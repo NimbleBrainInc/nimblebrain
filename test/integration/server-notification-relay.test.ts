@@ -27,6 +27,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -109,7 +110,7 @@ beforeAll(async () => {
     runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
   }
 
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

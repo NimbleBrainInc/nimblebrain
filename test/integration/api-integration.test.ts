@@ -10,6 +10,7 @@ import type { ServerHandle } from "../../src/api/server.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { textContent, extractText } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // --- SSE parsing helper ---
 
@@ -247,7 +248,7 @@ describe("integration: windowing under load", () => {
 		});
 		await provisionTestWorkspace(runtime);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 
@@ -471,7 +472,7 @@ describe("E2E: install app -> tool call via API", () => {
 			},
 		}, undefined, TEST_WORKSPACE_ID);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 
@@ -543,7 +544,7 @@ describe("E2E: tool call via API", () => {
 			name: "@test/notes",
 		}, undefined, TEST_WORKSPACE_ID);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 
@@ -590,7 +591,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 		});
 		await provisionTestWorkspace(runtime);
 
-		handle = startServer({ runtime, port: 0 });
+		handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
 		baseUrl = `http://localhost:${handle.port}`;
 	});
 

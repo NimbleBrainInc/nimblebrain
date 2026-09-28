@@ -28,6 +28,7 @@ import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const SENTINEL = "DETACH_SENTINEL";
 const BACKGROUND_REPLY = "completed in the background after disconnect";
@@ -94,7 +95,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
       workDir,
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation to get a stable convId to assert against.

@@ -17,6 +17,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 interface SSEEvent {
   event: string;
@@ -82,7 +83,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation (first doGenerate call returns immediately).
@@ -127,7 +128,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation we can contend on.

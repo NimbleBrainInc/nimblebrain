@@ -13,6 +13,7 @@ import type { ToolSource, Tool } from "../../src/tools/types.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Log capture helper
@@ -94,7 +95,7 @@ beforeAll(async () => {
 	const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 	wsRegistry.addSource(new FakeToolSource());
 
-	handle = startServer({ runtime, port: 0 });
+	handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
 	baseUrl = `http://localhost:${handle.port}`;
 });
 

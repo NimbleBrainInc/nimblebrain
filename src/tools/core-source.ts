@@ -79,7 +79,7 @@ const CLEARABLE_FIELDS = [
   { key: "maxOutputTokens", clearFlag: "clearMaxOutputTokens", coerce: Number },
 ] as const;
 
-/** Org-admin gate. Dev mode (no identity provider) bypasses. */
+/** Org-admin gate. A runtime with no identity provider (no `instance.json`) bypasses. */
 function checkModelConfigAccess(runtime: Runtime): string | null {
   if (runtime.getIdentityProvider() === null) return null;
   const identity = runtime.getCurrentIdentity();

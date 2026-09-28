@@ -5,6 +5,7 @@ import {
   ConnectionRevalidator,
   revalidatorIntervalMsFromEnv,
 } from "../connectors/runtime/connection-revalidator.ts";
+import { missingInstanceConfigError } from "../identity/instance.ts";
 import type { IdentityProvider } from "../identity/provider.ts";
 import { DevIdentityProvider } from "../identity/providers/dev.ts";
 import { canonicalOrigins, webOrigin } from "../oauth/public-origin.ts";
@@ -30,7 +31,10 @@ import type { AppContext } from "./types.ts";
 export interface ServerOptions {
   runtime: Runtime;
   port?: number;
-  /** Pluggable identity provider. Falls back to DevIdentityProvider (no auth) when null. */
+  /**
+   * Pluggable identity provider. When omitted, the runtime's provider (from
+   * `instance.json`) is used; with neither, the server refuses to start.
+   */
   provider?: IdentityProvider | null;
   /**
    * Pluggable cluster-shared session metadata store. When omitted, a process-
@@ -76,6 +80,11 @@ const envAllowedOrigins: Set<string> | null = process.env.ALLOWED_ORIGINS
  */
 export function startServer(options: ServerOptions): ServerHandle {
   const { runtime, port = 27247, provider: optProvider = null } = options;
+  // Refuse before anything starts: with no identity provider there is nothing
+  // to authenticate a request with. `instance.json` names the provider, `dev`
+  // included; its absence never selects one.
+  const provider = optProvider ?? runtime.getIdentityProvider();
+  if (!provider) throw missingInstanceConfigError(runtime.getWorkDir());
   // Read the scoped internal token minted by the runtime at startup.
   const internalToken = runtime.getInternalToken();
 
@@ -148,7 +157,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   //     high — far above human navigation, low enough to stop a hot loop.
   //   - `/v1/workspaces/:wsId/chat` (chatLimiter) is first-party + LLM-expensive, so it stays
   //     modest.
-  // All are bypassed in dev mode (see `isDevMode` below).
+  // All are bypassed under the dev identity provider (see `isDevMode` below).
   const chatRateLimit = Number(process.env.NB_CHAT_RATE_LIMIT) || 20;
   const toolRateLimit = Number(process.env.NB_TOOL_RATE_LIMIT) || 600;
   const mcpRateLimit = Number(process.env.NB_MCP_RATE_LIMIT) || 300;
@@ -188,20 +197,10 @@ export function startServer(options: ServerOptions): ServerHandle {
     sseManager.emit(event);
   };
 
-  // Resolve identity provider. `isDevMode` is captured BEFORE the dev
-  // substitution: when no real provider is configured we still install a
-  // DevIdentityProvider (so the local app authenticates as a single
-  // `usr_default`), which makes `authMode` look like a real adapter. The
-  // honest "is this local dev" signal is therefore "was a real provider
-  // configured", not the post-substitution auth mode. Request rate limiting
-  // keys off this to bypass in dev.
-  let effectiveProvider: IdentityProvider | null = optProvider ?? runtime.getIdentityProvider();
-  const isDevMode = effectiveProvider === null;
-  if (!effectiveProvider) {
-    const workDir = runtime.getWorkDir();
-    effectiveProvider = new DevIdentityProvider(workDir, runtime.getUserStore());
-  }
-  const authMode = resolveAuthMode(effectiveProvider);
+  // Dev is the provider `instance.json` chose, never an inference from a
+  // missing one. Request rate limiting keys off it to bypass in dev.
+  const isDevMode = provider instanceof DevIdentityProvider;
+  const authMode = resolveAuthMode(provider);
   const authConfigured = authMode.type !== "dev";
 
   // Construct the per-pod MCP host. The transport map lives here; the
@@ -226,7 +225,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     runtime,
     features: runtime.getFeatures(),
     authOptions: { mode: authMode, internalToken, eventSink: runtime.getEventSink() },
-    provider: effectiveProvider,
+    provider,
     workspaceStore: runtime.getWorkspaceStore(),
     sseManager,
     conversationEventManager,

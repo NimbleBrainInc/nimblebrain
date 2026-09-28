@@ -97,9 +97,8 @@ async function checkWritePermission(
     return { allowed: false, reason: "Writing instructions requires a workspace context" };
   }
 
-  // Dev mode (no identity provider configured) — allow writes through.
-  // Matches the existing convention for dev-mode tool dispatch (see
-  // `src/runtime/runtime.ts:getCurrentIdentity` — null in dev).
+  // No identity provider (an in-process runtime with no `instance.json`) —
+  // allow writes through.
   if (runtime.getIdentityProvider() === null) {
     return { allowed: true, wsId };
   }

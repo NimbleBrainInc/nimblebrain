@@ -30,6 +30,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // ── In-process counter source ─────────────────────────────────────
 
@@ -169,7 +170,7 @@ beforeAll(async () => {
   personalReg.addSource(personalSource.source);
   strangerReg.addSource(strangerSource.source);
 
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

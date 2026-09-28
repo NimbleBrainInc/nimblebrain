@@ -1,4 +1,5 @@
 import type { InstanceConfig } from "./instance.ts";
+import { DevIdentityProvider } from "./providers/dev.ts";
 import { OidcIdentityProvider } from "./providers/oidc.ts";
 import { WorkosIdentityProvider } from "./providers/workos.ts";
 import type { OrgRole } from "./types.ts";
@@ -221,18 +222,19 @@ export interface IdentityProvider {
 // ── Factory ────────────────────────────────────────────────────────
 
 /**
- * Create the appropriate identity provider based on instance config.
- * Returns null when config is null (dev mode — no auth).
+ * Create the identity provider `instance.json` names. Every adapter, `dev`
+ * included, is chosen by name; there is no provider for an absent config.
  */
 export function createIdentityProvider(
-  config: InstanceConfig | null,
+  config: InstanceConfig,
   userStore: UserStore,
-): IdentityProvider | null {
-  if (config === null) return null;
-
+  workDir: string,
+): IdentityProvider {
   const adapter = config.auth.adapter;
 
   switch (adapter) {
+    case "dev":
+      return new DevIdentityProvider(workDir, userStore);
     case "oidc":
       return new OidcIdentityProvider(config.auth, userStore);
     case "workos":

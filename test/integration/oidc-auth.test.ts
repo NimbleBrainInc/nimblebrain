@@ -165,7 +165,7 @@ describe("OIDC integration: full flow", () => {
     // Create stores and adapter via factory
     const userStore = new UserStore(workDir);
     const wsStore = new WorkspaceStore(workDir);
-    const adapter = createIdentityProvider(config, userStore);
+    const adapter = createIdentityProvider(config, userStore, workDir);
     expect(adapter).not.toBeNull();
     expect(adapter).toBeInstanceOf(OidcIdentityProvider);
 
@@ -260,7 +260,7 @@ describe("OIDC integration: domain rejection", () => {
 
     const config = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(config, userStore);
+    const adapter = createIdentityProvider(config, userStore, workDir);
     expect(adapter).not.toBeNull();
 
     // acme.com is not in allowedDomains for this config
@@ -289,15 +289,9 @@ describe("OIDC integration: factory wiring", () => {
 
     const config = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(config, userStore);
+    const adapter = createIdentityProvider(config, userStore, workDir);
 
     expect(adapter).toBeInstanceOf(OidcIdentityProvider);
-  });
-
-  test("null config (dev mode) returns null adapter", () => {
-    const userStore = new UserStore(workDir);
-    const adapter = createIdentityProvider(null, userStore);
-    expect(adapter).toBeNull();
   });
 
   test("admin-created user is found by OIDC login without duplication", async () => {

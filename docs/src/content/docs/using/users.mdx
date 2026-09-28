@@ -5,7 +5,7 @@ description: Create users, assign roles, and manage workspace membership in your
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-NimbleBrain supports multi-user environments where each person has their own identity, conversations, and workspace memberships. User management is available in dev mode (the built-in local identity store) and with the **oidc** adapter.
+NimbleBrain supports multi-user environments where each person has their own identity, conversations, and workspace memberships. User management is available with the **dev** adapter (the built-in local identity store) and with the **oidc** adapter.
 
 ## Auth adapters
 
@@ -13,12 +13,12 @@ How users are managed depends on your authentication configuration in `instance.
 
 | Adapter | User management | Description |
 |---------|----------------|-------------|
-| **dev** | Via `nb__manage_users` tool | No `instance.json`. Identities live in the built-in local store under `users/`. Network authentication is not enforced (see [Security](/deploy/security/)), but users, roles, and ownership still apply. |
+| **dev** | Via `nb__manage_users` tool | `"adapter": "dev"`. Identities live in the built-in local store under `users/`. No credential is checked and every request is the built-in owner (see [Security](/deploy/security/)), but users, roles, and ownership still apply. |
 | **oidc** | External provider | Users are managed in your OIDC provider. NimbleBrain creates local records on first login. |
 | **workos** | External provider (WorkOS) | Identities and sign-in are managed in WorkOS / AuthKit. |
 
 <Aside type="tip">
-In dev mode (no `instance.json`), authentication is disabled entirely. This is the default for local development.
+The `dev` adapter checks no credential. The dev launchers (`bun run dev` and its variants) write it for you; everywhere else, `instance.json` must name an adapter or the server does not start.
 </Aside>
 
 ## Creating users
@@ -27,7 +27,7 @@ In dev mode (no `instance.json`), authentication is disabled entirely. This is t
   There is no "Settings → Users" tab with an email invite field in the web UI. Users are created through the `nb__manage_users` tool — ask the agent, or call the tool directly. Only org **admins** and **owners** can manage users.
 </Aside>
 
-In dev mode, ask the agent to create users:
+With the `dev` adapter, ask the agent to create users:
 
 ```
 Create a user for sarah@example.com with the name Sarah

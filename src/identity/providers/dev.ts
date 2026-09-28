@@ -26,8 +26,9 @@ export const DEV_IDENTITY: UserIdentity = {
 // ── DevIdentityProvider ──────────────────────────────────────────
 
 /**
- * Identity provider for dev mode — always returns a default user identity.
- * Creates the default user profile and workspace on first access if missing.
+ * The `dev` adapter (`{"auth":{"adapter":"dev"}}` in `instance.json`): every
+ * request authenticates as `DEV_IDENTITY`, with no credential checked.
+ * Creates the default user profile on first access if missing.
  */
 export class DevIdentityProvider implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -46,7 +47,9 @@ export class DevIdentityProvider implements IdentityProvider {
     private userStore: UserStore,
   ) {
     this.usersDir = join(workDir, "users");
-    log.warn("Running in dev mode — no authentication configured");
+    log.warn(
+      "instance.json selects the dev identity provider: every request is the local developer, with no login",
+    );
   }
 
   async verifyRequest(_req: Request): Promise<VerifiedIdentity | null> {

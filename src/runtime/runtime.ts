@@ -657,7 +657,12 @@ export class Runtime {
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
     await retireLegacyPersonalWorkspaces(workspaceStore, userStore);
-    const identityProvider = createIdentityProvider(instanceConfig, userStore);
+    // No `instance.json` leaves the runtime without a provider. Only an
+    // in-process caller can use such a runtime: the HTTP server refuses to
+    // start on it.
+    const identityProvider = instanceConfig
+      ? createIdentityProvider(instanceConfig, userStore, workDir)
+      : null;
 
     // Mint the scoped internal-API auth token (the internal-API bearer checked
     // in auth-middleware). Rotated on every runtime restart — never persisted.
@@ -768,8 +773,8 @@ export class Runtime {
     const getWorkspaceId = (): string | null => getRequestContext()?.workspaceId ?? null;
 
     // Build management tool contexts using the identity holder + stores from task 001
-    // ManageUsersContext is always created. In dev mode (no identity provider),
-    // the tool can still list/update/delete users — it just can't create
+    // ManageUsersContext is always created. With no identity provider, the
+    // tool can still list/update/delete users — it just can't create
     // users with API keys (that requires a provider with credential login).
     const manageUsersCtx = { getIdentity, userStore, provider: identityProvider };
     const noActiveToolPromotionRun = (toolName: string): ToolPromotionResult => ({
@@ -2125,8 +2130,9 @@ export class Runtime {
    * The workspace a request runs in. The HTTP doors always name one
    * (ADR-0037), so `workspaceId` is absent only for a caller driving the
    * runtime directly. With an identity provider configured that is a caller
-   * bug and throws: the server does not choose a workspace for a request. In
-   * dev mode (no provider) the caller's default workspace stands in,
+   * bug and throws: the server does not choose a workspace for a request. With
+   * no provider (an in-process runtime with no `instance.json`) the caller's
+   * default workspace stands in,
    * provisioned if they have none, with its registry ready.
    */
   private async resolveRequestWorkspace(
@@ -4064,7 +4070,7 @@ export class Runtime {
     return this._managedConnectorRegistry;
   }
 
-  /** Get the IdentityProvider (null in dev mode when no instance.json). */
+  /** Get the IdentityProvider `instance.json` names (null when the workdir has none). */
   getIdentityProvider(): IdentityProvider | null {
     return this._identityProvider;
   }
@@ -4120,13 +4126,13 @@ export class Runtime {
   /**
    * Resolve the workspace-scoped data directory for the current request.
    * Returns `{workDir}/workspaces/{wsId}` when a workspace is active.
-   * Dev mode (no identity provider) falls back to global workDir.
+   * With no identity provider it falls back to the global workDir.
    */
   getWorkspaceScopedDir(wsId?: string | null): string {
     const id = wsId ?? this.getCurrentWorkspaceId();
     if (id) return this.getWorkspaceContext(id).getRoot();
 
-    // Dev mode (no identity provider) — allow global fallback for local development
+    // No identity provider (an in-process runtime with no `instance.json`).
     if (!this._identityProvider) return resolveWorkDir(this.config);
 
     throw new Error("No workspace context — cannot resolve scoped directory.");
@@ -4201,7 +4207,7 @@ export class Runtime {
     return this._automationEventTrigger.offer(req);
   }
 
-  /** Get the loaded InstanceConfig (null when no instance.json exists — dev mode). */
+  /** Get the loaded InstanceConfig (null when no instance.json exists). */
   getInstanceConfig(): InstanceConfig | null {
     return this._instanceConfig;
   }

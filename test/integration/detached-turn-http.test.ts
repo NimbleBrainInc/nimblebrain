@@ -7,6 +7,7 @@ import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // Dev-mode caller (no identity provider) — every request resolves to this
 // owner, and conversations are born in TEST_WORKSPACE_ID's owner partition.
@@ -25,7 +26,7 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

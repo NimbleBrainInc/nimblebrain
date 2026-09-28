@@ -23,6 +23,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-upload-conversation-workspace-${Date.now()}`);
 
@@ -46,7 +47,7 @@ beforeAll(async () => {
   });
   await provisionTestWorkspace(runtime, WORKSPACE_A);
   await provisionTestWorkspace(runtime, OTHER);
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

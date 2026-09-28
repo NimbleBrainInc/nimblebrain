@@ -29,6 +29,7 @@ import { createTestAuthAdapter, TEST_IDENTITY } from "../../helpers/test-auth-ad
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 const ALICE = { id: "usr_alice", email: "alice@example.com" };
 const BOB = { id: "usr_bob", email: "bob@example.com" };
@@ -257,7 +258,7 @@ describe("/v1/conversations/:id/events — dev mode (no provider)", () => {
     await provisionTestWorkspace(runtime);
     // No `provider` → dev mode. The auth middleware passes through
     // without setting c.var.identity.
-    handle = startServer({ runtime, port: 0 });
+    handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
     baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation via runtime.chat without an identity. The

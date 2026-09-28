@@ -8,7 +8,7 @@ import { Aside } from '@astrojs/starlight/components';
 NimbleBrain reads environment variables for model provider keys, server binding, public-origin resolution, rate limiting, MCP session limits, the Composio aggregator, and observability. This page lists every supported variable with its purpose, default, and precedence.
 
 <Aside type="note">
-  Authentication is **not** configured through an environment variable. Identity comes from `instance.json` auth adapters (`oidc` / `workos`); the absence of that file is dev mode. See [`instance.json`](/config/instance-json/) for the full auth model.
+  Authentication is **not** configured through an environment variable. Identity comes from the `instance.json` auth adapter (`dev` / `oidc` / `workos`), and the server does not start without that file. See [`instance.json`](/config/instance-json/) for the full auth model.
 </Aside>
 
 ## Variable reference

@@ -70,6 +70,13 @@ named for them with them as admin, and it becomes their default. It is an
 ordinary workspace — it can be shared, and nothing marks how it was made
 (ADR-0039).
 
+### Identity provider
+What authenticates a request and says who made it, named by `auth.adapter` in
+`instance.json`: `dev` (every request is one local developer, an org owner),
+`oidc` or `workos`. It is always a choice: with no `instance.json` the server
+does not start, and no request is admitted as `dev` because the file is absent
+(ADR-0040).
+
 ### Owner
 The authenticated principal a primitive belongs to. Stored as an `<ownerId>`
 sub-partition in the path (ADR-0003), which makes owner-privacy structural.
@@ -235,6 +242,7 @@ The decision log is `adr/`. Foundational (secure RBAC):
 - [0037](adr/0037-a-workspace-is-addressed-by-url-on-every-surface.md) — a workspace is addressed by URL on every surface; a route is workspace-scoped or identity-scoped, and its path says which
 - [0038](adr/0038-a-credential-is-first-party-by-the-client-it-was-issued-to.md) — a credential's audience says where it may be used; the client it was issued to says whose app holds it; only a configured first-party client gets first-party standing
 - [0039](adr/0039-the-first-workspace-is-an-ordinary-workspace.md) — the workspace provisioned for a user is an ordinary workspace; the default a user lands in is a preference
+- [0040](adr/0040-the-identity-provider-is-chosen-never-defaulted.md) — `instance.json` names the identity provider, `dev` included; with none, the server does not start
 
 Manage skills:
 

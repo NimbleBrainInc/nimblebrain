@@ -8,6 +8,7 @@ import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 // --- Unauthenticated server (dev mode) ---
 
@@ -26,7 +27,7 @@ beforeAll(async () => {
 
 	await provisionTestWorkspace(runtime);
 
-	handle = startServer({ runtime, port: 0 });
+	handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
 	baseUrl = `http://localhost:${handle.port}`;
 });
 

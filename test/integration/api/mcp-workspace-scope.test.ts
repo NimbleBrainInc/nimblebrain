@@ -18,6 +18,7 @@ import { SharedSourceRef } from "../../../src/tools/registry.ts";
 import type { ToolSource, Tool } from "../../../src/tools/types.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 
 // ── Fake tool sources ───────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ beforeAll(async () => {
 
   // Denied source is NOT added to workspace registry
 
-  handle = startServer({ runtime, port: 0 });
+  handle = startServer({ runtime, port: 0, provider: devProvider(runtime) });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

@@ -7,7 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 Each workspace has its own config file at `<workDir>/workspaces/<wsId>/workspace.json`. This is where connectors, skill directories, and optional model overrides live — **not** in [`nimblebrain.json`](/config/nimblebrain-json).
 
-In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) the runtime uses a single workspace with ID `_dev`, so you'll find its config at `<workDir>/workspaces/_dev/workspace.json`. Under auth, workspaces are created and managed via the `nb__manage_workspaces` tool or the HTTP API; their files are maintained by the runtime. Team workspace ids are opaque (`ws_<16-hex>`) and name-independent.
+Workspaces are created and managed via the `nb__manage_workspaces` tool or the HTTP API; their files are maintained by the runtime. Team workspace ids are opaque (`ws_<16-hex>`) and name-independent.
 
 ## Example
 

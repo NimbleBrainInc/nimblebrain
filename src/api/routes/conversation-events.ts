@@ -18,8 +18,8 @@
  *    the chat path). Content does not leak.
  *  - Conversation exists and the caller is the owner → 200 SSE.
  *
- * Dev-mode: when no identity provider is configured (`bun run
- * dev:worktree`, `Runtime.start` without an `instance.json`), the
+ * No identity provider: when the runtime has none (`Runtime.start`
+ * without an `instance.json`, served with a provider of its own), the
  * caller is treated as `DEV_IDENTITY` (`usr_default`) — same fallback
  * `runtime.chat` uses for the analogous case. Production deployments
  * with an identity provider configured but middleware that fails to
@@ -90,7 +90,7 @@ export function conversationEventRoutes(ctx: AppContext) {
       }
 
       // Resolve the caller id. Authenticated request → identity.id.
-      // Dev mode (no identity provider configured) → fall back to
+      // No runtime identity provider → fall back to
       // DEV_IDENTITY so the same conversations `runtime.chat` minted
       // under usr_default are readable. Misconfigured production
       // (provider exists but middleware didn't populate identity) →

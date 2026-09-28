@@ -8,6 +8,7 @@ import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -24,7 +25,7 @@ beforeAll(async () => {
 
 	await provisionTestWorkspace(runtime);
 
-	handle = startServer({ runtime, port: 0 }); // port 0 = random available port
+	handle = startServer({ runtime, port: 0, provider: devProvider(runtime) }); // port 0 = random available port
 	baseUrl = `http://localhost:${handle.port}`;
 });
 
