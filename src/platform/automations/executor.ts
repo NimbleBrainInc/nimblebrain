@@ -677,10 +677,9 @@ function classifyAbortedRun(
  * No HTTP, no auth token — pure function call within the same process.
  *
  * @param taskFn      Direct reference to runtime.executeTask() or equivalent.
- * @param getContext  Returns the workspace/identity context for the run. Called
- *                    per-execution so it can read current state. Every trigger
- *                    gets the same answer: the automation's owner, in its
- *                    workspace.
+ * @param getContext  Derives the run's workspace/identity context from the
+ *                    automation. Every trigger gets the same answer: the
+ *                    automation's owner, in its workspace.
  */
 export function createDirectExecutor(
   taskFn: TaskFn,

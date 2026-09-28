@@ -57,10 +57,11 @@ function recordingModel(): { model: LanguageModelV4; offered: string[][] } {
       { text: "done" },
     ]).flat(),
   });
-  // Only a run's first model call is recorded: the list it opens with.
-  let calls = 0;
+  // Only a run's opening model call is recorded: the one no tool result has
+  // reached yet, which carries the list the run opens with.
   const record = (options: LanguageModelV4CallOptions) => {
-    if (calls++ % 2 === 0) offered.push((options.tools ?? []).map((t) => t.name).sort());
+    if (options.prompt.some((m) => m.role === "tool")) return;
+    offered.push((options.tools ?? []).map((t) => t.name).sort());
   };
   const model: LanguageModelV4 = {
     ...inner,
@@ -115,6 +116,7 @@ describe("Run now gets the scheduled run's tools", () => {
       );
       const scheduled = await executor(automation, undefined, "scheduled");
 
+      expect(offered).toHaveLength(RUNS);
       const [, manualTools, scheduledTools] = offered;
       expect(manualTools).toEqual(scheduledTools);
       expect(manualTools).not.toContain(ADMIN_ONLY_TOOL);
