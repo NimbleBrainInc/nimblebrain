@@ -1,6 +1,7 @@
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { CONNECTED_FRAME } from "./sse-heartbeat.ts";
 
 /**
  * SSE client connection tracked by the event manager.
@@ -302,6 +303,7 @@ export class SseEventManager implements EventSink {
           workspaceMemberships: opts.workspaceMemberships,
         };
         this.clients.set(id, client);
+        controller.enqueue(CONNECTED_FRAME);
       },
       cancel: () => {
         this.removeClient(id);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readConnected } from "../helpers/sse.ts";
 import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
@@ -103,6 +104,40 @@ describe("POST /v1/workspaces/:wsId/chat/stream", () => {
 		expect(doneData.response).toBe("Stream me");
 		expect(doneData.conversationId).toMatch(/^conv_/);
 		expect(doneData.stopReason).toBe("complete");
+	});
+
+	it("sends its response head before the run emits chat.start", async () => {
+		// Hold the run before it emits anything, as a slow tool listing does.
+		const chat = runtime.chat.bind(runtime);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		runtime.chat = async (...args) => {
+			await gate;
+			return chat(...args);
+		};
+		try {
+			const res = await Promise.race([
+				fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ message: "Held", workspaceId: TEST_WORKSPACE_ID }),
+				}),
+				new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 2000)),
+			]);
+			if (res === "pending") throw new Error("chat/stream sent no response head within 2000ms");
+
+			expect(res.status).toBe(200);
+			expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+			const reader = res.body!.getReader();
+			await readConnected(reader);
+			release();
+			while (!(await reader.read()).done) {}
+		} finally {
+			release();
+			runtime.chat = chat;
+		}
 	});
 
 	it("includes text.delta events", async () => {
@@ -372,36 +407,48 @@ describe("POST /v1/workspaces/:wsId/tools/call", () => {
 });
 
 describe("GET /v1/events", () => {
-	it("returns SSE stream with correct headers and receives data", async () => {
-		// Use the SSE manager directly to verify the endpoint works
-		// The fetch API with SSE is tricky in tests, so we verify headers
-		// via a short read and verify the manager unit tests cover broadcast logic
-
+	/**
+	 * Open `/v1/events` and report what arrived before any event was
+	 * broadcast. Counts broadcasts while the request is pending, and gives up
+	 * after `deadlineMs` so a stream that stays silent fails here instead of
+	 * hanging until the next 30s heartbeat.
+	 */
+	async function openBeforeAnyBroadcast(deadlineMs = 2000) {
+		const broadcast = handle.sseManager.broadcast.bind(handle.sseManager);
+		let broadcasts = 0;
+		handle.sseManager.broadcast = (...args) => {
+			broadcasts++;
+			broadcast(...args);
+		};
 		const controller = new AbortController();
+		try {
+			const res = await Promise.race([
+				fetch(`${baseUrl}/v1/events`, { signal: controller.signal }),
+				new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), deadlineMs)),
+			]);
+			if (res === "pending") {
+				controller.abort();
+				throw new Error(`GET /v1/events sent no response head within ${deadlineMs}ms`);
+			}
+			const broadcastsBeforeHead = broadcasts;
+			const reader = res.body!.getReader();
+			const { value } = await reader.read();
+			await reader.cancel().catch(() => {});
+			return { res, firstChunk: new TextDecoder().decode(value), broadcastsBeforeHead };
+		} finally {
+			handle.sseManager.broadcast = broadcast;
+			controller.abort();
+		}
+	}
 
-		// Broadcast a heartbeat to the manager so the SSE client gets data quickly
-		setTimeout(() => {
-			handle.sseManager.broadcast("heartbeat", {
-				timestamp: new Date().toISOString(),
-			});
-		}, 50);
-
-		const res = await fetch(`${baseUrl}/v1/events`, {
-			signal: controller.signal,
-		});
+	it("sends its response head, with SSE headers, before any event is broadcast", async () => {
+		const { res, firstChunk, broadcastsBeforeHead } = await openBeforeAnyBroadcast();
 
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toBe("text/event-stream");
 		expect(res.headers.get("Cache-Control")).toBe("no-cache");
-
-		// Read a chunk from the stream
-		const reader = res.body!.getReader();
-		const { value } = await reader.read();
-		const text = new TextDecoder().decode(value);
-		expect(text).toContain("event: heartbeat");
-
-		controller.abort();
-		reader.cancel().catch(() => {}); // Cleanup
+		expect(broadcastsBeforeHead).toBe(0);
+		expect(firstChunk).toBe(": connected\n\n");
 	});
 });
 
@@ -413,6 +460,7 @@ describe("SSE Event Manager", () => {
 
 		const stream = manager.addClient();
 		const reader = stream.getReader();
+		await readConnected(reader);
 
 		// Broadcast a test event
 		manager.broadcast("connector.installed", {
@@ -440,6 +488,7 @@ describe("SSE Event Manager", () => {
 		const stream2 = manager.addClient();
 		const reader1 = stream1.getReader();
 		const reader2 = stream2.getReader();
+		await Promise.all([readConnected(reader1), readConnected(reader2)]);
 
 		expect(manager.clientCount).toBe(2);
 
@@ -491,6 +540,7 @@ describe("SSE Event Manager", () => {
 
 		const stream = manager.addClient();
 		const reader = stream.getReader();
+		await readConnected(reader);
 
 		// Emit a run.start event — should NOT be forwarded
 		manager.emit({

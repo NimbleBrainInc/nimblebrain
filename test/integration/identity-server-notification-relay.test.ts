@@ -68,14 +68,7 @@ function readFrames(stream: ReadableStream<Uint8Array>): { frames: Frame[]; rele
 
 /** The owner's own `/v1/events` stream — the one their browser tabs hold. */
 async function openOwnStream(): Promise<{ frames: Frame[]; release: () => void }> {
-  // The response head goes out with the stream's first chunk, so the fetch
-  // resolves only once something is broadcast.
-  const kick = setTimeout(
-    () => handle.sseManager.broadcast("heartbeat", { timestamp: new Date().toISOString() }),
-    50,
-  );
   const res = await fetch(`${baseUrl}/v1/events`);
-  clearTimeout(kick);
   expect(res.status).toBe(200);
   if (!res.body) throw new Error("no event stream body");
   return readFrames(res.body);

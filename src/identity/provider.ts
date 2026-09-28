@@ -88,8 +88,8 @@ export interface TokenResult {
  *
  * Collapsing the two makes a backend hiccup indistinguishable from a revoked
  * session, and the web client logs the user out on the second one. This is the
- * same distinction {@link RefreshTokenError}'s `unavailable` kind already draws
- * on the refresh hop; verification is the hop that was missing it.
+ * same distinction {@link RefreshTokenError}'s `unavailable` kind draws on the
+ * refresh hop.
  *
  * Providers own the classification — only they understand their SDK's failure
  * shapes. `authenticateRequest` maps this to 503 + `Retry-After` and does not
