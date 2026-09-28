@@ -49,7 +49,7 @@ servers:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `host_version` | `string` | Yes | Contract major version. Write `"1.0"`. It changes only on a breaking change: every block on this page is part of `1.0`, and a block is turned on by declaring it, not by the version. The host accepts any `1.x` and skips a connector that declares another major. |
+| `host_version` | `string` | Yes | Contract major version. Write `"1.0"`. It changes only on a breaking change: every block on this page is part of `1.0`, and a block is turned on by declaring it, not by the version. The host accepts any `1.x` and skips a catalog connector that declares another major. |
 | `name` | `string` | Recommended | Display name shown in the sidebar and app list. Without a `name` the host surfaces no UI for the connector, so it's required in practice for any app with a presence in the shell. |
 | `icon` | `string` | No | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). Defaults to `""`. |
 | `category` | `string` | No | Reserved, free-form string. Not currently consumed by the host — declare it only as forward-looking metadata. |

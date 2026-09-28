@@ -232,7 +232,7 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
 
 function hostVersionViolation(s: ServerDetail): string | null {
   const host = getNimbleBrainHostMeta(s);
-  if (host === undefined || isSupportedHostVersion(host.host_version)) return null;
+  if (host === undefined || host === null || isSupportedHostVersion(host.host_version)) return null;
   return `host_version must be major 1 ("1.0"): ${JSON.stringify(host.host_version)}`;
 }
 
@@ -244,6 +244,6 @@ function hostVersionViolation(s: ServerDetail): string | null {
  * it does not know. For `admin_tools`, which only narrows who may call a tool,
  * ignoring it would widen access, so the entry is dropped instead.
  */
-export function isSupportedHostVersion(v: unknown): boolean {
+function isSupportedHostVersion(v: unknown): boolean {
   return typeof v === "string" && /^1(\.\d+)?$/.test(v);
 }

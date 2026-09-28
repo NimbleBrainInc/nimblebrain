@@ -172,6 +172,12 @@ describe("validateCatalog", () => {
     expect(diagnostics[0]?.message).toContain("directory boundary");
     expect(diagnostics[0]?.message).toContain("host_version must be major 1");
 
+    // A null block is no block, as every host-block parser reads it.
+    writeCatalog("catalog.json", [
+      { ...VALID_ENTRY, _meta: { "ai.nimblebrain/host": null } },
+    ]);
+    expect(validateCatalog(dir)).toEqual([]);
+
     for (const v of ["1", "1.0", "1.1", "1.5", "1.12"]) {
       writeCatalog("catalog.json", [withHost(v)]);
       expect(validateCatalog(dir)).toEqual([]);
