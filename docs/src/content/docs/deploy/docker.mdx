@@ -30,6 +30,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      - GREENPT_API_KEY=${GREENPT_API_KEY:-}
       - NEBIUS_API_KEY=${NEBIUS_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
     networks:
@@ -81,6 +82,7 @@ The `web` container runs Caddy, which serves the static UI files and reverse-pro
 | `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key for Claude |
 | `OPENAI_API_KEY` | No | OpenAI API key (for OpenAI model provider) |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | No | Google Gemini API key (for Google model provider) |
+| `GREENPT_API_KEY` | No | GreenPT API key (for the GreenPT model provider) |
 | `NEBIUS_API_KEY` | No | Nebius Token Factory API key (for the Nebius model provider) |
 | `XAI_API_KEY` | No | xAI API key (for the xAI/Grok model provider) |
 | `ALLOWED_ORIGINS` | Production | Comma-separated list of allowed CORS origins (e.g., `https://nb.example.com`). Required for cross-origin cookie auth |

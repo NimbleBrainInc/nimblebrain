@@ -76,6 +76,28 @@ describe("buildRegistry", () => {
     expect(() => registry.languageModel("fakeprovider:some-model")).toThrow();
   });
 
+  it("resolves greenpt models through the OpenAI-compatible Chat Completions API", () => {
+    const registry = buildRegistry({ providers: { greenpt: { apiKey: "greenpt-test-key" } } });
+    const model = registry.languageModel("greenpt:glm-5.2");
+    expect(model).toBeDefined();
+    expect(model.specificationVersion).toBe("v3");
+    expect(model.provider).toBe("greenpt.chat");
+    expect(model.modelId).toBe("glm-5.2");
+  });
+
+  it("fails closed when greenpt is configured without a key", () => {
+    const prev = process.env.GREENPT_API_KEY;
+    process.env.GREENPT_API_KEY = "";
+    try {
+      expect(() => buildRegistry({ providers: { greenpt: {} } })).toThrow(
+        /greenpt.*no API key/i,
+      );
+    } finally {
+      if (prev === undefined) delete process.env.GREENPT_API_KEY;
+      else process.env.GREENPT_API_KEY = prev;
+    }
+  });
+
   it("resolves nebius models through the OpenAI-compatible Chat Completions API", () => {
     const registry = buildRegistry({ providers: { nebius: { apiKey: "nb-test-key" } } });
     const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro");
@@ -151,6 +173,54 @@ describe("buildModelResolver", () => {
     expect(model).toBeDefined();
     expect(model.provider).toContain("anthropic");
     expect(model.modelId).toContain("claude-sonnet-4-6");
+  });
+});
+
+describe("greenpt request shape", () => {
+  async function captureGreenptRequest(reasoningEffort?: string): Promise<{
+    body: Record<string, unknown>;
+    url: string;
+    authorization: string | null;
+  }> {
+    const realFetch = globalThis.fetch;
+    let body: Record<string, unknown> = {};
+    let url = "";
+    let authorization: string | null = null;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      url = String(input);
+      authorization = new Headers(init?.headers).get("authorization");
+      body = JSON.parse(String(init?.body));
+      return new Response(
+        'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+    try {
+      await buildModelResolver({
+        providers: { greenpt: { apiKey: "greenpt-test-key" } },
+      })("greenpt:kimi-k3").doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        ...(reasoningEffort
+          ? { providerOptions: { greenpt: { reasoningEffort } } }
+          : {}),
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return { body, url, authorization };
+  }
+
+  it("uses GreenPT's endpoint, bearer key, exact model id, and streaming usage", async () => {
+    const request = await captureGreenptRequest();
+    expect(request.url).toBe("https://api.greenpt.ai/v1/chat/completions");
+    expect(request.authorization).toBe("Bearer greenpt-test-key");
+    expect(request.body.model).toBe("kimi-k3");
+    expect(request.body.stream_options).toEqual({ include_usage: true });
+  });
+
+  it("routes GreenPT reasoning effort onto the wire", async () => {
+    const request = await captureGreenptRequest("high");
+    expect(request.body.reasoning_effort).toBe("high");
   });
 });
 

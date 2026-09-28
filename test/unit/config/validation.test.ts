@@ -75,6 +75,21 @@ describe("config schema validation", () => {
     ).toBe(true);
   });
 
+  it("accepts GreenPT provider config and rejects unknown provider fields", () => {
+    expect(
+      isValid({
+        providers: {
+          greenpt: {
+            apiKey: "test-key",
+            baseURL: "https://api.greenpt.ai/v1",
+            models: ["glm-5.2", "kimi-k2.7-code", "kimi-k3"],
+          },
+        },
+      }),
+    ).toBe(true);
+    expect(isValid({ providers: { greenpt: { unknown: true } } })).toBe(false);
+  });
+
   it("rejects features with non-boolean value", () => {
     expect(isValid({ features: { catalogSearch: "yes" } })).toBe(false);
   });
