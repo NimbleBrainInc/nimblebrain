@@ -215,6 +215,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_authkit_1",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec + 3600,
         iat: nowSec,
       },
@@ -238,6 +239,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_authkit_mcp",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec + 3600,
         iat: nowSec,
       },
@@ -258,6 +260,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_authkit_expired",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec - 100, // expired 100 seconds ago
         iat: nowSec - 3700,
       },
@@ -322,6 +325,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_bad_sig",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec + 3600,
         iat: nowSec,
       },
@@ -346,6 +350,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_time_test",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec + 3600, // expires 1 hour from real now, but provider thinks it's 10 hours later
         iat: nowSec,
       },
@@ -369,7 +374,14 @@ describe("verifyRequest reports the token's grant", () => {
   async function authkitToken(extra: Record<string, unknown>): Promise<string> {
     const nowSec = Math.floor(Date.now() / 1000);
     return createJwt(
-      { sub: "user_grant", iss: "https://testapp.authkit.app", exp: nowSec + 3600, iat: nowSec, ...extra },
+      {
+        sub: "user_grant",
+        iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
+        exp: nowSec + 3600,
+        iat: nowSec,
+        ...extra,
+      },
       authkitKey.privateKey,
       authkitKey.kid,
     );
@@ -438,6 +450,46 @@ describe("verifyRequest reports the token's grant", () => {
       const verified = await provider.verifyRequest(makeRequest(token));
       expect(verified?.grant).toEqual({ kind: "resource", audience: ["client_test_authkit"] });
     }
+  });
+
+  it("refuses an AuthKit resource token minted for another org", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({
+      client_id: "client_test_mcp",
+      aud: "https://nb.example.com/mcp/ws_a",
+      org_id: "org_other",
+    });
+    expect(await provider.verifyRequest(makeRequest(token))).toBeNull();
+  });
+
+  it("refuses a first-party AuthKit token minted for another org", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_channels", org_id: "org_other" });
+    expect(await provider.verifyRequest(makeRequest(token))).toBeNull();
+  });
+
+  it("refuses an AuthKit token with no org_id when an org is configured", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_channels", org_id: undefined });
+    expect(await provider.verifyRequest(makeRequest(token))).toBeNull();
+  });
+
+  it("admits AuthKit tokens of both grant kinds minted for the configured org", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const firstParty = await provider.verifyRequest(
+      makeRequest(await authkitToken({ client_id: "client_test_channels" })),
+    );
+    expect(firstParty?.grant).toEqual({ kind: "first_party" });
+    const resource = await provider.verifyRequest(
+      makeRequest(await authkitToken({ client_id: "client_test_mcp", aud: "https://nb.example.com/mcp/ws_a" })),
+    );
+    expect(resource?.grant).toEqual({ kind: "resource", audience: ["https://nb.example.com/mcp/ws_a"] });
+  });
+
+  it("admits an AuthKit token with any org_id when no org is configured", async () => {
+    const { provider } = createProvider({ organizationId: undefined });
+    const token = await authkitToken({ org_id: "org_other" });
+    expect(await provider.verifyRequest(makeRequest(token))).not.toBeNull();
   });
 
   it("reports a User Management token as first-party", async () => {
