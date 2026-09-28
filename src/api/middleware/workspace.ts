@@ -20,8 +20,7 @@ function workspaceNotFound(): Response {
  * uses (`isAddressedWorkspaceMember`), on every request.
  *
  * With no identity on the request, the caller is the dev user only when no
- * identity provider is configured; otherwise (the internal connector token)
- * there is no member to admit.
+ * identity provider is configured; otherwise there is no member to admit.
  */
 export function requireWorkspace(ctx: AppContext) {
   return createMiddleware<AppEnv>(async (c, next) => {

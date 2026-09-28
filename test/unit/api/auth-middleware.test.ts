@@ -209,7 +209,7 @@ describe("authenticateRequest — identity in return value", () => {
     const provider = createMockProvider("my-key", identity);
     const options = {
       mode: { type: "adapter", provider } as AuthMode,
-      };
+    };
 
     const req = makeRequest("/v1/workspaces/ws_a/shell", {
       headers: { Authorization: "Bearer my-key" },
@@ -232,10 +232,10 @@ describe("authenticateRequest — identity in return value", () => {
 
     const options1 = {
       mode: { type: "adapter", provider: provider1 } as AuthMode,
-      };
+    };
     const options2 = {
       mode: { type: "adapter", provider: provider2 } as AuthMode,
-      };
+    };
 
     const req1 = makeRequest("/v1/workspaces/ws_a/shell", {
       headers: { Authorization: "Bearer key-1" },
