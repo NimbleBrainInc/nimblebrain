@@ -101,11 +101,24 @@ function modernServer(opts: Parameters<typeof buildServer>[0] = {}): Fetch {
   return createMcpHandler(() => buildServer(opts)).fetch;
 }
 
-async function connect(url: string): Promise<McpSource> {
+async function connect(url: string, opts: { connector?: boolean } = {}): Promise<McpSource> {
   const source = new McpSource(
     "era",
     { type: "remote", url: new URL(url), allowInsecure: true },
     new NoopEventSink(),
+    // A connector source carries the context that registers the host-resources
+    // handlers, which is what entitles it to claim the extension.
+    opts.connector
+      ? {
+          workspaceId: "ws_era",
+          connectorId: "era",
+          hostResources: {
+            read: async () => ({ contents: [] }),
+            list: async () => ({ resources: [] }),
+          },
+          rateLimit: { check: () => {} },
+        }
+      : undefined,
   );
   await source.start();
   return source;
@@ -271,7 +284,7 @@ describe("the host-resources claim", () => {
       }
       return legacy(request);
     });
-    const source = await connect(served.url);
+    const source = await connect(served.url, { connector: true });
     try {
       expect(source.getNegotiatedProtocolVersion()).toBe("2025-11-25");
       expect(claimed?.extensions?.[HOST_RESOURCES_CAPABILITY_KEY]).toEqual(
@@ -298,7 +311,7 @@ describe("the host-resources claim", () => {
       }
       return modern(request);
     });
-    const source = await connect(served.url);
+    const source = await connect(served.url, { connector: true });
     try {
       expect(source.getNegotiatedProtocolVersion()).toBe("2026-07-28");
       await source.tools();

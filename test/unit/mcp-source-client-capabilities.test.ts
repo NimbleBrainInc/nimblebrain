@@ -16,6 +16,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Server } from "@modelcontextprotocol/server";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import { HOST_RESOURCES_CAPABILITY_KEY } from "../../src/host-resources/capability.ts";
 import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
@@ -58,5 +59,13 @@ describe("McpSource client capabilities", () => {
     source = await makeInProcessSource("caps-skills", []);
     // Exercised by `listSkills` + verification in the runtime's discovery.
     expect(declaredCapabilities(source)?.extensions?.[SKILLS_EXTENSION_ID]).toEqual({});
+  });
+
+  // A platform source has no `connectorContext`, so no host-resources handlers
+  // are registered for it; claiming the extension would promise a server
+  // requests nobody answers.
+  test("does NOT claim host-resources from a source that serves no handlers", async () => {
+    source = await makeInProcessSource("caps-host-resources", []);
+    expect(declaredCapabilities(source)?.extensions?.[HOST_RESOURCES_CAPABILITY_KEY]).toBeUndefined();
   });
 });
