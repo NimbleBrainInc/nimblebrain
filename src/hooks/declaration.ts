@@ -96,6 +96,12 @@ function parseHeaderRenames(raw: unknown): Record<string, string> | undefined {
  * is an anonymous request and must not be able to assert who it is, on this hop
  * any more than on the edge's.
  *
+ * `cookie` is not in the edge's set and is not an identity a caller asserts:
+ * it is the browser's session. It is listed here so no rename can target it.
+ * On the forward it never gets this far, because
+ * {@link isBrowserCredentialHeader} drops it before any rename is read; the
+ * two checks cover different cases, so keep both.
+ *
  * The identity NAMESPACE rule lives in {@link isStrippedRequestHeader}, not
  * here — see there for why a name list is the wrong shape for that half.
  */
@@ -121,8 +127,10 @@ export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
 /**
  * Whether an inbound header is a credential a browser attaches on its own.
  *
- * `Cookie` carries the user's session to this origin, so a browser that posts
- * to a hook URL would hand it to the connector. No vendor authenticates a
+ * `Cookie` carries the user's session to this origin. `SameSite=Lax` and
+ * `rejectCrossSiteWrites` keep it off a post from another site or from an
+ * origin CORS does not allow, but a post from this origin or an allowed one
+ * still carries it, and the forward would hand it to the connector. No vendor authenticates a
  * delivery with it, so, unlike `Authorization`, it cannot be renamed through:
  * the connector declares its renames and must not be able to ask for it.
  */

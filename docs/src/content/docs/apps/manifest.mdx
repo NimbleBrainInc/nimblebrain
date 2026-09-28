@@ -181,8 +181,9 @@ identity — `Authorization`, `X-Api-Key`, `X-Tenant-Id`, `X-Workspace-Id`,
 `X-User-Id`, and **everything under the reserved `X-NB-*` prefix**. These are
 stripped, because the only identity on a forwarded delivery must be the one the
 platform verified. If your vendor signs on one of those headers, declare a
-rename. `Cookie` never reaches you either, and cannot be renamed: a browser that
-posts to the URL attaches the user's session cookie, and no vendor signs with it.
+rename. `Cookie` never reaches you either, and cannot be renamed: a browser
+posting to the URL from the platform's own origin attaches the user's session
+cookie, and no vendor signs with it.
 
 ```json
 { "vendor": "acme", "route": "/ingest/acme", "register_tool": "set_webhook_url",
