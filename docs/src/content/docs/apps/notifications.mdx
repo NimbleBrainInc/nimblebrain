@@ -45,12 +45,12 @@ need sub-second delivery, this is the wrong primitive.
 
 ## Declare the outbox
 
-One block in `_meta["ai.nimblebrain/host"]`, with `host_version: "1.3"`:
+One block in `_meta["ai.nimblebrain/host"]`:
 
 ```json title="manifest.json"
 "_meta": {
   "ai.nimblebrain/host": {
-    "host_version": "1.3",
+    "host_version": "1.0",
     "notifications": {
       "resource": "acme://notifications",
       "description": "Domain lifecycle, campaign replies, bounce and suppression events."

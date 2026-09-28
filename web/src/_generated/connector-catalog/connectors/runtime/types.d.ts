@@ -255,7 +255,14 @@ export interface OAuthClientConfig {
 }
 /** Host manifest metadata at _meta["ai.nimblebrain/host"]. */
 export interface HostManifestMeta {
-    host_version: "1.0" | "1.1" | "1.2" | "1.3" | "1.4" | "1.5";
+    /**
+     * Contract major version, written `"1.0"`. It changes only on a breaking
+     * change; a block is enabled by being present, never by this value. A value
+     * outside major 1 is a contract this runtime cannot read, so the entry is
+     * dropped at the catalog boundary (`validateServerDetailSafety`). Any `1.x`
+     * is major 1.
+     */
+    host_version: string;
     name?: string;
     icon?: string;
     /**
@@ -281,7 +288,7 @@ export interface HostManifestMeta {
     hooks?: HookDeclaration[];
     /**
      * The outbox this server exposes: one MCP resource the runtime reads on a
-     * schedule for facts nobody asked for. Belongs to `host_version: "1.3"`.
+     * schedule for facts nobody asked for.
      *
      * Unlike {@link hooks}, declaring one grants no privilege. A hook
      * declaration decides where this runtime sends a delivery with a freshly
@@ -298,7 +305,7 @@ export interface HostManifestMeta {
      * The two moments the runtime can tell this server about its own
      * installation — `on_ready` when it first becomes reachable in a workspace,
      * `on_removing` immediately before its source is torn down. Each names a tool
-     * on this same server. Belongs to `host_version: "1.4"`.
+     * on this same server.
      *
      * The same line {@link HostManifestMeta.hooks} holds applies here with more
      * force: nothing in this block describes what either event MEANS. The kernel
@@ -311,7 +318,7 @@ export interface HostManifestMeta {
     lifecycle?: LifecycleDeclaration;
     /**
      * Bare names of tools on this same server that only a workspace admin may
-     * call. Belongs to `host_version: "1.5"`.
+     * call.
      *
      * It only narrows: the kernel removes these tools from a non-admin's listings
      * and refuses them at dispatch on every door, and grants nothing. Read from

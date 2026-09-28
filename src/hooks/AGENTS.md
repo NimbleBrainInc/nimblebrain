@@ -8,7 +8,7 @@ Scope: the hooks door, `src/hooks/` and `src/api/routes/hooks.ts`. `clientAddres
 `src/hooks/`). One generic door for vendor deliveries that cannot carry a platform
 token. The runtime opens the capability in the path, mints its ordinary
 workspace-scoped platform token, and forwards the bytes to a route the connector
-declared. Servers opt in with `_meta["ai.nimblebrain/host"].hooks` (`host_version: "1.2"`).
+declared. Servers opt in with `_meta["ai.nimblebrain/host"].hooks`.
 
 **The invariant: the runtime never parses a hook body.** It holds no vendor list
 and no envelope knowledge. If you find yourself reading a field out of a

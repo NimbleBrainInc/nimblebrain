@@ -7,8 +7,8 @@ Scope: `src/lifecycle/` and the tool-surface watch in `src/tools/connector-surfa
 `src/lifecycle/` (`declaration.ts` parses, `notify.ts` calls) tells a connector
 it became reachable in a workspace (`on_ready`, with
 `{ reason: "install" | "resume" }`) and that it is about to be removed
-(`on_removing`, no arguments). Declared as `_meta["ai.nimblebrain/host"].lifecycle`,
-`host_version: "1.4"`; each value names a tool on that same server. Developer
+(`on_removing`, no arguments). Declared as `_meta["ai.nimblebrain/host"].lifecycle`;
+each value names a tool on that same server. Developer
 contract: [`docs/apps/lifecycle.mdx`](../../docs/src/content/docs/apps/lifecycle.mdx).
 
 **Two moments, because the notification is a tool call on the bundle.** Before a

@@ -158,6 +158,30 @@ describe("validateCatalog", () => {
     expect(diagnostics[0]?.message).toContain("must NOT have more than 100 characters");
   });
 
+  test("a host block of another major is reported as a directory-boundary drop", () => {
+    // A host that predates major 2 would read its blocks as major 1 and
+    // ignore what it does not know — for admin_tools, widening access.
+    const withHost = (host_version: unknown) => ({
+      ...VALID_ENTRY,
+      _meta: { "ai.nimblebrain/host": { host_version, admin_tools: ["configure"] } },
+    });
+    writeCatalog("catalog.json", [withHost("2.0")]);
+
+    const diagnostics = validateCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("directory boundary");
+    expect(diagnostics[0]?.message).toContain("host_version must be major 1");
+
+    for (const v of ["1", "1.0", "1.1", "1.5", "1.12"]) {
+      writeCatalog("catalog.json", [withHost(v)]);
+      expect(validateCatalog(dir)).toEqual([]);
+    }
+    for (const v of [undefined, 1, "2", "1.0.0", "v1", ""]) {
+      writeCatalog("catalog.json", [withHost(v)]);
+      expect(validateCatalog(dir)).toHaveLength(1);
+    }
+  });
+
   test("an entry with neither packages nor remotes is reported as not installable", () => {
     // `packages` and `remotes` are both optional in ServerDetail, so this
     // is schema-valid and safety-clean, and the directory's projection

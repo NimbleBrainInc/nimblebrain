@@ -202,6 +202,8 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
  *   - additionalAuthorizationParams reserved-key smuggling (RFC 6749
  *     params client_id, redirect_uri, state, etc. — would let a
  *     catalog override OAuth-flow-critical parameters)
+ *   - a host block whose host_version is not major 1 (see
+ *     {@link isSupportedHostVersion})
  */
 export function validateServerDetailSafety(s: ServerDetail): string | null {
   for (const icon of s.icons ?? []) {
@@ -225,5 +227,23 @@ export function validateServerDetailSafety(s: ServerDetail): string | null {
   if (meta?.docsUrl !== undefined && !isHttpUrl(meta.docsUrl)) {
     return `docsUrl must be http(s): "${meta.docsUrl}"`;
   }
-  return null;
+  return hostVersionViolation(s);
+}
+
+function hostVersionViolation(s: ServerDetail): string | null {
+  const host = getNimbleBrainHostMeta(s);
+  if (host === undefined || isSupportedHostVersion(host.host_version)) return null;
+  return `host_version must be major 1 ("1.0"): ${JSON.stringify(host.host_version)}`;
+}
+
+/**
+ * Whether this runtime can read a host block of this `host_version`. Only the
+ * major is a contract: blocks are added under major 1 without a bump and are
+ * enabled by being present. A different major is a contract this runtime
+ * predates, and it would otherwise parse that block as major 1 and ignore what
+ * it does not know. For `admin_tools`, which only narrows who may call a tool,
+ * ignoring it would widen access, so the entry is dropped instead.
+ */
+export function isSupportedHostVersion(v: unknown): boolean {
+  return typeof v === "string" && /^1(\.\d+)?$/.test(v);
 }
