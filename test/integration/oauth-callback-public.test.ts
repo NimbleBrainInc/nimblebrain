@@ -117,6 +117,16 @@ describe("public/special routes stay reachable without auth (mount-order invaria
 	}
 });
 
+describe("protected resource metadata for a path that is no resource", () => {
+	// Bare /mcp names no workspace, so it has no metadata document. It must
+	// answer 404 like the root document, not fall through to an authenticated
+	// route's middleware and answer 401.
+	it("GET /.well-known/oauth-protected-resource/mcp without auth returns 404", async () => {
+		const res = await fetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp`);
+		expect(res.status).toBe(404);
+	});
+});
+
 describe("POST /v1/auth/logout is public", () => {
 	it("clears the session without auth", async () => {
 		const res = await fetch(`${baseUrl}/v1/auth/logout`, {
