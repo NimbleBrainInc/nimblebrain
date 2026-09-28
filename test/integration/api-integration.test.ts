@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readConnected } from "../helpers/sse.ts";
 import { createTestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
@@ -669,6 +670,7 @@ describe("E2E: SSE event filtering — only routed events pass through", () => {
 
 		const stream = manager.addClient();
 		const reader = stream.getReader();
+		await readConnected(reader);
 
 		// Emit events: one that should be forwarded, one that should not
 		manager.emit({

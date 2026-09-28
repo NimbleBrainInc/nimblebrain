@@ -46,7 +46,7 @@ import { mcpResourceUrl } from "./mcp-resource.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
 import { validateAgainst } from "./schemas/validate.ts";
-import { startSseHeartbeat } from "./sse-heartbeat.ts";
+import { CONNECTED_FRAME, startSseHeartbeat } from "./sse-heartbeat.ts";
 import { apiError } from "./types.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
@@ -355,6 +355,7 @@ export async function handleChatStream(
   let markTransportClosed: () => void = () => {};
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      controller.enqueue(CONNECTED_FRAME);
       const encoder = new TextEncoder();
       // Tracks whether THIS response is still writable. It does not track
       // the run — the run's lifecycle is the sink subscription, torn down

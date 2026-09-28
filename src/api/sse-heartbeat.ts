@@ -1,5 +1,6 @@
 /**
- * SSE keepalive helper for request-scoped streams.
+ * SSE comment frames: the one a stream writes when it opens, and the
+ * keepalive for request-scoped streams.
  *
  * Emits `: ping\n\n` comment frames on an SSE stream's controller at a
  * fixed interval so AWS ALB (and anything else enforcing TCP idle
@@ -16,6 +17,15 @@
 
 const encoder = new TextEncoder();
 const PING_FRAME = encoder.encode(": ping\n\n");
+
+/**
+ * The comment a long-lived SSE stream writes the moment it opens. A server
+ * sends a streamed response's status and headers with its first chunk, so a
+ * stream that waits for its first event leaves the client's request pending
+ * until something happens to be broadcast (up to a full heartbeat). The
+ * parser ignores comment lines, so this reaches no event handler.
+ */
+export const CONNECTED_FRAME = encoder.encode(": connected\n\n");
 
 export interface SseHeartbeat {
   /** Cancel the heartbeat. Idempotent. */

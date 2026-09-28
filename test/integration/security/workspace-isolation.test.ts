@@ -23,6 +23,7 @@ import type {
 } from "../../../src/connectors/runtime/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { readConnected } from "../../helpers/sse.ts";
 import { TEST_IDENTITY, TestAuthAdapter } from "../../helpers/test-auth-adapter.ts";
 import { startServer } from "../../../src/api/server.ts";
 import type { ServerHandle } from "../../../src/api/server.ts";
@@ -183,13 +184,14 @@ describe("V4: Identity-scoped routes need no workspace", () => {
 // ── V5: SSE Event Scoping ───────────────────────────────────────
 
 describe("V5: SSE events scoped by workspace", () => {
-  it("broadcast with wsId only reaches matching clients", () => {
+  it("broadcast with wsId only reaches matching clients", async () => {
     const manager = new SseEventManager(60_000);
 
     const streamA = manager.addClient("ws_alpha");
     const streamB = manager.addClient("ws_beta");
     const readerA = streamA.getReader();
     const readerB = streamB.getReader();
+    await Promise.all([readConnected(readerA), readConnected(readerB)]);
 
     // Broadcast to workspace alpha only
     manager.broadcast("config.changed", { key: "model" }, "ws_alpha");
@@ -217,13 +219,14 @@ describe("V5: SSE events scoped by workspace", () => {
     });
   });
 
-  it("broadcast without wsId reaches all clients", () => {
+  it("broadcast without wsId reaches all clients", async () => {
     const manager = new SseEventManager(60_000);
 
     const streamA = manager.addClient("ws_alpha");
     const streamB = manager.addClient("ws_beta");
     const readerA = streamA.getReader();
     const readerB = streamB.getReader();
+    await Promise.all([readConnected(readerA), readConnected(readerB)]);
 
     // Broadcast without workspace filter (e.g., heartbeat)
     manager.broadcast("heartbeat", { timestamp: new Date().toISOString() });
@@ -240,13 +243,14 @@ describe("V5: SSE events scoped by workspace", () => {
     });
   });
 
-  it("client without workspace receives all events", () => {
+  it("client without workspace receives all events", async () => {
     const manager = new SseEventManager(60_000);
 
     const streamNoWs = manager.addClient(); // no workspace
     const streamWs = manager.addClient("ws_alpha");
     const readerNoWs = streamNoWs.getReader();
     const readerWs = streamWs.getReader();
+    await Promise.all([readConnected(readerNoWs), readConnected(readerWs)]);
 
     // Broadcast to workspace alpha
     manager.broadcast("config.changed", { key: "model" }, "ws_alpha");
