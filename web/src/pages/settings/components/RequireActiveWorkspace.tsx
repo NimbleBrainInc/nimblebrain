@@ -8,18 +8,9 @@ import { useWorkspaceContext } from "../../../context/WorkspaceContext";
  * the header switcher should always have one selected. If we end up
  * rendering a workspace-scoped page without one, surface a loud error
  * rather than rendering an indeterminate UI.
- *
- * Distinct from the loading state: while `WorkspaceContext` is still
- * fetching (`loading: true`) we show a spinner placeholder. Only after
- * loading completes with `activeWorkspace === null` do we treat it as
- * an error condition.
  */
 export function RequireActiveWorkspace({ children }: { children: ReactNode }) {
-  const { activeWorkspace, loading } = useWorkspaceContext();
-
-  if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading workspace…</p>;
-  }
+  const { activeWorkspace } = useWorkspaceContext();
 
   if (!activeWorkspace) {
     return (

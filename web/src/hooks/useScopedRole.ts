@@ -64,9 +64,8 @@ export function resolveScopedRole(
  * workspace context is needed).
  *
  * Reads from `SessionContext` (org role) and `WorkspaceContext` (active
- * workspace + the user's membership role within it, populated by the
- * extended `manage_workspaces.list` response). No async fetches — the
- * inputs are already in memory.
+ * workspace + the user's membership role within it, from bootstrap). No
+ * async fetches — the inputs are already in memory.
  */
 export function useScopedRole(): ScopedRole {
   const session = useSession();

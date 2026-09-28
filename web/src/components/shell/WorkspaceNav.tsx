@@ -69,17 +69,6 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
 
   const handleAdd = useCallback(() => navigate("/org/workspaces"), [navigate]);
 
-  if (wsCtx.loading) {
-    return (
-      <div
-        className={cn("text-xs", collapsed ? "px-2 py-2 text-center" : "px-4 py-2")}
-        data-testid="sidebar-workspace-nav-loading"
-      >
-        {collapsed ? "…" : "Loading workspaces…"}
-      </div>
-    );
-  }
-
   if (collapsed) {
     return (
       <div

@@ -47,16 +47,12 @@ export function GlobalHomePage() {
           <h2 className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
             Your workspaces
           </h2>
-          {wsCtx.loading ? (
-            <div className="text-sm text-muted-foreground">Loading workspaces…</div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {ordered.map((ws) => (
-                <WorkspaceTile key={ws.id} workspace={ws} />
-              ))}
-              <NewWorkspaceTile />
-            </div>
-          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {ordered.map((ws) => (
+              <WorkspaceTile key={ws.id} workspace={ws} />
+            ))}
+            <NewWorkspaceTile />
+          </div>
         </section>
       </div>
     </div>

@@ -133,8 +133,7 @@ export function ChatProvider({
   //
   // Membership-gated so an unknown or non-member slug yields `null` (hold, same
   // as home) rather than a phantom id; `WorkspaceRouteGuard` bounces that route
-  // anyway. While the workspace list is still loading, `workspaces` is empty and
-  // focus holds at `null` — the panel waits rather than guessing.
+  // anyway.
   const location = useLocation();
   const navigate = useNavigate();
   const { workspaces } = useWorkspaceContext();

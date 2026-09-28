@@ -63,14 +63,6 @@ export function WorkspaceOverviewPage() {
     [navigate, slug],
   );
 
-  if (wsCtx.loading) {
-    return (
-      <div className="p-8 text-sm text-muted-foreground" data-testid="workspace-overview-loading">
-        Loading workspace…
-      </div>
-    );
-  }
-
   if (!workspace) {
     return (
       <div className="p-8 text-sm text-muted-foreground" data-testid="workspace-overview-not-found">

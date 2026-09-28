@@ -13,9 +13,8 @@
 // So dropping it no longer only hurts non-org-admins: an org admin used to sail
 // past a missing `userRole` via the early return in `resolveScopedRole`, and now
 // loses every workspace write too, org owners included. Anchor the mapping in
-// tested helpers so a future contributor can't accidentally re-introduce the
-// omission via either entry path (bootstrap response or
-// `manage_workspaces.list` fallback).
+// a tested helper so a future contributor can't accidentally re-introduce the
+// omission.
 // ---------------------------------------------------------------------------
 
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
@@ -38,41 +37,4 @@ export function bootstrapWorkspacesToInfo(
     userRole: ws.role,
     mcpUrl: ws.mcpUrl,
   }));
-}
-
-/**
- * Parse the `manage_workspaces.list` tool response into `WorkspaceInfo[]`.
- * Used by the WorkspaceProvider's fallback fetch path (when bootstrap data
- * isn't provided — e.g. tests, hot-reload, or a future code path that
- * bypasses bootstrap).
- *
- * Defensive about field naming: the bootstrap response uses `role`, while
- * this tool returns `userRole` directly. Accept either so either contract
- * change can land without silently dropping the role and re-introducing
- * the "settings nav shows About only" regression.
- *
- * Tolerates either `[{...}]` or `{ workspaces: [{...}] }` envelopes.
- */
-export function parseWorkspaceListResponse(raw: unknown): WorkspaceInfo[] {
-  const list = Array.isArray(raw)
-    ? raw
-    : raw && typeof raw === "object" && "workspaces" in raw && Array.isArray(raw.workspaces)
-      ? raw.workspaces
-      : [];
-
-  return list
-    .filter((ws): ws is Record<string, unknown> => ws != null && typeof ws === "object")
-    .map((ws) => {
-      const rawRole = ws.userRole ?? ws.role;
-      const userRole = rawRole === "admin" || rawRole === "member" ? rawRole : undefined;
-      return {
-        id: String(ws.id ?? ""),
-        name: String(ws.name ?? ""),
-        memberCount: typeof ws.memberCount === "number" ? ws.memberCount : 0,
-        connectors: Array.isArray(ws.connectors)
-          ? (ws.connectors as Array<{ name?: string; path?: string }>)
-          : [],
-        ...(userRole ? { userRole } : {}),
-      };
-    });
 }
