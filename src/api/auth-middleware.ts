@@ -7,7 +7,6 @@ import type {
 } from "../identity/provider.ts";
 import { TransientAuthError } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
-import { constantTimeEqual, validateInternalToken } from "./auth-utils.ts";
 
 // ── Auth mode detection ───────────────────────────────────────────
 
@@ -27,13 +26,11 @@ export function resolveAuthMode(provider: IdentityProvider | null): AuthMode {
 export interface AuthMiddlewareOptions {
   /** Auth mode — adapter or dev. */
   mode: AuthMode;
-  /** Internal token for connector-to-host calls (scoped to chat endpoints). */
-  internalToken: string;
   /** Event sink for audit logging. */
   eventSink: EventSink;
 }
 
-/** Successful auth result — identity is undefined for internal tokens and dev mode. */
+/** Successful auth result — identity is undefined in dev mode. */
 export type AuthSuccess = { identity: UserIdentity | undefined };
 
 /** Auth check result: a Response (rejection) or AuthSuccess. */
@@ -47,42 +44,29 @@ export function isAuthError(result: AuthResult): result is Response {
 /**
  * Authenticate a request against the configured auth mode.
  *
- * Checks in order:
- * 1. Internal token (scoped to chat endpoints — always checked first for connector-to-host calls)
- * 2. IdentityProvider.verifyRequest() when mode is "adapter", then the
- *    credential's grant against `resource` (see {@link grantAdmits})
- * 3. Pass-through when mode is "dev"
+ * - "dev": pass-through, no identity.
+ * - "adapter": IdentityProvider.verifyRequest(), then the credential's grant
+ *   against `resource` (see {@link grantAdmits}).
  *
  * `resource` is the canonical URL of the protected resource the request
  * addresses (`/mcp/<wsId>`), or undefined for every other route.
  *
- * Returns { identity } on success, or a Response (401/403) on failure.
+ * Returns { identity } on success, or a Response (401, or 503 when
+ * verification is unavailable) on failure.
  */
 export async function authenticateRequest(
   req: Request,
   options: AuthMiddlewareOptions,
   resource?: string,
 ): Promise<AuthResult> {
-  const { mode, internalToken } = options;
+  const { mode } = options;
 
-  // Extract bearer token if present
-  const authHeader = req.headers.get("authorization") ?? "";
-  const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-  // 1. Always check internal token first (connector-to-host calls)
-  if (bearerToken && constantTimeEqual(bearerToken, internalToken)) {
-    const url = new URL(req.url);
-    const error = validateInternalToken(bearerToken, internalToken, url.pathname, req.method);
-    if (error) return error;
-    return { identity: undefined };
-  }
-
-  // 2. Dev mode — no auth required
+  // Dev mode — no auth required
   if (mode.type === "dev") {
     return { identity: undefined };
   }
 
-  // 3. IdentityProvider mode
+  // IdentityProvider mode
   if (mode.type === "adapter") {
     const verified = await verifyWithProvider(req, mode.provider);
     if (verified instanceof Response) return verified;

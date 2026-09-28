@@ -20,8 +20,6 @@ const noopSink = new NoopEventSink();
 
 // ── Test helpers ──────────────────────────────────────────────────
 
-const TEST_INTERNAL_TOKEN = "internal-token-for-testing-12345";
-
 function makeIdentity(overrides?: Partial<UserIdentity>): UserIdentity {
   return {
     id: "usr_abc123",
@@ -99,7 +97,6 @@ describe("resolveAuthMode", () => {
 describe("authenticateRequest — dev mode", () => {
   const options = {
     mode: { type: "dev" } as AuthMode,
-    internalToken: TEST_INTERNAL_TOKEN,
     eventSink: noopSink,
   };
 
@@ -128,7 +125,6 @@ describe("authenticateRequest — adapter mode", () => {
 
   const options = {
     mode: { type: "adapter", provider } as AuthMode,
-    internalToken: TEST_INTERNAL_TOKEN,
     eventSink: noopSink,
   };
 
@@ -149,6 +145,18 @@ describe("authenticateRequest — adapter mode", () => {
   it("rejects invalid Bearer token with 401", async () => {
     const req = makeRequest("/v1/workspaces/ws_a/shell", {
       headers: { Authorization: "Bearer wrong-key" },
+    });
+    const result = await authenticateRequest(req, options);
+    expect(isAuthError(result)).toBe(true);
+    if (isAuthError(result)) {
+      expect(result.status).toBe(401);
+    }
+  });
+
+  it("rejects an unverified Bearer token on a workspace's chat route with 401", async () => {
+    const req = makeRequest("/v1/workspaces/ws_a/chat", {
+      method: "POST",
+      headers: { Authorization: "Bearer not-a-provider-token" },
     });
     const result = await authenticateRequest(req, options);
     expect(isAuthError(result)).toBe(true);
@@ -193,83 +201,6 @@ describe("authenticateRequest — adapter mode", () => {
   });
 });
 
-// ── Internal token ────────────────────────────────────────────────
-
-describe("authenticateRequest — internal token", () => {
-  const provider = createMockProvider("some-key", makeIdentity());
-  const options = {
-    mode: { type: "adapter", provider } as AuthMode,
-    internalToken: TEST_INTERNAL_TOKEN,
-    eventSink: noopSink,
-  };
-
-  it("allows internal token on POST /v1/workspaces/:wsId/chat", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/chat", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(false);
-  });
-
-  it("allows internal token on POST /v1/workspaces/:wsId/chat/stream", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/chat/stream", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(false);
-  });
-
-  it("rejects internal token on non-chat endpoints with 403", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/shell", {
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(true);
-    if (isAuthError(result)) {
-      expect(result.status).toBe(403);
-    }
-  });
-
-  it("rejects internal token on a workspace's non-chat POST route with 403", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/tools/call", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(true);
-    if (isAuthError(result)) {
-      expect(result.status).toBe(403);
-    }
-  });
-
-  it("rejects internal token on a chat path outside a workspace with 403", async () => {
-    const req = makeRequest("/v1/chat", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, options);
-    expect(isAuthError(result)).toBe(true);
-    if (isAuthError(result)) {
-      expect(result.status).toBe(403);
-    }
-  });
-
-  it("internal token works even in dev mode", async () => {
-    const devOptions = {
-      mode: { type: "dev" } as AuthMode,
-      internalToken: TEST_INTERNAL_TOKEN,
-    };
-    const req = makeRequest("/v1/workspaces/ws_a/chat", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TEST_INTERNAL_TOKEN}` },
-    });
-    const result = await authenticateRequest(req, devOptions);
-    expect(isAuthError(result)).toBe(false);
-  });
-});
-
 // ── authenticateRequest returns identity ──────────────────────────
 
 describe("authenticateRequest — identity in return value", () => {
@@ -278,8 +209,7 @@ describe("authenticateRequest — identity in return value", () => {
     const provider = createMockProvider("my-key", identity);
     const options = {
       mode: { type: "adapter", provider } as AuthMode,
-      internalToken: TEST_INTERNAL_TOKEN,
-    };
+      };
 
     const req = makeRequest("/v1/workspaces/ws_a/shell", {
       headers: { Authorization: "Bearer my-key" },
@@ -302,12 +232,10 @@ describe("authenticateRequest — identity in return value", () => {
 
     const options1 = {
       mode: { type: "adapter", provider: provider1 } as AuthMode,
-      internalToken: TEST_INTERNAL_TOKEN,
-    };
+      };
     const options2 = {
       mode: { type: "adapter", provider: provider2 } as AuthMode,
-      internalToken: TEST_INTERNAL_TOKEN,
-    };
+      };
 
     const req1 = makeRequest("/v1/workspaces/ws_a/shell", {
       headers: { Authorization: "Bearer key-1" },

@@ -1,12 +1,10 @@
 /**
  * The edges of the workspace-scoped REST surface that are not the `:wsId` gate
- * itself: what CORS lets a browser send, which browser writes reach it, and
- * where the internal connector token may go.
+ * itself: what CORS lets a browser send, and which browser writes reach it.
  */
 
 import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import { isInternalTokenPath, validateInternalToken } from "../../../src/api/auth-utils.ts";
 import { corsMiddleware } from "../../../src/api/middleware/cors.ts";
 import { rejectCrossSiteWrites } from "../../../src/api/middleware/fetch-site.ts";
 
@@ -93,32 +91,5 @@ describe("rejectCrossSiteWrites", () => {
       Origin: "https://tenant-a.example.com",
     });
     expect(res.status).toBe(200);
-  });
-});
-
-describe("internal token paths", () => {
-  it("reaches a workspace's chat and chat stream, and nothing else", () => {
-    expect(isInternalTokenPath("/v1/workspaces/ws_acme/chat")).toBe(true);
-    expect(isInternalTokenPath("/v1/workspaces/ws_acme/chat/stream")).toBe(true);
-    for (const path of [
-      "/v1/chat",
-      "/v1/chat/stream",
-      "/v1/workspaces/ws_acme/chat/start",
-      "/v1/workspaces/ws_acme/tools/call",
-      "/v1/workspaces/ws_acme/chat/stream/x",
-      "/v1/workspaces/ws_acme/x/chat",
-      "/v1/workspaces//chat",
-      "/v1/events",
-    ]) {
-      expect(isInternalTokenPath(path)).toBe(false);
-    }
-  });
-
-  it("is POST only", () => {
-    const token = "internal-token";
-    expect(validateInternalToken(token, token, "/v1/workspaces/ws_acme/chat", "POST")).toBeNull();
-    expect(validateInternalToken(token, token, "/v1/workspaces/ws_acme/chat", "GET")?.status).toBe(
-      403,
-    );
   });
 });

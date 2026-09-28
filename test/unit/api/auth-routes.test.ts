@@ -18,7 +18,6 @@ function makeCtx(): AppContext {
     authOptions: {
       mode: { type: "adapter", provider },
       eventSink: { emit: () => {} },
-      internalToken: "test-internal-token",
     },
     secureCookies: false,
     appOrigin: "http://localhost",

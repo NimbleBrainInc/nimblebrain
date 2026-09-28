@@ -70,7 +70,6 @@ let mockFetch: ReturnType<typeof mock>;
 
 beforeEach(() => {
 	process.env.NB_HOST_URL = "http://test-host:3000";
-	process.env.NB_INTERNAL_TOKEN = "test-token-123";
 	mockFetch = mock(() =>
 		Promise.resolve(
 			new Response(JSON.stringify(chatResponse()), {
@@ -85,7 +84,6 @@ beforeEach(() => {
 afterEach(() => {
 	globalThis.fetch = originalFetch;
 	delete process.env.NB_HOST_URL;
-	delete process.env.NB_INTERNAL_TOKEN;
 });
 
 // ---------------------------------------------------------------------------
