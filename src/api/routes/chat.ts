@@ -25,22 +25,31 @@ export function chatRoutes(ctx: AppContext) {
   // `requireWorkspace` is per-route and placed AFTER `chatBodyLimit`/`rl` so
   // body-limit and rate-limit apply before the workspace lookup. `/cancel` is
   // identity-scoped: owner-gated by conversation id.
+  const auth = requireAuth(ctx.authOptions);
+  const logErrors = errorLog(ctx);
   return (
     new Hono<AppEnv>()
-      .use("*", requireAuth(ctx.authOptions))
-      .use("*", errorLog(ctx))
-      .post(`${WORKSPACE_ROUTE_PREFIX}/chat`, chatBodyLimit, rl, requireWorkspace(ctx), (c) =>
-        handleChat(
-          c.req.raw,
-          ctx.runtime,
-          ctx.features,
-          c.var.identity,
-          c.var.workspaceId,
-          ctx.conversationEventManager,
-        ),
+      .post(
+        `${WORKSPACE_ROUTE_PREFIX}/chat`,
+        auth,
+        logErrors,
+        chatBodyLimit,
+        rl,
+        requireWorkspace(ctx),
+        (c) =>
+          handleChat(
+            c.req.raw,
+            ctx.runtime,
+            ctx.features,
+            c.var.identity,
+            c.var.workspaceId,
+            ctx.conversationEventManager,
+          ),
       )
       .post(
         `${WORKSPACE_ROUTE_PREFIX}/chat/stream`,
+        auth,
+        logErrors,
         chatBodyLimit,
         rl,
         requireWorkspace(ctx),
@@ -57,11 +66,18 @@ export function chatRoutes(ctx: AppContext) {
       // Server-authoritative entry point: starts a detached turn and returns
       // the conversation id immediately. The client then watches via
       // GET /v1/conversations/:id/events. Generation survives client disconnect.
-      .post(`${WORKSPACE_ROUTE_PREFIX}/chat/start`, chatBodyLimit, rl, requireWorkspace(ctx), (c) =>
-        handleChatStart(c.req.raw, ctx.runtime, ctx.features, c.var.identity, c.var.workspaceId),
+      .post(
+        `${WORKSPACE_ROUTE_PREFIX}/chat/start`,
+        auth,
+        logErrors,
+        chatBodyLimit,
+        rl,
+        requireWorkspace(ctx),
+        (c) =>
+          handleChatStart(c.req.raw, ctx.runtime, ctx.features, c.var.identity, c.var.workspaceId),
       )
       // Explicit Stop — the only way to abort an in-flight turn.
-      .post("/v1/conversations/:id/cancel", (c) =>
+      .post("/v1/conversations/:id/cancel", auth, logErrors, (c) =>
         handleChatCancel(c.req.param("id"), ctx.runtime, c.var.identity),
       )
   );
