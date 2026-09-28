@@ -183,7 +183,7 @@ supply-chain review lives where a server is built and published, not in a proces
 that also holds tenant credentials. Every connector is aggregated into the same
 unified tool namespace by the `ToolRegistry`.
 
-No connectors are installed by default. Platform apps (home, conversations, files, usage, automations, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
+No connectors are installed by default. Platform apps (conversations, files, usage, automations, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
 
 ## Configuration
 
@@ -583,13 +583,13 @@ The sidebar is data-driven from the placement registry:
 
 | Slot | Purpose | Example |
 |------|---------|---------|
-| `sidebar` (priority < 10) | Ungrouped core nav at top | Home (0), Conversations (1) |
+| `sidebar` (priority < 10) | Ungrouped core nav at top | Conversations (1) |
 | `sidebar` (priority >= 10) | Grouped under "general" label | — |
 | `sidebar.<group>` | Named group | `sidebar.apps` → "Apps" |
 | `sidebar.bottom` | Pinned to bottom zone | Settings |
 | `main` | App routes (pages, not nav) | Third-party apps |
 
-Placements with a `route` field get React Router routes in `App.tsx`. Routes from `sidebar` use `/app/<route>` (except Home → `/`).
+Placements with a `route` field get React Router routes in `App.tsx`. Routes from `sidebar` use `/app/<route>`.
 
 ### Configuration Reference
 

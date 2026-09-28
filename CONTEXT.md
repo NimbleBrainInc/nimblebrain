@@ -150,7 +150,7 @@ the process, which is what host-owned `_meta` markers are conditioned on
 (ADR-0014, ADR-0024).
 
 ### Platform app
-One of the kernel's own capabilities, expressed as a source: home,
+One of the kernel's own capabilities, expressed as a source:
 conversations, files, automations, usage, skills, instructions, hooks,
 notifications, compose. Each is an in-process MCP server the runtime hosts
 rather than connects to — there is no URL, no credential, and no connection
