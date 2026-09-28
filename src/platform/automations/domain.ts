@@ -24,7 +24,7 @@
  * See `src/platform/AGENTS.md` § 1.4 for the cross-cutting rule.
  */
 
-import { computeBudgetResetAt, computeNextRunAt } from "./scheduler.ts";
+import { computeBudgetResetAt, computeNextRunAt, setNextRunAt } from "./scheduler.ts";
 import {
   type Automation,
   type AutomationSource,
@@ -300,17 +300,13 @@ const UPDATABLE_FIELDS = [
 /**
  * Move `nextRunAt` onto the schedule the automation now has.
  *
- * An event schedule has no next run, so one left over from the clock schedule
- * it replaced is cleared rather than kept: the timer ignores it, but the status
- * surface reads it, and a moment nothing will ever act on is worse than none.
+ * A schedule with no next run (an event schedule, or a cron with no future
+ * date) clears one left over from the schedule it replaced: kept, a past value
+ * would stay due forever, and a moment nothing will ever act on is worse than
+ * none.
  */
 function reanchorNextRunAt(automation: Automation, defaultTimezone?: string): void {
-  const nextRun = computeNextRunAt(automation, Date.now(), defaultTimezone);
-  if (nextRun !== null) {
-    automation.nextRunAt = new Date(nextRun).toISOString();
-  } else if (isEventSchedule(automation.schedule)) {
-    automation.nextRunAt = undefined;
-  }
+  setNextRunAt(automation, computeNextRunAt(automation, Date.now(), defaultTimezone));
 }
 
 export function updateAutomation(

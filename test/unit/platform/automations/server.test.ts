@@ -1154,6 +1154,40 @@ describe("handleCreate — validation", () => {
 			),
 		).toThrow("Invalid cron");
 	});
+
+	test("rejects creation with a cron that matches no date", () => {
+		const ctx = makeCtx();
+		expect(() =>
+			handleCreate(
+				createArgs("February 31", "test", { type: "cron", expression: "0 9 31 2 *" }),
+				ctx,
+			),
+		).toThrow("matches no future date");
+	});
+
+	test("rejects creation with a cron whose year has passed", () => {
+		const ctx = makeCtx();
+		expect(() =>
+			handleCreate(
+				createArgs("Past Year", "test", { type: "cron", expression: "0 0 9 1 1 * 2020" }),
+				ctx,
+			),
+		).toThrow("matches no future date");
+	});
+
+	test("rejects creation with an unknown timezone", () => {
+		const ctx = makeCtx();
+		expect(() =>
+			handleCreate(
+				createArgs("Bad Zone", "test", {
+					type: "cron",
+					expression: "0 9 * * *",
+					timezone: "Bogus/Zone",
+				}),
+				ctx,
+			),
+		).toThrow("Invalid cron expression");
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1176,6 +1210,23 @@ describe("handleUpdate — validation", () => {
 				ctx,
 			),
 		).toThrow("at least 1 minute");
+	});
+
+	test("rejects update to a cron that matches no date", () => {
+		const ctx = makeCtx();
+		handleCreate(
+			createArgs("Update To Feb 31", "test", { type: "cron", expression: "0 9 * * *" }),
+			ctx,
+		);
+
+		expect(() =>
+			handleUpdate(
+				updateArgs("Update To Feb 31", {
+					schedule: { type: "cron", expression: "0 9 31 2 *" },
+				}),
+				ctx,
+			),
+		).toThrow("matches no future date");
 	});
 
 	test("accepts valid schedule update", () => {

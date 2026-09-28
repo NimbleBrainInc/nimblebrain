@@ -32,7 +32,7 @@ Automation runs use your **timezone** for cron scheduling. The default is `Pacif
 
 Three schedule types:
 
-- **Cron** — a standard 5-field cron expression (for example, `0 9 * * 1` for 9:00 AM every Monday)
+- **Cron** — a standard 5-field cron expression (for example, `0 9 * * 1` for 9:00 AM every Monday). An expression that matches no future date, such as `0 9 31 2 *` (February 31), is refused, since it would never run
 - **Interval** — a fixed interval in milliseconds, minimum 60000 (one minute)
 - **Event** — no time at all: the automation runs when a notification reaches it
 

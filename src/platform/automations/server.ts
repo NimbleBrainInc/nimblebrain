@@ -376,17 +376,28 @@ function validateSchedule(schedule: ScheduleSpec): void {
     if (!schedule.expression) {
       throw new Error("expression is required for cron schedules");
     }
-    validateCronExpression(schedule.expression);
+    validateCronExpression(schedule.expression, schedule.timezone);
   }
 }
 
-/** Validate a cron expression by constructing a Croner instance. Throws on parse error. */
-function validateCronExpression(expression: string): void {
+/**
+ * Validate a cron expression by constructing a Croner instance and asking it
+ * for the next run. Throws on a parse error, an unknown timezone, or an
+ * expression that matches no future date (`0 9 31 2 *`, or a year that has
+ * passed), which the scheduler could never place in time.
+ */
+function validateCronExpression(expression: string, timezone?: string): void {
+  let next: Date | null;
   try {
-    new Cron(expression);
+    next = new Cron(expression, { timezone }).nextRun();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Invalid cron expression: ${msg}`);
+  }
+  if (next === null) {
+    throw new Error(
+      `Invalid cron expression: "${expression}" matches no future date, so it would never run`,
+    );
   }
 }
 
