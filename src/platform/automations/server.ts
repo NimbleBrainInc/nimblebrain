@@ -715,6 +715,7 @@ export async function handleRun(
   // would become an unhandled rejection. The `.catch(noop)` swallows
   // exactly that case — the scheduler's own logging is the right place
   // for filesystem diagnostics, not the MCP request frame.
+  const startedAt = new Date().toISOString();
   const runPromise = ctx.runNow(automation.id);
   runPromise.catch(() => {});
 
@@ -735,13 +736,24 @@ export async function handleRun(
     if (timer !== undefined) clearTimeout(timer);
   }
 
+  // Run now runs a disabled automation (see `Scheduler.runNow`); say so, since
+  // its schedule and events will not fire it again.
+  const enabled = automation.enabled;
+  const disabledNote = enabled
+    ? ""
+    : ` "${name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;
+
   if (outcome === PENDING) {
     return {
       status: "dispatched",
       automationId: automation.id,
+      startedAt,
+      enabled,
       message:
-        `Started "${name}" — still running after ${waitMs / 1000}s. ` +
-        `Use automations__runs to check completion.`,
+        `"${name}" is still running after ${waitMs / 1000}s and continues in the background; ` +
+        `it has not failed. When it ends, its run appears in automations__runs ` +
+        `(automationId "${automation.id}", since "${startedAt}"); read its full output with ` +
+        `automations__run_result, or stop it with automations__cancel.${disabledNote}`,
     };
   }
 
@@ -757,7 +769,9 @@ export async function handleRun(
     );
   }
 
-  return { run: outcome };
+  return disabledNote
+    ? { run: outcome, enabled, message: disabledNote.trim() }
+    : { run: outcome, enabled };
 }
 
 export function handleCancel(

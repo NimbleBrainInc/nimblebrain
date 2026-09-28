@@ -128,7 +128,7 @@ Browse and manage automations from the **Automations** panel in the sidebar, or 
 
 4. **Resume a paused automation** — re-enable it on its existing schedule.
 
-5. **Trigger an immediate run** — bypass the schedule and run now. Short runs return the full run record; runs that take longer than about 30 seconds continue in the background, and the panel updates when they finish.
+5. **Trigger an immediate run** — bypass the schedule and run now. This runs a paused automation too, which is how you test one before enabling it; a paused automation is never fired by its schedule or by events. Short runs return the full run record. A run that takes longer than about 30 seconds keeps going in the background: the response says it is still running, and its record appears in the run history when it ends.
 
 </Steps>
 

@@ -971,6 +971,27 @@ describe("Scheduler — runNow", () => {
 		scheduler.stop();
 	});
 
+	it("runNow() runs a disabled automation that an event would skip", async () => {
+		// One rule for `enabled`: it gates unattended triggers, and Run now is
+		// the attended one. Both triggers against the same disabled automation.
+		const auto = makeAutomation({ enabled: false });
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		scheduler.start();
+
+		const fromEvent = await scheduler.runFromEvent(WS, OWNER, auto.id, { preamble: "x" });
+		expect(fromEvent).toEqual({ skipped: "the automation is disabled" });
+		expect(executor).not.toHaveBeenCalled();
+
+		const run = await scheduler.runNow(WS, OWNER, auto.id);
+		expect(run!.status).toBe("success");
+		expect(executor).toHaveBeenCalledTimes(1);
+
+		scheduler.stop();
+	});
+
 	it("runNow() returns null for unknown automation", async () => {
 		seedDefs(tmpDir, new Map());
 

@@ -830,6 +830,60 @@ describe("handleRun", () => {
 		expect(result.run.status).toBe("success");
 	});
 
+	test("runs a disabled automation and says it is disabled", async () => {
+		const ctx = makeCtx();
+		handleCreate(
+			createArgs("Paused", "Run now", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
+			ctx,
+		);
+
+		const result = await handleRun({ name: "Paused" }, ctx);
+
+		if (!("run" in result)) {
+			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+		}
+		expect(result.run.status).toBe("success");
+		expect(result.enabled).toBe(false);
+		expect(result.message).toContain("is disabled");
+	});
+
+	test("an enabled automation's run carries no disabled message", async () => {
+		const ctx = makeCtx();
+		handleCreate(createArgs("Live", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
+
+		const result = await handleRun({ name: "Live" }, ctx);
+
+		if (!("run" in result)) {
+			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+		}
+		expect(result.enabled).toBe(true);
+		expect(result.message).toBeUndefined();
+	});
+
+	test("a disabled automation's dispatched envelope says it is disabled", async () => {
+		let resolveRun: ((value: AutomationRun | null) => void) | undefined;
+		const runPromise = new Promise<AutomationRun | null>((resolve) => {
+			resolveRun = resolve;
+		});
+		const slowCtx = makeCtx({ handleRunSyncWaitMs: 20, runNow: () => runPromise });
+		handleCreate(
+			createArgs("Slow paused", "p", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
+			slowCtx,
+		);
+
+		try {
+			const result = await handleRun({ name: "Slow paused" }, slowCtx);
+			if (!("status" in result)) {
+				throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
+			}
+			expect(result.enabled).toBe(false);
+			expect(result.message).toContain("still running");
+			expect(result.message).toContain("is disabled");
+		} finally {
+			resolveRun?.(null);
+		}
+	});
+
 	test("throws for nonexistent automation", async () => {
 		const ctx = makeCtx();
 		await expect(handleRun({ name: "Nope" }, ctx)).rejects.toThrow(
@@ -874,7 +928,15 @@ describe("handleRun", () => {
 			}
 			expect(result.status).toBe("dispatched");
 			expect(result.automationId).toBe("slow");
+			expect(result.enabled).toBe(true);
+			expect(Number.isNaN(Date.parse(result.startedAt))).toBe(false);
+			// Says the run is still going, and where its result will appear.
 			expect(result.message).toContain("still running");
+			expect(result.message).toContain("has not failed");
+			expect(result.message).toContain("automations__runs");
+			expect(result.message).toContain(result.startedAt);
+			expect(result.message).toContain("automations__run_result");
+			expect(result.message).not.toContain("disabled");
 		} finally {
 			// Drain the pending runNow promise so it doesn't sit live past
 			// the test (handleRun no longer awaits it after the sync-wait

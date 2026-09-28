@@ -216,8 +216,8 @@ DO:
 ```ts
 // src/platform/schemas/automations.ts — named, exported, type-only OK
 export type AutomationsRunOutput =
-  | { run: AutomationRun }
-  | { status: "dispatched"; automationId: string; message: string };
+  | { run: AutomationRunRecord; enabled: boolean; message?: string }
+  | { status: "dispatched"; automationId: string; startedAt: string; enabled: boolean; message: string };
 
 // src/platform/automations/server.ts — handler return type is the contract
 export async function handleRun(

@@ -313,16 +313,22 @@ export interface AutomationsRunsOutput {
 /**
  * Discriminated union — `handleRun` returns one of two shapes:
  *
- *   { run: AutomationRunRecord }                     when the run finishes
+ *   { run: AutomationRunRecord; enabled; message? }  when the run finishes
  *                                                    inside the sync-wait
  *                                                    window (~30s default).
  *
- *   { status: "dispatched"; automationId; message }  when the run is still
- *                                                    in flight after the
- *                                                    window. Scheduler keeps
- *                                                    tracking; poll
+ *   { status: "dispatched"; automationId;            when the run is still
+ *     startedAt; enabled; message }                  in flight after the
+ *                                                    window. It keeps going;
+ *                                                    its record lands in
  *                                                    `automations__runs`
- *                                                    for completion.
+ *                                                    (`since: startedAt`)
+ *                                                    when it ends.
+ *
+ * `enabled` is the automation's own flag. Run now runs a disabled automation,
+ * because it is a deliberate act and the create form's test run depends on
+ * it; a disabled automation is not fired by its schedule or by events, and
+ * `message` says so.
  *
  * Both shapes indicate the dispatch succeeded; only an error response
  * indicates failure to dispatch. Consumers MUST narrow before
@@ -331,9 +337,13 @@ export interface AutomationsRunsOutput {
  */
 export type AutomationsRunOutput = {
     run: AutomationRunRecord;
+    enabled: boolean;
+    message?: string;
 } | {
     status: "dispatched";
     automationId: string;
+    startedAt: string;
+    enabled: boolean;
     message: string;
 };
 export interface AutomationsCancelOutput {

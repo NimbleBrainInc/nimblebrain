@@ -552,6 +552,12 @@ export class Scheduler {
   /**
    * Trigger an immediate run of a specific automation, bypassing schedule
    * and backoff checks. Respects concurrency guards.
+   *
+   * Runs a disabled automation. `enabled` decides whether the automation fires
+   * unattended — from its schedule or from events — and Run now is a person's
+   * deliberate act, which is how a disabled automation is tested before it is
+   * enabled (the create form's test run creates it disabled and runs it).
+   * `handleRun` tells the caller the automation is disabled.
    */
   async runNow(wsId: string, ownerId: string, automationId: string): Promise<AutomationRun | null> {
     const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
@@ -592,6 +598,7 @@ export class Scheduler {
     const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
     const auto = this.definitions.get(key);
     if (!auto) return { skipped: "the automation is no longer in this workspace" };
+    // Unattended, so `enabled` gates it; `runNow` is the attended trigger that does not.
     if (!auto.enabled) return { skipped: "the automation is disabled" };
     if (this.activeRuns.has(key)) {
       this.recordSkipped(auto, "Already running (event)");
