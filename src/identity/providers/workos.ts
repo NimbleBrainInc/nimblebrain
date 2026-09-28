@@ -54,8 +54,9 @@ const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Why a `verifyRequest` call rejected a token. Each value names one of the
- * provider's `return null` exits, so a 401 in the logs carries the gate that
- * produced it. `org_mismatch` is a token, from either issuer, whose `org_id`
+ * token-level `return null` exits, so a 401 in the logs carries the gate that
+ * produced it; an access denial from `resolveUser` logs its own `DENIED` line
+ * instead. `org_mismatch` is a token, from either issuer, whose `org_id`
  * is not the configured org or is absent, such as one minted for another org
  * of a multi-org user. See {@link WorkosIdentityProvider.reject}.
  */
@@ -309,8 +310,9 @@ export class WorkosIdentityProvider implements IdentityProvider {
     }
 
     // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management.
-    // Both branches route their rejections through reject() so failures carry the
-    // same reason field and severity — one reason-keyed view covers both issuers.
+    // Both branches route their token rejections through reject() so failures
+    // carry the same reason field and severity — one reason-keyed view covers
+    // both issuers. resolveUser's access denials log their own DENIED line.
     //
     // The issuer and the client decide the grant. A User Management token was
     // issued to this instance's own login client, so it is first-party. An
@@ -496,8 +498,10 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * Log a structured reason for a verify rejection, then return null.
    *
-   * Every `return null` exit in `verifyRequest` goes through here, because the
-   * auth middleware logs only a generic "[auth] authentication failed". The
+   * Every token-level `return null` exit in `verifyRequest` goes through here,
+   * because the auth middleware logs only a generic "[auth] authentication
+   * failed". Access denials from `resolveUser` (no org membership, deactivated
+   * user) log their own `DENIED` line and do not come through here. The
    * reason tells a routine expiry from an `org_id` mismatch or a bad
    * signature without reading source, and makes each cause greppable.
    *
