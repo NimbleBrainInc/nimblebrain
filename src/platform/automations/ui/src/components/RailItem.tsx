@@ -3,6 +3,7 @@ import { relativeTime, statusDotClass } from "../utils.ts";
 
 const RUN_STATUS_LABEL: Record<string, string> = {
   success: "Succeeded",
+  degraded: "Finished with errors",
   failure: "Failed",
   timeout: "Timed out",
   running: "Running",

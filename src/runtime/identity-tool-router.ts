@@ -125,10 +125,6 @@ function buildPerCallContext(
     // run stays walled from the automation-authoring surface. Dropping it here
     // would reopen the wall for anything below the top level.
     ...(outer?.unattended !== undefined ? { unattended: outer.unattended } : {}),
-    // Rides the restamp for the same reason `unattended` does: the outbound
-    // `_meta` stamp is read at dispatch depth, below this rebuild, so dropping
-    // it here would erase the provenance from every call the door makes.
-    ...(outer?.unattendedReason !== undefined ? { unattendedReason: outer.unattendedReason } : {}),
   };
 }
 

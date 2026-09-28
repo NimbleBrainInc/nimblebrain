@@ -44,12 +44,7 @@ import { getActiveWorkspaceId, uploadResource, type WorkspaceFile } from "../api
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import { openAppChannel } from "./app-channel";
-import {
-  ACTION_METHOD,
-  CHAT_CONTEXT_META_KEY,
-  KEYDOWN_METHOD,
-  REQUEST_FILE_METHOD,
-} from "./extensions";
+import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
 import { buildHostCapabilities } from "./host-capabilities";
 import { buildHostStyles } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
@@ -63,7 +58,6 @@ import type {
   ResourcesReadMessage,
   SynapseRequestFileMessage,
   UiActionMessage,
-  UiChatContext,
   UiMessageMessage,
   UiToolResultError,
   UiToolResultMessage,
@@ -73,7 +67,7 @@ import type {
 import { validateAppToHostMessage } from "./validate";
 
 // ---------------------------------------------------------------------------
-// App state store (module-level, shared across bridges)
+// App state (ui/update-model-context), one entry per live bridge
 // ---------------------------------------------------------------------------
 
 interface AppStateEntry {
@@ -82,16 +76,41 @@ interface AppStateEntry {
   updatedAt: string;
 }
 
-const appStateStore = new Map<string, AppStateEntry>();
+/**
+ * State belongs to the view that pushed it: `ui/update-model-context` is that
+ * view's current context (MCP Apps), not a durable record of the app. So each
+ * bridge owns its entry and `destroy()` releases it, and a reopened view
+ * reports nothing until it pushes. Entries are re-inserted on every push, so
+ * iteration order is push order.
+ */
+const appStateByBridge = new Map<symbol, { appName: string; entry: AppStateEntry }>();
 
-/** Get the latest app state pushed via ui/update-model-context. */
+/**
+ * Bridges whose iframe is out of the viewport (scrolled away in the chat, or
+ * hidden). A bridge is on screen until its observer says otherwise, so a host
+ * without `IntersectionObserver` treats every live view as on screen.
+ */
+const offScreenBridges = new Set<symbol>();
+
+/**
+ * The app state the prompt should carry for `appName`, from its live views.
+ *
+ * Several views of one app can be live at once (its full-page slot beside an
+ * inline view in the chat, or two inline views), and the prompt has one state
+ * slot. A view on screen beats one off screen: an inline view from an earlier
+ * turn can push when it mounts, scrolled out of sight, after the slot the user
+ * is looking at last pushed. Among views equally on or off screen, the most
+ * recent push wins: it comes from the view the user last changed.
+ */
 export function getAppState(appName: string): AppStateEntry | undefined {
-  return appStateStore.get(appName);
-}
-
-/** Clear app state (call when app is unmounted). */
-export function clearAppState(appName: string): void {
-  appStateStore.delete(appName);
+  let latestOnScreen: AppStateEntry | undefined;
+  let latest: AppStateEntry | undefined;
+  for (const [key, view] of appStateByBridge) {
+    if (view.appName !== appName) continue;
+    latest = view.entry;
+    if (!offScreenBridges.has(key)) latestOnScreen = view.entry;
+  }
+  return latestOnScreen ?? latest;
 }
 
 /** Handle returned by createBridge. Used to send messages and tear down. */
@@ -118,6 +137,18 @@ export function createBridge(
   callbacks?: BridgeCallbacks,
 ): BridgeHandle {
   let destroyed = false;
+  // This bridge's key in `appStateByBridge`, released in `destroy()`.
+  const stateKey = Symbol(appName);
+  const screenObserver =
+    typeof IntersectionObserver === "undefined"
+      ? null
+      : new IntersectionObserver((entries) => {
+          const last = entries[entries.length - 1];
+          if (!last || destroyed) return;
+          if (last.isIntersecting) offScreenBridges.delete(stateKey);
+          else offScreenBridges.add(stateKey);
+        });
+  screenObserver?.observe(iframe);
 
   // Nothing reaches the app before it has sent `ui/notifications/initialized`
   // except the answers to its own requests — the `ui/initialize` response
@@ -313,7 +344,7 @@ export function createBridge(
       // Spec: ui/update-model-context
       // -----------------------------------------------------------------
       case "ui/update-model-context":
-        handleUpdateModelContext(msg.params, msg.id, appName, postToIframe);
+        handleUpdateModelContext(msg.params, msg.id, stateKey, appName, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -487,6 +518,9 @@ export function createBridge(
     destroy(): void {
       destroyed = true;
       held.length = 0;
+      appStateByBridge.delete(stateKey);
+      offScreenBridges.delete(stateKey);
+      screenObserver?.disconnect();
       closeChannel();
       window.removeEventListener("message", handleMessage);
       // Unsubscribe from notifications/tasks/status so post-destroy
@@ -738,9 +772,11 @@ function handleInitialize(
  *
  * Every app is scoped to its own server, whatever its name. A server the app
  * names in `_meta` or in a top-level `server` is ignored, and a qualified tool
- * name naming another server is refused. This is the only place the scope can
- * be enforced: the browser holds ONE `/mcp` session shared by every iframe and
- * the agent, so the server sees no caller to attribute a call to.
+ * name naming another server is refused. The browser holds ONE `/mcp` session
+ * shared by every iframe and the agent, so the server sees no caller to
+ * attribute a call to; the bridge names the app's server on the call
+ * (`callToolViaMcp`), and `/mcp` holds it to that server and to tools whose
+ * `ui.visibility` includes "app".
  */
 function handleToolsCall(
   params: ToolsCallParams,
@@ -806,8 +842,8 @@ function handleResourcesRead(
 }
 
 /**
- * The `_meta` key that scopes a read, a listing or a task request on `/mcp` to
- * one source. Must equal
+ * The `_meta` key that scopes a read, a listing, a task request or a tool call
+ * on `/mcp` to one source. Must equal
  * `RESOURCE_SOURCE_META_KEY` in `src/api/mcp-server.ts` (the runtime image ships
  * `src/` alone, so the two cannot share a module); pinned equal by
  * `test/unit/tools/server-notifications.test.ts`.
@@ -863,15 +899,10 @@ function handleUiMessage(
   if (Array.isArray(params.content)) {
     const textBlock = params.content.find((b: Record<string, unknown>) => b.type === "text");
     if (textBlock?.text) {
-      const context = textBlock._meta?.[CHAT_CONTEXT_META_KEY] as UiChatContext | undefined;
       if (callbacks?.onChat) {
-        callbacks.onChat(textBlock.text, context);
+        callbacks.onChat(textBlock.text);
       } else {
-        window.dispatchEvent(
-          new CustomEvent("nb:chat", {
-            detail: { message: textBlock.text, context },
-          }),
-        );
+        window.dispatchEvent(new CustomEvent("nb:chat", { detail: { message: textBlock.text } }));
       }
     }
   }
@@ -900,12 +931,13 @@ function serveUiMessage(
 }
 
 /**
- * Handle a spec `ui/update-model-context`: store the app's latest visible
+ * Handle a spec `ui/update-model-context`: store this view's latest visible
  * state (with a text summary when present) and ack when the message had an id.
  */
 function handleUpdateModelContext(
   params: UiUpdateModelContextMessage["params"],
   id: string | number | undefined,
+  stateKey: symbol,
   appName: string,
   postToIframe: PostToIframe,
 ): void {
@@ -914,10 +946,11 @@ function handleUpdateModelContext(
     Array.isArray(content) && content.length > 0 && content[0].type === "text"
       ? content[0].text
       : undefined;
-  appStateStore.set(appName, {
-    state: structuredContent ?? {},
-    summary,
-    updatedAt: new Date().toISOString(),
+  // Delete first so the re-insert moves this view to the end of push order.
+  appStateByBridge.delete(stateKey);
+  appStateByBridge.set(stateKey, {
+    appName,
+    entry: { state: structuredContent ?? {}, summary, updatedAt: new Date().toISOString() },
   });
   // The same helper the served requests use: id `0` is an id, and a frame
   // without one is a notification that takes no answer.
@@ -925,18 +958,14 @@ function handleUpdateModelContext(
 }
 
 /**
- * Handle an ai.nimblebrain/action: route `navigate` to onNavigate, otherwise invoke
- * onAction (or dispatch an `nb:action` event when no callback is wired).
+ * Handle an ai.nimblebrain/action: invoke onAction, or dispatch an `nb:action`
+ * event when no callback is wired. The shell resolves the action by name.
  */
 function handleSynapseAction(
   params: UiActionMessage["params"],
   callbacks: BridgeCallbacks | undefined,
 ): void {
   const { action, ...actionParams } = params;
-  if (action === "navigate" && actionParams.route && callbacks?.onNavigate) {
-    callbacks.onNavigate(actionParams.route as string);
-    return;
-  }
   if (callbacks?.onAction) {
     callbacks.onAction(action, actionParams);
   } else {
@@ -1017,7 +1046,7 @@ async function callToolViaMcp(
   id: string,
 ): Promise<UiToolResultResponse | UiToolResultError | Record<string, unknown>> {
   // The `/mcp` endpoint expects a tool name whose shape encodes its scope.
-  // Two transformations:
+  // Three transformations:
   //
   //   1. Qualified: iframes pass either `<tool>` (bare) or
   //      `<source>__<tool>` (already qualified). A bare name is qualified
@@ -1034,6 +1063,10 @@ async function callToolViaMcp(
   //
   //      The active-workspace check stays: with no workspace there is no MCP
   //      endpoint to call, and failing here is a clearer error.
+  //   3. Named: `server` goes on the wire under `RESOURCE_SOURCE_META_KEY`, as
+  //      it does for reads, so `/mcp` knows the call is this app's and holds it
+  //      to the MCP Apps app scope: a tool whose `ui.visibility` lacks "app" is
+  //      refused there, since only the runtime knows each tool's visibility.
   //      A personal connector's marker needs no special handling here, and that
   //      is a property of the code rather than an assumption. `server` is the
   //      name the iframe was mounted under, which comes from
@@ -1072,6 +1105,7 @@ async function callToolViaMcp(
             name: qualifiedName,
             arguments: params.arguments ?? {},
             task: params.task,
+            _meta: { [RESOURCE_SOURCE_META_KEY]: server },
           },
         },
         CreateTaskResultSchema,
@@ -1083,6 +1117,7 @@ async function callToolViaMcp(
       {
         name: qualifiedName,
         arguments: params.arguments ?? {},
+        _meta: { [RESOURCE_SOURCE_META_KEY]: server },
       },
       CallToolResultSchema,
     );

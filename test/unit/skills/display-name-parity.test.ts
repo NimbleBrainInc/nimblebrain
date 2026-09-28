@@ -29,8 +29,8 @@ const CASES: Array<[id: string, expected: string]> = [
   ["/work/skills/release-notes.md", "release-notes"],
   ["skills/mpak-guide.md", "mpak-guide"],
   ["release-notes.md", "release-notes"],
-  // In-memory sentinel (workspace identity override) — no path, no extension.
-  ["skill-in-memory:identity-override", "skill-in-memory:identity-override"],
+  // In-memory sentinel — no path, no extension.
+  ["skill-in-memory:example", "skill-in-memory:example"],
   // Degenerate: a bare entrypoint with no directory to name it.
   ["SKILL.md", "SKILL"],
 ];

@@ -30,11 +30,9 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  * allowed one of their own personal connectors to be used inside. It only
  * ever lives in a *user*-scope record (a grant is the granting user's, and
  * revoking it is theirs). Absence of a grant means "not granted" — the
- * dispatch-time check fails closed uniformly, in every workspace including the
- * user's own personal one (a personal workspace is just a workspace — no
- * free-at-home). The store is a dumb ledger with no knowledge of
- * personal-workspace ids; it faithfully records whatever grant it is handed,
- * self-grants to the caller's own personal workspace included.
+ * dispatch-time check fails closed uniformly, in every workspace including one
+ * the user alone belongs to — no free-at-home. The store is a dumb ledger; it
+ * faithfully records whatever grant it is handed.
  *
  * Future expansion (see WORKSPACE_SECRETS_BROKER_SPEC): "needs_approval"
  * as a third state once the agent-pause-and-confirm flow lands.

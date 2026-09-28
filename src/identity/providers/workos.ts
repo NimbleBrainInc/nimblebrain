@@ -1,8 +1,6 @@
 import { WorkOS } from "@workos-inc/node";
 import { isAllowedOriginScheme, publicOrigin } from "../../oauth/public-origin.ts";
 import { log } from "../../observability/log.ts";
-import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
-import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { WorkosAuth } from "../instance.ts";
 import {
   type AuthorizationServer,
@@ -58,8 +56,9 @@ const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
  * Why a `verifyRequest` call rejected a token. Each value names one of the
  * provider's silent `return null` exits so an operator triaging an
  * involuntary logout sees the specific gate instead of a bare 401.
- * `org_mismatch` is the one behind the `retry_401` incident: a refreshed
- * token whose `org_id` no longer matches the configured org. See
+ * `org_mismatch` is a token, from either issuer, whose `org_id` is not the
+ * configured org or is absent: one minted for another org of a multi-org
+ * user, or a refresh that landed on the user's default org. See
  * {@link WorkosIdentityProvider.reject}.
  */
 type WorkosRejectReason =
@@ -212,13 +211,23 @@ export class WorkosIdentityProvider implements IdentityProvider {
   private organizationId: string | undefined;
   private authkitDomain: string | undefined;
   private adminRoleSlugs: Set<string>;
+  /** Client IDs whose AuthKit tokens are first-party; empty means none are. */
+  private firstPartyClientIds: ReadonlySet<string>;
   private userStore: UserStore | null;
-  private workspaceStore: WorkspaceStore;
 
   private jwksCache: CachedJwks | null = null;
   private authkitJwksCache: CachedJwks | null = null;
   private userCache = new Map<string, { identity: UserIdentity; fetchedAt: number }>();
   private static USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  /**
+   * How long after its last successful check a cached identity may still be
+   * served while WorkOS is failing. The membership check is what notices an
+   * org removal made in WorkOS, and during an outage that check is the call
+   * that fails, so this is the longest such a removal can go unnoticed. It is
+   * long enough to ride out a rate-limit window or a short outage without
+   * failing requests. Past it, the request gets a 503, not the old answer.
+   */
+  private static MAX_STALE_IDENTITY_MS = 30 * 60 * 1000; // 30 minutes
   /**
    * Normalized slugs already warned about in `resolveOrgRole`, so an
    * unrecognized-but-legitimate non-admin slug (e.g. `viewer`) logs once per
@@ -234,15 +243,8 @@ export class WorkosIdentityProvider implements IdentityProvider {
   /**
    * userStore is optional because WorkOS itself is the source of truth for
    * users (managedUsers: true); the local profile is a cache for preferences.
-   * workspaceStore is required: Phase 1 establishes the "authenticated user
-   * has ≥1 workspace" invariant at the identity boundary, and that requires
-   * a place to create workspaces.
    */
-  constructor(
-    config: WorkosAuth,
-    userStore: UserStore | undefined,
-    workspaceStore: WorkspaceStore,
-  ) {
+  constructor(config: WorkosAuth, userStore: UserStore | undefined) {
     const apiKey = process.env.WORKOS_API_KEY ?? config.apiKey ?? "";
     this.workos = new WorkOS(apiKey, { clientId: config.clientId });
     this.clientId = config.clientId;
@@ -254,8 +256,10 @@ export class WorkosIdentityProvider implements IdentityProvider {
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
+    this.firstPartyClientIds = new Set(
+      (config.firstPartyClientIds ?? []).map((id) => id.trim()).filter((id) => id.length > 0),
+    );
     this.userStore = userStore ?? null;
-    this.workspaceStore = workspaceStore;
     this.capabilities = {
       authCodeFlow: true,
       tokenRefresh: true,
@@ -290,34 +294,52 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // Must have sub (WorkOS user ID)
     if (typeof payload.sub !== "string") return this.reject("missing_sub");
 
+    // Every token, whichever issuer minted it, must be for the configured org.
+    // Membership alone does not settle it: a user who belongs to several orgs
+    // holds tokens minted for each, and only this org's may act here. `iss`
+    // says which issuer minted the refused token. This gate runs before the
+    // signature check, so `claimed_org` and `iss` are unverified input: safe
+    // to log, since a forged value only ever lands here or fails the signature
+    // check next, but not authoritative.
+    if (this.organizationId && payload.org_id !== this.organizationId) {
+      return this.reject("org_mismatch", {
+        sub: payload.sub,
+        iss: payload.iss ?? null,
+        claimed_org: payload.org_id ?? null,
+        expected_org: this.organizationId,
+      });
+    }
+
     // Route verification based on issuer: AuthKit MCP OAuth vs WorkOS User Management.
     // Both branches route their rejections through reject() so failures carry the
     // same reason field and severity — one reason-keyed view covers both issuers.
     //
-    // The issuer also decides the grant. An AuthKit token was minted for the
-    // resource the client named, so it carries its (signature-covered)
-    // audience; a User Management token was issued to this instance's own
-    // login client, so it is first-party.
+    // The issuer and the client decide the grant. A User Management token was
+    // issued to this instance's own login client, so it is first-party. An
+    // AuthKit token is first-party only when the client it was issued to (its
+    // signed `client_id`) is one the operator lists as its own; any other was
+    // minted for the resource its client named, so it carries its
+    // (signature-covered) audience. The audience never decides first-party
+    // standing: it says where a token may be used, not whose app holds it, and
+    // an MCP client that refreshes without a `resource` gets the same `aud`
+    // as a first-party app.
     const authkitIssuer = this.authkitOrigin();
     const fromAuthkit = authkitIssuer !== null && payload.iss === authkitIssuer;
     const identity = fromAuthkit
       ? await this.verifyAuthkitToken(parsed, payload.sub)
       : await this.verifyUserManagementToken(parsed, payload.sub);
 
-    // Enforce the invariant "authenticated user has ≥1 workspace" on every
-    // successful auth — covers the AuthKit/MCP-OAuth path (which never hits
-    // exchangeCode) and self-heals any user whose workspace was lost to
-    // admin deletion, partial failure, or migration. Idempotent; the happy
-    // path is one filesystem read.
     if (!identity) return null;
-    await ensureUserWorkspace(this.workspaceStore, {
-      id: identity.id,
-      displayName: identity.displayName,
-    });
-    const grant: TokenGrant = fromAuthkit
-      ? { kind: "resource", audience: audienceList(payload.aud) }
-      : FIRST_PARTY_GRANT;
+    const grant: TokenGrant =
+      !fromAuthkit || this.isFirstPartyClient(payload.client_id)
+        ? FIRST_PARTY_GRANT
+        : { kind: "resource", audience: audienceList(payload.aud) };
     return { ...identity, grant };
+  }
+
+  /** Whether a verified AuthKit token's `client_id` claim names a configured first-party client. */
+  private isFirstPartyClient(clientId: unknown): boolean {
+    return typeof clientId === "string" && this.firstPartyClientIds.has(clientId);
   }
 
   /**
@@ -336,29 +358,13 @@ export class WorkosIdentityProvider implements IdentityProvider {
   }
 
   /**
-   * Verify a WorkOS User Management JWT (org gate then WorkOS JWKS signature), then resolve the user.
+   * Verify a WorkOS User Management JWT against the WorkOS JWKS, then resolve the user.
    */
   private async verifyUserManagementToken(
     parsed: ParsedJwt,
     sub: string,
   ): Promise<UserIdentity | null> {
-    const { header, payload, signatureInput, signature } = parsed;
-
-    // Validate org_id matches configured organization. This is the silent gate
-    // behind the involuntary-logout incident: a refreshed token whose org_id
-    // drifted from the configured org (see refreshToken) lands here and was,
-    // until instrumented, indistinguishable from any other 401.
-    if (this.organizationId && payload.org_id !== this.organizationId) {
-      // `claimed_org` is the org_id from the JWT payload — this gate runs BEFORE
-      // signature verification, so it is unverified input. It's safe to log (a
-      // forged value only ever lands here or fails the sig check next) but an
-      // operator must not treat it as authoritative.
-      return this.reject("org_mismatch", {
-        sub,
-        claimed_org: payload.org_id ?? null,
-        expected_org: this.organizationId,
-      });
-    }
+    const { header, signatureInput, signature } = parsed;
 
     // Verify signature against WorkOS JWKS
     const keys = await this.getJwks();
@@ -606,23 +612,23 @@ export class WorkosIdentityProvider implements IdentityProvider {
       // validated (signature + expiration), so the user is who they claim to be.
       // Denying access because of a transient WorkOS API hiccup causes spurious 401s.
       //
-      // This fallback is NOT bounded by `USER_CACHE_TTL_MS`. That TTL decides
-      // only whether a refresh is *attempted*; reaching here means the attempt
-      // was made and failed, and nothing below re-checks the age or restamps
-      // `fetchedAt`. So a cached identity — including the org role it was built
-      // from — is served for as long as the upstream outage lasts, not for five
-      // minutes. The `age` on the line below is the one signal that says how
-      // far out of date the answer is; read it before assuming a bound.
-      if (cached) {
+      // `USER_CACHE_TTL_MS` decides only whether a refresh is attempted. How
+      // long a failed refresh may keep serving the cached identity, and the org
+      // role in it, is `MAX_STALE_IDENTITY_MS`, measured from the last
+      // successful check; `fetchedAt` is not restamped here.
+      if (cached && nowMs - cached.fetchedAt < WorkosIdentityProvider.MAX_STALE_IDENTITY_MS) {
         log.warn(
           `[workos] Using stale cached identity for ${workosUserId} (age: ${Math.round((nowMs - cached.fetchedAt) / 1000)}s)`,
         );
         return cached.identity;
       }
-      // No cache to fall back on, so we never reached a verdict about this
-      // user. Returning null here is what produced the spurious 401 the stale
-      // fallback above exists to avoid — the caller gets 503 and retries.
-      this.transient("user_unresolvable", { userId: workosUserId });
+      // No cache young enough to fall back on, so we never reached a verdict
+      // about this user. Returning null here is what produced the spurious 401
+      // the stale fallback above exists to avoid — the caller gets 503 and retries.
+      this.transient("user_unresolvable", {
+        userId: workosUserId,
+        stale_age_s: cached ? Math.round((nowMs - cached.fetchedAt) / 1000) : null,
+      });
     }
   }
 

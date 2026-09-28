@@ -10,20 +10,14 @@
  * cached answer for the TTL.
  *
  * The degraded fixtures each break a different leg — a throwing
- * `resources/list`, an endless cursor, a listed skill that cannot be read —
- * rather than returning zero resources. A clean enumeration that returns
+ * `skills/list`, an endless cursor, a listed `always` skill whose body cannot
+ * be read when it is composed — rather than listing zero skills. A clean enumeration that returns
  * nothing is NOT degraded — telling that from "never published" needs a
  * remembered baseline, which would page an operator on every legitimate
  * uninstall.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +29,12 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
+import {
+  handleSkillsList,
+  SKILLS_EXTENSION_CAPABILITY,
+  serveSkills,
+  skillEntryFor,
+} from "../helpers/skills-server.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const FAILING_NAME = "ai-nimblebrain-failing-mcp";
@@ -58,59 +58,44 @@ HEALTHY-MARKER — this rule must be in context on every turn.`;
 
 /** The two verbs every fixture below answers the same way. */
 function withPingTool(server: Server, toolName = "ping"): Server {
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [
       { name: toolName, description: "Ping", inputSchema: { type: "object", properties: {} } },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler('tools/call', async () => ({
     content: [{ type: "text", text: "done" }],
   }));
   return server;
 }
 
-/** Server whose `resources/list` throws; `tools/list` still answers. */
+/** Capabilities of a server that declares the Skills extension. */
+const SKILLS_CAPS = { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } };
+
+/** Server whose `skills/list` throws; `tools/list` still answers. */
 function createFailingServer(): Server {
-  const server = withPingTool(
-    new Server({ name: "failing", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } }),
-  );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    throw new Error("resources/list is unavailable");
+  const server = withPingTool(new Server({ name: "failing", version: "0.1.0" }, SKILLS_CAPS));
+  handleSkillsList(server, async () => {
+    throw new Error("skills/list is unavailable");
   });
   return server;
 }
 
-/** Server whose `resources/list` always returns a cursor — never finishes. */
+/** Server whose `skills/list` always returns a cursor — never finishes. */
 function createTruncatedServer(): Server {
-  const server = withPingTool(
-    new Server(
-      { name: "truncated", version: "0.1.0" },
-      { capabilities: { tools: {}, resources: {} } },
-    ),
-  );
-  let page = 0;
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    page++;
-    return {
-      resources: [{ uri: `res://filler/${page}`, name: `filler-${page}` }],
-      nextCursor: `page-${page}`,
-    };
-  });
+  const server = withPingTool(new Server({ name: "truncated", version: "0.1.0" }, SKILLS_CAPS));
+  handleSkillsList(server, () => ({ skills: [], nextCursor: "more" }));
   return server;
 }
 
-/** Server that LISTS one skill entrypoint but throws on every read. */
+/** Server that LISTS one `always` skill but throws on every read of its body. */
 function createUnreadableServer(): Server {
-  const server = withPingTool(
-    new Server(
-      { name: "unreadable", version: "0.1.0" },
-      { capabilities: { tools: {}, resources: {} } },
-    ),
-  );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [{ uri: "skill://broken/SKILL.md", name: "broken", mimeType: "text/markdown" }],
+  const server = withPingTool(new Server({ name: "unreadable", version: "0.1.0" }, SKILLS_CAPS));
+  const body = SKILL_BODY.replace("name: guide", "name: broken");
+  handleSkillsList(server, () => ({
+    skills: [skillEntryFor("skill://broken/SKILL.md", body)],
   }));
-  server.setRequestHandler(ReadResourceRequestSchema, async () => {
+  server.setRequestHandler('resources/read', async () => {
     throw new Error("resources/read is unavailable");
   });
   return server;
@@ -118,14 +103,9 @@ function createUnreadableServer(): Server {
 
 /** Ordinary server publishing one `always` skill — the control. */
 function createHealthyServer(): Server {
-  const server = withPingTool(
-    new Server({ name: "healthy", version: "0.1.0" }, { capabilities: { tools: {}, resources: {} } }),
-    "go",
-  );
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [{ uri: "skill://guide/SKILL.md", name: "guide", mimeType: "text/markdown" }],
-  }));
-  server.setRequestHandler(ReadResourceRequestSchema, async (req) => ({
+  const server = withPingTool(new Server({ name: "healthy", version: "0.1.0" }, SKILLS_CAPS), "go");
+  serveSkills(server, () => ({ "skill://guide/SKILL.md": SKILL_BODY }));
+  server.setRequestHandler("resources/read", async (req) => ({
     contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: SKILL_BODY }],
   }));
   return server;
@@ -245,10 +225,9 @@ describe("degraded skill discovery", () => {
   });
 
   it("reports a listed skill that cannot be read, and stays loud next turn", async () => {
-    // `resources/list` succeeds and names one skill entrypoint; every read
-    // throws. The read swallow is deliberate (one bad skill must not sink the
-    // discovery), so without the entrypoint count this caches zero skills as
-    // the complete answer — the same silent shortfall the PR exists to close.
+    // `skills/list` succeeds and names one `always` skill; every read of its
+    // body throws. The skill is needed every turn, so every turn tries the
+    // read and says why the skill did not compose.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
       await runtime.chat({ workspaceId: TEST_WORKSPACE_ID, message: "unreadable" });
@@ -264,12 +243,9 @@ describe("degraded skill discovery", () => {
   });
 
   it("says nothing about any other server — the signal must be rare to be worth reading", async () => {
-    // The tools-only in-process platform sources (`usage`, `compose`) advertise
-    // no `resources` capability; calling `resources/list` on one throws
-    // `Method not found`, which reads as a transport failure — so an ungated
-    // signal fires for them on every turn, in every workspace, forever. An
-    // alert that is always firing is not an alert. The healthy fixture and the
-    // resource-advertising platform sources must stay silent too: only the
+    // A source that does not declare the Skills extension is never asked for
+    // skills, so the platform's own sources stay silent; so must the healthy
+    // fixture. An alert that is always firing is not an alert: only the
     // deliberately degraded fixtures may appear.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
@@ -286,10 +262,9 @@ describe("degraded skill discovery", () => {
 
   it("still composes the skills it could reach", async () => {
     // Three degraded neighbours must not take the healthy server's guidance
-    // with them. Assert on the discovered pool's CONTENT: the healthy `always`
-    // skill, marker and all, survives discovery next to the degraded fixtures.
-    // (An empty pool or a dropped body fails this — asserting only on types
-    // could not.)
+    // with them. Assert on CONTENT: the healthy `always` skill survives
+    // discovery next to the degraded fixtures, and its body loads. (An empty
+    // pool or a dropped body fails this — asserting only on types could not.)
     const { response } = await runtime.chat({
       workspaceId: TEST_WORKSPACE_ID,
       message: "fourth",
@@ -297,11 +272,18 @@ describe("degraded skill discovery", () => {
     expect(typeof response).toBe("string");
     const pool = await (
       runtime as unknown as {
-        loadConnectorSkills: (wsId: string) => Promise<Array<{ body: string; manifest: unknown }>>;
+        loadConnectorSkills: (
+          wsId: string,
+        ) => Promise<
+          Array<{
+            manifest: { name: string };
+            loadBody?: () => Promise<{ ok: boolean; body?: string }>;
+          }>
+        >;
       }
     ).loadConnectorSkills(TEST_WORKSPACE_ID);
-    const healthySkill = pool.find((s) => s.body.includes("HEALTHY-MARKER"));
-    expect(healthySkill).toBeDefined();
+    const healthySkill = pool.find((s) => s.manifest.name === `connector:${HEALTHY_NAME}:guide`);
+    expect((await healthySkill?.loadBody?.())?.body).toContain("HEALTHY-MARKER");
   });
 
   it("reports source_unavailable only for a connector believed running — an auth-resting connector stays silent", async () => {

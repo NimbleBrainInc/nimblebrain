@@ -31,7 +31,7 @@ import type {
 } from "../connectors/runtime/types.ts";
 import { uninstallWorkspaceConnector } from "../connectors/runtime/uninstall.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import type { ToolResult } from "../engine/types.ts";
 import { HookContractError } from "../hooks/provisioning.ts";
 import { ensureHooks } from "../hooks/reconcile.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
@@ -63,8 +63,7 @@ import type { Tool, ToolSource } from "./types.ts";
  * Stage 2: every install is workspace-scoped. The `install` action
  * targets the request's active workspace (`ctx.getWorkspaceId()`, set
  * from the `/w/<slug>` route); an explicit `wsId` arg overrides it for
- * direct API callers. Any workspace — personal or shared — is a valid
- * target; the tool never special-cases the target's `isPersonal` flag.
+ * direct API callers. Any workspace is a valid target.
  * The connector ref's `oauthScope` is always `"workspace"`.
  *
  * Persistence: `WorkspaceStore.connectors[]` +
@@ -210,7 +209,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
     name: "manage_connectors",
     description:
       "List, install, and disconnect remote MCP connectors. Workspace connectors are shared by all members; user connectors are personal and follow you across workspaces.",
-    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { ui: { visibility: ["app"] } },
     inputSchema: {
       type: "object",
       properties: {
@@ -579,9 +578,9 @@ type InstalledEntry = {
    */
   handshakeVersion?: string;
   state: string;
-  // Stage 2: only workspace-scope connectors exist. Personal connectors
-  // live in the caller's personal workspace; the legacy `"user"` arm was
-  // removed in T008/T009 — every population site below emits `"workspace"`.
+  // Only workspace-scope connectors appear here; personal connectors live on
+  // the identity plane (`IdentityConnectorStore`). Every population site below
+  // emits `"workspace"`.
   scope: "workspace";
   interactive: boolean;
   toolCount: number;
@@ -937,10 +936,6 @@ async function handleListInstalled(
     }
   }
 
-  // Stage 2: user-scope walk removed. Personal connectors now appear
-  // under the user's personal workspace at `ws_user_<userId>` — same
-  // workspace-scope rendering path as any other workspace.
-
   return {
     content: textContent(`Installed: ${installed.length} entries.`),
     structuredContent: { installed },
@@ -1044,7 +1039,7 @@ async function handleInstall(
 
   switch (entry.install.kind) {
     case "remote-oauth": {
-      const collision = await personalConnectorCollisionGuard(ctx, identity.id, ws, entry);
+      const collision = await personalConnectorCollisionGuard(ctx, identity.id, entry);
       if (collision) return collision;
       return handleInstallRemoteOAuth(ctx, wsId, ws, entry);
     }
@@ -1054,17 +1049,11 @@ async function handleInstall(
 }
 
 /**
- * Gate a workspace-target install: admin role, the workspace connector allow-list,
- * and the personal-workspace connector-only rule. Returns an error result to
- * short-circuit on, or `null` to proceed.
+ * Gate a workspace-target install: admin role and the workspace connector
+ * allow-list. Returns an error result to short-circuit on, or `null` to proceed.
  *
- * Admin role gates every install — workspace-shared connectors widen the
- * workspace's tool / credential surface for every member, and personal
- * workspaces invariably have the owner as admin, so this covers the personal
- * path uniformly. A personal workspace is a CONNECTOR space (the user's own
- * remote MCP connections, grantable into shared rooms): only `remote-oauth` is
- * admitted, keeping "a connector in your personal workspace" == "a grantable
- * personal connector" true by construction.
+ * Admin role gates every install — workspace connectors widen the workspace's
+ * tool / credential surface for every member.
  */
 function workspaceInstallAdmission(
   ws: Workspace,
@@ -1087,30 +1076,21 @@ function workspaceInstallAdmission(
   ) {
     return errResult(`Connector "${entry.id}" not visible in this workspace.`);
   }
-  if (ws.isPersonal === true && entry.install.kind !== "remote-oauth") {
-    return errResult(
-      `Your personal workspace is for connectors — remote MCP connections. ` +
-        `"${entry.id}" installs as a "${entry.install.kind}" connector; install it into a shared workspace instead.`,
-    );
-  }
   return null;
 }
 
 /**
  * Forbid the collision (workspace side): a serverName can't be both a personal
- * connector and a SHARED-workspace install, or `resolvePermissionOwner` (which
+ * connector and a workspace install, or `resolvePermissionOwner` (which
  * resolves a personal connector first) could never address the workspace copy's
  * policy. Returns an error result when the caller already has a personal
- * connector of the same name, else `null`. The caller's own personal workspace
- * is the legacy personal home, not a shared collision — skip it.
+ * connector of the same name, else `null`.
  */
 async function personalConnectorCollisionGuard(
   ctx: ManageConnectorsContext,
   callerId: string,
-  ws: Workspace,
   entry: CatalogListing,
 ): Promise<ToolResult | null> {
-  if (ws.isPersonal === true) return null;
   const serverName = slugifyServerName(entry.id);
   const personal = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
     callerId,
@@ -1147,12 +1127,12 @@ async function handleInstallIdentity(
 ): Promise<ToolResult> {
   const callerId = identity.id;
 
-  // Personal connectors are remote MCP connections (mirrors the personal-
-  // workspace admission rule). Other install kinds belong in a shared workspace.
+  // Personal connectors are remote MCP connections. Other install kinds belong
+  // in a workspace.
   if (entry.install.kind !== "remote-oauth") {
     return errResult(
       `Personal connectors are remote MCP connections. "${entry.id}" installs as a ` +
-        `"${entry.install.kind}" connector — install it into a shared workspace instead.`,
+        `"${entry.install.kind}" connector — install it into a workspace instead.`,
     );
   }
 
@@ -1291,9 +1271,8 @@ async function handleInstallIdentity(
 }
 
 /**
- * The id of a SHARED workspace the caller belongs to that already installs
- * `serverName`, or `null`. Skips the caller's own personal workspace (the legacy
- * personal home — not a shared collision). Reads persisted `workspace.json`
+ * The id of a workspace the caller belongs to that already installs
+ * `serverName`, or `null`. Reads persisted `workspace.json`
  * connectors, so it's pod-independent (a self-heal / cold pod can't hide a
  * collision). Install-time enforcement only: a collision that forms later — the
  * caller joins a workspace that already installs `serverName` — isn't caught
@@ -1306,7 +1285,6 @@ async function findSharedWorkspaceInstall(
 ): Promise<string | null> {
   const workspaces = await ctx.runtime.getWorkspaceStore().getWorkspacesForUser(callerId);
   for (const ws of workspaces) {
-    if (ws.isPersonal === true) continue;
     if (ws.connectors.some((b) => serverNameFromRef(b) === serverName)) return ws.id;
   }
   return null;
@@ -1578,11 +1556,10 @@ function areAdditionalAuthParamsValid(additionalParams: unknown): boolean {
 
 /**
  * Remote OAuth install — targets the explicit `wsId` passed in by the
- * dispatcher (the request's active workspace). Every workspace — personal
- * or shared — is a valid target: install, boot-state derivation, and
- * disconnect cleanup are all keyed purely on `wsId`, so the credential
- * layout under `credentials/<provider>/<connectorId>/` works identically
- * regardless of the target's `isPersonal` flag. Static-auth entries
+ * dispatcher (the request's active workspace). Every workspace is a valid
+ * target: install, boot-state derivation, and disconnect cleanup are all
+ * keyed purely on `wsId`, so the credential layout under
+ * `credentials/<provider>/<connectorId>/` is the same in every workspace. Static-auth entries
  * require operator OAuth client config persisted under
  * `workspace.json#oauthOperatorApps[entry.id]` + the matching
  * client_secret in the credential store before this can proceed.
@@ -1623,24 +1600,10 @@ async function handleInstallRemoteOAuth(
   const lifecycle = ctx.runtime.getLifecycle();
 
   // Single install pipeline keyed on the explicit `wsId` the caller supplied.
-  // The personal vs shared-workspace distinction is a property of the target
-  // workspace (`ws.isPersonal`), not a separate code path — both produce the
-  // same `ConnectorRef` shape and the same workspace-scoped credential layout.
-  // Personal-target installs surface a different message string in `content`
-  // but identical `structuredContent`.
-  const isPersonalTarget = ws.isPersonal === true;
 
   // Dedup (which self-heals an orphaned workspace.json entry) short-circuits
   // before any expensive wiring so a re-click doesn't burn a brokered session.
-  const dupResult = await handleDuplicateInstall(
-    ctx,
-    wsId,
-    ws,
-    entry,
-    action,
-    serverName,
-    isPersonalTarget,
-  );
+  const dupResult = await handleDuplicateInstall(ctx, wsId, ws, entry, action, serverName);
   if (dupResult) return dupResult;
 
   // Fresh-install: resolve the wiring now that we know we're going to commit.
@@ -1735,7 +1698,7 @@ async function handleInstallRemoteOAuth(
   const warning = [startWarning, contractWarning].filter(Boolean).join(" ") || undefined;
   return {
     content: textContent(
-      remoteInstallMessage(entry.name, isPersonalTarget, {
+      remoteInstallMessage(entry.name, {
         startWarning,
         contractWarning,
         notice: ready.notice,
@@ -2210,7 +2173,6 @@ async function handleDuplicateInstall(
   entry: CatalogListing,
   action: RemoteOAuthInstall,
   serverName: string,
-  isPersonalTarget: boolean,
 ): Promise<ToolResult | null> {
   const lifecycle = ctx.runtime.getLifecycle();
   const dup = ws.connectors.find((b) => {
@@ -2240,11 +2202,7 @@ async function handleDuplicateInstall(
     };
   }
   return {
-    content: textContent(
-      isPersonalTarget
-        ? `"${entry.name}" already installed in your personal workspace.`
-        : `"${entry.name}" already installed.`,
-    ),
+    content: textContent(`"${entry.name}" already installed.`),
     structuredContent: {
       ok: true,
       alreadyInstalled: true,
@@ -2361,11 +2319,9 @@ interface RemoteInstallMessageParts {
  */
 function remoteInstallMessage(
   entryName: string,
-  isPersonalTarget: boolean,
   { startWarning, contractWarning, notice }: RemoteInstallMessageParts,
 ): string {
-  const where = isPersonalTarget ? "your personal workspace" : "this workspace";
-  const parts = [`Installed "${entryName}" in ${where}.`];
+  const parts = [`Installed "${entryName}" in this workspace.`];
   if (startWarning) {
     parts.push(`Source eager-start failed (${startWarning}) — click Connect to retry.`);
   }
@@ -2566,7 +2522,6 @@ async function handleUninstall(
   // Workspace-scope uninstall removes a connector for every member
   // of the workspace and clears the credential file. A non-admin
   // shouldn't be able to remove a shared connector other members rely on.
-  // Personal workspaces have a single admin (the owner) by invariant.
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
   if (!isWorkspaceAdmin(ws, identity)) {
@@ -2977,7 +2932,7 @@ async function handleListPersonalConnectors(
   const grantsByConnector = await store.listConnectorGrants(callerId);
 
   // Source of truth is the identity plane — `users/<id>/connectors.json` via
-  // `IdentityConnectorStore`, not the legacy `ws_user_` registry.
+  // `IdentityConnectorStore`.
   const refs = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(
     callerId,
   );
@@ -3064,8 +3019,8 @@ async function handleListPersonalConnectors(
  * `grant_connector` — grant the caller's personal connector `serverName` for use
  * inside the workspace `targetWsId`. Validates the connector is one the caller
  * installed on their identity, and the target is a workspace the caller belongs
- * to. The grant is required in EVERY workspace, including the caller's own
- * personal one (a personal workspace is just a workspace — no free-at-home).
+ * to. The grant is required in EVERY workspace, including one the caller
+ * alone belongs to — there is no free-at-home.
  */
 async function handleGrantConnector(
   ctx: ManageConnectorsContext,

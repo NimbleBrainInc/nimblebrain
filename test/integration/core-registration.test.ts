@@ -50,7 +50,7 @@ describe("nb-core registration in Runtime", () => {
 		const coreTools = tools.filter((t) => t.name.startsWith("nb__"));
 		expect(coreTools.length).toBeGreaterThanOrEqual(6);
 		const names = coreTools.map((t) => t.name).sort();
-		expect(names).toContain("nb__manage_identity");
+		expect(names).toContain("nb__set_preferences");
 	});
 
 	it("nb__ tools are callable via ToolRegistry.execute()", async () => {
@@ -59,14 +59,13 @@ describe("nb-core registration in Runtime", () => {
 			{ identity: null, workspaceId: TEST_WORKSPACE_ID },
 			() => registry.execute({
 				id: "test-core-exec",
-				name: "nb__list_apps",
+				name: "nb__workspace_info",
 				input: {},
 			}),
 		);
 		expect(result.isError).toBe(false);
 		const data = result.structuredContent as Record<string, unknown>;
-		expect(data.apps).toBeDefined();
-		expect(Array.isArray(data.apps)).toBe(true);
+		expect(typeof data.version).toBe("string");
 	});
 });
 
@@ -74,42 +73,7 @@ describe("nb-core registration in Runtime", () => {
 // 2. Resource serving via GET /v1/workspaces/:wsId/apps/nb/resources/:path
 // =============================================================================
 
-// The endpoint returns an MCP `ReadResourceResult`-shaped envelope so the
-// per-content `_meta` (including ext-apps `_meta.ui.*`) reaches the client
-// unchanged.
 describe("GET /v1/workspaces/:wsId/apps/nb/resources/:path", () => {
-	function extractHtml(envelope: unknown): string {
-		const contents = (envelope as { contents?: Array<{ text?: string }> })
-			.contents;
-		return contents?.[0]?.text ?? "";
-	}
-
-	it("returns HTML for app-nav", async () => {
-		const res = await fetch(
-			`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/app-nav`,
-		);
-		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
-		const envelope = await res.json();
-		const html = extractHtml(envelope);
-		expect(html).toContain("<!DOCTYPE html>");
-		expect(html).toContain("postMessage");
-	});
-
-	it("returns HTML for every core resource", async () => {
-		const resources = ["app-nav", "settings-link", "model-selector"];
-		for (const name of resources) {
-			const res = await fetch(
-				`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/${name}`,
-			);
-			expect(res.status).toBe(200);
-			expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
-			const envelope = await res.json();
-			const html = extractHtml(envelope);
-			expect(html).toContain("<!DOCTYPE html>");
-		}
-	});
-
 	it("returns 404 for unknown core resource", async () => {
 		const res = await fetch(
 			`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/apps/nb/resources/unknown`,
@@ -125,13 +89,13 @@ describe("GET /v1/workspaces/:wsId/apps/nb/resources/:path", () => {
 // =============================================================================
 
 describe("POST /v1/workspaces/:wsId/tools/call with server=nb", () => {
-	it("calls nb__list_apps and returns data", async () => {
+	it("calls nb__workspace_info and returns data", async () => {
 		const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				server: "nb",
-				tool: "list_apps",
+				tool: "workspace_info",
 				arguments: {},
 			}),
 		});

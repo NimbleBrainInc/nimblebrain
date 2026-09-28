@@ -1,8 +1,9 @@
 /**
  * Unit tests for the server-skill adapter (SEP-2640 `io.modelcontextprotocol/skills`).
  *
- * The pure functions — `isSkillEntrypointUri`, `parseSkillMarkdown`, and
- * `synthesizeConnectorSkill` — are the discovery + synthesis primitives the runtime
+ * The pure functions — `discoveredSkillFromEntry`, `parseSkillMarkdown`,
+ * `synthesizeConnectorSkill`, and `hydrateSkill` — are the discovery + synthesis
+ * primitives the runtime
  * composes. Combined with `selectLayer3Skills`, we verify end-to-end selection
  * behavior (active toolset → skill loads) without spinning up a Runtime.
  */
@@ -10,26 +11,75 @@
 import { describe, expect, test } from "bun:test";
 import {
   connectorSkillManifestName,
-  isSkillEntrypointUri,
+  discoveredSkillFromEntry,
+  hydrateSkill,
   parseConnectorSkillName,
   parseSkillMarkdown,
   synthesizeConnectorSkill,
 } from "../../../src/skills/connector-skills.ts";
 import { SkillMatcher } from "../../../src/skills/matcher.ts";
+import type { SkillBodyLoad } from "../../../src/skills/types.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../../src/skills/select.ts";
 
-describe("isSkillEntrypointUri", () => {
-  test("matches skill:// URIs ending in /SKILL.md, flat and nested", () => {
-    expect(isSkillEntrypointUri("skill://foo/SKILL.md")).toBe(true);
-    expect(isSkillEntrypointUri("skill://acme/billing/refunds/SKILL.md")).toBe(true);
+describe("discoveredSkillFromEntry", () => {
+  test("reads name, description, and loading config from the listing, with no body", () => {
+    const skill = discoveredSkillFromEntry({
+      uri: "skill://acme/capture/SKILL.md",
+      frontmatter: {
+        name: "capture",
+        description: "Capture corrections",
+        metadata: { nimblebrain: { "loading-strategy": "always", priority: 20, triggers: ["x"] } },
+      },
+      resources: "dynamic",
+    });
+    expect(skill).toMatchObject({
+      uri: "skill://acme/capture/SKILL.md",
+      name: "capture",
+      description: "Capture corrections",
+      loadingStrategy: "always",
+      priority: 20,
+      triggers: ["x"],
+    });
+    expect("body" in skill).toBe(false);
+  });
+});
+
+describe("hydrateSkill", () => {
+  const lazy = (load: () => Promise<SkillBodyLoad>) =>
+    synthesizeConnectorSkill({
+      serverName: "srv",
+      skillName: "s",
+      description: "d",
+      uri: "skill://s/SKILL.md",
+      loadBody: load,
+    });
+
+  test("a synthesized skill with a loader carries no body until hydrated", async () => {
+    let calls = 0;
+    const skill = lazy(async () => {
+      calls++;
+      return { ok: true, body: "the body" };
+    });
+    expect(skill.body).toBe("");
+    expect(calls).toBe(0);
+    const hydrated = await hydrateSkill(skill);
+    expect(hydrated?.body).toBe("the body");
+    expect(hydrated?.loadBody).toBeUndefined();
+    expect(calls).toBe(1);
   });
 
-  test("rejects the legacy /usage convention, supporting files, and other schemes", () => {
-    expect(isSkillEntrypointUri("skill://foo/usage")).toBe(false);
-    expect(isSkillEntrypointUri("skill://foo/SKILL.md/extra")).toBe(false);
-    expect(isSkillEntrypointUri("skill://foo/scripts/helper.py")).toBe(false);
-    expect(isSkillEntrypointUri("file:///x/SKILL.md")).toBe(false);
-    expect(isSkillEntrypointUri("skill://SKILL.md")).toBe(false);
+  test("a failed fetch yields null, and a skill with no loader passes through", async () => {
+    expect(
+      await hydrateSkill(lazy(async () => ({ ok: false, reason: "unreachable" }))),
+    ).toBeNull();
+    const eager = synthesizeConnectorSkill({
+      serverName: "srv",
+      skillName: "s",
+      description: "d",
+      body: "inline",
+      uri: "skill://s/SKILL.md",
+    });
+    expect(await hydrateSkill(eager)).toBe(eager);
   });
 });
 

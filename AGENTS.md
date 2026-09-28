@@ -66,7 +66,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 |---|---|
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, named output types, `ui://` MIME type |
 | [`src/platform/automations/AGENTS.md`](./src/platform/automations/AGENTS.md) | Automation storage, per-run membership gate, run results |
-| [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, personal-workspace invariants |
+| [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, provisioning and the default workspace |
 | [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |
 | [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
 | [`src/conversation/AGENTS.md`](./src/conversation/AGENTS.md) | Conversation paths, workspace binding on resume, no cross-workspace listing |
@@ -168,7 +168,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 | `models.fast` | `anthropic:claude-haiku-4-5-20251001` |
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
-| Max output tokens | 16,384 |
+| Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |
 | Default connectors | none (platform capabilities are built in) |
 | Work directory | `~/.nimblebrain` |
 | API port | 27247 |

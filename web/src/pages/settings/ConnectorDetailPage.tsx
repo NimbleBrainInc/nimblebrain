@@ -33,7 +33,7 @@ export function ConnectorDetailPage() {
   const { serverName = "", slug } = useParams<{ serverName: string; slug: string }>();
   const navigate = useNavigate();
   // Connectors are addressed by the URL slug — the page acts on whichever
-  // workspace (personal or shared) the slug names.
+  // workspace the slug names.
   const backPath = `/w/${slug}/settings/connectors`;
 
   const [installed, setInstalled] = useState<InstalledConnector | null>(null);
@@ -51,9 +51,7 @@ export function ConnectorDetailPage() {
   } | null>(null);
 
   // Edit gates ride on workspace-admin *membership*, matching the server's
-  // `canWriteWorkspaceScoped`. In a personal workspace the sole owner is its
-  // admin (the workspace store enforces that invariant), so the same check
-  // covers both cases.
+  // `canWriteWorkspaceScoped`.
   const canManage = useCanWriteActiveWorkspace();
 
   const refresh = useCallback(async () => {

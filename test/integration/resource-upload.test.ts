@@ -148,11 +148,15 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
   });
 
   it("persists tags / description / conversationId metadata onto the FileEntry", async () => {
+    const { conversationId } = await runtime.chat({
+      message: "a conversation to attach to",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     const form = new FormData();
     form.append("file", new Blob(["x"], { type: "text/plain" }), "x.txt");
     form.append("tags", JSON.stringify(["report", "q2"]));
     form.append("description", "Quarterly numbers");
-    form.append("conversationId", "conv_test_42");
+    form.append("conversationId", conversationId);
 
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
@@ -163,7 +167,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     const entry = body.files[0];
     expect(entry.tags).toEqual(["report", "q2"]);
     expect(entry.description).toBe("Quarterly numbers");
-    expect(entry.conversationId).toBe("conv_test_42");
+    expect(entry.conversationId).toBe(conversationId);
     expect(entry.source).toBe("app");
   });
 

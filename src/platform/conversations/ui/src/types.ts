@@ -6,7 +6,7 @@ export interface ConversationSummary {
   updatedAt?: string;
   /**
    * The workspace the conversation ran in. Absent on legacy chats with no
-   * stamped workspace — read as the owner's personal workspace.
+   * stamped workspace.
    */
   workspaceId?: string | null;
   /** A reply is still generating in this conversation, on any tab or device. */

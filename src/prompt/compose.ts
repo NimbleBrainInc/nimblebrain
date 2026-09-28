@@ -271,7 +271,7 @@ export interface FocusedAppInfo {
   referenceResourceUri?: string;
 }
 
-/** App state entry from the bridge's appStateStore. */
+/** App state a live app view pushed via `ui/update-model-context` (the web bridge's `getAppState`). */
 export interface AppStateInfo {
   state: Record<string, unknown>;
   summary?: string;
@@ -895,7 +895,6 @@ const INTERACTION_RULES = `### Interaction Rules
 - If unsure which tool to use, call \`nb__search\` with \`scope: "tools"\` and a keyword. Its top matches are activated automatically — call them directly. Only use \`nb__manage_tools\` to activate a different match from the results, or to remove tools when clearly switching domains (batch removes with the next adds).
 - When the user says "undo" or "go back," check if the app has undo, snapshot, or history tools. If not, say undo is not available for this app.
 - When the user gives vague feedback ("I don't like it," "make it better"), ask ONE clarifying question about what specifically to change.
-- Messages may include an \`[App Context: ...]\` header with metadata from the app. Use it to understand what the user was looking at.
 - Other apps are still available via \`nb__search\` (scope: "tools") if the user's request spans apps; its top matches are auto-activated, so you can usually call them directly.`;
 
 function formatFocusedAppSection(focusedApp: FocusedAppInfo): string {
@@ -1107,7 +1106,7 @@ function formatNoWorkspaceContext(): string {
     "",
     "The user is at their identity-level home — **not in any single workspace**. There is no current workspace. If the user asks which workspace they're in, tell them they're at their home view, not a specific one.",
     "",
-    "Your active tools are your personal workspace's — its apps plus the platform tools. A specific workspace's apps and tools are **not reachable from the home view**: to use them, the user must open that workspace. `nb__search` here searches only your personal workspace — it does not reach into other workspaces, so it won't surface a workspace's apps.",
+    "Your active tools are those of the one workspace this session runs in — its apps plus the platform tools. Another workspace's apps and tools are **not reachable from the home view**: to use them, the user must open that workspace. `nb__search` here searches only this session's workspace — it does not reach into other workspaces, so it won't surface their apps.",
     "",
     IDENTITY_SCOPE_NOTE,
   ].join("\n");

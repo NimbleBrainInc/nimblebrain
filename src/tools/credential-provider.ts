@@ -1,4 +1,4 @@
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike } from "@modelcontextprotocol/server";
 
 /**
  * The credential a provider attaches to a remote MCP transport: either static

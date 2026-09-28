@@ -1,6 +1,4 @@
 import { log } from "../../observability/log.ts";
-import { ensureUserWorkspace } from "../../workspace/provisioning.ts";
-import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { OidcAuth } from "../instance.ts";
 import {
   type CreateUserInput,
@@ -148,7 +146,6 @@ export class OidcIdentityProvider implements IdentityProvider {
   private allowedDomains: string[];
   private jwksUri: string | undefined;
   private userStore: UserStore;
-  private workspaceStore: WorkspaceStore;
 
   private jwksCache: CachedJwks | null = null;
   private discoveryCache: OidcDiscovery | null = null;
@@ -159,13 +156,12 @@ export class OidcIdentityProvider implements IdentityProvider {
   /** Overridable clock for testing. */
   now: () => number = () => Date.now();
 
-  constructor(config: OidcAuth, userStore: UserStore, workspaceStore: WorkspaceStore) {
+  constructor(config: OidcAuth, userStore: UserStore) {
     this.issuer = config.issuer.replace(/\/+$/, "");
     this.clientId = config.clientId;
     this.allowedDomains = config.allowedDomains.map((d) => d.toLowerCase());
     this.jwksUri = config.jwksUri;
     this.userStore = userStore;
-    this.workspaceStore = workspaceStore;
   }
 
   /**
@@ -220,18 +216,6 @@ export class OidcIdentityProvider implements IdentityProvider {
     // SECURITY: soft-deleted (deactivated) users are denied access. The record
     // is retained as a tombstone; access resumes only after an admin restores it.
     if (user.deletedAt) return null;
-
-    // Enforce the invariant "authenticated user has ≥1 workspace" on every
-    // successful auth, not only first login. Idempotent: happy path is one
-    // filesystem read and no writes. Running on every request makes the
-    // invariant self-healing for any state where the user exists but their
-    // workspace doesn't — admin deletion, partial failure, migrations from
-    // a prior build, cross-provider drift. A first-login-only gate leaves
-    // those users stuck at 500 forever with no client-side recovery path.
-    await ensureUserWorkspace(this.workspaceStore, {
-      id: user.id,
-      displayName: user.displayName,
-    });
 
     return { ...toIdentity(user), grant: FIRST_PARTY_GRANT };
   }

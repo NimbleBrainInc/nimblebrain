@@ -16,5 +16,6 @@ export {
   shutdownTracing,
   type WithSpanOptions,
   withInboundSpan,
+  withRootContext,
   withSpan,
 } from "./tracing.ts";

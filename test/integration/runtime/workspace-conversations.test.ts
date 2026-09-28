@@ -3,13 +3,13 @@
  *
  * Conversations are workspace-owned: each lives at
  * `{workDir}/workspaces/<wsId>/conversations/<ownerId>/<convId>.jsonl`. An
- * identity-bound chat with no focused `workspaceId` is born in the caller's
- * personal workspace (`ws_user_<userId>`), with the owner as the privacy
- * sub-partition. The old flat `{workDir}/conversations/` layout is gone.
+ * identity-bound dev-mode chat with no `workspaceId` is born in the caller's
+ * default workspace (provisioned for them if they have none), with the owner as
+ * the privacy sub-partition. The old flat `{workDir}/conversations/` layout is gone.
  *
  * Stage 2 (T006) made the chat surface identity-bound:
  * `ChatRequest.workspaceId` is removed and `ChatResult.workspaceId` with
- * it. The `workspaceId` on conversation metadata is the session (personal)
+ * it. The `workspaceId` on conversation metadata is the session's
  * workspace — the workspace binding and a breadcrumb for legacy single-workspace
  * reads (overlays, file store) — not a per-call attribution. Per-call
  * workspace lives on each `tool.done` event's `workspaceId`, stamped by the
@@ -22,7 +22,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 
 const testDir = join(tmpdir(), `nb-ws-conv-${Date.now()}`);
@@ -31,10 +30,21 @@ afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
-/** The workspace-owned path for a conversation born in `ownerId`'s personal workspace. */
-function personalWorkspaceConvPath(workDir: string, ownerId: string, convId: string): string {
+/** The id of the workspace a dev-mode request with no `workspaceId` ran in: the owner's only one. */
+async function defaultWorkspaceId(runtime: Runtime, ownerId: string): Promise<string> {
+  const [ws] = await runtime.getWorkspaceStore().getWorkspacesForUser(ownerId);
+  return ws!.id;
+}
+
+/** The workspace-owned path for a conversation born in `ownerId`'s default workspace. */
+async function defaultWorkspaceConvPath(
+  runtime: Runtime,
+  workDir: string,
+  ownerId: string,
+  convId: string,
+): Promise<string> {
   return join(
-    workspaceConversationsDir(workDir, personalWorkspaceIdFor(ownerId), ownerId),
+    workspaceConversationsDir(workDir, await defaultWorkspaceId(runtime, ownerId), ownerId),
     `${convId}.jsonl`,
   );
 }
@@ -44,7 +54,7 @@ function flatConvPath(workDir: string, convId: string): string {
 }
 
 describe("conversation persistence — workspace layout", () => {
-  it("chat with identity creates conversation in the owner's personal workspace (not flat)", async () => {
+  it("chat with identity creates conversation in the owner's default workspace (not flat)", async () => {
     const workDir = join(testDir, "identity-bound");
     mkdirSync(workDir, { recursive: true });
 
@@ -64,8 +74,8 @@ describe("conversation persistence — workspace layout", () => {
     const result = await runtime.chat({ message: "hello", identity });
     expect(result.conversationId).toMatch(/^conv_/);
 
-    // File lives under the personal workspace's owner partition.
-    expect(existsSync(personalWorkspaceConvPath(workDir, identity.id, result.conversationId))).toBe(
+    // File lives under the default workspace's owner partition.
+    expect(existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId))).toBe(
       true,
     );
 
@@ -95,13 +105,13 @@ describe("conversation persistence — workspace layout", () => {
     const r1 = await runtime.chat({ message: "hello 1", identity });
     const r2 = await runtime.chat({ message: "hello 2", identity });
 
-    expect(existsSync(personalWorkspaceConvPath(workDir, identity.id, r1.conversationId))).toBe(true);
-    expect(existsSync(personalWorkspaceConvPath(workDir, identity.id, r2.conversationId))).toBe(true);
+    expect(existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, r1.conversationId))).toBe(true);
+    expect(existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, r2.conversationId))).toBe(true);
 
     await runtime.shutdown();
   });
 
-  it("conversation metadata includes ownerId and a personal-workspace breadcrumb", async () => {
+  it("conversation metadata includes ownerId and a workspace breadcrumb", async () => {
     const workDir = join(testDir, "ws-meta");
     mkdirSync(workDir, { recursive: true });
 
@@ -120,15 +130,16 @@ describe("conversation persistence — workspace layout", () => {
 
     const result = await runtime.chat({ message: "hello metadata", identity });
 
-    const convFile = personalWorkspaceConvPath(workDir, identity.id, result.conversationId);
+    const convFile = await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const metadataLine = JSON.parse(content.split("\n")[0]!);
 
     expect(metadataLine.ownerId).toBe("user_alice");
-    // T006: the metadata `workspaceId` is the session (personal) workspace
-    // — the breadcrumb for legacy single-workspace reads. Per-call
-    // workspaceId lives on tool.done events.
-    expect(metadataLine.workspaceId).toBe("ws_user_user_alice");
+    // The metadata `workspaceId` is the session's workspace — here the owner's
+    // default one, provisioned with an opaque id. Per-call workspaceId lives
+    // on tool.done events.
+    expect(metadataLine.workspaceId).toBe(await defaultWorkspaceId(runtime, identity.id));
+    expect(metadataLine.workspaceId).toMatch(/^ws_[0-9a-f]{16}$/);
 
     await runtime.shutdown();
   });
@@ -152,7 +163,7 @@ describe("conversation persistence — workspace layout", () => {
 
     const result = await runtime.chat({ message: "hello userId", identity });
 
-    const convFile = personalWorkspaceConvPath(workDir, identity.id, result.conversationId);
+    const convFile = await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     const userEvent = lines
@@ -196,7 +207,7 @@ describe("conversation persistence — workspace layout", () => {
 
     expect(result2.conversationId).toBe(result1.conversationId);
 
-    const convFile = personalWorkspaceConvPath(workDir, identity.id, result1.conversationId);
+    const convFile = await defaultWorkspaceConvPath(runtime, workDir, identity.id, result1.conversationId);
     expect(existsSync(convFile)).toBe(true);
 
     // Wait for any pending writes (title generation + metadata cache).
@@ -226,8 +237,8 @@ describe("conversation persistence — workspace layout", () => {
     const result = await runtime.chat({ message: "no identity" });
 
     // Dev fallback owner is `usr_default`; its conversation lives in that
-    // identity's personal workspace.
-    const convFile = personalWorkspaceConvPath(workDir, "usr_default", result.conversationId);
+    // identity's default workspace.
+    const convFile = await defaultWorkspaceConvPath(runtime, workDir, "usr_default", result.conversationId);
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     const userEvent = lines

@@ -2,6 +2,8 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import type { LanguageModelV4, LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { callModel, NO_FINISH_PART_RAW } from "../../src/model/stream.ts";
 import { log } from "../../src/observability/log.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import {
@@ -10,7 +12,12 @@ import {
   requestIdentityAttrs,
   withSpan,
 } from "../../src/observability/index.ts";
-import { type RequestContext, runWithRequestContext } from "../../src/runtime/request-context.ts";
+import {
+  getRequestContext,
+  type RequestContext,
+  runDetached,
+  runWithRequestContext,
+} from "../../src/runtime/request-context.ts";
 
 const exporter = new InMemorySpanExporter();
 
@@ -95,6 +102,65 @@ describe("withSpan", () => {
   });
 });
 
+describe("llm.call span", () => {
+  function finishOnlyModel(finish: LanguageModelV4StreamPart | null): LanguageModelV4 {
+    return {
+      specificationVersion: "v4",
+      provider: "test",
+      modelId: "test-1",
+      supportedUrls: {},
+      async doGenerate() {
+        throw new Error("doGenerate not used");
+      },
+      async doStream() {
+        return {
+          stream: new ReadableStream<LanguageModelV4StreamPart>({
+            start(controller) {
+              controller.enqueue({ type: "stream-start", warnings: [] });
+              if (finish) controller.enqueue(finish);
+              controller.close();
+            },
+          }),
+        };
+      },
+    };
+  }
+  const usage = {
+    inputTokens: { total: 1, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+    outputTokens: { total: 1, text: undefined, reasoning: undefined },
+  };
+  const prompt = { prompt: [] };
+
+  it("stamps the provider's raw finish reason next to the unified one", async () => {
+    await callModel(
+      finishOnlyModel({
+        type: "finish",
+        usage,
+        finishReason: { unified: "other", raw: "compaction" },
+      }),
+      prompt,
+      () => {},
+    );
+    const attrs = spanNamed("llm.call").attributes;
+    expect(attrs["llm.finish_reason"]).toBe("other");
+    expect(attrs["llm.finish_reason_raw"]).toBe("compaction");
+  });
+
+  it("stamps the no-finish-part marker when the stream ends without a finish", async () => {
+    await callModel(finishOnlyModel(null), prompt, () => {});
+    expect(spanNamed("llm.call").attributes["llm.finish_reason_raw"]).toBe(NO_FINISH_PART_RAW);
+  });
+
+  it("omits the raw attribute when the provider reports none", async () => {
+    await callModel(
+      finishOnlyModel({ type: "finish", usage, finishReason: { unified: "stop", raw: undefined } }),
+      prompt,
+      () => {},
+    );
+    expect(spanNamed("llm.call").attributes["llm.finish_reason_raw"]).toBeUndefined();
+  });
+});
+
 describe("currentTraceId / injectTraceparent", () => {
   it("has no trace id and injects no traceparent outside a span", () => {
     expect(currentTraceId()).toBeUndefined();
@@ -108,6 +174,40 @@ describe("currentTraceId / injectTraceparent", () => {
       const headers = injectTraceparent({} as Record<string, string>);
       expect(headers.traceparent).toContain(id ?? "");
     });
+  });
+});
+
+describe("runDetached", () => {
+  // A timer captures the context it is created in, so what matters is the
+  // context each timer's callback sees, not the context at the call site.
+  function fireLater<T>(read: () => T): Promise<T> {
+    return new Promise((resolve) => setTimeout(() => resolve(read()), 0));
+  }
+  const read = () => ({ traceId: currentTraceId(), ctx: getRequestContext() });
+
+  it("arms a timer that fires outside the caller's trace and request", async () => {
+    await runWithRequestContext(identityCtx(), () =>
+      withSpan("agent.turn", {}, async () => {
+        const callerTrace = currentTraceId();
+        const inherited = await fireLater(read);
+        const detached = await runDetached(() => fireLater(read));
+
+        expect(inherited.traceId).toBe(callerTrace);
+        expect(inherited.ctx?.workspaceId).toBe("ws_abc123");
+        expect(detached.traceId).toBeUndefined();
+        expect(detached.ctx).toBeUndefined();
+      }),
+    );
+  });
+
+  it("opens a new root trace for a span started inside it", async () => {
+    await withSpan("agent.turn", {}, async () => {
+      await runDetached(() => withSpan("llm.call", {}, async () => {}));
+    });
+    const outer = spanNamed("agent.turn");
+    const detached = spanNamed("llm.call");
+    expect(detached.spanContext().traceId).not.toBe(outer.spanContext().traceId);
+    expect(detached.parentSpanContext).toBeUndefined();
   });
 });
 

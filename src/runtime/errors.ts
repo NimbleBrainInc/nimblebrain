@@ -31,6 +31,27 @@ export class ConversationAccessDeniedError extends Error {
 }
 
 /**
+ * Thrown when a chat or upload names a conversation that is not one of the
+ * caller's conversations in the workspace the request addresses. A request
+ * under `/v1/workspaces/<wsId>/` reaches only conversations stored under that
+ * workspace (ADR-0037), so a conversation stored in another workspace, one
+ * owned by someone else, and one that does not exist are one answer: the
+ * caller learns nothing about where, or whether, the id exists.
+ *
+ * The HTTP handler maps this to `404 conversation_not_found`.
+ */
+export class ConversationNotFoundError extends Error {
+  readonly code = "conversation_not_found";
+  constructor(
+    public readonly conversationId: string,
+    public readonly workspaceId: string,
+  ) {
+    super(`Conversation ${conversationId} not found in workspace ${workspaceId}`);
+    this.name = "ConversationNotFoundError";
+  }
+}
+
+/**
  * Thrown when the owner of a conversation tries to RESUME it but is no longer a
  * member of the workspace the conversation lives in. A conversation is sealed to
  * its workspace (its tools/skills/apps resolve there), so resuming it as a
@@ -43,8 +64,7 @@ export class ConversationAccessDeniedError extends Error {
  * `ConversationAccessDeniedError` so it inherits the same
  * `403 conversation_access_denied` HTTP mapping (the caller learns only "no
  * access"), while staying a distinct type so logs/telemetry/tests can tell an
- * offboarding denial from an ownership denial. Personal workspaces are
- * sole-member by construction, so this only ever fires for shared workspaces.
+ * offboarding denial from an ownership denial.
  */
 export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDeniedError {
   constructor(
@@ -65,7 +85,6 @@ export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDe
  * resume gate). The stable `code` lets the automations scheduler recognize this
  * outcome and record the run as **skipped** (not a failure — no consecutive-error
  * count, no auto-disable) so the automation self-heals if the owner is re-added.
- * Personal workspaces are sole-member by construction, so this never fires there.
  */
 export class WorkspaceMembershipRevokedError extends Error {
   readonly code = "workspace_membership_revoked";

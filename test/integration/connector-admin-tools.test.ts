@@ -396,6 +396,30 @@ describe("the /mcp/<wsId> door", () => {
   });
 });
 
+describe("an app's tools/call over /mcp (the iframe bridge)", () => {
+  // The bridge names the calling view's server under this key.
+  const fromApp = { "ai.nimblebrain/source": SERVER };
+
+  it("refuses a member's app with workspace_admin_required and runs an admin's", async () => {
+    resetCalls();
+    const member = await mcpClient(MEMBER_WS);
+    const admin = await mcpClient(ADMIN_WS);
+    try {
+      const refused = await member.callTool({ name: CONFIGURE, arguments: {}, _meta: fromApp });
+      expect(refused.isError).toBe(true);
+      expect(refused.structuredContent).toMatchObject({ error: "workspace_admin_required" });
+      expect(ran(MEMBER_WS)).toEqual([]);
+
+      const allowed = await admin.callTool({ name: CONFIGURE, arguments: {}, _meta: fromApp });
+      expect(allowed.isError).toBeFalsy();
+      expect(ran(ADMIN_WS)).toEqual(["configure"]);
+    } finally {
+      await member.close();
+      await admin.close();
+    }
+  });
+});
+
 describe("the REST tools/call door (ToolRegistry.execute)", () => {
   it("refuses a member and runs an admin", async () => {
     resetCalls();

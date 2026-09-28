@@ -76,7 +76,7 @@ export function buildMintRequest(params: MintRequestParams): string {
   }
   // Validate against the runtime's OWN canonical workspace-id grammar — the
   // runtime is authoritative over its workspaces and mints only for real ids
-  // (`ws_<hex>`, `ws_user_<userId>`). This is stricter than the authorizer's
+  // (`WORKSPACE_ID_RE`). This is stricter than the authorizer's
   // generic safe-id gate, and fails loud here if a non-workspace string ever
   // reaches the signer. The real id flows through verbatim — no rewriting.
   if (!WORKSPACE_ID_RE.test(params.workspace)) {

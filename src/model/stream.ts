@@ -69,6 +69,16 @@ export class ModelStreamStallError extends Error {
   }
 }
 
+/**
+ * `finishReason.raw` recorded when a stream ends without a `finish` part. The
+ * unified value is then "other", the same bucket the AI SDK uses for provider
+ * stops it does not recognize, so this marker is what tells "the provider sent
+ * no finish" apart from "the provider sent a stop reason we could not map".
+ * Provider raw values are provider enum strings (e.g. Anthropic `end_turn`),
+ * never this one.
+ */
+export const NO_FINISH_PART_RAW = "no_finish_part";
+
 export interface StreamResult {
   content: LanguageModelV4Content[];
   usage: LanguageModelV4Usage;
@@ -110,7 +120,8 @@ interface StreamState {
 /**
  * Trace one model call as an `llm.call` span nested under the active
  * `agent.turn`. Attributes are operational only — model id, provider, token
- * counts, finish reason. Prompt and completion content are NEVER recorded.
+ * counts, finish reason (unified and raw). Prompt and completion content are
+ * NEVER recorded.
  */
 export async function callModel(
   model: LanguageModelV4,
@@ -138,6 +149,10 @@ export async function callModel(
         "llm.tokens.input": result.usage.inputTokens.total ?? 0,
         "llm.tokens.output": result.usage.outputTokens.total ?? 0,
         "llm.finish_reason": result.finishReason.unified,
+        // The provider's own stop reason (an enum string such as `end_turn`),
+        // or NO_FINISH_PART_RAW. Several distinct provider stops share the
+        // unified "other"; this names which one it was.
+        ...(result.finishReason.raw ? { "llm.finish_reason_raw": result.finishReason.raw } : {}),
         ...(result.ttftMs !== undefined ? { "llm.ttft_ms": result.ttftMs } : {}),
       });
       return result;
@@ -175,9 +190,9 @@ async function callModelInner(
       outputTokens: { total: 0, text: undefined, reasoning: undefined },
     },
     // Default if the stream ends without a `finish` part. "other" is the
-    // V4-defined catch-all for unclassified stops; using it directly avoids
-    // the runtime-vs-type lie of `"unknown" as "other"`.
-    finishReason: { unified: "other", raw: undefined },
+    // V4-defined catch-all for unclassified stops; the raw marker keeps this
+    // case distinguishable from a provider stop reason that maps to "other".
+    finishReason: { unified: "other", raw: NO_FINISH_PART_RAW },
     accumulatedText: "",
     accumulatedReasoning: "",
     reasoningProviderMetadata: undefined,

@@ -31,7 +31,6 @@ import {
 } from "../../../src/runtime/request-context.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
-import { personalWorkspaceIdFor } from "../../../src/workspace/workspace-store.ts";
 
 // ── Stubs ─────────────────────────────────────────────────────────
 
@@ -131,7 +130,8 @@ const SHARED_WS = "ws_helix";
 const OTHER_WS = "ws_acme";
 const USER_ID = "u1";
 const OTHER_USER = "u2";
-const PERSONAL_WS = personalWorkspaceIdFor(USER_ID);
+/** A workspace only the caller belongs to. */
+const PERSONAL_WS = "ws_0000000000000001";
 
 let workDir = "";
 beforeEach(() => {
@@ -255,7 +255,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
   });
 
   // Pins: the per-call RequestContext carries the ROUTED workspace id. The
-  // chat session's ambient scope is the personal workspace (the session
+  // chat session's ambient scope is another workspace (the session
   // bridge); a call to the bound focused workspace must restamp to it so
   // `nb__*` handlers reading `requireWorkspaceId()` see the right workspace.
   test("restamps RequestContext.workspaceId to the routed workspace, even with a different ambient workspace", async () => {

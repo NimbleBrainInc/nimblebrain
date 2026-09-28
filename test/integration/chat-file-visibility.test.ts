@@ -13,16 +13,14 @@ import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 // Files uploaded with a chat land in the workspace the chat is addressed to
-// (`/v1/workspaces/<wsId>/chat/*`). The test uploads and reads in the dev
-// user's personal workspace, as the same identity (DEV_IDENTITY in dev mode),
-// so the file store paths line up.
-const PERSONAL_WS_ID = personalWorkspaceIdFor(DEV_IDENTITY.id);
+// (`/v1/workspaces/<wsId>/chat/*`). The test uploads and reads in a workspace
+// of the dev user's own, as the same identity (DEV_IDENTITY in dev mode), so
+// the file store paths line up. Assigned in `beforeAll`.
+let DEV_WS_ID: string;
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -37,14 +35,14 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  // Provision the dev user's personal workspace + registry so the
-  // file-store paths used by chat-multipart ingest exist before the
-  // first request hits `/v1/workspaces/<wsId>/chat/stream`.
-  await ensureUserWorkspace(runtime.getWorkspaceStore(), {
-    id: DEV_IDENTITY.id,
-    displayName: DEV_IDENTITY.displayName,
+  // Provision the dev user's own workspace + registry so the file-store
+  // paths used by chat-multipart ingest exist before the first request hits
+  // `/v1/workspaces/<wsId>/chat/stream`.
+  const devWs = await runtime.getWorkspaceStore().create("Dev's workspace", undefined, {
+    members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
   });
-  await runtime.ensureWorkspaceRegistry(PERSONAL_WS_ID);
+  DEV_WS_ID = devWs.id;
+  await runtime.ensureWorkspaceRegistry(DEV_WS_ID);
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
@@ -62,7 +60,7 @@ async function uploadChatFile(content: string, filename: string, mimeType: strin
   const file = new File([bytes], filename, { type: mimeType });
   form.append("files", file);
 
-  const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/chat/stream`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${DEV_WS_ID}/chat/stream`, {
     method: "POST",
     body: form,
   });
@@ -78,7 +76,7 @@ async function callFilesTool(
   tool: string,
   args: Record<string, unknown>,
 ): Promise<{ status: number; body: unknown }> {
-  const res = await fetch(`${baseUrl}/v1/workspaces/${PERSONAL_WS_ID}/tools/call`, {
+  const res = await fetch(`${baseUrl}/v1/workspaces/${DEV_WS_ID}/tools/call`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "files", tool, arguments: args }),
@@ -171,7 +169,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     expect(id).toBeDefined();
 
     // Files are workspace-owned, but the bare id resolves the workspace: the
-    // upload landed in the chat's workspace (here the dev user's personal
+    // upload landed in the chat's workspace (here the dev user's own
     // workspace), and the locator finds it there — no workspace in the URL.
     const res = await fetch(`${baseUrl}/v1/files/${id}`);
     expect(res.status).toBe(200);

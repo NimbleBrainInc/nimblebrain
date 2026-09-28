@@ -45,8 +45,9 @@ import { AUTOMATIONS_PANEL_HTML } from "./ui-resource.ts";
  *   synchronously inside that user's genuine context.
  * - everything else (`scheduled`, and any future/unknown value): act as the
  *   automation's owner, focused on its provenance workspace, with the ambient
- *   context IGNORED — a scheduled run can inherit a stale timer context (see
- *   `getExecutorContext`) that would otherwise run one tenant's automation in
+ *   context IGNORED. The scheduler arms its timer detached (`runDetached`), so
+ *   a scheduled run normally has no ambient context, but who a run acts as must
+ *   not rest on that: an inherited context would run one tenant's automation in
  *   another tenant's workspace.
  *
  * Reading ambient context is **fail-closed**: it requires an explicit `manual`
@@ -115,7 +116,7 @@ export async function createAutomationsSource(
   // conversation turn. `getExecutorContext` resolves WHO each run acts as; the
   // ALS read is isolated here so the decision logic stays pure and testable in
   // `resolveExecutorContext`. A `scheduled` run ignores the ambient context
-  // because the timer can carry a stale one (see `resolveExecutorContext`).
+  // (see `resolveExecutorContext`).
   const getExecutorContext = (
     automation: Automation | undefined,
     trigger: AutomationRunTrigger,

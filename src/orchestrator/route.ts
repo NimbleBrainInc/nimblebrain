@@ -437,9 +437,8 @@ export async function routeToolCall(opts: {
  *      own identity, reached here as a bare identity tool and resolved by
  *      `userId` (never through a workspace registry). Reaching it inside a
  *      workspace requires an active `PersonalConnectorGrant` to THAT workspace
- *      (fail closed → `ConnectorGrantDenied`) — uniformly, with no special case
- *      for the caller's own personal workspace (a personal workspace is just a
- *      workspace). The connector runs as the caller with its own identity-scoped
+ *      (fail closed → `ConnectorGrantDenied`) — uniformly, in every workspace.
+ *      The connector runs as the caller with its own identity-scoped
  *      credentials (`users/<id>/…`), so the session's workspace never enters the
  *      dispatch — no crossing.
  *
@@ -495,9 +494,8 @@ async function routeIdentityCall(
   const connector = await runtime.getIdentityConnectorSource?.(identityId, sourceName);
   if (connector) {
     // A personal connector is the user's own; reaching it inside a workspace
-    // requires an active grant to THAT workspace — uniformly, with no special
-    // case for the user's personal workspace (a personal workspace is just a
-    // workspace and gets no "free at home" treatment). Fail closed. The
+    // requires an active grant to THAT workspace — uniformly, with no "free at
+    // home" workspace. Fail closed. The
     // connector runs as the caller with its own identity-scoped credentials.
     const granted =
       workspaceId !== undefined &&

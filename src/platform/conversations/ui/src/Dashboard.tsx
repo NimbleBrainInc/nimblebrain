@@ -21,7 +21,7 @@ export function Dashboard() {
   // workspace), never as a filter value: the server derives the workspace from
   // the request itself, so this app sends no workspace argument.
   const { workspace } = useHostContext<{
-    workspace?: { id: string; name: string; isPersonal?: boolean };
+    workspace?: { id: string; name: string };
   }>();
   // A primitive (not the workspace object, whose identity churns per push) so a
   // refetch fires when the workspace actually changes and not on every push.

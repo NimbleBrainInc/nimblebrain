@@ -350,7 +350,7 @@ describe("Dev mode", () => {
     const originalWarn = console.warn;
     console.warn = () => {};
 
-    const adapter = new DevIdentityProvider(workDir, userStore, wsStore);
+    const adapter = new DevIdentityProvider(workDir, userStore);
 
     // verifyRequest returns default identity
     const req = new Request("http://localhost/v1/bootstrap");

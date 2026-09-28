@@ -5,7 +5,7 @@ description: Per-workspace configuration — connectors, skill directories, and 
 
 import { Aside } from '@astrojs/starlight/components';
 
-Each workspace has its own config file at `<workDir>/workspaces/<wsId>/workspace.json`. This is where connectors, skill directories, and optional model or identity overrides live — **not** in [`nimblebrain.json`](/config/nimblebrain-json).
+Each workspace has its own config file at `<workDir>/workspaces/<wsId>/workspace.json`. This is where connectors, skill directories, and optional model overrides live — **not** in [`nimblebrain.json`](/config/nimblebrain-json).
 
 In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) the runtime uses a single workspace with ID `_dev`, so you'll find its config at `<workDir>/workspaces/_dev/workspace.json`. Under auth, workspaces are created and managed via the `nb__manage_workspaces` tool or the HTTP API; their files are maintained by the runtime. Team workspace ids are opaque (`ws_<16-hex>`) and name-independent.
 
@@ -26,7 +26,6 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
   ],
   "skillDirs": ["./skills", "/opt/nimblebrain/skills"],
   "models": { "default": "anthropic:claude-opus-4-6" },
-  "identity": "You are the Acme Product Copilot. Be concise. Prefer data-backed answers.",
   "createdAt": "2026-03-05T10:00:00.000Z",
   "updatedAt": "2026-04-15T09:15:00.000Z"
 }
@@ -36,7 +35,7 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | `string` | Yes | Workspace ID. Opaque `ws_<16-hex>` for team workspaces, `ws_user_<userId>` for personal, `_dev` in dev mode. Name-independent — never parse it. |
+| `id` | `string` | Yes | Workspace ID. Opaque, usually `ws_<16-hex>` (some are `ws_user_<id>`), `_dev` in dev mode. Name-independent — never parse it. |
 | `name` | `string` | Yes | Human-readable workspace name shown in the UI. Freely editable; changing it does not change the id or on-disk path. |
 | `about` | `string \| null` | No | Short human-readable description, set in the workspace settings UI. Surfaced on the org "About" view and the workspace directory. Defaults to `null`. |
 | `members` | `array` | Yes | Users with access. Each entry is `{ userId, role }` where role is `"admin"` or `"member"`. |
@@ -46,9 +45,6 @@ In dev mode (no [`instance.json`](/config/instance-json/), no auth configured) t
 | `notifications` | `object` | No | Notification source ceilings and delivery routes. `notifications.sources` maps a connector's server name to `{ "maxLevel": "info" \| "attention" \| "urgent" }` — the highest level that source's items may reach a route at, defaulting to `info` for a source nobody has raised. `notifications.routes` is an array of `{ id, createdBy, match, deliver }`. Written only by a workspace admin through **Settings → Notifications**; see [Notifications](/using/notifications). |
 | `skillDirs` | `string[]` | No | Directories scanned for skill markdown files, in addition to the built-in skills. |
 | `models` | `object` | No | Per-workspace model slot overrides. Partial — missing slots inherit from `nimblebrain.json`. |
-| `identity` | `string` | No | Markdown prompt appended as a context skill for this workspace. |
-| `isPersonal` | `boolean` | No | `true` for a user's auto-provisioned personal workspace. Frozen post-create; never parse the id to infer it. |
-| `ownerUserId` | `string` | When `isPersonal` | Owner of a personal workspace. Required when `isPersonal: true`, forbidden otherwise. |
 | `createdAt` | `string` (ISO 8601) | Yes | Timestamp, maintained by the runtime. |
 | `updatedAt` | `string` (ISO 8601) | Yes | Timestamp, maintained by the runtime. |
 
@@ -109,13 +105,9 @@ Any workspace can override individual model slots. Slots you don't specify fall 
 
 Here the workspace uses Opus for `default` but still uses the instance default for `fast`.
 
-## Identity override
+## Workspace persona
 
-`identity` is a markdown block appended to the agent's system prompt as a context skill. Use it to give a workspace a distinct persona or domain focus:
-
-```json
-{ "identity": "You are the Acme Product Copilot. When asked about metrics, always cite the underlying query." }
-```
+To give a workspace a distinct persona or domain focus, write it as [workspace instructions](/guide/settings/#general-widsettingsgeneral) (This Workspace → General). An `identity` key in `workspace.json` is ignored.
 
 ## Related
 

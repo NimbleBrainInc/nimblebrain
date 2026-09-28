@@ -25,7 +25,11 @@ capability key, catalog-metadata key, and result marker is keyed under it —
 `ai.nimblebrain/resources/read`, `ai.nimblebrain/host-resources`,
 `ai.nimblebrain/connector`, `ai.nimblebrain/host`,
 `ai.nimblebrain/skill-activated`. One prefix, one place to grep, and no
-collision with another vendor's keys by construction.
+collision with another vendor's keys by construction. The namespace governs
+names in the protocol's own key spaces, not resource URIs: MCP leaves a URI's
+scheme to its publisher, so a resource the host reads by convention (such as
+`app://instructions`) is reserved by scheme in `src/tools/resource-schemes.ts`,
+as MCP Apps reserves `ui://`, rather than prefixed.
 
 **A `_meta` key is one of exactly two kinds, and the kind is decided by what
 accepting it from a server would widen.**

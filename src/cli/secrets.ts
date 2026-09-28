@@ -1,5 +1,7 @@
+import { existsSync, realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import type { SecretsConfig } from "../config/secrets.ts";
+import { credentialStoreBackendName, type SecretsConfig } from "../config/secrets.ts";
 import { defaultWorkDir } from "../connectors/runtime/paths.ts";
 import type { CredentialScope, CredentialStore } from "../tools/credential-store.ts";
 import {
@@ -52,6 +54,9 @@ const USAGE = `Usage:
   --workspace  workspace id, required for --scope workspace
   --user       user id, required for --scope user
   --config     path to nimblebrain.json
+
+\`set\` and \`delete\` first print, to stderr, the config file read, the work
+directory, the backend, and whether it seals.
 
 \`set\` reads the value from stdin, or prompts for it when stdin is a terminal.
 It is never taken from the command line, where it would land in shell history
@@ -161,6 +166,40 @@ function promptForValue(label: string): Promise<string> {
   });
 }
 
+/** A store, and what an operator needs to see to know which deployment it is. */
+export interface OpenedStore {
+  store: CredentialStore;
+  /** The config file that was read. */
+  configPath: string;
+  /** The work directory the store roots in. */
+  workDir: string;
+  /** The `secrets.backend` that answered. */
+  backend: string;
+}
+
+/**
+ * Refuse when the current directory and the work directory each hold a config.
+ *
+ * Config resolution takes a project-local `.nimblebrain/nimblebrain.json` over
+ * the work directory's, which is the documented development layout and what the
+ * server does too, so it stays. But an operator standing in a checkout that has
+ * one, meaning to write to the deployment in the work directory, would write to
+ * the checkout instead, and nothing would say so. When both exist and are
+ * different files, neither guess is safe; `--config` names the one meant.
+ */
+function assertOneCandidateConfig(): void {
+  const local = resolve(".nimblebrain", "nimblebrain.json");
+  const workDirs = join(defaultWorkDir(), "nimblebrain.json");
+  if (!existsSync(local) || !existsSync(workDirs)) return;
+  if (realpathSync(local) === realpathSync(workDirs)) return;
+  throw new UsageError(
+    "two configs could each be the deployment meant:\n" +
+      `  ${local}  (the current directory's, which is the one that would be read)\n` +
+      `  ${workDirs}  (the work directory's)\n` +
+      "pass --config <path> to name one",
+  );
+}
+
 /**
  * Build the store the way `runServe` does, from the same config.
  *
@@ -172,18 +211,35 @@ function promptForValue(label: string): Promise<string> {
  * directory the server never reads, and a deployment configured to seal writes
  * plaintext because the config that asked for sealing was never opened.
  */
-function openStore(configPath: string | undefined): CredentialStore {
+function openStore(configPath: string | undefined): OpenedStore {
+  if (!configPath) assertOneCandidateConfig();
   const config = loadConfig({
     ...(configPath ? { config: configPath } : {}),
     defaultWorkDir: defaultWorkDir(),
   });
   registerBuiltinCredentialStoreBackends();
-  return createCredentialStore({
-    // `loadConfig` always resolves one now that a default is passed; the
-    // fallback keeps the type honest rather than guarding a reachable case.
-    workDir: config.workDir ?? defaultWorkDir(),
-    secrets: config.secrets as SecretsConfig | undefined,
-  });
+  // `loadConfig` always resolves one now that a default is passed; the
+  // fallback keeps the type honest rather than guarding a reachable case.
+  const workDir = config.workDir ?? defaultWorkDir();
+  const secrets = config.secrets as SecretsConfig | undefined;
+  return {
+    store: createCredentialStore({ workDir, secrets }),
+    // Always set by `loadConfig`; optional only on the shared `RuntimeConfig`.
+    configPath: config.configPath ?? "",
+    workDir,
+    backend: credentialStoreBackendName(secrets),
+  };
+}
+
+/**
+ * The line `set` and `delete` print before they act. Where the write goes and
+ * how, never what: it is built from the destination alone and cannot reach a
+ * value.
+ */
+export function describeDestination(opened: OpenedStore): string {
+  const seals =
+    opened.store.seals === undefined ? "not reported" : opened.store.seals ? "yes" : "no";
+  return `config ${opened.configPath} · work dir ${opened.workDir} · backend ${opened.backend} · seals ${seals}`;
 }
 
 export interface SecretsCommandIo {
@@ -209,7 +265,7 @@ const DEFAULT_IO: SecretsCommandIo = {
 export async function runSecrets(
   argv: string[],
   io: SecretsCommandIo = DEFAULT_IO,
-  openStoreFn: (configPath: string | undefined) => CredentialStore = openStore,
+  openStoreFn: (configPath: string | undefined) => OpenedStore = openStore,
 ): Promise<number> {
   let positionals: string[];
   let values: Record<string, string | undefined>;
@@ -240,20 +296,23 @@ export async function runSecrets(
     );
     return 2;
   }
+  // Before the store is opened, so a mistyped command is reported as one and
+  // not as whatever opening the config would have said.
+  if (action !== "set" && action !== "list" && action !== "delete") {
+    io.stderr(action ? `unknown command "${action}"\n${USAGE}` : USAGE);
+    return 2;
+  }
 
   try {
     const scope = parseScope(values);
-    const store = openStoreFn(values.config);
+    const opened = openStoreFn(values.config);
     switch (action) {
       case "set":
-        return await setSecret(store, scope, key, io);
+        return await setSecret(opened, scope, key, io);
       case "list":
-        return await listSecrets(store, scope, key, io);
+        return await listSecrets(opened.store, scope, key, io);
       case "delete":
-        return await deleteSecret(store, scope, key, io);
-      default:
-        io.stderr(action ? `unknown command "${action}"\n${USAGE}` : USAGE);
-        return 2;
+        return await deleteSecret(opened, scope, key, io);
     }
   } catch (err) {
     if (err instanceof UsageError) {
@@ -266,12 +325,14 @@ export async function runSecrets(
 }
 
 async function setSecret(
-  store: CredentialStore,
+  opened: OpenedStore,
   scope: CredentialScope,
   key: string | undefined,
   io: SecretsCommandIo,
 ): Promise<number> {
   if (!key) throw new UsageError("set requires a key");
+  const { store } = opened;
+  io.stderr(describeDestination(opened));
   // This store never reconciles, so it has not checked its key against what is
   // on disk. A shell holding a different key than the server would seal the
   // value where nothing else can open it. Before the prompt, so the operator
@@ -310,13 +371,14 @@ async function listSecrets(
 }
 
 async function deleteSecret(
-  store: CredentialStore,
+  opened: OpenedStore,
   scope: CredentialScope,
   key: string | undefined,
   io: SecretsCommandIo,
 ): Promise<number> {
   if (!key) throw new UsageError("delete requires a key");
-  await store.delete(scope, key);
+  io.stderr(describeDestination(opened));
+  await opened.store.delete(scope, key);
   io.stderr(`deleted ${key}`);
   return 0;
 }

@@ -2,16 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesResultSchema,
-  ListToolsRequestSchema,
-  ReadResourceResultSchema,
-  type ListResourcesResult,
-  type ReadResourceResult,
-} from "@modelcontextprotocol/sdk/types.js";
+import { ListResourcesResultSchema, ReadResourceResultSchema } from "@modelcontextprotocol/core";
+import { Server, InMemoryTransport } from "@modelcontextprotocol/server";
+import type { ListResourcesResult, ReadResourceResult } from "@modelcontextprotocol/server";
 import {
   FileBackedHostResourcesResolver,
   HOST_RESOURCES_LIST_METHOD,
@@ -79,7 +72,7 @@ async function seedFile(
 async function buildFakeConnector(uriToRead: string) {
   const server = new Server({ name: "fake-connector", version: "0.0.1" }, { capabilities: { tools: {} } });
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler('tools/list', async () => ({
     tools: [
       {
         name: "read_via_host",
@@ -89,7 +82,7 @@ async function buildFakeConnector(uriToRead: string) {
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async () => {
+  server.setRequestHandler('tools/call', async () => {
     // Server-initiated request to the client — this is the host-resources
     // method going back to the platform side, where McpSource's inbound
     // handler dispatches to the resolver. The SDK's `Server.request`
@@ -187,7 +180,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { name: "fake-connector", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler('tools/list', async () => ({
       tools: [
         {
           name: "list_csvs",
@@ -196,7 +189,7 @@ describe("McpSource inbound host-resources handlers", () => {
         },
       ],
     }));
-    server.setRequestHandler(CallToolRequestSchema, async () => {
+    server.setRequestHandler('tools/call', async () => {
       try {
         const result = (await server.request(
           {
@@ -267,7 +260,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { name: "fake-connector", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler('tools/list', async () => ({
       tools: [
         {
           name: "list_drafts",
@@ -276,7 +269,7 @@ describe("McpSource inbound host-resources handlers", () => {
         },
       ],
     }));
-    server.setRequestHandler(CallToolRequestSchema, async () => {
+    server.setRequestHandler('tools/call', async () => {
       try {
         const result = (await server.request(
           {

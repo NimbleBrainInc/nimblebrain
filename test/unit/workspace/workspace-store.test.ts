@@ -9,8 +9,6 @@ import { parseNamespacedToolName } from "../../../src/tools/namespace.ts";
 import {
   generateWorkspaceId,
   MemberConflictError,
-  personalWorkspaceIdFor,
-  personalWorkspaceSlugFor,
   slugify,
   WorkspaceConflictError,
   WorkspaceStore,
@@ -63,9 +61,8 @@ describe("generateWorkspaceId", () => {
 
 // ── Slugification ──────────────────────────────────────────────────
 
-// `slugify` is retained for the explicit-slug-override path of `create`
-// and for personal-workspace slugs (`personalWorkspaceSlugFor`). The
-// default, no-slug create path produces an OPAQUE id (see
+// `slugify` is retained for the explicit-slug-override path of `create`.
+// The default, no-slug create path produces an OPAQUE id (see
 // `generateWorkspaceId` tests above) — the name is not derived into the id.
 describe("slugify", () => {
   test("converts spaces to underscores and lowercases", () => {
@@ -301,66 +298,15 @@ describe("WorkspaceStore file permissions", () => {
   });
 });
 
-// ── Personal workspace helper + co-required invariant ─────────────
+// ── create ─────────────────────────────────────────────────────────
 
-describe("personalWorkspaceIdFor / personalWorkspaceSlugFor", () => {
-  test("constructs ws_user_<userId> with the full user id preserved", () => {
-    // The full user id (including the provider prefix) is concatenated
-    // verbatim. This is the "dumb concat" rule — see the helper's
-    // docblock for why we don't strip prefixes.
-    expect(personalWorkspaceIdFor("user_abc123")).toBe("ws_user_user_abc123");
-    expect(personalWorkspaceIdFor("usr_default")).toBe("ws_user_usr_default");
-  });
-
-  test("slug form is the id without the ws_ prefix — round-trips through create", async () => {
-    const slug = personalWorkspaceSlugFor("user_alice");
-    expect(slug).toBe("user_user_alice");
-
-    const ws = await store.create("Alice", slug, {
-      isPersonal: true,
-      ownerUserId: "user_alice",
-    });
-    expect(ws.id).toBe(personalWorkspaceIdFor("user_alice"));
-  });
-
-  test("rejects empty / non-string userId", () => {
-    expect(() => personalWorkspaceIdFor("")).toThrow(/userId is required/);
-    expect(() => personalWorkspaceIdFor(undefined as unknown as string)).toThrow(/userId is required/);
-  });
-});
-
-describe("WorkspaceStore.create: isPersonal/ownerUserId invariants", () => {
-  test("defaults isPersonal to false and ownerUserId to undefined", async () => {
+describe("WorkspaceStore.create", () => {
+  test("writes no legacy personal fields", async () => {
     const ws = await store.create("Shared");
-    expect(ws.isPersonal).toBe(false);
-    expect(ws.ownerUserId).toBeUndefined();
+    const raw = JSON.parse(await readFile(join(workDir, "workspaces", ws.id, "workspace.json"), "utf-8"));
+    expect("isPersonal" in raw).toBe(false);
+    expect("ownerUserId" in raw).toBe(false);
     expect(ws.about).toBeNull();
-  });
-
-  test("persists isPersonal + ownerUserId when supplied together", async () => {
-    const ws = await store.create("Alice", "user_user_alice", {
-      isPersonal: true,
-      ownerUserId: "user_alice",
-    });
-    expect(ws.isPersonal).toBe(true);
-    expect(ws.ownerUserId).toBe("user_alice");
-
-    // Round-trip through disk.
-    const readBack = await store.get(ws.id);
-    expect(readBack?.isPersonal).toBe(true);
-    expect(readBack?.ownerUserId).toBe("user_alice");
-  });
-
-  test("rejects isPersonal=true without ownerUserId", async () => {
-    await expect(
-      store.create("Bad", "user_user_x", { isPersonal: true }),
-    ).rejects.toThrow(/isPersonal=true requires ownerUserId/);
-  });
-
-  test("rejects ownerUserId without isPersonal=true", async () => {
-    await expect(
-      store.create("Bad", "shared", { ownerUserId: "user_alice" }),
-    ).rejects.toThrow(/ownerUserId is only valid with isPersonal=true/);
   });
 
   test("persists about when supplied; defaults to null otherwise", async () => {
@@ -400,23 +346,54 @@ describe("WorkspaceStore.update", () => {
     expect(updated?.about).toBe("new description");
   });
 
-  test("throws PersonalWorkspaceInvariantError on attempted writes to isPersonal/ownerUserId (Stage 1.1)", async () => {
-    const ws = await store.create("Alice", "user_user_alice", {
-      isPersonal: true,
-      ownerUserId: "user_alice",
+  test("drops legacy isPersonal/ownerUserId from the record it writes", async () => {
+    const ws = await store.create("Mat's workspace", "legacy_own", {
+      members: [{ userId: "user_alice", role: "admin" }],
     });
-    // Cast to bypass the Pick<> at the type level — runtime must throw
-    // loudly instead of silently stripping the disallowed keys. The
-    // silent-strip behavior is what produced multi-admin personal
-    // workspaces in production; Stage 1.1 replaces it with a typed
-    // error. Exhaustive invariant coverage lives in
-    // `personal-workspace-invariants.test.ts`.
-    await expect(
-      store.update(ws.id, {
-        isPersonal: false,
-        ownerUserId: "user_evil",
-      } as unknown as { name: string }),
-    ).rejects.toThrow(/personal-workspace invariant/i);
+    const file = join(workDir, "workspaces", ws.id, "workspace.json");
+    const legacy = { ...JSON.parse(await readFile(file, "utf-8")), isPersonal: true, ownerUserId: "user_alice" };
+    await writeFile(file, JSON.stringify(legacy));
+
+    const updated = await store.update(ws.id, { about: "hi" });
+    expect(updated?.about).toBe("hi");
+    const raw = JSON.parse(await readFile(file, "utf-8"));
+    expect("isPersonal" in raw).toBe(false);
+    expect("ownerUserId" in raw).toBe(false);
+    expect(raw.id).toBe(ws.id);
+    expect(raw.members).toEqual([{ userId: "user_alice", role: "admin" }]);
+  });
+
+  test("ignores a members patch (membership changes go through the member operations)", async () => {
+    const ws = await store.create("Team", undefined, {
+      members: [{ userId: "user_alice", role: "admin" }],
+    });
+    // Cast past the Pick<> — the runtime must strip it too.
+    const updated = await store.update(ws.id, {
+      name: "Team 2",
+      members: [{ userId: "user_evil", role: "admin" }],
+    } as unknown as { name: string });
+    expect(updated?.name).toBe("Team 2");
+    expect(updated?.members).toEqual([{ userId: "user_alice", role: "admin" }]);
+    expect((await store.get(ws.id))?.members).toEqual([{ userId: "user_alice", role: "admin" }]);
+  });
+});
+
+describe("member operations apply to every workspace", () => {
+  test("a workspace created for one user can gain, re-role, and lose members", async () => {
+    const ws = await store.create("Mat's workspace", undefined, {
+      members: [{ userId: "user_mat", role: "admin" }],
+    });
+
+    await store.addMember(ws.id, "user_bob", "member");
+    await store.updateMemberRole(ws.id, "user_bob", "admin");
+    await store.updateMemberRole(ws.id, "user_mat", "member");
+    expect((await store.get(ws.id))?.members).toEqual([
+      { userId: "user_mat", role: "member" },
+      { userId: "user_bob", role: "admin" },
+    ]);
+
+    await store.removeMember(ws.id, "user_mat");
+    expect((await store.get(ws.id))?.members).toEqual([{ userId: "user_bob", role: "admin" }]);
   });
 });
 

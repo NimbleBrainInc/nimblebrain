@@ -23,7 +23,8 @@ const CATEGORY_ORDER: { category: BriefingSection["category"]; label: string }[]
  * model receives only the status note and reports an empty briefing.
  */
 export function renderBriefingText(briefing: BriefingOutput): string {
-  const parts: string[] = [briefing.greeting];
+  if (briefing.state === "empty") return "No app in this workspace provides briefing facets.";
+  const parts: string[] = [];
   if (briefing.lede) parts.push(briefing.lede);
 
   for (const { category, label } of CATEGORY_ORDER) {

@@ -5,7 +5,7 @@ import type {
   LanguageModelV4StreamPart,
 } from "@ai-sdk/provider";
 import { withRetry } from "../../src/engine/retry.ts";
-import { callModel, ModelStreamStallError } from "../../src/model/stream.ts";
+import { callModel, ModelStreamStallError, NO_FINISH_PART_RAW } from "../../src/model/stream.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 function userPrompt(text: string): LanguageModelV4CallOptions {
@@ -479,5 +479,65 @@ describe("callModel — time-to-first-token", () => {
     const model = createEchoModel({ responses: [{ toolCalls: [sampleToolCall] }] });
     const result = await callModel(model, userPrompt("call tool"), () => {});
     expect(typeof result.ttftMs).toBe("number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Raw (provider-native) finish reason
+// ---------------------------------------------------------------------------
+
+/** A text stream whose finish part carries the given unified + raw reason. */
+function finishStream(
+  unified: "stop" | "other",
+  raw: string | undefined,
+): ReadableStream<LanguageModelV4StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      controller.enqueue({ type: "text-start", id: "t0" });
+      controller.enqueue({ type: "text-delta", id: "t0", delta: "hi" });
+      controller.enqueue({ type: "text-end", id: "t0" });
+      controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified, raw } });
+      controller.close();
+    },
+  });
+}
+
+/** A text stream that closes without ever sending a finish part. */
+function noFinishStream(): ReadableStream<LanguageModelV4StreamPart> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue({ type: "stream-start", warnings: [] });
+      controller.enqueue({ type: "text-start", id: "t0" });
+      controller.enqueue({ type: "text-delta", id: "t0", delta: "hi" });
+      controller.enqueue({ type: "text-end", id: "t0" });
+      controller.close();
+    },
+  });
+}
+
+describe("callModel — raw finish reason", () => {
+  it("passes the provider's raw stop reason through alongside the unified one", async () => {
+    const result = await callModel(
+      scriptedModel([() => finishStream("other", "compaction")]),
+      userPrompt("x"),
+      () => {},
+    );
+    expect(result.finishReason).toEqual({ unified: "other", raw: "compaction" });
+  });
+
+  it("marks a stream that ended with no finish part distinctly from a provider value", async () => {
+    const result = await callModel(scriptedModel([noFinishStream]), userPrompt("x"), () => {});
+    expect(result.finishReason).toEqual({ unified: "other", raw: NO_FINISH_PART_RAW });
+    expect(NO_FINISH_PART_RAW).toBe("no_finish_part");
+  });
+
+  it("keeps raw undefined when the finish part reports none", async () => {
+    const result = await callModel(
+      scriptedModel([() => finishStream("stop", undefined)]),
+      userPrompt("x"),
+      () => {},
+    );
+    expect(result.finishReason).toEqual({ unified: "stop", raw: undefined });
   });
 });

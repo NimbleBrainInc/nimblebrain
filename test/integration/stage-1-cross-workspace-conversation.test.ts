@@ -221,12 +221,10 @@ describe("conversation access after the owner is removed from its workspace", ()
       message: "Workspace not found",
     });
 
-    // 6. RESUME is denied — even addressed to a DIFFERENT workspace Alice IS a
-    //    member of (sharedB passes the door's membership check). The conversation
-    //    is sealed to sharedA, so resolution would bind tools to sharedA, which
-    //    Alice was removed from. The membership gate refuses with a 403, NOT a
-    //    silent continuation. (This is the resume analog of step 5's HTTP-boundary
-    //    refusal, but on the conversation's OWN workspace rather than the path's.)
+    // 6. RESUME is denied at a DIFFERENT workspace Alice IS a member of, too
+    //    (sharedB passes the door's membership check). A chat runs in the
+    //    workspace its path names, and the conversation is not stored in
+    //    sharedB, so the answer is the one an unknown conversation gets.
     const continueRes = await fetch(`${baseUrl}/v1/workspaces/${sharedB}/chat`, {
       method: "POST",
       headers: {
@@ -238,9 +236,9 @@ describe("conversation access after the owner is removed from its workspace", ()
         conversationId: convId,
       }),
     });
-    expect(continueRes.status).toBe(403);
+    expect(continueRes.status).toBe(404);
     const continueBody = (await continueRes.json()) as { error: string };
-    expect(continueBody.error).toBe("conversation_access_denied");
+    expect(continueBody.error).toBe("conversation_not_found");
 
     // 7. The denied resume left the conversation untouched: still one turn,
     //    still in sharedA, and the refused message was never appended.

@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isInternalTool } from "../../../../src/engine/types.ts";
+import { isModelVisible } from "../../../../src/engine/types.ts";
 import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
@@ -1211,7 +1211,7 @@ describe("durable status is set_status only", () => {
     const tools = await src.tools();
     const setStatus = tools.find((t) => t.name.endsWith("set_status"));
     expect(setStatus).toBeDefined();
-    expect(isInternalTool(setStatus as { meta?: Record<string, unknown> })).toBe(true);
+    expect(isModelVisible(setStatus as { meta?: Record<string, unknown> })).toBe(false);
 
     const { direct, proxied } = surfaceTools(tools, null, { maxDirectTools: 1000 });
     expect([...direct, ...proxied].some((t) => t.name.endsWith("set_status"))).toBe(false);

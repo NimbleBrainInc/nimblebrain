@@ -85,6 +85,8 @@ function unsupportedEntry(): CatalogListing {
 interface Harness {
   workDir: string;
   sharedWsId: string;
+  /** A workspace the caller alone belongs to — the kind provisioning gives a new user. */
+  ownWsId: string;
   grants: Record<string, string[]>;
   toolPolicies: Record<string, unknown>;
   tool: ReturnType<typeof createManageConnectorsTool>;
@@ -100,14 +102,14 @@ async function buildHarness(): Promise<Harness> {
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
-  // One shared workspace (admin) + the caller's personal workspace.
+  // One shared workspace (admin) + a workspace the caller alone belongs to.
   await workspaceStore.create("Helix", "helix");
   const sharedWsId = "ws_helix";
   await workspaceStore.addMember(sharedWsId, USER.id, "admin");
-  await workspaceStore.create("Personal", `user_${USER.id}`, {
-    isPersonal: true,
-    ownerUserId: USER.id,
+  const ownWs = await workspaceStore.create("User's workspace", undefined, {
+    members: [{ userId: USER.id, role: "admin" }],
   });
+  const ownWsId = ownWs.id;
 
   const grants: Record<string, string[]> = {};
   // Per-tool allow/deny policies, keyed serverName — the user-scope
@@ -144,7 +146,7 @@ async function buildHarness(): Promise<Harness> {
     getIdentity: () => USER,
     getWorkspaceId: () => sharedWsId,
   };
-  return { workDir, sharedWsId, grants, toolPolicies, tool: createManageConnectorsTool(ctx) };
+  return { workDir, sharedWsId, ownWsId, grants, toolPolicies, tool: createManageConnectorsTool(ctx) };
 }
 
 function resultText(result: { content?: unknown }): string {
@@ -332,6 +334,34 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
       });
       expect(shared.isError).toBe(true);
       expect(resultText(shared)).toMatch(/already one of your personal connectors/i);
+    });
+
+    // No workspace is exempt: one the caller alone belongs to collides the same
+    // way, since it can gain members like any other.
+    test("install into the caller's own workspace then identity install → rejected", async () => {
+      const own = await h.tool.handler({ action: "install", entry: dcrEntry(), wsId: h.ownWsId });
+      expect(own.isError).toBe(false);
+
+      const identity = await h.tool.handler({
+        action: "install",
+        entry: dcrEntry(),
+        scope: "identity",
+      });
+      expect(identity.isError).toBe(true);
+      expect(resultText(identity)).toMatch(/already installed as a connector in a workspace/i);
+    });
+
+    test("identity install then install into the caller's own workspace → rejected", async () => {
+      const identity = await h.tool.handler({
+        action: "install",
+        entry: dcrEntry(),
+        scope: "identity",
+      });
+      expect(identity.isError).toBe(false);
+
+      const own = await h.tool.handler({ action: "install", entry: dcrEntry(), wsId: h.ownWsId });
+      expect(own.isError).toBe(true);
+      expect(resultText(own)).toMatch(/already one of your personal connectors/i);
     });
   });
 });

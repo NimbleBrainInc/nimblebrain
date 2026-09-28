@@ -91,28 +91,31 @@ export function ModelTab() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Fetch `get_config` into the form. Runs on mount and again after every
+  // save, because a save changes what `resolved` reports: clearing an override
+  // moves its field's placeholder to the new effective value.
+  const loadConfig = useCallback(async () => {
+    const config = parseToolResult<ModelConfig>(await callTool("nb", "get_config"));
+    const qualify = (id: string | undefined) => qualifyModelId(id, config.availableModels ?? {});
+    setDefaultModel(qualify(config.models?.default));
+    setFastModel(qualify(config.models?.fast));
+    setMaxIterations(config.maxIterations ?? null);
+    setMaxInputTokens(config.maxInputTokens ?? null);
+    setMaxOutputTokens(config.maxOutputTokens ?? null);
+    setResolved(config.resolved);
+    setThinking(config.thinking ?? THINKING_DEFAULT);
+    setThinkingEffort(config.thinkingEffort ?? EFFORT_DEFAULT);
+    setThinkingBudgetTokens(config.thinkingBudgetTokens ?? null);
+    setAvailableModels(config.availableModels ?? {});
+  }, []);
+
   useEffect(() => {
-    callTool("nb", "get_config")
-      .then((res) => {
-        const config = parseToolResult<ModelConfig>(res);
-        const qualify = (id: string | undefined) =>
-          qualifyModelId(id, config.availableModels ?? {});
-        setDefaultModel(qualify(config.models?.default));
-        setFastModel(qualify(config.models?.fast));
-        setMaxIterations(config.maxIterations ?? null);
-        setMaxInputTokens(config.maxInputTokens ?? null);
-        setMaxOutputTokens(config.maxOutputTokens ?? null);
-        setResolved(config.resolved);
-        setThinking(config.thinking ?? THINKING_DEFAULT);
-        setThinkingEffort(config.thinkingEffort ?? EFFORT_DEFAULT);
-        setThinkingBudgetTokens(config.thinkingBudgetTokens ?? null);
-        setAvailableModels(config.availableModels ?? {});
-      })
+    loadConfig()
       .catch((err) => {
         setLoadError(err instanceof Error ? err.message : "Failed to load configuration.");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [loadConfig]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -136,6 +139,9 @@ export function ModelTab() {
         ...thinkingPatch,
       });
       setFeedback({ type: "success", message: "Model configuration saved." });
+      // The save has landed; a failed refresh only leaves the old placeholders
+      // until the next load, so it does not turn the save into an error.
+      await loadConfig().catch(() => {});
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to save configuration.";
       setFeedback({ type: "error", message: msg });
@@ -151,6 +157,7 @@ export function ModelTab() {
     thinking,
     thinkingEffort,
     thinkingBudgetTokens,
+    loadConfig,
   ]);
 
   return (
@@ -163,146 +170,151 @@ export function ModelTab() {
       feedback={feedback}
       save={{ onSave: handleSave, saving, disabled: saving }}
     >
-      <Section title="Models" flush>
-        <div className="space-y-4">
-          <ModelSelect
-            id="defaultModel"
-            label="Default Model"
-            value={defaultModel}
-            onChange={setDefaultModel}
-            availableModels={availableModels}
-            placeholder={
-              resolved ? `Use the default (${resolved.models.default})` : "Use the default"
-            }
-          />
-
-          <ModelSelect
-            id="fastModel"
-            label="Fast Model"
-            value={fastModel}
-            onChange={setFastModel}
-            availableModels={availableModels}
-            placeholder={
-              resolved
-                ? `Follow the default model (${resolved.models.fast})`
-                : "Follow the default model"
-            }
-          />
-        </div>
-      </Section>
-
-      <Section title="Limits" description="Runtime caps applied to every conversation.">
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="maxIterations">Max Iterations</Label>
-            <Input
-              id="maxIterations"
-              type="number"
-              min={1}
-              max={25}
-              value={maxIterations ?? ""}
-              placeholder={resolved ? String(resolved.maxIterations) : ""}
-              onChange={(e) => setMaxIterations(numberOrNull(e.target.value))}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="maxInputTokens">Max Input Tokens</Label>
-            <Input
-              id="maxInputTokens"
-              type="number"
-              min={0}
-              value={maxInputTokens ?? ""}
-              placeholder={resolved ? String(resolved.maxInputTokens) : ""}
-              onChange={(e) => setMaxInputTokens(numberOrNull(e.target.value))}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="maxOutputTokens">Max Output Tokens</Label>
-            <Input
-              id="maxOutputTokens"
-              type="number"
-              min={0}
-              value={maxOutputTokens ?? ""}
-              placeholder={resolved ? String(resolved.maxOutputTokens) : ""}
-              onChange={(e) => setMaxOutputTokens(numberOrNull(e.target.value))}
-            />
-          </div>
-        </div>
-      </Section>
-
-      <Section
-        title="Extended Thinking"
-        description="Applies to every provider that supports reasoning. Billed as output tokens; adaptive only engages when the model judges it useful."
-      >
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="thinking">Mode</Label>
-            <Select
-              id="thinking"
-              value={thinking}
-              onChange={(e) =>
-                setThinking(e.target.value as ThinkingMode | typeof THINKING_DEFAULT)
+      {/* Locked while saving: the save ends by reloading every field from
+          `get_config`, which would overwrite an edit made mid-save. */}
+      <fieldset disabled={saving} className="min-w-0 space-y-6">
+        <Section title="Models" flush>
+          <div className="space-y-4">
+            <ModelSelect
+              id="defaultModel"
+              label="Default Model"
+              value={defaultModel}
+              onChange={setDefaultModel}
+              availableModels={availableModels}
+              placeholder={
+                resolved ? `Use the default (${resolved.models.default})` : "Use the default"
               }
-            >
-              <option value={THINKING_DEFAULT}>
-                Default (reasoning models think at medium effort, others not at all)
-              </option>
-              <option value="off">
-                Off — not enforceable on Opus 4.7/4.8, Sonnet 5, or Opus 5
-              </option>
-              <option value="adaptive">Adaptive — model decides per call</option>
-              <option value="enabled">Enabled — always reason</option>
-            </Select>
-          </div>
+            />
 
-          {tuningAppliesTo(thinking) && (
+            <ModelSelect
+              id="fastModel"
+              label="Fast Model"
+              value={fastModel}
+              onChange={setFastModel}
+              availableModels={availableModels}
+              placeholder={
+                resolved
+                  ? `Follow the default model (${resolved.models.fast})`
+                  : "Follow the default model"
+              }
+            />
+          </div>
+        </Section>
+
+        <Section title="Limits" description="Runtime caps applied to every conversation.">
+          <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="thinkingEffort">Effort</Label>
+              <Label htmlFor="maxIterations">Max Iterations</Label>
+              <Input
+                id="maxIterations"
+                type="number"
+                min={1}
+                max={25}
+                value={maxIterations ?? ""}
+                placeholder={resolved ? String(resolved.maxIterations) : ""}
+                onChange={(e) => setMaxIterations(numberOrNull(e.target.value))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="maxInputTokens">Max Input Tokens</Label>
+              <Input
+                id="maxInputTokens"
+                type="number"
+                min={0}
+                value={maxInputTokens ?? ""}
+                placeholder={resolved ? String(resolved.maxInputTokens) : ""}
+                onChange={(e) => setMaxInputTokens(numberOrNull(e.target.value))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="maxOutputTokens">Max Output Tokens</Label>
+              <Input
+                id="maxOutputTokens"
+                type="number"
+                min={0}
+                value={maxOutputTokens ?? ""}
+                placeholder={resolved ? String(resolved.maxOutputTokens) : ""}
+                onChange={(e) => setMaxOutputTokens(numberOrNull(e.target.value))}
+              />
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          title="Extended Thinking"
+          description="Applies to every provider that supports reasoning. Billed as output tokens; adaptive only engages when the model judges it useful."
+        >
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="thinking">Mode</Label>
               <Select
-                id="thinkingEffort"
-                value={thinkingEffort}
+                id="thinking"
+                value={thinking}
                 onChange={(e) =>
-                  setThinkingEffort(e.target.value as ThinkingEffort | typeof EFFORT_DEFAULT)
+                  setThinking(e.target.value as ThinkingMode | typeof THINKING_DEFAULT)
                 }
               >
-                <option value={EFFORT_DEFAULT}>Default (medium)</option>
-                {THINKING_EFFORT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
+                <option value={THINKING_DEFAULT}>
+                  Default (reasoning models think at medium effort, others not at all)
+                </option>
+                <option value="off">
+                  Off — not enforceable on Opus 4.7/4.8, Sonnet 5, or Opus 5
+                </option>
+                <option value="adaptive">Adaptive — model decides per call</option>
+                <option value="enabled">Enabled — always reason</option>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                How hard to think. Applies to the default policy too, not only to Enabled. Carries
-                to every provider — models that meter thinking in tokens get a budget sized from it.
-              </p>
             </div>
-          )}
 
-          {tuningAppliesTo(thinking) && (
-            <div className="space-y-1.5">
-              <Label htmlFor="thinkingBudgetTokens">Thinking Budget Tokens</Label>
-              <Input
-                id="thinkingBudgetTokens"
-                type="number"
-                min={1024}
-                placeholder="Not set — Effort applies"
-                value={thinkingBudgetTokens ?? ""}
-                onChange={(e) =>
-                  setThinkingBudgetTokens(e.target.value === "" ? null : Number(e.target.value))
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                Optional. Min 1024, and capped to leave room for the answer. Only honored by
-                providers that meter thinking in tokens (Anthropic up to 4.6, Gemini 2.5); elsewhere
-                Effort applies.
-              </p>
-            </div>
-          )}
-        </div>
-      </Section>
+            {tuningAppliesTo(thinking) && (
+              <div className="space-y-1.5">
+                <Label htmlFor="thinkingEffort">Effort</Label>
+                <Select
+                  id="thinkingEffort"
+                  value={thinkingEffort}
+                  onChange={(e) =>
+                    setThinkingEffort(e.target.value as ThinkingEffort | typeof EFFORT_DEFAULT)
+                  }
+                >
+                  <option value={EFFORT_DEFAULT}>Default (medium)</option>
+                  {THINKING_EFFORT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  How hard to think. Applies to the default policy too, not only to Enabled. Carries
+                  to every provider — models that meter thinking in tokens get a budget sized from
+                  it.
+                </p>
+              </div>
+            )}
+
+            {tuningAppliesTo(thinking) && (
+              <div className="space-y-1.5">
+                <Label htmlFor="thinkingBudgetTokens">Thinking Budget Tokens</Label>
+                <Input
+                  id="thinkingBudgetTokens"
+                  type="number"
+                  min={1024}
+                  placeholder="Not set — Effort applies"
+                  value={thinkingBudgetTokens ?? ""}
+                  onChange={(e) =>
+                    setThinkingBudgetTokens(e.target.value === "" ? null : Number(e.target.value))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional. Min 1024, and capped to leave room for the answer. Only honored by
+                  providers that meter thinking in tokens (Anthropic up to 4.6, Gemini 2.5);
+                  elsewhere Effort applies.
+                </p>
+              </div>
+            )}
+          </div>
+        </Section>
+      </fieldset>
     </SettingsFormPage>
   );
 }

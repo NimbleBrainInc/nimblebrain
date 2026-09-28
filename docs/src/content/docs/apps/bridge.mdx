@@ -5,7 +5,7 @@ description: NimbleBrain's ext-apps host implementation — the JSON-RPC protoco
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. NimbleBrain extends the spec with `synapse/` namespace methods for data-change notifications, semantic actions, file transfer, and keyboard forwarding.
+The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. Where the spec has no method for something the shell needs, NimbleBrain adds an [`ai.nimblebrain/` extension](/mcp/overview/#between-an-app-view-and-the-host): semantic actions, a file picker, and keyboard forwarding.
 
 All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 
@@ -271,7 +271,7 @@ Call a tool on your app's MCP server. This is a JSON-RPC **request** — the res
 ```
 
 <Aside type="note">
-Tool calls are scoped to your app's MCP server: the bridge routes `tools/call` with your app's server name. A server named in `_meta["ai.nimblebrain/server"]` or in a top-level `server` is ignored, and a tool name qualified with another server's name (`other__tool`) is refused.
+Tool calls are scoped to your app's MCP server: the bridge routes `tools/call` with your app's server name. A server named in `_meta["ai.nimblebrain/server"]` or in a top-level `server` is ignored, and a tool name qualified with another server's name (`other__tool`) is refused. A call to one of your own server's tools is refused too when the tool's `_meta.ui.visibility` does not include `"app"` (a tool that declares `["model"]`): the error is `-32602` with `data.reason: "not_app_callable"`. A tool that declares `["app"]` is callable from your view but hidden from the agent.
 </Aside>
 
 ### `resources/read`
@@ -384,7 +384,7 @@ The `@nimblebrain/synapse` SDK's `callToolAsTask` handles the full flow — star
 
 ### `ui/message`
 
-Send a message to the conversation. Follows the ext-apps spec format with `role` and `content` array. Context can be attached via `_meta` on the content block.
+Send a message to the conversation. Follows the ext-apps spec format with `role` and `content` array.
 
 ```json
 {
@@ -394,19 +394,13 @@ Send a message to the conversation. Follows the ext-apps spec format with `role`
     "role": "user",
     "content": [{
       "type": "text",
-      "text": "Show me the 5-day forecast for Honolulu",
-      "_meta": {
-        "ai.nimblebrain/context": {
-          "action": "forecast",
-          "entity": { "type": "city", "id": "honolulu" }
-        }
-      }
+      "text": "Show me the 5-day forecast for Honolulu"
     }]
   }
 }
 ```
 
-The `_meta["ai.nimblebrain/context"]` object is optional. When present, it helps the agent understand the source and intent of the message.
+To tell the agent what the user is looking at or acting on, send [`ui/update-model-context`](#uiupdate-model-context) first: the host attaches the app's latest model context to the turn.
 
 The host answers `{}`, and `{ "isError": true }` when the handler threw — the message did not reach the conversation, so an app that cares can say so. Sent without an `id` it is a notification, which takes no answer — an app on an older SDK sends it that way.
 
@@ -522,7 +516,7 @@ A log line, forwarded to the host's browser console with your app's name. A noti
 
 ### `ai.nimblebrain/action`
 
-Request a semantic action from the shell. Your app declares *intent* and the shell resolves it — no need to know routes or layout details.
+Ask the shell to open an app or a conversation. Your app names what to open and the shell resolves it, so the app never depends on the shell's routes.
 
 ```json
 {
@@ -537,21 +531,12 @@ Request a semantic action from the shell. Your app declares *intent* and the she
 
 The `action` field is required. All other fields in `params` are action-specific.
 
-**Built-in actions (handled by the bridge):**
-
-| Action | Params | Description |
-|--------|--------|-------------|
-| `navigate` | `{ route: string }` | Navigate to a route in the shell (e.g., `/app/tasks`). Invokes the `onNavigate` callback. |
-
-**Consumer-level actions (handled by shell callbacks):**
-
 | Action | Params | Description |
 |--------|--------|-------------|
 | `openConversation` | `{ id: string }` | Open the chat panel and load a specific conversation. |
-| `startChat` | `{ prompt?: string }` | Open the chat panel. Optionally pre-fill a prompt. |
-| `openApp` | `{ name: string }` | Navigate to an installed app by server name. |
+| `openApp` | `{ name: string }` | Open an installed app, named by its route or server name. |
 
-The bridge handles `navigate` directly. All other actions are dispatched to the registered `onAction` callback, or as an `nb:action` custom event on `window` if no callback is registered.
+The bridge hands every action to the registered `onAction` callback, or dispatches it as an `nb:action` custom event on `window` when no callback is registered. The shell ignores an action it does not know. To put a message into the conversation, use [`ui/message`](#uimessage); to open an external page, [`ui/open-link`](#uiopen-link).
 
 <Aside type="note">
 `ai.nimblebrain/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/action"]`.
@@ -593,6 +578,20 @@ Every param is optional: `accept` takes the same value as an `<input type="file"
 <Aside type="caution">
 **SDK compatibility.** With the `@nimblebrain/synapse` SDK, call `pickFile()` for a single entry or `pickFiles()` for the list — both read this one shape, from the release that moves `connect()` onto the spec's own client onwards. **Releases through 0.18.0 read the bare shapes** (an array, a single object, or `null`) and throw on `{ files }`, reporting it as an out-of-date *host* — so an app on 0.18.0 or earlier has to move its pin in the same deploy as the host.
 </Aside>
+
+### `ai.nimblebrain/keydown`
+
+Forward a keyboard shortcut to the shell. An iframe that has focus receives every keystroke, so without this the shell's shortcuts stop working while the user is inside an app. The host re-dispatches the key as a `keydown` on its own document.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ai.nimblebrain/keydown",
+  "params": { "key": "k", "metaKey": true, "ctrlKey": false, "shiftKey": false, "altKey": false }
+}
+```
+
+It is a notification and takes no answer. With `@nimblebrain/synapse`, pass `forwardKeys` to `connect()` to forward shortcuts, and the SDK sends only when the host declared `experimental["ai.nimblebrain/keydown"]`.
 
 ## Security model
 

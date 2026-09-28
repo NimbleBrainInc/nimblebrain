@@ -134,8 +134,8 @@ export type ConnectorRef = {
     /**
      * OAuth identity scope for this URL connector. `"workspace"` is the
      * only legal value: one identity per `(workspace, server)`, shared
-     * across workspace members. Personal connectors bind to the owning
-     * user's personal workspace (`personalWorkspaceIdFor(userId)`).
+     * across workspace members. Personal connectors live on the identity
+     * plane (`IdentityConnectorStore`), not here.
      */
     oauthScope?: "workspace";
     /**
@@ -367,8 +367,7 @@ export interface ConnectorInstance {
     /**
      * OAuth identity scope for URL connectors. `"workspace"` is the only legal
      * value — one shared identity per `(workspace, server)`. Personal
-     * connectors are workspace-scoped to the user's personal workspace
-     * (`personalWorkspaceIdFor(userId)`).
+     * connectors live on the identity plane (`IdentityConnectorStore`).
      */
     oauthScope?: "workspace";
     /**
@@ -405,13 +404,4 @@ export interface StartConnectorResult {
     meta: LocalConnectorMeta | null;
     /** The actual source name registered in the ToolRegistry. */
     sourceName: string;
-}
-/** App info returned by GET /v1/apps. */
-export interface AppInfo {
-    name: string;
-    connectorName: string;
-    version: string;
-    status: ConnectionState;
-    toolCount: number;
-    ui: ConnectorUiMeta | null;
 }

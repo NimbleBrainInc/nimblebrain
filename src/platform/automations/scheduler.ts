@@ -10,7 +10,9 @@
  */
 
 import { Cron } from "croner";
+import { automationRunsTotal } from "../../api/metrics.ts";
 import { log } from "../../observability/log.ts";
+import { runDetached } from "../../runtime/request-context.ts";
 import { WorkspaceRootMissingError } from "../../workspace/context.ts";
 import {
   appendRun,
@@ -297,6 +299,7 @@ function resolveLastRunStatus(
   status: AutomationRun["status"],
 ): NonNullable<Automation["lastRunStatus"]> {
   if (status === "success") return "success";
+  if (status === "degraded") return "degraded";
   if (status === "timeout") return "timeout";
   if (status === "skipped") return "skipped";
   return "failure";
@@ -304,10 +307,12 @@ function resolveLastRunStatus(
 
 /**
  * Update consecutive-error accounting and auto-disable after too many failures.
- * Skipped and cancelled runs don't affect consecutiveErrors.
+ * Skipped and cancelled runs don't affect consecutiveErrors. A degraded run
+ * clears the streak like a success: it ran to completion, and backoff exists
+ * for runs that could not run, not for work a tool refused.
  */
 function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: number): void {
-  if (run.status === "success") {
+  if (run.status === "success" || run.status === "degraded") {
     auto.consecutiveErrors = 0;
     return;
   }
@@ -667,7 +672,10 @@ export class Scheduler {
       }
     }
 
-    this.timer = setTimeout(() => this.onTimer(), minDelay);
+    // Detached: `reload()` arms from inside the tool call that mutated an
+    // automation, and each fire re-arms from the previous one, so a timer that
+    // kept its creator's context would run every later tick as that request.
+    this.timer = runDetached(() => setTimeout(() => this.onTimer(), minDelay));
   }
 
   /**
@@ -852,6 +860,7 @@ export class Scheduler {
     // Persist the run summary + the updated definition, then sync the single
     // in-memory entry so the timer sees the new nextRunAt without re-scanning.
     appendRun(this.config.workDir, wsId, ownerId, automation.id, run);
+    automationRunsTotal.inc({ status: run.status });
     saveAutomation(this.config.workDir, wsId, ownerId, auto);
     this.definitions.set(Scheduler.keyOf(auto), auto);
   }
@@ -886,6 +895,7 @@ export class Scheduler {
     const ownerId = auto.ownerId;
     if (!wsId || !ownerId) return run; // defensive — can't locate the store
     appendRun(this.config.workDir, wsId, ownerId, auto.id, run);
+    automationRunsTotal.inc({ status: run.status });
 
     // Advance nextRunAt so this automation isn't immediately "due" again.
     // Re-read THIS automation's file to avoid overwriting concurrent changes.

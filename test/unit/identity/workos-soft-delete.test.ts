@@ -14,7 +14,6 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { UserStore } from "../../../src/identity/user.ts";
-import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ── Crypto helpers ──────────────────────────────────────────────────
 
@@ -87,8 +86,7 @@ function jwksResponseBody(): string {
 function createProvider(): { provider: WorkosIdentityProvider; userStore: UserStore } {
   const dir = mkdtempSync(join(tmpdir(), "workos-soft-delete-"));
   const userStore = new UserStore(dir);
-  const workspaceStore = new WorkspaceStore(dir);
-  const provider = new WorkosIdentityProvider(CONFIG, userStore, workspaceStore);
+  const provider = new WorkosIdentityProvider(CONFIG, userStore);
 
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
   workos.userManagement = {

@@ -2,15 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
 
@@ -67,11 +64,11 @@ beforeAll(async () => {
   const wsStore = runtime.getWorkspaceStore();
   await wsStore.create("Helix", SHARED_WS.slice(3));
   await wsStore.addMember(SHARED_WS, DEV_IDENTITY.id, "admin");
-  await ensureUserWorkspace(wsStore, {
-    id: DEV_IDENTITY.id,
-    displayName: DEV_IDENTITY.displayName,
-  });
-  personalWs = personalWorkspaceIdFor(DEV_IDENTITY.id);
+  personalWs = (
+    await wsStore.create("Own", undefined, {
+      members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
+    })
+  ).id;
 
   await installConnector("granola", ["read_notes", "delete_notes"]);
   await installConnector("notion", ["read"]); // installed but NOT granted

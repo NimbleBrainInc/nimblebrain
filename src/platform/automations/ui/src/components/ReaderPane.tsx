@@ -13,6 +13,7 @@ import { formatDuration, formatTokens, relativeTime, statusDotClass } from "../u
 
 const STATUS_LABEL: Record<string, string> = {
   success: "Run succeeded",
+  degraded: "Run finished with errors",
   failure: "Run failed",
   timeout: "Run timed out",
   running: "Running…",
@@ -243,7 +244,7 @@ function ReaderContent({ run, output }: { run: AutomationRun; output: string }) 
         {output && (
           <>
             <div className="reader-error-label" style={{ marginTop: 14 }}>
-              Output before failure
+              {run.status === "degraded" ? "Output" : "Output before failure"}
             </div>
             <OutputMarkdown markdown={output} />
           </>

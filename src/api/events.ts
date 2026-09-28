@@ -96,13 +96,11 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // never every member of a workspace they happen to share.
   "server.notification": { scope: "owner", wsIdField: "workspaceId", userIdField: "userId" },
   // Live conversation-title update (auto-title generation completes after the
-  // turn). Scoped by the event's `wsId`, which the runtime sets to the OWNER'S
-  // PERSONAL workspace (NOT the conversation's workspaceId) — conversations are
-  // owner-scoped, so this reaches exactly the owner's tabs. Scoping by the
-  // conversation's workspaceId would leak the title to every member of a team
-  // workspace; see the rationale at runtime.ts (generateTitle emit). The shell
-  // routes it to the matching conversation slice by `conversationId`.
-  "conversation.title": { scope: "workspace", wsIdField: "wsId" },
+  // turn). A conversation is private to its owner, so the event is stamped with
+  // the owner (`ownerId`) and reaches that identity's tabs alone. Scoping by the
+  // conversation's workspace would leak the title to every member of it. The
+  // shell routes it to the matching conversation slice by `conversationId`.
+  "conversation.title": { scope: "owner", wsIdField: "wsId", userIdField: "ownerId" },
   // Org-level config (model preferences, feature flags). Affects every
   // workspace; broadcast to all.
   "config.changed": { scope: "global" },

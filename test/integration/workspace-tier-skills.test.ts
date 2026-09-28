@@ -1,13 +1,12 @@
 /**
  * Regression test for workspace-tier skill loading from the FOCUSED workspace.
  *
- * Why this test exists: Stage 2 (#272) wired skill selection to read
- * workspace-tier skills from the session (personal) workspace instead of
- * the focused workspace, so any workspace-tier skill in a non-personal
- * workspace silently disappeared from agent context. The fix passes
- * `focusedWsId ?? sessionWsId` into `loadConversationSkills`.
+ * Why this test exists: skill selection once read workspace-tier skills from
+ * the caller's session workspace instead of the focused one, so a
+ * workspace-tier skill in any other workspace silently disappeared from agent
+ * context. Selection reads from the one workspace the turn runs in.
  *
- * The focused-vs-personal guarantee applies to BOTH composition channels,
+ * The focused-workspace guarantee applies to BOTH composition channels,
  * which this file covers:
  *   - Capability skills (`type: skill`) → Layer 3 (`skills.loaded`).
  *   - Context skills (`type: context`) → the always-on context channel,
@@ -23,7 +22,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -32,6 +30,7 @@ const SHARED_SKILL_BODY =
   "Always answer in plain English. Avoid em-dashes. Match the user's voice.";
 
 const testDir = join(tmpdir(), `nimblebrain-ws-tier-skills-${Date.now()}`);
+const HOME_WORKSPACE_ID = "ws_home";
 let runtime: Runtime;
 
 beforeAll(async () => {
@@ -43,12 +42,13 @@ beforeAll(async () => {
     workDir: testDir,
     telemetry: { enabled: false },
   });
+  // The dev user's default workspace (provisioned first, so it is the earliest
+  // membership): where a request that names no workspace runs.
+  await provisionTestWorkspace(runtime, HOME_WORKSPACE_ID, "Home");
   await provisionTestWorkspace(runtime);
 
   // Plant a workspace-tier capability skill (dynamic + tool-affinity) in the
-  // FOCUSED (shared) workspace — not the personal one. The session workspace
-  // (personalWorkspaceIdFor(DEV_IDENTITY.id)) is a different dir on disk;
-  // before the fix, selection read from there and never saw this file.
+  // FOCUSED workspace. Selection must read from the workspace the turn runs in.
   // dynamic + tool-affinity (nb__* is always surfaced) routes it to Layer 3.
   const sharedSkillsDir = join(testDir, "workspaces", TEST_WORKSPACE_ID, "skills");
   mkdirSync(sharedSkillsDir, { recursive: true });
@@ -65,13 +65,6 @@ afterAll(async () => {
 
 describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
   it("loads the focused workspace's `always` skill into `skills.loaded`", async () => {
-    // Sanity check the precondition: the focused workspace MUST be a
-    // different dir than the session (personal) workspace, otherwise the
-    // test can't distinguish "loaded from focused" from "loaded from
-    // session" — the regression we're guarding against.
-    const personalWsId = personalWorkspaceIdFor(DEV_IDENTITY.id);
-    expect(personalWsId).not.toBe(TEST_WORKSPACE_ID);
-
     const chat = await runtime.chat({
       workspaceId: TEST_WORKSPACE_ID,
       message: "hello",
@@ -141,12 +134,12 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
   });
 
   it("does NOT load the focused workspace's skill when chatting from home (no focus)", async () => {
-    // Home control panel = no `workspaceId` on the request. Layer 3
-    // workspace-tier skills should fall back to the session (personal)
-    // workspace, NOT bleed in from a workspace the user happens to
-    // belong to. This pins the `focusedWsId ?? sessionWsId` semantic so a
-    // future refactor toward "load across every accessible workspace"
-    // becomes a deliberate decision, not an accidental one.
+    // Home control panel = no `workspaceId` on the request (dev mode). The turn
+    // runs in the caller's default workspace, and Layer 3 workspace-tier skills
+    // come from there, NOT bleed in from another workspace the user happens to
+    // belong to. This pins the one-workspace semantic so a future refactor
+    // toward "load across every accessible workspace" becomes a deliberate
+    // decision, not an accidental one.
     const chat = await runtime.chat({
       // No workspaceId — home mode.
       message: "hello from home",
@@ -174,23 +167,23 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
   it("walls listActivatableSkills to the named workspace (real loader, no stubs)", async () => {
     // The activatable set backs both the rendered catalog and nb__use_skill
     // name validation, so the wall must hold on the REAL loader composition,
-    // not a FakeRuntime. Plant a dynamic skill in the personal workspace and
+    // not a FakeRuntime. Plant a dynamic skill in another workspace and
     // assert each workspace's set sees only its own tier.
-    const personalWsId = personalWorkspaceIdFor(DEV_IDENTITY.id);
-    const personalName = "personal-only-playbook";
-    const personalSkillsDir = join(testDir, "workspaces", personalWsId, "skills");
-    mkdirSync(personalSkillsDir, { recursive: true });
+    const otherWsId = "ws_other_tier";
+    const otherName = "other-only-playbook";
+    const otherSkillsDir = join(testDir, "workspaces", otherWsId, "skills");
+    mkdirSync(otherSkillsDir, { recursive: true });
     writeFileSync(
-      join(personalSkillsDir, `${personalName}.md`),
-      `---\nname: ${personalName}\ndescription: Personal drafting playbook\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n---\n\nDraft like me.\n`,
+      join(otherSkillsDir, `${otherName}.md`),
+      `---\nname: ${otherName}\ndescription: Other drafting playbook\nmetadata:\n  nimblebrain:\n    loading-strategy: dynamic\n---\n\nDraft like me.\n`,
     );
 
     const sharedSet = await runtime.listActivatableSkills(TEST_WORKSPACE_ID, DEV_IDENTITY.id);
     expect(sharedSet.some((s) => s.name === SHARED_SKILL_NAME)).toBe(true);
-    expect(sharedSet.some((s) => s.name === personalName)).toBe(false);
+    expect(sharedSet.some((s) => s.name === otherName)).toBe(false);
 
-    const personalSet = await runtime.listActivatableSkills(personalWsId, DEV_IDENTITY.id);
-    expect(personalSet.some((s) => s.name === personalName)).toBe(true);
-    expect(personalSet.some((s) => s.name === SHARED_SKILL_NAME)).toBe(false);
+    const otherSet = await runtime.listActivatableSkills(otherWsId, DEV_IDENTITY.id);
+    expect(otherSet.some((s) => s.name === otherName)).toBe(true);
+    expect(otherSet.some((s) => s.name === SHARED_SKILL_NAME)).toBe(false);
   });
 });

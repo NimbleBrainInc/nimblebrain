@@ -15,10 +15,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { InstructionsStore } from "../../../src/instructions/index.ts";
@@ -175,7 +171,7 @@ describe("instructions source — write_instructions", () => {
 
     const updates: Array<{ uri: string }> = [];
     const client = src.getClient()!;
-    client.setNotificationHandler(ResourceUpdatedNotificationSchema, (n) => {
+    client.setNotificationHandler('notifications/resources/updated', (n) => {
       updates.push({ uri: n.params.uri as string });
     });
 
@@ -446,7 +442,7 @@ describe("instructions source — tool list", () => {
     const client = src.getClient()!;
     const tools = await client.listTools();
     const writeTool = tools.tools.find((t) => t.name === "write_instructions");
-    expect((writeTool?._meta as Record<string, unknown>)?.["ai.nimblebrain/internal"]).toBe(true);
+    expect((writeTool?._meta as { ui?: { visibility?: unknown } })?.ui?.visibility).toEqual(["app"]);
     expect(writeTool?.description).toContain("Empty text clears");
   });
 
@@ -467,7 +463,7 @@ describe("instructions source — connector lifecycle", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const seen: string[] = [];
-    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => {
+    client.setNotificationHandler('notifications/resources/list_changed', () => {
       seen.push("list_changed");
     });
     await new Promise((r) => setTimeout(r, 5));

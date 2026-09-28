@@ -75,6 +75,36 @@ describe("EventSourcedConversationStore", () => {
     expect(events[2].type).toBe("run.done");
   });
 
+  it("persists the raw finish reason on llm.response next to the unified one", async () => {
+    const conv = await store.create({ ownerId: "user_test" });
+    store.setActiveConversation(conv.id);
+
+    const llmDone = (runId: string, finish: Record<string, unknown>) =>
+      store.emit({
+        type: "llm.done",
+        data: {
+          runId,
+          model: "test-model",
+          content: [{ type: "text", text: "Hello" }],
+          usage: { inputTokens: 1, outputTokens: 1 },
+          llmMs: 5,
+          ...finish,
+        },
+      });
+    llmDone("r1", { finishReason: "other", finishReasonRaw: "compaction" });
+    llmDone("r2", { finishReason: "stop" });
+
+    const events = readLines(join(dirs.dir, `${conv.id}.jsonl`))
+      .slice(1)
+      .map((l) => JSON.parse(l))
+      .filter((e) => e.type === "llm.response");
+    expect(events).toHaveLength(2);
+    expect(events[0].finishReason).toBe("other");
+    expect(events[0].finishReasonRaw).toBe("compaction");
+    // Absent, not undefined-valued, when the provider reported none.
+    expect("finishReasonRaw" in events[1]).toBe(false);
+  });
+
   it("persists resourceLinks + resourceUri on tool.done (artifact rehydration)", async () => {
     // Regression: the engine emits resource references on tool.done, but they
     // were dropped on persist — so a reopened conversation lost its artifact://

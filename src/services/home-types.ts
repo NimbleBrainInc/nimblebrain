@@ -51,13 +51,19 @@ export interface ActivityOutput {
 export interface AutomationRunSummary {
   total: number;
   succeeded: number;
+  /** Runs that ended in `failure` or `timeout`. */
   failed: number;
+  /** Runs that finished with a failed tool call nobody retried. */
+  degraded: number;
+  /** Every failed and degraded run, each with its status. */
   failures: AutomationFailure[];
 }
 
-/** A failed automation run with details. */
+/** A failed or degraded automation run with details. */
 export interface AutomationFailure {
+  /** The automation's id. */
   name: string;
+  status: "failure" | "timeout" | "degraded";
   error?: string;
   action: BriefingAction;
 }
@@ -98,15 +104,4 @@ export interface ErrorEntry {
   source: "tool" | "engine" | "http";
   message: string;
   context?: string;
-}
-
-/** Home feature configuration from nimblebrain.json. Mirrors the shape
- * returned by `Runtime.getHomeConfig()`. Feature gating (`enabled`) and
- * model selection live elsewhere — the model identity is passed to
- * BriefingGenerator separately, and feature-flag gating happens at
- * tool registration. */
-export interface HomeConfig {
-  userName: string;
-  timezone: string;
-  cacheTtlMinutes: number;
 }

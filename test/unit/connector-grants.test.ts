@@ -21,8 +21,7 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
-import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { personalWorkspaceIdFor, WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -35,7 +34,8 @@ const ALICE: UserIdentity = {
 } as UserIdentity;
 
 const SHARED_WS = "ws_helix";
-const personalWs = personalWorkspaceIdFor(ALICE.id);
+/** A workspace only Alice belongs to. */
+const personalWs = "ws_alice_own";
 
 interface Harness {
   workDir: string;
@@ -60,8 +60,10 @@ async function buildHarness(opts: {
   if (opts.memberOfShared !== false) {
     await workspaceStore.addMember(SHARED_WS, ALICE.id, "member");
   }
-  // The caller's personal workspace — just a workspace they belong to.
-  await ensureUserWorkspace(workspaceStore, { id: ALICE.id, displayName: ALICE.displayName });
+  // A workspace only the caller belongs to — just a workspace.
+  await workspaceStore.create("Alice's workspace", personalWs.slice(3), {
+    members: [{ userId: ALICE.id, role: "admin" }],
+  });
 
   // Personal connectors live on the identity plane — both grant and
   // list_personal_connectors read the IdentityConnectorStore.
@@ -120,8 +122,8 @@ describe("manage_connectors — personal-connector grants", () => {
     expect(await h.store.getConnectorGrants(ALICE.id, "granola")).toEqual([SHARED_WS]);
   });
 
-  test("grant_connector grants to the caller's own personal workspace — just a workspace", async () => {
-    // A personal workspace is grant-gated like any other (no free-at-home).
+  test("grant_connector grants to a workspace only the caller belongs to — just a workspace", async () => {
+    // Grant-gated like any other (no free-at-home).
     h = await buildHarness({ personalConnectors: ["granola"] });
     const res = await h.tool.handler({
       action: "grant_connector",

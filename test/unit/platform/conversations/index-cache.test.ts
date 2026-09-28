@@ -330,7 +330,7 @@ describe("list workspace filtering", () => {
 			updatedAt: "2025-01-03T00:00:00.000Z",
 			title: "Workspaceless legacy chat",
 			ownerId: "u1",
-			// no workspaceId — belongs to the personal workspace
+			// no workspaceId — a legacy chat under no workspace
 			messages: [{ role: "user", content: "hi", timestamp: "2025-01-03T00:01:00.000Z" }],
 		});
 		writeConvFile({
@@ -356,7 +356,7 @@ describe("list workspace filtering", () => {
 
 	test("a legacy flat-layout chat is under no workspace, so no workspace lists it", async () => {
 		// The directory is the binding, so a file that is not under a workspace is
-		// not in one — including from the owner's own personal workspace.
+		// not in one — whichever workspace the owner lists from.
 		const index = await buildWorkspaceIndex();
 		expect(
 			index.list({ workspaceId: "ws_user_u1" }, { userId: "u1" }).conversations,

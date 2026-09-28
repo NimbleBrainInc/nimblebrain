@@ -670,7 +670,7 @@ export async function initiateComposioOAuth(
 
 /**
  * Per-workspace installed view. Returns every connector visible in the
- * workspace. Personal connectors live in the caller's personal workspace.
+ * workspace. Personal connectors live on the caller's identity, not here.
  *
  * Stage 2: `scope` is always `"workspace"`. The legacy `"user"` arm was
  * removed in T008/T009.
@@ -806,9 +806,8 @@ export interface PersonalConnector {
 }
 
 /**
- * The caller's personal connectors and, for each, the shared workspaces it's
- * granted to. The server derives the personal workspace from the caller's
- * identity, so the answer is the same whichever workspace the call goes
+ * The caller's personal connectors and, for each, the workspaces it's
+ * granted to. The server reads them from the caller's identity, so the answer is the same whichever workspace the call goes
  * through — safe to call from `/profile`, which has no workspace of its own.
  */
 export async function listPersonalConnectors(): Promise<{ connectors: PersonalConnector[] }> {
@@ -834,7 +833,7 @@ export async function listPersonalCatalog(): Promise<{ catalog: CatalogListing[]
 /**
  * Grant the caller's personal connector `serverName` for use inside `wsId`. A
  * personal connector is identity-bound and must be granted into EVERY workspace
- * it's used in — the personal workspace included (no free-at-home). Its tools
+ * it's used in (no free-at-home). Its tools
  * then surface to the agent in that workspace.
  */
 export async function grantConnector(serverName: string, wsId: string): Promise<void> {
@@ -1170,7 +1169,7 @@ export async function logout(): Promise<void> {
  *
  * Bootstrap names no workspace. Which workspace the user is in is owned by the
  * URL (`/w/:slug`), resolved AFTER bootstrap by the route guard — not by a
- * remembered selection. The server defaults the focus to the user's personal
+ * remembered selection. The server defaults the focus to the user's default
  * workspace on its own.
  */
 export async function tryBootstrap(): Promise<BootstrapResponse | null> {

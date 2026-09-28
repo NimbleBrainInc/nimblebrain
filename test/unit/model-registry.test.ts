@@ -227,3 +227,56 @@ describe("nebius request shape", () => {
     expect(body.reasoning_effort).toBe("low");
   });
 });
+
+describe("anthropic request shape", () => {
+  async function captureAnthropicRequest(
+    providerOptions?: Record<string, Record<string, unknown>>,
+  ): Promise<Record<string, unknown>> {
+    const realFetch = globalThis.fetch;
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as unknown as typeof fetch;
+    try {
+      await buildModelResolver({ providers: { anthropic: { apiKey: "sk-test" } } })(
+        "anthropic:claude-sonnet-4-6",
+      ).doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+        tools: [
+          {
+            type: "function",
+            name: "update_contact",
+            inputSchema: { type: "object", properties: { email: { type: "string" } } },
+          },
+        ],
+        ...(providerOptions ? { providerOptions } : {}),
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return body;
+  }
+
+  it("sends tools without eager input streaming, so the API validates their arguments", async () => {
+    // Eager streaming skips the API's JSON validation of tool arguments; a
+    // malformed string then fails the call as "arguments were not valid JSON".
+    const body = await captureAnthropicRequest();
+    const tools = body.tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.eager_input_streaming).toBeUndefined();
+  });
+
+  it("keeps the call's own anthropic options alongside the default", async () => {
+    // The engine sends thinking under the same `anthropic` key; the default
+    // must merge with it, not replace it.
+    const body = await captureAnthropicRequest({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 2048 } },
+    });
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
+    expect((body.tools as Array<Record<string, unknown>>)[0]?.eager_input_streaming).toBeUndefined();
+  });
+});

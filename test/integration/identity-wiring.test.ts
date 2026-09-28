@@ -5,7 +5,7 @@
  * - Runtime.start() in dev mode exposes functional identity stores
  * - Management tools are registered in the tool registry
  * - Chat with workspace context creates conversations in the right place
- * - Chat without workspace (backward compat) uses global conversations dir
+ * - Chat without a workspace (dev mode) runs in the caller's default workspace
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -14,7 +14,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
@@ -129,28 +128,23 @@ describe("Management tools in registry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Chat is identity-bound (Stage 2 / T006)
+// 3. Chat without a workspace (dev mode)
 // ---------------------------------------------------------------------------
 //
-// Pre-Stage-2 this section pinned "chat creates the conversation in the
-// requested workspace's directory" and "chat without workspaceId throws."
-// Both contracts were deleted by T006: chat is now identity-bound, the
-// session workspace is the identity's personal workspace, and the
-// `ChatRequest.workspaceId` field is gone. The conversation file lives in
-// the caller's personal workspace
-// (`{workDir}/workspaces/ws_user_<id>/conversations/<id>/{convId}.jsonl`);
-// the metadata's `workspaceId` is that same personal-workspace binding (also the
-// session breadcrumb for legacy single-workspace reads).
+// A chat that names no workspace runs, in dev mode, in the caller's default
+// workspace — provisioned for them if they belong to none. The conversation file
+// lives in that workspace's owner partition, and its metadata records the
+// workspace.
 
-describe("Chat is identity-bound (Stage 2 / T006)", () => {
-  it("conversation lives in the personal workspace with ownerId; metadata records the personal workspace as the session breadcrumb", async () => {
+describe("Chat without a workspace (dev mode)", () => {
+  it("conversation lives in the provisioned workspace with ownerId; metadata records that workspace", async () => {
     const workDir = makeTempDir("identity-bound-chat");
     const runtime = await Runtime.start({
       workDir,
       model: { provider: "custom", adapter: createEchoModel() },
     });
 
-    // No explicit `workspaceId` — T006 removed it. Just an identity.
+    // No `workspaceId` — dev mode stands in the caller's default workspace.
     const result = await runtime.chat({
       message: "hello from identity-bound chat",
       identity: {
@@ -164,10 +158,13 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
 
     expect(result.conversationId).toMatch(/^conv_/);
 
-    // Conversation lives in the personal workspace's owner partition; the
-    // metadata workspaceId is that same session (personal) workspace.
+    // One workspace was provisioned for Alice; the conversation lives in its
+    // owner partition and its metadata names it.
+    const aliceWorkspaces = await runtime.getWorkspaceStore().getWorkspacesForUser("usr_alice");
+    expect(aliceWorkspaces).toHaveLength(1);
+    const aliceWsId = aliceWorkspaces[0]!.id;
     const convFile = join(
-      workspaceConversationsDir(workDir, personalWorkspaceIdFor("usr_alice"), "usr_alice"),
+      workspaceConversationsDir(workDir, aliceWsId, "usr_alice"),
       `${result.conversationId}.jsonl`,
     );
     expect(existsSync(convFile)).toBe(true);
@@ -175,9 +172,8 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
     const content = readFileSync(convFile, "utf-8");
     const metadataLine = JSON.parse(content.split("\n")[0]!);
     expect(metadataLine.ownerId).toBe("usr_alice");
-    // Stamped from the auto-provisioned personal workspace.
-    expect(typeof metadataLine.workspaceId).toBe("string");
-    expect(metadataLine.workspaceId).toMatch(/^ws_user_usr_alice/);
+    expect(metadataLine.workspaceId).toBe(aliceWsId);
+    expect(aliceWsId).toMatch(/^ws_[0-9a-f]{16}$/);
 
     // Nothing was written at the old flat top-level path.
     expect(existsSync(join(workDir, "conversations", `${result.conversationId}.jsonl`))).toBe(
@@ -200,9 +196,10 @@ describe("Chat is identity-bound (Stage 2 / T006)", () => {
     expect(result.conversationId).toMatch(/^conv_/);
 
     // Identity-bound under DEV_IDENTITY (`usr_default`); the conversation
-    // lives in that identity's personal workspace.
+    // lives in the workspace provisioned for that identity.
+    const [devWs] = await runtime.getWorkspaceStore().getWorkspacesForUser("usr_default");
     const convFile = join(
-      workspaceConversationsDir(workDir, personalWorkspaceIdFor("usr_default"), "usr_default"),
+      workspaceConversationsDir(workDir, devWs!.id, "usr_default"),
       `${result.conversationId}.jsonl`,
     );
     expect(existsSync(convFile)).toBe(true);

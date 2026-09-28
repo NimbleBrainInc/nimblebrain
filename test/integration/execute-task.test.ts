@@ -11,7 +11,7 @@
  *  - `workspaceId` absent → the orchestrator still routes a namespaced
  *                            cross-workspace tool call (dispatch
  *                            contract). The ACTIVE tool list shown to
- *                            the model is the personal workspace's
+ *                            the model is the owner's default workspace's
  *                            tools + identity tools; cross-workspace
  *                            tools are reachable via `nb__search` as
  *                            the discoverable corpus, NOT preloaded
@@ -36,7 +36,6 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
-import { personalWorkspaceIdFor } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 const TEST_USER_ID = "usr_exec_task_test";
@@ -88,14 +87,15 @@ describe("runtime.executeTask", () => {
 
   async function provisionWorkspaces(r: Runtime) {
     const wsStore = r.getWorkspaceStore();
-    const personalWsId = personalWorkspaceIdFor(TEST_USER_ID);
-    await wsStore.create("Personal", personalWsId.slice(3), {
-      isPersonal: true,
-      ownerUserId: TEST_USER_ID,
+    // The owner's own workspace, created first so it is their default — the
+    // workspace an unfocused (dev-mode) task runs in.
+    const ownWs = await wsStore.create("Own", undefined, {
+      members: [{ userId: TEST_USER_ID, role: "admin" }],
     });
+    const defaultWsId = ownWs.id;
     await wsStore.create("Shared", SHARED_WS_ID.slice(3));
     await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
-    return { personalWsId, sharedWsId: SHARED_WS_ID };
+    return { defaultWsId, sharedWsId: SHARED_WS_ID };
   }
 
   it("stamps the run id as runId, and leaves conversationId unset", async () => {
@@ -168,6 +168,25 @@ describe("runtime.executeTask", () => {
     expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
     expect(result.stopReason).toBe("complete");
     expect(result.usage.iterations).toBeGreaterThan(0);
+  });
+
+  it("returns the last call's unified and raw finish reasons", async () => {
+    // The automations executor reads these to explain a run that ended
+    // "other"; its unit tests inject a TaskFnResult, so only this test covers
+    // the engine → run handle → TaskResult passthrough.
+    runtime = await bootRuntime({
+      responses: [{ text: "", finishReason: "other", finishReasonRaw: "compaction" }],
+    });
+    await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      prompt: "do the thing",
+      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+    });
+
+    expect(result.stopReason).toBe("other");
+    expect(result.finishReason).toBe("other");
+    expect(result.finishReasonRaw).toBe("compaction");
   });
 
   it("each call gets a distinct runId (no resume path)", async () => {
@@ -245,7 +264,7 @@ describe("runtime.executeTask", () => {
     await probe.source.start();
 
     // The wall for the task path: an unscoped task is bounded to the session
-    // (personal) workspace, and a name addressing ANOTHER workspace does not
+    // (default) workspace, and a name addressing ANOTHER workspace does not
     // resolve — not because reach is denied, but because the `ws_<id>-` form is
     // retired and rejected at parse. A task reaches exactly one workspace plus
     // identity tools, and there is no longer a name that can say otherwise. The
@@ -272,7 +291,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       prompt: "ping anywhere you can reach",
       identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
-      // No workspaceId — unscoped task bounded to the session (personal) ws.
+      // No workspaceId — unscoped task bounded to the owner's default ws.
     });
 
     expect(result.toolCalls.length).toBeGreaterThan(0);
@@ -439,18 +458,18 @@ describe("runtime.executeTask", () => {
     // Regression guard for the executeTask analog of the chat-path bug
     // PR #315 fixed in `_chatInner`. Before this fix,
     // `loadConversationSkills(sessionWsId, ...)` at runtime.ts:1703
-    // pulled workspace-tier skills from the user's personal workspace,
+    // pulled workspace-tier skills from the user's default workspace,
     // so any scheduled task focused on a shared workspace silently
     // dropped that workspace's `loading_strategy: always` skills.
     //
     // Fix: `loadConversationSkills(focusedWsId ?? sessionWsId, ...)`.
     // This test plants a workspace-tier skill in the SHARED workspace
-    // (different dir than the personal workspace), runs an
+    // (different dir than the default workspace), runs an
     // executeTask focused on the shared workspace, and asserts the
     // skill lands in the recorded `skills.loaded` event.
     runtime = await bootRuntime(undefined);
-    const { personalWsId } = await provisionWorkspaces(runtime);
-    expect(personalWsId).not.toBe(SHARED_WS_ID);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    expect(defaultWsId).not.toBe(SHARED_WS_ID);
 
     const SKILL_NAME = "shared-task-voice";
     const sharedSkillsDir = join(workDir, "workspaces", SHARED_WS_ID, "skills");

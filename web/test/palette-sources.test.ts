@@ -52,7 +52,7 @@ describe("workspacesSource", () => {
     ...baseCtx,
     workspaces: [
       ws("ws_aaaaaaaaaaaaaaaa", "Pacific Clinic", { userRole: "member" }),
-      ws("ws_bbbbbbbbbbbbbbbb", "Personal", { userRole: "admin", isPersonal: true }),
+      ws("ws_bbbbbbbbbbbbbbbb", "Zeta Labs", { userRole: "admin" }),
       ws("ws_cccccccccccccccc", "Helix Sales", { userRole: "admin" }),
     ],
     activeWorkspaceId: "ws_cccccccccccccccc",

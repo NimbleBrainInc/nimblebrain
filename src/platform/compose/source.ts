@@ -51,7 +51,7 @@ import {
   wrapContained,
 } from "../../prompt/compose.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
-import { makeIdentitySkill, type Runtime } from "../../runtime/runtime.ts";
+import type { Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
 import { collectActivatableSkills, toCatalogEntries } from "../../skills/catalog.ts";
 import { skillDisplayName } from "../../skills/display-name.ts";
@@ -243,11 +243,8 @@ export function createComposeSource(runtime: Runtime, eventSink: EventSink): Mcp
  *
  * Inputs gathered (mirrors `runtime.chat()` for everything not request-
  * scoped):
- *   - `contextSkills` = global `runtime.getContextSkills()` PLUS the
- *     workspace identity override (`workspace.identity` synthesized into
- *     a priority-1 core skill). The override is the workspace-scoping
- *     piece — without it the trace would lie for any workspace using a
- *     custom identity.
+ *   - `contextSkills` = the conversation pool's context-role skills, every
+ *     tier.
  *   - `apps` = `runtime.buildAppsList(wsId)` — workspace-scoped, includes
  *     each connector's `app://instructions` overlay.
  *   - `overlays` = `runtime.readPromptOverlays(wsId)` — the workspace
@@ -268,15 +265,8 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const wsId = runtime.requireWorkspaceId();
   const identity = runtime.getCurrentIdentity();
 
-  // Gather workspace metadata + the workspace identity override (per-
-  // workspace `workspace.identity` synthesized into a priority-1 context
-  // skill, exactly like `runtime.chat()` does at line ~708). Without this
-  // append, the trace would silently report `DEFAULT_IDENTITY` for any
-  // workspace operating under a custom identity — defeating the headline
-  // purpose of the tool.
   const ws = await runtime.getWorkspaceStore().get(wsId);
   const workspaceContext: WorkspaceContext = ws ? { id: ws.id, name: ws.name } : { id: wsId };
-  const identityOverride = ws?.identity ? makeIdentitySkill(ws.identity) : null;
   // Partition the conversation pool by ROLE, exactly as `runtime.chat()` does:
   // `context` (every tier, active only) → Layer 0/1; `capability` → Layer 3.
   // This trace must equal what chat composes — including workspace/user-tier
@@ -292,7 +282,6 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   const { context: poolContext, capability: poolCapability } = partitionSkillsByRole(
     runtime.loadConversationSkills(wsId, userId).filter((sk) => !suppressed.has(sk.manifest.name)),
   );
-  const requestContextSkills = identityOverride ? [...poolContext, identityOverride] : poolContext;
 
   // Gather inputs in parallel where possible.
   const [apps, overlays] = await Promise.all([
@@ -353,7 +342,7 @@ async function composeLive(runtime: Runtime, convId: string): Promise<ComposeRes
   );
 
   const composed: ComposedPrompt = composeSystemPromptTraced(
-    requestContextSkills,
+    poolContext,
     null, // matched skill — request-scoped, skipped in live mode
     apps,
     undefined, // focused app — request-scoped
@@ -748,7 +737,7 @@ interface L3SkillAudit {
 function auditL3Skill(entry: SkillsLoadedEvent["skills"][number]): L3SkillAudit {
   const path = entry.id;
   // `skill-in-memory:<name>` ids are synthesized for skills without a
-  // sourcePath (e.g. workspace identity overrides). Nothing to verify.
+  // sourcePath. Nothing to verify.
   // POSIX-only check — the platform's deployed targets (Linux, macOS) put
   // skill files under absolute POSIX paths. A future Windows port would
   // need to broaden this (`path.isAbsolute(path)`) since drive-letter

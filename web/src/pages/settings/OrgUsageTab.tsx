@@ -25,10 +25,9 @@ import {
 
 // ── Org usage / audit ────────────────────────────────────────────────
 //
-// Usage is inherently per-USER post-Stage-1: identity-bound sessions span
-// workspaces and a conversation's `workspaceId` breadcrumb is the user's
-// personal workspace, not a focused one. So usage moved off workspace
-// settings to the org/audit surface, aggregated BY USER.
+// Usage is inherently per-USER: identity-bound sessions span workspaces. So
+// usage moved off workspace settings to the org/audit surface, aggregated BY
+// USER.
 //
 // One usage read per period asks the backend to bucket the same scan by user
 // and by day. The roster resolves ownerId → name/email for the table.

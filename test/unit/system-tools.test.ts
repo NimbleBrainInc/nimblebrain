@@ -281,7 +281,7 @@ describe("System Tools", () => {
 		expect(result._meta?.[NON_ADVANCING_META_KEY]).toBe(true);
 	});
 
-	it("search with scope=tools excludes internal tools from results", async () => {
+	it("search with scope=tools excludes app-only tools from results", async () => {
 		const registry = new ToolRegistry();
 		const source = await makeInProcessSource("test", [
 			{
@@ -292,10 +292,10 @@ describe("System Tools", () => {
 			},
 			{
 				name: "hidden",
-				description: "Hidden internal tool",
+				description: "Hidden app-only tool",
 				inputSchema: { type: "object", properties: {} },
 				handler: async () => ({ content: textContent("ok"), isError: false }),
-				meta: { "ai.nimblebrain/internal": true },
+				meta: { ui: { visibility: ["app"] } },
 			},
 		]);
 		registry.addSource(source);
@@ -549,8 +549,8 @@ describe("System Tools", () => {
 						ok: false,
 						toolName,
 						changed: false,
-						reason: "internal_tool",
-						message: `${toolName} is an internal tool and cannot be added.`,
+						reason: "not_model_visible",
+						message: `${toolName} is not visible to the model and cannot be added.`,
 					};
 				}
 				return { ok: true, toolName, changed: true, message: `${toolName} added` };
@@ -594,7 +594,7 @@ describe("System Tools", () => {
 		}>(result);
 		expect(structured?.promoted[0]?.ok).toBe(true);
 		expect(structured?.promoted[1]?.ok).toBe(false);
-		expect(structured?.promoted[1]?.reason).toBe("internal_tool");
+		expect(structured?.promoted[1]?.reason).toBe("not_model_visible");
 	});
 
 	it("manage_tools accepts exact tool names returned by search", async () => {
@@ -818,6 +818,60 @@ describe("status tool — scope: skills", () => {
 		expect(text.split("soul").length - 1).toBe(1);
 		expect(text).toContain("Core Skills");
 		expect(text).not.toContain("Workspace & User Skills");
+	});
+
+	// A server skill's body is fetched only when it is needed: the overview
+	// lists names, and the detail view fetches the one body it prints.
+	describe("a tool-affined server skill", () => {
+		function serverSkill(loadBody: Skill["loadBody"]) {
+			const skill: Skill = {
+				manifest: {
+					name: "connector:crm:lookup",
+					description: "CRM lookup guidance",
+					loadingStrategy: "dynamic",
+					priority: 50,
+					status: "active",
+				},
+				body: "",
+				sourcePath: "skill://lookup/SKILL.md",
+				loadBody,
+			};
+			return [{ skill, loadedBy: "tool_affinity" as const, reason: "tool: crm__search" }];
+		}
+
+		it("is listed by the overview without fetching its body", async () => {
+			let fetched = 0;
+			const layer3 = serverSkill(async () => {
+				fetched++;
+				return { ok: true, body: "LOOKUP_BODY" };
+			});
+			const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+			const result = await source.execute("status", { scope: "skills" });
+			expect(extractText(result.content)).toContain("connector:crm:lookup");
+			expect(fetched).toBe(0);
+		});
+
+		it("has its body fetched and printed by the detail view", async () => {
+			const layer3 = serverSkill(async () => ({ ok: true, body: "LOOKUP_BODY" }));
+			const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+			const result = await source.execute("status", {
+				scope: "skills",
+				name: "connector:crm:lookup",
+			});
+			expect(result.isError).toBe(false);
+			expect(extractText(result.content)).toContain("LOOKUP_BODY");
+		});
+
+		it("is reported as unfetchable when its body cannot be loaded", async () => {
+			const layer3 = serverSkill(async () => ({ ok: false, reason: "unreachable" }));
+			const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+			const result = await source.execute("status", {
+				scope: "skills",
+				name: "connector:crm:lookup",
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain("could not be fetched");
+		});
 	});
 
 	it("shows matchable skills with triggers", async () => {

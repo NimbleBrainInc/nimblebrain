@@ -908,14 +908,12 @@ export class ConnectorLifecycleManager {
     if (!instance.ref || !("url" in instance.ref)) {
       throw new Error(`[lifecycle] missing URL ref for "${serverName}" — cannot construct source`);
     }
-    // Stage 2: every URL connector is workspace-scoped (the legacy
-    // `oauthScope: "user"` literal was deleted). The only legal
-    // principal is `WORKSPACE_PRINCIPAL_ID`; a member-scoped call
-    // would be a regression of the schema cut.
+    // Every URL connector is workspace-scoped, so the only legal principal
+    // is `WORKSPACE_PRINCIPAL_ID`.
     if (principalId !== WORKSPACE_PRINCIPAL_ID) {
       throw new Error(
         `[lifecycle] startAuth: principal "${principalId}" is not a workspace principal — ` +
-          "Stage 2 cut the legacy user-scope path; bind the connector to the owner's personal workspace instead.",
+          "install the connector into a workspace, or as a personal connector.",
       );
     }
 
@@ -1204,10 +1202,10 @@ export class ConnectorLifecycleManager {
         }
       })
       .catch((err) => {
-        // The SDK's OAuth error classes (InvalidGrantError, InvalidClientError,
-        // …) carry their detail in `.name` with an EMPTY `.message`, so fall
-        // back to the name — otherwise the surfaced diagnostic is blank, which
-        // is nearly as useless as swallowing it.
+        // An error with an empty `.message` falls back to its `.name`, so the
+        // surfaced diagnostic is never blank, which is nearly as useless as
+        // swallowing it. (The SDK's `OAuthError` carries the OAuth error code,
+        // e.g. `invalid_grant`, as its message.)
         const msg = err instanceof Error ? err.message || err.name : String(err);
         // Always surface the failure. The interactive path (capturedAuthUrl
         // set) used to be swallowed here: if the background start() failed
@@ -1353,9 +1351,8 @@ export class ConnectorLifecycleManager {
    * tuple. Stops `source.stop()` and removes the source from the
    * workspace registry.
    *
-   * Stage 2 collapsed the member-scope (user-pool) branch — every URL
-   * connector now binds to a workspace, including personal connectors
-   * (those bind to the owner's personal workspace).
+   * Every URL workspace connector binds to a workspace. Personal connectors
+   * live on the identity plane and never reach here.
    *
    * Idempotent: silently no-ops if no source is currently wired up.
    */

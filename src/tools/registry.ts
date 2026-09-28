@@ -1,6 +1,6 @@
 import { textContent } from "../engine/content-helpers.ts";
 import {
-  isInternalTool,
+  isModelVisible,
   type ToolCall,
   type ToolResult,
   type ToolRouter,
@@ -294,14 +294,14 @@ export class ToolRegistry implements ToolRouter {
   /**
    * Search all tools by natural-language terms over name + description.
    *
-   * Internal tools are excluded. This feeds the invalid-name recovery hint,
-   * which writes matched names and descriptions straight into the model's
-   * context — and an `ai.nimblebrain/internal` tool is a UI-driven affordance
-   * the model must never be handed, on any surface. Same exclusion `nb__search`
-   * applies to its own results.
+   * Tools not visible to the model are excluded. This feeds the invalid-name
+   * recovery hint, which writes matched names and descriptions straight into
+   * the model's context, and a tool without `"model"` in its `ui.visibility`
+   * must never be handed to the model, on any surface. Same exclusion
+   * `nb__search` applies to its own results.
    */
   private async searchTools(query: string): Promise<Array<{ name: string; description: string }>> {
-    const all = (await this.availableTools()).filter((t) => !isInternalTool(t));
+    const all = (await this.availableTools()).filter(isModelVisible);
     return rankToolSearchResults(all, query)
       .slice(0, 5)
       .map((t) => ({ name: t.name, description: t.description }));

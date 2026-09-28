@@ -100,7 +100,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
 } {
   const config = { ...BASE_CONFIG, ...configOverrides };
   const workspaceStore = new WorkspaceStore(mkdtempSync(join(tmpdir(), "workos-authkit-")));
-  const provider = new WorkosIdentityProvider(config, undefined, workspaceStore);
+  const provider = new WorkosIdentityProvider(config, undefined);
 
   // Mock the WorkOS SDK to handle resolveUser internals
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
@@ -215,6 +215,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_authkit_1",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec + 3600,
         iat: nowSec,
       },
@@ -228,17 +229,17 @@ describe("verifyRequest with AuthKit JWT", () => {
     expect(identity!.email).toBe("user_authkit_1@test.com");
   });
 
-  it("provisions a workspace on successful AuthKit auth (MCP OAuth path)", async () => {
-    // AuthKit tokens never route through exchangeCode (that's the browser
-    // auth-code flow). verifyRequest is the only place the invariant
-    // "authenticated user has ≥1 workspace" can be established for this
-    // path — so workspace provisioning must live there.
+  it("creates no workspace on successful AuthKit auth (bootstrap provisions)", async () => {
+    // Authentication creates no workspace. A request on the MCP OAuth path
+    // names its workspace in the URL and is admitted by membership; the web
+    // shell's bootstrap is where a user who belongs to none gets one.
     const { provider, workspaceStore } = createProvider();
     const nowSec = Math.floor(Date.now() / 1000);
     const token = await createJwt(
       {
         sub: "user_authkit_mcp",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec + 3600,
         iat: nowSec,
       },
@@ -249,11 +250,7 @@ describe("verifyRequest with AuthKit JWT", () => {
     const identity = await provider.verifyRequest(makeRequest(token));
     expect(identity).not.toBeNull();
 
-    const workspaces = await workspaceStore.getWorkspacesForUser(identity!.id);
-    expect(workspaces).toHaveLength(1);
-    expect(workspaces[0]!.members).toEqual([
-      { userId: identity!.id, role: "admin" },
-    ]);
+    expect(await workspaceStore.getWorkspacesForUser(identity!.id)).toHaveLength(0);
   });
 
   it("rejects expired AuthKit JWT", async () => {
@@ -263,6 +260,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_authkit_expired",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec - 100, // expired 100 seconds ago
         iat: nowSec - 3700,
       },
@@ -327,6 +325,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_bad_sig",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec + 3600,
         iat: nowSec,
       },
@@ -351,6 +350,7 @@ describe("verifyRequest with AuthKit JWT", () => {
       {
         sub: "user_time_test",
         iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
         exp: nowSec + 3600, // expires 1 hour from real now, but provider thinks it's 10 hours later
         iat: nowSec,
       },
@@ -374,7 +374,14 @@ describe("verifyRequest reports the token's grant", () => {
   async function authkitToken(extra: Record<string, unknown>): Promise<string> {
     const nowSec = Math.floor(Date.now() / 1000);
     return createJwt(
-      { sub: "user_grant", iss: "https://testapp.authkit.app", exp: nowSec + 3600, iat: nowSec, ...extra },
+      {
+        sub: "user_grant",
+        iss: "https://testapp.authkit.app",
+        org_id: "org_test_authkit",
+        exp: nowSec + 3600,
+        iat: nowSec,
+        ...extra,
+      },
       authkitKey.privateKey,
       authkitKey.kid,
     );
@@ -406,6 +413,83 @@ describe("verifyRequest reports the token's grant", () => {
     const { provider } = createProvider();
     const verified = await provider.verifyRequest(makeRequest(await authkitToken({})));
     expect(verified?.grant).toEqual({ kind: "resource", audience: [] });
+  });
+
+  it("reports an AuthKit token as first-party when its client_id is configured", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_channels", aud: "client_test_authkit" });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "first_party" });
+  });
+
+  it("reports an AuthKit token whose client_id is not configured as a resource token", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_mcp", aud: "client_test_authkit" });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "resource", audience: ["client_test_authkit"] });
+  });
+
+  it("never reads first-party standing from aud", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_mcp", aud: "client_test_channels" });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "resource", audience: ["client_test_channels"] });
+  });
+
+  it("reports a listed client_id in a non-string shape as a resource token", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: ["client_test_channels"] });
+    const verified = await provider.verifyRequest(makeRequest(token));
+    expect(verified?.grant).toEqual({ kind: "resource", audience: [] });
+  });
+
+  it("reports no AuthKit token as first-party when no client IDs are configured", async () => {
+    for (const firstPartyClientIds of [undefined, [], [" "]]) {
+      const { provider } = createProvider({ firstPartyClientIds });
+      const token = await authkitToken({ client_id: "client_test_channels", aud: "client_test_authkit" });
+      const verified = await provider.verifyRequest(makeRequest(token));
+      expect(verified?.grant).toEqual({ kind: "resource", audience: ["client_test_authkit"] });
+    }
+  });
+
+  it("refuses an AuthKit resource token minted for another org", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({
+      client_id: "client_test_mcp",
+      aud: "https://nb.example.com/mcp/ws_a",
+      org_id: "org_other",
+    });
+    expect(await provider.verifyRequest(makeRequest(token))).toBeNull();
+  });
+
+  it("refuses a first-party AuthKit token minted for another org", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_channels", org_id: "org_other" });
+    expect(await provider.verifyRequest(makeRequest(token))).toBeNull();
+  });
+
+  it("refuses an AuthKit token with no org_id when an org is configured", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const token = await authkitToken({ client_id: "client_test_channels", org_id: undefined });
+    expect(await provider.verifyRequest(makeRequest(token))).toBeNull();
+  });
+
+  it("admits AuthKit tokens of both grant kinds minted for the configured org", async () => {
+    const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
+    const firstParty = await provider.verifyRequest(
+      makeRequest(await authkitToken({ client_id: "client_test_channels" })),
+    );
+    expect(firstParty?.grant).toEqual({ kind: "first_party" });
+    const resource = await provider.verifyRequest(
+      makeRequest(await authkitToken({ client_id: "client_test_mcp", aud: "https://nb.example.com/mcp/ws_a" })),
+    );
+    expect(resource?.grant).toEqual({ kind: "resource", audience: ["https://nb.example.com/mcp/ws_a"] });
+  });
+
+  it("admits an AuthKit token with any org_id when no org is configured", async () => {
+    const { provider } = createProvider({ organizationId: undefined });
+    const token = await authkitToken({ org_id: "org_other" });
+    expect(await provider.verifyRequest(makeRequest(token))).not.toBeNull();
   });
 
   it("reports a User Management token as first-party", async () => {

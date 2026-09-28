@@ -132,6 +132,18 @@ describe("GET /.well-known/oauth-protected-resource", () => {
     expect(body.resource).toBeUndefined();
     expect(body.message).toContain("/.well-known/oauth-protected-resource/mcp/<workspaceId>");
   });
+
+  it("is absent under the metadata path for bare /mcp and every other non-workspace path", async () => {
+    const app = createApp("auth.example.com");
+    for (const suffix of ["/mcp", "/mcp/", "/mcp/ws_a/extra", "/v1"]) {
+      const res = await app.request(`/.well-known/oauth-protected-resource${suffix}`);
+
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.resource).toBeUndefined();
+      expect(body.message).toContain("/.well-known/oauth-protected-resource/mcp/<workspaceId>");
+    }
+  });
 });
 
 // ── Authorization Server Metadata proxy ──────────────────────────

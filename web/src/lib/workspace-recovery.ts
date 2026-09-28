@@ -10,24 +10,25 @@ import type { WorkspaceInfo } from "../context/WorkspaceContext";
  * failing id is exactly what's in the path, and the client's cached list can
  * be stale — still listing a workspace the server now rejects — so re-selecting
  * it would just refetch the same bad path and strand the user on a home
- * view that can't load data. Prefer the personal workspace, then any other
- * membership. When nothing valid remains, bail and let bootstrap / login own
- * the empty-membership case rather than loop.
+ * view that can't load data. Any other membership will do. When nothing valid
+ * remains the user may have lost their last workspace, so the shell restarts:
+ * bootstrap gives a user with no workspace one of their own.
  *
- * Side effects (`setActiveWorkspace`, `navigateHome`) are injected so this is
- * unit-testable without rendering the shell.
+ * Side effects (`setActiveWorkspace`, `navigateHome`, `restartShell`) are
+ * injected so this is unit-testable without rendering the shell.
  */
 export function recoverFromWorkspaceError(
   workspaces: WorkspaceInfo[],
   rejectedId: string | undefined,
   setActiveWorkspace: (ws: WorkspaceInfo) => void,
   navigateHome: () => void,
+  restartShell: () => void,
 ): void {
-  const fallback =
-    workspaces.find((w) => w.isPersonal && w.id !== rejectedId) ??
-    workspaces.find((w) => w.id !== rejectedId) ??
-    null;
-  if (!fallback) return;
+  const fallback = workspaces.find((w) => w.id !== rejectedId) ?? null;
+  if (!fallback) {
+    restartShell();
+    return;
+  }
   // setActiveWorkspace updates the focused workspace + the api/client paths.
   setActiveWorkspace(fallback);
   navigateHome();

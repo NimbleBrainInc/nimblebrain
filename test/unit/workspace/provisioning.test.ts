@@ -2,13 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { ensureUserWorkspace } from "../../../src/workspace/provisioning.ts";
-import type { Workspace } from "../../../src/workspace/types.ts";
+import { UserStore } from "../../../src/identity/user.ts";
 import {
-  personalWorkspaceIdFor,
-  WorkspaceConflictError,
-  WorkspaceStore,
-} from "../../../src/workspace/workspace-store.ts";
+  defaultWorkspaceFor,
+  ensureUserWorkspace,
+  provisionedWorkspaceName,
+} from "../../../src/workspace/provisioning.ts";
+import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+
+const OPAQUE_ID = /^ws_[0-9a-f]{16}$/;
 
 let workDir: string;
 let store: WorkspaceStore;
@@ -23,196 +25,125 @@ afterEach(async () => {
 });
 
 describe("ensureUserWorkspace", () => {
-  test("creates the canonical personal workspace and adds the user as admin", async () => {
-    const ws = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
+  test("creates one ordinary workspace for a user with no membership", async () => {
+    const [ws, ...rest] = await ensureUserWorkspace(store, {
+      id: "user_alice",
+      displayName: "Alice Smith",
+    });
 
-    expect(ws.id).toBe(personalWorkspaceIdFor("user_alice"));
-    expect(ws.id).toBe("ws_user_user_alice");
-    expect(ws.name).toBe("Alice's Workspace");
-    expect(ws.members).toEqual([{ userId: "user_alice", role: "admin" }]);
-    expect(ws.isPersonal).toBe(true);
-    expect(ws.ownerUserId).toBe("user_alice");
+    expect(rest).toEqual([]);
+    expect(ws?.id).toMatch(OPAQUE_ID);
+    expect(ws?.name).toBe("Alice's workspace");
+    expect(ws?.members).toEqual([{ userId: "user_alice", role: "admin" }]);
+    expect(ws && "isPersonal" in ws).toBe(false);
+    expect(ws && "ownerUserId" in ws).toBe(false);
+    expect(await store.list()).toHaveLength(1);
   });
 
-  test("falls back to generic name when displayName is missing", async () => {
-    const ws = await ensureUserWorkspace(store, { id: "user_alice" });
+  test("returns existing memberships and creates nothing", async () => {
+    const team = await store.create("Team", undefined, {
+      members: [{ userId: "user_alice", role: "member" }],
+    });
 
-    expect(ws.name).toBe("Workspace");
-    expect(ws.isPersonal).toBe(true);
-    expect(ws.ownerUserId).toBe("user_alice");
+    const memberships = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
+
+    expect(memberships.map((w) => w.id)).toEqual([team.id]);
+    expect(await store.list()).toHaveLength(1);
   });
 
-  test("preserves the user_ prefix in the workspace id (dumb concat, no strip)", async () => {
-    // The personal-workspace helper is `ws_user_` + userId — full id preserved,
-    // doubled-prefix on purpose. See `personalWorkspaceIdFor` docblock.
-    const ws = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
+  test("is idempotent across sequential calls", async () => {
+    const first = await ensureUserWorkspace(store, { id: "user_alice" });
+    const second = await ensureUserWorkspace(store, { id: "user_alice" });
 
-    expect(ws.id).toBe("ws_user_user_alice");
+    expect(second.map((w) => w.id)).toEqual(first.map((w) => w.id));
+    expect(await store.list()).toHaveLength(1);
   });
 
-  test("works for ids that don't start with user_ (e.g. dev provider's usr_*)", async () => {
-    const ws = await ensureUserWorkspace(store, { id: "usr_default" });
-
-    expect(ws.id).toBe("ws_user_usr_default");
-    expect(ws.ownerUserId).toBe("usr_default");
-  });
-
-  test("is a no-op when the user already has a personal workspace", async () => {
-    const first = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
-    const second = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
-
-    expect(second.id).toBe(first.id);
-    expect((await store.list()).length).toBe(1);
-  });
-
-  test("concurrent calls for the same user produce exactly one personal workspace", async () => {
+  test("concurrent calls for one user create exactly one workspace", async () => {
     const results = await Promise.all(
-      Array.from({ length: 5 }, () =>
-        ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" }),
-      ),
+      Array.from({ length: 5 }, () => ensureUserWorkspace(store, { id: "user_alice" })),
     );
 
-    // All callers observe the same workspace.
-    const ids = new Set(results.map((ws) => ws.id));
+    const ids = new Set(results.flat().map((w) => w.id));
     expect(ids.size).toBe(1);
-
-    // Store contains exactly one workspace.
-    const list = await store.list();
-    expect(list.length).toBe(1);
-    expect(list[0]!.members).toEqual([{ userId: "user_alice", role: "admin" }]);
-    expect(list[0]!.isPersonal).toBe(true);
+    expect(await store.list()).toHaveLength(1);
   });
 
-  test("self-heals when canonical is deleted between create-conflict and re-read", async () => {
-    // Race shape (pinning what an earlier version of reconcileConflict
-    // would have 500'd on): caller A's `store.get` returns null, A's
-    // `store.create` loses the race to caller B → throws
-    // WorkspaceConflictError, but C deletes the workspace before A
-    // re-reads. The bounded retry loop must recreate, not throw.
-    let getCallNo = 0;
-    let createCallNo = 0;
-    const recreated: Workspace = {
-      id: personalWorkspaceIdFor("user_alice"),
-      name: "Alice's Workspace",
-      members: [{ userId: "user_alice", role: "admin" }],
-      connectors: [],
-      isPersonal: true,
-      ownerUserId: "user_alice",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    const stub = {
-      async get(_id: string): Promise<Workspace | null> {
-        getCallNo++;
-        return null; // both reads see the deleted state
-      },
-      async create(_name: string, _slug: string): Promise<Workspace> {
-        createCallNo++;
-        if (createCallNo === 1) {
-          throw new WorkspaceConflictError(personalWorkspaceIdFor("user_alice"));
-        }
-        return recreated;
-      },
-    } as unknown as WorkspaceStore;
+  test("provisions again for a user removed from every workspace", async () => {
+    const [first] = await ensureUserWorkspace(store, { id: "user_alice" });
+    await store.removeMember(first!.id, "user_alice");
 
-    const result = await ensureUserWorkspace(stub, {
+    const [second] = await ensureUserWorkspace(store, { id: "user_alice" });
+
+    expect(second?.id).not.toBe(first?.id);
+    expect(second?.members).toEqual([{ userId: "user_alice", role: "admin" }]);
+  });
+
+  test("sets the new workspace as the user's default, keeping other preferences", async () => {
+    const users = new UserStore(workDir);
+    await users.create({
       id: "user_alice",
+      email: "alice@example.com",
       displayName: "Alice",
+      preferences: { timezone: "Pacific/Honolulu" },
     });
 
-    expect(result).toBe(recreated);
-    expect(getCallNo).toBe(2); // initial read + post-conflict re-read
-    expect(createCallNo).toBe(2); // first lost, second won
-  });
+    const [ws] = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" }, users);
 
-  test("gives up after 3 attempts under pathological create/delete churn", async () => {
-    // If every attempt loses to a concurrent creator AND every
-    // re-read sees the workspace already deleted again, surface a
-    // diagnosable error instead of looping forever.
-    const stub = {
-      async get(): Promise<Workspace | null> {
-        return null;
-      },
-      async create(): Promise<Workspace> {
-        throw new WorkspaceConflictError(personalWorkspaceIdFor("user_alice"));
-      },
-    } as unknown as WorkspaceStore;
-
-    await expect(
-      ensureUserWorkspace(stub, { id: "user_alice", displayName: "Alice" }),
-    ).rejects.toThrow(/couldn't be reconciled after 3 attempts/);
-  });
-
-  test("different users get different personal workspaces", async () => {
-    const a = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
-    const b = await ensureUserWorkspace(store, { id: "user_bob", displayName: "Bob" });
-
-    expect(a.id).toBe("ws_user_user_alice");
-    expect(b.id).toBe("ws_user_user_bob");
-    expect(a.ownerUserId).toBe("user_alice");
-    expect(b.ownerUserId).toBe("user_bob");
-    expect((await store.list()).length).toBe(2);
-  });
-
-  test("creates the personal workspace even when the user is already in a shared one", async () => {
-    // Stage 1 invariant: every user has a personal workspace, regardless of
-    // shared memberships. Pre-Stage-1 behavior returned any membership and
-    // skipped creation — now the personal workspace is created separately.
-    const shared = await store.create("Shared");
-    await store.addMember(shared.id, "user_alice", "member");
-
-    const ws = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
-
-    expect(ws.id).toBe("ws_user_user_alice");
-    expect(ws.id).not.toBe(shared.id);
-    expect(ws.isPersonal).toBe(true);
-
-    // Both workspaces exist; user is a member of both.
-    const list = await store.list();
-    expect(list.length).toBe(2);
-    const sharedAfter = await store.get(shared.id);
-    expect(sharedAfter?.members).toEqual([{ userId: "user_alice", role: "member" }]);
-  });
-
-  test("create populates the owner as sole admin so ensureUserWorkspace is a pure read on the second login (Stage 1.1)", async () => {
-    // Stage 1.1 invariant: `WorkspaceStore.create` produces a personal
-    // workspace whose `members` is already `[{ userId: ownerUserId,
-    // role: "admin" }]`. The earlier "personal workspace exists with
-    // zero members" state can no longer be reached through the
-    // canonical create path — and `addMember` on a personal workspace
-    // is now rejected by the store. So ensureUserWorkspace becomes a
-    // pure read on every login after the first. Operators with
-    // pre-Stage-1.1 data converge via
-    // `scripts/cleanup-personal-workspace-members.ts`.
-    const wsId = personalWorkspaceIdFor("user_alice");
-    const pre = await store.create("Alice's Workspace", wsId.slice(3), {
-      isPersonal: true,
-      ownerUserId: "user_alice",
+    const profile = await users.get("user_alice");
+    expect(profile?.preferences).toEqual({
+      timezone: "Pacific/Honolulu",
+      defaultWorkspaceId: ws!.id,
     });
-    expect(pre.members).toEqual([{ userId: "user_alice", role: "admin" }]);
-
-    const ws = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
-    expect(ws.id).toBe(wsId);
-    expect(ws.members).toEqual([{ userId: "user_alice", role: "admin" }]);
   });
 
-  test("OIDC-style user IDs that share hex prefixes still produce different workspaces", async () => {
-    // Regression guard preserved from the prior implementation. The full
-    // user id is part of the canonical workspace id, so no prefix overlap
-    // can collide.
-    const a = await ensureUserWorkspace(store, {
-      id: "usr_oidc_abcdef0011aa",
-      displayName: "A",
-    });
-    const b = await ensureUserWorkspace(store, {
-      id: "usr_oidc_abcdef0022bb",
-      displayName: "B",
-    });
+  test("does not touch preferences when the user already has a workspace", async () => {
+    const users = new UserStore(workDir);
+    await users.create({ id: "user_alice", email: "alice@example.com", displayName: "Alice" });
+    await store.create("Team", undefined, { members: [{ userId: "user_alice", role: "admin" }] });
 
-    expect(a.id).not.toBe(b.id);
-    expect(a.id).toBe("ws_user_usr_oidc_abcdef0011aa");
-    expect(b.id).toBe("ws_user_usr_oidc_abcdef0022bb");
-    expect(a.members.map((m) => m.userId)).toEqual(["usr_oidc_abcdef0011aa"]);
-    expect(b.members.map((m) => m.userId)).toEqual(["usr_oidc_abcdef0022bb"]);
+    await ensureUserWorkspace(store, { id: "user_alice" }, users);
+
+    expect((await users.get("user_alice"))?.preferences.defaultWorkspaceId).toBeUndefined();
+  });
+
+  test("tolerates a user with no profile record", async () => {
+    const users = new UserStore(workDir);
+    const [ws] = await ensureUserWorkspace(store, { id: "user_ghost" }, users);
+    expect(ws?.id).toMatch(OPAQUE_ID);
+    expect(await users.get("user_ghost")).toBeNull();
+  });
+});
+
+describe("provisionedWorkspaceName", () => {
+  test.each([
+    ["Mat Goldsborough", "Mat's workspace"],
+    ["  Mat  ", "Mat's workspace"],
+    ["mat@x.ai", "mat's workspace"],
+    [undefined, "Workspace"],
+    ["", "Workspace"],
+    ["   ", "Workspace"],
+  ])("%p → %p", (displayName, expected) => {
+    expect(provisionedWorkspaceName(displayName)).toBe(expected);
+  });
+});
+
+describe("defaultWorkspaceFor", () => {
+  test("prefers the default workspace while the user is a member", async () => {
+    const a = await store.create("A");
+    const b = await store.create("B");
+    expect(defaultWorkspaceFor([a, b], { defaultWorkspaceId: b.id }).id).toBe(b.id);
+  });
+
+  test("falls back to the first membership when the default is not one of them", async () => {
+    const a = await store.create("A");
+    const b = await store.create("B");
+    expect(defaultWorkspaceFor([a, b], { defaultWorkspaceId: "ws_gone000000000000" }).id).toBe(a.id);
+  });
+
+  test("falls back to the first membership with no preference", async () => {
+    const a = await store.create("A");
+    expect(defaultWorkspaceFor([a], undefined).id).toBe(a.id);
+    expect(defaultWorkspaceFor([a], {}).id).toBe(a.id);
   });
 });

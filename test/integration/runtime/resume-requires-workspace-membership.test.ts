@@ -8,7 +8,7 @@
  * throw `ConversationWorkspaceAccessDeniedError`.
  *
  * Reads stay owner-gated (covered elsewhere); this pins the active/resume path,
- * the current-member allow case, and the personal-workspace exemption.
+ * the current-member allow case, and a resume in the dev-mode default workspace.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -49,7 +49,11 @@ describe("resume requires current membership of the conversation's workspace", (
 
     let thrown: unknown;
     try {
-      await runtime.chat({ message: "still here?", conversationId: born.conversationId });
+      await runtime.chat({
+        message: "still here?",
+        conversationId: born.conversationId,
+        workspaceId: WORKSPACE_A,
+      });
     } catch (e) {
       thrown = e;
     }
@@ -70,7 +74,11 @@ describe("resume requires current membership of the conversation's workspace", (
 
     let thrown: unknown;
     try {
-      await runtime.startTurn({ message: "still here?", conversationId: born.conversationId });
+      await runtime.startTurn({
+        message: "still here?",
+        conversationId: born.conversationId,
+        workspaceId: WORKSPACE_A,
+      });
     } catch (e) {
       thrown = e;
     }
@@ -95,10 +103,11 @@ describe("resume requires current membership of the conversation's workspace", (
     await runtime.shutdown();
   });
 
-  it("does not gate a personal-workspace conversation (sole-member by construction)", async () => {
-    const runtime = await startRuntime("personal");
+  it("resumes a conversation born in the dev-mode default workspace", async () => {
+    const runtime = await startRuntime("default-ws");
 
-    // Born unfocused → personal workspace; resume must not be gated.
+    // Born unfocused → the caller's default workspace, where they are a member;
+    // the resume resolves the same default and is not gated.
     const born = await runtime.chat({ message: "hello from home" });
     const resumed = await runtime.chat({
       message: "still here",

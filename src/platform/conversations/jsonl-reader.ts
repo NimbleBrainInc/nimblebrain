@@ -36,9 +36,8 @@ export interface ConversationMeta {
   ownerId?: string;
   /**
    * The workspace the conversation ran in — the breadcrumb the
-   * runtime stamps on the line-1 header at create time. Absent on legacy
-   * files written before workspace stamping; a consumer treats absent as
-   * the owner's personal workspace.
+   * runtime stamps on the line-1 header at create time. May be absent; the
+   * workspace the file is stored under is authoritative either way.
    */
   workspaceId?: string;
 }
@@ -60,7 +59,11 @@ export interface DisplayMessage {
   /** Aggregate LLM usage for the whole turn; undefined for user messages. */
   usage?: DisplayUsage;
   files?: DisplayFile[];
-  /** Non-"complete" run terminations bubble up here ("max_iterations", "error"). */
+  /**
+   * Non-"complete" run terminations bubble up here: a `run.done` stopReason
+   * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
+   * "interrupted" for a run with no terminal event.
+   */
   stopReason?: string;
   /**
    * True when this assistant turn has no terminal event yet (no run.done /

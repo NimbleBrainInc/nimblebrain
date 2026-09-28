@@ -13,16 +13,6 @@ export type ConnectionState =
   | "stopped"
   | "pending_auth";
 
-/** App info returned by GET /v1/apps. */
-export interface AppInfo {
-  name: string;
-  connectorName: string;
-  version: string;
-  status: ConnectionState;
-  toolCount: number;
-  ui: ConnectorUiMeta | null;
-}
-
 /** Tool call result from POST /v1/workspaces/:wsId/tools/call. */
 export interface ToolCallResult {
   content: Array<{ type: string; text?: string; [key: string]: unknown }>;
@@ -157,7 +147,6 @@ export interface ConfigChangedEvent {
 export interface ConversationTitleEvent {
   conversationId: string;
   title: string;
-  wsId?: string;
 }
 
 /**
@@ -420,12 +409,6 @@ export interface BootstrapResponse {
     role: "admin" | "member";
     memberCount: number;
     connectorCount: number;
-    /**
-     * `true` for the user's personal workspace. Pre-Stage-1 deployments
-     * return `false` for every workspace until the
-     * `migrate-personal-workspaces` script runs.
-     */
-    isPersonal: boolean;
     /** The workspace's MCP endpoint, canonical form: `<publicOrigin>/mcp/<wsId>`. */
     mcpUrl: string;
   }>;

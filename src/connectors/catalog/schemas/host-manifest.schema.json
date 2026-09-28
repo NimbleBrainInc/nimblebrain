@@ -196,7 +196,7 @@
     },
     "BriefingFacet": {
       "type": "object",
-      "description": "One dimension of a server's briefing contribution. Resolved via exactly one of `resource` (an MCP resource read) or `tool` (an MCP tool call) — both answered by the server that declared the facet. The host never reads a server's data itself, so there is no host-side query. A facet declaring neither falls back to `description`.",
+      "description": "One dimension of a server's briefing contribution. Resolved via exactly one of `resource` (an MCP resource read) or `tool` (an MCP tool call) — both answered by the server that declared the facet. The host never reads a server's data itself, so there is no host-side query. A facet declaring neither falls back to `description`. A facet answers for the workspace, never for the caller: one briefing is generated per workspace and shown to every member.",
       "required": ["name", "label", "type"],
       "additionalProperties": false,
       "properties": {

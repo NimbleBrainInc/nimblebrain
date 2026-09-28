@@ -1,6 +1,6 @@
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
-import { INTERNAL_TOOL_ANNOTATION, type ToolResult } from "../engine/types.ts";
+import type { ToolResult } from "../engine/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { UserStore } from "../identity/user.ts";
@@ -9,7 +9,6 @@ import type { Runtime } from "../runtime/runtime.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { isArchiveName, listArchives, purgeArchive } from "../workspace/archives.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
-import { PersonalWorkspaceInvariantError } from "../workspace/errors.ts";
 import type { WorkspaceMember } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
@@ -97,7 +96,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
     name: "manage_workspaces",
     description:
       "Manage workspaces and their members. Workspace CRUD and claim_admin require org admin. Member management requires workspace admin membership. claim_admin lets an org admin seat themselves as admin of a shared workspace that has no admin member, to recover one that would otherwise be unmanageable. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
-    meta: { [INTERNAL_TOOL_ANNOTATION]: true },
+    meta: { ui: { visibility: ["app"] } },
     inputSchema: {
       type: "object",
       properties: {
@@ -313,12 +312,6 @@ async function handleCreate(
       isError: false,
     };
   } catch (err) {
-    // PersonalWorkspaceInvariantError propagates to the HTTP layer
-    // (mapped to 422). Swallowing it here would degrade a sharp
-    // identity-boundary violation into a soft 200 + isError:true.
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to create workspace: ${err instanceof Error ? err.message : String(err)}`,
@@ -360,18 +353,6 @@ async function handleClaimAdmin(
     return { content: textContent(`Workspace "${workspaceId}" not found.`), isError: true };
   }
 
-  // Personal workspaces are sole-owner and always have the owner seated as
-  // admin at creation, so they can never be stranded — and mutating their
-  // membership violates the personal-workspace invariant.
-  if (ws.isPersonal === true) {
-    return {
-      content: textContent(
-        "Personal workspaces always have an admin owner; claim_admin does not apply.",
-      ),
-      isError: true,
-    };
-  }
-
   // Narrow the lever: only a workspace with NO admin member is recoverable.
   // Refusing otherwise keeps this from becoming a backdoor org-admin override
   // into a healthy workspace.
@@ -400,9 +381,6 @@ async function handleClaimAdmin(
       isError: false,
     };
   } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to claim admin: ${err instanceof Error ? err.message : String(err)}`,
@@ -463,9 +441,6 @@ async function handleUpdate(
       isError: false,
     };
   } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to update workspace: ${err instanceof Error ? err.message : String(err)}`,
@@ -584,10 +559,6 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
         // web client gate workspace-admin UI without an extra `list_members`
         // round-trip per workspace.
         ...(userRole ? { userRole } : {}),
-        // `isPersonal` lets the web client badge the personal workspace
-        // and enforce the personal-workspace invariants in settings.
-        // Pre-Stage-1 workspaces return `false`.
-        isPersonal: ws.isPersonal === true,
       };
     });
     const data = { workspaces: result };
@@ -696,33 +667,8 @@ function memberPermissionDenied(): ToolResult {
   };
 }
 
-/**
- * Encode `PersonalWorkspaceInvariantError` into the ToolResult so the
- * HTTP layer (`handleToolCall`) can recognize it and map to a 422 with
- * a structured body — the typed error class itself is lost across the
- * in-process MCP serialization boundary. The marker is the `error`
- * field on `structuredContent`; consumers outside the HTTP layer (the
- * agent loop, external MCP clients) see a regular `isError: true`
- * result and can read the same `structuredContent` if they care.
- */
-function personalWorkspaceInvariantToolResult(err: PersonalWorkspaceInvariantError): ToolResult {
-  return {
-    content: textContent(err.message),
-    structuredContent: {
-      error: "personal_workspace_invariant",
-      workspaceId: err.workspaceId,
-      reason: err.reason,
-      message: err.message,
-    },
-    isError: true,
-  };
-}
-
-/** Map a thrown mutation error to a ToolResult, preserving the personal-workspace invariant marker. */
+/** Map a thrown mutation error to a ToolResult. */
 function mutationErrorResult(err: unknown, action: string): ToolResult {
-  if (err instanceof PersonalWorkspaceInvariantError) {
-    return personalWorkspaceInvariantToolResult(err);
-  }
   return {
     content: textContent(
       `Failed to ${action}: ${err instanceof Error ? err.message : String(err)}`,
@@ -840,9 +786,6 @@ async function handleAddMember(
       isError: false,
     };
   } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to add member: ${err instanceof Error ? err.message : String(err)}`,
@@ -934,9 +877,6 @@ async function handleRemoveMember(
       isError: false,
     };
   } catch (err) {
-    if (err instanceof PersonalWorkspaceInvariantError) {
-      return personalWorkspaceInvariantToolResult(err);
-    }
     return {
       content: textContent(
         `Failed to remove member: ${err instanceof Error ? err.message : String(err)}`,

@@ -4,7 +4,6 @@
     "target": "ESNext",
     "module": "Preserve",
     "moduleDetection": "force",
-    "jsx": "react-jsx",
     "allowJs": true,
 
     "moduleResolution": "bundler",
@@ -25,6 +24,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "instrument/**/*.ts", "scripts/**/*.ts"],
+  "include": ["src/**/*.ts", "instrument/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "src/platform/*/ui"]
 }

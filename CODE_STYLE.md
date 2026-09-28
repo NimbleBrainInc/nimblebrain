@@ -87,6 +87,51 @@ flags any byte in 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, or 0x7F under `src/`.
 
 ---
 
+## Public content
+
+### No internal hosts or real WorkOS identifiers
+
+This repo is public. Never write a hosted-platform hostname, a real AuthKit
+subdomain, or a WorkOS client id in any tracked file: source, test, fixture,
+doc, or script. Use a fictional value, or take a real one at runtime.
+
+```ts
+// BAD — a hosted tenant's real host (drawn here with a placeholder for the
+// company domain, so this file stays clean under the check).
+process.env.NB_PLATFORM_HOST = "acme.<company-domain>";
+const PROBE_REDIRECT_URI = "https://<real-tenant>.<company-domain>/v1/mcp-auth/callback";
+```
+
+```ts
+// GOOD — a fictional host in a test; a real one from the caller at runtime.
+process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
+const redirectUri = parseRedirectUri(process.argv[3]); // usage error when missing
+```
+
+**Rationale.** A public repo is indexed and cloned. A real host in an example
+discloses deployment topology and names a customer, and it outlives any later
+cleanup in git history. `example.com` (RFC 2606) cannot resolve to anyone's
+deployment, so a reader knows at a glance the value is illustrative.
+
+**Detection.** `bun run check:internal-hosts` (wired into `verify:static`)
+scans every git-tracked text file for:
+
+- a subdomain of the company domain other than a public site (`docs`,
+  `schemas`, `static`, `synapse`, `www`);
+- `<subdomain>.authkit.app` where the subdomain is not allow-listed;
+- the WorkOS client-id shape: `client_01` followed by 24 Crockford base-32
+  characters.
+
+**Override.** Two allow-lists of exact labels in
+`scripts/check-internal-hosts.ts`. `PUBLIC_COMPANY_SUBDOMAINS` holds the
+company's public sites; add one only when it serves the public.
+`FICTIONAL_AUTHKIT_SUBDOMAINS` holds AuthKit placeholders (`myapp` in the
+docs, `testapp` in the tests); add a label only when it is a placeholder in
+every use. There is no per-line marker and no file
+exemption. For a client id, use a value that breaks the shape (`client_test`).
+
+---
+
 ## Adding a new rule
 
 1. **Pick the smallest possible rule.** One pattern, one example, one

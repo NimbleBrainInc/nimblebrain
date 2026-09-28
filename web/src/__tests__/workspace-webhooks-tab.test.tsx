@@ -53,7 +53,6 @@ const WS: WorkspaceInfo = {
   name: "Outbound",
   connectors: [],
   memberCount: 1,
-  isPersonal: false,
   userRole: "admin",
 };
 

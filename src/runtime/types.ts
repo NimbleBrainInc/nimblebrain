@@ -228,7 +228,7 @@ export interface RuntimeConfig {
   home?: {
     /** Enable the Home dashboard. Default: true. */
     enabled?: boolean;
-    /** User's first name for the greeting. Default: "there". */
+    /** Legacy fallback for `preferences.displayName`. */
     userName?: string;
     /** IANA timezone (e.g., "Pacific/Honolulu"). Empty uses system timezone. */
     timezone?: string;
@@ -297,7 +297,8 @@ export interface ChatRequest {
    * its tools plus the caller's identity tools, all bare, via
    * `listToolsForWorkspace(workspaceId)`. There is no cross-workspace union.
    * Absent → the chat isn't focused on a workspace (e.g. the home control
-   * panel); it falls back to the personal workspace, which is then the workspace.
+   * panel); only a dev-mode caller may omit it, and the caller's default
+   * workspace then stands in (`Runtime.resolveRequestWorkspace`).
    */
   workspaceId?: string;
   /**
@@ -505,5 +506,13 @@ export interface TaskResult {
     errorReason?: string;
   }>;
   stopReason: string;
+  /**
+   * The last model call's unified finish reason and provider-native stop
+   * reason. See `EngineResult.finishReason` / `finishReasonRaw`. Together they
+   * let the caller explain a `stopReason` of "other", which several distinct
+   * provider outcomes share.
+   */
+  finishReason?: string;
+  finishReasonRaw?: string;
   usage: TurnUsage;
 }
