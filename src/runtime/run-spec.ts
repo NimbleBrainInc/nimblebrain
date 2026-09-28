@@ -93,8 +93,7 @@ export interface RunInput {
    */
   content: Array<UserTextPart | UserResourceLinkPart>;
   /**
-   * The author stamped on that message. Absent leaves the message unattributed,
-   * which is what a dev-mode chat with no identity produces.
+   * The author stamped on that message. Absent leaves the message unattributed.
    */
   userId?: string;
   /** File references persisted alongside the message. */

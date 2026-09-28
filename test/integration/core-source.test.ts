@@ -176,6 +176,32 @@ describe("Core Source", () => {
 		}
 	});
 
+	it("nb__set_model_config with no identity is refused, and nothing is written", async () => {
+		const workDir = join(testDir, `work-noidentity-${Date.now()}`);
+		mkdirSync(workDir, { recursive: true });
+		const configPath = join(workDir, "nimblebrain.json");
+		writeFileSync(configPath, JSON.stringify({ version: "1" }));
+
+		const runtime = await Runtime.start({
+			identityProvider: devProvider,
+			model: { provider: "custom", adapter: createEchoModel() },
+			workDir,
+			configPath,
+			logging: { disabled: true },
+		});
+		try {
+			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+			const result = await source.execute("set_model_config", {
+				defaultModel: "claude-haiku-4-5-20251001",
+			});
+			expect(result.isError).toBe(true);
+			expect(extractText(result.content)).toContain("requires an authenticated identity");
+			expect(existsSync(deriveOverridePath(configPath))).toBe(false);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	it("nb__set_model_config with invalid model returns error", async () => {
 		const workDir = join(testDir, `work-badmodel-${Date.now()}`);
 		mkdirSync(workDir, { recursive: true });

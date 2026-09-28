@@ -1285,8 +1285,7 @@ export class Runtime {
       conversation: { store, conversation, resumed },
       input: {
         content: buildUserMessageContent(request),
-        // The message's author, absent when a dev-mode caller sent no identity.
-        ...(request.identity?.id ? { userId: request.identity.id } : {}),
+        userId: requestIdentity.id,
         ...(request.fileRefs?.length ? { fileRefs: request.fileRefs } : {}),
         // A chat matches trigger phrases against what the person actually typed
         // — not the assembled content blocks, which carry upload placeholders.

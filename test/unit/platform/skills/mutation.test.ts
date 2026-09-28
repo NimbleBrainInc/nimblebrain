@@ -299,6 +299,25 @@ describe("skills__create", () => {
     );
   });
 
+  test("a create with no identity is refused, and nothing is written", async () => {
+    runtime.identity = null;
+    const src = await buildSource();
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "create",
+      arguments: {
+        scope: "org",
+        manifest: { name: "no-identity", description: "test", type: "skill" },
+        body: "x",
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect((result as { structuredContent?: { code?: string } }).structuredContent?.code).toBe(
+      "permission_denied",
+    );
+    expect(existsSync(join(workDir, "skills", "no-identity.md"))).toBe(false);
+  });
+
   test("workspace scope writes under {workDir}/workspaces/{wsId}/skills/", async () => {
     runtime.wsId = "ws_demo";
     seedWorkspaceRoot(workDir, "ws_demo");

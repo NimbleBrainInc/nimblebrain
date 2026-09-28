@@ -62,10 +62,8 @@ export interface TaskFnRequest {
   allowedTools?: string[];
   metadata?: Record<string, unknown>;
   /**
-   * Focused workspace (optional). Set → tools scoped to that workspace
-   * + identity tools, briefing for that workspace. Omitted → the session
-   * (personal) workspace's tools + identity tools, no focused-workspace
-   * briefing. Either way the automation is walled to one workspace.
+   * The automation's workspace: tools scoped to it + identity tools, and
+   * its briefing. `runtime.executeTask()` refuses a task that names none.
    */
   workspaceId?: string;
   /** Identity under which this automation runs. */

@@ -312,9 +312,8 @@ export interface ChatRequest {
    * It is ALSO the tool scope: a session is walled to this one workspace —
    * its tools plus the caller's identity tools, all bare, via
    * `listToolsForWorkspace(workspaceId)`. There is no cross-workspace union.
-   * Absent → the chat isn't focused on a workspace (e.g. the home control
-   * panel); only a dev-mode caller may omit it, and the caller's default
-   * workspace then stands in (`Runtime.resolveRequestWorkspace`).
+   * Required at runtime, under every identity provider: a request naming
+   * none is refused, and the runtime never chooses a workspace for it.
    */
   workspaceId?: string;
   /**
@@ -455,13 +454,11 @@ export interface TaskRequest {
    */
   identity?: UserIdentity;
   /**
-   * Focused workspace (optional). When set, drives the active tool set
-   * (that workspace's tools + identity tools) and the focused-workspace
-   * briefing layer in the system prompt. When omitted, the active tool
-   * set is the owner's personal-workspace tools + identity tools; `nb__search`
-   * discovers the rest of that one workspace, NOT a cross-workspace union
-   * (progressive disclosure, same shape as chat). The focused-workspace
-   * briefing layer is skipped — `TASK_IDENTITY` carries the framing.
+   * The workspace the task runs in. Drives the active tool set (that
+   * workspace's tools + identity tools; `nb__search` discovers the rest of
+   * that one workspace, NOT a cross-workspace union) and the workspace
+   * briefing layer in the system prompt. Required at runtime, as for
+   * `ChatRequest.workspaceId`: a task naming none is refused.
    */
   workspaceId?: string;
   model?: string;

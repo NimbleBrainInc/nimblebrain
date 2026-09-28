@@ -89,10 +89,7 @@ async function checkWritePermission(
     };
   }
 
-  // No workspace, no overlay to write — checked ahead of the dev-mode
-  // allow-through, which would otherwise return `allowed` with no wsId and
-  // leave the write site's non-null assertion false (rescued only by
-  // `resolveDir` throwing into the handler's catch).
+  // No workspace, no overlay to write.
   if (!wsId) {
     return { allowed: false, reason: "Writing instructions requires a workspace context" };
   }

@@ -26,7 +26,7 @@ So read the write path. Do not assume a call site is covered because the helper 
 
 ## Provisioning and the default workspace
 
-**Every workspace is ordinary, however it was created (ADR-0039).** Nothing in the store or above it may treat a workspace differently for how it came to exist. A user who belongs to no workspace gets one from `ensureUserWorkspace` (`src/workspace/provisioning.ts`), called by bootstrap and by the runtime's dev-mode default: an opaque id, `provisionedWorkspaceName(displayName)`, the user as admin. It becomes their `preferences.defaultWorkspaceId`; `defaultWorkspaceFor` reads that preference, ignoring it while the user is not a member, and falls back to the earliest membership.
+**Every workspace is ordinary, however it was created (ADR-0039).** Nothing in the store or above it may treat a workspace differently for how it came to exist. A user who belongs to no workspace gets one from `ensureUserWorkspace` (`src/workspace/provisioning.ts`), called by bootstrap: an opaque id, `provisionedWorkspaceName(displayName)`, the user as admin. It becomes their `preferences.defaultWorkspaceId`; `defaultWorkspaceFor` reads that preference, ignoring it while the user is not a member, and falls back to the earliest membership.
 
 - **Do not call `ensureUserWorkspace` on a per-request path.** It lists every workspace. Bootstrap is where the shell starts, so it is where a user with none gets one.
 - **Do not provision on a request that names a workspace, or on an unattended run.** A request that names none is a caller error under every identity provider (`requireRequestWorkspace` in `runtime.ts`), and an automation whose owner lost every membership is skipped, not given a new workspace.

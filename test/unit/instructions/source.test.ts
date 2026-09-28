@@ -279,6 +279,20 @@ describe("instructions source — write_instructions", () => {
 // ── Role gates ──────────────────────────────────────────────────────────
 
 describe("instructions source — role gates", () => {
+  test("a write with no identity is refused, and nothing is written", async () => {
+    const src = await buildSource();
+    runtime.identity = null;
+    runtime.wsId = "ws_demo";
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "write_instructions",
+      arguments: { body: "x" },
+    });
+    expect(result.isError).toBe(true);
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("");
+  });
+
   test("workspace non-admin member denied for workspace scope", async () => {
     const src = await buildSource();
     runtime.identity = {
