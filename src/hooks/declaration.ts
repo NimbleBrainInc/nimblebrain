@@ -76,6 +76,8 @@ function parseHeaderRenames(raw: unknown): Record<string, string> | undefined {
   const out: Record<string, string> = {};
   for (const [from, to] of Object.entries(raw as Record<string, unknown>)) {
     if (!HEADER_NAME_RE.test(from)) continue;
+    // The browser's session credential is never forwarded, renamed or not.
+    if (isBrowserCredentialHeader(from.toLowerCase())) continue;
     if (typeof to !== "string" || !HEADER_NAME_RE.test(to)) continue;
     // A rename INTO the stripped class would re-open the hole the strip exists
     // to close, letting a caller land a value on an identity header name.
@@ -99,6 +101,7 @@ function parseHeaderRenames(raw: unknown): Record<string, string> | undefined {
  */
 export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "authorization",
+  "cookie",
   "x-api-key",
   "x-tenant-id",
   "x-workspace-id",
@@ -114,6 +117,18 @@ export const STRIPPED_REQUEST_HEADERS: ReadonlySet<string> = new Set([
   "content-length",
   "expect",
 ]);
+
+/**
+ * Whether an inbound header is a credential a browser attaches on its own.
+ *
+ * `Cookie` carries the user's session to this origin, so a browser that posts
+ * to a hook URL would hand it to the connector. No vendor authenticates a
+ * delivery with it, so, unlike `Authorization`, it cannot be renamed through:
+ * the connector declares its renames and must not be able to ask for it.
+ */
+export function isBrowserCredentialHeader(lowerName: string): boolean {
+  return lowerName === "cookie";
+}
 
 /**
  * Whether an inbound header is dropped before the forward.

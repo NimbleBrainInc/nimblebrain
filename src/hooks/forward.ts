@@ -4,7 +4,11 @@ import { isMintedFleetSource } from "../oauth/minted-credential-provider.ts";
 import { injectTraceparent } from "../observability/index.ts";
 import { resolveTransportCredential } from "../tools/remote-transport.ts";
 import { createSsrfGuardedFetch } from "../tools/ssrf-guarded-fetch.ts";
-import { isStrippedRequestHeader, resolveForwardUrl } from "./declaration.ts";
+import {
+  isBrowserCredentialHeader,
+  isStrippedRequestHeader,
+  resolveForwardUrl,
+} from "./declaration.ts";
 
 /**
  * The forward hop: the same call the runtime already makes to a connector, with
@@ -97,6 +101,8 @@ export class HookForwardUnauthenticatedError extends Error {
  * verifier, and no replay can restore a header that never arrived. The rename
  * target is validated at declaration time to be outside the stripped class, so
  * a rename can move a value out of the identity namespace but never into it.
+ * The browser's `Cookie` is dropped before any rename is read, so no
+ * declaration can move it out.
  */
 export function buildForwardHeaders(opts: {
   inbound: Headers;
@@ -106,6 +112,8 @@ export function buildForwardHeaders(opts: {
   const headers = new Headers();
   for (const [name, value] of opts.inbound) {
     const lower = name.toLowerCase();
+    // Before the renames: a stored rename must not carry the session out.
+    if (isBrowserCredentialHeader(lower)) continue;
     const renamed = opts.renames?.[lower];
     if (renamed) {
       headers.set(renamed, value);

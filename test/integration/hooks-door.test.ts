@@ -247,6 +247,14 @@ describe("a legitimate delivery", () => {
     // caller's.
     expect(headers.get("authorization")).toBe("Bearer operator");
   });
+
+  test("does not forward the browser's session cookie", async () => {
+    await deliver(makeApp(), hookUrl(), {
+      headers: { cookie: "nb_session=user-session; nb_oauth_state=abc" },
+    });
+    expect(forwarded).toHaveLength(1);
+    expect((forwarded[0]?.init.headers as Headers).get("cookie")).toBeNull();
+  });
 });
 
   test("another workspace's id does not reach this workspace's connector", async () => {

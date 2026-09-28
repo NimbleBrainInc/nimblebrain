@@ -62,6 +62,15 @@ describe("parseHookDeclarations", () => {
     expect(decl?.header_renames).toBeUndefined();
   });
 
+  test("refuses a rename FROM the browser's cookie", () => {
+    // A rename out of the stripped class exists for vendor signatures; no vendor
+    // signs with the cookie, and the connector must not be able to ask for it.
+    const decl = parseHookDeclarations(
+      meta([{ ...GOOD, header_renames: { Cookie: "x-acme-cookie" } }]),
+    )[0];
+    expect(decl?.header_renames).toBeUndefined();
+  });
+
   test("refuses a rename whose name is not an HTTP token", () => {
     const decl = parseHookDeclarations(
       meta([{ ...GOOD, header_renames: { "bad header": "x-ok", "x-ok": "also bad" } }]),
@@ -122,6 +131,7 @@ describe("the stripped header class", () => {
   test("covers every identity header a caller could try to assert", () => {
     for (const name of [
       "authorization",
+      "cookie",
       "x-api-key",
       "x-tenant-id",
       "x-workspace-id",

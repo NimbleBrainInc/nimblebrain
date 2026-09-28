@@ -38,6 +38,7 @@ describe("what survives the forward", () => {
 
   test.each([
     "authorization",
+    "cookie",
     "x-api-key",
     "x-tenant-id",
     "x-workspace-id",
@@ -90,6 +91,17 @@ describe("declared header renames", () => {
     );
     expect(headers.get("x-acme-signature")).toBe("Bearer vendor-secret");
     expect(headers.get("authorization")).toBeNull();
+  });
+
+  test("never move the browser's cookie, even when a stored rename names it", () => {
+    // The connector declares its renames. A browser posting to the hook URL
+    // attaches the user's session cookie, which no rename may carry out.
+    const headers = build(
+      { cookie: "nb_session=user-session" },
+      { renames: { cookie: "x-acme-cookie" } },
+    );
+    expect(headers.get("x-acme-cookie")).toBeNull();
+    expect(headers.get("cookie")).toBeNull();
   });
 
   test("apply to a header that would have passed through anyway", () => {

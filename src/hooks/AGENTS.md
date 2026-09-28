@@ -124,3 +124,6 @@ header. `isStrippedRequestHeader` mirrors the edge's rule (`x-user-id` plus the
 the edge and the namespace invariant only holds if every hop ahead of it also
 refuses to pass one through. The general path stays a denylist: vendor signature
 headers the runtime cannot enumerate have to reach the receiving verifier.
+`Cookie` is dropped before any rename is read (`isBrowserCredentialHeader`): a
+browser posting to a hook URL attaches the user's session, and the connector
+declares its own renames, so it must not be able to ask for that header.
