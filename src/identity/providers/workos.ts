@@ -56,8 +56,9 @@ const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
  * Why a `verifyRequest` call rejected a token. Each value names one of the
  * provider's silent `return null` exits so an operator triaging an
  * involuntary logout sees the specific gate instead of a bare 401.
- * `org_mismatch` is the one behind the `retry_401` incident: a refreshed
- * token whose `org_id` no longer matches the configured org. See
+ * `org_mismatch` is a token, from either issuer, whose `org_id` is not the
+ * configured org or is absent: one minted for another org of a multi-org
+ * user, or a refresh that landed on the user's default org. See
  * {@link WorkosIdentityProvider.reject}.
  */
 type WorkosRejectReason =
@@ -295,15 +296,15 @@ export class WorkosIdentityProvider implements IdentityProvider {
 
     // Every token, whichever issuer minted it, must be for the configured org.
     // Membership alone does not settle it: a user who belongs to several orgs
-    // holds tokens minted for each, and only this org's may act here. A User
-    // Management token that fails here is usually a refresh that drifted to
-    // the user's default org (see refreshToken). This gate runs before the
-    // signature check, so `claimed_org` is unverified input: safe to log, since
-    // a forged value only ever lands here or fails the signature check next,
-    // but not authoritative.
+    // holds tokens minted for each, and only this org's may act here. `iss`
+    // says which issuer minted the refused token. This gate runs before the
+    // signature check, so `claimed_org` and `iss` are unverified input: safe
+    // to log, since a forged value only ever lands here or fails the signature
+    // check next, but not authoritative.
     if (this.organizationId && payload.org_id !== this.organizationId) {
       return this.reject("org_mismatch", {
         sub: payload.sub,
+        iss: payload.iss ?? null,
         claimed_org: payload.org_id ?? null,
         expected_org: this.organizationId,
       });
