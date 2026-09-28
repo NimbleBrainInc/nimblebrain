@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
 let runtime: Runtime;
@@ -24,6 +25,7 @@ let toolNames: string[];
 beforeAll(async () => {
   testDir = mkdtempSync(join(tmpdir(), "platform-sources-"));
   runtime = await Runtime.start({
+    identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,
