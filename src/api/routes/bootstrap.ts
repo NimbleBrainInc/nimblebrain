@@ -4,7 +4,7 @@ import { requireAuth } from "../middleware/auth.ts";
 import type { AppContext, AuthEnv } from "../types.ts";
 
 export function bootstrapRoutes(ctx: AppContext) {
-  return new Hono<AuthEnv>()
-    .use("*", requireAuth(ctx.authOptions))
-    .get("/v1/bootstrap", (c) => handleBootstrap(ctx.runtime, c.var.identity));
+  return new Hono<AuthEnv>().get("/v1/bootstrap", requireAuth(ctx.authOptions), (c) =>
+    handleBootstrap(ctx.runtime, c.var.identity),
+  );
 }

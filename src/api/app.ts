@@ -42,7 +42,12 @@ export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
   // refused unless CORS allows that origin.
   app.use("*", rejectCrossSiteWrites(allowedOrigins));
 
-  // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
+  // Route groups. Each router chains its own middleware on each of its routes
+  // (see src/api/AGENTS.md), so no router's middleware reaches another's
+  // routes, and mount order matters only if two routers registered the same
+  // method and path (the first handler to answer wins). The global middleware
+  // above is registered first because Hono runs a middleware only when it
+  // precedes the handler that answers.
   app.route("/", wellKnownRoutes(ctx));
   app.route("/", healthRoutes());
   // Prometheus scrape endpoint. Bare /metrics (never /v1/metrics) so the web
@@ -50,14 +55,11 @@ export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
   app.route("/", metricsRoutes());
   app.route("/", authRoutes(ctx));
   // Outbound-OAuth callback for remote MCP servers. Unauthenticated by
-  // design — state param guards against unsolicited codes. Must be
-  // reachable before any authenticated middleware; ordering alongside
-  // authRoutes keeps that invariant obvious.
+  // design — state param guards against unsolicited codes.
   app.route("/", mcpAuthRoutes(ctx));
   // Managed-connector providers own their HTTP callback surface (Composio's
-  // `/v1/composio-auth/*`). Mounted here — parallel to mcpAuthRoutes, same
-  // unauthenticated-callback constraint — only for each REGISTERED provider, so
-  // a provider-less deploy mounts nothing and 404s at the router (honest "not
+  // `/v1/composio-auth/*`), mounted only for each REGISTERED provider, so a
+  // provider-less deploy mounts nothing and 404s at the router (honest "not
   // installed") instead of hitting an internal config gate.
   for (const provider of ctx.runtime.getManagedConnectorRegistry().list()) {
     const providerRoutes = provider.routes?.(ctx);
@@ -65,24 +67,15 @@ export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
   }
 
   // Inbound vendor webhooks. Unauthenticated by design for the same reason the
-  // callbacks above are — a vendor's POST cannot carry a platform token — and
-  // mounted in this same block so that constraint stays visible in one place.
-  // The credential is the sealed capability in the path; everything under
+  // callbacks above are — a vendor's POST cannot carry a platform token. The
+  // credential is the sealed capability in the path; everything under
   // `/v1/hooks/` that does not open one 404s. Returns null (mounts nothing)
   // when no hook key is provisioned, so a deployment without the capability
   // answers an honest router 404 rather than an internal config gate.
   const hooks = hooksRoutes(ctx);
   if (hooks) app.route("/", hooks);
 
-  // MCP routes BEFORE other authenticated routes — prevents other sub-app
-  // wildcard middleware from intercepting /mcp requests. Hono runs use("*")
-  // middleware from ALL sub-apps mounted at "/" that appear before the
-  // matching route, so MCP must be registered before chat/tools/events.
   app.route("/", mcpRoutes(ctx));
-
-  // Conversation events SSE — identity-scoped (located by conversation id,
-  // owner-gated). Registered before chat/tools/etc. so their `use("*")`
-  // middleware does not run on it.
   app.route("/", conversationEventRoutes(ctx));
 
   app.route("/", bootstrapRoutes(ctx));

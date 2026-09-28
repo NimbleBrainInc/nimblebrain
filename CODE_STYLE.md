@@ -132,6 +132,46 @@ exemption. For a client id, use a value that breaks the shape (`client_test`).
 
 ---
 
+## HTTP routes
+
+### Router middleware is chained per route
+
+A Hono sub-app never calls `.use()`. Chain its middleware on each route.
+
+```ts
+// BAD — app.ts mounts this at "/", so requireAuth runs for every request the
+// app handles after the mount, including other routers' routes and paths no
+// router registered.
+return new Hono<AppEnv>()
+  .use("*", requireAuth(ctx.authOptions))
+  .get("/v1/bootstrap", (c) => handleBootstrap(ctx.runtime, c.var.identity));
+```
+
+```ts
+// GOOD — the middleware runs for this route alone.
+return new Hono<AppEnv>().get("/v1/bootstrap", requireAuth(ctx.authOptions), (c) =>
+  handleBootstrap(ctx.runtime, c.var.identity),
+);
+```
+
+**Rationale.** Hono flattens a sub-app's `.use("*", mw)` into a `/*` matcher
+on the parent app. Every router is mounted at "/", so that middleware runs for
+every later-matched request: an unregistered path answers 401 instead of 404,
+a route mounted after the router authenticates once per such router, and
+`errorLog` records errors for routes it does not own. Correctness would then
+depend on mount order in `app.ts`. Per-route middleware scopes it to the route
+by construction.
+
+**Detection.** `bun run check:route-middleware` (wired into `verify:static`)
+flags any `.use(...)` call in a file under `src/` that imports from `hono`,
+except `src/api/app.ts`.
+
+**Override.** None. The global middleware in `src/api/app.ts` (tracing,
+metrics, CORS, security headers, the cross-site guard) is app-wide by design
+and is the only place `.use()` belongs.
+
+---
+
 ## Adding a new rule
 
 1. **Pick the smallest possible rule.** One pattern, one example, one
