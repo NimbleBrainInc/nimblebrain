@@ -37,9 +37,10 @@ export function createApp(ctx: AppContext, allowedOrigins: Set<string> | null) {
   // Global CORS middleware
   app.use("*", corsMiddleware(allowedOrigins));
   app.use("*", securityHeaders());
-  // Workspace-scoped writes take the session cookie; refuse a browser's
-  // cross-origin write that no CORS preflight would have stopped.
-  app.use("/v1/workspaces/*", rejectCrossSiteWrites(allowedOrigins));
+  // Every route, like CORS: a browser attaches the session cookie to a write
+  // on its own, so a write from another origin that no preflight stopped is
+  // refused unless CORS allows that origin.
+  app.use("*", rejectCrossSiteWrites(allowedOrigins));
 
   // Route groups — well-known endpoints first (unauthenticated, no body limit needed)
   app.route("/", wellKnownRoutes(ctx));

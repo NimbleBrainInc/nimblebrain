@@ -1,5 +1,6 @@
 type BunServer = ReturnType<typeof Bun.serve>;
 
+import type { Hono } from "hono";
 import type { ConnectionHealthProbe } from "../connectors/runtime/connection-probe.ts";
 import {
   ConnectionRevalidator,
@@ -39,6 +40,8 @@ export interface ServerOptions {
 
 export interface ServerHandle {
   server: BunServer;
+  /** The Hono app the server serves; its `routes` are the route table. */
+  app: Hono;
   healthMonitor: HealthMonitor;
   sseManager: SseEventManager;
   /** Shorthand for server.port */
@@ -51,15 +54,19 @@ export interface ServerHandle {
  * Parse ALLOWED_ORIGINS env var into a Set of *additional* CORS origins. The
  * canonical hosts (custom domain + platform subdomain) are folded in separately
  * via `canonicalOrigins()` at server start, so they never need to be listed
- * here by hand. `null` (var unset) allows same-origin requests only.
+ * here by hand. `null` (var unset) allows same-origin requests only. Read when
+ * a server starts, so the allowlist is the environment of that start.
  */
-const envAllowedOrigins: Set<string> | null = process.env.ALLOWED_ORIGINS
-  ? new Set(
-      process.env.ALLOWED_ORIGINS.split(",")
-        .map((o) => o.trim())
-        .filter(Boolean),
-    )
-  : null;
+function readEnvAllowedOrigins(): Set<string> | null {
+  const raw = process.env.ALLOWED_ORIGINS;
+  if (!raw) return null;
+  return new Set(
+    raw
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean),
+  );
+}
 
 /**
  * Start an HTTP API server wrapping a Runtime instance.
@@ -81,6 +88,7 @@ export function startServer(options: ServerOptions): ServerHandle {
   // canonical hosts (custom domain + platform subdomain). Folding the canonical
   // origins in here means they're always allowed without being listed by hand.
   // `null` (no ALLOWED_ORIGINS) allows same-origin requests only.
+  const envAllowedOrigins = readEnvAllowedOrigins();
   const allowedOrigins: Set<string> | null = envAllowedOrigins
     ? new Set([...envAllowedOrigins, ...canonicalOrigins()])
     : null;
@@ -242,6 +250,7 @@ export function startServer(options: ServerOptions): ServerHandle {
 
   return {
     server,
+    app,
     healthMonitor,
     sseManager,
     get port(): number {

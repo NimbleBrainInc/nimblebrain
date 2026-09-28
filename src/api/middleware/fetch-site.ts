@@ -15,6 +15,11 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * `same-origin` and `none` (typed or bookmarked) pass; `same-site` and
  * `cross-site` pass only from an origin the CORS allowlist names. A request
  * without the header is not from a browser that attaches cookies on its own.
+ *
+ * Mounted on every route, as CORS is. It refuses nothing CORS admits: a write
+ * carrying `Authorization` or a JSON body is preflighted, and the preflight
+ * passes only for an allowlisted origin, which passes here too. What it adds
+ * is the write no preflight guards, the one a cookie authenticates.
  */
 export function rejectCrossSiteWrites(allowedOrigins: Set<string> | null) {
   return createMiddleware(async (c, next) => {

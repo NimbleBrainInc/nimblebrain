@@ -30,8 +30,8 @@ import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
  *   the connector's pending Connection, sets a session-bound `nb_oauth_state`
  *   cookie scoped to the callback path, and returns the URL the client
  *   should navigate the user's browser to. **POST-only** so a malicious
- *   `<img>` or prefetch can't trigger a flow, and a cross-site write under
- *   `/v1/workspaces/` is refused (`rejectCrossSiteWrites`).
+ *   `<img>` or prefetch can't trigger a flow, and a browser's write from
+ *   another origin is refused (`rejectCrossSiteWrites`, on every route).
  *
  * - `GET /v1/mcp-auth/callback?code&state` (unauthenticated): the return
  *   leg of the OAuth dance. Verifies the `nb_oauth_state` cookie hashes

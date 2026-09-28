@@ -111,9 +111,9 @@ These headers are exposed to client JavaScript:
 Mcp-Session-Id, Mcp-Protocol-Version
 ```
 
-### Cross-origin writes to a workspace
+### Cross-origin writes
 
-CORS stops a script on another origin from reading a response, but a plain form or `text/plain` POST needs no preflight, and `SameSite=Lax` sends the session cookie on it when the other origin is on the same site. So a write to a workspace route (`POST`, `PATCH`, `DELETE` under `/v1/workspaces/`) that the browser marks `Sec-Fetch-Site: same-site` or `cross-site` is refused with `403 cross_site_request`, unless its `Origin` is in `ALLOWED_ORIGINS`. Same-origin requests, and clients that are not browsers, are unaffected.
+CORS stops a script on another origin from reading a response, but a plain form or `text/plain` POST needs no preflight, and `SameSite=Lax` sends the session cookie on it when the other origin is on the same site. So any write (a method other than `GET`, `HEAD` or `OPTIONS`, on any route: `/v1/*`, `/mcp/<wsId>`, webhook deliveries) that the browser marks `Sec-Fetch-Site: same-site` or `cross-site` is refused with `403 cross_site_request`, unless its `Origin` is in `ALLOWED_ORIGINS`. Same-origin requests, and clients that are not browsers (MCP clients, webhook senders, services calling the API), send no such header and are unaffected. A browser request that CORS admits after a preflight comes from an allowed origin, so it is unaffected too.
 
 ## Network architecture
 
