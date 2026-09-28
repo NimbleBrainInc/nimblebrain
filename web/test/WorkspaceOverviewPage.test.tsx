@@ -33,9 +33,10 @@ import { realClient } from "./setup";
 // could. WorkspaceContext skips its list call when given bootstrap data, so the
 // real setActiveWorkspaceId it calls is harmless — sibling suites reset client
 // state in their own beforeEach.
+let callToolImpl: () => Promise<unknown> = () => new Promise(() => {});
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callTool: () => new Promise(() => {}),
+  callTool: () => callToolImpl(),
 }));
 
 const React = await import("react");
@@ -46,6 +47,9 @@ const { WorkspaceOverviewPage } = await import("../src/pages/WorkspaceOverviewPa
 const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
 const { ShellProvider } = await import("../src/context/ShellContext");
 const { toSlug } = await import("../src/lib/workspace-slug");
+const { WorkspaceAppIconsContext } = await import("../src/context/WorkspaceAppIconsContext");
+const { useLocation } = await import("react-router-dom");
+type InstalledConnector = import("../src/api/client").InstalledConnector;
 
 interface Mounted {
   container: HTMLDivElement;
@@ -56,6 +60,7 @@ let mounted: Mounted | null = null;
 afterEach(() => {
   mounted?.unmount();
   mounted = null;
+  callToolImpl = () => new Promise(() => {});
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -171,5 +176,71 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
 
     const page = findByTestId(mounted.container, "workspace-overview-page");
     expect(page?.textContent).toContain("2 apps installed, 2 members");
+  });
+});
+
+describe("WorkspaceOverviewPage — briefing", () => {
+  function Where() {
+    return <div data-testid="location">{useLocation().pathname}</div>;
+  }
+
+  test("a connector needing sign-in opens its connector page", async () => {
+    callToolImpl = () =>
+      Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } });
+    const gmail: InstalledConnector = {
+      serverName: "gmail",
+      connectorName: "gmail",
+      version: "1.0.0",
+      state: "pending_auth",
+      scope: "workspace",
+      interactive: false,
+      toolCount: 0,
+      status: "needs_auth",
+    };
+    const slug = toSlug(WS.id);
+    mounted = await mount(
+      <WorkspaceAppIconsContext.Provider
+        value={{ iconFor: () => undefined, connectors: { workspaceId: WS.id, installed: [gmail] } }}
+      >
+        <MemoryRouter initialEntries={[`/w/${slug}`]}>
+          <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
+            <Routes>
+              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+              <Route path="*" element={<Where />} />
+            </Routes>
+          </WorkspaceProvider>
+        </MemoryRouter>
+      </WorkspaceAppIconsContext.Provider>,
+    );
+
+    const row = findByTestId(mounted.container, "briefing-connector-status");
+    expect(row?.textContent).toBe("Sign-in required · gmail");
+    expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+    await act(async () => {
+      row?.getElementsByTagName("button")[0]?.click();
+    });
+    expect(findByTestId(mounted.container, "location")?.textContent).toBe(
+      `/w/${slug}/settings/connectors/gmail`,
+    );
+  });
+
+  test("holds the skeleton until the connectors list names this workspace", async () => {
+    callToolImpl = () =>
+      Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } });
+    mounted = await mount(
+      <WorkspaceAppIconsContext.Provider
+        value={{ iconFor: () => undefined, connectors: { workspaceId: "ws_other", installed: [] } }}
+      >
+        <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
+          <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
+            <Routes>
+              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+            </Routes>
+          </WorkspaceProvider>
+        </MemoryRouter>
+      </WorkspaceAppIconsContext.Provider>,
+    );
+    expect(findByTestId(mounted.container, "workspace-briefing-loading")).not.toBeNull();
+    expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
   });
 });

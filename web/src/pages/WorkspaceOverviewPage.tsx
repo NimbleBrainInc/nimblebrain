@@ -37,7 +37,7 @@ export function WorkspaceOverviewPage() {
   const { slug } = useParams<{ slug: string }>();
   const wsCtx = useWorkspaceContext();
   const shell = useShellContext();
-  const { iconFor } = useWorkspaceAppIcons();
+  const { iconFor, connectors } = useWorkspaceAppIcons();
   const navigate = useNavigate();
 
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
@@ -48,15 +48,28 @@ export function WorkspaceOverviewPage() {
   // lockstep — no one-frame mismatch on a switch (see useWorkspaceBriefing).
   const {
     briefing,
+    loading: briefingLoading,
     error: briefingError,
     refresh: refreshBriefing,
   } = useWorkspaceBriefing(workspace?.id);
+
+  // Connector status comes from the list the app icons already fetch. Until
+  // it names this workspace (a switch in flight), the briefing waits for it,
+  // so a connector needing attention never appears after "nothing needs you".
+  const connectorsReady = workspace != null && connectors?.workspaceId === workspace.id;
 
   const handleBriefingOpen = useCallback(
     (route: string) => {
       // An item carries its app's placement route (e.g. "@scope/name").
       // Absolute paths pass through; bare routes open the app in this workspace.
       navigate(route.startsWith("/") ? route : `/w/${slug}/app/${route}`);
+    },
+    [navigate, slug],
+  );
+
+  const handleConnectorOpen = useCallback(
+    (serverName: string) => {
+      navigate(`/w/${slug}/settings/connectors/${serverName}`);
     },
     [navigate, slug],
   );
@@ -114,14 +127,17 @@ export function WorkspaceOverviewPage() {
           </Link>
         </header>
 
-        {/* Briefing — what is waiting in the installed apps, one count per
-            facet each app's server reports. */}
+        {/* What needs a member here: each app's open counts, and each
+            connector that needs attention. */}
         <div className="mb-10">
           <BriefingView
             briefing={briefing}
+            connectors={connectorsReady ? connectors.installed : []}
+            loading={briefingLoading || !connectorsReady}
             error={briefingError}
             onRetry={refreshBriefing}
             onOpen={handleBriefingOpen}
+            onOpenConnector={handleConnectorOpen}
           />
         </div>
 

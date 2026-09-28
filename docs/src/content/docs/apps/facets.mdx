@@ -133,7 +133,8 @@ quick: a `count(*)`, not a page of rows you count afterwards.
 | The count is zero | Nothing. |
 | The read fails, returns an invalid count, or takes longer than 5 seconds | The title, marked unavailable. Your other facets, and every other server's, render normally. |
 | Your server did not advertise the extension | Nothing is listed or read. |
-| Your connector is not connected in the workspace | Its facets are not read. |
+| Your connector is not connected in the workspace | Its facets are not read. If it needs sign-in or configuration, or has failed, the overview shows that status in their place, opening the connector's page. |
+| No facet anywhere in the workspace has a count, and every connector is ready | One line: "Nothing needs you in this workspace." |
 
 Counts are cached per workspace, server, and facet: a count is reused for 60
 seconds, then served for up to 10 minutes while one fresh read runs in the

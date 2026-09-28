@@ -1,9 +1,12 @@
-// BriefingView — render contract for the workspace overview's facet counts.
+// BriefingView — render contract for the workspace overview's list: facet
+// counts from the server, a row per connector needing attention, and the
+// empty line.
 // Uses the container/createRoot harness (happy-dom + testing-library's
 // `screen.getByText` don't mix); query via container.textContent + testids.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import type { BriefingOutput } from "../src/_generated/platform-schemas/home";
+import type { InstalledConnector } from "../src/api/client";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -56,6 +59,12 @@ function findButton(c: HTMLElement, text: string): HTMLButtonElement | null {
   return null;
 }
 
+function findAllByTestId(c: HTMLElement, id: string): HTMLElement[] {
+  return Array.from(c.getElementsByTagName("*")).filter(
+    (el) => el.getAttribute("data-testid") === id,
+  ) as HTMLElement[];
+}
+
 function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
   return {
     generated_at: "2026-05-25T08:00:00.000Z",
@@ -73,7 +82,7 @@ function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
         facet: "blocked",
         label: "Tasks blocked",
         count: 0,
-        route: null,
+        route: "@acme/tasks",
         state: "unavailable",
       },
     ],
@@ -81,70 +90,179 @@ function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
   };
 }
 
+function connector(
+  serverName: string,
+  status: InstalledConnector["status"],
+  name?: string,
+): InstalledConnector {
+  return {
+    serverName,
+    connectorName: serverName,
+    version: "1.0.0",
+    state: "running",
+    scope: "workspace",
+    interactive: false,
+    toolCount: 1,
+    status,
+    ...(name ? { catalog: { name } as InstalledConnector["catalog"] } : {}),
+  };
+}
+
+interface Props {
+  briefing?: BriefingOutput | null;
+  connectors?: InstalledConnector[];
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  onOpen?: (route: string) => void;
+  onOpenConnector?: (serverName: string) => void;
+}
+
+function view(p: Props = {}) {
+  return (
+    <BriefingView
+      briefing={p.briefing === undefined ? makeBriefing() : p.briefing}
+      connectors={p.connectors ?? []}
+      loading={p.loading ?? false}
+      error={p.error ?? null}
+      onRetry={p.onRetry ?? (() => {})}
+      onOpen={p.onOpen ?? (() => {})}
+      onOpenConnector={p.onOpenConnector ?? (() => {})}
+    />
+  );
+}
+
 describe("BriefingView", () => {
   test("renders each item as its count and label, with the app", async () => {
-    mounted = await mount(
-      <BriefingView briefing={makeBriefing()} error={null} onRetry={() => {}} />,
-    );
-    const text = mounted.container.textContent ?? "";
-    expect(text).toContain("2 Follow-ups overdue");
-    expect(text).toContain("CRM");
-    expect(text).toContain("Tasks blocked — unavailable");
+    mounted = await mount(view());
+    const rows = findAllByTestId(mounted.container, "briefing-item");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toBe("2 Follow-ups overdue · CRM");
+  });
+
+  test("hides nothing the server sent, in the order it sent it", async () => {
+    const briefing = makeBriefing({
+      items: [
+        { app: "B", facet: "b", label: "Second app", count: 1, route: null, state: "ok" },
+        { app: "A", facet: "a", label: "Down", count: 0, route: null, state: "unavailable" },
+        { app: "A", facet: "c", label: "Third", count: 7, route: null, state: "ok" },
+      ],
+    });
+    mounted = await mount(view({ briefing }));
+    const rows = Array.from(mounted.container.getElementsByTagName("li")).map((li) => li.textContent);
+    expect(rows).toEqual(["1 Second app · B", "Down — unavailable · A", "7 Third · A"]);
+  });
+
+  test("an unavailable item renders muted and keeps its action", async () => {
+    const opened: string[] = [];
+    mounted = await mount(view({ onOpen: (r) => opened.push(r) }));
+    const row = findByTestId(mounted.container, "briefing-item-unavailable");
+    expect(row?.textContent).toBe("Tasks blocked — unavailable · Tasks");
+    const button = row?.getElementsByTagName("button")[0];
+    expect(button?.className).toContain("text-muted-foreground");
+    await act(async () => {
+      button?.click();
+    });
+    expect(opened).toEqual(["@acme/tasks"]);
+  });
+
+  test("an item with no route has no action", async () => {
+    const briefing = makeBriefing({
+      items: [{ app: "A", facet: "a", label: "Things", count: 3, route: null, state: "ok" }],
+    });
+    mounted = await mount(view({ briefing }));
+    expect(mounted.container.getElementsByTagName("button")).toHaveLength(0);
   });
 
   test("renders a label as text, never as markup", async () => {
     const briefing = makeBriefing({
-      items: [
-        {
-          app: "CRM",
-          facet: "x",
-          label: "<b>bold</b>",
-          count: 1,
-          route: null,
-          state: "ok",
-        },
-      ],
+      items: [{ app: "CRM", facet: "x", label: "<b>bold</b>", count: 1, route: null, state: "ok" }],
     });
-    mounted = await mount(<BriefingView briefing={briefing} error={null} onRetry={() => {}} />);
+    mounted = await mount(view({ briefing }));
     expect(mounted.container.getElementsByTagName("b")).toHaveLength(0);
     expect(mounted.container.textContent ?? "").toContain("<b>bold</b>");
   });
 
-  test("opens an item's app route, and offers no action without one", async () => {
+  test("a connector needing sign-in gets a row that opens its page", async () => {
     const opened: string[] = [];
     mounted = await mount(
-      <BriefingView
-        briefing={makeBriefing()}
-        error={null}
-        onRetry={() => {}}
-        onOpen={(route) => opened.push(route)}
-      />,
+      view({
+        briefing: makeBriefing({ items: [] }),
+        connectors: [
+          connector("gmail", "needs_auth", "Gmail"),
+          connector("crm", "ready", "CRM"),
+          connector("slack", "starting", "Slack"),
+        ],
+        onOpenConnector: (s) => opened.push(s),
+      }),
     );
-    const buttons = Array.from(mounted.container.getElementsByTagName("button"));
-    expect(buttons).toHaveLength(1);
+    const rows = findAllByTestId(mounted.container, "briefing-connector-status");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toBe("Sign-in required · Gmail");
     await act(async () => {
-      findButton(mounted!.container, "Open")?.click();
+      rows[0]?.getElementsByTagName("button")[0]?.click();
     });
-    expect(opened).toEqual(["@acme/crm"]);
+    expect(opened).toEqual(["gmail"]);
   });
 
-  test("renders nothing when no item is waiting", async () => {
+  test("uses the connector page's labels for setup and failure", async () => {
     mounted = await mount(
-      <BriefingView briefing={makeBriefing({ items: [] })} error={null} onRetry={() => {}} />,
+      view({
+        briefing: makeBriefing({ items: [] }),
+        connectors: [connector("a", "needs_setup"), connector("b", "failed")],
+      }),
     );
-    expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
+    const text = findAllByTestId(mounted.container, "briefing-connector-status").map(
+      (r) => r.textContent,
+    );
+    expect(text).toEqual(["Configuration required · a", "Failed · b"]);
+  });
+
+  describe("empty state", () => {
+    const EMPTY = "Nothing needs you in this workspace.";
+
+    test("renders when there are no items and every connector is ready", async () => {
+      mounted = await mount(
+        view({ briefing: makeBriefing({ items: [] }), connectors: [connector("crm", "ready")] }),
+      );
+      expect(findByTestId(mounted.container, "workspace-briefing-empty")?.textContent).toBe(EMPTY);
+      expect(mounted.container.getElementsByTagName("li")).toHaveLength(0);
+    });
+
+    test("does not render while a connector needs attention", async () => {
+      mounted = await mount(
+        view({ briefing: makeBriefing({ items: [] }), connectors: [connector("g", "needs_auth")] }),
+      );
+      expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+    });
+
+    test("does not render while an item is waiting", async () => {
+      mounted = await mount(view({ connectors: [connector("crm", "ready")] }));
+      expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+    });
+
+    test("does not render while loading; a skeleton holds the space", async () => {
+      mounted = await mount(view({ briefing: null, loading: true }));
+      expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+      expect(findByTestId(mounted.container, "workspace-briefing-loading")).not.toBeNull();
+    });
+
+    test("does not render on an error", async () => {
+      mounted = await mount(view({ briefing: null, error: "boom" }));
+      expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+    });
   });
 
   test("renders an error with a working Retry", async () => {
     let calls = 0;
     mounted = await mount(
-      <BriefingView
-        briefing={null}
-        error="boom"
-        onRetry={() => {
+      view({
+        briefing: null,
+        error: "boom",
+        onRetry: () => {
           calls++;
-        }}
-      />,
+        },
+      }),
     );
     expect(mounted.container.textContent ?? "").toContain("boom");
     const retry = findButton(mounted.container, "Retry");

@@ -346,7 +346,7 @@ function StatusDot({ status }: { status: InstalledConnector["status"] }) {
 
 /** One short phrase per status. Reads as "what's true right now,"
  *  not "what to do" — the action label carries the verb. */
-function statusLabel(status: InstalledConnector["status"]): string {
+export function statusLabel(status: InstalledConnector["status"]): string {
   switch (status) {
     case "ready":
       return "Ready";

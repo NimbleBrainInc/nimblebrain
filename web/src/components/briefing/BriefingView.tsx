@@ -1,89 +1,186 @@
 // ---------------------------------------------------------------------------
-// BriefingView — presentational render of a workspace's open counts.
+// BriefingView — what needs a member in this workspace, as a list.
 //
-// Pure: it takes a `BriefingOutput` (the `nb__briefing` tool's structured
-// result) plus error/open callbacks and renders. No data fetching, no
-// transport — the workspace dashboard wires it to `useWorkspaceBriefing`.
-// Each item is a count an app's server reported through the
-// `ai.nimblebrain/facets` extension; label and count are untrusted server data
-// and render as text.
+// Pure: it takes the `nb__briefing` result and the workspace's installed
+// connectors and renders. No data fetching — the overview wires it to
+// `useWorkspaceBriefing` and the connectors list it already holds.
+//
+// Two kinds of row:
+//   - A facet item from the server: `<count> <label>` with the app's name,
+//     opening the app. Label and count are untrusted server data and render as
+//     text; an `unavailable` item renders muted and keeps its action.
+//   - A connector that is not ready: the status the connector page shows,
+//     opening that page. Its facets are never read, so it has no count.
+// With neither, the list is one line saying nothing needs the member.
 // ---------------------------------------------------------------------------
 
+import type { ReactNode } from "react";
 import type { BriefingItem, BriefingOutput } from "../../_generated/platform-schemas/home";
+import type { InstalledConnector } from "../../api/client";
+import { cn } from "../../lib/utils";
+import { statusLabel } from "../connectors/ConnectorStatusHero";
+
+/** Statuses a member resolves on the connector's page. `connecting` and `starting` are in flight. */
+const ATTENTION_STATUSES: ReadonlySet<InstalledConnector["status"]> = new Set([
+  "needs_auth",
+  "needs_setup",
+  "failed",
+]);
 
 interface BriefingViewProps {
   briefing: BriefingOutput | null;
+  /** The workspace's installed connectors; each needing attention adds a row. */
+  connectors: readonly InstalledConnector[];
+  loading: boolean;
   error: string | null;
   onRetry: () => void;
-  /** Invoked with an item's app route when it is clicked. */
-  onOpen?: (route: string) => void;
+  /** Invoked with a facet item's app route. */
+  onOpen: (route: string) => void;
+  /** Invoked with the server name of a connector that needs attention. */
+  onOpenConnector: (serverName: string) => void;
 }
 
-function Eyebrow() {
-  return (
-    <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground">
-      Briefing
-    </div>
+function Row({
+  onClick,
+  muted,
+  children,
+  testId,
+}: {
+  onClick?: () => void;
+  muted?: boolean;
+  children: ReactNode;
+  testId: string;
+}) {
+  const className = cn(
+    "flex w-full items-baseline gap-1.5 px-3 py-2 -mx-3 rounded-sm text-left text-sm",
+    muted ? "text-muted-foreground" : "text-foreground",
   );
-}
-
-function ItemRow({ item, onOpen }: { item: BriefingItem; onOpen?: (route: string) => void }) {
-  const unavailable = item.state === "unavailable";
   return (
-    <li className="flex items-start gap-2.5 text-sm text-foreground/80">
-      <span className="flex-1 leading-relaxed">
-        {unavailable ? (
-          <span className="text-muted-foreground">{item.label} — unavailable</span>
-        ) : (
-          <>
-            <span className="font-semibold text-foreground">{item.count}</span> {item.label}
-          </>
-        )}
-        <span className="text-muted-foreground"> · {item.app}</span>
-      </span>
-      {item.route && onOpen && (
+    <li data-testid={testId}>
+      {onClick ? (
         <button
           type="button"
-          onClick={() => onOpen(item.route!)}
-          className="shrink-0 text-xs font-medium text-primary hover:underline"
+          onClick={onClick}
+          className={cn(className, "hover:bg-foreground/5 transition-colors")}
         >
-          Open &rarr;
+          {children}
         </button>
+      ) : (
+        <div className={className}>{children}</div>
       )}
     </li>
   );
 }
 
-export function BriefingView({ briefing, error, onRetry, onOpen }: BriefingViewProps) {
-  // Nothing is waiting in any app: there is nothing to show.
-  if (!error && (!briefing || briefing.items.length === 0)) return null;
+function AppName({ name }: { name: string }) {
+  return <span className="text-muted-foreground"> · {name}</span>;
+}
+
+function FacetRow({ item, onOpen }: { item: BriefingItem; onOpen: (route: string) => void }) {
+  const { route } = item;
+  const unavailable = item.state === "unavailable";
+  return (
+    <Row
+      testId={unavailable ? "briefing-item-unavailable" : "briefing-item"}
+      muted={unavailable}
+      onClick={route ? () => onOpen(route) : undefined}
+    >
+      <span>
+        {unavailable ? (
+          <>{item.label} — unavailable</>
+        ) : (
+          <>
+            <span className="font-semibold tabular-nums">{item.count}</span> {item.label}
+          </>
+        )}
+        <AppName name={item.app} />
+      </span>
+    </Row>
+  );
+}
+
+function ConnectorRow({
+  connector,
+  onOpen,
+}: {
+  connector: InstalledConnector;
+  onOpen: (serverName: string) => void;
+}) {
+  return (
+    <Row testId="briefing-connector-status" onClick={() => onOpen(connector.serverName)}>
+      <span>
+        {statusLabel(connector.status)}
+        <AppName name={connector.catalog?.name ?? connector.serverName} />
+      </span>
+    </Row>
+  );
+}
+
+function Skeleton() {
+  return (
+    <div className="space-y-1" aria-hidden data-testid="workspace-briefing-loading">
+      <div className="h-9 rounded-sm bg-muted/50 motion-safe:animate-pulse" />
+      <div className="h-9 rounded-sm bg-muted/50 motion-safe:animate-pulse" />
+    </div>
+  );
+}
+
+export function BriefingView({
+  briefing,
+  connectors,
+  loading,
+  error,
+  onRetry,
+  onOpen,
+  onOpenConnector,
+}: BriefingViewProps) {
+  const needsAttention = connectors.filter((c) => ATTENTION_STATUSES.has(c.status));
+  const items = briefing?.items ?? [];
+  const empty = !loading && !error && items.length === 0 && needsAttention.length === 0;
 
   return (
     <section data-testid="workspace-briefing">
-      <Eyebrow />
+      {loading ? (
+        <Skeleton />
+      ) : (
+        <>
+          {(needsAttention.length > 0 || items.length > 0) && (
+            <ul>
+              {needsAttention.map((c) => (
+                <ConnectorRow
+                  key={`connector:${c.serverName}`}
+                  connector={c}
+                  onOpen={onOpenConnector}
+                />
+              ))}
+              {items.map((item) => (
+                <FacetRow key={`${item.app}/${item.facet}`} item={item} onOpen={onOpen} />
+              ))}
+            </ul>
+          )}
 
-      {error && (
-        <div
-          className="mt-3 rounded-sm border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-          data-testid="workspace-briefing-error"
-        >
-          <p>{error}</p>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="mt-2 text-xs font-medium text-destructive hover:underline"
-          >
-            Retry
-          </button>
-        </div>
-      )}
+          {error && (
+            <div
+              className="mt-2 rounded-sm border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+              data-testid="workspace-briefing-error"
+            >
+              <p>{error}</p>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-2 text-xs font-medium text-destructive hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          )}
 
-      {briefing && briefing.items.length > 0 && (
-        <ul className="mt-3 space-y-1.5">
-          {briefing.items.map((item) => (
-            <ItemRow key={`${item.app}/${item.facet}`} item={item} onOpen={onOpen} />
-          ))}
-        </ul>
+          {empty && (
+            <p className="text-sm text-muted-foreground" data-testid="workspace-briefing-empty">
+              Nothing needs you in this workspace.
+            </p>
+          )}
+        </>
       )}
     </section>
   );

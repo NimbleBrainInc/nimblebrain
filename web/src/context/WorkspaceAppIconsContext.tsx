@@ -1,4 +1,11 @@
 import { createContext, useContext } from "react";
+import type { InstalledConnector } from "../api/client";
+
+/** The installed connectors of one workspace, tagged with the workspace they were read for. */
+export interface WorkspaceConnectors {
+  workspaceId: string;
+  installed: InstalledConnector[];
+}
 
 export interface WorkspaceAppIconsValue {
   /**
@@ -16,6 +23,13 @@ export interface WorkspaceAppIconsValue {
    * (the duplicate-fetch trap #317 calls out).
    */
   connectorCount?: number;
+  /**
+   * The focused workspace's installed connectors, from that same call, with
+   * their host-derived `status`. The overview reads it for the connectors that
+   * need attention. Callers compare `workspaceId` to the workspace they render:
+   * after a switch it names the previous workspace until the refetch lands.
+   */
+  connectors?: WorkspaceConnectors;
 }
 
 // Default is a no-op resolver so consumers rendered outside the provider

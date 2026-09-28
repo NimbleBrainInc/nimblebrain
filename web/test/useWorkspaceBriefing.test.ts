@@ -1,9 +1,9 @@
-// useWorkspaceBriefing — the logic-heavy half of the briefing restore: the
-// monotonic stale-response guard, clear-on-workspace-switch, and force_refresh
-// routing. callTool is mocked with manually-resolvable deferreds so we can
-// control response ordering (the whole point of the reqRef guard).
+// useWorkspaceBriefing — fetch on mount and on refresh, the stale-response
+// guard, and that nothing one workspace loaded is served under another.
+// callTool is mocked with manually-resolvable deferreds so we can control
+// response ordering (the whole point of the request-id guard).
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
 import { realClient } from "./setup";
 
@@ -30,50 +30,44 @@ mock.module("../src/api/client", () => ({
     }),
 }));
 
-const { useWorkspaceBriefing, __resetBriefingCache } = await import(
+const { BRIEFING_TIMEOUT_MS, useWorkspaceBriefing } = await import(
   "../src/hooks/useWorkspaceBriefing"
 );
 
-/** Resolve the Nth callTool with a briefing whose greeting tags its origin. */
-function resolveCall(i: number, greeting: string): void {
+/** Resolve the Nth callTool with one item whose label tags its origin. */
+function resolveCall(i: number, label: string): void {
   calls[i]?.resolve({
     isError: false,
     structuredContent: {
-      greeting,
-      date: "",
-      lede: "",
-      sections: [],
-      state: "quiet",
-      generated_at: "",
-      cached: false,
+      items: [{ app: "CRM", facet: "f", label, count: 1, route: "crm", state: "ok" }],
+      generated_at: "2026-09-28T00:00:00.000Z",
     },
   });
 }
 
-const flush = () => act(async () => { await Promise.resolve(); });
+const labelOf = (b: { items: { label: string }[] } | null) => b?.items[0]?.label;
 
 beforeEach(() => {
   calls = [];
-  __resetBriefingCache(); // the cache is module-level; isolate each test
 });
 afterEach(() => {
   calls = [];
-  __resetBriefingCache();
 });
 
 describe("useWorkspaceBriefing", () => {
   test("fetches on mount and exposes the briefing", async () => {
     const { result } = renderHook(() => useWorkspaceBriefing("ws_a"));
+    expect(result.current.loading).toBe(true);
     expect(calls.length).toBe(1);
-    expect(calls[0]?.args).toEqual({}); // initial load is not a force-refresh
+    expect(calls[0]?.args).toEqual({});
     await act(async () => {
       resolveCall(0, "alpha");
     });
-    expect(result.current.briefing?.greeting).toBe("alpha");
+    expect(labelOf(result.current.briefing)).toBe("alpha");
     expect(result.current.loading).toBe(false);
   });
 
-  test("refresh() sends force_refresh: true", async () => {
+  test("refresh() refetches with force_refresh: true", async () => {
     const { result } = renderHook(() => useWorkspaceBriefing("ws_a"));
     await act(async () => {
       resolveCall(0, "alpha");
@@ -85,75 +79,88 @@ describe("useWorkspaceBriefing", () => {
     expect(calls[1]?.args).toEqual({ force_refresh: true });
   });
 
-  test("switching workspace clears the briefing before the refetch resolves", async () => {
+  test("a remount fetches again: nothing is cached on the client", async () => {
+    const first = renderHook(() => useWorkspaceBriefing("ws_a"));
+    await act(async () => {
+      resolveCall(0, "alpha");
+    });
+    first.unmount();
+
+    const { result } = renderHook(() => useWorkspaceBriefing("ws_a"));
+    expect(calls.length).toBe(2);
+    expect(result.current.briefing).toBeNull();
+    expect(result.current.loading).toBe(true);
+  });
+
+  test("no state survives a workspace change", async () => {
     const { result, rerender } = renderHook(({ ws }: { ws: string }) => useWorkspaceBriefing(ws), {
       initialProps: { ws: "ws_a" },
     });
     await act(async () => {
       resolveCall(0, "alpha");
     });
-    expect(result.current.briefing?.greeting).toBe("alpha");
+    expect(labelOf(result.current.briefing)).toBe("alpha");
 
     await act(async () => {
       rerender({ ws: "ws_b" });
     });
-    // Cleared immediately so the old workspace's briefing never shows under
-    // the new X-Workspace-Id header; ws_b's fetch is now in flight.
     expect(result.current.briefing).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(result.current.loading).toBe(true);
     expect(calls.length).toBe(2);
+
+    // An error in ws_b does not follow the member back to ws_a either.
+    await act(async () => {
+      calls[1]?.reject(new Error("boom"));
+    });
+    expect(result.current.error).toBe("boom");
+    await act(async () => {
+      rerender({ ws: "ws_a" });
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.briefing).toBeNull();
+    expect(result.current.loading).toBe(true);
+    expect(calls.length).toBe(3);
   });
 
   test("drops a stale response superseded by a workspace switch", async () => {
     const { result, rerender } = renderHook(({ ws }: { ws: string }) => useWorkspaceBriefing(ws), {
       initialProps: { ws: "ws_a" },
     });
-    // call 0 = ws_a (left pending — the slow one)
     await act(async () => {
       rerender({ ws: "ws_b" });
     });
-    expect(calls.length).toBe(2); // call 1 = ws_b
+    expect(calls.length).toBe(2);
 
-    // ws_b resolves first and wins.
     await act(async () => {
       resolveCall(1, "bravo");
     });
-    expect(result.current.briefing?.greeting).toBe("bravo");
+    expect(labelOf(result.current.briefing)).toBe("bravo");
 
-    // The slow ws_a now resolves LATE — the monotonic reqRef guard must drop
-    // it so it can't clobber the current (ws_b) briefing.
+    // The slow ws_a response lands late and is dropped.
     await act(async () => {
       resolveCall(0, "alpha-stale");
     });
-    await flush();
-    expect(result.current.briefing?.greeting).toBe("bravo");
+    expect(labelOf(result.current.briefing)).toBe("bravo");
   });
 
-  test("revisiting a cached workspace paints instantly, no loading flash (stale-while-revalidate)", async () => {
-    const { result, rerender } = renderHook(({ ws }: { ws: string }) => useWorkspaceBriefing(ws), {
-      initialProps: { ws: "ws_a" },
-    });
-    await act(async () => {
-      resolveCall(0, "alpha");
-    }); // ws_a cached
-    await act(async () => {
-      rerender({ ws: "ws_b" });
-    });
-    await act(async () => {
-      resolveCall(1, "bravo");
-    }); // ws_b cached
-
-    // Switch BACK to ws_a — the cached briefing shows immediately, with no
-    // loading skeleton, while a silent revalidation fires in the background.
-    await act(async () => {
-      rerender({ ws: "ws_a" });
-    });
-    expect(result.current.briefing?.greeting).toBe("alpha");
-    expect(result.current.loading).toBe(false);
-    expect(calls.length).toBe(3); // the silent revalidate
+  test("a load that outlasts the client timeout becomes an error", async () => {
+    jest.useFakeTimers();
+    try {
+      const { result } = renderHook(() => useWorkspaceBriefing("ws_a"));
+      await act(async () => {
+        jest.advanceTimersByTime(BRIEFING_TIMEOUT_MS);
+      });
+      expect(result.current.loading).toBe(false);
+      expect(result.current.error).toBe("The briefing took too long to load.");
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
-  test("does not fetch when there is no active workspace", () => {
-    renderHook(() => useWorkspaceBriefing(undefined));
+  test("does not fetch when there is no workspace", () => {
+    const { result } = renderHook(() => useWorkspaceBriefing(undefined));
     expect(calls.length).toBe(0);
+    expect(result.current.loading).toBe(false);
   });
 });

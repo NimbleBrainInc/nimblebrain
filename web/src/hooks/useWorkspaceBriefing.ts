@@ -1,54 +1,59 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { BriefingOutput } from "../_generated/platform-schemas/home";
 import { callTool } from "../api/client";
 import { parseToolResult } from "../api/tool-result";
+
+/** Client bound on one briefing load. The server bounds each facet read at 5 s. */
+export const BRIEFING_TIMEOUT_MS = 10_000;
 
 export interface UseWorkspaceBriefing {
   briefing: BriefingOutput | null;
   loading: boolean;
   error: string | null;
-  /** Force a cache-bypassing regeneration. */
+  /** Refetch, bypassing the server's per-facet cache. */
   refresh: () => void;
 }
 
-// Per-workspace briefing cache, module-level so it survives the overview page
-// unmounting on navigation away and back. Stale-while-revalidate: a revisit
-// paints the cached briefing instantly and refetches silently, so toggling
-// between already-seen workspaces never flashes a loading skeleton. The server
-// has its own briefing cache/TTL behind `force_refresh`; this is just the
-// client mirror that removes the per-switch round-trip from the render path.
-const briefingCache = new Map<string, BriefingOutput>();
+interface Loaded {
+  workspaceId: string;
+  briefing: BriefingOutput | null;
+  error: string | null;
+}
 
-/** Test-only: clear the cross-render briefing cache for deterministic suites. */
-export function __resetBriefingCache(): void {
-  briefingCache.clear();
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("The briefing took too long to load.")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 /**
- * Fetch the workspace activity briefing (`nb__briefing`) for the active
- * workspace.
+ * Fetch the workspace briefing (`nb__briefing`) on mount and on `refresh()`.
  *
  * The briefing is workspace-scoped server-side via the workspace in the
- * request path, which the REST client derives from the active workspace. We key the
- * fetch on `workspaceId` — and the caller must pass the *active* workspace id
- * (not the route slug's), because `WorkspaceContext.setActiveWorkspace` sets
- * the React state and the request header together. Keying on the active id
- * therefore guarantees the header matches the workspace we're fetching for,
- * with no stale-header race (the page mounts before the route guard's sync
- * effect, so the slug-derived id could briefly lead the header).
+ * request path, which the REST client derives from the active workspace. The
+ * caller passes the workspace the page renders; a result is kept with the
+ * workspace it was fetched for and read only while that is still the one
+ * asked for, so nothing from one workspace paints under another, even on the
+ * first frame after a switch.
+ *
+ * There is no client cache: the server caches each facet, and a fresh load is
+ * one round-trip.
  *
  * Transport is REST (`callTool`), not the MCP iframe bridge — this is
  * first-party shell code per the API-audiences split in `src/api/AGENTS.md`.
  */
 export function useWorkspaceBriefing(workspaceId: string | undefined): UseWorkspaceBriefing {
-  // `bump` forces a re-render when the async fetch fills the module cache; both
-  // `briefing` and `loading` are then read from the cache DURING render (below),
-  // keyed on the CURRENT workspaceId. That render-time read is what kills the
-  // switch flash: an effect-backed value paints one frame of the previous
-  // workspace's briefing (or a blank gap) under the new header before the effect
-  // catches up — a render-time value is correct on the very first frame.
-  const [, bump] = useReducer((n: number) => n + 1, 0);
-  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
   // Monotonic request id — drops responses that resolve after a newer fetch
   // (workspace switched, or a refresh raced the initial load).
   const reqRef = useRef(0);
@@ -57,44 +62,40 @@ export function useWorkspaceBriefing(workspaceId: string | undefined): UseWorksp
     async (forceRefresh: boolean) => {
       if (!workspaceId) return;
       const seq = ++reqRef.current;
-      setError(null);
       try {
-        const result = await callTool(
-          "nb",
-          "briefing",
-          forceRefresh ? { force_refresh: true } : {},
+        const result = await withTimeout(
+          callTool("nb", "briefing", forceRefresh ? { force_refresh: true } : {}),
+          BRIEFING_TIMEOUT_MS,
         );
-        const out = parseToolResult<BriefingOutput>(result);
-        if (seq === reqRef.current) {
-          briefingCache.set(workspaceId, out);
-          bump();
-        }
+        const briefing = parseToolResult<BriefingOutput>(result);
+        if (seq === reqRef.current) setLoaded({ workspaceId, briefing, error: null });
       } catch (err) {
         if (seq === reqRef.current) {
-          setError(err instanceof Error ? err.message : "Failed to load briefing");
+          setLoaded({
+            workspaceId,
+            briefing: null,
+            error: err instanceof Error ? err.message : "Failed to load briefing",
+          });
         }
       }
     },
     [workspaceId],
   );
 
-  // (Re)fetch when the workspace changes. A cached workspace revalidates
-  // silently (the derived `loading` below is already false because its entry is
-  // cached); an uncached one shows the skeleton until the fetch fills it.
   useEffect(() => {
-    setError(null);
-    if (workspaceId) void load(false);
-  }, [workspaceId, load]);
+    void load(false);
+  }, [load]);
 
   const refresh = useCallback(() => {
+    setLoaded(null);
     void load(true);
   }, [load]);
 
-  // Both derived from the cache at render time, keyed on the current workspace —
-  // so a switch is correct on the first painted frame: a revisit shows its
-  // cached briefing with no flash, and a first visit shows the skeleton with no
-  // blank gap. The skeleton (loading) is only "nothing cached yet, no error".
-  const briefing = workspaceId ? (briefingCache.get(workspaceId) ?? null) : null;
-  const loading = workspaceId != null && !briefingCache.has(workspaceId) && error === null;
-  return { briefing, loading, error, refresh };
+  const current = workspaceId != null && loaded?.workspaceId === workspaceId ? loaded : null;
+  return {
+    briefing: current?.briefing ?? null,
+    loading: workspaceId != null && current === null,
+    error: current?.error ?? null,
+    refresh,
+  };
 }
