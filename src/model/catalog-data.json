@@ -1281,6 +1281,32 @@
         "knowledgeCutoff": "2026-05-18",
         "releaseDate": "2026-09-22"
       },
+      "gpt-6-sol": {
+        "id": "gpt-6-sol",
+        "name": "GPT-6 Sol",
+        "family": "gpt-sol",
+        "cost": {
+          "input": 2,
+          "output": 10,
+          "cacheRead": 0.2,
+          "cacheWrite": 2.5
+        },
+        "limits": {
+          "context": 1050000,
+          "output": 128000
+        },
+        "capabilities": {
+          "toolCall": true,
+          "reasoning": true,
+          "attachment": true
+        },
+        "modalities": {
+          "input": ["text", "image", "pdf"],
+          "output": ["text"]
+        },
+        "knowledgeCutoff": "2026-04-20",
+        "releaseDate": "2026-09-22"
+      },
       "gpt-realtime-2.1": {
         "id": "gpt-realtime-2.1",
         "name": "GPT-Realtime-2.1",
