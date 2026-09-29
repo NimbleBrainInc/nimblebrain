@@ -12,7 +12,12 @@ import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts
 import { FIRST_PARTY_GRANT } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { log } from "../../../src/observability/log.ts";
-import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
+import {
+  _clearAll,
+  DEFAULT_FLOW_TTL_MS,
+  register as registerFlow,
+  resolveWithCode,
+} from "../../../src/tools/oauth-flow-registry.ts";
 import { readJson } from "../../helpers/http.ts";
 
 /** What `POST .../mcp-auth/initiate` answers: `null` when no interactive step is needed. */
@@ -459,6 +464,62 @@ describe("GET /v1/mcp-auth/callback", () => {
   });
 });
 
+describe("GET /v1/mcp-auth/callback — invalid_scope falls back to the connector's own scope", () => {
+  let app: Hono<AppEnv>;
+  const state = "fallback-state";
+  const fallbackUrl = `https://vendor.test/authorize?state=${state}&scope=mcp&client_id=cid`;
+  const cookie = `nb_oauth_state=${sha256Hex(state)}`;
+  const refused = `http://localhost/v1/mcp-auth/callback?error=invalid_scope&state=${state}`;
+  let used: number;
+  let flow: Promise<string>;
+
+  beforeEach(() => {
+    app = makeApp(makeStubLifecycle());
+    used = 0;
+    flow = registerFlow(state, WS_OWNER, "granola", DEFAULT_FLOW_TTL_MS, {
+      url: fallbackUrl,
+      onUse: () => used++,
+    });
+    flow.catch(() => {});
+  });
+
+  afterEach(() => {
+    _clearAll();
+  });
+
+  test("sends the browser to the fallback once, and the same flow still completes", async () => {
+    const res = await app.request(refused, { headers: { cookie } });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(fallbackUrl);
+    expect(used).toBe(1);
+
+    // The server refuses the fallback too: no second retry.
+    const again = await app.request(refused, { headers: { cookie } });
+    expect(again.status).toBe(400);
+    expect(await again.text()).toContain("invalid_scope");
+    expect(used).toBe(1);
+
+    expect(resolveWithCode(state, "auth-code-1")).toBe(true);
+    await expect(flow).resolves.toBe("auth-code-1");
+  });
+
+  test("takes no fallback without the session's state cookie", async () => {
+    const res = await app.request(refused);
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+    expect(used).toBe(0);
+  });
+
+  test("takes no fallback for any other refusal", async () => {
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?error=access_denied&state=${state}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(400);
+    expect(used).toBe(0);
+  });
+});
+
 describe("GET /v1/mcp-auth/callback — outcome logging (#1244)", () => {
   // Without these lines, "the user never came back from the vendor" and "a
   // callback arrived and a check refused it" are the same observation: silence.
@@ -679,6 +740,31 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     const setCookie = res.headers.get("Set-Cookie");
     expect(setCookie).not.toBeNull();
     expect(setCookie!).toContain(`nb_oauth_state=${sha256Hex(innerState)}`);
+  });
+
+  test("an invalid_scope callback's fallback carries the state re-wrapped for the bouncer", async () => {
+    const { signEnvelope, verifyEnvelopeAsTenant } = await import("../../../src/oauth/envelope.ts");
+    const tenantKey = Buffer.from(TENANT_KEY_B64, "base64");
+    const innerState = "inner-state-for-fallback";
+    const wireState = signEnvelope({ tid: TID, inner: innerState, tenantKey });
+    registerFlow(innerState, WS_OWNER, "granola", DEFAULT_FLOW_TTL_MS, {
+      url: `https://vendor.test/authorize?state=${innerState}&scope=mcp`,
+      onUse: () => {},
+    }).catch(() => {});
+
+    const res = await app.request(
+      `http://localhost/v1/mcp-auth/callback?error=invalid_scope&state=${encodeURIComponent(wireState)}`,
+      { headers: { cookie: `nb_oauth_state=${sha256Hex(innerState)}` } },
+    );
+
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.searchParams.get("scope")).toBe("mcp");
+    const rewrapped = location.searchParams.get("state") ?? "";
+    expect(rewrapped.startsWith("v1.")).toBe(true);
+    expect(verifyEnvelopeAsTenant({ wire: rewrapped, tenantKey, expectedTid: TID }).inner).toBe(
+      innerState,
+    );
   });
 
   test("callback unwraps the envelope, applies cookie binding, and resolves the flow", async () => {

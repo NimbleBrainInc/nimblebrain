@@ -12,7 +12,12 @@ import {
 } from "../../oauth/envelope.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
-import { type FlowOwner, peekFlowOwner, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
+import {
+  type FlowOwner,
+  peekFlowOwner,
+  resolveWithCode,
+  takeScopeFallback,
+} from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
 import { type AppContext, type AppEnv, apiError } from "../types.ts";
@@ -182,7 +187,13 @@ export function mcpAuthRoutes(ctx: AppContext) {
     c.header("Pragma", "no-cache");
 
     const params = readCallbackParams(c);
-    if (isCallbackFailure(params)) return refuse(params);
+    if (isCallbackFailure(params)) {
+      const fallback = retryWithoutIdentityScopes(c);
+      if (fallback === null) return refuse(params);
+      if (isCallbackFailure(fallback)) return refuse(fallback);
+      logCallbackOutcome("scope_fallback", { flow: flowId(fallback.state) });
+      return c.redirect(fallback.authorizationUrl, 302);
+    }
     const { code, wireState } = params;
 
     const state = recoverInnerState(c, wireState);
@@ -385,6 +396,7 @@ function buildOAuthStateCookie(value: string, maxAge: number, secure: boolean): 
  */
 type CallbackOutcome =
   | "resolved"
+  | "scope_fallback"
   | "unknown_flow"
   | "cookie_mismatch"
   | "envelope_missing"
@@ -430,7 +442,7 @@ function flowId(state: string): string {
 function logCallbackOutcome(outcome: CallbackOutcome, fields: Record<string, unknown> = {}): void {
   const message = `[mcp-auth] callback ${outcome}`;
   const structured = { event: "mcp_auth.callback", outcome, ...fields };
-  if (outcome === "resolved") log.info(message, structured);
+  if (outcome === "resolved" || outcome === "scope_fallback") log.info(message, structured);
   else log.warn(message, structured);
 }
 
@@ -465,6 +477,39 @@ function readCallbackParams(
     return { outcome: "missing_params", response: c.text("missing code or state", 400) };
   }
   return { code, wireState };
+}
+
+/**
+ * Answer an `invalid_scope` refusal by sending the browser to the flow's
+ * fallback: the same authorize request without the identity scopes the
+ * provider added (`openid`, `email`), which a server may advertise and still
+ * refuse to this client. Same state and PKCE challenge, so the same cookie and
+ * pending flow carry on, and the fallback is taken once, so a second refusal
+ * ends the flow. The state is checked like a code's before anything is taken.
+ * Returns null when there is no fallback to take.
+ */
+function retryWithoutIdentityScopes(
+  c: Context<AppEnv>,
+): { authorizationUrl: string; state: string } | CallbackFailure | null {
+  const wireState = c.req.query("state");
+  if (c.req.query("error") !== "invalid_scope" || !wireState) return null;
+
+  const state = recoverInnerState(c, wireState);
+  if (isCallbackFailure(state)) return state;
+  const mismatch = verifyStateCookie(c, state);
+  if (mismatch) return { ...mismatch, fields: { ...mismatch.fields, flow: flowId(state) } };
+
+  const url = takeScopeFallback(state);
+  if (!url) return null;
+  const prepared = prepareAuthorization(url, "callback", flowId(state));
+  if (prepared instanceof Response) {
+    return {
+      outcome: "provider_error",
+      fields: { providerError: "invalid_scope" },
+      response: prepared,
+    };
+  }
+  return prepared;
 }
 
 /** Recover the inner OAuth state: unwrap the signed envelope in bouncer mode (rejecting an unwrapped or invalid envelope), else the wire state verbatim. Returns the inner state or a refusal. */

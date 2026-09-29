@@ -20,7 +20,12 @@ import { log } from "../observability/log.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
 import { McpOAuthRecords } from "./mcp-oauth-records.ts";
-import { type FlowOwner, register as registerInteractiveFlow } from "./oauth-flow-registry.ts";
+import {
+  DEFAULT_FLOW_TTL_MS,
+  type FlowOwner,
+  register as registerInteractiveFlow,
+  type ScopeFallback,
+} from "./oauth-flow-registry.ts";
 import {
   discoverIdentityMetadata,
   fetchUserinfo,
@@ -636,6 +641,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    */
   private exchangingCode = false;
   /**
+   * The server refused the identity scopes this flow first asked for, and the
+   * flow went on without them, so its sign-in names no account.
+   */
+  private identityScopesRefused = false;
+  /**
    * The authorization server the SDK is talking to, from the `issuer` it
    * passes to `clientInformation` on every `auth()`, ahead of both the
    * authorize redirect and the code exchange.
@@ -882,6 +892,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const d = deferred<string>();
     this.pendingFlow = { promise: d.promise, deferred: d };
     this.currentState = s;
+    this.identityScopesRefused = false;
     return s;
   }
 
@@ -1214,9 +1225,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   /**
    * The account a token response names: the id_token's claims, completed from
-   * the userinfo endpoint at a sign-in whose id_token names no account.
+   * the userinfo endpoint at a sign-in whose id_token names no account. None at
+   * a sign-in that went on without the identity scopes the server refused.
    */
   private async signedInAs(tokens: OAuthTokens): Promise<IdentityClaims | null> {
+    if (this.exchangingCode && this.identityScopesRefused) return null;
     const idToken = (tokens as { id_token?: unknown }).id_token;
     const claims =
       typeof idToken === "string" && idToken.length > 0 ? parseIdTokenClaims(idToken) : null;
@@ -1272,6 +1285,24 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     const scope = url.searchParams.get("scope");
     const add = identityScopesToAdd(scope, metadata);
     if (add.length > 0) url.searchParams.set("scope", [scope, ...add].join(" "));
+  }
+
+  /**
+   * The flow's fallback when `addIdentityScopes` changed the request: the
+   * request as it was before (`before`), for the callback to send the browser
+   * to if the server answers `invalid_scope`. Taking it makes that request the
+   * one Connect hands out, and names no account unless `openid` is still in it.
+   */
+  private identityScopeFallback(before: URL, url: URL): ScopeFallback | undefined {
+    if (url.toString() === before.toString()) return undefined;
+    return {
+      url: before.toString(),
+      onUse: () => {
+        const scope = before.searchParams.get("scope") ?? "";
+        this.identityScopesRefused = !scope.split(" ").includes("openid");
+        this.notifyInteractiveAuthRequired(before);
+      },
+    };
   }
 
   /**
@@ -1494,8 +1525,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // capture phase and the second would clobber the first's state.
     this.pendingFlow.urlCaptured = true;
     // Configured scopes are the whole grant the operator chose; otherwise ask
-    // an OIDC server for the account too, so "Connected as" can name it.
+    // an OIDC server for the account too, so "Connected as" can name it. The
+    // request without them is kept as the flow's fallback: a server may
+    // advertise `openid` and still refuse it to this client (`invalid_scope`).
+    const withoutIdentity = new URL(url);
     if (!this.scopes || this.scopes.length === 0) await this.addIdentityScopes(url);
+    const scopeFallback = this.identityScopeFallback(withoutIdentity, url);
     // Local deferred for the headless branch. The interactive branch
     // doesn't use this — it swaps `pendingFlow.promise` for the flow
     // registry's promise instead.
@@ -1565,7 +1600,13 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       this.owner.type === "workspace"
         ? { kind: "workspace", wsId: this.owner.wsId }
         : { kind: "user", userId: this.owner.userId };
-    const registryPromise = registerInteractiveFlow(stateParam, flowOwner, this.serverName);
+    const registryPromise = registerInteractiveFlow(
+      stateParam,
+      flowOwner,
+      this.serverName,
+      DEFAULT_FLOW_TTL_MS,
+      scopeFallback,
+    );
     // Swap the promise to the registry's (which resolves on HTTP callback
     // delivering the code) and drop the headless-branch deferred (no longer
     // applicable on the interactive path). MUTATE rather than replace the

@@ -33,6 +33,18 @@ interface PendingFlow {
   owner: FlowOwner;
   serverName: string;
   timeout: ReturnType<typeof setTimeout>;
+  scopeFallback?: ScopeFallback;
+}
+
+/**
+ * A second authorize request for a flow whose first one asked for scopes the
+ * server may refuse. `url` is the same request (state, PKCE challenge, client)
+ * with only the connector's own scope; `onUse` tells the initiator the flow now
+ * runs on it. Taken at most once, so a refusal of the fallback ends the flow.
+ */
+export interface ScopeFallback {
+  url: string;
+  onUse: () => void;
 }
 
 /** Leading `state` characters used as a flow's id in errors and logs. */
@@ -80,6 +92,7 @@ export function register(
   owner: FlowOwner,
   serverName: string,
   ttlMs: number = DEFAULT_FLOW_TTL_MS,
+  scopeFallback?: ScopeFallback,
 ): Promise<string> {
   const promise = new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -96,7 +109,14 @@ export function register(
     // in short-lived CLI invocations. In the HTTP server process this is
     // a no-op — the server keeps the loop alive independently.
     timeout.unref?.();
-    flows.set(state, { resolve, reject, owner, serverName, timeout });
+    flows.set(state, {
+      resolve,
+      reject,
+      owner,
+      serverName,
+      timeout,
+      ...(scopeFallback ? { scopeFallback } : {}),
+    });
   });
   // Defensive no-op rejection handler. A caller that awaits / .catches
   // their own handle still observes rejections normally — multiple Promise
@@ -119,6 +139,21 @@ export function register(
  */
 export function peekFlowOwner(state: string): FlowOwner | null {
   return flows.get(state)?.owner ?? null;
+}
+
+/**
+ * Take a pending flow's scope fallback: the authorize URL to send the browser
+ * to after the server answered `invalid_scope`. Returns it once and never
+ * again, so a server that refuses the fallback too gets no further retry.
+ * Returns null when the flow is unknown or has no fallback left.
+ */
+export function takeScopeFallback(state: string): string | null {
+  const flow = flows.get(state);
+  const fallback = flow?.scopeFallback;
+  if (!flow || !fallback) return null;
+  delete flow.scopeFallback;
+  fallback.onUse();
+  return fallback.url;
 }
 
 /** Resolve a pending flow by state. Returns true if found. */
