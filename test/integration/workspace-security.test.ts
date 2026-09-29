@@ -50,6 +50,7 @@ function makeSource(name: string, toolNames: string[]): ToolSource {
     tools: async () => tools,
     execute: async (toolName: string): Promise<ToolResult> => ({
       content: [{ type: "text", text: `executed ${name}/${toolName}` }],
+      isError: false,
     }),
   };
 }

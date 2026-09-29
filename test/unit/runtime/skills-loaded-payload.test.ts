@@ -6,6 +6,7 @@ import {
   hashSkillBody,
 } from "../../../src/runtime/skills-loaded-payload.ts";
 import { synthesizeConnectorSkill } from "../../../src/skills/connector-skills.ts";
+import type { SkillManifest } from "../../../src/skills/schemas/skill-manifest.ts";
 import type { LoadedBy, SelectedSkill } from "../../../src/skills/select.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 
@@ -35,7 +36,7 @@ function makeSkill(
 }
 
 function selected(
-  overrides: Partial<SelectedSkill["skill"]>,
+  overrides: { manifest?: Partial<SkillManifest>; body?: string; sourcePath?: string },
   loadedBy: LoadedBy = "always",
 ): SelectedSkill {
   return {
@@ -44,7 +45,9 @@ function selected(
         name: "test-skill",
         description: "A test skill",
         version: "1.0.0",
+        loadingStrategy: loadedBy === "always" ? "always" : "dynamic",
         priority: 50,
+        status: "active",
         ...(overrides.manifest ?? {}),
       },
       body: overrides.body ?? "Default body content.",

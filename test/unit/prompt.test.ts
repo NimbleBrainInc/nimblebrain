@@ -16,7 +16,14 @@ import type { Skill } from "../../src/skills/types.ts";
 
 function makeContextSkill(name: string, priority: number, body: string): Skill {
   return {
-    manifest: { name, description: "", version: "1.0.0", priority },
+    manifest: {
+      loadingStrategy: "always",
+      status: "active",
+      name,
+      description: "",
+      version: "1.0.0",
+      priority,
+    },
     body,
     sourcePath: `/test/${name}.md`,
   };
@@ -24,6 +31,8 @@ function makeContextSkill(name: string, priority: number, body: string): Skill {
 
 const testSkill: Skill = {
   manifest: {
+    loadingStrategy: "dynamic",
+    status: "active",
     name: "test-skill",
     description: "Test",
     version: "1.0.0",
@@ -897,12 +906,24 @@ describe("composeSystemPrompt — matched-skill de-dup identity", () => {
   // apart exactly as the bare path did.
   it("does not merge two filesystem skills that share a name across tiers", () => {
     const orgSkill: Skill = {
-      manifest: { name: "voice", description: "", priority: 50 },
+      manifest: {
+        loadingStrategy: "dynamic",
+        status: "active",
+        name: "voice",
+        description: "",
+        priority: 50,
+      },
       body: "ORG-VOICE",
       sourcePath: "/work/skills/voice.md",
     };
     const wsSkill: Skill = {
-      manifest: { name: "voice", description: "", priority: 50 },
+      manifest: {
+        loadingStrategy: "dynamic",
+        status: "active",
+        name: "voice",
+        description: "",
+        priority: 50,
+      },
       body: "WORKSPACE-VOICE",
       sourcePath: "/work/workspaces/ws_a/skills/voice.md",
     };

@@ -15,13 +15,14 @@ import {
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
-const ALICE: UserIdentity = {
+const ALICE: UserIdentity = makeIdentity({
   id: "usr_alice",
   email: "alice@example.com",
   displayName: "Alice",
   orgRole: "member",
-};
+});
 
 interface StoredWorkspace {
   id: string;

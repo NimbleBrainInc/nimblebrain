@@ -29,10 +29,11 @@ import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
-const ALICE = { id: "usr_alice", email: "alice@example.com" };
+const ALICE = makeIdentity({ id: "usr_alice", email: "alice@example.com" });
 const BOB = { id: "usr_bob", email: "bob@example.com" };
 
 describe("Runtime.findConversation", () => {
@@ -175,7 +176,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
     const seed = await runtime.chat({
       message: "alice's private",
       workspaceId: TEST_WORKSPACE_ID,
-      identity: { id: "usr_alice", email: "alice@example.com" },
+      identity: makeIdentity({ id: "usr_alice", email: "alice@example.com" }),
     });
     const res = await fetch(`${baseUrl}/v1/conversations/${seed.conversationId}/events`, {
       method: "GET",

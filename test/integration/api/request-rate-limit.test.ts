@@ -17,6 +17,7 @@ import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 /**
@@ -35,12 +36,12 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-wo
  */
 
 const TOKEN = "rate-limit-test-token-abcdef";
-const IDENTITY: UserIdentity = {
+const IDENTITY: UserIdentity = makeIdentity({
   id: DEV_IDENTITY.id,
   email: "ratelimit@example.test",
   displayName: "Rate Limit Tester",
   orgRole: "member",
-};
+});
 
 class TokenAuthAdapter implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {

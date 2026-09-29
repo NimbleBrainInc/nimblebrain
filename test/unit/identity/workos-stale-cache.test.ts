@@ -12,6 +12,7 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── Key generation helpers (shared with workos-authkit.test.ts) ──
 
@@ -123,7 +124,7 @@ function createProvider() {
     deleteUser: async () => {},
   };
 
-  provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+  provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
   return provider;
 }
@@ -161,7 +162,9 @@ describe("JWKS stale cache fallback", () => {
     provider.now = () => baseTime + 6 * 60 * 1000;
 
     // JWKS endpoint returns 500
-    provider.fetcher = async () => new Response("Internal Server Error", { status: 500 });
+    provider.fetcher = fakeFetch(
+      async () => new Response("Internal Server Error", { status: 500 }),
+    );
 
     // Should still verify using stale cached keys
     const token2 = await makeValidToken("user_jwks_1", baseTime + 6 * 60 * 1000);
@@ -183,9 +186,9 @@ describe("JWKS stale cache fallback", () => {
     provider.now = () => baseTime + 6 * 60 * 1000;
 
     // Network error
-    provider.fetcher = async () => {
+    provider.fetcher = fakeFetch(async () => {
       throw new Error("ECONNREFUSED");
-    };
+    });
 
     const token2 = await makeValidToken("user_jwks_2", baseTime + 6 * 60 * 1000);
     const result = await provider.verifyRequest(makeRequest(token2));
@@ -196,7 +199,7 @@ describe("JWKS stale cache fallback", () => {
   it("signals unavailable when JWKS fetch fails and no cache exists", async () => {
     const provider = createProvider();
     // JWKS endpoint down from the start — no cache to fall back on
-    provider.fetcher = async () => new Response("Service Unavailable", { status: 503 });
+    provider.fetcher = fakeFetch(async () => new Response("Service Unavailable", { status: 503 }));
 
     const token = await makeValidToken("user_no_cache", Date.now());
     // Not `null`: we never reached a verdict about this token, so the caller
@@ -235,7 +238,7 @@ describe("resolveUser stale cache fallback", () => {
     };
 
     // JWKS cache also expired — provide fresh JWKS so we isolate the resolveUser failure
-    provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+    provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
     const token2 = await makeValidToken("user_resolve_1", baseTime + 6 * 60 * 1000);
     const second = await provider.verifyRequest(makeRequest(token2));
@@ -314,7 +317,7 @@ describe("resolveUser stale cache fallback", () => {
       throw new Error("WorkOS memberships 429");
     };
     provider.now = () => baseTime + 6 * 60 * 1000;
-    provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+    provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
     // The other half of the fix: the outage must not evict the entry. Deleting
     // it here would deny THIS request and every later one for the outage's
@@ -370,7 +373,7 @@ describe("resolveUser stale cache fallback", () => {
       data: [], // No memberships — access definitively revoked
     });
 
-    provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+    provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
     const token2 = await makeValidToken("user_revoked", baseTime + 6 * 60 * 1000);
     const second = await provider.verifyRequest(makeRequest(token2));

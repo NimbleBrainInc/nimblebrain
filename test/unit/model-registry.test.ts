@@ -155,7 +155,7 @@ describe("nebius request shape", () => {
    * removal.
    */
   async function captureNebiusRequest(
-    call: (model: ReturnType<typeof buildModelResolver>) => Promise<unknown>,
+    call: (model: ReturnType<typeof buildModelResolver>) => PromiseLike<unknown>,
   ): Promise<Record<string, unknown>> {
     const realFetch = globalThis.fetch;
     let body: Record<string, unknown> = {};

@@ -49,7 +49,7 @@ function writeCalls(
       ts: string;
       model: string;
       source?: string;
-      usage: Record<string, number>;
+      usage: UsageLedgerEntry["usage"];
       llmMs?: number;
     };
     const rates = resolveRates(ev.model);
@@ -58,7 +58,7 @@ function writeCalls(
       source: ev.source ?? "main",
       origin: meta.origin ?? "chat",
       model: ev.model,
-      usage: ev.usage as UsageLedgerEntry["usage"],
+      usage: ev.usage,
       llmMs: ev.llmMs ?? 0,
       sessionId: meta.id,
       ...(meta.ownerId !== undefined ? { userId: meta.ownerId } : {}),

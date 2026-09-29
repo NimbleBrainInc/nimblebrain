@@ -12,6 +12,7 @@ import { UserStore } from "../../../src/identity/user.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import type { ManageUsersContext } from "../../../src/tools/user-tools.ts";
 import { createManageUsersTool } from "../../../src/tools/user-tools.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -76,12 +77,12 @@ beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-user-tools-test-"));
   userStore = new UserStore(workDir);
   provider = createMockProvider(userStore);
-  currentIdentity = {
+  currentIdentity = makeIdentity({
     id: "usr_admin000000001",
     email: "admin@example.com",
     displayName: "Admin",
     orgRole: "admin",
-  };
+  });
   tool = createManageUsersTool(makeCtx());
 });
 

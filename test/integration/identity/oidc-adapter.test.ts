@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { OidcIdentityProvider } from "../../../src/identity/providers/oidc.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── RSA key pair (generated once per suite) ───────────────────────
 
@@ -266,10 +267,10 @@ describe("OidcIdentityProvider", () => {
 
       let fetchCount = 0;
       const originalFetch = adapter.fetcher;
-      adapter.fetcher = async (...args: Parameters<typeof fetch>) => {
+      adapter.fetcher = fakeFetch(async (...args: Parameters<typeof fetch>) => {
         fetchCount++;
         return originalFetch(...args);
-      };
+      });
 
       const token1 = await buildJwt({ email: "alice@example.com" });
       await adapter.verifyRequest(bearerRequest(token1));
@@ -289,10 +290,10 @@ describe("OidcIdentityProvider", () => {
 
       let fetchCount = 0;
       const originalFetch = adapter.fetcher;
-      adapter.fetcher = async (...args: Parameters<typeof fetch>) => {
+      adapter.fetcher = fakeFetch(async (...args: Parameters<typeof fetch>) => {
         fetchCount++;
         return originalFetch(...args);
-      };
+      });
 
       // Freeze time
       let fakeNow = Date.now();

@@ -1094,7 +1094,7 @@ describe("handleCancel", () => {
       ctx,
     );
 
-    const result = handleCancel({ name: "Cancel Target" }, ctx) as Record<string, unknown>;
+    const result = handleCancel({ name: "Cancel Target" }, ctx);
     expect(result.cancelled).toBe(true);
     expect(cancelledId).toBe("cancel-target");
   });
@@ -1125,8 +1125,8 @@ describe("handleList — disable info", () => {
     auto.disabledReason = "Token budget exceeded";
     saveDefs(defs);
 
-    const result = handleList({}, ctx) as Record<string, unknown>;
-    const automations = result.automations as Array<Record<string, unknown>>;
+    const result = handleList({}, ctx);
+    const automations = result.automations;
     const entry = automations.find((a) => a.id === "list-disabled")!;
     expect(entry.disabledReason).toBe("Token budget exceeded");
   });

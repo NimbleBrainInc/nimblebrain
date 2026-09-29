@@ -181,6 +181,17 @@ describe("OIDC integration: full flow", () => {
     expect(identity!.displayName).toBe("Alice");
     expect(identity!.orgRole).toBe("member");
     expect(identity!.id).toMatch(/^usr_oidc_[0-9a-f]{12}$/);
+    // The stored user carries more (its IdP subject, timestamps); none of it
+    // may ride along on the verified identity, which is the user's identity
+    // fields plus the token's grant.
+    expect(Object.keys(identity!).sort()).toEqual([
+      "displayName",
+      "email",
+      "grant",
+      "id",
+      "orgRole",
+      "preferences",
+    ]);
 
     // User was persisted in the store
     const stored = await userStore.getByEmail("alice@acme.com");

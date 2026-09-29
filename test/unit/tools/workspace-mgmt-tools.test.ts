@@ -14,6 +14,7 @@ import {
   type ManageWorkspacesContext,
 } from "../../../src/tools/workspace-mgmt-tools.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -72,12 +73,12 @@ beforeEach(async () => {
   store = new WorkspaceStore(workDir);
   userStore = new UserStore(workDir);
   catalogEntries = [];
-  currentIdentity = {
+  currentIdentity = makeIdentity({
     id: "usr_admin000000001",
     email: "admin@example.com",
     displayName: "Admin",
     orgRole: "admin",
-  };
+  });
   tool = createManageWorkspacesTool(makeCtx());
 });
 
@@ -239,12 +240,12 @@ describe("nb__manage_workspaces", () => {
         orgRole: "member",
       });
 
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: creator.id,
         email: creator.email,
         displayName: creator.displayName,
         orgRole: "admin",
-      };
+      });
       tool = createManageWorkspacesTool(makeCtx());
 
       const createResult = await tool.handler({

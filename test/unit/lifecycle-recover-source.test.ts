@@ -33,7 +33,7 @@ function stubSource(name: string): ToolSource {
       return [];
     },
     async execute(): Promise<ToolResult> {
-      return { content: [{ type: "text" as const, text: `[${name}] dispatched` }] };
+      return { content: [{ type: "text" as const, text: `[${name}] dispatched` }], isError: false };
     },
   };
 }

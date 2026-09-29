@@ -31,6 +31,8 @@ function makeSystemTools(): ToolSchema[] {
 function makeSkill(opts: { allowedTools?: string[] } = {}): Skill {
   return {
     manifest: {
+      loadingStrategy: "dynamic",
+      status: "active",
       name: "test-skill",
       description: "Test",
       version: "1.0.0",

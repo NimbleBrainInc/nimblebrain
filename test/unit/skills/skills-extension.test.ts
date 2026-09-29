@@ -142,7 +142,13 @@ describe("verifySkillEntrypoint", () => {
 });
 
 describe("disambiguateSkillNames", () => {
-  const skill = (uri: string, name: string) => ({ uri, name, description: "", body: "" });
+  const skill = (uri: string, name: string) => ({
+    uri,
+    name,
+    description: "",
+    body: "",
+    entry: entryFor(SKILL_MD, { uri }),
+  });
 
   it("names colliding skills by their skill path and leaves unique names alone", () => {
     const out = disambiguateSkillNames([

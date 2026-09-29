@@ -175,6 +175,7 @@ describe("supervisor — recovery from a trip", () => {
     trip(sup);
     const stalled: ToolResult = {
       content: [{ type: "text", text: "no matches" }],
+      isError: false,
       _meta: { [NON_ADVANCING_META_KEY]: true },
     };
     expect(sup.observe(call("foo"), stalled).type).toBe("synth");

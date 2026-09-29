@@ -10,6 +10,7 @@ import {
   ServiceTokenCache,
   type TenantIdentity,
 } from "../../src/oauth/tenant-key-mint.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 // ---------------------------------------------------------------------------
 // Faithful inline mirror of the authorizer's verifier
@@ -198,7 +199,7 @@ function fakeAuthorizer(
 ) {
   let calls = 0;
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl = fakeFetch(async (input, init) => {
     calls++;
     const url = String(input);
     if (!url.endsWith("/token")) return new Response("not found", { status: 404 });
@@ -215,7 +216,7 @@ function fakeAuthorizer(
       token_type: "Bearer",
       expires_in: opts.expiresIn ?? 300,
     });
-  };
+  });
   return { fetchImpl, calls: () => calls };
 }
 
@@ -311,10 +312,10 @@ describe("ServiceTokenCache", () => {
   it("does not pin callers to a failed mint (in-flight marker cleared on error)", async () => {
     let mode: "fail" | "ok" = "fail";
     const okAuthz = fakeAuthorizer({ now: () => 1000 });
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl = fakeFetch(async (input, init) => {
       if (mode === "fail") return new Response(`{"error":"boom"}`, { status: 500 });
       return okAuthz.fetchImpl(input, init);
-    };
+    });
     const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl, now: () => 1000 });
 
     await expect(cache.getToken(req)).rejects.toThrow(MintError);
@@ -339,10 +340,10 @@ describe("createMintingFetch", () => {
       now: () => 1000,
     });
     let seenAuth: string | null = null;
-    const baseFetch: typeof fetch = async (_input, init) => {
+    const baseFetch = fakeFetch(async (_input, init) => {
       seenAuth = new Headers(init?.headers).get("Authorization");
       return new Response("ok", { status: 200 });
-    };
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts", { method: "POST" });
@@ -359,14 +360,14 @@ describe("createMintingFetch", () => {
     });
     let serviceCalls = 0;
     const seen: (string | null)[] = [];
-    const baseFetch: typeof fetch = async (_input, init) => {
+    const baseFetch = fakeFetch(async (_input, init) => {
       serviceCalls++;
       seen.push(new Headers(init?.headers).get("Authorization"));
       // Reject the first token, accept the (re-minted) second.
       return serviceCalls === 1
         ? new Response("no", { status: 401 })
         : new Response("ok", { status: 200 });
-    };
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts");
@@ -384,10 +385,10 @@ describe("createMintingFetch", () => {
       now: () => 1000,
     });
     let serviceCalls = 0;
-    const baseFetch: typeof fetch = async () => {
+    const baseFetch = fakeFetch(async () => {
       serviceCalls++;
       return new Response("boom", { status: 500 });
-    };
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts");

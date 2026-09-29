@@ -1134,7 +1134,14 @@ describe("status tool — scope: overview", () => {
     const getSkills: GetSkillsFn = () => ({
       context: [
         {
-          manifest: { name: "soul", description: "Identity", version: "1.0.0", priority: 0 },
+          manifest: {
+            loadingStrategy: "always",
+            status: "active",
+            name: "soul",
+            description: "Identity",
+            version: "1.0.0",
+            priority: 0,
+          },
           body: "You are helpful.",
           sourcePath: "/src/skills/core/soul.md",
         },

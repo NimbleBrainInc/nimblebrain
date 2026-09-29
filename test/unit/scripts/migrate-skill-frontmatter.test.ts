@@ -90,8 +90,8 @@ describe("migrateFrontmatterToManifest", () => {
     });
     // version is a canonical conventional field — carried across (top-level wins).
     expect(m.version).toBe("1.0.0");
-    expect((m as Record<string, unknown>).type).toBeUndefined();
-    expect((m as Record<string, unknown>)["requires-bundles"]).toBeUndefined();
+    expect(Object.hasOwn(m, "type")).toBe(false);
+    expect(Object.hasOwn(m, "requires-bundles")).toBe(false);
     // scope is stamped from the directory tier at load, never persisted.
     expect(m.scope).toBeUndefined();
     // keywords are NOT dropped — they fold into the description (activation signal).

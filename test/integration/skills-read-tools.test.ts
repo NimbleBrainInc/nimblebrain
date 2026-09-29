@@ -117,6 +117,7 @@ describe("skills read tools — end-to-end", () => {
       const list = await callTool(runtime, "skills__list", {}, wsId);
       expect(list.isError).toBe(false);
       const listed = (list.structured as { skills?: unknown[] }).skills as Array<{
+        id: string;
         name: string;
         layer: number;
         scope: string;
@@ -129,7 +130,8 @@ describe("skills read tools — end-to-end", () => {
       expect(ws.layer).toBe(3);
 
       // skills__read — using the id surfaced by list.
-      const target = listed.find((s) => s.name === "voice-rules") as { id: string };
+      const target = listed.find((s) => s.name === "voice-rules")!;
+      expect(target.id).toBeTruthy();
       const read = await callTool(runtime, "skills__read", { id: target.id }, wsId);
       expect(read.isError).toBe(false);
       const readSC = read.structured as {

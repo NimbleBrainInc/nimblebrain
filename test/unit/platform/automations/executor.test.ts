@@ -6,6 +6,7 @@ import {
   type TaskFnResult,
 } from "../../../../src/platform/automations/executor.ts";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
+import { fakeFetch } from "../../../helpers/fake-fetch.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,7 +72,7 @@ beforeEach(() => {
       }),
     ),
   );
-  globalThis.fetch = mockFetch as typeof fetch;
+  globalThis.fetch = fakeFetch(mockFetch);
 });
 
 afterEach(() => {

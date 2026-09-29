@@ -25,6 +25,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 
 const TEST_USER_ID = "usr_cfg";
 const SHARED_WS_ID = "ws_cfgshared00000";
@@ -108,7 +109,7 @@ it("a chat in a shared workspace uses THAT workspace's model overrides, not the 
   sharedReg.addSource(probe.source);
 
   await runtime.chat({
-    identity: { id: TEST_USER_ID, displayName: "Cfg User" },
+    identity: makeIdentity({ id: TEST_USER_ID, displayName: "Cfg User" }),
     workspaceId: SHARED_WS_ID,
     message: "config source check",
   });

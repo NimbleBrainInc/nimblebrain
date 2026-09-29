@@ -75,6 +75,10 @@ function automation(): Automation {
     workspaceId: WS,
     ownerId: OWNER,
     source: "user",
+    runCount: 0,
+    consecutiveErrors: 0,
+    cumulativeInputTokens: 0,
+    cumulativeOutputTokens: 0,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };

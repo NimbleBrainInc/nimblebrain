@@ -9,6 +9,7 @@ import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { DEFAULT_MAX_INPUT_TOKENS } from "../../src/limits.ts";
 import { estimateCost } from "../../src/usage/cost.ts";
 
 /**
@@ -30,6 +31,7 @@ import { estimateCost } from "../../src/usage/cost.ts";
 const config: EngineConfig = {
   model: "anthropic:claude-sonnet-4-6",
   maxIterations: 3,
+  maxInputTokens: DEFAULT_MAX_INPUT_TOKENS,
   maxOutputTokens: 100,
   thinking: { mode: "off" },
 };

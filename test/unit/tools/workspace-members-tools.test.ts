@@ -12,6 +12,7 @@ import {
   type ManageMembersContext,
 } from "../../../src/tools/workspace-mgmt-tools.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -81,12 +82,12 @@ beforeEach(async () => {
   });
 
   // Default identity: org admin
-  currentIdentity = {
+  currentIdentity = makeIdentity({
     id: "usr_admin000000001",
     email: "admin@example.com",
     displayName: "Admin",
     orgRole: "admin",
-  };
+  });
 
   tool = createManageMembersTool(makeCtx());
 });
@@ -105,12 +106,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, "usr_wsadmin0000001", "admin");
 
       // Switch identity to workspace admin (not org admin)
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: "usr_wsadmin0000001",
         email: "wsadmin@example.com",
         displayName: "WS Admin",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -198,12 +199,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "member");
 
       // Act as workspace admin
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: "usr_wsadmin0000001",
         email: "wsadmin@example.com",
         displayName: "WS Admin",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -225,12 +226,12 @@ describe("nb__manage_members", () => {
       // memberUser is the sole workspace admin and acts as the requester.
       const ws = await wsStore.create("Team LastAdmin");
       await wsStore.addMember(ws.id, memberUser.id, "admin");
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -266,12 +267,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "admin");
       await userStore.softDelete(anotherUser.id);
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -291,12 +292,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "admin");
       await userStore.softDelete(anotherUser.id);
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -345,12 +346,12 @@ describe("nb__manage_members", () => {
       // memberUser is the sole admin and acts as the requester.
       const ws = await wsStore.create("Team DemoteLast");
       await wsStore.addMember(ws.id, memberUser.id, "admin");
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -370,12 +371,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "admin");
       await userStore.softDelete(anotherUser.id);
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -423,12 +424,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "member");
       // Requester must be a workspace admin member; memberUser fills that role.
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -453,12 +454,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, anotherUser.id, "member");
       await userStore.softDelete(anotherUser.id);
       // memberUser (active admin) acts as the requester.
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({ action: "list", workspaceId: ws.id });
@@ -511,12 +512,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "member");
 
       // Regular member (not workspace admin, not org admin)
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({

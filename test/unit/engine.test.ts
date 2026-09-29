@@ -2367,9 +2367,8 @@ describe("AgentEngine", () => {
       const secondPrompt = sentMessages[1]!;
       const assistant = secondPrompt.find((m) => m.role === "assistant");
       expect(assistant).toBeDefined();
-      const reasoning = (assistant!.content as Array<Record<string, unknown>>).find(
-        (c) => c.type === "reasoning",
-      );
+      const content = assistant?.role === "assistant" ? assistant.content : [];
+      const reasoning = content.find((c) => c.type === "reasoning");
       expect(reasoning).toBeDefined();
       // The critical assertion — providerOptions must be set, not just
       // providerMetadata, because that's what the Anthropic prompt path reads.

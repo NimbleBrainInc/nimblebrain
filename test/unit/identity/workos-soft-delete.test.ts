@@ -14,6 +14,7 @@ import { join } from "node:path";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── Crypto helpers ──────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ function createProvider(): { provider: WorkosIdentityProvider; userStore: UserSt
       ],
     }),
   };
-  provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+  provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
   return { provider, userStore };
 }

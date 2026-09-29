@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { SmitheryConnectionProbe } from "../../src/connectors/providers/smithery/connection-probe.ts";
 import type { ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const OPTIONS = { apiKey: "sk_test", baseUrl: "https://api.smithery.ai", namespace: "test-ns" };
 const realFetch = globalThis.fetch;
@@ -57,11 +58,13 @@ function targetOf(ref: ConnectorRef): ProbeTarget {
 }
 
 function stubFetch(status: number, body: unknown): void {
-  globalThis.fetch = (async () =>
-    new Response(status === 404 ? "" : JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    })) as typeof fetch;
+  globalThis.fetch = fakeFetch(
+    async () =>
+      new Response(status === 404 ? "" : JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
 }
 
 async function verdictFor(status: number, body: unknown) {
@@ -127,9 +130,9 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
   });
 
   it("reports indeterminate when the transport throws, and never propagates", async () => {
-    globalThis.fetch = (async () => {
+    globalThis.fetch = fakeFetch(async () => {
       throw new Error("network down");
-    }) as typeof fetch;
+    });
 
     const probe = new SmitheryConnectionProbe(OPTIONS);
     expect(await probe.probe(targetOf(refWithMarker()), new AbortController().signal)).toBe(
