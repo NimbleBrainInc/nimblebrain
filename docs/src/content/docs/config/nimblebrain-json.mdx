@@ -565,6 +565,7 @@ Catalog connector ids installed into every new workspace as it is created. Defau
 - **Installed as the creator.** Each connector goes through the same install as **Browse → Install**, in list order, run as the workspace's creator (who is its admin). That covers a workspace created from **Workspaces → New workspace** and the first workspace a new user is given.
 - **Sign-in comes later.** A connector that needs sign-in installs unconnected and shows **Connect** on the workspace's Connectors page.
 - **Skips are logged, never fatal.** An id the catalog does not list is skipped with a warning, and so is a connector the creator already holds as a [personal connector](/using/personal-connectors/), since one connector cannot be both. A skipped default never stops the workspace from being created.
+- **Not for static-auth connectors.** A connector whose catalog entry uses `auth: static` needs its OAuth app set up in each workspace (**Set up** on the Connectors page), and a new workspace has none, so it is always skipped. List connectors that sign in on their own (`dcr`) or through a broker.
 - **New workspaces only.** Existing workspaces are unchanged, and removing a default from one workspace does not bring it back.
 
 ## notifications
