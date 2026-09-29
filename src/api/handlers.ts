@@ -2097,7 +2097,7 @@ async function persistResourceUploads(
   for (const file of uploads) {
     if (file.data.length > config.maxFileSize) {
       errors.push(
-        `File "${file.filename}" (${file.data.length} bytes) exceeds per-file limit of ${config.maxFileSize}`,
+        `File "${file.filename}" (${humanSize(file.data.length)}) exceeds per-file limit of ${humanSize(config.maxFileSize)}`,
       );
       continue;
     }

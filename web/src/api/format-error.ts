@@ -47,5 +47,5 @@ function formatUploadErrors(err: ApiClientError): string {
   const errors = Array.isArray(err.details?.errors)
     ? err.details.errors.filter((e): e is string => typeof e === "string")
     : [];
-  return errors.length > 0 ? errors.join(" ") : err.message;
+  return errors.length > 0 ? errors.join("; ") : err.message;
 }

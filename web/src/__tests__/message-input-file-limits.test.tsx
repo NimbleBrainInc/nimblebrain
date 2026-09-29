@@ -93,11 +93,24 @@ describe("MessageInput attachment limits", () => {
     await attach(3);
     expect(alertText()).toBe("Up to 2 files per message. Remove 1 to send.");
     expect(sendButton().disabled).toBe(true);
+
+    // Enter is the other way to send; it is held by the same limit.
+    const textarea = container.getElementsByTagName("textarea")[0] as HTMLTextAreaElement;
+    await act(async () => {
+      textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   test("a set within the limits can be sent", async () => {
     await attach(2);
     expect(alertText()).toBeNull();
     expect(sendButton().disabled).toBe(false);
+
+    const textarea = container.getElementsByTagName("textarea")[0] as HTMLTextAreaElement;
+    await act(async () => {
+      textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onSend).toHaveBeenCalledTimes(1);
   });
 });
