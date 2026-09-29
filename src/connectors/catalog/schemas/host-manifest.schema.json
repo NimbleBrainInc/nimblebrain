@@ -96,7 +96,7 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Rename inbound headers before the forward, as { from: to }. The forward strips the header class a caller could use to assert identity (authorization, x-api-key, x-tenant-id, x-workspace-id, …) — the same class the fleet edge strips. A vendor that authenticates its deliveries on one of those headers cannot otherwise reach its own verifier, so declaring a rename moves the value to a header the strip list does not cover. A rename whose target is itself in the stripped class is ignored."
+          "description": "Rename inbound headers before the forward, as { from: to }. The forward strips the header class a caller could use to assert identity (authorization, x-api-key, x-tenant-id, x-workspace-id, …) — the same class the fleet edge strips — and the browser's session credential, cookie. A vendor that authenticates its deliveries on one of the identity headers cannot otherwise reach its own verifier, so declaring a rename moves the value to a header the strip list does not cover. cookie cannot be renamed through: no vendor signs a delivery with it, so a rename from cookie is ignored. A rename whose target is itself in the stripped class is ignored."
         }
       }
     },
