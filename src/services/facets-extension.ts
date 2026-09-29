@@ -4,7 +4,7 @@
  * A server that advertises the extension in its capabilities lists each facet
  * as a resource carrying `_meta["ai.nimblebrain/facets"]`, and answers
  * `resources/read` on it with `{ "count": n }`. The extension adds no method.
- * Public contract: `docs/src/content/docs/apps/facets.mdx`.
+ * Public contract: `docs/src/content/docs/extensions/facets.mdx`.
  *
  * This module holds the wire shape and the checks the extension requires of a
  * host. It does no I/O; the briefing collector lists, reads, and caches.

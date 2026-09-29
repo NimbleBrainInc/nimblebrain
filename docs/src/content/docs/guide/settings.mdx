@@ -8,7 +8,7 @@ import { Aside } from '@astrojs/starlight/components';
 NimbleBrain organizes settings by **scope** — what each setting affects:
 
 - **You** — your personal profile (theme, display name, timezone). Lives at `/profile`, reached from the **avatar menu** at the **top-left** of the sidebar.
-- **This Workspace** — settings for the workspace you're currently focused on (its name, members, instructions, app config, connectors, skills). Lives under `/w/<id>/settings/*`.
+- **This Workspace** — settings for the workspace you're currently focused on (its name, members, instructions, connectors and their settings, skills). Lives under `/w/<id>/settings/*`.
 - **Organization** — admin-only settings that affect every workspace (model defaults, the workspace roster, deleted-workspace archives, user management, org-wide usage). Lives under `/org/*`.
 
 Open profile or sign out from the **avatar menu** at the top-left. Open workspace and org settings from the workspace navigator and the workspace settings nav.
@@ -50,15 +50,13 @@ This section reflects the workspace you're currently focused on. Switch workspac
 
 The list of who belongs to this workspace and their role. Managing membership requires being an **admin member of that workspace** — an organization admin who is not a member of it cannot add or remove people there, or view its roster.
 
-### Apps (`/w/<id>/settings/apps`)
-
-Per-connector settings for apps installed in this workspace. An app appears here only when its author registered a settings panel — otherwise it has no settings UI to surface.
-
-Some apps support **custom instructions** of their own — saved guidance the agent picks up whenever you're using that app. When supported, the editor appears inside that app's settings panel; the app owns storage and validation, and the platform includes the saved text in the agent's system prompt on every turn. See the [app-author docs](/apps/custom-instructions/) for the other side of this.
-
 ### Connectors (`/w/<id>/settings/connectors`)
 
 Browse and configure the workspace's connectors — point-and-click OAuth integrations and managed connectors. Install a connector here to make its tools available to the agent in this workspace.
+
+Open a connector to see its settings page: its status, connection, secrets, and tool permissions, then any settings the connector provides itself, under its name. Every member can open the page; only an admin member of this workspace can change the host's sections.
+
+Some connectors support **custom instructions** of their own — saved guidance the agent picks up whenever you're using that app. When supported, the editor appears in the connector's own section of its settings page; the connector owns storage and validation, and the platform includes the saved text in the agent's system prompt on every turn. See the [app-author docs](/extensions/custom-instructions/) for the other side of this.
 
 ### Skills (`/w/<id>/settings/skills`)
 
@@ -137,7 +135,7 @@ Custom instructions stack from broad to narrow, and the agent reads them on ever
 
 1. **Organization** policy applies everywhere.
 2. **Workspace Instructions** (This Workspace → General) layer on top for the focused workspace.
-3. **App custom instructions** (This Workspace → Apps) apply when you're using that app.
+3. **App custom instructions** (This Workspace → Connectors → the connector) apply when you're using that app.
 
 ## Sidebar layout
 

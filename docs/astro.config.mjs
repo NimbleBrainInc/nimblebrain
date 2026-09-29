@@ -38,6 +38,14 @@ export default defineConfig({
     '/cli/reload': '/cli/overview/',
     '/cli/telemetry': '/using/telemetry/',
     '/cli/automation': '/using/automations/',
+    // Extension pages moved into their own section.
+    '/apps/facets': '/extensions/facets/',
+    '/apps/lifecycle': '/extensions/lifecycle/',
+    '/apps/notifications': '/extensions/notifications/',
+    '/apps/placements': '/extensions/placements/',
+    '/apps/custom-instructions': '/extensions/custom-instructions/',
+    '/mcp/host-resources': '/extensions/host-resources/',
+    '/mcp/reserved-keys': '/extensions/reserved-keys/',
   },
   integrations: [
     starlight({
@@ -141,8 +149,6 @@ export default defineConfig({
             items: [
               { label: 'NimbleBrain and MCP', slug: 'mcp/overview' },
               { label: 'Protocol Support', slug: 'mcp/protocol-support' },
-              { label: 'Host Resources', slug: 'mcp/host-resources' },
-              { label: 'Reserved Keys', slug: 'mcp/reserved-keys' },
             ],
           },
           {
@@ -163,16 +169,33 @@ export default defineConfig({
               { label: 'Manifest Reference', slug: 'apps/manifest' },
               { label: 'Synapse SDK', slug: 'apps/synapse' },
               { label: 'Tool Results & Content Routing', slug: 'apps/tool-results' },
-              { label: 'Facets', slug: 'apps/facets' },
-              { label: 'Notifications', slug: 'apps/notifications' },
-              { label: 'Lifecycle', slug: 'apps/lifecycle' },
               { label: 'MCP App Bridge', slug: 'apps/bridge' },
               { label: 'UI Resources', slug: 'apps/ui-resources' },
               { label: 'Theming', slug: 'apps/theming' },
-              { label: 'Placements & Navigation', slug: 'apps/placements' },
-              { label: 'Custom Instructions', slug: 'apps/custom-instructions' },
               { label: 'Local Development', slug: 'apps/local-dev' },
               { label: 'Example: Hello World App', slug: 'apps/hello-world' },
+            ],
+          },
+          {
+            label: 'Extensions',
+            link: '/extensions/overview',
+            icon: 'server',
+            items: [
+              { label: 'Overview', slug: 'extensions/overview' },
+              { label: 'Lifecycle', slug: 'extensions/lifecycle' },
+              { label: 'Facets', slug: 'extensions/facets' },
+              { label: 'Notifications', slug: 'extensions/notifications' },
+              { label: 'Inbound Webhooks', slug: 'extensions/webhooks' },
+              { label: 'Settings Sections', slug: 'extensions/settings-sections' },
+              { label: 'Admin-only Tools', slug: 'extensions/admin-tools' },
+              { label: 'Placements & Navigation', slug: 'extensions/placements' },
+              { label: 'Host Resources', slug: 'extensions/host-resources' },
+              { label: 'Custom Instructions', slug: 'extensions/custom-instructions' },
+              {
+                label: 'App Bridge Extensions',
+                link: '/apps/bridge/#nimblebrain-extensions-ainimblebrain',
+              },
+              { label: 'Reserved Keys', slug: 'extensions/reserved-keys' },
             ],
           },
           {

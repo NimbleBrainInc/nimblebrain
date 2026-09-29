@@ -1,0 +1,125 @@
+---
+title: Settings sections
+description: Render your connector's own settings on its settings page with a settings placement, and use the canManage host-context flag to show controls only to people who can use them.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A settings section is your connector's own UI on its settings page, **Settings →
+Connectors → your connector**. It is for how your connector behaves in this
+workspace: changed rarely, and affecting every member. Work people do daily
+belongs in your app's [main view](/extensions/placements/) instead.
+
+It is a capability of the [`ai.nimblebrain/host`](/apps/manifest/) block, declared
+as a placement with `slot: "settings"`, not as a separate top-level object.
+
+## Declare it
+
+```json
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.0",
+    "name": "Support Desk",
+    "placements": [
+      { "slot": "settings", "resourceUri": "ui://settings" }
+    ]
+  }
+}
+```
+
+| Field | Meaning for a `settings` placement |
+|---|---|
+| `resourceUri` | The `ui://` page that renders the section, served by your server. |
+| `priority` | When you declare more than one `settings` placement, the host renders the first by priority and ignores the rest. |
+| `route`, `label` | Ignored. The page already belongs to your connector, so the section claims no navigation: there is no tab, nav entry, or route. |
+
+## Where it renders
+
+On your connector's settings page, **after the host's own sections** (status,
+connection, secrets, tool permissions), under your connector's name with a
+"Provided by" line.
+
+The host sizes the section to its content, so style it as a section of a page,
+not as a full viewport. **Every workspace member who can open the page sees it**,
+not only admins.
+
+## The manage flag
+
+The host tells the section whether the viewer can manage this connector, in the
+handshake's host context:
+
+```json
+"hostContext": {
+  "connector": { "canManage": false }
+}
+```
+
+- `canManage` is `true` for a **workspace admin**, a member of this workspace
+  whose role is `admin`, and `false` for everyone else. That includes an
+  organization admin who is not an admin of this workspace. It is the same rule
+  the host's own sections on the page follow.
+- When it changes while the section is open, the host sends it again in
+  `ui/notifications/host-context-changed`.
+- Only the settings section receives the `connector` key. Your other
+  placements do not.
+
+<Aside type="caution" title="The flag reflects controls; it is not the permission">
+Use `canManage` to disable or omit controls the viewer cannot use. It does not
+stop anyone. The iframe can call any tool on its own server regardless of the
+flag, and so can the agent. A tool that only a workspace admin may call must be
+declared in [`admin_tools`](/extensions/admin-tools/), so the host refuses it to
+everyone else on every path.
+</Aside>
+
+## Example
+
+A Support Desk connector keeps a default reply signature per workspace. Any
+member may read it; only a workspace admin may change it. The catalog entry
+declares the section and gates the write tool:
+
+```json
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.0",
+    "name": "Support Desk",
+    "icon": "life-buoy",
+    "placements": [
+      { "slot": "settings", "resourceUri": "ui://settings" }
+    ],
+    "admin_tools": ["set_default_signature"]
+  }
+}
+```
+
+The section reads the flag at the handshake and on every host-context change,
+and disables the editor when it is `false`:
+
+```js
+// ui://settings. `ctx` is the hostContext from the ui/initialize result,
+// or the params of a ui/notifications/host-context-changed notification.
+function applyHostContext(ctx) {
+  if (!ctx.connector) return; // a change that did not touch the flag
+  const canManage = ctx.connector.canManage === true;
+  document.querySelector("#signature").disabled = !canManage;
+  document.querySelector("#save").hidden = !canManage;
+  document.querySelector("#read-only-note").hidden = canManage;
+}
+
+document.querySelector("#save").addEventListener("click", async () => {
+  // A non-admin never gets here through the UI. If one calls the tool some
+  // other way, the host refuses it with workspace_admin_required.
+  await callTool("set_default_signature", {
+    signature: document.querySelector("#signature").value,
+  });
+});
+```
+
+Two layers, each doing one job: `canManage` keeps a member from being shown a
+control that would fail, and `admin_tools` is what makes it fail.
+
+## Related
+
+- [Placements & navigation](/extensions/placements/): every slot, including `settings`
+- [Admin-only tools](/extensions/admin-tools/): enforcing who may call a tool
+- [Custom instructions](/extensions/custom-instructions/): a common use of a settings section
+- [MCP App Bridge](/apps/bridge/): the handshake and host-context notifications

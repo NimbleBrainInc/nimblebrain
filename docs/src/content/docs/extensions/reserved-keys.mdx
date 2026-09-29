@@ -3,7 +3,7 @@ title: Reserved Keys
 description: The ai.nimblebrain/* _meta keys only the host may set. A server that sends one has it removed before the result reaches the agent.
 ---
 
-Every key under `ai.nimblebrain/` belongs to NimbleBrain. Some are [extensions](/mcp/overview/#extensions) a server may use. The keys on this page are different: the host sets them itself, and it removes them from anything a server sends.
+Every key under `ai.nimblebrain/` belongs to NimbleBrain. Some are [extensions](/extensions/overview/#registry) a server may use. The keys on this page are different: the host sets them itself, and it removes them from anything a server sends.
 
 ## Why a key is reserved
 
@@ -36,5 +36,5 @@ Seeing one of these keys in a trace between the host and your server is normal. 
 
 ## Related
 
-- [NimbleBrain and MCP](/mcp/overview/): the full extension list and design rules
+- [Extensions](/extensions/overview/): the full extension registry and design rules
 - [Protocol support](/mcp/protocol-support/): what the host advertises and reads

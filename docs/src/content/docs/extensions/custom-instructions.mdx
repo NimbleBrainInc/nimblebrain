@@ -98,9 +98,7 @@ If you want a UI surface where a workspace admin edits the instructions (versus 
 
 Then publish the section's HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain renders it on your connector's settings page, **Settings → Connectors → My App**, after the host's own sections.
 
-The section is shown to every member who can open that page. The host passes `hostContext.connector.canManage`, which is `true` only for a workspace admin; use it to disable the editor for everyone else. The flag reflects controls; it is not the permission. The tool that writes the instructions stays callable by any member and by the agent, so the flag alone does not keep a member from changing them.
-
-See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settings"` placement shape and the manage flag, and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
+The section is shown to every member who can open that page. Use `hostContext.connector.canManage` to disable the editor for anyone who is not a workspace admin, and name the tool that writes the instructions in [`admin_tools`](/extensions/admin-tools/) if only an admin should change them: the flag shapes the UI, and `admin_tools` is what the host enforces. See [Settings sections](/extensions/settings-sections/) for both, and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
 
 ## Why this convention
 
@@ -112,5 +110,5 @@ See the [Manifest reference](/apps/manifest/#settings-sections) for the `"settin
 ## Related
 
 - [The workspace overlay](/guide/settings/) — managed by the host, not by your app. Written by workspace admins in the workspace settings UI; the agent drafts suggested text but does not write the overlay itself. Guidance that should reach every workspace in the organization is an org-tier skill instead.
-- [Manifest reference](/apps/manifest/) — full `_meta["ai.nimblebrain/host"]` schema, including the `"settings"` placement slot.
-- [Placements & Navigation](/apps/placements/) — the slots your app's views render in.
+- [Settings sections](/extensions/settings-sections/) — where the editor renders, and the manage flag.
+- [Placements & Navigation](/extensions/placements/) — the slots your app's views render in.

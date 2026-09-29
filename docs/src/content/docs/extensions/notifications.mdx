@@ -28,7 +28,7 @@ that no in-flight call is waiting on.
 
 ## Why an outbox and not a callback
 
-The obvious design is the mirror of the [inbound hooks door](/apps/manifest#hooks-inbound-webhooks):
+The obvious design is the mirror of the [inbound hooks door](/extensions/webhooks/):
 the host hands you a URL and you POST to it. Two things decide against it.
 
 **Direction of control.** Under a callback, your server chooses when to spend a
@@ -354,7 +354,7 @@ server.registerResource(
 ## Related
 
 - [Manifest Reference](/apps/manifest) — the `notifications` block in context.
-- [Inbound webhooks](/apps/manifest#hooks-inbound-webhooks) — the other
+- [Inbound webhooks](/extensions/webhooks/) — the other
   direction: a vendor delivering to you.
 - [MCP Triggers and Events](https://github.com/modelcontextprotocol/experimental-ext-triggers-events)
   — the working-group design this envelope and poll result mirror field for

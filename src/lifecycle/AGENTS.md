@@ -9,7 +9,7 @@ it became reachable in a workspace (`on_ready`, with
 `{ reason: "install" | "resume" }`) and that it is about to be removed
 (`on_removing`, no arguments). Declared as `_meta["ai.nimblebrain/host"].lifecycle`;
 each value names a tool on that same server. Developer
-contract: [`docs/apps/lifecycle.mdx`](../../docs/src/content/docs/apps/lifecycle.mdx).
+contract: [`docs/extensions/lifecycle.mdx`](../../docs/src/content/docs/extensions/lifecycle.mdx).
 
 **Two moments, because the notification is a tool call on the bundle.** Before a
 connector is reachable there is no server to call; after teardown there is

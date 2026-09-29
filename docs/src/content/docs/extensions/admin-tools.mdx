@@ -1,0 +1,106 @@
+---
+title: Admin-only tools
+description: Name tools in admin_tools and the host lets only a workspace admin list or call them, on every path, before the call reaches your server.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Your server cannot check who is calling it: the host tells it the workspace, not
+the person or their role. When a tool changes how your connector behaves for
+everyone in the workspace, name it in `admin_tools` and the host enforces the
+role for you.
+
+`admin_tools` is a capability of the [`ai.nimblebrain/host`](/apps/manifest/)
+block.
+
+```json
+"_meta": {
+  "ai.nimblebrain/host": {
+    "host_version": "1.0",
+    "admin_tools": ["configure_endpoint"]
+  }
+}
+```
+
+The value is a list of bare tool names on your own server, at most 64, each with
+no whitespace.
+
+## What the host does
+
+For anyone who is not a **workspace admin** of the workspace the call is bound to:
+
+- **The tools are hidden.** The host removes them from every tool listing: the
+  agent's tools in chat, tool search, and the [MCP endpoint](/connect/mcp-endpoint/).
+  A member's agent never sees a tool it would be refused.
+- **Calls are refused on every path**: chat, the MCP endpoint, your app's UI
+  through the [app bridge](/apps/bridge/), REST, and automations and other
+  unattended runs. A refused call never reaches your server.
+- **The refusal is structured.** It is an error result whose `structuredContent` is:
+
+  ```json
+  { "error": "workspace_admin_required", "connector": "<server>", "tool": "<tool>" }
+  ```
+
+  Its text tells the person to ask a workspace admin to make the change.
+
+## Who counts as a workspace admin
+
+A member of that workspace whose role is `admin`. Nothing else:
+
+- An organization admin or owner who is not an admin of this workspace gets
+  **no bypass**.
+- A call with no signed-in user is refused.
+- A run acts as the identity it was started under, and is checked as that
+  identity.
+
+This is the same rule as the [settings section](/extensions/settings-sections/)'s
+`canManage` flag and the host's own controls on the connector's settings page.
+
+## Rules
+
+- **Catalog only.** The host reads the list from your server's
+  [connectors catalog](/config/connectors-catalog/) entry, like
+  [`hooks`](/extensions/webhooks/). A tool's own `_meta`, an MCPB bundle
+  manifest, or anything else your running server sends does not change it. So a
+  later build of your server cannot widen access by dropping the declaration.
+- **It only narrows.** It removes callers and grants nothing.
+- **Enforced by name.** A name your server does not advertise is still refused
+  to non-admins, and is a warning on install.
+- **A malformed list gates every tool.** If `admin_tools` is present but is not a
+  list of at most 64 tool names with no whitespace (`null` included, such as a
+  bare `admin_tools:` in YAML), the host cannot tell which tools you meant. Since
+  dropping part of a narrowing list would widen access, it refuses every tool on
+  your server to non-admins and warns on install. An empty list declares
+  nothing. Duplicate names collapse.
+- **The host's own calls pass.** The host calls your
+  [`lifecycle`](/extensions/lifecycle/) handlers and `hooks` `register_tool`
+  itself; those calls are not checked. Naming one of them here is a warning on
+  install.
+- **Personal connectors are not gated.** A connector a user
+  [connects for themselves](/using/personal-connectors/) acts on their own
+  account, not on the workspace, so the list does not apply to it.
+
+## The honest limit
+
+<Aside type="caution" title="It gates who calls, not whether a person is present">
+`admin_tools` controls **who** can call a tool. A workspace admin's agent acts as
+that admin and passes the check, and so does an automation run as that admin. An
+admin-only tool must still be safe for that agent to call: validate its
+arguments, keep it idempotent where you can, and do not treat an admitted call
+as proof that a human reviewed it.
+</Aside>
+
+## Pairing it with a settings section
+
+A tool that changes connector-wide behavior is usually driven from your
+[settings section](/extensions/settings-sections/). The section shows every
+member the page, and uses `hostContext.connector.canManage` to disable the
+controls for anyone who is not an admin. That flag only shapes the UI.
+`admin_tools` is what enforces it, for the section's own calls and for every
+other path to the tool.
+
+## Related
+
+- [Settings sections](/extensions/settings-sections/): the UI side of the same rule
+- [Manifest Reference](/apps/manifest/): the `admin_tools` field in the `ai.nimblebrain/host` block
+- [Connectors](/using/connectors/): tool permissions an admin sets per workspace

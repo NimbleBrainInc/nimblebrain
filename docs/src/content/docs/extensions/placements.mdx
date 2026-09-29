@@ -17,7 +17,7 @@ The shell layout has the following slots:
 | `sidebar` | No nav entry for a connector | Reserved for the host's own views (Conversations, Automations, Files). A connector's `sidebar` placement with a `route` still registers that route. |
 | `sidebar.bottom` | The bottom of the mobile navigation drawer | A pinned item. It does not render in the desktop sidebar. |
 | `main` | A route, with no nav entry | A full-page view. Requires a `route`. Reachable by URL or when your app navigates to it. |
-| `settings` | The connector's settings page | Your connector's settings component, rendered after the host's own sections on **Settings → Connectors → your connector**. See [Settings sections](/apps/manifest/#settings-sections). |
+| `settings` | The connector's settings page | Your connector's settings component, rendered after the host's own sections on **Settings → Connectors → your connector**. See [Settings sections](/extensions/settings-sections/). |
 
 An unknown slot is dropped, never fatal.
 
@@ -74,6 +74,12 @@ A placement with a `route` registers a URL inside the workspace, under `/w/<slug
 
 Clicking the app in the sidebar opens that URL and loads the placement's `resourceUri` in the main area, beside the docked chat.
 
+### The `primary` view
+
+The virtual `primary` resource path resolves to the **first declared placement's** `resourceUri`, so the shell can load your main view without knowing its URI ahead of time. See [UI Resources](/apps/ui-resources) for how `primary` resolves.
+
+The schema also accepts a `primaryView` object for back-compat, but the host does not consume it: placements are the source of truth for what is registered and routed. Declare a placement, not `primaryView`.
+
 ## Sidebar rendering
 
 Under the focused workspace, the sidebar shows:
@@ -99,7 +105,7 @@ Specify icons using [Lucide](https://lucide.dev/icons) names in kebab-case:
 { "icon": "settings" }
 ```
 
-The resolver converts kebab-case to PascalCase for Lucide component lookup. If the name is not found, `CircleDot` is used as the fallback.
+The resolver accepts kebab-case or PascalCase (`"message-square"` and `"MessageSquare"` both resolve to the `MessageSquare` component). If the name is not found, `CircleDot` is used as the fallback.
 
 ## Size hints
 

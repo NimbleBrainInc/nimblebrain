@@ -5,14 +5,36 @@ description: Be told when your connector becomes reachable in a workspace, and w
 
 import { Aside } from '@astrojs/starlight/components';
 
-Some servers need to do something the first time they are installed into a
-workspace — mint a tenancy at a vendor, create a bucket, register a sending
-domain — and undo it when they are removed. Nothing in MCP tells you either
-moment: a tool call arrives when a user asks for something, and the install and
-the uninstall are not that.
+A server that keeps anything outside itself for a workspace (a tenancy at a
+vendor, a storage bucket, a sending domain, a webhook registration) needs to
+know two moments: when it was installed into a workspace, and when it is about
+to be removed. Nothing in MCP tells you either. A tool call arrives when someone
+asks for something, and an install or an uninstall is not that.
 
-A `lifecycle` block asks the host to tell you. It names two tools on **your own
-server**, and the host calls them.
+Lifecycle tells you both. It is a capability of the
+[`ai.nimblebrain/host`](/apps/manifest/) block.
+
+## What it enables
+
+**Per-workspace state at a third party, created on install and released on
+uninstall, with no operator script.** Without it, someone has to provision the
+vendor side by hand before the connector works, and remember to clean it up
+after. With it, installing the connector is the whole setup, and removing it
+starts the teardown.
+
+Lifecycle is one of three capabilities that together let a server own a vendor
+integration end to end:
+
+| | Capability | What it does for the integration |
+|---|---|---|
+| 1 | Lifecycle | Creates the vendor-side resource when the connector is installed, and releases it when the connector is removed |
+| 2 | [Inbound webhooks](/extensions/webhooks/) | Receives the vendor's events about that resource |
+| 3 | [Notifications](/extensions/notifications/) | Tells the workspace what happened: the domain went active, a reply landed |
+
+## Declare it
+
+A `lifecycle` block names two tools on **your own server**, and the host calls
+them.
 
 ```json title="manifest.json"
 "_meta": {
@@ -26,9 +48,9 @@ server**, and the host calls them.
 }
 ```
 
-Both are optional; declare either alone. Nothing else in the block, and nothing
-else is planned: the host says *you were installed*, and what that means is
-yours.
+Both are optional; declare either alone. Nothing else is in the block, and
+nothing else is planned: the host says *you were installed*, and what that means
+is yours.
 
 ## The two events
 
@@ -148,6 +170,30 @@ user is watching, `on_removing` inside the uninstall. Record the intent and let
 your own background work converge it; a handler that waits on a vendor
 round-trip makes the install feel broken and the uninstall feel stuck.
 
+## Privileged work: record it, act on it elsewhere
+
+Creating a tenancy or a domain usually needs a credential with broad power at
+the vendor. Keep that credential out of the handlers.
+
+**Record the request as ordinary state in `on_ready`**, such as a row saying
+"this workspace wants a tenancy", and return. **A separate process that holds
+the privileged credential** reads those rows and acts on them, and does the
+same for the release rows `on_removing` writes.
+
+- The handler stays **fast**: it writes a row, so the install is not waiting on
+  a vendor round-trip.
+- It stays **idempotent**: recording "wants a tenancy" twice is the same row,
+  which is what at-least-once delivery needs.
+- It stays **unprivileged**: the process serving tool calls never holds the
+  credential that can create or destroy resources at the vendor, so a bug or a
+  prompt-injected call on that path cannot reach it.
+- The separate process is also where retries and the sweep for missed
+  `on_removing` calls live, since it is already converging recorded intent
+  against the vendor.
+
+The handlers in the examples above follow this shape: `request_tenancy` and
+`release_tenancy` record intent, and nothing in them calls the vendor.
+
 ## What the user sees
 
 `on_ready`'s **text result becomes a notice on the install**, shown beside the
@@ -213,6 +259,8 @@ asymmetry: Kubernetes `lifecycle: { postStart, preStop }`, VS Code
 
 ## Related
 
-- [Manifest Reference](/apps/manifest) — the `lifecycle` block in context.
-- [Notifications](/apps/notifications) — telling the host about facts you learn
+- [Manifest Reference](/apps/manifest/) — the `lifecycle` field in the `ai.nimblebrain/host` block.
+- [Inbound webhooks](/extensions/webhooks/) — receiving the vendor's events about
+  what `on_ready` set up.
+- [Notifications](/extensions/notifications/) — telling the host about facts you learn
   later, which is the other half of a server that does work between calls.
