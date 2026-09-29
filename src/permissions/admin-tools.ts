@@ -1,3 +1,4 @@
+import type { AdminToolsDeclaration } from "../connectors/catalog/types.ts";
 import type { HostManifestMeta } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -37,36 +38,37 @@ const ADMIN_TOOLS_MAX = 64;
 const TOOL_NAME_MAX = 128;
 
 /**
- * Extract the declared admin tool names, or `undefined` when there are none.
+ * Parse the declared admin tools, or `undefined` when none are declared.
  *
- * Tolerant, like every other field in the host extension: a malformed entry is
- * dropped with a warning and the rest stand. A malformed BLOCK (not an array)
- * declares nothing, also with a warning. Duplicates collapse.
+ * Strict where the rest of the host extension is tolerant, because this field
+ * only narrows: dropping a bad part of it would widen access. A present
+ * declaration that is not a list of at most {@link ADMIN_TOOLS_MAX} bare tool
+ * names (`null` included — a bare `admin_tools:` in YAML) gates EVERY tool on
+ * the connector, with a warning naming it. An empty list declares nothing.
+ * Duplicates collapse.
  */
 export function parseAdminToolsDeclaration(
   meta: HostManifestMeta | undefined,
-): string[] | undefined {
+  connector: string,
+): AdminToolsDeclaration | undefined {
   // `meta` is an unchecked cast over manifest / registry JSON, so the declared
   // type is a claim about intent, not a guarantee about bytes.
   const raw = meta?.admin_tools as unknown;
-  if (raw === undefined || raw === null) return undefined;
-  if (!Array.isArray(raw)) {
-    drop("admin_tools is not an array");
-    return undefined;
+  if (raw === undefined) return undefined;
+  const reason = malformedReason(raw);
+  if (reason !== null) {
+    warnOnce(connector, reason);
+    return { kind: "all", reason };
   }
-  const out = new Set<string>();
-  for (const entry of raw) {
-    if (!isBareToolName(entry)) {
-      drop("an entry is not a bare tool name");
-      continue;
-    }
-    if (out.size >= ADMIN_TOOLS_MAX) {
-      drop(`more than ${ADMIN_TOOLS_MAX} names; the rest are ignored`);
-      break;
-    }
-    out.add(entry);
-  }
-  return out.size > 0 ? [...out] : undefined;
+  const names = [...new Set(raw as string[])];
+  return names.length > 0 ? { kind: "names", names } : undefined;
+}
+
+function malformedReason(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return "admin_tools is not a list";
+  if (raw.length > ADMIN_TOOLS_MAX) return `admin_tools names more than ${ADMIN_TOOLS_MAX} tools`;
+  if (!raw.every(isBareToolName)) return "admin_tools has an entry that is not a bare tool name";
+  return null;
 }
 
 function isBareToolName(entry: unknown): entry is string {
@@ -78,26 +80,41 @@ function isBareToolName(entry: unknown): entry is string {
   );
 }
 
-function drop(reason: string): void {
-  log.warn(`[admin-tools] dropping malformed declaration: ${reason}`);
+/** The projection reruns on every catalog read, which a non-admin's every call
+ *  makes, so each connector's malformed declaration is logged once. */
+const warned = new Set<string>();
+
+function warnOnce(connector: string, reason: string): void {
+  const key = `${connector}\0${reason}`;
+  if (warned.has(key)) return;
+  warned.add(key);
+  log.warn(
+    `[admin-tools] connector "${connector}": ${reason}; every tool on it is admin-only until the declaration is fixed`,
+  );
 }
 
 /**
  * Whether `identity` may call `toolName` on a connector that declares
  * `adminTools`, in workspace `ws`.
  *
- * Allowed when the tool is not declared, or when `canWriteWorkspaceScoped`
- * allows. The one predicate behind both the listing filter and the dispatch
- * refusal, so a member's agent never lists a tool it would be refused.
+ * Allowed when the tool is not declared (and the declaration is not `all`), or
+ * when `canWriteWorkspaceScoped` allows. The one predicate behind both the
+ * listing filter and the dispatch refusal, so a member's agent never lists a
+ * tool it would be refused.
  */
 export function isAdminToolAllowed(
   identity: Pick<UserIdentity, "id"> | null | undefined,
   ws: Workspace | null | undefined,
-  adminTools: readonly string[] | undefined,
+  adminTools: AdminToolsDeclaration | undefined,
   toolName: string,
 ): boolean {
-  if (!adminTools?.includes(toolName)) return true;
+  if (!gates(adminTools, toolName)) return true;
   return canWriteWorkspaceScoped(identity, ws).allowed;
+}
+
+function gates(adminTools: AdminToolsDeclaration | undefined, toolName: string): boolean {
+  if (adminTools === undefined) return false;
+  return adminTools.kind === "all" || adminTools.names.includes(toolName);
 }
 
 /**
@@ -125,6 +142,7 @@ export function adminToolDenial(serverName: string, toolName: string): ToolResul
  * nothing to say. Never a reason to stop enforcing: every name is enforced
  * whether or not the server advertises it today.
  *
+ * - A malformed declaration gates every tool; that is the one warning.
  * - A name the server does not advertise is probably a typo or a tool behind a
  *   flag; the gate holds for it anyway.
  * - A name that is also a lifecycle handler or a hooks `register_tool` is one
@@ -138,12 +156,19 @@ export function adminToolDenial(serverName: string, toolName: string): ToolResul
  */
 export function adminToolsContractWarnings(opts: {
   connector: string;
-  adminTools: readonly string[] | undefined;
+  adminTools: AdminToolsDeclaration | undefined;
   lifecycle?: LifecycleDeclaration;
   hooks?: readonly HookDeclaration[];
   tools?: Tool[];
 }): string[] {
-  const { connector, adminTools, tools } = opts;
+  const { connector, tools } = opts;
+  if (opts.adminTools?.kind === "all") {
+    return [
+      `Connector "${connector}": ${opts.adminTools.reason}, so every tool on it is refused to ` +
+        `non-admins until the catalog entry's admin_tools is fixed.`,
+    ];
+  }
+  const adminTools = opts.adminTools?.names;
   if (!adminTools || adminTools.length === 0) return [];
   const kernelCalled = kernelCalledTools(opts.lifecycle, opts.hooks);
   const warnings: string[] = [];

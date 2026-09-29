@@ -23,6 +23,7 @@ import type {
   AutomationsStatusOutput,
 } from "../schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
+import { containsRecursiveTool } from "./executor.ts";
 import type { ReadRunsOptions } from "./store.ts";
 import {
   type Automation,
@@ -246,7 +247,7 @@ export interface CostEstimate {
 export function estimateCost(automation: Automation, workspaceDefaultModel?: string): CostEstimate {
   const rates = getModelRates(automation.model ?? workspaceDefaultModel);
   // Use actual average if available, otherwise a realistic per-run estimate.
-  // maxInputTokens is a ceiling (200K default), NOT an estimate — actual runs
+  // maxInputTokens is a ceiling (unset = none), NOT an estimate — actual runs
   // typically use 15-25K input tokens. Using the ceiling produces wildly inflated costs.
   const hasHistory = automation.runCount > 0 && automation.cumulativeInputTokens > 0;
   const inputTokens = hasHistory ? automation.cumulativeInputTokens / automation.runCount : 20_000; // realistic per-run estimate
@@ -317,11 +318,21 @@ export interface ValidatableAutomationFields {
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;
+  allowedTools?: string[];
 }
 
 export function validateAutomationFields(args: ValidatableAutomationFields): void {
   if (args.schedule) validateSchedule(args.schedule);
   validateNumericLimits(args);
+  // The executor refuses to run such an automation; refusing it here tells the
+  // author at write time instead of at the first run.
+  const recursive = containsRecursiveTool(args.allowedTools);
+  if (recursive !== null) {
+    throw new Error(
+      `allowedTools may not include "${recursive}": an automation cannot create, update, or ` +
+        "delete automations from its own runs.",
+    );
+  }
 }
 
 /**
@@ -376,17 +387,28 @@ function validateSchedule(schedule: ScheduleSpec): void {
     if (!schedule.expression) {
       throw new Error("expression is required for cron schedules");
     }
-    validateCronExpression(schedule.expression);
+    validateCronExpression(schedule.expression, schedule.timezone);
   }
 }
 
-/** Validate a cron expression by constructing a Croner instance. Throws on parse error. */
-function validateCronExpression(expression: string): void {
+/**
+ * Validate a cron expression by constructing a Croner instance and asking it
+ * for the next run. Throws on a parse error, an unknown timezone, or an
+ * expression that matches no future date (`0 9 31 2 *`, or a year that has
+ * passed), which the scheduler could never place in time.
+ */
+function validateCronExpression(expression: string, timezone?: string): void {
+  let next: Date | null;
   try {
-    new Cron(expression);
+    next = new Cron(expression, { timezone }).nextRun();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Invalid cron expression: ${msg}`);
+  }
+  if (next === null) {
+    throw new Error(
+      `Invalid cron expression: "${expression}" matches no future date, so it would never run`,
+    );
   }
 }
 
@@ -406,11 +428,10 @@ function validateNumericLimits(args: ValidatableAutomationFields): void {
 
 /**
  * Strict input shape for `automations__create`. The validator has already
- * enforced shape — handler reads typed fields directly. Operator-only
- * fields (`source`, `allowedTools`) are NOT in this shape; the LLM-facing
- * handler hardcodes `source: "agent"` and never sets the others. An
- * internal caller bypasses this handler and calls `createAutomation` from
- * `domain.ts` directly with the full shape.
+ * enforced shape — handler reads typed fields directly. The operator-only
+ * field `source` is NOT in this shape; the LLM-facing handler hardcodes
+ * `source: "agent"`. An internal caller bypasses this handler and calls
+ * `createAutomation` from `domain.ts` directly with the full shape.
  */
 interface CreateInput {
   manifest: {
@@ -423,6 +444,7 @@ interface CreateInput {
     maxIterations?: number;
     maxInputTokens?: number;
     maxRunDurationMs?: number;
+    allowedTools?: string[];
     tokenBudget?: Automation["tokenBudget"];
   };
   body: string;
@@ -444,11 +466,11 @@ export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): o
       maxIterations: manifest.maxIterations,
       maxInputTokens: manifest.maxInputTokens,
       maxRunDurationMs: manifest.maxRunDurationMs,
+      allowedTools: manifest.allowedTools,
       tokenBudget: manifest.tokenBudget,
       enabled: manifest.enabled,
       // LLM-facing path: stamp `agent` source and derive ownership from
-      // request context. `allowedTools` is intentionally not reachable
-      // from this surface.
+      // request context.
       source: "agent",
       ownerId: ctx.currentUserId,
       workspaceId: ctx.currentWorkspaceId,
@@ -715,6 +737,7 @@ export async function handleRun(
   // would become an unhandled rejection. The `.catch(noop)` swallows
   // exactly that case — the scheduler's own logging is the right place
   // for filesystem diagnostics, not the MCP request frame.
+  const startedAt = new Date().toISOString();
   const runPromise = ctx.runNow(automation.id);
   runPromise.catch(() => {});
 
@@ -735,13 +758,25 @@ export async function handleRun(
     if (timer !== undefined) clearTimeout(timer);
   }
 
+  // Run now runs a disabled automation (see `Scheduler.runNow`); say so, since
+  // its schedule and events will not fire it again. Read after the run settles:
+  // the run itself can disable it (failure auto-disable, token budget).
+  const enabled = findByName(ctx.definitions(), name)?.enabled ?? automation.enabled;
+  const disabledNote = enabled
+    ? ""
+    : ` "${name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;
+
   if (outcome === PENDING) {
     return {
       status: "dispatched",
       automationId: automation.id,
+      startedAt,
+      enabled,
       message:
-        `Started "${name}" — still running after ${waitMs / 1000}s. ` +
-        `Use automations__runs to check completion.`,
+        `"${name}" is still running after ${waitMs / 1000}s and continues in the background; ` +
+        `it has not failed. When it ends, its run appears in automations__runs ` +
+        `(automationId "${automation.id}", since "${startedAt}"); read its full output with ` +
+        `automations__run_result, or stop it with automations__cancel.${disabledNote}`,
     };
   }
 
@@ -757,7 +792,9 @@ export async function handleRun(
     );
   }
 
-  return { run: outcome };
+  return disabledNote
+    ? { run: outcome, enabled, message: disabledNote.trim() }
+    : { run: outcome, enabled };
 }
 
 export function handleCancel(

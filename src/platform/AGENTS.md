@@ -216,8 +216,8 @@ DO:
 ```ts
 // src/platform/schemas/automations.ts — named, exported, type-only OK
 export type AutomationsRunOutput =
-  | { run: AutomationRun }
-  | { status: "dispatched"; automationId: string; message: string };
+  | { run: AutomationRunRecord; enabled: boolean; message?: string }
+  | { status: "dispatched"; automationId: string; startedAt: string; enabled: boolean; message: string };
 
 // src/platform/automations/server.ts — handler return type is the contract
 export async function handleRun(
@@ -339,7 +339,7 @@ passed, production stayed broken. Match the production type strictly.
 |---|---|
 | Bare `{ type: "object" }` | Model invents structure; serializes nested objects as JSON strings |
 | `name` at root, `description` in manifest | Splits identity; model packs everything into one place and gets it wrong |
-| `allowedTools: string[]` | Leaky abstraction — couples skill/automation identity to connector names that change |
+| `allowedTools: string[]` as anything but a run's enforced allowlist | Leaky abstraction — couples identity to connector names that change. An automation takes one because narrowing its runs' tools is the point and the run's tool router enforces it; describe it with `<connector>__*` globs |
 | `source`, `ownerId` in input schema | Runtime fields the LLM has no business setting |
 | Designed-but-not-enforced placeholder fields | Confuses callers; schema lies about what's load-bearing |
 | Multiple casings accepted in handler | Hides the contract; one casing won, document it |

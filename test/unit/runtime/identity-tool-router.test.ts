@@ -29,6 +29,7 @@ import {
   type RequestContext,
   runWithRequestContext,
 } from "../../../src/runtime/request-context.ts";
+import { isToolAllowedForRun } from "../../../src/tools/tool-pattern.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 
@@ -376,5 +377,71 @@ describe("IdentityToolRouter — execute (identity door)", () => {
     await router.execute({ id: "c1", name: "conversations__list", input: {} });
 
     expect(hookEvents).toEqual([]);
+  });
+});
+
+describe("IdentityToolRouter — a run's allowedTools", () => {
+  // Pins: the allowlist bounds what the run can reach, not only what it is
+  // shown. A tool outside it is absent from `availableTools` (the set
+  // `nb__manage_tools` promotes from) and refused at dispatch. Naive failure:
+  // filter only the surfaced list, leaving activation and direct calls open.
+  const isToolAllowed = (name: string) => isToolAllowedForRun(name, ["crm__*"]);
+  const schema = (name: string): ToolSchema => ({
+    name,
+    description: name,
+    inputSchema: { type: "object", properties: {} },
+  });
+
+  test("lists only allowed tools, keeping nb__* system tools", async () => {
+    const router = new IdentityToolRouter({
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      isToolAllowed,
+      runtime: makeStubRuntime({
+        registries: new Map(),
+        memberships: new Map(),
+        existingWorkspaces: new Set(),
+        workDir,
+        toolsByWorkspace: new Map([
+          [
+            SHARED_WS,
+            [
+              schema("crm__search"),
+              schema("mail__send"),
+              schema("files__read"),
+              schema("nb__search"),
+            ],
+          ],
+        ]),
+      }),
+    });
+
+    const names = (await router.availableTools()).map((t) => t.name);
+
+    expect(names).toEqual(["crm__search", "nb__search"]);
+  });
+
+  test("refuses a call to a tool outside the list without dispatching it", async () => {
+    const crm = makeSpySource("crm");
+    const mail = makeSpySource("mail");
+    const router = new IdentityToolRouter({
+      identityId: USER_ID,
+      workspaceId: SHARED_WS,
+      isToolAllowed,
+      runtime: makeStubRuntime({
+        registries: new Map([[SHARED_WS, [crm, mail]]]),
+        memberships: new Map([[USER_ID, [SHARED_WS]]]),
+        existingWorkspaces: new Set([SHARED_WS]),
+        workDir,
+      }),
+    });
+
+    const denied = await router.execute({ id: "c1", name: "mail__send", input: {} });
+    const allowed = await router.execute({ id: "c2", name: "crm__search", input: {} });
+
+    expect(denied.isError).toBe(true);
+    expect(mail.calls).toHaveLength(0);
+    expect(allowed.isError).toBe(false);
+    expect(crm.calls).toHaveLength(1);
   });
 });

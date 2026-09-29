@@ -189,6 +189,28 @@ describe("createDirectExecutor", () => {
 // (Restores coverage lost when the executeHttp tests were deleted.)
 // ---------------------------------------------------------------------------
 
+describe("createDirectExecutor — the run input cap", () => {
+	async function requestFor(overrides: Partial<Automation>) {
+		let seen: Parameters<TaskFn>[0] | undefined;
+		const taskFn: TaskFn = async (req) => {
+			seen = req;
+			return makeDirectTaskFn()(req);
+		};
+		await createDirectExecutor(taskFn, () => ({}))(makeAutomation(overrides));
+		return seen;
+	}
+
+	test("an automation's maxInputTokens reaches the runtime as the run's total cap", async () => {
+		const req = await requestFor({ maxInputTokens: 150_000 });
+		expect(req?.maxRunInputTokens).toBe(150_000);
+	});
+
+	test("an automation without maxInputTokens sends no cap", async () => {
+		const req = await requestFor({});
+		expect(req?.maxRunInputTokens).toBeUndefined();
+	});
+});
+
 describe("createDirectExecutor — stopReason → status", () => {
 	function taskFnWithStop(stopReason: string): TaskFn {
 		return async (): Promise<TaskFnResult> => ({
@@ -212,6 +234,16 @@ describe("createDirectExecutor — stopReason → status", () => {
 
 	test("max_iterations → timeout", async () => {
 		expect(await statusFor("max_iterations")).toBe("timeout");
+	});
+
+	test("max_input_tokens → failure, naming the cap", async () => {
+		const executor = createDirectExecutor(taskFnWithStop("max_input_tokens"), () => ({}));
+		const { run, result } = await executor(makeAutomation({ maxInputTokens: 200_000 }));
+		expect(run.status).toBe("failure");
+		expect(run.stopReason).toBe("max_input_tokens");
+		expect(result?.stopReason).toBe("max_input_tokens");
+		expect(run.error).toContain("input-token cap");
+		expect(run.error).toContain("200,000");
 	});
 
 	test("length → failure (fail-closed default)", async () => {
@@ -671,10 +703,10 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
 // Recursive-call guard at the executor
 // ---------------------------------------------------------------------------
 //
-// `allowedTools` is no longer in the LLM-facing schema (PR #127), but
-// operator file edits and connector-contributed schedules can still set it.
-// The guard lives at the executor — closest to the actual chat() call —
-// so it sees the merged Automation regardless of how the field got there.
+// The create and update tools refuse a recursive `allowedTools`, but operator
+// file edits and connector-contributed schedules can still set one. The guard
+// also lives at the executor — closest to the actual run — so it sees the
+// merged Automation regardless of how the field got there.
 
 describe("createDirectExecutor — recursive-call guard", () => {
 	test("refuses to run when allowedTools includes automations__create", async () => {
@@ -699,6 +731,23 @@ describe("createDirectExecutor — recursive-call guard", () => {
 		});
 
 		await expect(executor(automation)).rejects.toThrow(/allowedTools/);
+	});
+
+	test("sends allowedTools to the run, and none for an empty list", async () => {
+		const seen: Array<string[] | undefined> = [];
+		const taskFn: TaskFn = async (req) => {
+			seen.push(req.allowedTools);
+			return makeDirectTaskFn()(req);
+		};
+		const executor = createDirectExecutor(taskFn, () => ({
+			workspaceId: "ws_test",
+			identity: { id: "u" },
+		}));
+
+		await executor(makeAutomation({ allowedTools: ["crm__*"] }));
+		await executor(makeAutomation({ allowedTools: [] }));
+
+		expect(seen).toEqual([["crm__*"], undefined]);
 	});
 
 	test("permits non-recursive allowedTools", async () => {

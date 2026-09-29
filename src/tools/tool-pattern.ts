@@ -71,3 +71,13 @@ export function toolNameMatchesPattern(toolName: string, pattern: string): boole
   );
   return regex.test(normalizedName);
 }
+
+/**
+ * Whether a run limited to `allowedTools` may reach `toolName`. The `nb__*`
+ * system tools always may: search and activation are how a run finds the tools
+ * it is allowed.
+ */
+export function isToolAllowedForRun(toolName: string, allowedTools: string[]): boolean {
+  if (bareToolName(toolName).startsWith("nb__")) return true;
+  return allowedTools.some((pattern) => toolNameMatchesPattern(toolName, pattern));
+}

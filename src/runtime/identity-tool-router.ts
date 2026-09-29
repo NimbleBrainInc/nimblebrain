@@ -28,6 +28,7 @@
  * identity at execute time — that would defeat the membership gate.
  */
 
+import { textContent } from "../engine/content-helpers.ts";
 import type { ToolCall, ToolResult, ToolRouter, ToolSchema } from "../engine/types.ts";
 // Imported from the two modules rather than from `../orchestrator/index.ts`:
 // the barrel also exports `dispatchUnattended`, which composes THIS router, and
@@ -85,6 +86,12 @@ export interface IdentityToolRouterOptions {
   runtime: OrchestratorRuntime;
   /** Optional audit-attribution hook. See `WorkspaceDispatchHook`. */
   onWorkspaceDispatch?: WorkspaceDispatchHook;
+  /**
+   * Narrows what the run may reach: a tool name it rejects is neither listed
+   * (so `nb__manage_tools` cannot activate it) nor dispatched. The run's
+   * `allowedTools`, built by the runtime. Absent means no narrowing.
+   */
+  isToolAllowed?: (name: string) => boolean;
 }
 
 /**
@@ -133,6 +140,7 @@ export class IdentityToolRouter implements ToolRouter {
   private readonly workspaceId: string;
   private readonly runtime: OrchestratorRuntime;
   private readonly onWorkspaceDispatch?: WorkspaceDispatchHook;
+  private readonly isToolAllowed?: (name: string) => boolean;
 
   constructor(opts: IdentityToolRouterOptions) {
     // The type system already pins the shape; we only need to catch the
@@ -146,6 +154,7 @@ export class IdentityToolRouter implements ToolRouter {
     this.workspaceId = opts.workspaceId;
     this.runtime = opts.runtime;
     if (opts.onWorkspaceDispatch) this.onWorkspaceDispatch = opts.onWorkspaceDispatch;
+    if (opts.isToolAllowed) this.isToolAllowed = opts.isToolAllowed;
   }
 
   /**
@@ -154,7 +163,9 @@ export class IdentityToolRouter implements ToolRouter {
    * the engine's reachable universe — a session reaches exactly one workspace.
    */
   async availableTools(): Promise<ToolSchema[]> {
-    return this.runtime.listToolsForWorkspace(this.workspaceId, this.identityId);
+    const tools = await this.runtime.listToolsForWorkspace(this.workspaceId, this.identityId);
+    const allowed = this.isToolAllowed;
+    return allowed ? tools.filter((t) => allowed(t.name)) : tools;
   }
 
   /**
@@ -174,6 +185,13 @@ export class IdentityToolRouter implements ToolRouter {
    * errors propagate to the engine's `run.error` path.
    */
   async execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
+    if (this.isToolAllowed && !this.isToolAllowed(call.name)) {
+      return {
+        content: textContent(`${call.name} is not in this run's allowed tools.`),
+        isError: true,
+      };
+    }
+
     let routed: RoutedToolCall;
     try {
       routed = await routeToolCall({

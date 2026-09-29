@@ -104,7 +104,11 @@ export interface RunInput {
    * prompt is a task description, not a phrase a skill should claim.
    */
   matchOn?: string;
-  /** Glob patterns filtering which tools reach the model. */
+  /**
+   * Glob patterns narrowing the run's tools (`nb__*` always pass). A chat's set
+   * only the turn-start tools; an unattended run's also bound what it can
+   * activate and call.
+   */
   allowedTools?: string[];
   /** Scopes the run to one app's briefing and tool surface. Chat only. */
   appContext?: AppContext;
@@ -114,8 +118,8 @@ export interface RunInput {
 export interface RunBudget {
   /** Per-request iteration cap; falls back to the configured default. */
   maxIterations?: number;
-  /** Per-request input-token cap, treated as a CAP; falls back to config. */
-  maxInputTokens?: number;
+  /** Input tokens the whole run may spend across every model call. Absent = no cap. */
+  maxRunInputTokens?: number;
 }
 
 /**

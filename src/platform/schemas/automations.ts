@@ -78,11 +78,37 @@ const Schedule = Type.Object(
   { required: ["type"] },
 );
 
-const TokenBudget = Type.Object({
-  maxInputTokens: Type.Optional(Type.Number()),
-  maxOutputTokens: Type.Optional(Type.Number()),
-  period: Type.Optional(StringEnum(["daily", "monthly"] as const)),
-});
+const TokenBudget = Type.Object(
+  {
+    maxInputTokens: Type.Optional(
+      Type.Number({
+        minimum: 1,
+        description: "Most input tokens this automation's runs may use in total per period.",
+      }),
+    ),
+    maxOutputTokens: Type.Optional(
+      Type.Number({
+        minimum: 1,
+        description: "Most output tokens this automation's runs may use in total per period.",
+      }),
+    ),
+    period: Type.Optional(
+      StringEnum(["daily", "monthly"] as const, {
+        description:
+          "When the running totals reset: at the start of each day or month. Omit for a " +
+          "lifetime total that never resets.",
+      }),
+    ),
+  },
+  {
+    description:
+      "Spending limit across runs, in tokens (not dollars). Checked after each run " +
+      "completes: once the period's total passes a cap, the automation is disabled and " +
+      "stays disabled until someone re-enables it. The run that crosses the cap finishes; " +
+      "to bound a single run, use maxInputTokens and maxIterations. Offer one when the " +
+      "automation runs often or unattended for long.",
+  },
+);
 
 // Manifest fields shared by create + update. `name` is required for create
 // (rebuilt with explicit required); update uses the same fields minus name
@@ -92,7 +118,10 @@ const ManifestFields = {
   description: Type.Optional(Type.String({ description: "What this automation does." })),
   schedule: Schedule,
   enabled: Type.Optional(
-    Type.Boolean({ description: "Whether the automation runs. Default true." }),
+    Type.Boolean({
+      description:
+        "Whether its schedule or events fire it. Default true. Run now (automations__run) runs it either way.",
+    }),
   ),
   skill: Type.Optional(
     Type.String({
@@ -111,7 +140,24 @@ const ManifestFields = {
     Type.Number({ description: "Max LLM iterations per run. Default 25, hard cap 50." }),
   ),
   maxInputTokens: Type.Optional(
-    Type.Number({ description: "Max input tokens per run. Default 200000." }),
+    Type.Number({
+      description:
+        "Input tokens one run may spend in total, summed over every model call (1000 to " +
+        "1000000), counting cache reads. Before each model call the run stops with stopReason " +
+        "max_input_tokens if that call's projected input would pass the cap. Omit for no " +
+        "per-run cap.",
+    }),
+  ),
+  allowedTools: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Tools this automation's runs may use, as names or globs: `gmail__*` for a workspace " +
+        "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
+        "run cannot activate or call a tool outside the list; the `nb__*` system tools stay " +
+        "available. Prefer a `<connector>__*` " +
+        "glob, since a connector can rename its tools. Omit or leave empty to allow every tool in the " +
+        "workspace. May not name automations__create, automations__update, or automations__delete.",
+    }),
   ),
   maxRunDurationMs: Type.Optional(
     Type.Number({ description: "Max wall-clock per run (ms). Default 120000." }),
@@ -130,6 +176,7 @@ const UpdateManifestFields = {
   model: ManifestFields.model,
   maxIterations: ManifestFields.maxIterations,
   maxInputTokens: ManifestFields.maxInputTokens,
+  allowedTools: ManifestFields.allowedTools,
   maxRunDurationMs: ManifestFields.maxRunDurationMs,
   tokenBudget: ManifestFields.tokenBudget,
 };
@@ -353,7 +400,14 @@ export interface AutomationRunRecord {
   transient?: boolean;
   trigger?: "scheduled" | "manual" | "event";
   resultPreview?: string;
-  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+  stopReason?:
+    | "complete"
+    | "max_iterations"
+    | "max_input_tokens"
+    | "length"
+    | "content_filter"
+    | "error"
+    | "other";
 }
 
 /**
@@ -390,7 +444,14 @@ export interface AutomationsRunResultOutput {
   activityLog: RunToolCallRecord[];
   outputFiles: RunFileRefRecord[];
   usage: { inputTokens: number; outputTokens: number; iterations: number };
-  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+  stopReason?:
+    | "complete"
+    | "max_iterations"
+    | "max_input_tokens"
+    | "length"
+    | "content_filter"
+    | "error"
+    | "other";
 }
 
 /**
@@ -475,16 +536,22 @@ export interface AutomationsRunsOutput {
 /**
  * Discriminated union — `handleRun` returns one of two shapes:
  *
- *   { run: AutomationRunRecord }                     when the run finishes
+ *   { run: AutomationRunRecord; enabled; message? }  when the run finishes
  *                                                    inside the sync-wait
  *                                                    window (~30s default).
  *
- *   { status: "dispatched"; automationId; message }  when the run is still
- *                                                    in flight after the
- *                                                    window. Scheduler keeps
- *                                                    tracking; poll
+ *   { status: "dispatched"; automationId;            when the run is still
+ *     startedAt; enabled; message }                  in flight after the
+ *                                                    window. It keeps going;
+ *                                                    its record lands in
  *                                                    `automations__runs`
- *                                                    for completion.
+ *                                                    (`since: startedAt`)
+ *                                                    when it ends.
+ *
+ * `enabled` is the automation's own flag. Run now runs a disabled automation,
+ * because it is a deliberate act and the create form's test run depends on
+ * it; a disabled automation is not fired by its schedule or by events, and
+ * `message` says so.
  *
  * Both shapes indicate the dispatch succeeded; only an error response
  * indicates failure to dispatch. Consumers MUST narrow before
@@ -492,8 +559,14 @@ export interface AutomationsRunsOutput {
  * caused the production CLI crash this type prevents.
  */
 export type AutomationsRunOutput =
-  | { run: AutomationRunRecord }
-  | { status: "dispatched"; automationId: string; message: string };
+  | { run: AutomationRunRecord; enabled: boolean; message?: string }
+  | {
+      status: "dispatched";
+      automationId: string;
+      startedAt: string;
+      enabled: boolean;
+      message: string;
+    };
 
 export interface AutomationsCancelOutput {
   cancelled: boolean;

@@ -642,6 +642,17 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
+/** Estimated input tokens of one model call: every prompt message (system included) and tool definition. */
+function estimatePromptTokens(
+  prompt: LanguageModelV4Message[],
+  tools: LanguageModelV4FunctionTool[],
+): number {
+  return (
+    prompt.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
+    tools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0)
+  );
+}
+
 /** Apply the transformPrompt hook when present; otherwise the system prompt verbatim. */
 function resolveCallPrompt(config: EngineConfig, systemPrompt: string): string {
   return config.hooks?.transformPrompt ? config.hooks.transformPrompt(systemPrompt) : systemPrompt;
@@ -1137,6 +1148,10 @@ export class AgentEngine {
     let lastFinishReason: FinishReason | undefined;
     // The same call's provider-native stop reason (see `EngineResult.finishReasonRaw`).
     let lastFinishReasonRaw: string | undefined;
+    // Input tokens the most recent model call reported. One half of the next
+    // call's projected size for the run cap (see `EngineConfig.maxRunInputTokens`).
+    let lastCallInputTokens = 0;
+    let runInputCapReached = false;
 
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
@@ -1186,6 +1201,22 @@ export class AgentEngine {
 
         callMessages = appendFinalStepReminder(callMessages, iteration, maxIter);
 
+        // The run-wide input cap, checked against the prompt about to be sent,
+        // before it is sent (see `EngineConfig.maxRunInputTokens`).
+        if (config.maxRunInputTokens !== undefined) {
+          const projected = Math.max(
+            lastCallInputTokens,
+            estimatePromptTokens(
+              [{ role: "system", content: callPrompt }, ...callMessages],
+              modelTools,
+            ),
+          );
+          if (cumulativeUsage.inputTokens + projected > config.maxRunInputTokens) {
+            runInputCapReached = true;
+            break;
+          }
+        }
+
         const callProviderOptions = buildThinkingProviderOptions(
           config.model,
           config.thinking,
@@ -1220,9 +1251,7 @@ export class AgentEngine {
           // `cachedPrompt` is the full prompt array (system message +
           // messages), so this covers everything billed as input except the
           // provider's own per-request overhead.
-          estimatedInputTokens =
-            cachedPrompt.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
-            cachedTools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0);
+          estimatedInputTokens = estimatePromptTokens(cachedPrompt, cachedTools);
           return withRetry(
             () =>
               callModel(
@@ -1274,6 +1303,7 @@ export class AgentEngine {
 
         const turnUsage = computeTurnUsage(response.usage);
         addUsage(cumulativeUsage, turnUsage);
+        lastCallInputTokens = turnUsage.inputTokens;
         cumulativeLlmMs += llmMs;
 
         // Track the model's per-call finish reason for downstream
@@ -1412,6 +1442,7 @@ export class AgentEngine {
       runId,
       iteration,
       maxIter,
+      runInputCapReached,
       lastFinishReason,
       lastFinishReasonRaw,
       totalMs,
@@ -1454,7 +1485,7 @@ export class AgentEngine {
 
   /**
    * Emit `run.done` and assemble the EngineResult: the run-level stop reason
-   * (iteration cap first, then the model-driven exit) and the reported
+   * (run input cap, then iteration cap, then the model-driven exit) and the reported
    * iteration count (which includes the in-progress iteration when the loop
    * exited before the cap).
    */
@@ -1462,6 +1493,7 @@ export class AgentEngine {
     runId: string;
     iteration: number;
     maxIter: number;
+    runInputCapReached: boolean;
     lastFinishReason: FinishReason | undefined;
     lastFinishReasonRaw: string | undefined;
     totalMs: number;
@@ -1474,6 +1506,7 @@ export class AgentEngine {
       runId,
       iteration,
       maxIter,
+      runInputCapReached,
       lastFinishReason,
       lastFinishReasonRaw,
       totalMs,
@@ -1482,9 +1515,16 @@ export class AgentEngine {
       cumulativeUsage,
       cumulativeLlmMs,
     } = params;
-    const stopReason: StopReason =
-      iteration >= maxIter ? "max_iterations" : deriveStopReason(lastFinishReason);
-    const reportedIterations = reportedIterationCount(iteration, maxIter);
+    const stopReason: StopReason = runInputCapReached
+      ? "max_input_tokens"
+      : iteration >= maxIter
+        ? "max_iterations"
+        : deriveStopReason(lastFinishReason);
+    // A cap stop breaks before its iteration's model call, so every counted
+    // iteration is complete.
+    const reportedIterations = runInputCapReached
+      ? iteration
+      : reportedIterationCount(iteration, maxIter);
     this.events.emit({
       type: "run.done",
       data: {

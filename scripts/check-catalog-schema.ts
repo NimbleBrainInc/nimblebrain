@@ -7,8 +7,9 @@
  * fails the upstream `ServerDetail` schema, duplicates a name already
  * claimed by an earlier file, sits in a file that cannot be read or
  * parsed, is scrubbed at the directory boundary for an unsafe URL or a
- * reserved OAuth param, or resolves to nothing installable. Exit 1 if
- * anything would be dropped, 0 if every entry reaches Browse.
+ * reserved OAuth param, or resolves to nothing installable — and every
+ * entry whose malformed `admin_tools` makes all its tools admin-only.
+ * Exit 1 if there is any, 0 if every entry reaches Browse as written.
  *
  * **Why this exists.** A catalog entry is validated at load, and an
  * invalid one is dropped with a warn log while its siblings load fine
@@ -46,7 +47,9 @@ function main(): void {
     return;
   }
 
-  console.error(`✗ ${path}: ${diagnostics.length} problem(s) — these entries would be dropped\n`);
+  console.error(
+    `✗ ${path}: ${diagnostics.length} problem(s) — these entries would be dropped or gated\n`,
+  );
   // Print the diagnostic verbatim — it is already file-and-entry
   // qualified. A source-stage line is worded exactly as the runtime logs
   // it, so it is the string to grep for when confirming a fix landed in a
@@ -63,7 +66,8 @@ function main(): void {
         "Field rules: `description` is capped at 100 characters by the upstream MCP\n" +
         "registry schema (src/connectors/catalog/schemas/server.schema.json); icon, docs, and\n" +
         "portal URLs must be http(s); OAuth params may not use reserved keys; and an\n" +
-        "entry needs `packages` or a `remotes` entry the installer supports.",
+        "entry needs `packages` or a `remotes` entry the installer supports; `admin_tools`\n" +
+        "must be a list of at most 64 tool names with no whitespace.",
     );
   }
   process.exit(1);

@@ -75,7 +75,7 @@ The engine stops for one of these reasons:
 
 - **`complete`** — the model responded without requesting any tool calls
 - **`max_iterations`** — the iteration limit was reached
-- **`token_budget`** — cumulative input tokens exceeded `maxInputTokens`. When this happens, tool calls from the current LLM response are dropped (not executed) to avoid running tools whose results can't be processed.
+- **`max_input_tokens`** — the run has an input-token cap (an automation's **Max Input Tokens**), and the next model call would pass it. Before each call the engine projects that call's input as the larger of its estimate of the prompt and the previous call's reported input, so the run ends within the cap unless the estimate undercounts. The cap counts cache reads, so it bounds tokens, not cost. Whatever the run produced before the stop is kept. `maxInputTokens` in `nimblebrain.json` is different: it bounds the context of one model call, not the run.
 - **`cancelled`** — the run was stopped before it finished: the user pressed Stop, an automation run was cancelled or timed out, or the runtime aborted it (for example on shutdown). The conversation keeps what the turn did before the stop.
 
 All tool calls within a single iteration run in parallel via `Promise.all()`.

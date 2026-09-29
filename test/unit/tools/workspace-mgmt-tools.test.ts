@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { User } from "../../../src/identity/user.ts";
@@ -32,6 +33,8 @@ let store: WorkspaceStore;
 let userStore: UserStore;
 let tool: InProcessTool;
 let currentIdentity: UserIdentity | null;
+/** What the stub catalog serves; a test that names connectors seeds it. */
+let catalogEntries: ConnectorCatalogEntry[];
 
 /**
  * A runtime stub whose `deleteWorkspace` archives through the real store and
@@ -52,6 +55,10 @@ function makeCtx(): ManageWorkspacesContext {
         deleted: await store.delete(wsId),
         connectors: [],
       }),
+      getConnectorCatalog: () => ({
+        catalogByUrl: async () => new Map(catalogEntries.map((e) => [e.url, e])),
+        catalogByIdMap: async () => new Map(catalogEntries.map((e) => [e.id, e])),
+      }),
     } as unknown as Runtime,
     userStore,
   };
@@ -61,6 +68,7 @@ beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-ws-mgmt-test-"));
   store = new WorkspaceStore(workDir);
   userStore = new UserStore(workDir);
+  catalogEntries = [];
   currentIdentity = {
     id: "usr_admin000000001",
     email: "admin@example.com",
@@ -516,6 +524,42 @@ describe("nb__manage_workspaces", () => {
       expect(sorted[0].memberCount).toBe(1);
       expect(sorted[0].connectors).toEqual([]);
       expect(sorted[1].name).toBe("Beta");
+    });
+
+    test("names each connector from the catalog and never returns the ref", async () => {
+      catalogEntries = [
+        { id: "com.example/echo", name: "Echo", url: "https://echo.example.com/mcp" },
+        { id: "com.example/mail", name: "Mail", url: "https://catalog.example.com/mail" },
+      ] as ConnectorCatalogEntry[];
+      await tool.handler({ action: "create", name: "Alpha" });
+      const [ws] = await store.list();
+      await store.update(ws.id, {
+        connectors: [
+          // Catalogued by URL, carrying an inline secret the listing must not echo.
+          {
+            url: "https://echo.example.com/mcp",
+            serverName: "echo",
+            transport: { auth: { type: "bearer", token: "inline-secret" } },
+          },
+          // Brokered: a per-install session URL, catalogued by the stamped id.
+          {
+            url: "https://session.example.com/abc",
+            serverName: "mail",
+            brokered: { provider: "composio", connectorId: "com.example/mail" },
+          },
+          // Uncatalogued and unnamed: falls back to the derived server name.
+          { url: "https://other.example.com/mcp" },
+        ],
+      });
+
+      const parsed = parseResult(await tool.handler({ action: "list" })) as {
+        workspaces: Array<{ connectors: Array<Record<string, unknown>> }>;
+      };
+      const connectors = parsed.workspaces[0].connectors;
+      expect(connectors.map((c) => c.name)).toEqual(["Echo", "Mail", connectors[2].serverName]);
+      expect(connectors[2].serverName).toBeTruthy();
+      for (const c of connectors) expect(Object.keys(c).sort()).toEqual(["name", "serverName"]);
+      expect(JSON.stringify(parsed)).not.toContain("inline-secret");
     });
 
     test("returns empty array when no workspaces exist", async () => {

@@ -602,7 +602,7 @@ function ConfigSection({
         </EditableConfigItem>
 
         <EditableConfigItem
-          label="Max Input Tokens"
+          label="Max Input Tokens / Run"
           active={editing === "maxInputTokens"}
           onActivate={() => onEdit("maxInputTokens")}
           editor={

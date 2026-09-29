@@ -1,17 +1,15 @@
 /**
- * Regression: the outbound-OAuth callbacks must stay PUBLIC under adapter auth.
+ * The outbound-OAuth callbacks are PUBLIC under adapter auth.
  *
  * `GET /v1/mcp-auth/callback` and `GET /v1/composio-auth/callback` are
- * unauthenticated by design — the vendor's browser returns here with no
+ * unauthenticated by design: the vendor's browser returns here with no
  * platform session, and the flow is guarded by the state cookie + flow
- * registry, not by `requireAuth`. A wildcard `authed.use("*", requireAuth)`
- * inside `authRoutes` once leaked onto every sub-app mounted after it
- * (mcp-auth, composio-auth), so these callbacks 401'd whenever the user's
- * session wasn't present on the callback's landing origin — wedging the
- * connector at "Connecting…" forever. These tests pin the contract: the
- * callbacks are reachable without auth (400 for missing params, never 401),
- * while an authenticated route (bootstrap) still rejects unauthenticated
- * callers.
+ * registry, not by `requireAuth`. This suite checks that:
+ *
+ * - the callbacks answer without credentials (400 for missing params, never 401);
+ * - an authenticated route (bootstrap) still refuses unauthenticated callers;
+ * - a protected-resource metadata path that names no resource answers 404,
+ *   not 401.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -50,8 +48,8 @@ beforeAll(async () => {
 	});
 	await provisionTestWorkspace(runtime);
 
-	// Adapter (auth-enabled) mode — this is the only mode where the leak
-	// manifests; dev mode passes every request through.
+	// Adapter (auth-enabled) mode — this is the only mode where a misplaced
+	// `requireAuth` would 401 a public route; dev mode passes every request through.
 	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });

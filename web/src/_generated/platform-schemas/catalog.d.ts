@@ -148,6 +148,7 @@ export declare const PlatformToolCatalog: {
                     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                     maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                    allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                     tokenBudget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -181,6 +182,7 @@ export declare const PlatformToolCatalog: {
                     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                     maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                    allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                     tokenBudget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                         maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;

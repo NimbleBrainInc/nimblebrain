@@ -390,3 +390,22 @@ describe("an event schedule", () => {
     }
   });
 });
+
+describe("updateAutomation — a schedule with no next run", () => {
+  test("clears the nextRunAt left by the schedule it replaced", () => {
+    const ctx = makeCtx();
+    createAutomation(
+      {
+        name: "Morning",
+        prompt: "Say good morning",
+        schedule: { type: "cron", expression: "0 9 * * *" },
+      },
+      ctx,
+    );
+    expect(loadOwnerAutomations(workDir, WS, OWNER).get("morning")?.nextRunAt).toBeDefined();
+
+    updateAutomation("Morning", { schedule: { type: "cron", expression: "0 9 31 2 *" } }, ctx);
+
+    expect(loadOwnerAutomations(workDir, WS, OWNER).get("morning")?.nextRunAt).toBeUndefined();
+  });
+});

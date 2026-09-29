@@ -474,3 +474,43 @@ describe("kernel-originated calls", () => {
     expect(warnings.some((w) => w.includes('"configure"'))).toBe(false);
   });
 });
+
+describe("a malformed admin_tools declaration", () => {
+  // A catalog typo must not open the connector's tools to members: the entry
+  // stays in the catalog and every tool on it becomes admin-only.
+  it("refuses a member every tool on the connector and runs an admin's", async () => {
+    writeFileSync(
+      join(catalogDir, "acme.yaml"),
+      CATALOG_YAML.replace(
+        "admin_tools: [configure, workspace_ready, set_webhook_url, ghost]",
+        "admin_tools: configure",
+      ),
+    );
+    runtime.getConnectorCatalog().resetCache();
+    resetCalls();
+    const member = await mcpClient(MEMBER_WS);
+    const admin = await mcpClient(ADMIN_WS);
+    try {
+      const memberNames = (await member.listTools()).tools.map((t) => t.name);
+      expect(memberNames).not.toContain(SEARCH);
+      expect(memberNames).not.toContain(CONFIGURE);
+
+      const refused = await member.callTool({ name: SEARCH, arguments: {} });
+      expect(refused.structuredContent).toMatchObject({ error: "workspace_admin_required" });
+      expect(ran(MEMBER_WS)).toEqual([]);
+
+      const allowed = await admin.callTool({ name: SEARCH, arguments: {} });
+      expect(allowed.isError).toBeFalsy();
+      expect(ran(ADMIN_WS)).toEqual(["search"]);
+
+      const warnings = await runtime.adminToolsContractWarnings(MEMBER_WS, SERVER);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("every tool");
+    } finally {
+      await member.close();
+      await admin.close();
+      writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
+      runtime.getConnectorCatalog().resetCache();
+    }
+  });
+});

@@ -31,13 +31,18 @@ export interface Automation {
   /** Force a specific skill match (bypass trigger/keyword matching). */
   skill?: string;
 
-  /** Tool allowlist (glob patterns). Passed as allowedTools on chat request. */
+  /** Tool allowlist (glob patterns) for this automation's runs. Empty or absent: every tool. */
   allowedTools?: string[];
 
   /** Max agentic iterations per run. Default: 25. Hard cap: 50. */
   maxIterations?: number;
 
-  /** Max input tokens per run. Default: 200_000. */
+  /**
+   * Input tokens one run may spend, summed over every model call. Before each
+   * call the engine ends the run with stopReason `max_input_tokens` if that
+   * call's projected input would pass it (see `EngineConfig.maxRunInputTokens`).
+   * Unset = no per-run cap.
+   */
   maxInputTokens?: number;
 
   /** Max execution time in ms for a single run. Default: 120_000 (2 minutes). */
@@ -241,7 +246,14 @@ export interface AutomationRun {
    * (intentionally duplicated here to keep this app's types decoupled
    * from the engine package). Keep in sync when the engine union changes.
    */
-  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+  stopReason?:
+    | "complete"
+    | "max_iterations"
+    | "max_input_tokens"
+    | "length"
+    | "content_filter"
+    | "error"
+    | "other";
 }
 
 // ---------------------------------------------------------------------------

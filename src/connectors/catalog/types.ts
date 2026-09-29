@@ -171,8 +171,18 @@ export interface ConnectorCatalogEntry {
    * known before the connector connects and must not move when a later build
    * of the server stops saying it. Absent for connectors that declare none.
    */
-  adminTools?: string[];
+  adminTools?: AdminToolsDeclaration;
 }
+
+/**
+ * A parsed `admin_tools` declaration. `names` gates those tools; `all` gates
+ * every tool on the connector, which is what a malformed declaration means:
+ * the field only narrows, so a declaration the kernel cannot read fails
+ * closed. Interpreted only by `isAdminToolAllowed`.
+ */
+export type AdminToolsDeclaration =
+  | { readonly kind: "names"; readonly names: readonly string[] }
+  | { readonly kind: "all"; readonly reason: string };
 
 /** How to install an entry — varies by source type. */
 export type InstallAction = RemoteOAuthInstall | DirectUrlInstall;

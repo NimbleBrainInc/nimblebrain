@@ -29,6 +29,8 @@
 
 import { join } from "node:path";
 import { log } from "../../observability/log.ts";
+import { brokeredRef } from "../runtime/brokered.ts";
+import type { ConnectorRef } from "../runtime/types.ts";
 import {
   projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
@@ -250,4 +252,25 @@ export class ConnectorCatalog {
     }
     return out;
   }
+}
+
+/**
+ * Match an installed connector's ref to its catalog entry. Prefers a URL match;
+ * EVERY brokered connector stores a per-install session URL that misses
+ * `byUrl`, so they fall back to the catalog id their provider stamped on the
+ * ref at install — recovered by `brokeredRef`, which owns the provider list.
+ *
+ * The fallback must cover each brokered kind: without it the connector reads as
+ * uncatalogued — slug instead of display name, letter avatar instead of icon,
+ * and every catalog-gated section of the Configure page dark.
+ */
+export function catalogEntryForRef(
+  ref: ConnectorRef,
+  byUrl: Map<string, ConnectorCatalogEntry>,
+  byId: Map<string, ConnectorCatalogEntry>,
+): ConnectorCatalogEntry | undefined {
+  const byUrlMatch = ref.url ? byUrl.get(ref.url) : undefined;
+  if (byUrlMatch) return byUrlMatch;
+  const connectorId = brokeredRef(ref)?.connectorId;
+  return connectorId ? byId.get(connectorId) : undefined;
 }

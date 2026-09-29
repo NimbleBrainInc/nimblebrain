@@ -9,8 +9,8 @@
  *
  * Why split this out:
  *
- *   - The LLM-facing schema must be minimal (no `source`, no
- *     `allowedTools`) — operator/runtime fields only.
+ *   - The LLM-facing schema must be minimal (no `source`) — operator/runtime
+ *     fields stay off it.
  *   - But an internal caller legitimately needs to set those fields.
  *   - Without this split, internal callers either (a) pass the wrong
  *     shape and silently no-op, or (b) sneak operator fields back into
@@ -24,7 +24,7 @@
  * See `src/platform/AGENTS.md` § 1.4 for the cross-cutting rule.
  */
 
-import { computeBudgetResetAt, computeNextRunAt } from "./scheduler.ts";
+import { computeBudgetResetAt, computeNextRunAt, setNextRunAt } from "./scheduler.ts";
 import {
   type Automation,
   type AutomationSource,
@@ -100,9 +100,9 @@ function resetBudgetWindowIfChanged(
 
 /**
  * Full create input for the domain. Includes operator-only fields the
- * LLM-facing schema does NOT expose: `source`, `allowedTools`, `ownerId`,
- * `workspaceId`. The tool handler hardcodes `source: "agent"` and derives
- * ownership from request context.
+ * LLM-facing schema does NOT expose: `source`, `ownerId`, `workspaceId`.
+ * The tool handler hardcodes `source: "agent"` and derives ownership from
+ * request context.
  */
 export interface DomainCreateInput {
   name: string;
@@ -116,9 +116,9 @@ export interface DomainCreateInput {
   maxRunDurationMs?: number;
   tokenBudget?: TokenBudget;
   enabled?: boolean;
+  allowedTools?: string[];
   // Operator/runtime fields:
   source?: AutomationSource;
-  allowedTools?: string[];
   ownerId?: string;
   workspaceId?: string;
 }
@@ -135,7 +135,6 @@ export interface DomainUpdatePatch {
   maxRunDurationMs?: number;
   tokenBudget?: TokenBudget;
   enabled?: boolean;
-  // Operator-only:
   allowedTools?: string[];
 }
 
@@ -300,17 +299,13 @@ const UPDATABLE_FIELDS = [
 /**
  * Move `nextRunAt` onto the schedule the automation now has.
  *
- * An event schedule has no next run, so one left over from the clock schedule
- * it replaced is cleared rather than kept: the timer ignores it, but the status
- * surface reads it, and a moment nothing will ever act on is worse than none.
+ * A schedule with no next run (an event schedule, or a cron with no future
+ * date) clears one left over from the schedule it replaced: kept, a past value
+ * would stay due forever, and a moment nothing will ever act on is worse than
+ * none.
  */
 function reanchorNextRunAt(automation: Automation, defaultTimezone?: string): void {
-  const nextRun = computeNextRunAt(automation, Date.now(), defaultTimezone);
-  if (nextRun !== null) {
-    automation.nextRunAt = new Date(nextRun).toISOString();
-  } else if (isEventSchedule(automation.schedule)) {
-    automation.nextRunAt = undefined;
-  }
+  setNextRunAt(automation, computeNextRunAt(automation, Date.now(), defaultTimezone));
 }
 
 export function updateAutomation(
