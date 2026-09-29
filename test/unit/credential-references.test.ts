@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
+import type { DeclaredRuntimeConfig } from "../../src/runtime/runtime.ts";
 import {
   _resetCredentialStoreForTest,
   FileCredentialStore,
@@ -208,6 +209,20 @@ describe("instance config references", () => {
       },
     });
     expect(resolved.connectors.gateways.acme.apiKey).toBe("gw-stored");
+  });
+
+  test("a reference is typed only where the runtime can resolve one", () => {
+    const ref = { ref: "credential", key: "k" } as const;
+    const declared: DeclaredRuntimeConfig[] = [
+      { model: { provider: "openai", apiKey: ref, baseURL: ref } },
+      // @ts-expect-error — a literal-union field takes no reference
+      { thinking: ref },
+      // @ts-expect-error — a literal-union field takes no reference
+      { model: { provider: ref } },
+      // @ts-expect-error — `workDir` is read before the credential store exists
+      { workDir: ref },
+    ];
+    expect(declared).toHaveLength(4);
   });
 
   test("a config with no references comes back as the very same object", async () => {

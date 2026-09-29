@@ -325,7 +325,7 @@ function reportStrandedSlots(rt: Runtime, allowed: string[] | undefined): void {
  * through the sink `events`, `logging` and `telemetry` build. None of them can
  * be a credential reference, because nothing could resolve it yet.
  */
-export type PreStoreConfigKey = "workDir" | "secrets" | "telemetry" | "logging" | "events";
+type PreStoreConfigKey = "workDir" | "secrets" | "telemetry" | "logging" | "events";
 
 /**
  * `RuntimeConfig` as a caller declares it: a credential reference admitted
@@ -598,8 +598,9 @@ export class Runtime {
     //
     // The sink comes first in turn: the store audits every reveal through it,
     // and the first reveal happens inside the dereference on the last line.
-    // `workDir` is the one field that cannot itself be a reference — the store
-    // lives under it — so reading it off the raw config is not an ordering bug.
+    // The fields read here, before the store exists, cannot themselves be
+    // references (`PreStoreConfigKey`), so reading them off the raw config is
+    // not an ordering bug.
     //
     // This is the single construction of the credential store. It is installed
     // for the leaf readers (`remote-transport.ts` resolving a header, the
