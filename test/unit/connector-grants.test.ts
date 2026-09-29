@@ -257,7 +257,10 @@ describe("manage_connectors — personal-connector grants", () => {
       ...base,
       displayName: "alice@mail.example",
     });
-    await saveComposioConnection(h.workDir, owner, "com.slack/slack", { ...base, toolkit: "slack" });
+    await saveComposioConnection(h.workDir, owner, "com.slack/slack", {
+      ...base,
+      toolkit: "slack",
+    });
     const res = await h.tool.handler({ action: "list_personal_connectors" });
     const connectors = sc(res).connectors ?? [];
     const gmail = connectors.find((c) => c.serverName === slugifyServerName("com.google/gmail"));

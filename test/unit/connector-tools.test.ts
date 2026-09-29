@@ -1124,15 +1124,20 @@ describe("manage_connectors.get_installed", () => {
   test("names the signed-in account; the full list does not read it", async () => {
     // Records first: seeding derives the boot state from the stored tokens.
     const owner = { type: "workspace", wsId: h.wsId } as const;
-    const records = new McpOAuthRecords({ owner, serverName: STUB_SERVER_NAME, workDir: h.workDir });
+    const records = new McpOAuthRecords({
+      owner,
+      serverName: STUB_SERVER_NAME,
+      workDir: h.workDir,
+    });
     await records.write("tokens", { access_token: "at", token_type: "Bearer" });
     await records.write("identity", { sub: "vendor-subject", email: "ops@acme-corp.example" });
     await seedConnector(h);
     const tool = buildTool(h, ADMIN_USER);
 
     const one = await tool.handler({ action: "get_installed", serverName: STUB_SERVER_NAME });
-    const installed = (one.structuredContent as { installed: { state: string; identity?: unknown } })
-      .installed;
+    const installed = (
+      one.structuredContent as { installed: { state: string; identity?: unknown } }
+    ).installed;
     expect(installed.state).toBe("running");
     expect(installed.identity).toEqual({ email: "ops@acme-corp.example" });
 
