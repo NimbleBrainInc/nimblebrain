@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   type ConnectorTool,
   listConnectorToolsWithPermissions,
+  type PermissionScope,
   setConnectorPermissions,
   type ToolPolicy,
 } from "../../api/client";
@@ -30,13 +31,17 @@ function errorMessage(err: unknown): string {
  */
 export function ToolPermissionsTable({
   serverName,
+  scope,
   canManage,
 }: {
   serverName: string;
-  /** Whether the viewer may change policy. Tool policy is workspace-owned —
-   *  it decides what the agent may call for every member — so the server
-   *  admin-gates the write. Read stays open: a member should be able to see
-   *  what their agent is allowed to do. */
+  /** Which connector's policy this table shows: the active workspace's install,
+   *  or the viewer's personal connector (policy owned by their identity). */
+  scope: PermissionScope;
+  /** Whether the viewer may change policy. A workspace install's policy
+   *  decides what the agent may call for every member, so the server
+   *  admin-gates the write; read stays open, so a member can see what their
+   *  agent is allowed to do. A personal connector's policy is the viewer's own. */
   canManage: boolean;
 }) {
   const [tools, setTools] = useState<ConnectorTool[]>([]);
@@ -54,7 +59,7 @@ export function ToolPermissionsTable({
         // One combined call fetches tools and permissions together; the
         // server runs the two reads in parallel, halving the table's
         // page-load REST traffic.
-        const res = await listConnectorToolsWithPermissions(serverName, "workspace");
+        const res = await listConnectorToolsWithPermissions(serverName, scope);
         if (cancelled) return;
         setTools(res.tools);
         setPolicies(res.permissions);
@@ -68,7 +73,7 @@ export function ToolPermissionsTable({
     return () => {
       cancelled = true;
     };
-  }, [serverName]);
+  }, [serverName, scope]);
 
   const policyFor = (toolName: string): ToolPolicy =>
     policies[toolName] === "disallow" ? "disallow" : "allow";
@@ -79,7 +84,7 @@ export function ToolPermissionsTable({
     const prev = policyFor(toolName);
     setPolicies((p) => ({ ...p, [toolName]: next }));
     try {
-      await setConnectorPermissions(serverName, "workspace", { [toolName]: next });
+      await setConnectorPermissions(serverName, scope, { [toolName]: next });
     } catch (err) {
       setPolicies((p) => ({ ...p, [toolName]: prev }));
       setError(errorMessage(err));
@@ -95,7 +100,7 @@ export function ToolPermissionsTable({
     const prev = { ...policies };
     setPolicies(all);
     try {
-      await setConnectorPermissions(serverName, "workspace", all);
+      await setConnectorPermissions(serverName, scope, all);
     } catch (err) {
       setPolicies(prev);
       setError(errorMessage(err));
@@ -143,8 +148,21 @@ export function ToolPermissionsTable({
   // active source) returns empty tools — the hero already conveys
   // the "Sign-in required / Configure" prompt; an empty Tool
   // permissions section adds noise. Same for genuine zero-tool
-  // connectors (rare). After load, only render with content.
-  if (!loading && !error && tools.length === 0) return null;
+  // connectors (rare). After load, only render with content. A personal
+  // connector has no hero, and its table opens on request, so it says why
+  // the section is empty instead of vanishing.
+  if (!loading && !error && tools.length === 0) {
+    if (scope !== "identity") return null;
+    return (
+      <section className="space-y-3">
+        {header}
+        <p className="text-sm text-muted-foreground">
+          Couldn't list this connector's tools right now. If it persists, disconnect and connect it
+          again.
+        </p>
+      </section>
+    );
+  }
 
   if (loading) {
     return (

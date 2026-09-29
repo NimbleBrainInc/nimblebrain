@@ -11,6 +11,7 @@ import {
   type PersonalConnector,
   revokeConnector,
 } from "../../api/client";
+import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
 import { Button } from "../../components/ui/button";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
 import { EmptyState, InlineError, Section, SettingsPageHeader } from "./components";
@@ -22,7 +23,10 @@ import { EmptyState, InlineError, Section, SettingsPageHeader } from "./componen
  * connects at the IDENTITY level — it follows them across workspaces and is
  * owned by no single workspace. This tab lists the connectors the user has
  * connected, offers the curated set available for a personal connection, and —
- * per connector — grants/revokes it into the caller's workspaces.
+ * per connector — grants/revokes it into the caller's workspaces and sets which
+ * of its tools the agent may call. That tool policy is the caller's own
+ * (`scope: "identity"`), read by the gate on every call to the connector in any
+ * workspace it is granted to.
  *
  * A personal connector is identity-bound and must be granted into EVERY
  * workspace it's used in (no free-at-home);
@@ -264,6 +268,9 @@ function PersonalConnectorRow({
   onSetGrant: (serverName: string, wsId: string, granted: boolean) => void;
 }) {
   const [managing, setManaging] = useState(false);
+  // Listing tools starts a cold connector, so the table mounts on demand rather
+  // than once per row on page load.
+  const [showingTools, setShowingTools] = useState(false);
   const grants = connector.grantedWorkspaces.length;
   const grantLabel =
     grants === 0 ? "Not granted" : `Granted to ${grants} workspace${grants === 1 ? "" : "s"}`;
@@ -289,6 +296,11 @@ function PersonalConnectorRow({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          <ToolPermissionsToggle
+            connected={connected}
+            open={showingTools}
+            onToggle={() => setShowingTools((t) => !t)}
+          />
           <button
             type="button"
             onClick={() => setManaging((m) => !m)}
@@ -338,7 +350,45 @@ function PersonalConnectorRow({
           onSetGrant={onSetGrant}
         />
       ) : null}
+
+      <ToolPermissionsPanel serverName={connector.serverName} open={connected && showingTools} />
     </div>
+  );
+}
+
+/**
+ * The connector's tool policy — the viewer's own (`scope: "identity"`), so they
+ * may always change it.
+ */
+function ToolPermissionsPanel({ serverName, open }: { serverName: string; open: boolean }) {
+  if (!open) return null;
+  return (
+    <div className="mt-3 border-t border-border/60 pt-3">
+      <ToolPermissionsTable serverName={serverName} scope="identity" canManage />
+    </div>
+  );
+}
+
+/** Opens the connector's tool-permissions table; only a connected connector has tools to list. */
+function ToolPermissionsToggle({
+  connected,
+  open,
+  onToggle,
+}: {
+  connected: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (!connected) return null;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+      aria-expanded={open}
+    >
+      Tool permissions
+    </button>
   );
 }
 

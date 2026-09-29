@@ -1114,6 +1114,14 @@ export async function getOAuthRedirectUri(): Promise<{ redirectUri: string }> {
 export type ToolPolicy = "allow" | "disallow";
 
 /**
+ * Which connector a permission call addresses: the active workspace's install,
+ * or the caller's personal connector of that name. The response names the
+ * policy owner the server resolved (`user` for a personal connector).
+ */
+export type PermissionScope = "workspace" | "identity";
+export type PermissionOwnerScope = "workspace" | "user";
+
+/**
  * Combined fetch — returns the connector's tool list AND the policy
  * map in one round-trip. Used by ToolPermissionsTable, which needs
  * both on mount; the previous two-call shape doubled the page-load
@@ -1121,9 +1129,9 @@ export type ToolPolicy = "allow" | "disallow";
  */
 export async function listConnectorToolsWithPermissions(
   serverName: string,
-  scope?: "workspace",
+  scope?: PermissionScope,
 ): Promise<{
-  scope: "workspace";
+  scope: PermissionOwnerScope;
   serverName: string;
   tools: ConnectorTool[];
   permissions: Record<string, ToolPolicy>;
@@ -1138,9 +1146,9 @@ export async function listConnectorToolsWithPermissions(
 
 export async function setConnectorPermissions(
   serverName: string,
-  scope: "workspace",
+  scope: PermissionScope,
   tools: Record<string, ToolPolicy>,
-): Promise<{ ok: boolean; scope: "workspace"; serverName: string }> {
+): Promise<{ ok: boolean; scope: PermissionOwnerScope; serverName: string }> {
   const result = await callTool("nb", "manage_connectors", {
     action: "set_permissions",
     serverName,

@@ -276,7 +276,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           type: "string",
           enum: ["workspace", "identity"],
           description:
-            'For `install`: `scope: "identity"` installs the entry as a PERSONAL connector on the caller\'s own identity (no workspace) instead of into a workspace — the Profile → Connectors action. Otherwise a workspace-vs-user scope hint for `list_installed` / `list_tools` / `uninstall` / `disconnect`. For the permission actions (`get_permissions` / `set_permissions` / `list_tools_with_permissions`) it names whose policy to address: `"identity"` is the caller\'s personal connector, `"workspace"` is the connector installed in this workspace. Omitted, the workspace install wins when this workspace has one, else the caller\'s personal connector — so when both exist under one name, pass `scope: "identity"` to reach the personal one. `list_tools_with_permissions` lists tools of the connector installed in this workspace, so it needs that install whatever the scope.',
+            'For `install`: `scope: "identity"` installs the entry as a PERSONAL connector on the caller\'s own identity (no workspace) instead of into a workspace — the Profile → Connectors action. Otherwise a workspace-vs-user scope hint for `list_installed` / `list_tools` / `uninstall` / `disconnect`. For the permission actions (`get_permissions` / `set_permissions` / `list_tools_with_permissions`) it names whose policy to address: `"identity"` is the caller\'s personal connector, `"workspace"` is the connector installed in this workspace. Omitted, the workspace install wins when this workspace has one, else the caller\'s personal connector — so when both exist under one name, pass `scope: "identity"` to reach the personal one. `list_tools_with_permissions` lists the tools of whichever connector that resolves to; the personal one needs no workspace.',
         },
         tools: {
           type: "object",
@@ -2681,8 +2681,10 @@ async function handleListTools(
  * resolution, instance lookup, and ownership checks. Merging them
  * into one server-side action halves the round-trips.
  *
- * The two reads themselves run in parallel (`Promise.all`); a slow
- * `tools/list` can't gate the permission read.
+ * The owner decides where the tools come from: a workspace install reads the
+ * workspace registry, a personal connector (`{scope:"user"}`) the caller's
+ * identity source, which needs no workspace. The two reads themselves run in
+ * parallel (`Promise.all`); a slow `tools/list` can't gate the permission read.
  */
 async function handleListToolsWithPermissions(
   ctx: ManageConnectorsContext,
@@ -2693,30 +2695,32 @@ async function handleListToolsWithPermissions(
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
 
-  const lifecycle = ctx.runtime.getLifecycle();
-  if (!wsId) return errResult("Workspace context required.");
-  if (!lifecycle.getInstance(serverName, wsId)) {
-    return errResult(`Connector "${serverName}" not installed in workspace.`);
-  }
-
   const owner = await resolvePermissionOwner(ctx, wsId, callerId, serverName, scope);
   if ("error" in owner) return errResult(owner.error);
 
-  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-  const source = registry.getSource(serverName);
-  if (!source) {
-    // Connector installed but not running. Permissions still readable
-    // (they're persisted independently of the source); return them
-    // alongside an empty tools list so the UI can render the
-    // permissions surface as "no tools currently available" without
-    // a hard error.
+  let source: ToolSource | undefined;
+  if (owner.scope === "user") {
+    source = await identityToolSource(ctx, owner.userId, serverName);
+  } else {
+    if (!ctx.runtime.getLifecycle().getInstance(serverName, owner.wsId)) {
+      return errResult(`Connector "${serverName}" not installed in workspace.`);
+    }
+    source = ctx.runtime.getRegistryForWorkspace(owner.wsId).getSource(serverName);
+  }
+  // Connector installed but not running. Permissions still readable
+  // (they're persisted independently of the source); return them
+  // alongside an empty tools list so the UI can render the
+  // permissions surface as "no tools currently available" without
+  // a hard error.
+  const notRunning = async (): Promise<ToolResult> => {
     const permissions = await ctx.runtime.getPermissionStore().getConnector(owner, serverName);
     return {
       content: textContent("Tools: 0 (connector not running)."),
       structuredContent: { scope: owner.scope, serverName, tools: [], permissions },
       isError: false,
     };
-  }
+  };
+  if (!source) return notRunning();
 
   try {
     // Run the two reads in parallel — they don't depend on each
@@ -2742,7 +2746,38 @@ async function handleListToolsWithPermissions(
       isError: false,
     };
   } catch (err) {
+    // A personal source can be registered yet unstarted (a start that stopped
+    // to wait for re-authorization), so its tools/list throws; that is the
+    // same "not running" state, not a failed request.
+    if (owner.scope === "user") {
+      log.warn(
+        `[connectors] personal connector "${serverName}" could not list tools: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return notRunning();
+    }
     return errResult(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * The caller's personal connector as a started source, or undefined when it
+ * cannot run. Starts it when cold, through the same door dispatch uses, because
+ * an identity source is warm only on a pod that has already dispatched to it or
+ * connected it. A start that fails (no credentials yet, an unreachable remote)
+ * reads as "not running", which the caller answers with the policy alone.
+ */
+async function identityToolSource(
+  ctx: ManageConnectorsContext,
+  userId: string,
+  serverName: string,
+): Promise<ToolSource | undefined> {
+  try {
+    return await ctx.runtime.getIdentityConnectorSource(userId, serverName);
+  } catch (err) {
+    log.warn(
+      `[connectors] personal connector "${serverName}" did not start for a tool listing: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return undefined;
   }
 }
 
