@@ -80,18 +80,15 @@ function updateArgs(name: string, patch: Record<string, unknown> = {}): Record<s
 
 const TMP_DIR = join(import.meta.dir, ".tmp-automation-server");
 
-let savedDefs: Map<string, Automation>;
 let schedulerReloaded: boolean;
 
 function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
-  savedDefs = loadDefs();
   schedulerReloaded = false;
 
   return {
     definitions: () => loadDefs(),
     save: (defs) => {
       saveDefs(defs);
-      savedDefs = defs;
     },
     reloadScheduler: () => {
       schedulerReloaded = true;

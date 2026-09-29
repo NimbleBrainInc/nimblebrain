@@ -111,7 +111,7 @@ async function runRealScenario(spec: ProviderSpec): Promise<ScenarioResult> {
   const engine = new AgentEngine(
     model,
     new StaticToolRouter([FACT_TOOL], (call) => ({
-      content: textContent(`${String(call.input["topic"])} is a letter of the Greek alphabet.`),
+      content: textContent(`${String(call.input.topic)} is a letter of the Greek alphabet.`),
       isError: false,
     })),
     new NoopEventSink(),

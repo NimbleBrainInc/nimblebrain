@@ -32,7 +32,7 @@ import { AA_NON_TEXT, contrastRatio, over } from "../../../web/src/theme/contras
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 import { REPO, sourceFiles, themedTrees } from "./themed-trees.ts";
 
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * A rule that loops an animation while painting a host token.
@@ -167,7 +167,7 @@ function blockBody(css: string, from: number, what: string): string {
  * guard is watching nothing.
  */
 function animationOf(css: string, selector: string): string | null {
-  const at = css.search(new RegExp(`${escape(selector)}\\s*\\{`));
+  const at = css.search(new RegExp(`${escapeRegExp(selector)}\\s*\\{`));
   if (at === -1) throw new Error(`no rule for ${selector}`);
   return /animation:\s*([a-zA-Z][\w-]*)/.exec(blockBody(css, at, selector))?.[1] ?? null;
 }
@@ -248,7 +248,7 @@ for (const { what, selector, css } of LOADED) {
     // Read the painted token rather than hardcoding it, so repointing the
     // indicator at a dimmer token is caught here too.
     const painted = new RegExp(
-      `${escape(selector)}\\s*\\{[^}]*background:\\s*var\\((--[\\w-]+)\\)`,
+      `${escapeRegExp(selector)}\\s*\\{[^}]*background:\\s*var\\((--[\\w-]+)\\)`,
     ).exec(css)?.[1];
 
     test("the indicator paints a token the host injects", () => {
@@ -359,7 +359,7 @@ describe("reduced-motion overrides are placed where they win", () => {
             // `(?!none)` matters: without it this matches the override's own
             // `animation: none` and reports every correct override as dead.
             const decl = new RegExp(
-              `${escape(sel)}\\s*\\{[^}]*animation:\\s*(?!none\\b)[a-zA-Z]`,
+              `${escapeRegExp(sel)}\\s*\\{[^}]*animation:\\s*(?!none\\b)[a-zA-Z]`,
               "g",
             );
             for (const d of css.matchAll(decl)) {

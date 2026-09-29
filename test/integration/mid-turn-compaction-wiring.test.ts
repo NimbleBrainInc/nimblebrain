@@ -18,7 +18,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";

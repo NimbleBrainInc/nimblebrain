@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";

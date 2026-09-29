@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -102,7 +102,7 @@ describe("multi-model routing", () => {
 
       const runStart = events.find((e) => e.type === "run.start");
       expect(runStart).toBeDefined();
-      expect(runStart!.data["model"]).toBe("my-custom-default");
+      expect(runStart!.data.model).toBe("my-custom-default");
     });
   });
 
@@ -114,10 +114,6 @@ describe("multi-model routing", () => {
 
   describe("engine works with LanguageModelV4 end-to-end", () => {
     it("engine processes multiple turns with echo model", async () => {
-      const echoModel = createEchoModel({
-        responses: [{ text: "First response" }, { text: "Second response" }],
-      });
-
       // Use a model that returns tool calls then stops
       const toolCallModel = createEchoModel({
         responses: [

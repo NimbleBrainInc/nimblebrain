@@ -3,7 +3,6 @@ import type {
   LanguageModelV4CallOptions,
   LanguageModelV4Content,
   LanguageModelV4FinishReason,
-  LanguageModelV4Message,
   LanguageModelV4StreamPart,
   LanguageModelV4ToolCall,
   LanguageModelV4Usage,

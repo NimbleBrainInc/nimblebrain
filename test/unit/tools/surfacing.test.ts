@@ -4,7 +4,6 @@ import { DEFAULT_MAX_DIRECT_TOOLS } from "../../../src/limits.ts";
 import type { PromptAppInfo } from "../../../src/prompt/compose.ts";
 import { composeSystemPrompt } from "../../../src/prompt/compose.ts";
 import type { Skill } from "../../../src/skills/types.ts";
-import {} from "../../../src/tools/namespace.ts";
 import { surfaceTools } from "../../../src/tools/surfacing.ts";
 import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
 

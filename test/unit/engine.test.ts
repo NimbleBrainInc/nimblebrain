@@ -73,7 +73,7 @@ describe("AgentEngine", () => {
     const events: EventSink = {
       emit(event: EngineEvent) {
         if (event.type === "text.delta") {
-          chunks.push(event.data["text"] as string);
+          chunks.push(event.data.text as string);
         }
       },
     };
@@ -122,7 +122,7 @@ describe("AgentEngine", () => {
     const tools = {
       schemas: [{ name: "test__greet", description: "Greet someone", inputSchema: {} }],
       handler: (call: ToolCall): ToolResult => ({
-        content: textContent(`Hello, ${call.input["name"]}!`),
+        content: textContent(`Hello, ${call.input.name}!`),
         isError: false,
       }),
     };
@@ -1502,12 +1502,12 @@ describe("AgentEngine", () => {
 
     const toolStart = events.find((e) => e.type === "tool.start");
     expect(toolStart).toBeDefined();
-    expect(toolStart!.data["resourceUri"]).toBe("ui://app/viewer");
+    expect(toolStart!.data.resourceUri).toBe("ui://app/viewer");
 
     const toolDone = events.find((e) => e.type === "tool.done");
     expect(toolDone).toBeDefined();
-    expect(toolDone!.data["resourceUri"]).toBe("ui://app/viewer");
-    expect(toolDone!.data["result"]).toEqual({ content: textContent("rendered"), isError: false });
+    expect(toolDone!.data.resourceUri).toBe("ui://app/viewer");
+    expect(toolDone!.data.result).toEqual({ content: textContent("rendered"), isError: false });
   });
 
   it("surfaces resource_link blocks on tool.done and in the result record", async () => {
@@ -1569,7 +1569,7 @@ describe("AgentEngine", () => {
 
     const toolDone = events.find((e) => e.type === "tool.done");
     expect(toolDone).toBeDefined();
-    expect(toolDone!.data["resourceLinks"]).toEqual([
+    expect(toolDone!.data.resourceLinks).toEqual([
       {
         uri: "collateral://exports/exp_abc123.pdf",
         name: "Document export",
@@ -1577,7 +1577,7 @@ describe("AgentEngine", () => {
       },
     ]);
     // resourceUri is separate (no UI annotation) — stays undefined.
-    expect(toolDone!.data["resourceUri"]).toBeUndefined();
+    expect(toolDone!.data.resourceUri).toBeUndefined();
 
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0]!.resourceLinks).toEqual([
@@ -1632,7 +1632,7 @@ describe("AgentEngine", () => {
 
     const toolDone = events.find((e) => e.type === "tool.done");
     expect(toolDone).toBeDefined();
-    expect(toolDone!.data["resourceLinks"]).toBeUndefined();
+    expect(toolDone!.data.resourceLinks).toBeUndefined();
   });
 
   it("stops at max_iterations", async () => {
@@ -2956,7 +2956,7 @@ describe("AgentEngine", () => {
       {
         ...defaultConfig,
         hooks: {
-          transformPrompt: (prompt) => prompt + "\nExtra instruction.",
+          transformPrompt: (prompt) => `${prompt}\nExtra instruction.`,
         },
       },
       "Base prompt.",
@@ -3507,7 +3507,7 @@ describe("audience filtering", () => {
     // tool.done should have the full result (unfiltered) since it has resourceUri
     const toolDone = events.find((e) => e.type === "tool.done");
     expect(toolDone).toBeDefined();
-    expect(toolDone!.data["result"]).toBeDefined();
+    expect(toolDone!.data.result).toBeDefined();
   });
 });
 
@@ -3782,7 +3782,7 @@ describe("malformed tool call input", () => {
 
     const errorEvent = events.find((e) => e.type === "run.error");
     expect(errorEvent).toBeDefined();
-    expect(errorEvent!.data["error"]).toContain("API connection refused");
+    expect(errorEvent!.data.error).toContain("API connection refused");
   });
 
   describe("tool result size limit", () => {
@@ -4543,10 +4543,10 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
     );
 
     expect(injected).toHaveLength(1);
-    expect(injected[0]!.data["skillName"]).toBe("gmail");
-    expect(injected[0]!.data["toolName"]).toBe("gmail__send");
-    expect(injected[0]!.data["skillBody"]).toBe(GMAIL_CANDIDATE.body);
-    expect(injected[0]!.data["scope"]).toBe("connector");
+    expect(injected[0]!.data.skillName).toBe("gmail");
+    expect(injected[0]!.data.toolName).toBe("gmail__send");
+    expect(injected[0]!.data.skillBody).toBe(GMAIL_CANDIDATE.body);
+    expect(injected[0]!.data.scope).toBe("connector");
   });
 
   it("does not inject when the called tool matches no candidate affinity", async () => {
@@ -4747,11 +4747,11 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
     );
 
     expect(activated).toHaveLength(1);
-    expect(activated[0]!.data["skillName"]).toBe("gmail");
-    expect(activated[0]!.data["toolCallId"]).toBe("u1");
-    expect(activated[0]!.data["scope"]).toBe("connector");
-    expect(activated[0]!.data["tokens"]).toBe(12);
-    expect(typeof activated[0]!.data["runId"]).toBe("string");
+    expect(activated[0]!.data.skillName).toBe("gmail");
+    expect(activated[0]!.data.toolCallId).toBe("u1");
+    expect(activated[0]!.data.scope).toBe("connector");
+    expect(activated[0]!.data.tokens).toBe(12);
+    expect(typeof activated[0]!.data.runId).toBe("string");
   });
 
   it("suppresses surface-once overlay injection for a skill activated earlier in the run", async () => {
@@ -4791,7 +4791,7 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
     );
 
     expect(activated).toHaveLength(1);
-    expect(activated[0]!.data["toolCallId"]).toBe("u1");
+    expect(activated[0]!.data.toolCallId).toBe("u1");
   });
 
   it("seeds the dedup set from a history activation marker (fallback scan)", async () => {

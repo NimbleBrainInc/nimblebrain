@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,7 +50,7 @@ afterEach(() => {
 describe("ConnectorCatalog.list", () => {
   test("aggregates entries from every catalog file, projecting to CatalogListing", async () => {
     const catalogDir = freshCatalog();
-    const granola = writeStaticCatalog(
+    writeStaticCatalog(
       [
         {
           name: "ai.granola/mcp",
@@ -63,7 +63,7 @@ describe("ConnectorCatalog.list", () => {
       ],
       "granola.yaml",
     );
-    const echo = writeStaticCatalog(
+    writeStaticCatalog(
       [
         {
           name: "ai.nimblebrain/echo",
@@ -122,7 +122,7 @@ describe("ConnectorCatalog.list", () => {
 
   test("dedups entries by id across the catalog", async () => {
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([
+    writeStaticCatalog([
       {
         name: "ai.granola/mcp",
         description: "first",
@@ -146,7 +146,7 @@ describe("ConnectorCatalog.list", () => {
 
   test("operatorConfigured probe runs only for static-auth entries with operatorSetup", async () => {
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([
+    writeStaticCatalog([
       {
         name: "io.asana/mcp",
         description: "Asana",
@@ -185,7 +185,7 @@ describe("ConnectorCatalog.list", () => {
 
   test("a packages-only entry is dropped — this runtime installs no downloaded code", async () => {
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([
+    writeStaticCatalog([
       {
         name: "ai.nimblebrain/echo",
         description: "Echo",
@@ -236,7 +236,7 @@ describe("ConnectorCatalog lookup tables", () => {
     // "not a recognized platform connector". Icons are cosmetic — a missing
     // icon must never make a connector non-functional.
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([
+    writeStaticCatalog([
       {
         name: "ai.nimblebrain/web",
         description: "Web tools",
@@ -272,7 +272,7 @@ describe("ConnectorCatalog safety scrub (XSS via _meta extension URLs)", () => {
 
   async function listWith(server: Record<string, unknown>) {
     const catalogDir = freshCatalog();
-    const path = writeStaticCatalog([server]);
+    writeStaticCatalog([server]);
     return new ConnectorCatalog(catalogDir).list();
   }
 

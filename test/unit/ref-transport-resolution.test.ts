@@ -22,7 +22,6 @@ function ref(transport: UrlRef["transport"]): UrlRef {
   return { url: "https://composio.test/mcp", serverName: "gmail", transport } as UrlRef;
 }
 
-// biome-ignore lint/suspicious/noTemplateCurlyInString: the literal legacy placeholder
 const LEGACY_VALUE = "${COMPOSIO_API_KEY}";
 
 describe("transport: legacy Composio refs map forward", () => {

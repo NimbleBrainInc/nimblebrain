@@ -10,7 +10,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
-import type { ConversationEvent } from "../../../src/conversation/types.ts";
 
 function makeDirs() {
   const base = mkdtempSync(join(tmpdir(), "store-corruption-"));
@@ -30,7 +29,8 @@ function makeMetadataLine(id: string): string {
   });
 }
 
-function makeEvent(overrides: Partial<ConversationEvent> & { type: string }): string {
+/** One event line as it sits on disk; the fixture may write any shape. */
+function makeEvent(overrides: Record<string, unknown> & { type: string }): string {
   return JSON.stringify({
     ts: "2026-04-14T00:01:00Z",
     ...overrides,
@@ -45,7 +45,7 @@ describe("conversation store corruption resilience", () => {
 
     const lines = [
       makeMetadataLine(id),
-      makeEvent({ type: "user.message", content: [{ type: "text", text: "Hello" }] } as any),
+      makeEvent({ type: "user.message", content: [{ type: "text", text: "Hello" }] }),
       "NOT VALID JSON {{{",
       makeEvent({
         type: "llm.done",
@@ -53,10 +53,10 @@ describe("conversation store corruption resilience", () => {
         content: [{ type: "text", text: "Hi!" }],
         usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 100,
-      } as any),
+      }),
     ];
 
-    writeFileSync(join(dirs.dir, `${id}.jsonl`), lines.join("\n") + "\n");
+    writeFileSync(join(dirs.dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 
     const conv = await store.load(id);
     expect(conv).not.toBeNull();
@@ -70,7 +70,7 @@ describe("conversation store corruption resilience", () => {
 
     const lines = [
       makeMetadataLine(id),
-      makeEvent({ type: "user.message", content: [{ type: "text", text: "Hello" }] } as any),
+      makeEvent({ type: "user.message", content: [{ type: "text", text: "Hello" }] }),
       "TRUNCATED LINE",
       '{"ts":"2026-04-14T00:02:00Z","type":"llm.done","model":"test","content":[{"type":"text","text":"Reply"}],"usage":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0},"llmMs":100}',
       makeEvent({
@@ -81,10 +81,10 @@ describe("conversation store corruption resilience", () => {
         inputTokens: 10,
         outputTokens: 5,
         totalMs: 200,
-      } as any),
+      }),
     ];
 
-    writeFileSync(join(dirs.dir, `${id}.jsonl`), lines.join("\n") + "\n");
+    writeFileSync(join(dirs.dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 
     const conv = await store.load(id);
     expect(conv).not.toBeNull();
@@ -97,23 +97,17 @@ describe("conversation store corruption resilience", () => {
     expect(userMsg).toBeDefined();
   });
 
-  it("load() returns null when metadata line (line 1) is corrupt", async () => {
+  it("load() never returns a conversation when the metadata line (line 1) is corrupt", async () => {
     const dirs = makeDirs();
     const store = new EventSourcedConversationStore(dirs);
     const id = "conv_c0aa0e1000000003";
 
     writeFileSync(join(dirs.dir, `${id}.jsonl`), "NOT JSON AT ALL\n");
 
-    // Metadata line is critical — store cannot recover without it
-    let threw = false;
-    try {
-      await store.load(id);
-    } catch {
-      threw = true;
-    }
-    // Either returns null or throws — both are acceptable.
-    // The key assertion: it does NOT return a conversation with garbage data.
-    expect(true).toBe(true); // reached here = didn't hang
+    // Metadata line is critical — store cannot recover without it. Returning
+    // null and throwing are both acceptable; returning a conversation is not.
+    const loaded = await store.load(id).catch(() => null);
+    expect(loaded).toBeNull();
   });
 
   it("load() handles file with only metadata and no events", async () => {
@@ -121,7 +115,7 @@ describe("conversation store corruption resilience", () => {
     const store = new EventSourcedConversationStore(dirs);
     const id = "conv_c0aa0e1000000004";
 
-    writeFileSync(join(dirs.dir, `${id}.jsonl`), makeMetadataLine(id) + "\n");
+    writeFileSync(join(dirs.dir, `${id}.jsonl`), `${makeMetadataLine(id)}\n`);
 
     const conv = await store.load(id);
     expect(conv).not.toBeNull();
@@ -136,7 +130,7 @@ describe("conversation store corruption resilience", () => {
 
     const lines = [makeMetadataLine(id), "GARBAGE LINE 1", "GARBAGE LINE 2", "{incomplete json"];
 
-    writeFileSync(join(dirs.dir, `${id}.jsonl`), lines.join("\n") + "\n");
+    writeFileSync(join(dirs.dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 
     const conv = await store.load(id);
     expect(conv).not.toBeNull();

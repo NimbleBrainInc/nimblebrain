@@ -263,8 +263,9 @@ describe("UC-W6: Workspace admin manages connectors", () => {
     expect(inventory[0]!.wsId).toBe(eng.id);
 
     // Other workspace is unaffected
-    const mkt = await wsStore.create("Marketing", "marketing");
+    await wsStore.create("Marketing", "marketing");
     const allWorkspaces = await wsStore.list();
+    expect(allWorkspaces).toHaveLength(2);
     inventory = buildProcessInventory(allWorkspaces, workDir);
     // Only 1 entry (eng has crm, mkt has none)
     expect(inventory).toHaveLength(1);

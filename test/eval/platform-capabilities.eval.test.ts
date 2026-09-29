@@ -12,7 +12,7 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { assertSearchedFor, assertToolCalled, runEval, shutdownEvalRuntime } from "./helpers.ts";
+import { assertSearchedFor, runEval, shutdownEvalRuntime } from "./helpers.ts";
 
 afterAll(async () => {
   await shutdownEvalRuntime();

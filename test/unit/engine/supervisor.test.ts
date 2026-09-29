@@ -598,7 +598,7 @@ describe("supervisor — infrastructure errors are excluded from the strike coun
     for (let i = 0; i < 4; i++) {
       sup.observe(call("svc__write"), infraError("connection closed"));
     }
-    expect(sup.snapshot().callCounts["svc__write"]).toBe(4);
+    expect(sup.snapshot().callCounts.svc__write).toBe(4);
   });
 
   it("does not let an infrastructure error launder a genuine loop", () => {

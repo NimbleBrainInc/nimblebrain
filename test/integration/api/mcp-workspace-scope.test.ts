@@ -36,7 +36,7 @@ class FakeToolSource implements ToolSource {
     return this.toolList;
   }
 
-  async execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult> {
+  async execute(toolName: string, _input: Record<string, unknown>): Promise<ToolResult> {
     return { content: textContent(`executed ${this.name}__${toolName}`), isError: false };
   }
 }
@@ -101,7 +101,11 @@ beforeAll(async () => {
   // Allowed source is in the workspace
   wsRegistry.addSource(new SharedSourceRef(allowedSource));
 
-  // Denied source is NOT added to workspace registry
+  // The denied source is installed in another workspace the caller also
+  // administers, so the assertions below test the wall rather than the
+  // absence of a tool anywhere.
+  const otherWs = await provisionTestWorkspace(runtime, "ws_other", "Other");
+  runtime.getRegistryForWorkspace(otherWs).addSource(new SharedSourceRef(deniedSource));
 
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;

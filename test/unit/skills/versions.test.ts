@@ -248,7 +248,7 @@ describe("version history", () => {
     // scope/permission/symlink gates all validate the skill `id`, never the
     // file a version resolves to — this is the only thing holding that line.
     for (const bad of [
-      "../".repeat(6) + "etc/passwd",
+      `${"../".repeat(6)}etc/passwd`,
       "..",
       "2026-01-01T00-00-00-000Z/../../../secret",
       "",

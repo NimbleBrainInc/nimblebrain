@@ -117,7 +117,7 @@ describe("envelope rejects malformed input", () => {
 
   test("wrong version prefix → invalid_format", () => {
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey() });
-    const swapped = "v2" + wire.slice(2);
+    const swapped = `v2${wire.slice(2)}`;
     expectError(
       () => verifyEnvelopeAsTenant({ wire: swapped, tenantKey: tenantKey(), expectedTid: TID }),
       "invalid_format",
@@ -125,7 +125,7 @@ describe("envelope rejects malformed input", () => {
   });
 
   test("oversize wire → invalid_format", () => {
-    const huge = "v1." + "A".repeat(5000) + ".AAAA";
+    const huge = `v1.${"A".repeat(5000)}.AAAA`;
     expectError(
       () => verifyEnvelopeAsTenant({ wire: huge, tenantKey: tenantKey(), expectedTid: TID }),
       "invalid_format",

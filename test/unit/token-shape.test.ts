@@ -84,7 +84,7 @@ async function runToolLoop(
 async function assertGolden(name: string, shape: unknown): Promise<void> {
   const path = `${import.meta.dir}/__golden__/${name}.json`;
   const serialized = `${JSON.stringify(shape, null, 2)}\n`;
-  if (process.env["TOKEN_SHAPE_UPDATE"]) {
+  if (process.env.TOKEN_SHAPE_UPDATE) {
     await Bun.write(path, serialized);
     return;
   }

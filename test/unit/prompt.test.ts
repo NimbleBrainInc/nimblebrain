@@ -275,14 +275,16 @@ describe("composeSystemPrompt — core vs user context layering", () => {
     const core = makeContextSkill("soul", 0, "Core identity.");
     const bootstrap = makeContextSkill("bootstrap", 10, "Use meta-tools.");
     const result = composeSystemPrompt([core, bootstrap], testSkill, sampleApps);
-    // All skills are core (priority ≤ 10), so output should be identical to the old behavior
-    const expected = [
+    // All skills are core (priority ≤ 10): core context, then apps, then the matched skill.
+    const order = [
       "Core identity.",
       "Use meta-tools.",
-      // apps section
-      expect.stringContaining("## Installed Apps"),
+      "## Installed Apps",
       "You are a test expert.",
     ];
+    const positions = order.map((s) => result.indexOf(s));
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
     // Verify no double separators
     expect(result).not.toContain("---\n\n---");
   });

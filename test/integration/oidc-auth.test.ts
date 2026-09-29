@@ -9,7 +9,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadInstanceConfig, saveInstanceConfig } from "../../src/identity/instance.ts";
@@ -168,7 +168,6 @@ describe("OIDC integration: full flow", () => {
 
     // Create stores and adapter via factory
     const userStore = new UserStore(workDir);
-    const wsStore = new WorkspaceStore(workDir);
     const adapter = createIdentityProvider(config, userStore, workDir);
     expect(adapter).not.toBeNull();
     expect(adapter).toBeInstanceOf(OidcIdentityProvider);

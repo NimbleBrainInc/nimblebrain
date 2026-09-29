@@ -65,7 +65,6 @@ mock.module("@composio/core", () => ({
     create() {
       return { mcp: { type: "http", url: "https://composio.test/mcp/x", headers: {} } };
     }
-    constructor(_opts: unknown) {}
   },
 }));
 

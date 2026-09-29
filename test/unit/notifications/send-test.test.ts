@@ -176,7 +176,7 @@ describe("a route that can deliver", () => {
   });
 
   test("the item is in the inbox, marked as a test", async () => {
-    const out = await send("attention");
+    await send("attention");
     const stored = storeFor(wsId).list({ limit: 10 });
 
     expect(stored).toHaveLength(1);

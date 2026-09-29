@@ -9,10 +9,9 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";

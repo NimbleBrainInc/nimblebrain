@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -189,7 +188,7 @@ describe("Integration: files app write → read round-trip (filesystem)", () => 
       createdAt: new Date().toISOString(),
       description: null,
     };
-    await appendFile(registryPath, JSON.stringify(entry) + "\n");
+    await appendFile(registryPath, `${JSON.stringify(entry)}\n`);
 
     // Read back via FileStore to verify interoperability
     const store = createFileStore(join(workDir, "files"));

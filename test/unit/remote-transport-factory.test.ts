@@ -125,7 +125,7 @@ describe("createRemoteTransport", () => {
     expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
     const internal = t as unknown as Record<string, unknown>;
     // StreamableHTTPClientTransport stores sessionId as _sessionId
-    const sessionId = internal["_sessionId"] as string | undefined;
+    const sessionId = internal._sessionId as string | undefined;
     if (sessionId !== undefined) {
       expect(sessionId).toBe("session-abc");
     }
@@ -208,10 +208,10 @@ describe("createRemoteTransport — provider auth (minted)", () => {
     const internal = t as unknown as Record<string, unknown>;
     // The minted token is attached via the transport's fetch override, not a
     // static header — so `_fetch` is wired and `Authorization` is absent.
-    expect(internal["_fetch"]).toBeDefined();
-    const reqInit = internal["_requestInit"] as RequestInit | undefined;
+    expect(internal._fetch).toBeDefined();
+    const reqInit = internal._requestInit as RequestInit | undefined;
     const headers = (reqInit?.headers ?? {}) as Record<string, string>;
-    expect(headers["Authorization"]).toBeUndefined();
+    expect(headers.Authorization).toBeUndefined();
   });
 });
 
@@ -589,7 +589,7 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
       { ...config, auth: { type: "bearer", token: "static-token" } },
       memoryProvider(),
     );
-    expect((t as unknown as Record<string, unknown>)["_authProvider"]).toBeUndefined();
+    expect((t as unknown as Record<string, unknown>)._authProvider).toBeUndefined();
     await sdkOAuthFetch(t)(`${OTHER_ORIGIN}/.well-known/oauth-authorization-server`, {});
     await t.send({ jsonrpc: "2.0", method: "notifications/roots/list_changed" });
     expect(

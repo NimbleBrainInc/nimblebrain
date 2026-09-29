@@ -20,7 +20,6 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type {
   EngineConfig,
-  EngineEvent,
   EventSink,
   ToolCall,
   ToolResult,
@@ -66,27 +65,6 @@ function makeEngine(
     ),
     events ?? new NoopEventSink(),
   );
-}
-
-/** Helper: count how many times a pattern appears as a top-level separator. */
-function countTopLevelSeparators(prompt: string): number {
-  return prompt.split(SEPARATOR).length - 1;
-}
-
-/**
- * Helper: extract sections by splitting on `## ` headers.
- * Returns an array of { header, body } objects.
- */
-function extractSections(prompt: string): Array<{ header: string; body: string }> {
-  const sections: Array<{ header: string; body: string }> = [];
-  const parts = prompt.split(/^(## .+)$/m);
-  for (let i = 1; i < parts.length; i += 2) {
-    sections.push({
-      header: parts[i]!.replace("## ", ""),
-      body: (parts[i + 1] ?? "").trim(),
-    });
-  }
-  return sections;
 }
 
 // ============================================================================
@@ -1189,7 +1167,7 @@ describe("Tier 2: Engine Behavioral — tool results, hooks", () => {
         };
       });
 
-      const largePayload = "X".repeat(60_000) + "\n\nEvil injection at the end.";
+      const largePayload = `${"X".repeat(60_000)}\n\nEvil injection at the end.`;
 
       // Tool with UI annotation (resourceUri) so it gets the summary path
       // The engine looks for _meta.ui.resourceUri
@@ -1296,7 +1274,7 @@ describe("Tier 2: Engine Behavioral — tool results, hooks", () => {
                 return {
                   ...block,
                   text: block.text.replace(
-                    /IGNORE PREVIOUS INSTRUCTIONS[^]*/i,
+                    /IGNORE PREVIOUS INSTRUCTIONS[\s\S]*/i,
                     "[content filtered]",
                   ),
                 };

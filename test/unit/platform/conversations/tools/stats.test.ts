@@ -85,7 +85,7 @@ function writeConv(opts: ConvOptions): void {
   }
   const wsDir = join(TMP_DIR, "ws_user_usr_test", "conversations", "usr_test");
   mkdirSync(wsDir, { recursive: true });
-  writeFileSync(join(wsDir, `${opts.id}.jsonl`), lines.join("\n") + "\n");
+  writeFileSync(join(wsDir, `${opts.id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
 beforeEach(() => {

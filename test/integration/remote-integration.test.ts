@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
@@ -7,7 +7,6 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { getConnectorRefValidator } from "../../src/config/index.ts";
-import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";

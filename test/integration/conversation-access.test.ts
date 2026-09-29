@@ -15,7 +15,7 @@
  *  - HTTP: the three chat routes answer each of those cases with the same 404.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -101,25 +101,6 @@ class MultiUserAuthAdapter implements IdentityProvider {
   async deleteUser(): Promise<boolean> {
     return false;
   }
-}
-
-interface SSEEvent {
-  event: string;
-  data: string;
-}
-
-function parseSSE(text: string): SSEEvent[] {
-  const events: SSEEvent[] = [];
-  for (const block of text.split("\n\n").filter((b) => b.trim())) {
-    let event = "";
-    let data = "";
-    for (const line of block.split("\n")) {
-      if (line.startsWith("event: ")) event = line.slice(7);
-      else if (line.startsWith("data: ")) data = line.slice(6);
-    }
-    if (event) events.push({ event, data });
-  }
-  return events;
 }
 
 // ---------------------------------------------------------------------------

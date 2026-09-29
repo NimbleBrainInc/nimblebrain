@@ -11,7 +11,6 @@ import {
   isDue,
   isInBackoff,
   isTransientError,
-  MAX_CONSECUTIVE_ERRORS,
   Scheduler,
 } from "../../../../src/platform/automations/scheduler.ts";
 import {
@@ -389,7 +388,7 @@ describe("Scheduler — timer arming", () => {
     // Spy on setTimeout
     const originalSetTimeout = globalThis.setTimeout;
     let capturedDelay = -1;
-    globalThis.setTimeout = ((fn: Function, delay?: number) => {
+    globalThis.setTimeout = ((fn: () => void, delay?: number) => {
       capturedDelay = delay ?? 0;
       return originalSetTimeout(fn, delay);
     }) as typeof globalThis.setTimeout;
@@ -414,7 +413,7 @@ describe("Scheduler — timer arming", () => {
     // The context a timer captures is the one active when it is created.
     const originalSetTimeout = globalThis.setTimeout;
     const armedIn: unknown[] = [];
-    globalThis.setTimeout = ((fn: Function, delay?: number) => {
+    globalThis.setTimeout = ((fn: () => void, delay?: number) => {
       armedIn.push(getRequestContext());
       return originalSetTimeout(fn, delay);
     }) as typeof globalThis.setTimeout;
@@ -445,7 +444,7 @@ describe("Scheduler — timer arming", () => {
 
     const originalSetTimeout = globalThis.setTimeout;
     let capturedDelay = -1;
-    globalThis.setTimeout = ((fn: Function, delay?: number) => {
+    globalThis.setTimeout = ((fn: () => void, delay?: number) => {
       capturedDelay = delay ?? 0;
       return originalSetTimeout(fn, delay);
     }) as typeof globalThis.setTimeout;
@@ -469,7 +468,7 @@ describe("Scheduler — timer arming", () => {
 
     const originalSetTimeout = globalThis.setTimeout;
     let capturedDelay = -1;
-    globalThis.setTimeout = ((fn: Function, delay?: number) => {
+    globalThis.setTimeout = ((fn: () => void, delay?: number) => {
       capturedDelay = delay ?? 0;
       return originalSetTimeout(fn, delay);
     }) as typeof globalThis.setTimeout;
@@ -628,7 +627,7 @@ describe("Scheduler — cron schedule with no next run", () => {
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     const originalSetTimeout = globalThis.setTimeout;
     let capturedDelay = -1;
-    globalThis.setTimeout = ((fn: Function, delay?: number) => {
+    globalThis.setTimeout = ((fn: () => void, delay?: number) => {
       capturedDelay = delay ?? 0;
       return originalSetTimeout(fn, delay);
     }) as typeof globalThis.setTimeout;
@@ -1493,6 +1492,7 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
     // First timer: dispatches blocker, skips auto-skip-test (don't await — blocker blocks)
     scheduler.onTimer();
     await new Promise((r) => setTimeout(r, 50));
+    expect(callCount).toBe(1);
 
     // Check that the skipped automation's nextRunAt was advanced into the future
     const updated = defOf(scheduler, "auto-skip-test")!;

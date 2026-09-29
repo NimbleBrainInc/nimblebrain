@@ -1,9 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { getValidator } from "../../src/config/index.ts";
 import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
-import type { ConnectorUiMeta, HostManifestMeta } from "../../src/connectors/runtime/types.ts";
+import type { HostManifestMeta } from "../../src/connectors/runtime/types.ts";
 import type { EngineEventType } from "../../src/engine/types.ts";
-import type { RuntimeConfig } from "../../src/runtime/types.ts";
 
 describe("JSON Schema validation", () => {
   const validate = getValidator();

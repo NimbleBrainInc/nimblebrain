@@ -86,7 +86,6 @@ describe("transport auth — literal and reference", () => {
     process.env.NB_CREDREF_PROBE = "from-env";
     try {
       const config: RemoteTransportConfig = {
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal that must NOT expand
         auth: { type: "bearer", token: "${NB_CREDREF_PROBE}" },
       };
       const { headers } = await resolveTransportCredential(config, WS_ID);

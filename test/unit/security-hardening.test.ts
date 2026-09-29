@@ -10,7 +10,7 @@
  * the existing test files for completeness.
  */
 import { beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -250,7 +250,7 @@ describe("Security Hardening Regression Tests", () => {
 
     it("injects the guide regardless of MTF trust score (no per-turn gate)", () => {
       const guideText = "Use tasks__create. Always set a due date.";
-      for (const score of [0, 30, 49, 50, 80, 100]) {
+      for (const _score of [0, 30, 49, 50, 80, 100]) {
         const focused: FocusedAppInfo = {
           name: "Tasks",
           tools: [],

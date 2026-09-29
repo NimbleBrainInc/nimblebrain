@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import type { McpTransportMode } from "../../src/tools/mcp-source.ts";

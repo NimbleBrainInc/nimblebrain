@@ -27,7 +27,7 @@ describe("fallbackTitle", () => {
   });
 
   it("truncates at 60 chars when no space after position 20", () => {
-    const msg = "short prefix then " + "x".repeat(80);
+    const msg = `short prefix then ${"x".repeat(80)}`;
     const result = fallbackTitle(msg);
     expect(result.length).toBe(60);
   });

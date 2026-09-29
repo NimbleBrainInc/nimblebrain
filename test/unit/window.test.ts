@@ -176,16 +176,16 @@ describe("windowMessages", () => {
       textMsg("user", "Read all the files"),
       // First round: 4 parallel tool calls
       toolCallMsg("call_a", "call_b", "call_c", "call_d"),
-      toolResultMsg("call_a", "file A content " + "x".repeat(200)),
-      toolResultMsg("call_b", "file B content " + "x".repeat(200)),
-      toolResultMsg("call_c", "file C content " + "x".repeat(200)),
-      toolResultMsg("call_d", "file D content " + "x".repeat(200)),
+      toolResultMsg("call_a", `file A content ${"x".repeat(200)}`),
+      toolResultMsg("call_b", `file B content ${"x".repeat(200)}`),
+      toolResultMsg("call_c", `file C content ${"x".repeat(200)}`),
+      toolResultMsg("call_d", `file D content ${"x".repeat(200)}`),
       // Second round: 4 more parallel tool calls
       toolCallMsg("call_e", "call_f", "call_g", "call_h"),
-      toolResultMsg("call_e", "file E content " + "x".repeat(200)),
-      toolResultMsg("call_f", "file F content " + "x".repeat(200)),
-      toolResultMsg("call_g", "file G content " + "x".repeat(200)),
-      toolResultMsg("call_h", "file H content " + "x".repeat(200)),
+      toolResultMsg("call_e", `file E content ${"x".repeat(200)}`),
+      toolResultMsg("call_f", `file F content ${"x".repeat(200)}`),
+      toolResultMsg("call_g", `file G content ${"x".repeat(200)}`),
+      toolResultMsg("call_h", `file H content ${"x".repeat(200)}`),
       // Final text response
       textMsg("assistant", "I've read all the files."),
       // Next user message

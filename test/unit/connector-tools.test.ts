@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -136,7 +136,7 @@ interface PermissionWrite {
  * what the production `ManageConnectorsContext` declares without forcing
  * us to satisfy 100+ unrelated methods.
  */
-function buildHarness(opts: { adminId?: string } = {}): Harness {
+function buildHarness(): Harness {
   const permissionWrites: PermissionWrite[] = [];
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-tools-"));
   const wsId = "ws_acme";

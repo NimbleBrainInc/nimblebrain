@@ -144,7 +144,7 @@ function makeDataPlaneFetch(
       });
     }
 
-    return new Response("unexpected url: " + url, { status: 500 });
+    return new Response(`unexpected url: ${url}`, { status: 500 });
   }) as typeof fetch;
 }
 
@@ -383,7 +383,7 @@ function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
       });
     }
 
-    return new Response("unexpected url: " + url, { status: 500 });
+    return new Response(`unexpected url: ${url}`, { status: 500 });
   }) as typeof fetch;
 }
 

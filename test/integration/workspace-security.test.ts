@@ -22,7 +22,6 @@ import { UserStore } from "../../src/identity/user.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 import { SharedSourceRef, ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
-import type { Workspace } from "../../src/workspace/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import {
   installTestCredentialStore,
@@ -35,17 +34,6 @@ import {
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "nb-sec-integ-"));
-}
-
-function makeWorkspace(id: string, name: string, connectors: Workspace["connectors"]): Workspace {
-  return {
-    id,
-    name,
-    members: [],
-    connectors: connectors,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
 }
 
 function makeSource(name: string, toolNames: string[]): ToolSource {
@@ -69,15 +57,6 @@ function makeSource(name: string, toolNames: string[]): ToolSource {
 // ---------------------------------------------------------------------------
 // Shared test fixtures
 // ---------------------------------------------------------------------------
-
-// Two workspaces
-const wsEng = makeWorkspace("ws_eng", "Engineering", [
-  { url: "https://crm.example.com/mcp", serverName: "crm" },
-]);
-
-const wsMkt = makeWorkspace("ws_mkt", "Marketing", [
-  { url: "https://dropbox.example.com/mcp", serverName: "dropbox" },
-]);
 
 // Sources
 const protectedSources = [

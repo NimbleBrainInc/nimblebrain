@@ -69,7 +69,7 @@ describe("the wire format", () => {
     // they all still claim to be sealed, so `open` refuses them.
     for (const damaged of [
       `${sealed}\n`,
-      ` ${sealed}`.trimStart() + " ",
+      `${` ${sealed}`.trimStart()} `,
       sealed.slice(0, -4),
       sealed.split(".").slice(0, 4).join("."),
       "NBS1.",

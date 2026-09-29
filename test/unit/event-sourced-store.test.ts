@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
-import type { EngineEvent } from "../../src/engine/types.ts";
 
 function makeDir() {
   const base = mkdtempSync(join(tmpdir(), "es-store-test-"));

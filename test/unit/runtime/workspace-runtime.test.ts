@@ -3,7 +3,6 @@ import { join } from "node:path";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
 import {
   buildProcessInventory,
-  type ProcessInventoryEntry,
   resolveConnectorStartConcurrency,
 } from "../../../src/runtime/workspace-runtime.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";

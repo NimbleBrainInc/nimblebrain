@@ -83,8 +83,8 @@ describe("AgentEngine run input cap", () => {
     expect(r.toolRuns).toEqual(["call_1", "call_2", "call_3"]);
 
     const done = r.events.find((e) => e.type === "run.done");
-    expect(done?.data["stopReason"]).toBe("max_input_tokens");
-    expect(done?.data["iterations"]).toBe(3);
+    expect(done?.data.stopReason).toBe("max_input_tokens");
+    expect(done?.data.iterations).toBe(3);
   });
 
   it("projects the next call from the prompt about to be sent, not only the previous call", async () => {

@@ -110,7 +110,7 @@ describe("callModel", () => {
     // Order: text deltas precede prep-start (text emitted before tool-use
     // block in this fixture); prep-end precedes nothing relevant for this test
     // but must precede the assembled tool-call returned in result.content.
-    const textIdx = events.findIndex((e) => e === "text:preface");
+    const textIdx = events.indexOf("text:preface");
     const startIdx = events.indexOf(startEvents[0]);
     const endIdx = events.indexOf(endEvents[0]);
     expect(textIdx).toBeLessThan(startIdx);

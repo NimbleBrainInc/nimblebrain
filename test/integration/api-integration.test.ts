@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { extractText, textContent } from "../../src/engine/content-helpers.ts";
+import { textContent } from "../../src/engine/content-helpers.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";

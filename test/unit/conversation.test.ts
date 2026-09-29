@@ -195,11 +195,11 @@ describe("windowMessages", () => {
 
   it("drops middle messages when budget is tight", () => {
     const messages = [
-      wmsg("user", "First: " + "a".repeat(40)), // ~12 tokens
-      wmsg("assistant", "Second: " + "b".repeat(400)), // ~100 tokens (big)
-      wmsg("user", "Third: " + "c".repeat(400)), // ~100 tokens (big)
-      wmsg("assistant", "Fourth: " + "d".repeat(40)), // ~12 tokens
-      wmsg("user", "Fifth: " + "e".repeat(40)), // ~12 tokens
+      wmsg("user", `First: ${"a".repeat(40)}`), // ~12 tokens
+      wmsg("assistant", `Second: ${"b".repeat(400)}`), // ~100 tokens (big)
+      wmsg("user", `Third: ${"c".repeat(400)}`), // ~100 tokens (big)
+      wmsg("assistant", `Fourth: ${"d".repeat(40)}`), // ~12 tokens
+      wmsg("user", `Fifth: ${"e".repeat(40)}`), // ~12 tokens
     ];
 
     // Budget: 50 tokens — enough for first (~12) + fourth (~12) + fifth (~12) = 36

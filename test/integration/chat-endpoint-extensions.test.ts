@@ -180,7 +180,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       // Verify it's actually in the JSONL file's first line under the workspace's
       // owner partition (dev owner `usr_default`, focused on TEST_WORKSPACE_ID).
       const convDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
-      const files = require("fs")
+      const files = require("node:fs")
         .readdirSync(convDir)
         .filter((f: string) => f.endsWith(".jsonl"));
       expect(files.length).toBeGreaterThan(0);

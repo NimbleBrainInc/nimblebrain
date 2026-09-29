@@ -21,7 +21,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
 import { isModelVisible } from "../../../../src/engine/types.ts";
 import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
@@ -59,12 +58,9 @@ class FakeRuntime {
     { id: string; name: string; members: Array<{ userId: string; role: "admin" | "member" }> }
   >();
 
-  private readonly _store: EventSourcedConversationStore;
-
   constructor(private workDir: string) {
     const convDir = join(workDir, "conversations");
     mkdirSync(convDir, { recursive: true });
-    this._store = new EventSourcedConversationStore({ dir: convDir });
     // The dev user administers the workspace these tests write to.
     this.setMember("ws_demo", DEV_USER.id, "admin");
   }

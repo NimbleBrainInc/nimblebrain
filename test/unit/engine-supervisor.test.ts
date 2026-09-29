@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";

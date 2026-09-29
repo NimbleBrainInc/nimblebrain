@@ -193,7 +193,10 @@ describe("summarizeMessages + runCompaction", () => {
   test("runCompaction returns null below threshold (model never called)", async () => {
     let called = false;
     const model = {
-      doGenerate: async () => ((called = true), { content: [] }),
+      doGenerate: async () => {
+        called = true;
+        return { content: [] };
+      },
     } as unknown as LanguageModelV4;
     const out = await runCompaction(model, conversation(2, 40), { budget: 100_000 });
     expect(out).toBeNull();
@@ -302,7 +305,12 @@ describe("compactConversationMessages", () => {
   test("no-op below threshold: same reference, no event, model never called", async () => {
     const msgs = conversation(2, 40);
     let called = false;
-    const model = { doGenerate: async () => ((called = true), { content: [] }) } as never;
+    const model = {
+      doGenerate: async () => {
+        called = true;
+        return { content: [] };
+      },
+    } as never;
     const events: HistoryCompactedEvent[] = [];
     const out = await compactConversationMessages(model, msgs, {
       budget: 100_000,

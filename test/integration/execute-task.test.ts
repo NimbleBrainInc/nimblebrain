@@ -130,7 +130,7 @@ describe("runtime.executeTask", () => {
         { text: "done" },
       ],
     });
-    const { defaultWsId } = await provisionWorkspaces(runtime);
+    await provisionWorkspaces(runtime);
     const reg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
     reg.addSource(source);
 
@@ -272,7 +272,7 @@ describe("runtime.executeTask", () => {
         { text: "done" },
       ],
     });
-    const { defaultWsId } = await provisionWorkspaces(runtime);
+    await provisionWorkspaces(runtime);
     const reg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
     reg.addSource(probe.source);
 
@@ -358,7 +358,7 @@ describe("runtime.executeTask", () => {
         { text: "done" },
       ],
     });
-    const { defaultWsId } = await provisionWorkspaces(runtime);
+    await provisionWorkspaces(runtime);
     const reg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
     reg.addSource(probe.source);
 

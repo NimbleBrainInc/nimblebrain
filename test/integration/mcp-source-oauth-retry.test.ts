@@ -93,7 +93,7 @@ function startMockOAuthMcpServer(): MockOAuthMcpServer {
       // ---- DCR ----
       if (url.pathname === "/register" && req.method === "POST") {
         const body = (await req.json()) as Record<string, unknown>;
-        const client_id = "mock-client-" + Math.random().toString(36).slice(2, 10);
+        const client_id = `mock-client-${Math.random().toString(36).slice(2, 10)}`;
         return Response.json(
           {
             client_id,
@@ -112,7 +112,7 @@ function startMockOAuthMcpServer(): MockOAuthMcpServer {
         const state = url.searchParams.get("state") ?? "";
         const clientId = url.searchParams.get("client_id") ?? "";
         const redirectUri = url.searchParams.get("redirect_uri") ?? CALLBACK;
-        const code = "mock-code-" + Math.random().toString(36).slice(2, 10);
+        const code = `mock-code-${Math.random().toString(36).slice(2, 10)}`;
         ISSUED.set(clientId, { code });
         const target = new URL(redirectUri);
         target.searchParams.set("code", code);
@@ -132,7 +132,7 @@ function startMockOAuthMcpServer(): MockOAuthMcpServer {
         if (!issued || issued.code !== code) {
           return Response.json({ error: "invalid_grant" }, { status: 400 });
         }
-        const access = "mock-token-" + Math.random().toString(36).slice(2, 10);
+        const access = `mock-token-${Math.random().toString(36).slice(2, 10)}`;
         VALID_TOKENS.add(access);
         return Response.json({
           access_token: access,

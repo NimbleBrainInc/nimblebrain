@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EngineEvent, EngineEventType } from "../../src/engine/types.ts";
+import type { EngineEventType } from "../../src/engine/types.ts";
 import type { TelemetryClient, TelemetryClientFactory } from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
@@ -27,8 +27,8 @@ function createTestSetup(): { mock: MockTelemetryClient; sink: PostHogEventSink 
   const factory: TelemetryClientFactory = (_apiKey, _options) => mock;
 
   // Clear env vars that would disable telemetry
-  delete process.env["NB_TELEMETRY_DISABLED"];
-  delete process.env["DO_NOT_TRACK"];
+  delete process.env.NB_TELEMETRY_DISABLED;
+  delete process.env.DO_NOT_TRACK;
 
   const mgr = TelemetryManager.create({
     workDir: makeTmpDir(),
@@ -46,10 +46,10 @@ describe("PostHogEventSink", () => {
   const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    savedEnv["NB_TELEMETRY_DISABLED"] = process.env["NB_TELEMETRY_DISABLED"];
-    savedEnv["DO_NOT_TRACK"] = process.env["DO_NOT_TRACK"];
-    delete process.env["NB_TELEMETRY_DISABLED"];
-    delete process.env["DO_NOT_TRACK"];
+    savedEnv.NB_TELEMETRY_DISABLED = process.env.NB_TELEMETRY_DISABLED;
+    savedEnv.DO_NOT_TRACK = process.env.DO_NOT_TRACK;
+    delete process.env.NB_TELEMETRY_DISABLED;
+    delete process.env.DO_NOT_TRACK;
   });
 
   afterEach(() => {

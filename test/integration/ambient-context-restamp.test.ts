@@ -26,7 +26,6 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
-import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 

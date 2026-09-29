@@ -70,7 +70,7 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
     meta,
     ...annotated.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt })),
   ];
-  writeFileSync(join(dir, `${id}.jsonl`), lines.join("\n") + "\n");
+  writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
 describe("conversations__get", () => {

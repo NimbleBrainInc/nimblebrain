@@ -113,6 +113,8 @@ Tests use `createEchoModel()` from `test/helpers/echo-model.ts` and `StaticToolR
 
 Shared test helpers live in `test/helpers/` (imported by both unit and integration).
 
+**Biome lints `test/` with the same rules as `src/`, minus two** (the `test/**` override in `biome.json`, which cannot hold comments): `noExcessiveCognitiveComplexity`, because a fake dispatches a whole protocol in one function (a mock server's routes, a fake Redis's commands) and splitting it scatters one readable table; and `noTemplateCurlyInString`, because a literal `${VAR}` in a test is data under test.
+
 **Every bun process in the test path passes `--no-env-file`.** Bun auto-loads `.env`, so without it a developer's real keys (e.g. `COMPOSIO_API_KEY`) reach the test process, fail the tests that assert the unconfigured path, and let test code make live API calls. CI has no `.env`, so the failure looks local-only.
 
 - The flag binds to one process and does not propagate: a child re-runs the auto-load itself. So it goes on the `test:*` scripts, on every `bun` a test spawns (`cli.test.ts` boots the full runtime; the `scripts/check-*` suites spawn the checkers), and on any single file you run by hand — `bun test --no-env-file <file>`.

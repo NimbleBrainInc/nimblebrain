@@ -33,7 +33,6 @@ const WORKSPACE_A = "ws_workspace_a";
 const WORKSPACE_A_NAME = "Alpha Workspace";
 const WORKSPACE_B = "ws_workspace_b";
 const WORKSPACE_B_NAME = "Bravo Workspace";
-const OWNER = DEV_IDENTITY.id;
 // Another workspace the owner belongs to, provisioned before WORKSPACE_A so it
 // is the owner's default: a dev-mode request that names no workspace runs here.
 const HOME = "ws_home";

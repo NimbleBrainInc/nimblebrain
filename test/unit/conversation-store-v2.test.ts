@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../../src/conversation/memory-store.ts";
-import type {
-  Conversation,
-  ConversationStore,
-  StoredMessage,
-} from "../../src/conversation/types.ts";
+import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
 
 function msg(role: "user" | "assistant", content: string): StoredMessage {
   return { role, content, timestamp: new Date().toISOString() };

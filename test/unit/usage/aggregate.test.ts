@@ -258,7 +258,7 @@ describe("aggregateUsage", () => {
   });
 
   it("returns empty report for non-existent directory", async () => {
-    const report = await aggregateUsage("/tmp/does-not-exist-" + Date.now(), "all", "day");
+    const report = await aggregateUsage(`/tmp/does-not-exist-${Date.now()}`, "all", "day");
 
     expect(report.totals.llmCalls).toBe(0);
     expect(report.totals.conversations).toBe(0);

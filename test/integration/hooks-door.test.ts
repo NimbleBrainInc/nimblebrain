@@ -28,7 +28,6 @@ import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 
 const TID = "tenant-a";
 const KEY = randomBytes(32);
-const OTHER_TENANT_KEY = randomBytes(32);
 const IDENTITY: HookIdentity = { tid: TID, key: KEY };
 
 const CONNECTOR = "acme-billing-mcp";

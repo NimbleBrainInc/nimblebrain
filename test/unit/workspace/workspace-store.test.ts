@@ -13,7 +13,6 @@ import {
   WorkspaceConflictError,
   WorkspaceStore,
 } from "../../../src/workspace/workspace-store.ts";
-import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
 
 let workDir: string;
 let store: WorkspaceStore;

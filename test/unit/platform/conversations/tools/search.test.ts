@@ -55,7 +55,7 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
   ];
   const wsDir = join(dir, "ws_user_usr_test", "conversations", "usr_test");
   mkdirSync(wsDir, { recursive: true });
-  writeFileSync(join(wsDir, `${id}.jsonl`), lines.join("\n") + "\n");
+  writeFileSync(join(wsDir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
 describe("conversations__search", () => {

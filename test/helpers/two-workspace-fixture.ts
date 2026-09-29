@@ -30,7 +30,6 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ChatRequest } from "../../src/runtime/types.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
-import {} from "../../src/tools/namespace.ts";
 import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "./dev-provider.ts";
 import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";

@@ -5,7 +5,6 @@ import { join } from "node:path";
 import type {
   CreateUserResult,
   IdentityProvider,
-  ProviderCapabilities,
   UserIdentity,
 } from "../../../src/identity/provider.ts";
 import type { User } from "../../../src/identity/user.ts";

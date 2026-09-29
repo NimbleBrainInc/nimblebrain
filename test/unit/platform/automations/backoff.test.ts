@@ -20,11 +20,7 @@ import {
   isTransientError,
   Scheduler,
 } from "../../../../src/platform/automations/scheduler.ts";
-import {
-  loadOwnerAutomations,
-  readRuns,
-  saveAutomation,
-} from "../../../../src/platform/automations/store.ts";
+import { saveAutomation } from "../../../../src/platform/automations/store.ts";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
@@ -53,10 +49,6 @@ function seedDefs(workDir: string, defs: Map<string, Automation>): void {
     if (!auto.ownerId) auto.ownerId = OWNER;
     saveAutomation(workDir, WS, OWNER, auto);
   }
-}
-
-function loadDefs(workDir: string): Map<string, Automation> {
-  return loadOwnerAutomations(workDir, WS, OWNER);
 }
 
 function defOf(scheduler: Scheduler, id: string, owner = OWNER, ws = WS): Automation | undefined {

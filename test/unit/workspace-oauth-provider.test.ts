@@ -802,9 +802,8 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     await p.saveTokens({
       access_token: "acc",
       token_type: "Bearer",
-      // biome-ignore lint/suspicious/noExplicitAny: id_token is an OIDC extension on OAuthTokens
       id_token: fakeIdToken,
-    } as any);
+    });
 
     const identity = await p.identity();
     expect(identity).toEqual({
@@ -837,9 +836,8 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     await p.saveTokens({
       access_token: "a",
       token_type: "Bearer",
-      // biome-ignore lint/suspicious/noExplicitAny: id_token extension
       id_token: `${header}.${payload}.s`,
-    } as any);
+    });
     expect(await p.identity()).not.toBeNull();
     await p.invalidateCredentials("tokens");
     expect(await p.identity()).toBeNull();
@@ -856,9 +854,8 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     await p.saveTokens({
       access_token: "a",
       token_type: "Bearer",
-      // biome-ignore lint/suspicious/noExplicitAny: malformed id_token
       id_token: "not.a.jwt.at.all",
-    } as any);
+    });
     expect(await p.identity()).toBeNull();
     expect((await p.tokens())?.access_token).toBe("a");
   });
