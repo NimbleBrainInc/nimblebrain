@@ -28,6 +28,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 
 const TEST_USER_ID = "usr_amb_ctx_test";
 const TEST_USER_DISPLAY = "Ambient Test";
@@ -140,7 +141,7 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     // Run the chat IN ws_helix. The per-call wrap must stamp the routed
     // ws_helix at dispatch time, never the user's default workspace.
     await runtime.chat({
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       workspaceId: SHARED_WS_ID,
       message: "ambient context check",
     });

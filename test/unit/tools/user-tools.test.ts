@@ -12,20 +12,10 @@ import { UserStore } from "../../../src/identity/user.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import type { ManageUsersContext } from "../../../src/tools/user-tools.ts";
 import { createManageUsersTool } from "../../../src/tools/user-tools.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { parseResult, resultText } from "../../helpers/tool-result.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-function extractText(result: { content: Array<{ type: string; text: string }> }): string {
-  return result.content[0].text;
-}
-
-function parseResult(result: {
-  content: Array<{ type: string; text: string }>;
-  structuredContent?: Record<string, unknown>;
-}): unknown {
-  if (result.structuredContent) return result.structuredContent;
-  return JSON.parse(extractText(result));
-}
 
 // ── Setup ─────────────────────────────────────────────────────────
 
@@ -76,12 +66,12 @@ beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-user-tools-test-"));
   userStore = new UserStore(workDir);
   provider = createMockProvider(userStore);
-  currentIdentity = {
+  currentIdentity = makeIdentity({
     id: "usr_admin000000001",
     email: "admin@example.com",
     displayName: "Admin",
     orgRole: "admin",
-  };
+  });
   tool = createManageUsersTool(makeCtx());
 });
 
@@ -131,7 +121,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("You don't have permission to manage users");
+      expect(resultText(result)).toContain("You don't have permission to manage users");
     });
 
     test("null identity gets permission denied", async () => {
@@ -140,7 +130,7 @@ describe("nb__manage_users", () => {
 
       const result = await tool.handler({ action: "list" });
 
-      expect(extractText(result)).toContain("You don't have permission to manage users");
+      expect(resultText(result)).toContain("You don't have permission to manage users");
     });
   });
 
@@ -192,7 +182,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("email and displayName are required");
+      expect(resultText(result)).toContain("email and displayName are required");
     });
 
     test("requires displayName", async () => {
@@ -202,7 +192,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("email and displayName are required");
+      expect(resultText(result)).toContain("email and displayName are required");
     });
   });
 
@@ -239,7 +229,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("userId is required");
+      expect(resultText(result)).toContain("userId is required");
     });
 
     test("returns error for non-existent user", async () => {
@@ -250,7 +240,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("User not found");
+      expect(resultText(result)).toContain("User not found");
     });
 
     test("cannot downgrade the last owner to member", async () => {
@@ -270,7 +260,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(updateResult.isError).toBe(false);
-      expect(extractText(updateResult)).toContain("Cannot change the role of the last owner");
+      expect(resultText(updateResult)).toContain("Cannot change the role of the last owner");
     });
 
     test("can downgrade owner when another owner exists", async () => {
@@ -327,7 +317,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(updateResult.isError).toBe(false);
-      expect(extractText(updateResult)).toContain("Cannot change the role of the last owner");
+      expect(resultText(updateResult)).toContain("Cannot change the role of the last owner");
     });
   });
 
@@ -383,7 +373,7 @@ describe("nb__manage_users", () => {
       const result = await tool.handler({ action: "delete" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("userId is required");
+      expect(resultText(result)).toContain("userId is required");
     });
 
     test("returns error for non-existent user", async () => {
@@ -393,7 +383,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("User not found");
+      expect(resultText(result)).toContain("User not found");
     });
 
     test("cannot delete the last owner", async () => {
@@ -411,7 +401,7 @@ describe("nb__manage_users", () => {
       });
 
       expect(deleteResult.isError).toBe(false);
-      expect(extractText(deleteResult)).toContain("Cannot delete the last owner");
+      expect(resultText(deleteResult)).toContain("Cannot delete the last owner");
 
       // Verify user still exists
       const user = await userStore.get(owner.user.id);
@@ -440,14 +430,14 @@ describe("nb__manage_users", () => {
       const result = await tool.handler({ action: "restore" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("userId is required");
+      expect(resultText(result)).toContain("userId is required");
     });
 
     test("returns error for non-existent user", async () => {
       const result = await tool.handler({ action: "restore", userId: "usr_nonexistent00000" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("User not found");
+      expect(resultText(result)).toContain("User not found");
     });
   });
 
@@ -476,7 +466,7 @@ describe("nb__manage_users", () => {
       expect(emails).toEqual(["alice@example.com", "bob@example.com"]);
 
       // List should NOT include apiKey
-      const raw = extractText(listResult);
+      const raw = resultText(listResult);
       expect(raw).not.toContain("apiKey");
     });
 

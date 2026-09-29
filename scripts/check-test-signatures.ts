@@ -47,12 +47,32 @@
  *   stale data costs nothing to drop; one the test depends on must be wired to
  *   the option that replaced it. A record that is deliberately a shape the type
  *   forbids (a legacy row as it sits on disk) says so with a commented cast.
+ * - **TS2741 / TS2739** "Property is missing" — a stub without a field its type
+ *   requires. The code under test reads `undefined` there, so a test of a rule
+ *   keyed on that field (a role, a status, a counter) runs against a value the
+ *   runtime never produces. Build stubs from the shared helpers
+ *   (`test/helpers/identity.ts`, `test/helpers/fake-fetch.ts`) or give the field
+ *   the value the runtime would.
+ * - **TS2352** "Conversion may be a mistake" — an `as` between types that do not
+ *   overlap, which hides a stub or a mock that no longer matches what it stands
+ *   in for. Narrow instead, or, for a shape deliberately off-type, cast through
+ *   `unknown` with a comment naming why.
+ * - **TS2345** "Argument is not assignable to parameter" — a call handing a
+ *   function a shape it no longer takes: a stub missing a field the callee now
+ *   reads, a helper typed narrower than the value it is given, or a fake built
+ *   on a retired SDK. Type shared helpers on the real types
+ *   (`test/helpers/tool-result.ts`) so one signature serves every caller.
  *
- * `TS2304` "Cannot find name" is the same degradation one step further along — no
- * import at all — and is deliberately still out: its instances are mostly
- * missing DOM lib types, not drift. Widening to another code means fixing
- * that code's existing instances first, and expecting the fix to expose what the
- * dead type was hiding.
+ * - **TS2304 / TS2552** "Cannot find name" — the same degradation one step
+ *   further along, a name with no import at all. TS2552 is the variant that
+ *   suggests a near-miss. The project has no DOM lib on purpose: the suite runs
+ *   on Bun, and a DOM lib would let a server test name `window` or `document`
+ *   without complaint. A browser type a test needs has a non-DOM spelling
+ *   (`webcrypto.JsonWebKey`, `RequestInit["redirect"]`), or the fake is typed as
+ *   the structure it provides.
+ *
+ * Widening to another code means fixing that code's existing instances first,
+ * and expecting the fix to expose what the dead type was hiding.
  *
  * Recount to confirm you cleared them; do not grep. A fix can trade one code for
  * another and leave the total unchanged — repointing a dead import at the right
@@ -115,11 +135,13 @@ const TEST_EXTENSIONS = ["ts", "tsx"];
 /**
  * The diagnostics this gate covers — a call site that fell behind its callee
  * (TS2554), an import naming something its module does not export (TS2305,
- * TS2724, TS2459, TS2614: one defect TypeScript reports four ways), and an
- * object literal naming a property its type does not have (TS2353). See the
- * header before adding another.
+ * TS2724, TS2459, TS2614: one defect TypeScript reports four ways), an object
+ * literal naming a property its type does not have (TS2353), a stub missing one
+ * it requires (TS2741, TS2739), a cast between non-overlapping types (TS2352),
+ * a name that resolves to nothing (TS2304, TS2552), and an argument its
+ * parameter does not accept (TS2345). See the header before adding another.
  */
-const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353];
+const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353, 2741, 2739, 2352, 2304, 2552, 2345];
 const GATED = new RegExp(`error TS(${GATED_CODES.join("|")}):`);
 
 async function main(): Promise<void> {
@@ -181,14 +203,15 @@ async function main(): Promise<void> {
     console.error("arity still executes — JavaScript drops the extras and fills the missing with");
     console.error("undefined. A dead type import degrades to the error type, so every annotation");
     console.error("written in terms of it stops constraining anything. An unknown property is");
-    console.error("ignored by the code it configures. All go on passing while asserting something");
-    console.error("the runtime can no longer do. Update the test.");
+    console.error(
+      "ignored by the code it configures, a missing one reads as undefined, and a cast",
+    );
+    console.error("between non-overlapping types hides either. All go on passing while asserting");
+    console.error("something the runtime can no longer do. Update the test.");
     process.exit(1);
   }
 
-  console.log(
-    `✓ No call-site, import, or excess-property drift across ${onDisk.length} files under test/`,
-  );
+  console.log(`✓ No shape drift across ${onDisk.length} files under test/`);
 }
 
 main().catch((err: unknown) => {

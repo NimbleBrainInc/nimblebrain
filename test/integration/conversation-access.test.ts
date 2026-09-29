@@ -37,24 +37,25 @@ import { ConversationNotFoundError } from "../../src/runtime/errors.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const ALICE: UserIdentity = {
+const ALICE: UserIdentity = makeIdentity({
   id: "usr_alice",
   email: "alice@example.com",
   displayName: "Alice",
   orgRole: "member",
-};
-const BOB: UserIdentity = {
+});
+const BOB: UserIdentity = makeIdentity({
   id: "usr_bob",
   email: "bob@example.com",
   displayName: "Bob",
   orgRole: "member",
-};
+});
 
 /**
  * Auth adapter that maps multiple bearer tokens to multiple identities.

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { wellKnownRoutes } from "../../../src/api/routes/well-known.ts";
 import type { AppContext } from "../../../src/api/types.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── Test helpers ──────────────────────────────────────────────────
 
@@ -158,7 +159,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
 
     // Mock global fetch to intercept the upstream request
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    globalThis.fetch = fakeFetch(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return new Response(JSON.stringify(upstreamMetadata), {
@@ -167,7 +168,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
         });
       }
       return originalFetch(input);
-    };
+    });
 
     try {
       const app = createApp("auth.example.com");
@@ -185,9 +186,9 @@ describe("GET /.well-known/oauth-authorization-server", () => {
 
   it("returns 502 when upstream fetch fails", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
+    globalThis.fetch = fakeFetch(async () => {
       throw new Error("network error");
-    };
+    });
 
     try {
       const app = createApp("auth.example.com");
@@ -203,9 +204,9 @@ describe("GET /.well-known/oauth-authorization-server", () => {
 
   it("returns 502 when upstream returns non-200", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
+    globalThis.fetch = fakeFetch(async () => {
       return new Response("Internal Server Error", { status: 500 });
-    };
+    });
 
     try {
       const app = createApp("auth.example.com");
@@ -235,9 +236,9 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     // network — a bare fetch() of `undefined` would resolve against the test
     // runner's own origin rather than 404.
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = fakeFetch(async () => {
       throw new Error("upstream must not be fetched when there is no metadataUrl");
-    }) as typeof fetch;
+    });
 
     try {
       const app = createApp("myapp.example.com", { metadataUrl: false });

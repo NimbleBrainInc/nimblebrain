@@ -427,6 +427,8 @@ export interface BootstrapResponse {
     maxIterations: number;
     maxInputTokens: number;
     maxOutputTokens: number;
+    /** Attachment limits; absent when the deployment has file context off. */
+    files?: FileLimits;
   };
   version: string;
   buildSha: string | null;
@@ -451,4 +453,11 @@ export interface PlacementEntry {
   icon?: string;
   route?: string;
   size?: "compact" | "full" | "auto";
+}
+
+/** The limits a chat message's attachments are held to (the server's `files` config). */
+export interface FileLimits {
+  maxFileSize: number;
+  maxTotalSize: number;
+  maxFilesPerMessage: number;
 }

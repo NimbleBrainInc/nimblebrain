@@ -29,7 +29,7 @@ function session(orgRole?: string, authenticated = true): SessionInfo {
 }
 
 function workspace(userRole?: "admin" | "member"): WorkspaceInfo {
-  return { id: "ws_demo", name: "Demo", memberCount: 1, connectors: [], userRole };
+  return { id: "ws_demo", name: "Demo", memberCount: 1, connectorCount: 0, userRole };
 }
 
 describe("resolveScopedRole — org-level overrides", () => {

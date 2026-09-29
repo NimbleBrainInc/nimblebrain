@@ -14,15 +14,18 @@
  */
 
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { log } from "../../../src/observability/log.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── Key generation helpers (mirror workos-authkit.test.ts) ──────────
 
 interface TestKeyPair {
   privateKey: CryptoKey;
-  publicJwk: JsonWebKey;
+  /** A JWKS entry: the WebCrypto key plus its RFC 7517 `kid`. */
+  publicJwk: webcrypto.JsonWebKey & { kid?: string };
   kid: string;
 }
 
@@ -120,7 +123,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
     },
   };
 
-  provider.fetcher = async (input: RequestInfo | URL) => {
+  provider.fetcher = fakeFetch(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url === `https://api.workos.com/sso/jwks/${config.clientId}`) {
       return new Response(
@@ -140,7 +143,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
       );
     }
     return new Response("Not Found", { status: 404 });
-  };
+  });
 
   return { provider, refreshCapture };
 }

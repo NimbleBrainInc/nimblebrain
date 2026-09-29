@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { Conversation } from "../../src/conversation/types.ts";
+import type { Conversation, StoredMessage } from "../../src/conversation/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, EngineEvent, EventSink, ToolSchema } from "../../src/engine/types.ts";
@@ -90,6 +90,22 @@ async function appendUser(
   });
 }
 
+/**
+ * Stored history handed straight to the engine, as this suite does on purpose:
+ * the engine's fallback dedup scan reads the `metadata` markers stored messages
+ * carry (the runtime's own path strips them and passes the delivered set
+ * instead). A stored user part may also be a resource link, which the model
+ * input type does not admit; this suite writes text only, and says so.
+ */
+function asEngineInput(history: StoredMessage[]): LanguageModelV4Message[] {
+  for (const m of history) {
+    if (m.role === "user" && m.content.some((p) => p.type !== "text")) {
+      throw new Error("asEngineInput: this suite passes text-only user messages");
+    }
+  }
+  return history as LanguageModelV4Message[];
+}
+
 function systemContent(prompt: LanguageModelV4Message[]): string {
   const sys = prompt.find((m) => m.role === "system");
   return sys && typeof sys.content === "string" ? sys.content : "";
@@ -121,7 +137,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     await appendUser(store, conv, "send an email to a@b.com");
     const rec = recordingModel(sendThenAnswer());
     const engine = new AgentEngine(rec.model, router(), store);
-    await engine.run(config(), SYSTEM, await store.history(conv), [SEND_TOOL]);
+    await engine.run(config(), SYSTEM, asEngineInput(await store.history(conv)), [SEND_TOOL]);
 
     // Two model calls: the one that emitted the tool call, then the one after
     // the tool ran. The overlay fired during the first, so the second must
@@ -148,7 +164,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     await appendUser(store, conv, "send an email to a@b.com");
     const rec = recordingModel(sendThenAnswer());
     const engine = new AgentEngine(rec.model, router(), store);
-    await engine.run(config(), SYSTEM, await store.history(conv), [SEND_TOOL]);
+    await engine.run(config(), SYSTEM, asEngineInput(await store.history(conv)), [SEND_TOOL]);
 
     // What the model actually saw on its final call, minus the system message.
     const liveShape = rec.calls[rec.calls.length - 1]!.prompt.filter(
@@ -182,7 +198,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     await new AgentEngine(rec.model, router(), store).run(
       config(),
       SYSTEM,
-      await store.history(conv),
+      asEngineInput(await store.history(conv)),
       [SEND_TOOL],
     );
 
@@ -218,7 +234,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     await new AgentEngine(rec.model, router(), store).run(
       twoCandidates,
       SYSTEM,
-      await store.history(conv),
+      asEngineInput(await store.history(conv)),
       [SEND_TOOL],
     );
 
@@ -249,7 +265,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     await appendUser(store, conv, "send an email to a@b.com");
     const rec1 = recordingModel(sendThenAnswer());
     const engine1 = new AgentEngine(rec1.model, router(), store);
-    await engine1.run(config(), SYSTEM, await store.history(conv), [SEND_TOOL]);
+    await engine1.run(config(), SYSTEM, asEngineInput(await store.history(conv)), [SEND_TOOL]);
 
     // The overlay was surfaced into the conversation history as a synthetic
     // assistant message — reconstructed from the persisted event.
@@ -267,7 +283,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     // --- Turn 2: a fresh user turn; history already carries the overlay. ---
     await appendUser(store, conv, "now send another");
     const history2 = await store.history(conv);
-    expect(messagesContainOverlay(history2)).toBe(true);
+    expect(messagesContainOverlay(asEngineInput(history2))).toBe(true);
 
     const injected2: EngineEvent[] = [];
     const sink2: EventSink = {
@@ -278,7 +294,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
     };
     const rec2 = recordingModel(sendThenAnswer());
     const engine2 = new AgentEngine(rec2.model, router(), sink2);
-    await engine2.run(config(), SYSTEM, history2, [SEND_TOOL]);
+    await engine2.run(config(), SYSTEM, asEngineInput(history2), [SEND_TOOL]);
 
     // Calling the same connector tool again does NOT re-surface the overlay —
     // the engine sees it already in history (cross-run dedup).
@@ -319,7 +335,7 @@ describe("connector-skill surface-once (engine + event store)", () => {
       new StaticToolRouter([calendarTool], () => ({ content: textContent("[]"), isError: false })),
       store,
     );
-    await engine.run(config(), SYSTEM, await store.history(conv), [calendarTool]);
+    await engine.run(config(), SYSTEM, asEngineInput(await store.history(conv)), [calendarTool]);
 
     const messages = await store.history(conv);
     expect(messages.some((m) => m.metadata?.synthetic === "connector_skill_injected")).toBe(false);

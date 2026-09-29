@@ -50,6 +50,7 @@ function makeSource(name: string, toolNames: string[]): ToolSource {
     tools: async () => tools,
     execute: async (toolName: string): Promise<ToolResult> => ({
       content: [{ type: "text", text: `executed ${name}/${toolName}` }],
+      isError: false,
     }),
   };
 }
@@ -217,7 +218,7 @@ describe("Workspace security: DevIdentityProvider populates workspace connectors
     await adapter.verifyRequest(new Request("http://localhost/v1/bootstrap"));
 
     const ws = await wsStore.create("Test Workspace", "test");
-    await wsStore.addMember(ws.id, "usr_default", "owner");
+    await wsStore.addMember(ws.id, "usr_default", "admin");
 
     console.warn = originalWarn;
 

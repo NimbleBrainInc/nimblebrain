@@ -194,7 +194,11 @@ describe("connector permission gate — enforced on the engine door", () => {
     registry.addSource(registrySource);
     registry.setPermissionContext(WS_ID, h.store);
 
-    const result = await registry.execute({ name: "mock__destructive_write", input: {} });
+    const result = await registry.execute({
+      id: "call-197",
+      name: "mock__destructive_write",
+      input: {},
+    });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ error: "tool_permission_denied" });
     expect(registrySource.callLog).toEqual([]);

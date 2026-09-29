@@ -12,20 +12,10 @@ import {
   type ManageMembersContext,
 } from "../../../src/tools/workspace-mgmt-tools.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { parseResult, resultText } from "../../helpers/tool-result.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-function extractText(result: { content: Array<{ type: string; text: string }> }): string {
-  return result.content[0].text;
-}
-
-function parseResult(result: {
-  content: Array<{ type: string; text: string }>;
-  structuredContent?: Record<string, unknown>;
-}): unknown {
-  if (result.structuredContent) return result.structuredContent;
-  return JSON.parse(extractText(result));
-}
 
 // ── Setup ─────────────────────────────────────────────────────────
 
@@ -81,12 +71,12 @@ beforeEach(async () => {
   });
 
   // Default identity: org admin
-  currentIdentity = {
+  currentIdentity = makeIdentity({
     id: "usr_admin000000001",
     email: "admin@example.com",
     displayName: "Admin",
     orgRole: "admin",
-  };
+  });
 
   tool = createManageMembersTool(makeCtx());
 });
@@ -105,12 +95,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, "usr_wsadmin0000001", "admin");
 
       // Switch identity to workspace admin (not org admin)
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: "usr_wsadmin0000001",
         email: "wsadmin@example.com",
         displayName: "WS Admin",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -175,7 +165,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toBe("User not found");
+      expect(resultText(result)).toBe("User not found");
     });
 
     test("requires userId", async () => {
@@ -187,7 +177,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("userId is required");
+      expect(resultText(result)).toContain("userId is required");
     });
   });
 
@@ -198,12 +188,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "member");
 
       // Act as workspace admin
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: "usr_wsadmin0000001",
         email: "wsadmin@example.com",
         displayName: "WS Admin",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -225,12 +215,12 @@ describe("nb__manage_members", () => {
       // memberUser is the sole workspace admin and acts as the requester.
       const ws = await wsStore.create("Team LastAdmin");
       await wsStore.addMember(ws.id, memberUser.id, "admin");
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -240,7 +230,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Cannot remove the last workspace admin");
+      expect(resultText(result)).toContain("Cannot remove the last workspace admin");
     });
 
     test("can remove admin when another admin exists", async () => {
@@ -266,12 +256,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "admin");
       await userStore.softDelete(anotherUser.id);
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -281,7 +271,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Cannot remove the last workspace admin");
+      expect(resultText(result)).toContain("Cannot remove the last workspace admin");
     });
 
     test("can remove a deactivated admin even though it is an admin entry", async () => {
@@ -291,12 +281,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "admin");
       await userStore.softDelete(anotherUser.id);
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -318,7 +308,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("is not a member");
+      expect(resultText(result)).toContain("is not a member");
     });
   });
 
@@ -345,12 +335,12 @@ describe("nb__manage_members", () => {
       // memberUser is the sole admin and acts as the requester.
       const ws = await wsStore.create("Team DemoteLast");
       await wsStore.addMember(ws.id, memberUser.id, "admin");
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -361,7 +351,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Cannot demote the last workspace admin");
+      expect(resultText(result)).toContain("Cannot demote the last workspace admin");
     });
 
     test("cannot demote the last active admin when the other admin is deactivated", async () => {
@@ -370,12 +360,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "admin");
       await userStore.softDelete(anotherUser.id);
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -386,7 +376,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Cannot demote the last workspace admin");
+      expect(resultText(result)).toContain("Cannot demote the last workspace admin");
     });
 
     test("requires role", async () => {
@@ -400,7 +390,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("role is required");
+      expect(resultText(result)).toContain("role is required");
     });
 
     test("requires userId", async () => {
@@ -413,7 +403,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("userId is required");
+      expect(resultText(result)).toContain("userId is required");
     });
   });
 
@@ -423,12 +413,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "member");
       // Requester must be a workspace admin member; memberUser fills that role.
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -453,12 +443,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, anotherUser.id, "member");
       await userStore.softDelete(anotherUser.id);
       // memberUser (active admin) acts as the requester.
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member User",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({ action: "list", workspaceId: ws.id });
@@ -501,7 +491,7 @@ describe("nb__manage_members", () => {
         workspaceId: "ws_nonexistent",
       });
 
-      expect(extractText(result)).toContain("don't have permission");
+      expect(resultText(result)).toContain("don't have permission");
     });
   });
 
@@ -511,12 +501,12 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "member");
 
       // Regular member (not workspace admin, not org admin)
-      currentIdentity = {
+      currentIdentity = makeIdentity({
         id: memberUser.id,
         email: "member@example.com",
         displayName: "Member",
         orgRole: "member",
-      };
+      });
       tool = createManageMembersTool(makeCtx());
 
       const result = await tool.handler({
@@ -525,7 +515,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(false);
-      expect(extractText(result)).toContain("don't have permission");
+      expect(resultText(result)).toContain("don't have permission");
     });
 
     test("null identity gets permission denied", async () => {
@@ -538,7 +528,7 @@ describe("nb__manage_members", () => {
         workspaceId: ws.id,
       });
 
-      expect(extractText(result)).toContain("don't have permission");
+      expect(resultText(result)).toContain("don't have permission");
     });
 
     test("org owner who is NOT a member can manage members", async () => {
@@ -598,7 +588,7 @@ describe("nb__manage_members", () => {
         workspaceId: ws.id,
         userId: memberUser.id,
       });
-      expect(extractText(removed)).toContain("Cannot remove the last workspace admin");
+      expect(resultText(removed)).toContain("Cannot remove the last workspace admin");
 
       const demoted = await tool.handler({
         action: "update",
@@ -606,7 +596,7 @@ describe("nb__manage_members", () => {
         userId: memberUser.id,
         role: "member",
       });
-      expect(extractText(demoted)).toContain("Cannot demote the last workspace admin");
+      expect(resultText(demoted)).toContain("Cannot demote the last workspace admin");
     });
 
     test("org owner who IS a workspace admin member can manage members", async () => {
@@ -634,7 +624,7 @@ describe("nb__manage_members", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Unknown action: invalid");
+      expect(resultText(result)).toContain("Unknown action: invalid");
     });
   });
 });

@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { rateLimit, requestRateLimit } from "../../../src/api/middleware/rate-limit.ts";
 import { LoginRateLimiter, RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
 import type { AppEnv } from "../../../src/api/types.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
 /**
  * Build a minimal Hono app with the rate-limit middleware protecting a
@@ -92,12 +93,13 @@ function buildAuthenticatedApp(limiter: RequestRateLimiter, userId = "user-1") {
   const app = new Hono<AppEnv>();
   // Simulate requireAuth setting identity
   app.use("*", async (c, next) => {
-    c.set("identity", {
-      id: userId,
-      name: "Test",
-      email: "test@test.com",
-      role: "member",
-    } as AppEnv["Variables"]["identity"]);
+    c.set(
+      "identity",
+      makeIdentity({
+        id: userId,
+        email: "test@test.com",
+      }),
+    );
     await next();
   });
   app.use("*", requestRateLimit(limiter));
@@ -139,12 +141,13 @@ describe("requestRateLimit middleware", () => {
     // Dynamic user based on header
     app.use("*", async (c, next) => {
       const userId = c.req.header("X-Test-User") ?? "default";
-      c.set("identity", {
-        id: userId,
-        name: "Test",
-        email: "t@t.com",
-        role: "member",
-      } as AppEnv["Variables"]["identity"]);
+      c.set(
+        "identity",
+        makeIdentity({
+          id: userId,
+          email: "t@t.com",
+        }),
+      );
       await next();
     });
     app.use("*", requestRateLimit(limiter));

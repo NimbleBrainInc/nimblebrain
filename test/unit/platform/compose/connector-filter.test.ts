@@ -45,6 +45,7 @@ describe("applyConnectorFilter", () => {
       source: "installed apps (2)",
       text: "## Installed Apps\n- synapse-collateral\n- synapse-crm",
       tokens: 100,
+      segment: "stable",
       subItems: [
         {
           kind: "app",
@@ -80,6 +81,7 @@ describe("applyConnectorFilter", () => {
       source: "focused app: synapse-collateral",
       text: "## Active App: synapse-collateral",
       tokens: 50,
+      segment: "volatile",
       connector: "synapse-collateral",
     };
     const otherLayer: TracedLayer = {
@@ -88,6 +90,7 @@ describe("applyConnectorFilter", () => {
       source: "runtime — user preferences + current date",
       text: "## User",
       tokens: 30,
+      segment: "stable",
     };
     const response = makeResponse([focusedApp, otherLayer]);
 
@@ -104,6 +107,7 @@ describe("applyConnectorFilter", () => {
       source: "runtime — user preferences + current date",
       text: "## User",
       tokens: 30,
+      segment: "stable",
     };
     const response = makeResponse([userPrefs]);
 
@@ -120,6 +124,7 @@ describe("applyConnectorFilter", () => {
       source: "layer 3 skills",
       text: "## Skills\n...",
       tokens: 200,
+      segment: "stable",
       subItems: [
         {
           kind: "layer3_skill",
@@ -159,6 +164,7 @@ describe("applyConnectorFilter", () => {
       source: "focused app: x",
       text: "x",
       tokens: 10,
+      segment: "volatile",
       connector: "synapse-crm",
     };
     const dropped: TracedLayer = {
@@ -167,6 +173,7 @@ describe("applyConnectorFilter", () => {
       source: "runtime — user prefs",
       text: "y",
       tokens: 20,
+      segment: "stable",
     };
     const response = makeResponse([matching, dropped]);
     expect(response.totalTokens).toBe(30);
@@ -188,6 +195,7 @@ describe("applyConnectorFilter", () => {
       source: "focused app: synapse-crm",
       text: "## Active App: synapse-crm",
       tokens: 10,
+      segment: "volatile",
       connector: "synapse-crm",
     };
     const dropped: TracedLayer = {
@@ -196,6 +204,7 @@ describe("applyConnectorFilter", () => {
       source: "runtime — user prefs",
       text: "## User\n- Name: Mat",
       tokens: 20,
+      segment: "stable",
     };
     const response = makeResponse([kept, dropped]);
 

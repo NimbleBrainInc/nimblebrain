@@ -31,6 +31,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 
 const TEST_USER_ID = "usr_exec_task_test";
 const TEST_USER_DISPLAY = "Task Test User";
@@ -136,7 +137,7 @@ describe("runtime.executeTask", () => {
 
     const result = await runtime.executeTask({
       prompt: "peek at the context",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       workspaceId: SHARED_WS_ID,
     });
 
@@ -155,7 +156,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       workspaceId: defaultWsId,
       prompt: "score the items",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       maxRunInputTokens: 1,
     });
 
@@ -173,7 +174,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       workspaceId: defaultWsId,
       prompt: "summarize today's activity",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
     expect(result.output).toContain("summarize today's activity");
@@ -195,7 +196,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       workspaceId: defaultWsId,
       prompt: "do the thing",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
     expect(result.stopReason).toBe("other");
@@ -210,7 +211,7 @@ describe("runtime.executeTask", () => {
     await expect(
       runtime.executeTask({
         prompt: "run somewhere",
-        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       }),
     ).rejects.toThrow("request names no workspace");
   });
@@ -222,12 +223,12 @@ describe("runtime.executeTask", () => {
     const first = await runtime.executeTask({
       workspaceId: defaultWsId,
       prompt: "first run",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
     const second = await runtime.executeTask({
       workspaceId: defaultWsId,
       prompt: "second run",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
     expect(first.runId).not.toBe(second.runId);
@@ -240,7 +241,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       workspaceId: defaultWsId,
       prompt: "what's the date today?",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
     // The deliverable rides back on the result, not a persisted conversation.
@@ -278,7 +279,7 @@ describe("runtime.executeTask", () => {
 
     const result = await runtime.executeTask({
       prompt: "ping the shared workspace probe",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       workspaceId: SHARED_WS_ID,
     });
 
@@ -319,7 +320,7 @@ describe("runtime.executeTask", () => {
 
     const result = await runtime.executeTask({
       prompt: "ping anywhere you can reach",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       workspaceId: defaultWsId,
     });
 
@@ -376,7 +377,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask(
       {
         prompt: "ping the probe, then keep going",
-        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
         workspaceId: SHARED_WS_ID,
         signal: controller.signal,
       },
@@ -429,7 +430,7 @@ describe("runtime.executeTask", () => {
       const result = await runtime.executeTask({
         workspaceId: defaultWsId,
         prompt: "rebuild yourself on real tools",
-        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       });
 
       expect(result.toolCalls[0]?.name).toBe(tool);
@@ -462,7 +463,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       workspaceId: defaultWsId,
       prompt: "check automation health",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
     expect(result.toolCalls[0]?.name).toBe("automations__list");
@@ -476,7 +477,7 @@ describe("runtime.executeTask", () => {
     const result = await runtime.executeTask({
       workspaceId: defaultWsId,
       prompt: "tag check",
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       metadata: { automationId: "auto_test_123" },
     });
 
@@ -528,7 +529,7 @@ describe("runtime.executeTask", () => {
     await runtime.executeTask(
       {
         prompt: "do a thing",
-        identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
         workspaceId: SHARED_WS_ID,
       },
       captureSink,

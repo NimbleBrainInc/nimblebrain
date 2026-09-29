@@ -8,18 +8,21 @@
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── Crypto helpers ──────────────────────────────────────────────────
 
 interface TestKeyPair {
   privateKey: CryptoKey;
-  publicJwk: JsonWebKey;
+  /** A JWKS entry: the WebCrypto key plus its RFC 7517 `kid`. */
+  publicJwk: webcrypto.JsonWebKey & { kid?: string };
   kid: string;
 }
 
@@ -122,7 +125,7 @@ function createProvider(): { provider: WorkosIdentityProvider; userStore: UserSt
       ],
     }),
   };
-  provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+  provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
   return { provider, userStore };
 }

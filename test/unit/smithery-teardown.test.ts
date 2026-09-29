@@ -32,6 +32,7 @@ import {
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const ENV_KEYS = ["SMITHERY_API_KEY"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -154,9 +155,9 @@ describe("cleanupSmitheryConnector", () => {
 
   it("reports a transport failure and never throws", async () => {
     configure();
-    globalThis.fetch = (async () => {
+    globalThis.fetch = fakeFetch(async () => {
       throw new Error("network down");
-    }) as typeof fetch;
+    });
 
     const result = await cleanupSmitheryConnector({
       connectionId: "nb-abc",

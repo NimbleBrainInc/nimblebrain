@@ -151,7 +151,7 @@ describe("engine.runMetadata — skills.loaded + context.assembled emission", ()
       );
     // run.start must come before skills.loaded; skills.loaded before context.assembled;
     // both must come before any llm.done.
-    const idx = (t: string) => types.indexOf(t);
+    const idx = (t: (typeof types)[number]) => types.indexOf(t);
     expect(idx("run.start")).toBeLessThan(idx("skills.loaded"));
     expect(idx("skills.loaded")).toBeLessThan(idx("context.assembled"));
     expect(idx("context.assembled")).toBeLessThan(idx("llm.done"));

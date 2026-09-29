@@ -9,6 +9,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +22,7 @@ import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 // ── RSA key pair (generated once per suite) ───────────────────────
 
 let privateKey: CryptoKey;
-let publicJwk: JsonWebKey;
+let publicJwk: webcrypto.JsonWebKey;
 const KID = "integ-key-1";
 
 beforeAll(async () => {
@@ -181,6 +182,17 @@ describe("OIDC integration: full flow", () => {
     expect(identity!.displayName).toBe("Alice");
     expect(identity!.orgRole).toBe("member");
     expect(identity!.id).toMatch(/^usr_oidc_[0-9a-f]{12}$/);
+    // The stored user carries more (its IdP subject, timestamps); none of it
+    // may ride along on the verified identity, which is the user's identity
+    // fields plus the token's grant.
+    expect(Object.keys(identity!).sort()).toEqual([
+      "displayName",
+      "email",
+      "grant",
+      "id",
+      "orgRole",
+      "preferences",
+    ]);
 
     // User was persisted in the store
     const stored = await userStore.getByEmail("alice@acme.com");

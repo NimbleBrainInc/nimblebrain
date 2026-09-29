@@ -34,18 +34,19 @@ import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const MODEL_A = "anthropic:claude-sonnet-5";
 const MODEL_B = "nebius:moonshotai/Kimi-K2.6";
 const FAST_MODEL = "anthropic:claude-haiku-4-5-20251001";
 
-const USER: UserIdentity = {
+const USER: UserIdentity = makeIdentity({
   id: "usr_pin",
   email: "pin@example.com",
   displayName: "Pin",
   orgRole: "member",
-};
+});
 
 /** Someone who chose their own model. `MODEL_B` is never the org default here. */
 const PICKY: UserIdentity = {

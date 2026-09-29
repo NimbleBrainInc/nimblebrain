@@ -257,7 +257,7 @@ test("another workspace's id does not reach this workspace's connector", async (
   // so the property has to be asserted against the lookup: an id minted for
   // one workspace forwards for THAT workspace, and nothing about the door's
   // scan may let it land on a neighbour's registration.
-  const other = await store.create({ name: "other", ownerId: "usr_other" });
+  const other = await store.create("other");
   const otherId = newDeliveryId();
   await seedWorkspace({
     id: other.id,
@@ -283,7 +283,7 @@ describe("a registration written before delivery ids existed", () => {
     // and with no `try` in the route that surfaced as a 500 — the one answer this
     // door's uniform 404 exists to never give, and it would have been given for a
     // perfectly current workspace.
-    const stale = await store.create({ name: "stale", ownerId: "usr_stale" });
+    const stale = await store.create("stale");
     await seedWorkspace({
       id: stale.id,
       hooks: {
@@ -305,7 +305,7 @@ describe("a registration written before delivery ids existed", () => {
   });
 
   test("its own URL cannot be reconstructed, so it 404s like anything else", async () => {
-    const stale = await store.create({ name: "stale-only", ownerId: "usr_stale" });
+    const stale = await store.create("stale-only");
     await seedWorkspace({
       id: stale.id,
       hooks: {
@@ -393,7 +393,7 @@ describe("every way a delivery is refused looks the same", () => {
   test("an id whose workspace is gone", async () => {
     // Its registration went with the record, so the scan finds nothing — the
     // same answer as an id that never existed, which is the point.
-    const doomed = await store.create({ name: "doomed", ownerId: "usr_doomed" });
+    const doomed = await store.create("doomed");
     const doomedId = newDeliveryId();
     await seedWorkspace({
       id: doomed.id,
@@ -804,7 +804,7 @@ describe("the rotation overlap, at the door", () => {
     // A grace widens which id opens ONE registration, never which registrations
     // an id opens.
     await midRotation();
-    const other = await store.create({ name: "other", ownerId: "usr_other" });
+    const other = await store.create("other");
     await seedWorkspace({
       id: other.id,
       hooks: {

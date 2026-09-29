@@ -34,6 +34,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const BASSETHOUND_ID = "ai.bassethound/mcp";
 const SERVER = "nimblebrain/bassethound";
@@ -129,11 +130,13 @@ let h: Harness;
 
 /** Stub the Connect API upsert with a ready connection. */
 function stubConnectApi(): void {
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ connectionId: "ignored", status: { state: "connected" } }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    })) as typeof fetch;
+  globalThis.fetch = fakeFetch(
+    async () =>
+      new Response(JSON.stringify({ connectionId: "ignored", status: { state: "connected" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
 }
 
 beforeEach(async () => {

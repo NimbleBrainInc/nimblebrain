@@ -117,6 +117,8 @@ describe("parseAdminToolsDeclaration", () => {
 });
 
 describe("the catalog projection", () => {
+  // `host` is the raw `_meta` block as a catalog file carries it, including
+  // shapes the projection must reject, so it is wider than the typed block.
   function detail(host: Record<string, unknown>): ServerDetail {
     return {
       name: "ai.acme/crm",
@@ -124,7 +126,7 @@ describe("the catalog projection", () => {
       version: "1.0.0",
       remotes: [{ type: "streamable-http", url: "https://crm.acme.test/mcp" }],
       _meta: { "ai.nimblebrain/host": host },
-    } as ServerDetail;
+    } as unknown as ServerDetail;
   }
 
   test("carries admin_tools onto the catalog entry", () => {

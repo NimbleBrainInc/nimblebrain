@@ -1219,8 +1219,9 @@ describe("reconstructMessages — cancelled runs", () => {
 function toolResultValue(messages: StoredMessage[]): string {
   const toolMsg = messages.find((m) => m.role === "tool");
   if (!toolMsg) throw new Error("no tool message in reconstruction");
-  const part = (toolMsg.content as Array<Record<string, unknown>>)[0]!;
-  return ((part.output as Record<string, unknown>).value as string) ?? "";
+  const part = toolMsg.role === "tool" ? toolMsg.content[0] : undefined;
+  if (part?.type !== "tool-result") throw new Error("no tool result in the tool message");
+  return part.output.type === "text" ? part.output.value : "";
 }
 
 /** Pull the UI-metadata tool output carried on the assistant message. */

@@ -290,6 +290,7 @@ function makeFakeSource(name: string): ToolSource {
     tools: async () => tools,
     execute: async (toolName: string): Promise<ToolResult> => ({
       content: [{ type: "text", text: `${name}/${toolName}` }],
+      isError: false,
     }),
   };
 }

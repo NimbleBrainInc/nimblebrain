@@ -915,14 +915,7 @@ describe("status tool — scope: skills", () => {
 describe("search — feature flag gating", () => {
   it("scope=tools returns error when toolDiscovery is disabled", async () => {
     const registry = await makeRegistry();
-    const features = {
-      skillManagement: true,
-      toolDiscovery: false,
-      catalogSearch: true,
-      fileContext: true,
-      userManagement: true,
-      workspaceManagement: true,
-    };
+    const features = resolveFeatures({ toolDiscovery: false });
     const systemTools = await createSystemTools(
       () => registry,
       undefined,
@@ -942,14 +935,7 @@ describe("search — feature flag gating", () => {
 
   it("scope=catalog returns error when catalogSearch is disabled", async () => {
     const registry = await makeRegistry();
-    const features = {
-      skillManagement: true,
-      toolDiscovery: true,
-      catalogSearch: false,
-      fileContext: true,
-      userManagement: true,
-      workspaceManagement: true,
-    };
+    const features = resolveFeatures({ catalogSearch: false });
     const systemTools = await createSystemTools(
       () => registry,
       undefined,
@@ -969,14 +955,7 @@ describe("search — feature flag gating", () => {
 
   it("scope=tools works when toolDiscovery is enabled", async () => {
     const registry = await makeRegistry();
-    const features = {
-      skillManagement: true,
-      toolDiscovery: true,
-      catalogSearch: false,
-      fileContext: true,
-      userManagement: true,
-      workspaceManagement: true,
-    };
+    const features = resolveFeatures({ catalogSearch: false });
     const systemTools = await createSystemTools(
       () => registry,
       undefined,
@@ -1134,7 +1113,14 @@ describe("status tool — scope: overview", () => {
     const getSkills: GetSkillsFn = () => ({
       context: [
         {
-          manifest: { name: "soul", description: "Identity", version: "1.0.0", priority: 0 },
+          manifest: {
+            loadingStrategy: "always",
+            status: "active",
+            name: "soul",
+            description: "Identity",
+            version: "1.0.0",
+            priority: 0,
+          },
           body: "You are helpful.",
           sourcePath: "/src/skills/core/soul.md",
         },

@@ -100,7 +100,7 @@ function storeV2Tests(
       const laterTimestamp = new Date(Date.now() + 5000).toISOString();
       await store.append(conv, {
         role: "user",
-        content: "later message",
+        content: [{ type: "text", text: "later message" }],
         timestamp: laterTimestamp,
       });
 
@@ -368,7 +368,7 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
     });
     const userMsg = JSON.stringify({
       role: "user",
-      content: "old message",
+      content: [{ type: "text", text: "old message" }],
       timestamp: "2024-06-01T00:00:00.000Z",
     });
     writeFileSync(join(dir, `${id}.jsonl`), `${meta}\n${userMsg}\n`);
@@ -459,21 +459,21 @@ describe("JsonlConversationStore (JSONL-specific)", () => {
     const conv1 = await store.create({ ownerId: "user_test" });
     await store.append(conv1, {
       role: "user",
-      content: "First",
+      content: [{ type: "text", text: "First" }],
       timestamp: "2025-01-01T00:00:00.000Z",
     });
 
     const conv2 = await store.create({ ownerId: "user_test" });
     await store.append(conv2, {
       role: "user",
-      content: "Second",
+      content: [{ type: "text", text: "Second" }],
       timestamp: "2025-02-01T00:00:00.000Z",
     });
 
     const conv3 = await store.create({ ownerId: "user_test" });
     await store.append(conv3, {
       role: "user",
-      content: "Third",
+      content: [{ type: "text", text: "Third" }],
       timestamp: "2025-03-01T00:00:00.000Z",
     });
 

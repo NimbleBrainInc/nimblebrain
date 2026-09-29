@@ -6,6 +6,7 @@ import type {
   LanguageModelV4StreamPart,
   LanguageModelV4ToolCall,
   LanguageModelV4Usage,
+  SharedV4ProviderMetadata,
 } from "@ai-sdk/provider";
 
 /**
@@ -24,7 +25,7 @@ export interface EchoModelResponse {
    * Anthropic SDK forwards thinking-block signatures here; tests use
    * this to verify multi-iteration round-trips preserve the signature.
    */
-  reasoningProviderMetadata?: Record<string, Record<string, unknown>>;
+  reasoningProviderMetadata?: SharedV4ProviderMetadata;
   /**
    * Optional reasoning-token subtotal reported in usage.outputTokens.reasoning.
    * Tests use this to verify the engine forwards the breakdown on llm.done.

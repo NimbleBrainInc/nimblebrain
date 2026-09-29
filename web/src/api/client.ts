@@ -703,7 +703,7 @@ export interface InstalledConnector {
   catalogId?: string | null;
   catalog?: ConnectorCatalogEntry;
   authorizationUrl?: string;
-  identity?: { sub?: string; email?: string; name?: string };
+  identity?: { email?: string; name?: string };
   missingOperatorSetup?: boolean;
   /** Last connection error for crashed / dead / reauth_required states. */
   lastError?: string;
@@ -802,6 +802,8 @@ export interface PersonalConnector {
    * composio Connect route keys on. Absent for DCR connectors.
    */
   connectorId?: string;
+  /** The account the connection is signed in as, when one was recorded. */
+  identity?: { email?: string; name?: string };
   grantedWorkspaces: string[];
 }
 

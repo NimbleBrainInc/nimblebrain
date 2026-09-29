@@ -73,7 +73,7 @@ import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
-import type { BootstrapResponse, ConfigInfo, PlacementEntry } from "./types";
+import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
 import "./index.css";
 
 function AuthenticatedApp({
@@ -120,6 +120,7 @@ function AuthenticatedApp({
     newConversationModel: bootstrap.config.newConversationModel,
     availableModels: bootstrap.config.availableModels,
     preferences: bootstrap.user.preferences,
+    fileLimits: bootstrap.config.files,
   };
 
   // Build session info from bootstrap user data
@@ -168,6 +169,7 @@ function BootstrappedShell({
     newConversationModel?: string;
     availableModels?: ConfigInfo["availableModels"];
     preferences?: { displayName?: string; timezone?: string; locale?: string; theme?: string };
+    fileLimits?: FileLimits;
   };
   currentUserId: string;
   onLogout: () => void;

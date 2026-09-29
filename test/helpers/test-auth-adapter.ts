@@ -21,13 +21,14 @@ import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User, UserStore } from "../../src/identity/user.ts";
 import type { IdentityStores } from "../../src/runtime/types.ts";
 import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "./identity.ts";
 
-export const TEST_IDENTITY: UserIdentity = {
+export const TEST_IDENTITY: UserIdentity = makeIdentity({
   id: "usr_test",
   email: "test@example.com",
   displayName: "Test User",
   orgRole: "owner",
-};
+});
 
 export class TestAuthAdapter implements IdentityProvider {
   private initPromise?: Promise<void>;

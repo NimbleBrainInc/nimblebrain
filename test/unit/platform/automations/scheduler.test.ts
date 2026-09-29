@@ -1173,11 +1173,11 @@ describe("Scheduler — runNow", () => {
 
     const SLEEP_MS = 50;
     const executor: Executor = mock(
-      async (_auto: Automation, _signal: AbortSignal): Promise<AutomationRun> => {
+      async (_auto: Automation, _signal: AbortSignal): Promise<never> => {
         await new Promise((r) => setTimeout(r, SLEEP_MS));
         throw new Error("Automation slow timed out after 1s");
       },
-    ) as Executor;
+    );
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
 
@@ -1219,8 +1219,8 @@ describe("Scheduler — stop", () => {
     const executor: Executor = mock(async (_auto: Automation, signal: AbortSignal) => {
       receivedSignal = signal;
       // Block forever
-      return new Promise<AutomationRun>(() => {});
-    }) as Executor;
+      return new Promise<never>(() => {});
+    });
 
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
@@ -1639,8 +1639,8 @@ describe("Scheduler — cancelRun", () => {
     let receivedSignal: AbortSignal | null = null;
     const executor: Executor = mock(async (_auto: Automation, signal: AbortSignal) => {
       receivedSignal = signal;
-      return new Promise<AutomationRun>(() => {}); // block forever
-    }) as Executor;
+      return new Promise<never>(() => {}); // block forever
+    });
 
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();

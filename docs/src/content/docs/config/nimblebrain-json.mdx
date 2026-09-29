@@ -645,6 +645,8 @@ File upload limits applied when `features.fileContext` is enabled.
 | `maxFilesPerMessage` | `integer` | 10 | Maximum number of files per chat message. |
 | `maxExtractedTextSize` | `integer` (bytes) | 200 KB | Maximum extracted text size per file. |
 
+An upload to the workspace file store (the Files app, or an app's file picker) is not a chat message: `maxFilesPerMessage` does not apply to it. It takes up to 100 files at a time, each within `maxFileSize` and all together within `maxTotalSize`. The chat composer shows the per-message limits before you send.
+
 ## telemetry
 
 NimbleBrain collects anonymized, aggregate usage data with no PII — no connector names, tool names, error messages, or file paths are sent.

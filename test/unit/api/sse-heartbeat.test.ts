@@ -23,7 +23,7 @@ function makeStreamPair(): {
   const read = async (): Promise<string> => {
     let out = "";
     while (true) {
-      const raced = await Promise.race<ReadableStreamReadResult<Uint8Array> | "idle">([
+      const raced = await Promise.race<Awaited<ReturnType<typeof reader.read>> | "idle">([
         reader.read(),
         sleep(5).then(() => "idle" as const),
       ]);

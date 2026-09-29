@@ -22,6 +22,7 @@ import {
   composioCallbackUrl,
   composioUserId,
   findActiveComposioConnection,
+  getComposioAccountDisplayName,
   initiateComposioConnection,
 } from "./sdk.ts";
 
@@ -191,12 +192,20 @@ export function composioAuthRoutes(ctx: AppContext) {
     if (entry instanceof Response) return entry;
 
     const composioUser = composioUserId(owner);
+    // The redirect carries only the account id, so the account's label is one
+    // bounded read. Awaited, not fired after the save: a late rewrite could land
+    // after a Disconnect and put `connection.json` back.
+    const { apiKey } = validateComposioConfig();
+    const displayName = apiKey
+      ? await getComposioAccountDisplayName({ apiKey, connectedAccountId })
+      : undefined;
     const connection: ComposioConnection = {
       connectedAccountId,
       toolkit: entry.composio.toolkit,
       userId: composioUser,
       connectedAt: new Date().toISOString(),
       status,
+      ...(displayName ? { displayName } : {}),
     };
 
     try {
@@ -417,6 +426,7 @@ async function adoptExistingComposioConnection(
         userId: composioUser,
         connectedAt: new Date().toISOString(),
         status: existing.status,
+        ...(existing.displayName ? { displayName: existing.displayName } : {}),
       };
       await saveComposioConnection(ctx.runtime.getWorkDir(), owner, connectorId, connection);
       if (owner.type === "workspace") {

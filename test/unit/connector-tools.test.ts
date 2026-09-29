@@ -15,6 +15,7 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import type { CredentialStore } from "../../src/tools/credential-store.ts";
+import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -1118,6 +1119,36 @@ describe("manage_connectors.get_installed", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "get_installed", serverName: "" });
     expect(result.isError).toBe(true);
+  });
+
+  test("names the signed-in account; the full list does not read it", async () => {
+    // Records first: seeding derives the boot state from the stored tokens.
+    const owner = { type: "workspace", wsId: h.wsId } as const;
+    const records = new McpOAuthRecords({
+      owner,
+      serverName: STUB_SERVER_NAME,
+      workDir: h.workDir,
+    });
+    await records.write("tokens", { access_token: "at", token_type: "Bearer" });
+    await records.write("identity", { sub: "vendor-subject", email: "ops@acme-corp.example" });
+    await seedConnector(h);
+    const tool = buildTool(h, ADMIN_USER);
+
+    const one = await tool.handler({ action: "get_installed", serverName: STUB_SERVER_NAME });
+    const installed = (
+      one.structuredContent as { installed: { state: string; identity?: unknown } }
+    ).installed;
+    expect(installed.state).toBe("running");
+    expect(installed.identity).toEqual({ email: "ops@acme-corp.example" });
+
+    // The full list backs every shell load; each identity read writes an audit
+    // line, so it stays off this path.
+    const all = await tool.handler({ action: "list_installed" });
+    const entry = (
+      all.structuredContent as { installed: Array<{ serverName: string; identity?: unknown }> }
+    ).installed.find((e) => e.serverName === STUB_SERVER_NAME);
+    expect(entry).toBeDefined();
+    expect(entry?.identity).toBeUndefined();
   });
 });
 

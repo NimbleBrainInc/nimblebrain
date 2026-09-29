@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
+import type { NotificationRoute } from "../../../src/notifications/config.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
 import {
   RETRY_TICK_MS,
@@ -413,11 +414,9 @@ describe("an author who is no longer a member", () => {
     error: "not a member",
   };
 
-  async function storedRoute(): Promise<Record<string, unknown> | undefined> {
+  async function storedRoute(): Promise<NotificationRoute | undefined> {
     const ws = await workspaceStore.get(wsId);
-    const routes = (ws?.notifications as { routes?: Array<Record<string, unknown>> } | undefined)
-      ?.routes;
-    return routes?.[0];
+    return ws?.notifications?.routes?.[0];
   }
 
   test("disables the route on the workspace record, with a reason the editor shows", async () => {

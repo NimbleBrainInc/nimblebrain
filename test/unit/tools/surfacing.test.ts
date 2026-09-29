@@ -25,6 +25,8 @@ function makeAppTools(prefix: string, count: number): ToolSchema[] {
 function makeSkill(opts: { allowedTools?: string[] } = {}): Skill {
   return {
     manifest: {
+      loadingStrategy: "dynamic",
+      status: "active",
       name: "test-skill",
       description: "Test",
       version: "1.0.0",
@@ -309,12 +311,21 @@ describe("composeSystemPrompt — apps injection", () => {
 
   it("apps section placed between context skills and matched skill", () => {
     const ctx: Skill = {
-      manifest: { name: "soul", description: "", version: "1.0.0", priority: 0 },
+      manifest: {
+        loadingStrategy: "always",
+        status: "active",
+        name: "soul",
+        description: "",
+        version: "1.0.0",
+        priority: 0,
+      },
       body: "I am the identity layer.",
       sourcePath: "/test/soul.md",
     };
     const skill: Skill = {
       manifest: {
+        loadingStrategy: "dynamic",
+        status: "active",
         name: "test",
         description: "",
         version: "1.0.0",

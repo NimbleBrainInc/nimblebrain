@@ -17,6 +17,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +28,7 @@ import { WorkosIdentityProvider } from "../../src/identity/providers/workos.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const AUTHKIT_DOMAIN = "testapp";
 const AUTHKIT_ISSUER = `https://${AUTHKIT_DOMAIN}.authkit.app`;
@@ -45,7 +47,7 @@ const testDir = join(tmpdir(), `nb-first-party-clients-${Date.now()}`);
 const seedDir = join(testDir, "seed");
 
 let privateKey: CryptoKey;
-let publicJwk: JsonWebKey;
+let publicJwk: webcrypto.JsonWebKey;
 /** Wall-clock deadline for every token, so tests share one clock. */
 let nowSec: number;
 /** A workspace USER belongs to. */
@@ -125,12 +127,12 @@ function workosProvider(config: Partial<WorkosAuth>): WorkosIdentityProvider {
       ],
     }),
   };
-  provider.fetcher = async (input: RequestInfo | URL) => {
+  provider.fetcher = fakeFetch(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url !== `${AUTHKIT_ISSUER}/oauth2/jwks`) return new Response("Not Found", { status: 404 });
     const { kty, n, e } = publicJwk;
     return Response.json({ keys: [{ kty, kid: KID, n, e, alg: "RS256", use: "sig" }] });
-  };
+  });
   return provider;
 }
 

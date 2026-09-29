@@ -291,7 +291,9 @@ const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set([
   "claude-opus-4-7",
   "claude-opus-4-8",
   "claude-opus-5",
+  "claude-opus-5-5",
   "claude-sonnet-5",
+  "claude-sonnet-5-5",
 ]);
 
 /**
@@ -428,7 +430,7 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   // Drop this row once models.dev stops carrying the model (OpenAI shutdown 2026-08-10).
   "gpt-5.2-chat-latest": new Set(["medium"]),
 
-  // Measured and unrestricted — 20 of the 25 reachable models.
+  // Measured and unrestricted — 23 of the 28 reachable models.
   "gpt-5": FULL_PLUS_MINIMAL,
   "gpt-5-mini": FULL_PLUS_MINIMAL,
   "gpt-5-nano": FULL_PLUS_MINIMAL,
@@ -443,6 +445,9 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   "gpt-5.6-luna": FULL_LADDER,
   "gpt-5.6-sol": FULL_LADDER,
   "gpt-5.6-terra": FULL_LADDER,
+  "gpt-6-astra": FULL_LADDER,
+  "gpt-6-luna": FULL_LADDER,
+  "gpt-6-sol": FULL_LADDER,
   o1: FULL_LADDER,
   "o1-pro": FULL_LADDER,
   o3: FULL_LADDER,

@@ -6,6 +6,7 @@ import {
   type TaskFnResult,
 } from "../../../../src/platform/automations/executor.ts";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
+import { fakeFetch } from "../../../helpers/fake-fetch.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,7 +72,7 @@ beforeEach(() => {
       }),
     ),
   );
-  globalThis.fetch = mockFetch as typeof fetch;
+  globalThis.fetch = fakeFetch(mockFetch);
 });
 
 afterEach(() => {
@@ -614,6 +615,26 @@ describe("createDirectExecutor — degraded runs", () => {
       call("granola__list_meetings", { since: "2026-09-25" }, true),
     ]);
     expect(run.status).toBe("success");
+  });
+
+  test("rejected arguments corrected on a many-job tool stay success", async () => {
+    const run = await runWith([
+      call("records__create", { id: "a" }, true),
+      call("records__create", { record_id: "b" }, false),
+      call("records__create", { id: "b" }, true),
+      call("records__create", { id: "c" }, true),
+    ]);
+    expect(run.status).toBe("success");
+  });
+
+  test("a failed write is not resolved by a later success of the same shape on another item", async () => {
+    const run = await runWith([
+      call("records__create", { id: "a", note: "x" }, false),
+      call("records__create", { id: "b", note: "y" }, true),
+      call("records__create", { id: "c", note: "z" }, true),
+    ]);
+    expect(run.status).toBe("degraded");
+    expect(run.error).toMatch(/records__create ×1/);
   });
 
   test("a failure after a one-job tool's only success is degraded", async () => {

@@ -4,7 +4,7 @@ import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { CONVERSATION_ID_RE } from "../conversation/types.ts";
 import type { EngineEvent, EventSink } from "../engine/types.ts";
-import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
+import { humanSize, ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
 import { resolveMimeType } from "../files/mime.ts";
 import type { FileEntry } from "../files/types.ts";
 import { FILE_ID_RE } from "../files/uri.ts";
@@ -1327,10 +1327,20 @@ export async function handleToolCall(
   });
 }
 
+/** The attachment limits a chat message is held to. */
+function fileLimits(config: ReturnType<Runtime["getFilesConfig"]>) {
+  return {
+    maxFileSize: config.maxFileSize,
+    maxTotalSize: config.maxTotalSize,
+    maxFilesPerMessage: config.maxFilesPerMessage,
+  };
+}
+
 /** Handle GET /v1/bootstrap — single startup endpoint replacing multiple calls. */
 export async function handleBootstrap(
   runtime: Runtime,
   identity?: UserIdentity,
+  features?: ResolvedFeatures,
 ): Promise<Response> {
   if (!identity) {
     return apiError(401, "authentication_required", "Authentication is required");
@@ -1415,6 +1425,10 @@ export async function handleBootstrap(
       maxIterations,
       maxInputTokens,
       maxOutputTokens,
+      // Attachment limits, so the composer states them before a send rather
+      // than after a refusal. Absent when file context is off: there is no
+      // attachment to limit.
+      ...(features?.fileContext ? { files: fileLimits(runtime.getFilesConfig()) } : {}),
     },
     version: VERSION,
     buildSha: process.env.NB_BUILD_SHA || null,
@@ -2083,7 +2097,7 @@ async function persistResourceUploads(
   for (const file of uploads) {
     if (file.data.length > config.maxFileSize) {
       errors.push(
-        `File "${file.filename}" (${file.data.length} bytes) exceeds per-file limit of ${config.maxFileSize}`,
+        `File "${file.filename}" (${humanSize(file.data.length)}) exceeds per-file limit of ${humanSize(config.maxFileSize)}`,
       );
       continue;
     }
@@ -2113,6 +2127,14 @@ async function persistResourceUploads(
   }
   return { entries, errors };
 }
+
+/**
+ * Files one store upload may carry. An upload adds files to the workspace store
+ * and makes no chat message, so `maxFilesPerMessage` (a bound on one model
+ * turn's attachments) does not apply; bytes are bounded by `maxTotalSize`, and
+ * this caps the per-file writes a request of many tiny parts can cause.
+ */
+const MAX_FILES_PER_UPLOAD = 100;
 
 /**
  * Handle POST /v1/workspaces/:wsId/resources — multipart file upload to the workspace
@@ -2151,18 +2173,22 @@ export async function handleResourceUpload(
   }
 
   const config = runtime.getFilesConfig();
-  if (uploads.length > config.maxFilesPerMessage) {
-    return apiError(413, "payload_too_large", "Too many files", {
-      count: uploads.length,
-      limit: config.maxFilesPerMessage,
-    });
+  if (uploads.length > MAX_FILES_PER_UPLOAD) {
+    return apiError(
+      413,
+      "payload_too_large",
+      `Too many files: ${uploads.length} in one upload; the limit is ${MAX_FILES_PER_UPLOAD}.`,
+      { count: uploads.length, limit: MAX_FILES_PER_UPLOAD },
+    );
   }
   const totalSize = uploads.reduce((s, f) => s + f.data.length, 0);
   if (totalSize > config.maxTotalSize) {
-    return apiError(413, "payload_too_large", "Total upload size exceeds limit", {
-      size: totalSize,
-      limit: config.maxTotalSize,
-    });
+    return apiError(
+      413,
+      "payload_too_large",
+      `Upload is ${humanSize(totalSize)}; the limit is ${humanSize(config.maxTotalSize)} per upload.`,
+      { size: totalSize, limit: config.maxTotalSize },
+    );
   }
 
   // Optional metadata applied to every uploaded file. The picker flow sends

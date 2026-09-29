@@ -31,22 +31,35 @@ describe("withRotatedKid", () => {
       connector: "acme-mcp",
       vendor: "acme",
       kid: "hk_first",
+      deliveryId: CURRENT_ID,
       route: "/ingest/acme",
     });
     expect(r.kid).toBe("hk_first");
+    expect(r.deliveryId).toBe(CURRENT_ID);
     expect(r.prevKid).toBeUndefined();
+    expect(r.prevDeliveryId).toBeUndefined();
     expect(r.rotatedAt).toBeUndefined();
   });
 
-  test("a rotation carries the outgoing kid into the grace window", () => {
+  test("a rotation carries the outgoing kid and delivery id into the grace window", () => {
     const iso = new Date(NOW).toISOString();
     const r = withRotatedKid(
       reg({ kid: "hk_old", createdAt: "2026-01-01T00:00:00.000Z" }),
-      { connector: "acme-mcp", vendor: "acme", kid: "hk_new", route: "/ingest/acme" },
+      {
+        connector: "acme-mcp",
+        vendor: "acme",
+        kid: "hk_new",
+        deliveryId: "next-delivery-id",
+        route: "/ingest/acme",
+      },
       iso,
     );
     expect(r.kid).toBe("hk_new");
     expect(r.prevKid).toBe("hk_old");
+    // The id rotates with the key: the outgoing URL stays admissible for the
+    // same grace window.
+    expect(r.deliveryId).toBe("next-delivery-id");
+    expect(r.prevDeliveryId).toBe(CURRENT_ID);
     expect(r.rotatedAt).toBe(iso);
     // The stream's identity predates the rotation and must survive it.
     expect(r.createdAt).toBe("2026-01-01T00:00:00.000Z");
@@ -55,7 +68,13 @@ describe("withRotatedKid", () => {
   test("a rotation refreshes the recorded route", () => {
     const r = withRotatedKid(
       reg(),
-      { connector: "acme-mcp", vendor: "acme", kid: "hk_new", route: "/ingest/v2" },
+      {
+        connector: "acme-mcp",
+        vendor: "acme",
+        kid: "hk_new",
+        deliveryId: "next-delivery-id",
+        route: "/ingest/v2",
+      },
       new Date(NOW).toISOString(),
     );
     expect(r.route).toBe("/ingest/v2");

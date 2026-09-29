@@ -78,14 +78,14 @@ const WORKSPACES: WorkspaceInfo[] = [
   {
     id: "ws_team",
     name: "Team",
-    connectors: [],
+    connectorCount: 0,
     memberCount: 2,
     userRole: "admin",
   },
   {
     id: "ws_other",
     name: "Other",
-    connectors: [],
+    connectorCount: 0,
     memberCount: 2,
     userRole: "admin",
   },

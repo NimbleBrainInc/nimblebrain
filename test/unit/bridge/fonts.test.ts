@@ -95,7 +95,7 @@ describe("host font faces cover what the tokens name", () => {
     // The silent-failure guard. Rename a family in `palette.ts` without
     // updating `fonts.ts` and nothing throws — the iframe just renders in
     // `system-ui` and looks plausible. This is what catches that.
-    const shipped = new Set(FONT_SPECS.map((f) => f.family));
+    const shipped = new Set<string>(FONT_SPECS.map((f) => f.family));
     for (const family of familiesNamedByTokens()) {
       expect(shipped.has(family), `no font spec for token family "${family}"`).toBe(true);
     }

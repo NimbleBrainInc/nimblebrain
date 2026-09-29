@@ -87,7 +87,7 @@ const { WorkspaceNotificationsTab } = await import("../pages/settings/WorkspaceN
 const WS: WorkspaceInfo = {
   id: "ws_outbound",
   name: "Outbound",
-  connectors: [],
+  connectorCount: 0,
   memberCount: 1,
   userRole: "admin",
 };

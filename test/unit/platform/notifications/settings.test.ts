@@ -28,6 +28,7 @@ import {
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
+import { resultText } from "../../../helpers/tool-result.ts";
 
 const WS = "ws_outbound";
 const USER = "usr_admin";
@@ -140,10 +141,6 @@ async function settings(): Promise<NotificationsSettingsOutput> {
   return res.structuredContent as unknown as NotificationsSettingsOutput;
 }
 
-function textOf(res: { content?: Array<{ text?: string }> }): string {
-  return res.content?.[0]?.text ?? "";
-}
-
 const route = (over: Partial<NotificationRouteInput> = {}): NotificationRouteInput => ({
   match: { source: "precision-outbound", name: "domain.*", level: "attention" },
   deliver: [{ kind: "tool", tool: TOOL, input: { channel: "#outbound", text: "{{title}}" } }],
@@ -175,7 +172,7 @@ describe("a member cannot configure the workspace", () => {
   test("cannot read the settings", async () => {
     const res = await exec("settings");
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("admin");
+    expect(resultText(res)).toContain("admin");
   });
 
   test("cannot raise a ceiling", async () => {
@@ -230,7 +227,7 @@ describe("the ceiling", () => {
     }
     const overflow = await exec("set_source_level", { source: "one-too-many", maxLevel: "info" });
     expect(overflow.isError).toBe(true);
-    expect(textOf(overflow)).toContain(String(NOTIFICATION_SOURCES_MAX));
+    expect(resultText(overflow)).toContain(String(NOTIFICATION_SOURCES_MAX));
 
     // The cap bounds how many sources are held, not whether a held one moves.
     const existing = await exec("set_source_level", { source: "src-0", maxLevel: "urgent" });
@@ -261,7 +258,7 @@ describe("the principal a route dispatches under", () => {
       routes: [{ ...route(), createdBy: OTHER }],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("must NOT have additional properties");
+    expect(resultText(res)).toContain("must NOT have additional properties");
     expect(runtime.workspaces.get(WS)?.notifications?.routes).toBeUndefined();
   });
 
@@ -331,7 +328,7 @@ describe("a route may only name what the workspace has", () => {
       routes: [route({ deliver: [{ kind: "tool", tool: "pagerduty__page" }] })],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("pagerduty__page");
+    expect(resultText(res)).toContain("pagerduty__page");
     expect(runtime.workspaces.get(WS)?.notifications?.routes).toBeUndefined();
   });
 
@@ -340,7 +337,7 @@ describe("a route may only name what the workspace has", () => {
       routes: [route({ deliver: [{ kind: "agent", automation: "auto_nope" }] })],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("auto_nope");
+    expect(resultText(res)).toContain("auto_nope");
   });
 
   test("an automation the caller owns is accepted", async () => {
@@ -357,7 +354,7 @@ describe("a route may only name what the workspace has", () => {
       routes: [route({ deliver: [{ kind: "tool", tool: TOOL, input: { text: "{{campaign}}" } }] })],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("{{campaign}}");
+    expect(resultText(res)).toContain("{{campaign}}");
   });
 
   test("the four documented placeholders are accepted, nested and all", async () => {
@@ -385,7 +382,7 @@ describe("a route may only name what the workspace has", () => {
       routes: [route({ id: "rt_same" }), route({ id: "rt_same" })],
     });
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("rt_same");
+    expect(resultText(res)).toContain("rt_same");
   });
 });
 
@@ -421,6 +418,6 @@ describe("without a bound workspace", () => {
       source.execute("settings", {}),
     );
     expect(res.isError).toBe(true);
-    expect(textOf(res)).toContain("No workspace in scope");
+    expect(resultText(res)).toContain("No workspace in scope");
   });
 });
