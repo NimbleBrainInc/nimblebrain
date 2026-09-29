@@ -122,26 +122,34 @@ describe("aggregateUsage", () => {
     expect(report.totals.conversations).toBe(1);
   });
 
-  it("counts aux.usage events (forked compaction/title calls) toward totals", async () => {
+  it("counts forked calls (ledger source compaction, title) toward totals", async () => {
     const dir = makeTmpDir();
+    // The runtime records a history fold as `source: "compaction"` and an
+    // auto-title as `source: "title"`, beside the turn's own `main` calls.
     writeCalls(dir, { id: "conv-aux" }, [
       llmEvent({ inputTokens: 1000, outputTokens: 500 }),
       {
-        type: "aux.usage",
         ts: "2026-04-10T12:05:00Z",
         source: "compaction",
         model: "claude-haiku-4-5-20251001",
         usage: { inputTokens: 400, outputTokens: 60, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 120,
       },
+      {
+        ts: "2026-04-10T12:06:00Z",
+        source: "title",
+        model: "claude-haiku-4-5-20251001",
+        usage: { inputTokens: 50, outputTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 40,
+      },
     ]);
 
     const report = await aggregateUsage(dir, "all", "day");
 
-    // Both the main turn and the forked summarizer call are counted.
-    expect(report.totals.tokens.input).toBe(1400);
-    expect(report.totals.tokens.output).toBe(560);
-    expect(report.totals.llmCalls).toBe(2);
+    // The main turn and both forked calls are counted.
+    expect(report.totals.tokens.input).toBe(1450);
+    expect(report.totals.tokens.output).toBe(568);
+    expect(report.totals.llmCalls).toBe(3);
   });
 
   it("excludes an entry timestamped before the report window", async () => {
