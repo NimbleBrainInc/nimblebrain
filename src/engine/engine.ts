@@ -1137,6 +1137,10 @@ export class AgentEngine {
     let lastFinishReason: FinishReason | undefined;
     // The same call's provider-native stop reason (see `EngineResult.finishReasonRaw`).
     let lastFinishReasonRaw: string | undefined;
+    // Input tokens the most recent model call reported: the floor for the next
+    // call's size, which is what the run cap is checked against.
+    let lastCallInputTokens = 0;
+    let runInputCapReached = false;
 
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
@@ -1161,6 +1165,18 @@ export class AgentEngine {
         // stop starting new work. The run's catch below ends an aborted
         // run with `run.done` stopReason "cancelled" and rethrows.
         throwIfAborted(config.signal);
+
+        // The run-wide input cap. Checked before the call rather than after,
+        // so the run never starts a call it cannot afford; the previous call's
+        // size stands in for this one's (see `EngineConfig.maxRunInputTokens`).
+        if (
+          config.maxRunInputTokens !== undefined &&
+          lastCallInputTokens > 0 &&
+          cumulativeUsage.inputTokens + lastCallInputTokens > config.maxRunInputTokens
+        ) {
+          runInputCapReached = true;
+          break;
+        }
 
         // Offer the history this loop has grown back to the caller, which may
         // return a smaller one to run with from here on (the runtime folds an
@@ -1274,6 +1290,7 @@ export class AgentEngine {
 
         const turnUsage = computeTurnUsage(response.usage);
         addUsage(cumulativeUsage, turnUsage);
+        lastCallInputTokens = turnUsage.inputTokens;
         cumulativeLlmMs += llmMs;
 
         // Track the model's per-call finish reason for downstream
@@ -1412,6 +1429,7 @@ export class AgentEngine {
       runId,
       iteration,
       maxIter,
+      runInputCapReached,
       lastFinishReason,
       lastFinishReasonRaw,
       totalMs,
@@ -1454,7 +1472,7 @@ export class AgentEngine {
 
   /**
    * Emit `run.done` and assemble the EngineResult: the run-level stop reason
-   * (iteration cap first, then the model-driven exit) and the reported
+   * (run input cap, then iteration cap, then the model-driven exit) and the reported
    * iteration count (which includes the in-progress iteration when the loop
    * exited before the cap).
    */
@@ -1462,6 +1480,7 @@ export class AgentEngine {
     runId: string;
     iteration: number;
     maxIter: number;
+    runInputCapReached: boolean;
     lastFinishReason: FinishReason | undefined;
     lastFinishReasonRaw: string | undefined;
     totalMs: number;
@@ -1474,6 +1493,7 @@ export class AgentEngine {
       runId,
       iteration,
       maxIter,
+      runInputCapReached,
       lastFinishReason,
       lastFinishReasonRaw,
       totalMs,
@@ -1482,9 +1502,16 @@ export class AgentEngine {
       cumulativeUsage,
       cumulativeLlmMs,
     } = params;
-    const stopReason: StopReason =
-      iteration >= maxIter ? "max_iterations" : deriveStopReason(lastFinishReason);
-    const reportedIterations = reportedIterationCount(iteration, maxIter);
+    const stopReason: StopReason = runInputCapReached
+      ? "max_input_tokens"
+      : iteration >= maxIter
+        ? "max_iterations"
+        : deriveStopReason(lastFinishReason);
+    // A cap stop breaks at the top of an iteration, before its model call, so
+    // every counted iteration is complete.
+    const reportedIterations = runInputCapReached
+      ? iteration
+      : reportedIterationCount(iteration, maxIter);
     this.events.emit({
       type: "run.done",
       data: {

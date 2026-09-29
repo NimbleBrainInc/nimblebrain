@@ -246,7 +246,7 @@ export interface CostEstimate {
 export function estimateCost(automation: Automation, workspaceDefaultModel?: string): CostEstimate {
   const rates = getModelRates(automation.model ?? workspaceDefaultModel);
   // Use actual average if available, otherwise a realistic per-run estimate.
-  // maxInputTokens is a ceiling (200K default), NOT an estimate — actual runs
+  // maxInputTokens is a ceiling (unset = none), NOT an estimate — actual runs
   // typically use 15-25K input tokens. Using the ceiling produces wildly inflated costs.
   const hasHistory = automation.runCount > 0 && automation.cumulativeInputTokens > 0;
   const inputTokens = hasHistory ? automation.cumulativeInputTokens / automation.runCount : 20_000; // realistic per-run estimate

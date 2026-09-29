@@ -62,7 +62,14 @@ export interface AutomationRun {
   outputTokens?: number;
   toolCalls?: number;
   iterations?: number;
-  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+  stopReason?:
+    | "complete"
+    | "max_iterations"
+    | "max_input_tokens"
+    | "length"
+    | "content_filter"
+    | "error"
+    | "other";
 }
 
 /** One tool call from a run's activity log (mirror of the runtime's RunToolCall). */
@@ -90,5 +97,12 @@ export interface AutomationRunResult {
   activityLog: RunToolCall[];
   outputFiles: RunFileRef[];
   usage: { inputTokens: number; outputTokens: number; iterations: number };
-  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+  stopReason?:
+    | "complete"
+    | "max_iterations"
+    | "max_input_tokens"
+    | "length"
+    | "content_filter"
+    | "error"
+    | "other";
 }

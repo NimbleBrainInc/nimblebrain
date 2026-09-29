@@ -1387,9 +1387,9 @@ export class Runtime {
       },
       budget: {
         ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
-        // The UI exposes a per-automation `maxInputTokens`; honoring it here is
-        // what makes that setting take effect.
-        ...(request.maxInputTokens !== undefined ? { maxInputTokens: request.maxInputTokens } : {}),
+        ...(request.maxRunInputTokens !== undefined
+          ? { maxRunInputTokens: request.maxRunInputTokens }
+          : {}),
       },
       model: this.resolveRequestModelString(request.model),
       ...(request.signal ? { signal: request.signal } : {}),
@@ -1575,6 +1575,7 @@ export class Runtime {
       model: spec.model,
       requestMaxIterations: spec.budget.maxIterations,
       maxInputTokens: messageBudget.budget,
+      maxRunInputTokens: spec.budget.maxRunInputTokens,
       maxOutputTokens: resolvedMaxOutputTokens,
       thinking: resolvedThinking,
       hooks: perRequestHooks,
@@ -2406,6 +2407,7 @@ export class Runtime {
     model: string;
     requestMaxIterations: number | undefined;
     maxInputTokens: number;
+    maxRunInputTokens: number | undefined;
     maxOutputTokens: number;
     thinking: EngineConfig["thinking"];
     hooks: EngineHooks;
@@ -2421,6 +2423,9 @@ export class Runtime {
       // Surfaced on run.start telemetry; the actual budget enforcement happens
       // inside `hooks.transformContext`.
       maxInputTokens: opts.maxInputTokens,
+      ...(opts.maxRunInputTokens !== undefined
+        ? { maxRunInputTokens: opts.maxRunInputTokens }
+        : {}),
       maxOutputTokens: opts.maxOutputTokens,
       ...(opts.thinking ? { thinking: opts.thinking } : {}),
       maxToolResultSize: this.config.maxToolResultSize,

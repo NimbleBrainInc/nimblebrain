@@ -461,7 +461,12 @@ export interface TaskRequest {
   workspaceId?: string;
   model?: string;
   maxIterations?: number;
-  maxInputTokens?: number;
+  /**
+   * Input tokens the whole run may spend, summed over every model call. The
+   * run ends with stopReason `max_input_tokens` rather than start a call that
+   * would pass it. Absent = no cap.
+   */
+  maxRunInputTokens?: number;
   /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
   allowedTools?: string[];
   /**

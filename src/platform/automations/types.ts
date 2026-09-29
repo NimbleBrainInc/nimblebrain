@@ -37,7 +37,11 @@ export interface Automation {
   /** Max agentic iterations per run. Default: 25. Hard cap: 50. */
   maxIterations?: number;
 
-  /** Max input tokens per run. Default: 200_000. */
+  /**
+   * Input tokens one run may spend, summed over every model call. The engine
+   * ends the run with stopReason `max_input_tokens` rather than start a call
+   * that would pass it. Unset = no per-run cap.
+   */
   maxInputTokens?: number;
 
   /** Max execution time in ms for a single run. Default: 120_000 (2 minutes). */
@@ -241,7 +245,14 @@ export interface AutomationRun {
    * (intentionally duplicated here to keep this app's types decoupled
    * from the engine package). Keep in sync when the engine union changes.
    */
-  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+  stopReason?:
+    | "complete"
+    | "max_iterations"
+    | "max_input_tokens"
+    | "length"
+    | "content_filter"
+    | "error"
+    | "other";
 }
 
 // ---------------------------------------------------------------------------

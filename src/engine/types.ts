@@ -545,6 +545,17 @@ export interface EngineConfig {
   maxInputTokens: number;
   maxOutputTokens: number;
   /**
+   * Cap on the input tokens the whole run may spend, summed over every model
+   * call. `maxInputTokens` bounds one call's context; this bounds the run.
+   * Before each call after the first, the engine ends the run with stopReason
+   * `max_input_tokens` when the tokens already spent plus the previous call's
+   * input would pass the cap. History grows between calls, so the previous
+   * call is a floor on the next and the run never starts a call it cannot
+   * afford; a mid-turn compaction can shrink it, which at worst ends the run
+   * one call early. Absent means no cap.
+   */
+  maxRunInputTokens?: number;
+  /**
    * Resolved thinking option for this call. Optional; absent means the
    * engine doesn't request thinking (provider default behavior).
    */
@@ -752,6 +763,8 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  *
  *   - `complete`         — model said done (finish=stop) with no pending tools
  *   - `max_iterations`   — agent loop hit its iteration cap
+ *   - `max_input_tokens` — the next model call would take the run past
+ *                          `EngineConfig.maxRunInputTokens`
  *   - `length`           — last LLM call hit `maxOutputTokens` mid-turn
  *   - `content_filter`   — last LLM call was blocked by provider moderation
  *   - `error`            — last LLM call's finish reason was `error`
@@ -774,6 +787,7 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
 export type StopReason =
   | "complete"
   | "max_iterations"
+  | "max_input_tokens"
   | "length"
   | "content_filter"
   | "error"

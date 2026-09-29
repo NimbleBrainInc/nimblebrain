@@ -189,6 +189,28 @@ describe("createDirectExecutor", () => {
 // (Restores coverage lost when the executeHttp tests were deleted.)
 // ---------------------------------------------------------------------------
 
+describe("createDirectExecutor — the run input cap", () => {
+	async function requestFor(overrides: Partial<Automation>) {
+		let seen: Parameters<TaskFn>[0] | undefined;
+		const taskFn: TaskFn = async (req) => {
+			seen = req;
+			return makeDirectTaskFn()(req);
+		};
+		await createDirectExecutor(taskFn, () => ({}))(makeAutomation(overrides));
+		return seen;
+	}
+
+	test("an automation's maxInputTokens reaches the runtime as the run's total cap", async () => {
+		const req = await requestFor({ maxInputTokens: 150_000 });
+		expect(req?.maxRunInputTokens).toBe(150_000);
+	});
+
+	test("an automation without maxInputTokens sends no cap", async () => {
+		const req = await requestFor({});
+		expect(req?.maxRunInputTokens).toBeUndefined();
+	});
+});
+
 describe("createDirectExecutor — stopReason → status", () => {
 	function taskFnWithStop(stopReason: string): TaskFn {
 		return async (): Promise<TaskFnResult> => ({
@@ -212,6 +234,16 @@ describe("createDirectExecutor — stopReason → status", () => {
 
 	test("max_iterations → timeout", async () => {
 		expect(await statusFor("max_iterations")).toBe("timeout");
+	});
+
+	test("max_input_tokens → failure, naming the cap", async () => {
+		const executor = createDirectExecutor(taskFnWithStop("max_input_tokens"), () => ({}));
+		const { run, result } = await executor(makeAutomation({ maxInputTokens: 200_000 }));
+		expect(run.status).toBe("failure");
+		expect(run.stopReason).toBe("max_input_tokens");
+		expect(result?.stopReason).toBe("max_input_tokens");
+		expect(run.error).toContain("input-token cap");
+		expect(run.error).toContain("200,000");
 	});
 
 	test("length → failure (fail-closed default)", async () => {

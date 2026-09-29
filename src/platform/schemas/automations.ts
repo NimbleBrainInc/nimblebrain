@@ -111,7 +111,12 @@ const ManifestFields = {
     Type.Number({ description: "Max LLM iterations per run. Default 25, hard cap 50." }),
   ),
   maxInputTokens: Type.Optional(
-    Type.Number({ description: "Max input tokens per run. Default 200000." }),
+    Type.Number({
+      description:
+        "Input tokens one run may spend in total, summed over every model call (1000 to " +
+        "1000000). The run stops with stopReason max_input_tokens rather than start a call " +
+        "that would pass it. Omit for no per-run cap.",
+    }),
   ),
   maxRunDurationMs: Type.Optional(
     Type.Number({ description: "Max wall-clock per run (ms). Default 120000." }),
@@ -353,7 +358,14 @@ export interface AutomationRunRecord {
   transient?: boolean;
   trigger?: "scheduled" | "manual" | "event";
   resultPreview?: string;
-  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+  stopReason?:
+    | "complete"
+    | "max_iterations"
+    | "max_input_tokens"
+    | "length"
+    | "content_filter"
+    | "error"
+    | "other";
 }
 
 /**
@@ -390,7 +402,14 @@ export interface AutomationsRunResultOutput {
   activityLog: RunToolCallRecord[];
   outputFiles: RunFileRefRecord[];
   usage: { inputTokens: number; outputTokens: number; iterations: number };
-  stopReason?: "complete" | "max_iterations" | "length" | "content_filter" | "error" | "other";
+  stopReason?:
+    | "complete"
+    | "max_iterations"
+    | "max_input_tokens"
+    | "length"
+    | "content_filter"
+    | "error"
+    | "other";
 }
 
 /**
