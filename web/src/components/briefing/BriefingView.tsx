@@ -175,7 +175,11 @@ function Row({ row, onHide }: { row: PanelRow; onHide: () => void }) {
           <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         </button>
       ) : (
-        <div className={base}>{inner}</div>
+        <div className={base}>
+          {inner}
+          {/* The chevron's slot, kept so every row's app pill lines up. */}
+          <span className="h-4 w-4 shrink-0" aria-hidden />
+        </div>
       )}
       <button
         type="button"
