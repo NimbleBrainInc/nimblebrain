@@ -55,6 +55,10 @@ async function buildHarness(opts: {
   memberOfShared?: boolean;
   /** Same-pod probe result — `true` makes every listed connector read `running`. */
   connectorRunning?: boolean;
+  /** The workspace the call is made in (the request URL's). */
+  wsId?: string;
+  /** Connectors installed as workspace connectors, keyed `serverName` → wsIds. */
+  workspaceInstalls?: Record<string, string[]>;
 }): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-grants-"));
   // `list_personal_connectors` derives `authed` from the OAuth token record,
@@ -104,13 +108,20 @@ async function buildHarness(opts: {
     getConnectorCatalog: () => ({ catalogEntries: async () => [] }),
     // Same-pod connection-state probe — nothing warm in this unit context, so
     // every connector reports the resting state.
-    getLifecycle: () => ({ isIdentityConnectorRunning: () => opts.connectorRunning === true }),
+    getLifecycle: () => ({
+      isIdentityConnectorRunning: () => opts.connectorRunning === true,
+      getInstance: (serverName: string, wsId: string) =>
+        opts.workspaceInstalls?.[serverName]?.includes(wsId) ? { serverName } : undefined,
+    }),
+    // No workspace source is running, so tool listings take the
+    // installed-but-not-running path and return the policy alone.
+    getRegistryForWorkspace: () => ({ getSource: () => undefined }),
   } as unknown as Runtime;
 
   const ctx: ManageConnectorsContext = {
     runtime,
     getIdentity: () => (opts.identity === undefined ? ALICE : opts.identity),
-    getWorkspaceId: () => null,
+    getWorkspaceId: () => opts.wsId ?? null,
   };
   return { workDir, store, tool: createManageConnectorsTool(ctx) };
 }
@@ -312,5 +323,102 @@ describe("manage_connectors — personal-connector permissions (identity scope)"
     expect((res.structuredContent as { tools?: Record<string, string> })?.tools).toEqual({
       delete_notes: "disallow",
     });
+  });
+});
+
+describe("manage_connectors — permissions when a personal connector and a workspace install share a name", () => {
+  let h: Harness;
+  afterEach(() => {
+    resetTestCredentialStore();
+    if (h) rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const both = (wsId: string) => ({
+    personalConnectors: ["granola"],
+    wsId,
+    workspaceInstalls: { granola: [wsId] },
+  });
+  const USER_OWNER = { scope: "user", userId: ALICE.id } as const;
+
+  test("set_permissions with scope 'workspace' writes the workspace policy, not the admin's personal one", async () => {
+    h = await buildHarness(both(personalWs));
+    const res = await h.tool.handler({
+      action: "set_permissions",
+      serverName: "granola",
+      scope: "workspace",
+      tools: { delete_notes: "disallow" },
+    });
+    expect(res.isError).toBeFalsy();
+    expect((res.structuredContent as { scope?: string }).scope).toBe("workspace");
+    expect(await h.store.getConnector({ scope: "workspace", wsId: personalWs }, "granola")).toEqual(
+      { delete_notes: "disallow" },
+    );
+    expect(await h.store.getConnector(USER_OWNER, "granola")).toEqual({});
+  });
+
+  test("unscoped set_permissions inside the workspace addresses the workspace install", async () => {
+    h = await buildHarness(both(personalWs));
+    await h.tool.handler({
+      action: "set_permissions",
+      serverName: "granola",
+      tools: { delete_notes: "disallow" },
+    });
+    expect(await h.store.getConnector({ scope: "workspace", wsId: personalWs }, "granola")).toEqual(
+      { delete_notes: "disallow" },
+    );
+    expect(await h.store.getConnector(USER_OWNER, "granola")).toEqual({});
+  });
+
+  test("list_tools_with_permissions with scope 'identity' reads the personal policy", async () => {
+    h = await buildHarness(both(personalWs));
+    await h.store.setConnector(USER_OWNER, "granola", { delete_notes: "disallow" });
+    const res = await h.tool.handler({
+      action: "list_tools_with_permissions",
+      serverName: "granola",
+      scope: "identity",
+    });
+    expect(res.isError).toBeFalsy();
+    expect(res.structuredContent).toMatchObject({
+      scope: "user",
+      permissions: { delete_notes: "disallow" },
+    });
+  });
+
+  test("scope 'identity' addresses the personal connector", async () => {
+    h = await buildHarness(both(personalWs));
+    const res = await h.tool.handler({
+      action: "set_permissions",
+      serverName: "granola",
+      scope: "identity",
+      tools: { delete_notes: "disallow" },
+    });
+    expect(res.isError).toBeFalsy();
+    expect(await h.store.getConnector(USER_OWNER, "granola")).toEqual({ delete_notes: "disallow" });
+    expect(await h.store.getConnector({ scope: "workspace", wsId: personalWs }, "granola")).toEqual(
+      {},
+    );
+  });
+
+  test("a non-admin's unscoped write is refused and pointed at scope 'identity'", async () => {
+    h = await buildHarness(both(SHARED_WS));
+    const res = await h.tool.handler({
+      action: "set_permissions",
+      serverName: "granola",
+      tools: { delete_notes: "disallow" },
+    });
+    expect(res.isError).toBe(true);
+    const text = (res.content as Array<{ text?: string }>).map((c) => c.text ?? "").join("");
+    expect(text).toContain('scope: "identity"');
+    expect(await h.store.getConnector(USER_OWNER, "granola")).toEqual({});
+  });
+
+  test("scope 'identity' for a connector the caller has no personal copy of is refused", async () => {
+    h = await buildHarness({ wsId: personalWs, workspaceInstalls: { granola: [personalWs] } });
+    const res = await h.tool.handler({
+      action: "get_permissions",
+      serverName: "granola",
+      scope: "identity",
+    });
+    expect(res.isError).toBe(true);
   });
 });

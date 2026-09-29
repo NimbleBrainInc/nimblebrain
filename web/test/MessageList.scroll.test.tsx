@@ -58,7 +58,7 @@ function renderList() {
     <MessageList
       messages={messages}
       isStreaming={false}
-      streamingState="idle"
+      streamingState={null}
       displayDetail="balanced"
     />,
   );

@@ -39,7 +39,6 @@ mock.module("../src/api/client", () => ({
   callTool: () => callToolImpl(),
 }));
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes } = await import("react-router-dom");
@@ -99,7 +98,7 @@ const WS: WorkspaceInfo = {
   id: "ws_acme",
   name: "Acme",
   memberCount: 2,
-  connectors: [],
+  connectorCount: 0,
   userRole: "admin",
 };
 

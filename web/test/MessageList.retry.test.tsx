@@ -33,7 +33,7 @@ describe("MessageList retry affordance", () => {
       <MessageList
         messages={[erroredMsg]}
         isStreaming={false}
-        streamingState="idle"
+        streamingState={null}
         displayDetail="balanced"
       />,
     );
@@ -52,7 +52,7 @@ describe("MessageList retry affordance", () => {
       <MessageList
         messages={[erroredMsg]}
         isStreaming={false}
-        streamingState="idle"
+        streamingState={null}
         displayDetail="balanced"
         onRetry={() => {}}
       />,

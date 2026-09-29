@@ -133,23 +133,24 @@ async function mountHarness(opts?: {
       React.createElement(
         MemoryRouter,
         { initialEntries: [route] },
-        React.createElement(
-          WorkspaceProvider,
-          { initialWorkspaces: [WS_A, WS_B], initialActiveId: activeId },
-          React.createElement(Drivers),
-          React.createElement(
-            ChatProvider,
-            {
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS_A, WS_B],
+          initialActiveId: activeId,
+          children: React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(Drivers),
+            React.createElement(ChatProvider, {
               initialConversationId: convId,
               currentUserId: "u1",
               // Provide config so the provider skips the get_config tool call.
               initialConfig: {
                 configuredProviders: [],
               },
-            },
-            React.createElement(Probe),
+              children: React.createElement(Probe),
+            }),
           ),
-        ),
+        }),
       ),
     );
   });

@@ -15,7 +15,6 @@ import { useMinDisplayTime } from "../src/hooks/useMinDisplayTime";
 
 function makeCall(overrides: Partial<ToolCallDisplay> & { id: string }): ToolCallDisplay {
   return {
-    id: overrides.id,
     name: "test_tool",
     status: "done",
     ok: true,

@@ -135,7 +135,9 @@ describe("RecentConversationsPopover", () => {
   });
 
   it("calls onOpen with the row id when a row is clicked", async () => {
-    let opened: string | null = null;
+    // Assigned in a callback, which control flow does not see; the cast keeps
+    // `opened` from narrowing to `null` at the assertion.
+    let opened = null as string | null;
     listImpl = async () => ({
       structuredContent: {
         conversations: [conv({ id: "c9", title: "Pick me", preview: "" })],

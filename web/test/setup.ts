@@ -39,7 +39,7 @@ for (const key of Object.getOwnPropertyNames(window)) {
 	if (key in globalThis) continue;
 	try {
 		Object.defineProperty(globalThis, key, {
-			value: (window as Record<string, unknown>)[key],
+			value: Reflect.get(window, key),
 			writable: true,
 			configurable: true,
 		});

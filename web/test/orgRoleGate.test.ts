@@ -23,16 +23,10 @@ import { resolveScopedRole, roleAtLeast } from "../src/hooks/useScopedRole";
 function makeSession(orgRole: "owner" | "admin" | "member" | undefined): SessionInfo {
   return {
     authenticated: true,
-    user: orgRole
-      ? {
-          id: "u_test",
-          email: "u@example.com",
-          displayName: "Test User",
-          orgRole,
-          preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
-        }
-      : null,
-  } as SessionInfo;
+    ...(orgRole
+      ? { user: { id: "u_test", email: "u@example.com", displayName: "Test User", orgRole } }
+      : {}),
+  };
 }
 
 describe("org-admin gate for /org/skills (and every other /org/* route)", () => {
@@ -66,7 +60,7 @@ describe("org-admin gate for /org/skills (and every other /org/* route)", () => 
   });
 
   it("rejects 'none' (unauthenticated) against org_admin minimum", () => {
-    const role = resolveScopedRole({ authenticated: false, user: null } as SessionInfo, null);
+    const role = resolveScopedRole({ authenticated: false }, null);
     expect(role).toBe("none");
     expect(roleAtLeast(role, "org_admin")).toBe(false);
   });

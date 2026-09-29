@@ -62,7 +62,6 @@ mock.module("../api/client", () => ({
   uninstallConnector,
 }));
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 

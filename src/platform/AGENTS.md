@@ -35,8 +35,12 @@ and the generated tree under `web/src/_generated/platform-schemas/` mirrors
 its shape.
 
 Register a new app in `index.ts`. Its UI, if it has one, is picked up by
-`build:platform-apps` and the image build from the `src/platform/*/ui` glob —
-there is no list to add it to.
+`build:platform-apps`, `check:platform-apps`, and the image build from the
+`src/platform/*/ui` glob — there is no list to add it to. The typecheck needs
+two configs in the UI package: `tsconfig.json` for the shipped source (browser
+libs, no Bun types, tests excluded) and `tsconfig.test.json` extending it with
+`types: ["vite/client", "bun"]` so `bun:test` resolves. Copy both from an
+existing app; `scripts/check-platform-apps.ts` says why each exists.
 
 An app's placements are the `placements:` array passed to `defineInProcessApp`,
 and that is the only copy the runtime reads. Two apps also carry a
@@ -395,6 +399,10 @@ update by grep is the discipline; the type system is the safety net.
   `XxxOutput` exports from `schemas/`; consumers import and narrow. Once
   tests are added to typecheck scope, every consumer drift surfaces at
   compile.
+- **Check, output side (§2.1)**: `bun run check:platform-output-types`
+  (in `verify:static`) fails on any function under `src/platform/` declared
+  to return `object` or `Promise<object>`. Rule doc: `CODE_STYLE.md`,
+  "Platform tool handlers return a named output type".
 - **Code review**: section 3 (anti-patterns) — flag in PRs explicitly.
 
 If you're tempted to violate any of section 1, ask whether the underlying

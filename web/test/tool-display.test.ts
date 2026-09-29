@@ -10,7 +10,6 @@ afterEach(() => clearRenderersForTest());
 function call(overrides: Partial<ToolCallDisplay> & { name: string }): ToolCallDisplay {
   return {
     id: overrides.id ?? `call_${Math.random().toString(36).slice(2, 8)}`,
-    name: overrides.name,
     status: "done",
     ok: true,
     ms: 10,

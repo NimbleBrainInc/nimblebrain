@@ -23,6 +23,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { NotificationView } from "../api/notifications";
 import type { NotificationsValue } from "../context/NotificationsContext";
+import type { PlacementEntry } from "../types";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,7 +73,7 @@ let unmount: (() => void) | null = null;
 
 async function mount(
   over: Partial<NotificationsValue> = {},
-  placements: Array<Record<string, unknown>> = [],
+  placements: PlacementEntry[] = [],
   entry = "/w/ws-outbound/notifications",
 ): Promise<{
   container: HTMLDivElement;

@@ -6,7 +6,6 @@ function desc(overrides: Partial<ToolDescription> & { verb: string }): ToolDescr
 	return {
 		id: `id_${Math.random().toString(36).slice(2, 8)}`,
 		name: overrides.name ?? "tool",
-		verb: overrides.verb,
 		object: "",
 		tone: "ok" as Tone,
 		summary: null,

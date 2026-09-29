@@ -126,7 +126,7 @@ describe("events-client — event routing", () => {
     subscribe("server.notification", thrower);
     subscribe("server.notification", good);
 
-    lastOptions!.onEvent("server.notification", { server: "x" });
+    lastOptions!.onEvent("server.notification", { server: "x", method: "notifications/message" });
 
     expect(thrower).toHaveBeenCalledTimes(1);
     expect(good).toHaveBeenCalledTimes(1);
@@ -134,7 +134,9 @@ describe("events-client — event routing", () => {
 
   test("events for types with no subscribers are dropped without error", () => {
     subscribe("server.notification", () => {});
-    expect(() => lastOptions!.onEvent("skill.created", { id: "x" })).not.toThrow();
+    expect(() =>
+      lastOptions!.onEvent("conversation.title", { conversationId: "c1", title: "t" }),
+    ).not.toThrow();
   });
 });
 
