@@ -138,7 +138,9 @@ import {
   type TaskAwareSource,
   type TaskScope,
 } from "./mcp-task-store.ts";
+import type { JsonRpcErrorBody } from "./schemas/responses.ts";
 import type { SessionRegistry } from "./session-store/index.ts";
+import { json } from "./types.ts";
 
 /**
  * JSON-RPC error code for "resource not found".
@@ -539,13 +541,13 @@ export class McpServerHost {
 
   /** Build the JSON-RPC 404 body shared by every `/mcp` session-miss path. */
   private sessionMissResponse(reason: "not_found" | "unavailable"): Response {
-    return new Response(
-      JSON.stringify({
+    return json<JsonRpcErrorBody>(
+      {
         jsonrpc: "2.0",
         error: { code: -32000, message: "Session not found", data: { reason } },
         id: null,
-      }),
-      { status: 404, headers: { "Content-Type": "application/json" } },
+      },
+      404,
     );
   }
 
@@ -805,7 +807,14 @@ function createHandlers(
     // ── Stage 1: a call that names a source is an app's (MCP Apps visibility)
     const appSource = scopedSourceName(request.params._meta);
     if (appSource !== undefined) {
-      const refused = await assertAppMayCall(name, appSource, runtime, wsId, identityId);
+      const refused = await assertAppMayCall(
+        name,
+        (args ?? {}) as Record<string, unknown>,
+        appSource,
+        runtime,
+        wsId,
+        identityId,
+      );
       if (refused) return refused;
     }
 
@@ -844,6 +853,7 @@ function createHandlers(
       routed,
       name,
       args,
+      appSource,
       taskParam,
       runtime,
       features,
@@ -1220,6 +1230,8 @@ async function executeWorkspaceToolCall(
   routed: WorkspaceRoute,
   name: string,
   args: Record<string, unknown> | undefined,
+  /** The calling view's server when an app made the call, else undefined. */
+  appSource: string | undefined,
   taskParam: CallToolTaskParam,
   runtime: Runtime,
   features: ResolvedFeatures,
@@ -1273,6 +1285,7 @@ async function executeWorkspaceToolCall(
       sessionCtx.identity,
       sourceName,
       localName,
+      { input: (args ?? {}) as Record<string, unknown>, caller: appSource ? "app" : "mcp" },
     );
     if (adminDenied) return toCallToolResult(adminDenied);
   }
@@ -1503,6 +1516,7 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  */
 async function assertAppMayCall(
   name: string,
+  args: Record<string, unknown>,
   appSource: string,
   runtime: Runtime,
   wsId: string,
@@ -1523,6 +1537,7 @@ async function assertAppMayCall(
       { id: identityId },
       appSource,
       name.slice(appSource.length + 2),
+      { input: args, caller: "app" },
     );
     if (denied) return toCallToolResult(denied);
   }
@@ -1728,14 +1743,7 @@ async function readResourceFromWorkspace(
 
 /** JSON-RPC error response with the proper headers. */
 function jsonRpcError(status: number, code: number, message: string): Response {
-  return new Response(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      error: { code, message },
-      id: null,
-    }),
-    { status, headers: { "Content-Type": "application/json" } },
-  );
+  return json<JsonRpcErrorBody>({ jsonrpc: "2.0", error: { code, message }, id: null }, status);
 }
 
 /** Cap on a client-supplied string written to a log line. */

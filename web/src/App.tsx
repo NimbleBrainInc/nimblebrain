@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import type { ShellData } from "./api/client";
 import {
   callTool,
   logout,
@@ -73,7 +72,13 @@ import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
-import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
+import type {
+  BootstrapResponse,
+  ConfigInfo,
+  FileLimits,
+  PlacementEntry,
+  ShellResponse,
+} from "./types";
 import "./index.css";
 
 function AuthenticatedApp({
@@ -113,7 +118,7 @@ function AuthenticatedApp({
 
   const initialWorkspaces: WorkspaceInfo[] = bootstrapWorkspacesToInfo(bootstrap.workspaces);
 
-  const initialShell: ShellData = bootstrap.shell;
+  const initialShell: ShellResponse = bootstrap.shell;
 
   const initialConfig = {
     configuredProviders: bootstrap.config.configuredProviders,
@@ -163,7 +168,7 @@ function BootstrappedShell({
   onLogout,
 }: {
   token: string;
-  initialShell: ShellData;
+  initialShell: ShellResponse;
   initialConfig: {
     configuredProviders: string[];
     newConversationModel?: string;

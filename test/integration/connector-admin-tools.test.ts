@@ -1,3 +1,5 @@
+import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * Connector `admin_tools`: a tool the catalog names there is listed for and
  * callable by a workspace admin only, on every door.
@@ -11,7 +13,8 @@
  * `tools/call`, REST `tools/call` (`ToolRegistry.execute`), and the
  * unattended dispatch. Plus the two things the gate must NOT touch: the
  * kernel's own lifecycle and hook-registration calls, and a server's own claim
- * about which of its tools are admin-only.
+ * about which of its tools are admin-only. And the `audit.admin_tool_call` line
+ * each door's call to a declared tool writes.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -26,10 +29,13 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import type { AdminToolCallPayload } from "../../src/engine/schemas/events.ts";
+import type { EventSink } from "../../src/engine/types.ts";
 import { ensureHooks } from "../../src/hooks/reconcile.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { notifyReady } from "../../src/lifecycle/notify.ts";
 import { dispatchUnattended } from "../../src/orchestrator/unattended-dispatch.ts";
+import { REDACTED_ARGUMENT } from "../../src/permissions/admin-tools.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
@@ -101,7 +107,11 @@ function buildSource(wsId: string) {
       tools: [
         // The server claims, in its own tool `_meta`, the opposite of what the
         // catalog says. Neither claim may move the gate.
-        tool("configure", { "ai.nimblebrain/host": { admin_tools: [] } }),
+        tool(
+          "configure",
+          { "ai.nimblebrain/host": { admin_tools: [] } },
+          { mode: { type: "string" }, api_key: { type: "string", writeOnly: true } },
+        ),
         tool("search", { "ai.nimblebrain/host": { admin_tools: ["search"] } }),
         tool("workspace_ready"),
         tool("set_webhook_url", undefined, {
@@ -135,6 +145,14 @@ function recordingModel(): LanguageModelV4 {
   };
 }
 
+/** Every `audit.admin_tool_call` line the runtime wrote, oldest first. */
+const audited: AdminToolCallPayload[] = [];
+const auditSink: EventSink = {
+  emit: (event) => {
+    if (event.type === "audit.admin_tool_call") audited.push(event.data as AdminToolCallPayload);
+  },
+};
+
 let runtime: Runtime;
 let handle: ServerHandle;
 let baseUrl: string;
@@ -150,6 +168,7 @@ beforeAll(async () => {
     identityProvider: devProvider,
     model: { provider: "custom", adapter: recordingModel() },
     logging: { disabled: true },
+    events: [auditSink],
     workDir: testDir,
   });
 
@@ -198,16 +217,14 @@ async function restCall(wsId: string, tool: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: SERVER, tool, arguments: {} }),
   });
-  return (await res.json()) as {
-    isError?: boolean;
-    structuredContent?: Record<string, unknown>;
-  };
+  return await readJson<ToolCallResponse>(res);
 }
 
 describe("the chat engine door (IdentityToolRouter)", () => {
   it("refuses a member a declared tool before the server runs it", async () => {
     resetCalls();
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: MEMBER_WS,
       runtime,
@@ -225,6 +242,7 @@ describe("the chat engine door (IdentityToolRouter)", () => {
   it("lets a member call an undeclared tool, even one the server claims is admin-only", async () => {
     resetCalls();
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: MEMBER_WS,
       runtime,
@@ -237,6 +255,7 @@ describe("the chat engine door (IdentityToolRouter)", () => {
   it("lets an admin call a declared tool", async () => {
     resetCalls();
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: ADMIN_WS,
       runtime,
@@ -472,6 +491,137 @@ describe("kernel-originated calls", () => {
     ).toBe(true);
     expect(warnings.some((w) => w.includes('"ghost"') && w.includes("not among"))).toBe(true);
     expect(warnings.some((w) => w.includes('"configure"'))).toBe(false);
+  });
+});
+
+describe("the audit.admin_tool_call line", () => {
+  const ARGS = { mode: "live", api_key: "sk-test-secret" };
+
+  /** The lines written while `act` ran. */
+  async function linesFrom(act: () => Promise<unknown>): Promise<AdminToolCallPayload[]> {
+    const start = audited.length;
+    await act();
+    return audited.slice(start);
+  }
+
+  it("records an admitted chat call with its caller, person and redacted arguments", async () => {
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: DEV_IDENTITY.id,
+      workspaceId: ADMIN_WS,
+      runtime,
+    });
+    const lines = await linesFrom(() => router.execute({ id: "u1", name: CONFIGURE, input: ARGS }));
+    expect(lines).toEqual([
+      {
+        workspaceId: ADMIN_WS,
+        userId: DEV_IDENTITY.id,
+        connector: SERVER,
+        tool: "configure",
+        caller: "chat",
+        outcome: "admitted",
+        arguments: { mode: "live", api_key: REDACTED_ARGUMENT },
+      },
+    ]);
+  });
+
+  it("records a refused call too", async () => {
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: DEV_IDENTITY.id,
+      workspaceId: MEMBER_WS,
+      runtime,
+    });
+    const lines = await linesFrom(() => router.execute({ id: "u2", name: CONFIGURE, input: ARGS }));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ workspaceId: MEMBER_WS, outcome: "refused" });
+  });
+
+  it("writes nothing for a tool the catalog does not declare", async () => {
+    const router = new IdentityToolRouter({
+      caller: "chat",
+      identityId: DEV_IDENTITY.id,
+      workspaceId: ADMIN_WS,
+      runtime,
+    });
+    expect(await linesFrom(() => router.execute({ id: "u3", name: SEARCH, input: {} }))).toEqual(
+      [],
+    );
+  });
+
+  it("names the conversation a chat's call came from", async () => {
+    responses.push({
+      toolCalls: [{ toolCallId: "u4", toolName: CONFIGURE, input: JSON.stringify(ARGS) }],
+    });
+    const lines = await linesFrom(() =>
+      runtime.chat({ identity: DEV_IDENTITY, message: "configure it", workspaceId: ADMIN_WS }),
+    );
+    const line = lines.find((l) => l.tool === "configure");
+    expect(line?.caller).toBe("chat");
+    expect(typeof line?.conversationId).toBe("string");
+  });
+
+  it("records an unattended run as automation", async () => {
+    responses.push({
+      toolCalls: [{ toolCallId: "u5", toolName: CONFIGURE, input: JSON.stringify(ARGS) }],
+    });
+    const lines = await linesFrom(() =>
+      runtime.executeTask({
+        prompt: "configure it",
+        identity: DEV_IDENTITY,
+        workspaceId: ADMIN_WS,
+        trigger: "schedule",
+        allowedTools: [CONFIGURE],
+      }),
+    );
+    expect(lines.map((l) => [l.caller, l.outcome])).toEqual([["automation", "admitted"]]);
+  });
+
+  it("records an unattended dispatch as dispatch", async () => {
+    const lines = await linesFrom(() =>
+      dispatchUnattended(runtime, {
+        principalId: DEV_IDENTITY.id,
+        workspaceId: ADMIN_WS,
+        tool: CONFIGURE,
+        input: ARGS,
+        reason: "route:test",
+      }),
+    );
+    expect(lines.map((l) => [l.caller, l.outcome])).toEqual([["dispatch", "admitted"]]);
+  });
+
+  it("tells an app's call from another /mcp client's, once per call", async () => {
+    const admin = await mcpClient(ADMIN_WS);
+    const member = await mcpClient(MEMBER_WS);
+    const fromApp = { "ai.nimblebrain/source": SERVER };
+    try {
+      const lines = await linesFrom(async () => {
+        await admin.callTool({ name: CONFIGURE, arguments: ARGS });
+        await admin.callTool({ name: CONFIGURE, arguments: ARGS, _meta: fromApp });
+        await member.callTool({ name: CONFIGURE, arguments: ARGS, _meta: fromApp });
+      });
+      expect(lines.map((l) => [l.caller, l.outcome, l.arguments.api_key])).toEqual([
+        ["mcp", "admitted", REDACTED_ARGUMENT],
+        ["app", "admitted", REDACTED_ARGUMENT],
+        ["app", "refused", REDACTED_ARGUMENT],
+      ]);
+    } finally {
+      await admin.close();
+      await member.close();
+    }
+  });
+
+  it("records a REST call as api", async () => {
+    const lines = await linesFrom(() => restCall(ADMIN_WS, "configure"));
+    expect(lines.map((l) => [l.caller, l.outcome])).toEqual([["api", "admitted"]]);
+  });
+
+  it("writes nothing for the kernel's own call to a declared handler", async () => {
+    expect(
+      await linesFrom(() =>
+        notifyReady(runtime.getLifecycleNotifyDeps(), MEMBER_WS, SERVER, "install"),
+      ),
+    ).toEqual([]);
   });
 });
 

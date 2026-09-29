@@ -1,3 +1,5 @@
+import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * The runtime owns the identity provider, and the server authenticates with
  * that one. So a caller the server admits is the caller the runtime's own
@@ -107,7 +109,7 @@ describe("the server authenticates with the runtime's identity provider", () => 
       body: JSON.stringify({ server, tool, arguments: args }),
     });
     expect(res.status).toBe(200);
-    return (await res.json()) as { isError?: boolean; content?: { text?: string }[] };
+    return await readJson<ToolCallResponse>(res);
   }
 
   it("is the one provider: the runtime holds it and the server admits nothing else", async () => {

@@ -7,7 +7,8 @@ import {
   workspaceConnectorsUrl,
 } from "../../../api/routes/connectors-redirect.ts";
 import { SUCCESS_PAGE_CSP, successPageHtml } from "../../../api/routes/oauth-success-page.ts";
-import { type AppContext, type AppEnv, apiError } from "../../../api/types.ts";
+import type { ComposioInitiateResponse } from "../../../api/schemas/responses.ts";
+import { type AppContext, type AppEnv, apiError, json } from "../../../api/types.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../../connectors/runtime/connection.ts";
 import { slugifyServerName } from "../../../connectors/runtime/paths.ts";
 import { type ConnectorOwner, connectorOwnerKey } from "../../../identity/connector-owner.ts";
@@ -124,7 +125,7 @@ export function composioAuthRoutes(ctx: AppContext) {
       if (creds instanceof Response) return creds;
       const { apiKey, authConfigId } = creds;
 
-      return connectComposio(ctx, c, {
+      return connectComposio(ctx, {
         entry,
         connectorId,
         owner: { type: "workspace", wsId },
@@ -170,7 +171,7 @@ export function composioAuthRoutes(ctx: AppContext) {
     if (creds instanceof Response) return creds;
     const { apiKey, authConfigId } = creds;
 
-    return connectComposio(ctx, c, {
+    return connectComposio(ctx, {
       entry,
       connectorId,
       owner: { type: "user", userId },
@@ -352,7 +353,6 @@ function resolveComposioCredentials(
 /** Reuse an already-ACTIVE Composio account for this owner (adopting it), or null to run a fresh OAuth initiate. */
 async function adoptExistingComposioConnection(
   ctx: AppContext,
-  c: Context<AppEnv>,
   args: {
     entry: ComposioCatalogEntry;
     connectorId: string;
@@ -437,7 +437,7 @@ async function adoptExistingComposioConnection(
           "running",
         );
       }
-      return c.json({
+      return json<ComposioInitiateResponse>({
         authorizationUrl: connectorsReturnUrl(owner),
         alreadyConnected: true,
       });
@@ -459,7 +459,6 @@ async function adoptExistingComposioConnection(
  */
 async function connectComposio(
   ctx: AppContext,
-  c: Context<AppEnv>,
   args: {
     entry: ComposioCatalogEntry;
     connectorId: string;
@@ -468,9 +467,9 @@ async function connectComposio(
     authConfigId: string;
   },
 ): Promise<Response> {
-  const adopted = await adoptExistingComposioConnection(ctx, c, args);
+  const adopted = await adoptExistingComposioConnection(ctx, args);
   if (adopted) return adopted;
-  return initiateFreshComposioConnection(ctx, c, {
+  return initiateFreshComposioConnection(ctx, {
     connectorId: args.connectorId,
     owner: args.owner,
     apiKey: args.apiKey,
@@ -481,7 +480,6 @@ async function connectComposio(
 /** Begin a fresh Composio OAuth connection: bind the state cookie and return the vendor authorization URL. */
 async function initiateFreshComposioConnection(
   ctx: AppContext,
-  c: Context<AppEnv>,
   args: {
     connectorId: string;
     owner: ConnectorOwner;
@@ -532,10 +530,8 @@ async function initiateFreshComposioConnection(
   // that already holds the nonce recomputes it. Kept for parity with
   // /v1/mcp-auth/callback as cheap defense-in-depth.
   const stateHash = sha256Hex(nonce);
-  c.header("Set-Cookie", buildComposioStateCookie(stateHash, 900, ctx.secureCookies));
-
-  return c.json({
-    authorizationUrl: initiateResponse.redirectUrl,
+  return json<ComposioInitiateResponse>({ authorizationUrl: initiateResponse.redirectUrl }, 200, {
+    "Set-Cookie": buildComposioStateCookie(stateHash, 900, ctx.secureCookies),
   });
 }
 

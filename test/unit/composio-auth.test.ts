@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
+import type { ApiErrorBody, ComposioInitiateResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 
 // ── @composio/core mock ─────────────────────────────────────────────
 //
@@ -672,10 +674,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      authorizationUrl: string;
-      alreadyConnected?: boolean;
-    };
+    const body = await readJson<ComposioInitiateResponse>(res);
     expect(body.authorizationUrl).toBe("https://connect.composio.dev/link/lk_42");
     expect(body.alreadyConnected).toBeUndefined();
 
@@ -721,10 +720,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        authorizationUrl: string;
-        alreadyConnected?: boolean;
-      };
+      const body = await readJson<ComposioInitiateResponse>(res);
       expect(body.alreadyConnected).toBe(true);
 
       // connection.json landed on disk under the existing account id.
@@ -781,7 +777,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
       });
 
       expect(res.status).toBe(502);
-      const body = (await res.json()) as { error: string };
+      const body = await readJson<ApiErrorBody>(res);
       expect(body.error).toBe("composio_adopt_source_start_failed");
 
       // connection.json must NOT be on disk — that's the whole point
@@ -816,7 +812,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string; message: string };
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("composio_unconfigured");
     expect(body.message).toBe("Composio integration not configured.");
   });
@@ -833,7 +829,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string; message: string };
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("composio_unconfigured");
     // Distinguishes this from (c): same code, different cause.
     expect(body.message).toContain("auth config");
@@ -861,7 +857,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("wrong_auth_kind");
   });
 
@@ -880,7 +876,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -896,7 +892,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: string };
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("connector_not_found");
   });
 
@@ -912,7 +908,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -1037,7 +1033,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { authorizationUrl: string; alreadyConnected?: boolean };
+    const body = await readJson<ComposioInitiateResponse>(res);
     expect(body.authorizationUrl).toBe("https://connect.composio.dev/link/lk_identity");
     expect(body.alreadyConnected).toBeUndefined();
 
@@ -1086,7 +1082,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
       });
 
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { authorizationUrl: string; alreadyConnected?: boolean };
+      const body = await readJson<ComposioInitiateResponse>(res);
       expect(body.alreadyConnected).toBe(true);
       // Navigates back to the identity connectors surface, not a workspace one.
       expect(body.authorizationUrl).toContain("/profile/connectors");
@@ -1132,7 +1128,7 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
         body: JSON.stringify({ connectorId: "com.google/gmail" }),
       });
       expect(res.status).toBe(404);
-      expect(((await res.json()) as { error: string }).error).toBe("connector_not_found");
+      expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_not_found");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

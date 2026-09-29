@@ -25,6 +25,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ToolInput } from "../../src/platform/schemas/catalog.ts";
@@ -32,6 +33,7 @@ import type { SkillDetail, SkillsListOutput } from "../../src/platform/schemas/s
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
@@ -72,7 +74,7 @@ async function callTool(tool: string, args: Record<string, unknown>): Promise<To
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "skills", tool, arguments: args }),
   });
-  const body = (await res.json()) as Omit<ToolCallResult, "status">;
+  const body = await readJson<ToolCallResponse | ApiErrorBody>(res);
   return { status: res.status, ...body };
 }
 

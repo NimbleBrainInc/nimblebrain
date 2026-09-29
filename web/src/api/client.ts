@@ -12,12 +12,17 @@ import type {
 import type { ToolInput } from "../_generated/platform-schemas/catalog";
 import { addAuthBreadcrumb, captureLogout, setSentryWorkspace } from "../sentry";
 import type {
-  ApiError,
+  ApiErrorBody,
   BootstrapResponse,
   ChatRequest,
-  ChatResult,
-  PlacementEntry,
-  ToolCallResult,
+  ChatResponse,
+  ChatStartResponse,
+  ComposioInitiateResponse,
+  OAuthInitiateResponse,
+  ReadResourceResponse,
+  ShellResponse,
+  ToolCallResponse,
+  UploadResourceResponse,
 } from "../types";
 import { createFetchWithRefresh } from "./fetch-with-refresh";
 
@@ -265,7 +270,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (res.status === 401) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unauthorized",
       message: "Unauthorized",
     }));
@@ -273,7 +278,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
@@ -313,7 +318,7 @@ export class ApiClientError extends Error {
  * `callTool` depending on evaluation order), so tests assert on this pure
  * function instead.
  */
-export function errorFromResponse(body: ApiError, status: number): ApiClientError {
+export function errorFromResponse(body: ApiErrorBody, status: number): ApiClientError {
   if (body.error === "workspace_error") onWorkspaceError?.();
   return new ApiClientError(body.error, body.message, status, body.details);
 }
@@ -361,7 +366,7 @@ export async function getResources(
   }
 
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
@@ -394,53 +399,19 @@ export async function callTool<S extends string, T extends string>(
   server: S,
   tool: T,
   args?: ToolInput<S, T>,
-): Promise<ToolCallResult> {
-  return request<ToolCallResult>(workspacePath("/tools/call"), {
+): Promise<ToolCallResponse> {
+  return request<ToolCallResponse>(workspacePath("/tools/call"), {
     method: "POST",
     body: JSON.stringify({ server, tool, arguments: args }),
   });
 }
 
-/**
- * MCP ReadResourceResult entry. Exactly one of `text` or `blob` is populated;
- * `blob` is a base64-encoded string per spec.
- */
-export interface ReadResourceContent {
-  uri: string;
-  mimeType?: string;
-  text?: string;
-  blob?: string;
-}
-
-export interface ReadResourceResult {
-  contents: ReadResourceContent[];
-}
-
 /** Read an MCP resource via POST /v1/workspaces/<wsId>/resources/read. */
-export async function readResource(server: string, uri: string): Promise<ReadResourceResult> {
-  return request<ReadResourceResult>(workspacePath("/resources/read"), {
+export async function readResource(server: string, uri: string): Promise<ReadResourceResponse> {
+  return request<ReadResourceResponse>(workspacePath("/resources/read"), {
     method: "POST",
     body: JSON.stringify({ server, uri }),
   });
-}
-
-/**
- * A workspace file as returned by the upload endpoint. Mirrors the
- * server-side `FileEntry` (src/files/types.ts), narrowed to the fields
- * the client cares about — no `tags`/`source`/`description` here yet
- * because the picker flow doesn't set them and consumers don't read them.
- * Add fields when a consumer needs them.
- */
-export interface WorkspaceFile {
-  id: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-}
-
-export interface UploadResourceResult {
-  files: WorkspaceFile[];
-  errors?: string[];
 }
 
 /**
@@ -448,7 +419,7 @@ export interface UploadResourceResult {
  * POST. Bytes go over the right pipe (HTTP multipart, streamed) instead
  * of being base64-encoded into a tool-call argument.
  */
-export async function uploadResource(files: File[]): Promise<UploadResourceResult> {
+export async function uploadResource(files: File[]): Promise<UploadResourceResponse> {
   const formData = new FormData();
   // Use `files` (plural) — the server's multipart route accepts either
   // `files` or `file`, but one canonical spelling avoids surprises.
@@ -474,13 +445,13 @@ export async function uploadResource(files: File[]): Promise<UploadResourceResul
     throw new ApiClientError("unauthorized", "Unauthorized", 401);
   }
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
     throw errorFromResponse(body, res.status);
   }
-  return res.json() as Promise<UploadResourceResult>;
+  return res.json() as Promise<UploadResourceResponse>;
 }
 
 // ---------------------------------------------------------------------------
@@ -488,8 +459,8 @@ export async function uploadResource(files: File[]): Promise<UploadResourceResul
 // ---------------------------------------------------------------------------
 
 /** Synchronous chat — waits for full agent turn. */
-export async function chat(req: ChatRequest): Promise<ChatResult> {
-  return request<ChatResult>(workspacePath("/chat"), {
+export async function chat(req: ChatRequest): Promise<ChatResponse> {
+  return request<ChatResponse>(workspacePath("/chat"), {
     method: "POST",
     body: JSON.stringify(req),
   });
@@ -500,7 +471,7 @@ export async function chat(req: ChatRequest): Promise<ChatResult> {
  * the turn runs to completion on the server regardless of this client. Watch
  * it via `connectConversationStream`.
  */
-export async function startChatTurn(req: ChatRequest): Promise<{ conversationId: string }> {
+export async function startChatTurn(req: ChatRequest): Promise<ChatStartResponse> {
   const res = await fetchWithRefresh(`${API_BASE}${workspacePath("/chat/start")}`, {
     method: "POST",
     credentials: "include",
@@ -509,20 +480,20 @@ export async function startChatTurn(req: ChatRequest): Promise<{ conversationId:
   });
   if (res.status === 401) throw new ApiClientError("unauthorized", "Unauthorized", 401);
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
     throw errorFromResponse(body, res.status);
   }
-  return res.json() as Promise<{ conversationId: string }>;
+  return res.json() as Promise<ChatStartResponse>;
 }
 
 /** Start a server-authoritative turn with file attachments (multipart). */
 export async function startChatTurnMultipart(
   req: ChatRequest,
   files: File[],
-): Promise<{ conversationId: string }> {
+): Promise<ChatStartResponse> {
   const formData = new FormData();
   formData.append("message", req.message);
   if (req.conversationId) formData.append("conversationId", req.conversationId);
@@ -541,13 +512,13 @@ export async function startChatTurnMultipart(
   });
   if (res.status === 401) throw new ApiClientError("unauthorized", "Unauthorized", 401);
   if (!res.ok) {
-    const body: ApiError = await res.json().catch(() => ({
+    const body: ApiErrorBody = await res.json().catch(() => ({
       error: "unknown",
       message: res.statusText,
     }));
     throw errorFromResponse(body, res.status);
   }
-  return res.json() as Promise<{ conversationId: string }>;
+  return res.json() as Promise<ChatStartResponse>;
 }
 
 /** Explicitly stop an in-flight turn (the Stop button). */
@@ -564,16 +535,9 @@ export async function cancelChatTurn(conversationId: string): Promise<void> {
 // Shell
 // ---------------------------------------------------------------------------
 
-/** Shell manifest returned by GET /v1/workspaces/<wsId>/shell. */
-export interface ShellData {
-  placements: PlacementEntry[];
-  chatEndpoint: string;
-  eventsEndpoint: string;
-}
-
 /** Fetch the shell manifest (placement slots, endpoints). */
-export async function getShell(): Promise<ShellData> {
-  return request<ShellData>(workspacePath("/shell"));
+export async function getShell(): Promise<ShellResponse> {
+  return request<ShellResponse>(workspacePath("/shell"));
 }
 
 /** Attempt to refresh the session using the refresh token cookie. Exposed for SSE modules. */
@@ -596,10 +560,10 @@ export const refreshSession = refreshInterceptor.tryRefresh;
 export async function initiateMcpOAuth(
   serverName: string,
   principalId?: string,
-): Promise<{ authorizationUrl: string | null }> {
+): Promise<OAuthInitiateResponse> {
   // `authorizationUrl` is null when the source connected without an interactive
   // flow (provider-minted / already-authenticated) — caller must not redirect.
-  return request<{ authorizationUrl: string | null }>(workspacePath("/mcp-auth/initiate"), {
+  return request<OAuthInitiateResponse>(workspacePath("/mcp-auth/initiate"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(principalId ? { serverName, principalId } : { serverName }),
@@ -612,12 +576,10 @@ export async function initiateMcpOAuth(
  * callback lands back on `/profile/connectors`. The identity-plane sibling of
  * `initiateMcpOAuth` (no workspace / principal).
  */
-export async function initiateIdentityConnect(
-  serverName: string,
-): Promise<{ authorizationUrl: string | null }> {
+export async function initiateIdentityConnect(serverName: string): Promise<OAuthInitiateResponse> {
   // `authorizationUrl` is null when the connector connected without an interactive
   // flow (already authenticated) — caller must not redirect.
-  return request<{ authorizationUrl: string | null }>("/v1/mcp-auth/initiate-identity", {
+  return request<OAuthInitiateResponse>("/v1/mcp-auth/initiate-identity", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverName }),
@@ -633,15 +595,12 @@ export async function initiateIdentityConnect(
  */
 export async function initiateComposioIdentityConnect(
   connectorId: string,
-): Promise<{ authorizationUrl: string; alreadyConnected?: boolean }> {
-  return request<{ authorizationUrl: string; alreadyConnected?: boolean }>(
-    "/v1/composio-auth/initiate-identity",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ connectorId }),
-    },
-  );
+): Promise<ComposioInitiateResponse> {
+  return request<ComposioInitiateResponse>("/v1/composio-auth/initiate-identity", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectorId }),
+  });
 }
 
 /**
@@ -657,15 +616,12 @@ export async function initiateComposioIdentityConnect(
  */
 export async function initiateComposioOAuth(
   connectorId: string,
-): Promise<{ authorizationUrl: string; alreadyConnected?: boolean }> {
-  return request<{ authorizationUrl: string; alreadyConnected?: boolean }>(
-    workspacePath("/composio-auth/initiate"),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ connectorId }),
-    },
-  );
+): Promise<ComposioInitiateResponse> {
+  return request<ComposioInitiateResponse>(workspacePath("/composio-auth/initiate"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ connectorId }),
+  });
 }
 
 /**
@@ -766,7 +722,7 @@ export interface InstalledConnector {
  * over `/v1/workspaces/<wsId>/tools/call`.
  */
 
-function unwrapStructured<T>(result: ToolCallResult, what: string): T {
+function unwrapStructured<T>(result: ToolCallResponse, what: string): T {
   if (result.isError) {
     const text = result.content?.[0]?.type === "text" ? result.content[0].text : "";
     throw new Error(text || `${what} failed.`);

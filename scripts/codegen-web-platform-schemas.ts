@@ -2,8 +2,9 @@
 /**
  * Generates the `.d.ts` trees under `web/src/_generated/` from the server-side
  * sources that own their shapes: the TypeBox schemas at
- * `src/platform/schemas/`, and the connector-catalog wire types at
- * `src/connectors/catalog/types.ts`.
+ * `src/platform/schemas/`, the connector-catalog wire types at
+ * `src/connectors/catalog/types.ts`, and the REST response bodies at
+ * `src/api/schemas/responses.ts`.
  *
  * Why this exists: web is a separate package (its own Dockerfile,
  * package.json, build context). The web shell needs the catalog's
@@ -41,6 +42,8 @@ const WORKSPACE_ID_PATTERN_SRC = join(REPO_ROOT, "src/workspace/workspace-id-pat
 const WORKSPACE_ID_PATTERN_DEST = join(REPO_ROOT, "web/src/_generated/workspace-id-pattern.ts");
 const CONNECTOR_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-connectors");
 const CONNECTOR_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/connector-catalog");
+const API_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-api");
+const API_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/api");
 const IDENTITY_SOURCES_SRC = join(REPO_ROOT, "src/tools/identity-sources.ts");
 /**
  * Zero-import runtime modules mirrored verbatim into the web tree.
@@ -251,3 +254,27 @@ rmSync(CONNECTOR_TYPES_TMP, { recursive: true, force: true });
 injectHeaders(CONNECTOR_TYPES_DEST, CONNECTOR_TYPES_DEST, "src");
 
 console.log(`[codegen] OK → ${CONNECTOR_TYPES_DEST.replace(REPO_ROOT, ".")}`);
+
+// ── REST response bodies ───────────────────────────────────────────
+//
+// The body of every JSON route, the types the handlers build through
+// `json<T>()`. `responses.ts` imports nothing, and the config's `rootDir` is its
+// own directory, so tsc refuses an import rather than emitting its graph here.
+
+console.log("[codegen] api → web/src/_generated/api/");
+
+rmSync(API_TYPES_TMP, { recursive: true, force: true });
+rmSync(API_TYPES_DEST, { recursive: true, force: true });
+
+execSync(`bunx tsc -p scripts/tsconfig.codegen-web-api.json`, {
+  cwd: REPO_ROOT,
+  stdio: "inherit",
+});
+
+mkdirSync(dirname(API_TYPES_DEST), { recursive: true });
+cpSync(API_TYPES_TMP, API_TYPES_DEST, { recursive: true });
+rmSync(API_TYPES_TMP, { recursive: true, force: true });
+
+injectHeaders(API_TYPES_DEST, API_TYPES_DEST, "src/api/schemas");
+
+console.log(`[codegen] OK → ${API_TYPES_DEST.replace(REPO_ROOT, ".")}`);

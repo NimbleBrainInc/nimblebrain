@@ -14,7 +14,7 @@ import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
 import { toSlug, toWsId } from "../lib/workspace-slug";
-import type { AppContext, ConfigInfo, FileLimits, ToolCallResult } from "../types";
+import type { AppContext, ConfigInfo, FileLimits, ToolCallResponse } from "../types";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ export interface ChatContextValue extends Omit<UseChatReturn, "sendMessage"> {
 const ChatContext = createContext<ChatContextValue | null>(null);
 
 /** Extract the config payload from a get_config result, preferring structuredContent over the first text block (parsed as JSON, else the raw block). */
-function extractConfigPayload(result: ToolCallResult): unknown {
+function extractConfigPayload(result: ToolCallResponse): unknown {
   const raw = result.structuredContent;
   if (raw) return raw;
   const block = result.content?.[0];

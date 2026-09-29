@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { handleReadResource } from "../../../src/api/handlers.ts";
 import { artifactResolutionsTotal } from "../../../src/api/metrics.ts";
-import type { ApiErrorBody } from "../../../src/api/types.ts";
+import type { ApiErrorBody, ReadResourceResponse } from "../../../src/api/schemas/responses.ts";
 import {
   ArtifactNotFoundError,
   type ArtifactResolver,
@@ -12,7 +12,6 @@ import {
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { ResourceData } from "../../../src/tools/types.ts";
 import { bytesToBase64 } from "../../../src/util/base64.ts";
-import type { ReadResourceResult } from "../../../web/src/api/client.ts";
 import { readJson } from "../../helpers/http.ts";
 
 /**
@@ -139,7 +138,7 @@ describe("handleReadResource", () => {
     expect(body.error).toBe("resource_not_found");
   });
 
-  it("returns ReadResourceResult shape for text resources", async () => {
+  it("returns ReadResourceResponse shape for text resources", async () => {
     const runtime = makeStubRuntime({
       resource: { text: "hello world", mimeType: "text/plain" },
     });
@@ -149,7 +148,7 @@ describe("handleReadResource", () => {
       { workspaceId: "w1" },
     );
     expect(res.status).toBe(200);
-    const body = await readJson<ReadResourceResult>(res);
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents).toHaveLength(1);
     expect(body.contents[0]).toEqual({
       uri: "ui://calendar/greeting",
@@ -169,7 +168,7 @@ describe("handleReadResource", () => {
       { workspaceId: "w1" },
     );
     expect(res.status).toBe(200);
-    const body = await readJson<ReadResourceResult>(res);
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents[0].uri).toBe("collateral://exports/e.pdf");
     expect(body.contents[0].mimeType).toBe("application/pdf");
     expect(body.contents[0].text).toBeUndefined();
@@ -204,7 +203,7 @@ describe("handleReadResource", () => {
       workspaceId: "ws_a",
     });
     expect(res.status).toBe(200);
-    const body = await readJson<ReadResourceResult>(res);
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents[0].text).toBe("hello world\n");
     expect(calls).toEqual([{ server: "files", uri: "files://fl_abc" }]);
   });
@@ -353,7 +352,7 @@ describe("handleReadResource — artifact:// branch", () => {
       workspaceId: "w1",
     });
     expect(res.status).toBe(200);
-    const body = await readJson<ReadResourceResult>(res);
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents).toEqual([
       { uri: "artifact://abc123", mimeType: "text/plain", text: "resolved body" },
     ]);

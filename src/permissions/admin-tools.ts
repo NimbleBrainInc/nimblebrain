@@ -108,13 +108,115 @@ export function isAdminToolAllowed(
   adminTools: AdminToolsDeclaration | undefined,
   toolName: string,
 ): boolean {
-  if (!gates(adminTools, toolName)) return true;
+  if (!isDeclaredAdminTool(adminTools, toolName)) return true;
   return canWriteWorkspaceScoped(identity, ws).allowed;
 }
 
-function gates(adminTools: AdminToolsDeclaration | undefined, toolName: string): boolean {
+/** Whether `adminTools` gates `toolName`, whoever is calling. */
+export function isDeclaredAdminTool(
+  adminTools: AdminToolsDeclaration | undefined,
+  toolName: string,
+): boolean {
   if (adminTools === undefined) return false;
   return adminTools.kind === "all" || adminTools.names.includes(toolName);
+}
+
+/**
+ * The door a call to a declared admin tool came through, as the audit line
+ * records it. The door knows; nothing downstream of it can tell a person's
+ * click from their agent's call, because both reach the same source.
+ *
+ * - `chat`: the agent, in a conversation a person is taking part in.
+ * - `automation`: the agent, in a run nobody is watching.
+ * - `dispatch`: an unattended dispatch from stored configuration.
+ * - `app`: a connector's own view, over `/mcp`.
+ * - `mcp`: any other `/mcp` client.
+ * - `api`: REST `tools/call`.
+ */
+export type AdminToolCaller = "chat" | "automation" | "dispatch" | "app" | "mcp" | "api";
+
+/** What a door knows about one call, beyond who made it and what it names. */
+export interface AdminToolCall {
+  input: Record<string, unknown>;
+  caller: AdminToolCaller;
+}
+
+/** What an argument the tool's schema marks `writeOnly` is recorded as. */
+export const REDACTED_ARGUMENT = "[redacted]";
+
+/**
+ * A call's arguments as the audit line records them: every argument, with the
+ * whole value of each top-level argument whose schema contains
+ * `"writeOnly": true` anywhere replaced. `writeOnly` is JSON Schema's own word
+ * for a value that is sent and never read back, which is what a secret is; a
+ * tool that takes one and does not mark it has its value written to the
+ * workspace log.
+ *
+ * "Anywhere" covers the shapes schema generators emit for a secret that is not
+ * a plain top-level string: a branch of `anyOf` / `oneOf` / `allOf` (an
+ * optional secret), a nested property or array item, and a local `$ref` into
+ * the schema's `$defs` or `definitions` (a model-typed argument). The argument
+ * is redacted whole rather than field by field, so a secret nested in it is
+ * never recorded.
+ *
+ * With no schema to read (the source is down, or no longer lists the tool),
+ * every value is replaced and only the names are kept: a secret the schema
+ * would have marked must not reach the log because the schema was unavailable.
+ */
+export function auditArguments(
+  input: Record<string, unknown>,
+  inputSchema: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const properties = inputSchema?.properties;
+  const described =
+    typeof properties === "object" && properties !== null
+      ? (properties as Record<string, unknown>)
+      : undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    const secret =
+      described === undefined || containsWriteOnly(described[key], inputSchema, new Set());
+    out[key] = secret ? REDACTED_ARGUMENT : value;
+  }
+  return out;
+}
+
+/**
+ * Whether `writeOnly: true` appears anywhere in `node`, following local `$ref`s
+ * against `root`. Every nested object and array is walked, whatever keyword
+ * holds it, so a combinator this does not name is still covered. A `$ref` that
+ * does not resolve counts as `writeOnly`: what it names cannot be read, so it
+ * is treated like an unreadable schema. `seen` stops a recursive `$ref`.
+ */
+function containsWriteOnly(node: unknown, root: unknown, seen: Set<unknown>): boolean {
+  if (typeof node !== "object" || node === null || seen.has(node)) return false;
+  seen.add(node);
+  if (Array.isArray(node)) return node.some((item) => containsWriteOnly(item, root, seen));
+  const obj = node as Record<string, unknown>;
+  if (obj.writeOnly === true) return true;
+  if (typeof obj.$ref === "string") {
+    const target = resolveLocalRef(root, obj.$ref);
+    if (target === undefined || containsWriteOnly(target, root, seen)) return true;
+  }
+  return Object.values(obj).some((value) => containsWriteOnly(value, root, seen));
+}
+
+/** The node a `#` or `#/…` JSON Pointer names in `root`, or undefined. */
+function resolveLocalRef(root: unknown, ref: string): unknown {
+  if (ref === "#") return root;
+  if (!ref.startsWith("#/")) return undefined;
+  let node: unknown = root;
+  for (const raw of ref.slice(2).split("/")) {
+    let segment: string;
+    try {
+      segment = decodeURIComponent(raw).replace(/~1/g, "/").replace(/~0/g, "~");
+    } catch {
+      return undefined;
+    }
+    if (typeof node !== "object" || node === null) return undefined;
+    node = (node as Record<string, unknown>)[segment];
+  }
+  return node;
 }
 
 /**

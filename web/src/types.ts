@@ -1,3 +1,23 @@
+// REST response bodies are the server's own types, generated from
+// `src/api/schemas/responses.ts`. Import them from here or from the generated
+// module; never restate one.
+export type {
+  ApiErrorBody,
+  BootstrapResponse,
+  ChatResponse,
+  ChatStartResponse,
+  ComposioInitiateResponse,
+  FileEntry,
+  FileLimits,
+  OAuthInitiateResponse,
+  PlacementEntry,
+  ReadResourceResponse,
+  ResourceContents,
+  ShellResponse,
+  ToolCallResponse,
+  UploadResourceResponse,
+} from "./_generated/api/responses";
+
 /** UI metadata for a connector (sidebar entry, icon). */
 export interface ConnectorUiMeta {
   name: string;
@@ -12,13 +32,6 @@ export type ConnectionState =
   | "dead"
   | "stopped"
   | "pending_auth";
-
-/** Tool call result from POST /v1/workspaces/:wsId/tools/call. */
-export interface ToolCallResult {
-  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
-  structuredContent?: Record<string, unknown>;
-  isError: boolean;
-}
 
 /** Tool call record in a chat result. */
 export interface ToolCallRecord {
@@ -59,11 +72,8 @@ export interface ChatRequest {
 }
 
 /**
- * Token usage for a single chat turn — the wire shape returned by
- * `POST /v1/workspaces/:wsId/chat` and the SSE `done` event. Mirrors `TurnUsage` from
- * the runtime (`src/runtime/types.ts`) plus `costUsd` which the API
- * boundary computes from `(model, usage)`. Cache and reasoning fields
- * are optional per the canonical `TokenUsage` shape.
+ * Token usage for a single chat turn, as the SSE `done` event carries it.
+ * The synchronous `POST …/chat` body is the generated `ChatResponse`.
  */
 export interface TurnUsage extends UsageShape {
   model: string;
@@ -73,7 +83,7 @@ export interface TurnUsage extends UsageShape {
   costUsd: number;
 }
 
-/** Full chat result from POST /v1/workspaces/:wsId/chat and the final SSE "done" event. */
+/** The final SSE `done` event of a chat turn. */
 export interface ChatResult {
   response: string;
   conversationId: string;
@@ -385,79 +395,4 @@ export interface ConfigInfo {
     locale?: string;
     theme?: string;
   };
-}
-
-/** Bootstrap response from GET /v1/bootstrap — single startup payload. */
-export interface BootstrapResponse {
-  user: {
-    id: string;
-    email: string;
-    displayName: string;
-    orgRole: string;
-    preferences: { displayName?: string; timezone?: string; locale?: string; theme?: string };
-  };
-  workspaces: Array<{
-    id: string;
-    name: string;
-    /**
-     * The signed-in user's role within this workspace. Drives the
-     * workspace-scoped permission UX (see `useScopedRole`). Tightened to
-     * the literal union so a future server change can't silently widen it
-     * back to `string` — that regression dropped every non-admin's
-     * settings nav to "About only" until detected in production.
-     */
-    role: "admin" | "member";
-    memberCount: number;
-    connectorCount: number;
-    /** The workspace's MCP endpoint, canonical form: `<publicOrigin>/mcp/<wsId>`. */
-    mcpUrl: string;
-  }>;
-  activeWorkspace: string | null;
-  shell: {
-    placements: PlacementEntry[];
-    chatEndpoint: string;
-    eventsEndpoint: string;
-  };
-  config: {
-    models: Record<string, string>;
-    configuredProviders: string[];
-    /** Same two fields `get_config` publishes — see `ConfigInfo`. */
-    newConversationModel?: string;
-    availableModels?: ConfigInfo["availableModels"];
-    maxIterations: number;
-    maxInputTokens: number;
-    maxOutputTokens: number;
-    /** Attachment limits; absent when the deployment has file context off. */
-    files?: FileLimits;
-  };
-  version: string;
-  buildSha: string | null;
-}
-
-/** API error response shape. */
-export interface ApiError {
-  error: string;
-  message: string;
-  details?: Record<string, unknown>;
-}
-
-// --- Shell / Placement Types ---
-
-/** A single placement entry from the shell manifest. */
-export interface PlacementEntry {
-  serverName: string;
-  slot: string;
-  resourceUri: string;
-  priority: number;
-  label?: string;
-  icon?: string;
-  route?: string;
-  size?: "compact" | "full" | "auto";
-}
-
-/** The limits a chat message's attachments are held to (the server's `files` config). */
-export interface FileLimits {
-  maxFileSize: number;
-  maxTotalSize: number;
-  maxFilesPerMessage: number;
 }

@@ -1,3 +1,5 @@
+import type { ApiErrorBody, ReadResourceResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 // Identity-app resource host: `/v1/workspaces/:wsId/apps/:name/resources/*`
 // (handleResourceProxy).
 //
@@ -46,7 +48,7 @@ describe("identity-app resource host (/v1/workspaces/:wsId/apps/:name/resources/
     // its `primary` resource from the identity source — not the workspace registry.
     const res = await handleResourceProxy("conversations", "primary", runtime, TEST_WORKSPACE_ID);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { contents: { uri: string; text?: string }[] };
+    const body = await readJson<ReadResourceResponse>(res);
     expect(body.contents.length).toBeGreaterThan(0);
     expect(body.contents[0]?.uri).toContain("ui://");
   });
@@ -76,7 +78,7 @@ describe("identity-app resource host (/v1/workspaces/:wsId/apps/:name/resources/
     // never served through the identity host.
     const res = await handleResourceProxy("no_such_app", "primary", runtime, TEST_WORKSPACE_ID);
     expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: string };
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("workspace_access_denied");
   });
 });

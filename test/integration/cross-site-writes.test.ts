@@ -1,3 +1,9 @@
+import type {
+  ApiErrorBody,
+  ChatCancelResponse,
+  ChatStartResponse,
+} from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * A browser write from another origin is refused on every route unless CORS
  * allows that origin, and nothing else changes.
@@ -157,7 +163,7 @@ function post(path: string, headers: Record<string, string>, body?: unknown): Pr
 
 async function expectRefused(res: Response): Promise<void> {
   expect(res.status).toBe(403);
-  expect(((await res.json()) as { error: string }).error).toBe("cross_site_request");
+  expect((await readJson<ApiErrorBody>(res)).error).toBe("cross_site_request");
 }
 
 async function startConversation(): Promise<string> {
@@ -165,7 +171,7 @@ async function startConversation(): Promise<string> {
     message: "hello",
   });
   expect(res.status).toBe(200);
-  return ((await res.json()) as { conversationId: string }).conversationId;
+  return (await readJson<ChatStartResponse>(res)).conversationId;
 }
 
 const MCP_INITIALIZE = {
@@ -194,7 +200,7 @@ const GUARDED: Array<{
     send: async (headers) => post(`/v1/conversations/${await startConversation()}/cancel`, headers),
     admitted: async (res) => {
       expect(res.status).toBe(200);
-      expect(typeof ((await res.json()) as { cancelled: boolean }).cancelled).toBe("boolean");
+      expect(typeof (await readJson<ChatCancelResponse>(res)).cancelled).toBe("boolean");
     },
   },
   {
@@ -202,7 +208,7 @@ const GUARDED: Array<{
     send: (headers) => post("/v1/mcp-auth/initiate-identity", headers, { serverName: "absent" }),
     admitted: async (res) => {
       expect(res.status).toBe(404);
-      expect(((await res.json()) as { error: string }).error).toBe("connector_not_found");
+      expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_not_found");
     },
   },
   {
@@ -211,7 +217,7 @@ const GUARDED: Array<{
       post("/v1/composio-auth/initiate-identity", headers, { connectorId: "com.example/absent" }),
     admitted: async (res) => {
       expect(res.status).toBe(404);
-      expect(((await res.json()) as { error: string }).error).toBe("connector_not_found");
+      expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_not_found");
     },
   },
   {
@@ -347,7 +353,7 @@ describe("the web app's own flows", () => {
       serverName: "absent",
     });
     expect(res.status).toBe(404);
-    expect(((await res.json()) as { error: string }).error).toBe("connector_not_found");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_not_found");
   });
 });
 
@@ -391,7 +397,8 @@ describe("every non-safe route in the table", () => {
         },
         body: "{}",
       });
-      const body = res.status === 403 ? ((await res.json()) as { error?: string }) : {};
+      const body: Partial<ApiErrorBody> =
+        res.status === 403 ? await readJson<ApiErrorBody>(res) : {};
       if (body.error !== "cross_site_request") admitted.push(`${path} → ${res.status}`);
     }
     expect(admitted).toEqual([]);

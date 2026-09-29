@@ -235,6 +235,37 @@ export const UnattendedDispatchPayload = Type.Object({
 });
 export type UnattendedDispatchPayload = Static<typeof UnattendedDispatchPayload>;
 
+export const AdminToolCallPayload = Type.Object({
+  workspaceId: Type.String({ description: "The workspace the call was made in." }),
+  userId: Type.Union([Type.String(), Type.Null()], {
+    description:
+      "The person the call ran as: the chat user, the run's owner, or the dispatch's principal.",
+  }),
+  connector: Type.String({ description: "The connector's source name." }),
+  tool: Type.String({ description: "The bare tool name." }),
+  caller: Type.Union(
+    [
+      Type.Literal("chat"),
+      Type.Literal("automation"),
+      Type.Literal("dispatch"),
+      Type.Literal("app"),
+      Type.Literal("mcp"),
+      Type.Literal("api"),
+    ],
+    { description: "The door the call came through (`AdminToolCaller`)." },
+  ),
+  outcome: Type.Union([Type.Literal("admitted"), Type.Literal("refused")], {
+    description:
+      "The role gate's answer. `admitted` is not success: the connector may still refuse the call.",
+  }),
+  arguments: Type.Record(Type.String(), Type.Unknown(), {
+    description: "The call's arguments, with every `writeOnly` property's value redacted.",
+  }),
+  conversationId: Type.Optional(Type.String()),
+  runId: Type.Optional(Type.String()),
+});
+export type AdminToolCallPayload = Static<typeof AdminToolCallPayload>;
+
 // ── Discriminated event union ────────────────────────────────────────────
 //
 // Events with a typed payload are listed in the union below. Emitters
@@ -266,6 +297,10 @@ export const TypedEngineEvent = Type.Union([
   Type.Object({
     type: Type.Literal("audit.unattended_dispatch"),
     data: UnattendedDispatchPayload,
+  }),
+  Type.Object({
+    type: Type.Literal("audit.admin_tool_call"),
+    data: AdminToolCallPayload,
   }),
 ]);
 export type TypedEngineEvent = Static<typeof TypedEngineEvent>;

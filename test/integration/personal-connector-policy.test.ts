@@ -99,6 +99,7 @@ afterAll(async () => {
 describe("personal-connector per-tool policy — engine door", () => {
   it("allows a granted, non-disallowed tool", async () => {
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: SHARED_WS,
       runtime,
@@ -109,6 +110,7 @@ describe("personal-connector per-tool policy — engine door", () => {
 
   it("denies a tool the owner disallowed, before it runs", async () => {
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: SHARED_WS,
       runtime,
@@ -128,6 +130,7 @@ describe("personal-connector reachability — a personal workspace is just a wor
     // granola is NOT granted to the personal workspace — only to Helix. The
     // personal workspace gets no special treatment, so it's grant-gated too.
     const homeRouter = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: personalWs,
       runtime,
@@ -146,6 +149,7 @@ describe("personal-connector reachability — a personal workspace is just a wor
     await store.grantConnector(DEV_IDENTITY.id, "notion", personalWs);
     try {
       const homeRouter = new IdentityToolRouter({
+        caller: "chat",
         identityId: DEV_IDENTITY.id,
         workspaceId: personalWs,
         runtime,

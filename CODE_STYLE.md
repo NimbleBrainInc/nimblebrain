@@ -170,6 +170,44 @@ except `src/api/app.ts`.
 metrics, CORS, security headers, the cross-site guard) is app-wide by design
 and is the only place `.use()` belongs.
 
+### A route's JSON body is a named response type
+
+A route writes a JSON body only through `json<T>()` (`src/api/types.ts`), with
+`T` a type from `src/api/schemas/responses.ts`.
+
+```ts
+// BAD — the body is described nowhere but here; the web client and the tests
+// each write their own copy.
+return c.json({ authorizationUrl });
+return Response.json({ conversationId });
+return json<{ ok: boolean }>({ ok: true });
+```
+
+```ts
+// GOOD — the named type is the contract the web shell and the tests import.
+import type { OAuthInitiateResponse } from "../schemas/responses.ts";
+
+return json<OAuthInitiateResponse>({ authorizationUrl }, 200, { "Set-Cookie": cookie });
+```
+
+**Rationale.** A body built inline is described again by every reader: the web
+client's hand-written type, a test's local interface. Those copies drift from the
+handler the first time it changes, and nothing fails. `responses.ts` is emitted
+into `web/src/_generated/api/` by `bun run codegen`, so a changed body fails the
+build at the web client and at the tests. `json<T>()` takes `T` as `NoInfer`, so
+it does not compile without one.
+
+**Detection.** `bun run check:rest-responses` (wired into `verify:static`) flags,
+in any `.ts` file under `src/` outside the platform app UIs: a `.json(...)` call
+with an argument (`c.json(body)`, `Response.json(body)`), a
+`new Response(JSON.stringify(...))` outside `src/api/types.ts`, and a
+`json<T>()` whose `T` is not a name imported from `schemas/responses.ts`.
+
+**Override.** None. Declare the body in `responses.ts`. A body that restates a
+domain type (`FileEntry`, `PlacementEntry`) mirrors it there, because
+`responses.ts` imports nothing, and `responses-drift-guard.ts` pins the mirror to
+its source.
+
 ---
 
 ## Platform tools

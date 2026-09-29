@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, HealthResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ChatResult } from "../../src/runtime/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -374,7 +374,7 @@ describe("Bearer token authentication", () => {
   it("GET /v1/health returns 200 regardless of auth", async () => {
     const res = await fetch(`${authUrl}/v1/health`);
     expect(res.status).toBe(200);
-    const body = await readJson<{ status: string }>(res);
+    const body = await readJson<HealthResponse>(res);
     expect(body.status).toBe("ok");
   });
 });
