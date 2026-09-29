@@ -341,7 +341,6 @@ function buildFinalAssistantMessage(
   finalBlocks: ContentBlock[],
   finalTools: ToolCallDisplay[] | undefined,
   usage: ChatMessage["usage"],
-  resultFiles: MessageFileAttachment[] | undefined,
   skillsLoaded: SkillsLoadedContext | undefined,
 ): ChatMessage {
   return {
@@ -354,7 +353,6 @@ function buildFinalAssistantMessage(
     ...(result.stopReason && result.stopReason !== "complete"
       ? { stopReason: result.stopReason }
       : {}),
-    ...(resultFiles && resultFiles.length > 0 ? { files: resultFiles } : {}),
   };
 }
 
@@ -1092,11 +1090,6 @@ export function createChatStore(): ChatStore {
           llmMs: result.usage.llmMs,
         }
       : undefined;
-    // Cast: `files` is attached to the done payload by the server but isn't
-    // on the typed ChatResult — read it defensively.
-    const resultFiles = (result as unknown as Record<string, unknown>).files as
-      | MessageFileAttachment[]
-      | undefined;
 
     const updated = [...slice.messages];
     if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
@@ -1105,7 +1098,6 @@ export function createChatStore(): ChatStore {
         finalBlocks,
         finalTools,
         usage,
-        resultFiles,
         slice.skillsLoaded,
       );
       slice.messages = updated;
