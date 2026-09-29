@@ -53,8 +53,8 @@ export function parseAdminToolsDeclaration(
 ): AdminToolsDeclaration | undefined {
   // `meta` is an unchecked cast over manifest / registry JSON, so the declared
   // type is a claim about intent, not a guarantee about bytes.
-  if (meta === undefined || meta === null || !("admin_tools" in meta)) return undefined;
-  const raw = meta.admin_tools as unknown;
+  const raw = meta?.admin_tools as unknown;
+  if (raw === undefined) return undefined;
   const reason = malformedReason(raw);
   if (reason !== null) {
     warnOnce(connector, reason);

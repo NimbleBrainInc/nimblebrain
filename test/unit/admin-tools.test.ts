@@ -90,6 +90,12 @@ describe("parseAdminToolsDeclaration", () => {
     expect(parse([])).toBeUndefined();
   });
 
+  test("declares nothing for a host block that is not an object", () => {
+    for (const host of ["1.0", 7]) {
+      expect(parseAdminToolsDeclaration(host as unknown as HostManifestMeta, "ai.acme/crm")).toBeUndefined();
+    }
+  });
+
   // The field only narrows, so dropping any part of it would widen access.
   test("gates every tool when the declaration is not a list, null included", () => {
     for (const raw of ["configure", { configure: true }, null, 7]) {
