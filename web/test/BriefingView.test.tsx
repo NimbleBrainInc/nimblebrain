@@ -74,6 +74,7 @@ function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
         facet: "overdue",
         label: "Follow-ups overdue",
         count: 2,
+        level: "warning",
         route: "@acme/crm",
         state: "ok",
       },
@@ -82,6 +83,7 @@ function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
         facet: "blocked",
         label: "Tasks blocked",
         count: 0,
+        level: "critical",
         route: "@acme/tasks",
         state: "unavailable",
       },
@@ -137,27 +139,31 @@ describe("BriefingView", () => {
     mounted = await mount(view());
     const rows = findAllByTestId(mounted.container, "briefing-item");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.textContent).toBe("2 Follow-ups overdue · CRM");
+    expect(rows[0]?.textContent).toBe("Warning: 2 Follow-ups overdue · CRM");
   });
 
   test("hides nothing the server sent, in the order it sent it", async () => {
     const briefing = makeBriefing({
       items: [
-        { app: "B", facet: "b", label: "Second app", count: 1, route: null, state: "ok" },
-        { app: "A", facet: "a", label: "Down", count: 0, route: null, state: "unavailable" },
-        { app: "A", facet: "c", label: "Third", count: 7, route: null, state: "ok" },
+        { app: "B", facet: "b", label: "Second app", count: 1, level: "warning", route: null, state: "ok" },
+        { app: "A", facet: "a", label: "Down", count: 0, level: "warning", route: null, state: "unavailable" },
+        { app: "A", facet: "c", label: "Third", count: 7, level: "warning", route: null, state: "ok" },
       ],
     });
     mounted = await mount(view({ briefing }));
     const rows = Array.from(mounted.container.getElementsByTagName("li")).map((li) => li.textContent);
-    expect(rows).toEqual(["1 Second app · B", "Down — unavailable · A", "7 Third · A"]);
+    expect(rows).toEqual([
+      "Warning: 1 Second app · B",
+      "Warning: Down — unavailable · A",
+      "Warning: 7 Third · A",
+    ]);
   });
 
   test("an unavailable item renders muted and keeps its action", async () => {
     const opened: string[] = [];
     mounted = await mount(view({ onOpen: (r) => opened.push(r) }));
     const row = findByTestId(mounted.container, "briefing-item-unavailable");
-    expect(row?.textContent).toBe("Tasks blocked — unavailable · Tasks");
+    expect(row?.textContent).toBe("Critical: Tasks blocked — unavailable · Tasks");
     const button = row?.getElementsByTagName("button")[0];
     expect(button?.className).toContain("text-muted-foreground");
     await act(async () => {
@@ -168,7 +174,7 @@ describe("BriefingView", () => {
 
   test("an item with no route has no action", async () => {
     const briefing = makeBriefing({
-      items: [{ app: "A", facet: "a", label: "Things", count: 3, route: null, state: "ok" }],
+      items: [{ app: "A", facet: "a", label: "Things", count: 3, level: "warning", route: null, state: "ok" }],
     });
     mounted = await mount(view({ briefing }));
     expect(mounted.container.getElementsByTagName("button")).toHaveLength(0);
@@ -176,7 +182,7 @@ describe("BriefingView", () => {
 
   test("renders a label as text, never as markup", async () => {
     const briefing = makeBriefing({
-      items: [{ app: "CRM", facet: "x", label: "<b>bold</b>", count: 1, route: null, state: "ok" }],
+      items: [{ app: "CRM", facet: "x", label: "<b>bold</b>", count: 1, level: "warning", route: null, state: "ok" }],
     });
     mounted = await mount(view({ briefing }));
     expect(mounted.container.getElementsByTagName("b")).toHaveLength(0);
@@ -194,7 +200,7 @@ describe("BriefingView", () => {
     );
     const rows = findAllByTestId(mounted.container, "briefing-connector-status");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.textContent).toBe("Sign-in required · Gmail");
+    expect(rows[0]?.textContent).toBe("Critical: Sign-in required · Gmail");
     await act(async () => {
       rows[0]?.getElementsByTagName("button")[0]?.click();
     });
@@ -217,12 +223,57 @@ describe("BriefingView", () => {
       (r) => r.textContent,
     );
     expect(text).toEqual([
-      "Configuration required · a",
-      "Failed · b",
-      "Connecting… · c",
-      "Starting… · d",
+      "Critical: Configuration required · a",
+      "Critical: Failed · b",
+      "Info: Connecting… · c",
+      "Info: Starting… · d",
     ]);
     expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+  });
+
+  test("orders every row by level, most urgent first, and shows the level", async () => {
+    mounted = await mount(
+      view({
+        briefing: makeBriefing({
+          items: [
+            { app: "Out", facet: "d", label: "Drafts", count: 4, level: "warning", route: null, state: "ok" },
+            { app: "Out", facet: "r", label: "Replies", count: 2, level: "info", route: null, state: "ok" },
+            { app: "Tasks", facet: "b", label: "Tasks blocked", count: 1, level: "critical", route: null, state: "ok" },
+          ],
+        }),
+        connectors: [connector("c", "connecting", "Slack"), connector("n", "needs_auth", "Notion")],
+      }),
+    );
+    const rows = Array.from(mounted.container.getElementsByTagName("li"));
+    expect(rows.map((li) => [li.getAttribute("data-level"), li.textContent])).toEqual([
+      ["critical", "Critical: Sign-in required · Notion"],
+      ["critical", "Critical: 1 Tasks blocked · Tasks"],
+      ["warning", "Warning: 4 Drafts · Out"],
+      ["info", "Info: Connecting… · Slack"],
+      ["info", "Info: 2 Replies · Out"],
+    ]);
+    const tone = (li: Element) => li.getElementsByTagName("svg")[0]?.getAttribute("class") ?? "";
+    expect(tone(rows[0]!)).toContain("text-destructive");
+    expect(tone(rows[2]!)).toContain("text-warning");
+    expect(tone(rows[3]!)).toContain("text-muted-foreground");
+  });
+
+  test("reads a level it does not know as warning, including an inherited key", async () => {
+    const odd = { app: "X", facet: "x", label: "Odd", count: 1, route: null, state: "ok" as const };
+    mounted = await mount(
+      view({
+        briefing: makeBriefing({
+          items: [
+            { ...odd, level: "urgent" as unknown as "warning" },
+            { ...odd, facet: "y", level: "constructor" as unknown as "warning" },
+          ],
+        }),
+      }),
+    );
+    const levels = Array.from(mounted.container.getElementsByTagName("li")).map((li) =>
+      li.getAttribute("data-level"),
+    );
+    expect(levels).toEqual(["warning", "warning"]);
   });
 
   describe("empty state", () => {

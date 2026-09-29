@@ -860,6 +860,80 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect((await p.tokens())?.access_token).toBe("a");
   });
 
+  describe("identity across a new sign-in vs a refresh", () => {
+    const idTokenFor = (sub: string, email: string): string => {
+      const header = btoa(JSON.stringify({ alg: "RS256" })).replace(/=/g, "");
+      const payload = btoa(JSON.stringify({ sub, email })).replace(/=/g, "");
+      return `${header}.${payload}.s`;
+    };
+    const signedIn = async (): Promise<WorkspaceOAuthProvider> => {
+      const p = new WorkspaceOAuthProvider({
+        owner: { type: "workspace", wsId: "ws_test" },
+        serverName: "oidc",
+        workDir,
+        callbackUrl: CALLBACK,
+      });
+      await p.exchangeAuthorizationCode(() =>
+        p.saveTokens({
+          access_token: "a1",
+          token_type: "Bearer",
+          refresh_token: "r1",
+          id_token: idTokenFor("user-a", "a@example.com"),
+        }),
+      );
+      expect(await p.identity()).toEqual({ sub: "user-a", email: "a@example.com" });
+      return p;
+    };
+
+    it("a code exchange without an id_token clears the prior sign-in's identity", async () => {
+      const p = await signedIn();
+      // Reconnect without a disconnect, as another account, and the token
+      // response carries no id_token: "Connected as" must not name user-a.
+      await p.exchangeAuthorizationCode(() =>
+        p.saveTokens({ access_token: "a2", token_type: "Bearer" }),
+      );
+      expect(await p.identity()).toBeNull();
+      expect((await p.tokens())?.access_token).toBe("a2");
+    });
+
+    it("a code exchange with an unparsable id_token clears the prior identity", async () => {
+      const p = await signedIn();
+      await p.exchangeAuthorizationCode(() =>
+        p.saveTokens({ access_token: "a2", token_type: "Bearer", id_token: "not-a-jwt" }),
+      );
+      expect(await p.identity()).toBeNull();
+    });
+
+    it("a code exchange with an id_token replaces the prior identity", async () => {
+      const p = await signedIn();
+      await p.exchangeAuthorizationCode(() =>
+        p.saveTokens({
+          access_token: "a2",
+          token_type: "Bearer",
+          id_token: idTokenFor("user-b", "b@example.com"),
+        }),
+      );
+      expect(await p.identity()).toEqual({ sub: "user-b", email: "b@example.com" });
+    });
+
+    it("a refresh without an id_token keeps the identity", async () => {
+      const p = await signedIn();
+      await p.saveTokens({ access_token: "a2", token_type: "Bearer", refresh_token: "r1" });
+      expect(await p.identity()).toEqual({ sub: "user-a", email: "a@example.com" });
+    });
+
+    it("a failed code exchange leaves later saves treated as refreshes", async () => {
+      const p = await signedIn();
+      await expect(
+        p.exchangeAuthorizationCode(async () => {
+          throw new Error("invalid_code");
+        }),
+      ).rejects.toThrow("invalid_code");
+      await p.saveTokens({ access_token: "a2", token_type: "Bearer", refresh_token: "r1" });
+      expect(await p.identity()).toEqual({ sub: "user-a", email: "a@example.com" });
+    });
+  });
+
   it("RFC 9728: discovers AS at a different origin via oauth-protected-resource", async () => {
     // Mimics Google: connector at gmailmcp.googleapis.com but AS at
     // oauth2.googleapis.com. The protected-resource metadata points at

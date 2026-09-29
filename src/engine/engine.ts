@@ -180,7 +180,7 @@ function toXaiEffort(effort: ThinkingEffort): XAIEffort {
  * The deepest level at or below the one requested that this model accepts.
  *
  * Support is per-model, not per-generation, so an operator's tier may simply
- * not exist here — `gemini-3-pro-preview` has no `medium`. Only steps down:
+ * not exist here — `gemini-3.1-flash-lite-image` has no `medium`. Only steps down:
  * stepping up would think harder than the operator asked for, which is a worse
  * surprise than not honoring the tier, and no current row would ever reach it
  * anyway (every level set contains `minimal` or `low`).
@@ -235,6 +235,13 @@ function pickTier<T extends string>(
  * 5-series reject `thinking.type=enabled` and take `thinking.type=adaptive`
  * plus `output_config.effort`; everything earlier takes `thinking.type=enabled`
  * with a token budget.
+ *
+ * `display: "summarized"` asks for the thinking text itself. The adaptive
+ * dialect omits it by default, so without this the response carries thinking
+ * blocks whose text is empty: the reasoning tokens are spent and billed, the
+ * turn stalls for as long as they take, and the client has nothing to show for
+ * the wait. It applies only to the adaptive dialect; the budget dialect returns
+ * thinking text unasked.
  */
 function buildAnthropicThinkingOptions(
   model: string,
@@ -252,13 +259,18 @@ function buildAnthropicThinkingOptions(
       // `off` work on the models where it works.
       return {};
     case "adaptive":
-      return { anthropic: { thinking: { type: "adaptive" } } };
+      return { anthropic: { thinking: { type: "adaptive", display: "summarized" } } };
     case "effort":
     case "enabled": {
       // Effort-shaped models take the tier either way: a token budget can't be
       // metered there, but the depth chosen alongside it can.
       if (effortShaped) {
-        return { anthropic: { thinking: { type: "adaptive" }, effort: thinking.effort } };
+        return {
+          anthropic: {
+            thinking: { type: "adaptive", display: "summarized" },
+            effort: thinking.effort,
+          },
+        };
       }
       const budgetTokens =
         thinking.mode === "enabled"
@@ -2027,8 +2039,24 @@ export class AgentEngine {
       };
     }
 
-    // Extract UI resourceUri from the tool's `_meta` if present
+    // A tool without "model" in its `ui.visibility` is withheld from every list
+    // the model sees, and that alone does not stop a model that names it: an
+    // injected instruction can carry the name. The engine is the host on this
+    // door, so the refusal is enforced here, at the call.
     const meta = ctx.toolMeta.get(gatedCall.name);
+    if (!isModelVisible({ meta })) {
+      return {
+        toolCall,
+        gatedCall,
+        result: {
+          content: textContent(`${gatedCall.name} is not available to the agent.`),
+          isError: true,
+        } as ToolResult,
+        ms: 0,
+      };
+    }
+
+    // Extract UI resourceUri from the tool's `_meta` if present
     const uiMeta = meta?.ui as Record<string, unknown> | undefined;
     const resourceUri = typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
 

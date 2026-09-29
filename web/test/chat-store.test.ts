@@ -184,6 +184,30 @@ describe("chat-store viewer", () => {
     expect(lastAssistant(snap.messages)?.content).toBe("hi there");
   });
 
+  it("keeps the analyzing state through a textless reasoning delta", async () => {
+    // Anthropic sends a reasoning block's signature as a delta with no text.
+    // Taking it as "streaming" hides the live cursor behind a block that
+    // renders nothing, so a long think shows no indicator at all.
+    const store = createChatStore();
+    await store.sendTurn("draft-sig", { text: "hello" });
+    const s = latestStream();
+
+    s.onEvent("user.message", { content: "hello" }, 1);
+    s.onEvent("tool.start", { id: "t1", name: "web_search" }, 2);
+    s.onEvent("tool.done", { id: "t1", name: "web_search", ok: true, ms: 5 }, 3);
+    expect(store.getSnapshot("draft-sig").streamingState).toBe("analyzing");
+
+    s.onEvent("reasoning.delta", { text: "" }, 4);
+    expect(store.getSnapshot("draft-sig").streamingState).toBe("analyzing");
+    expect(lastAssistant(store.getSnapshot("draft-sig").messages)?.blocks ?? []).not.toContainEqual({
+      type: "reasoning",
+      text: "",
+    });
+
+    s.onEvent("reasoning.delta", { text: "weighing the results" }, 5);
+    expect(store.getSnapshot("draft-sig").streamingState).toBe("streaming");
+  });
+
   it("isolates concurrent turns into their own slices", async () => {
     const store = createChatStore();
     await store.sendTurn("kA", { text: "a" });

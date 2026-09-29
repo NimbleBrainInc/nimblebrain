@@ -12,13 +12,13 @@ import { FACETS_EXTENSION_ID } from "../../src/services/facets-extension.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 
 /** A `resources/list` entry for a facet: marked, titled, `application/json`. */
-export function facetEntry(name: string, title: string) {
+export function facetEntry(name: string, title: string, level?: string) {
   return {
     uri: `test://facets/${name}`,
     name,
     title,
     mimeType: "application/json",
-    _meta: { [FACETS_EXTENSION_ID]: {} },
+    _meta: { [FACETS_EXTENSION_ID]: level === undefined ? {} : { level } },
   };
 }
 

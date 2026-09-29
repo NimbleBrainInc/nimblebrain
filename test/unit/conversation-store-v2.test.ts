@@ -6,14 +6,14 @@ import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../../src/conversation/memory-store.ts";
 import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
 
-function msg(role: "user" | "assistant", content: string): StoredMessage {
-  return { role, content, timestamp: new Date().toISOString() };
+function msg(role: "user" | "assistant", text: string): StoredMessage {
+  return { role, content: [{ type: "text", text }], timestamp: new Date().toISOString() };
 }
 
-function assistantMsg(content: string, metadata: StoredMessage["metadata"]): StoredMessage {
+function assistantMsg(text: string, metadata: StoredMessage["metadata"]): StoredMessage {
   return {
     role: "assistant",
-    content,
+    content: [{ type: "text", text }],
     timestamp: new Date().toISOString(),
     metadata,
   };
@@ -223,9 +223,9 @@ function storeV2Tests(
 
       const history = await store.history(forked!);
       expect(history).toHaveLength(3);
-      expect(history[0]!.content).toBe("First");
-      expect(history[1]!.content).toBe("Second");
-      expect(history[2]!.content).toBe("Third");
+      expect(history[0]!.content).toEqual([{ type: "text", text: "First" }]);
+      expect(history[1]!.content).toEqual([{ type: "text", text: "Second" }]);
+      expect(history[2]!.content).toEqual([{ type: "text", text: "Third" }]);
     });
 
     it("fork() with atMessage truncates messages", async () => {
@@ -239,8 +239,8 @@ function storeV2Tests(
 
       const history = await store.history(forked!);
       expect(history).toHaveLength(2);
-      expect(history[0]!.content).toBe("First");
-      expect(history[1]!.content).toBe("Second");
+      expect(history[0]!.content).toEqual([{ type: "text", text: "First" }]);
+      expect(history[1]!.content).toEqual([{ type: "text", text: "Second" }]);
     });
 
     it("fork() with atMessage=0 creates empty conversation", async () => {
@@ -290,18 +290,41 @@ function storeV2Tests(
 
     // --- list() with search ---
 
-    it("list() with search returns matching conversations", async () => {
+    it("list() search matches a title set by update(), after a later append", async () => {
       const conv1 = await store.create({ ownerId: "user_test" });
       await store.update(conv1.id, { title: "Deploy Pipeline" });
-      await store.append(conv1, msg("user", "Deploy stuff"));
+      await store.append(conv1, msg("user", "ship it"));
 
       const conv2 = await store.create({ ownerId: "user_test" });
       await store.update(conv2.id, { title: "Budget Review" });
+      await store.append(conv2, msg("user", "numbers please"));
+
+      const result = await store.list({ search: "pipeline" });
+      expect(result.conversations.map((c) => c.id)).toEqual([conv1.id]);
+    });
+
+    it("list() search matches the first user message's text", async () => {
+      const conv1 = await store.create({ ownerId: "user_test" });
+      await store.append(conv1, msg("user", "Deploy stuff"));
+
+      const conv2 = await store.create({ ownerId: "user_test" });
       await store.append(conv2, msg("user", "Review budget"));
 
-      const result = await store.list({ search: "deploy" });
-      expect(result.conversations).toHaveLength(1);
-      expect(result.conversations[0]!.id).toBe(conv1.id);
+      const result = await store.list({ search: "stuff" });
+      expect(result.conversations.map((c) => c.id)).toEqual([conv1.id]);
+      expect(result.conversations[0]!.preview).toBe("Deploy stuff");
+    });
+
+    it("append() with a copy that predates update() keeps the stored title", async () => {
+      const conv = await store.create({ ownerId: "user_test" });
+      await store.update(conv.id, { title: "Generated title" });
+      // `conv` still has title: null, as a caller's copy does when a background
+      // auto-title lands between its turns.
+      await store.append(conv, msg("user", "next turn"));
+
+      const listed = (await store.list()).conversations.find((c) => c.id === conv.id);
+      expect(listed?.title).toBe("Generated title");
+      expect((await store.load(conv.id))?.title).toBe("Generated title");
     });
   });
 }

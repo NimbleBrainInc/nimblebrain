@@ -187,7 +187,7 @@ describe("resolveThinking", () => {
     // asserted nothing about the flag on either arm.
     for (const model of [
       "openai:gpt-4o",
-      "google:gemini-2.0-flash",
+      "google:gemini-2.5-flash-preview-tts",
       "nebius:Qwen/Qwen3-235B-A22B-Instruct-2507",
     ]) {
       expect(getModelByString(model)?.capabilities.reasoning).toBe(false);

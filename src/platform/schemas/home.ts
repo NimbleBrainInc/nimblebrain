@@ -7,6 +7,13 @@
 // surface. Single source of truth — do not hand-redeclare on either side.
 
 /**
+ * How urgent an item is, most urgent first: something has stopped, someone
+ * should act, worth knowing. A facet's is declared by its server (`warning`
+ * when it declares none); a connector-status row's is the host's.
+ */
+export type BriefingLevel = "critical" | "warning" | "info";
+
+/**
  * One facet of one app: `<count> <label>`, opening the app. Built from a count
  * the app's server returned over the `ai.nimblebrain/facets` extension; nothing
  * in it is generated. `label` and `count` are untrusted server data: render the
@@ -21,6 +28,8 @@ export interface BriefingItem {
   label: string;
   /** Things waiting, as the server counted them. 0 when `state` is `unavailable`. */
   count: number;
+  /** The facet's declared urgency. */
+  level: BriefingLevel;
   /** The app's first placement route, or null when it has none. */
   route: string | null;
   /** `unavailable` when the read failed, timed out, or returned no valid count. */

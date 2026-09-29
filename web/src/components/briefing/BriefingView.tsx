@@ -11,11 +11,20 @@
 //     text; an `unavailable` item renders muted and keeps its action.
 //   - A connector that is not ready: the status the connector page shows,
 //     opening that page. Its facets are never read, so it has no count.
-// With neither, the list is one line saying nothing needs the member.
+// Every row has a level, shown by icon and colour, and the list is ordered by
+// it: `critical` (something has stopped), then `warning` (someone should act),
+// then `info` (worth knowing). A facet's level is its server's; a connector
+// row's is the host's (`statusLevel`).
+// With neither kind of row, the list is one line saying nothing needs the member.
 // ---------------------------------------------------------------------------
 
+import { CircleAlert, Info, type LucideIcon, OctagonAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import type { BriefingItem, BriefingOutput } from "../../_generated/platform-schemas/home";
+import type {
+  BriefingItem,
+  BriefingLevel,
+  BriefingOutput,
+} from "../../_generated/platform-schemas/home";
 import type { InstalledConnector } from "../../api/client";
 import { cn } from "../../lib/utils";
 import { statusLabel } from "../connectors/ConnectorStatusHero";
@@ -33,33 +42,66 @@ interface BriefingViewProps {
   onOpenConnector: (serverName: string) => void;
 }
 
+const LEVELS: Record<
+  BriefingLevel,
+  { rank: number; icon: LucideIcon; tone: string; name: string }
+> = {
+  critical: { rank: 0, icon: OctagonAlert, tone: "text-destructive", name: "Critical" },
+  warning: { rank: 1, icon: CircleAlert, tone: "text-warning", name: "Warning" },
+  info: { rank: 2, icon: Info, tone: "text-muted-foreground", name: "Info" },
+};
+
+/**
+ * The host's level for a connector that is not ready. One it cannot work
+ * without someone acting on is `critical`; one still coming up resolves on its
+ * own and is `info`.
+ */
+export function statusLevel(status: InstalledConnector["status"]): BriefingLevel {
+  return status === "connecting" || status === "starting" ? "info" : "critical";
+}
+
+/** A level the web does not know reads as `warning`, as the extension requires. */
+function levelOf(level: string): BriefingLevel {
+  return Object.hasOwn(LEVELS, level) ? (level as BriefingLevel) : "warning";
+}
+
 function Row({
   onClick,
   muted,
+  level,
   children,
   testId,
 }: {
   onClick?: () => void;
   muted?: boolean;
+  level: BriefingLevel;
   children: ReactNode;
   testId: string;
 }) {
+  const { icon: Icon, tone, name } = LEVELS[level];
   const className = cn(
-    "flex w-full items-baseline gap-1.5 px-3 py-2 -mx-3 rounded-sm text-left text-sm",
-    muted ? "text-muted-foreground" : "text-foreground",
+    "flex w-full items-center gap-2 px-3 py-2 -mx-3 rounded-sm text-left text-sm",
+    muted || level === "info" ? "text-muted-foreground" : "text-foreground",
+  );
+  const body = (
+    <>
+      <Icon className={cn("h-4 w-4 shrink-0", tone)} aria-hidden />
+      <span className="sr-only">{name}: </span>
+      {children}
+    </>
   );
   return (
-    <li data-testid={testId}>
+    <li data-testid={testId} data-level={level}>
       {onClick ? (
         <button
           type="button"
           onClick={onClick}
           className={cn(className, "hover:bg-foreground/5 transition-colors")}
         >
-          {children}
+          {body}
         </button>
       ) : (
-        <div className={className}>{children}</div>
+        <div className={className}>{body}</div>
       )}
     </li>
   );
@@ -76,6 +118,7 @@ function FacetRow({ item, onOpen }: { item: BriefingItem; onOpen: (route: string
     <Row
       testId={unavailable ? "briefing-item-unavailable" : "briefing-item"}
       muted={unavailable}
+      level={levelOf(item.level)}
       onClick={route ? () => onOpen(route) : undefined}
     >
       <span>
@@ -100,7 +143,11 @@ function ConnectorRow({
   onOpen: (serverName: string) => void;
 }) {
   return (
-    <Row testId="briefing-connector-status" onClick={() => onOpen(connector.serverName)}>
+    <Row
+      testId="briefing-connector-status"
+      level={statusLevel(connector.status)}
+      onClick={() => onOpen(connector.serverName)}
+    >
       <span>
         {statusLabel(connector.status)}
         <AppName name={connector.catalog?.name ?? connector.serverName} />
@@ -132,6 +179,20 @@ export function BriefingView({
   const needsAttention = connectors.filter((c) => c.status !== "ready");
   const items = briefing?.items ?? [];
   const empty = !loading && !error && items.length === 0 && needsAttention.length === 0;
+  // One list, most urgent first. Within a level, connector rows lead and facet
+  // items keep the server's order (sort is stable).
+  const rows = [
+    ...needsAttention.map((c) => ({
+      rank: LEVELS[statusLevel(c.status)].rank,
+      node: (
+        <ConnectorRow key={`connector:${c.serverName}`} connector={c} onOpen={onOpenConnector} />
+      ),
+    })),
+    ...items.map((item) => ({
+      rank: LEVELS[levelOf(item.level)].rank,
+      node: <FacetRow key={`${item.app}/${item.facet}`} item={item} onOpen={onOpen} />,
+    })),
+  ].sort((a, b) => a.rank - b.rank);
 
   return (
     <section data-testid="workspace-briefing">
@@ -139,20 +200,7 @@ export function BriefingView({
         <Skeleton />
       ) : (
         <>
-          {(needsAttention.length > 0 || items.length > 0) && (
-            <ul>
-              {needsAttention.map((c) => (
-                <ConnectorRow
-                  key={`connector:${c.serverName}`}
-                  connector={c}
-                  onOpen={onOpenConnector}
-                />
-              ))}
-              {items.map((item) => (
-                <FacetRow key={`${item.app}/${item.facet}`} item={item} onOpen={onOpen} />
-              ))}
-            </ul>
-          )}
+          {rows.length > 0 && <ul>{rows.map((row) => row.node)}</ul>}
 
           {error && (
             <div

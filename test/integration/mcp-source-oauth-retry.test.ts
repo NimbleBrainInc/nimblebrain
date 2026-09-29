@@ -296,4 +296,46 @@ describe("McpSource — OAuth retry path", () => {
 
     await source.stop();
   }, 15_000);
+
+  it("a reconnect whose code exchange carries no id_token clears the prior identity", async () => {
+    const provider = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "reauth-test",
+      workDir,
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+      headlessAuthProbe: true,
+    });
+    // A prior sign-in with an id_token and no refresh_token, whose access token
+    // the server no longer accepts: the next connect goes straight to a new
+    // authorization, and the mock's token response carries no id_token.
+    const header = btoa(JSON.stringify({ alg: "RS256" })).replace(/=/g, "");
+    const payload = btoa(JSON.stringify({ sub: "user-a", email: "a@example.com" })).replace(
+      /=/g,
+      "",
+    );
+    await provider.saveTokens({
+      access_token: "expired",
+      token_type: "Bearer",
+      id_token: `${header}.${payload}.s`,
+    });
+    expect(await provider.identity()).not.toBeNull();
+
+    const source = new McpSource(
+      "reauth-test",
+      {
+        type: "remote",
+        url: new URL(server.url),
+        allowInsecure: true,
+        authProvider: provider,
+      },
+      new NoopEventSink(),
+    );
+
+    await source.start();
+    expect((await provider.tokens())?.access_token).toStartWith("mock-token-");
+    expect(await provider.identity()).toBeNull();
+
+    await source.stop();
+  }, 15_000);
 });

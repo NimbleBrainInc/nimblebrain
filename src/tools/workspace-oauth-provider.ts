@@ -607,6 +607,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    *  UnauthorizedError; the connection should flip to reauth_required once. */
   private authLostNotified = false;
   /**
+   * True while `exchangeAuthorizationCode` runs, so `saveTokens` can tell a
+   * fresh sign-in from a refresh — the SDK calls it for both with no grant
+   * signal.
+   */
+  private exchangingCode = false;
+  /**
    * Whether this provider may drive an INTERACTIVE (browser) OAuth flow on the
    * current start attempt — a per-attempt signal, not construction-time.
    *
@@ -1133,19 +1139,40 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // this token, and we treat the result as informational (not used
     // for access decisions). Failures here are silent — auth still
     // succeeds; the UI just doesn't get a display name.
+    //
+    // A code exchange is a new sign-in, possibly as a different account, so
+    // its claims replace the record — and with no claims the record goes, or
+    // the UI would name the previous account. A refresh keeps the record:
+    // refresh responses commonly omit the id_token, and the account is
+    // unchanged.
     const idToken = (tokens as { id_token?: unknown }).id_token;
-    if (typeof idToken === "string" && idToken.length > 0) {
-      try {
-        const claims = parseIdTokenClaims(idToken);
-        if (claims) {
-          await this.records.write("identity", claims);
-        }
-      } catch (err) {
-        log.debug(
-          "mcp",
-          `[oauth] ${this.serverName} id_token parse failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+    try {
+      const claims =
+        typeof idToken === "string" && idToken.length > 0 ? parseIdTokenClaims(idToken) : null;
+      if (claims) {
+        await this.records.write("identity", claims);
+      } else if (this.exchangingCode) {
+        await this.records.delete("identity");
       }
+    } catch (err) {
+      log.debug(
+        "mcp",
+        `[oauth] ${this.serverName} identity capture failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Run `finish` — the transport's `finishAuth(code)`, which exchanges the
+   * authorization code and lands the tokens through `saveTokens` — marked as a
+   * code exchange, so `saveTokens` treats the tokens as a new sign-in.
+   */
+  async exchangeAuthorizationCode(finish: () => Promise<void>): Promise<void> {
+    this.exchangingCode = true;
+    try {
+      await finish();
+    } finally {
+      this.exchangingCode = false;
     }
   }
 

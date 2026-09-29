@@ -5,10 +5,11 @@
  * role, so admin-only tools are closed to both.
  *
  * Admin-only tools are app-only: they are never in a run's offered tool list,
- * whoever runs it. What an org role changes is whether a call to one succeeds.
- * So each run calls one, and the test compares both the offered tool list and
- * the call's outcome. The control run proves the comparison can fail: the same
- * admin identity handed to `executeTask` directly gets the call through.
+ * whoever runs it, and the engine refuses a model's call that names one. An
+ * org role therefore opens no tool to any run, so each run calls one and the
+ * test compares the offered tool list and the call's outcome. The control run
+ * pins the refusal to visibility rather than role: the same admin identity
+ * handed to `executeTask` directly is refused too.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -103,14 +104,16 @@ describe("Run now gets the scheduled run's tools", () => {
         resolveExecutorContext,
       );
 
-      // Control: the admin's own identity gets the admin-only call through.
+      // Control: the admin's own identity is refused as well, because the tool
+      // is app-only and the engine refuses a model's call to it.
       const control = await runtime.executeTask({
         prompt: "control",
         workspaceId: WS,
         identity: admin,
       });
       expect(control.toolCalls[0]?.name).toBe(ADMIN_ONLY_TOOL);
-      expect(control.toolCalls[0]?.ok).toBe(true);
+      expect(control.toolCalls[0]?.ok).toBe(false);
+      expect(control.toolCalls[0]?.output).toContain("is not available to the agent");
 
       // Run now, clicked by the admin inside their own request context.
       const manual = await runWithRequestContext({ identity: admin, workspaceId: WS }, () =>

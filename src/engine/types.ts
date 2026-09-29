@@ -203,9 +203,12 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  *
  *   - A tool without `"model"` is left out of every tool list that reaches a
  *     model: the chat list (`surfaceTools`), `nb__search`, the `/mcp`
- *     `tools/list`, the invalid-name recovery hint, and promotion. It stays
- *     callable by name, which is how the web shell's settings reach the
- *     platform's own UI-driven tools over REST.
+ *     `tools/list`, the invalid-name recovery hint, and promotion. The engine,
+ *     the host on the chat door, also refuses a model's call that names one.
+ *     It stays callable by name over REST, which is how the web shell's
+ *     settings reach the platform's own UI-driven tools. On `/mcp` the external
+ *     host enforces it: the listing withholds the tool, and a call cannot be
+ *     told from an app's, since they share one session.
  *   - A `tools/call` from an app is refused for a tool without `"app"`
  *     (`/mcp`, keyed on the source the iframe bridge names).
  *
