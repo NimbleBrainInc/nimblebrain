@@ -335,7 +335,11 @@
   outline-offset: 2px;
 }
 
-/* Expanded → box treatment so the head reads as the top of a real surface.
+/* Expanded → box treatment so the head reads as the top of a real surface —
+   literally the top of it: the head and the drawer share one border box, the
+   head's bottom edge serving as the rule between them. Two rounded boxes with
+   air between them read as two things the reader has to relate, when what is
+   below the head IS the head opened.
    Active (running) state is NOT boxed — it uses the spinner + brand color
    treatment below, the same as <LiveCursor>. Keeping in-flight chrome
    consistent across both surfaces means the user sees one "loading" shape
@@ -344,9 +348,13 @@
   padding: 6px 12px;
   background: var(--card);
   border: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
   opacity: 1;
 }
-.disclosure[data-expanded="true"] > .disclosure__head:hover {
+/* The seam is one surface, so the hover lifts both halves of it — scoped to a
+   hover on the head itself, since hovering the drawer is reading, not aiming. */
+.disclosure[data-expanded="true"] > .disclosure__head:hover,
+.disclosure[data-expanded="true"]:has(> .disclosure__head:hover) > .disclosure__body {
   border-color: color-mix(in oklch, var(--border), var(--foreground) 20%);
 }
 
@@ -387,9 +395,9 @@
 
 /* Drawer. Reveal motion is gated on prefers-reduced-motion. */
 .disclosure__body {
-  margin-top: 6px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
   background: var(--card);
   overflow: hidden;
 }
@@ -399,8 +407,8 @@
   }
 }
 @keyframes disclosure-reveal {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ───────────────────────────────────────────────────────────────────────
