@@ -10,9 +10,9 @@ import { createSsrfGuardedFetch } from "../../src/tools/ssrf-guarded-fetch.ts";
  */
 function stubFetch(routes: Record<string, { status: number; location?: string }>): {
   fetch: FetchLike;
-  calls: Array<{ url: string; redirect: RequestRedirect | undefined }>;
+  calls: Array<{ url: string; redirect: RequestInit["redirect"] }>;
 } {
-  const calls: Array<{ url: string; redirect: RequestRedirect | undefined }> = [];
+  const calls: Array<{ url: string; redirect: RequestInit["redirect"] }> = [];
   const fetch: FetchLike = async (input, init) => {
     const url = typeof input === "string" ? input : input.toString();
     calls.push({ url, redirect: init?.redirect });

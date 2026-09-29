@@ -10,6 +10,7 @@
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +23,8 @@ import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 interface TestKeyPair {
   privateKey: CryptoKey;
-  publicJwk: JsonWebKey;
+  /** A JWKS entry: the WebCrypto key plus its RFC 7517 `kid`. */
+  publicJwk: webcrypto.JsonWebKey & { kid?: string };
   kid: string;
 }
 
@@ -132,7 +134,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
   };
 
   // Mock fetcher to serve JWKS endpoints
-  provider.fetcher = fakeFetch(async (input: RequestInfo | URL) => {
+  provider.fetcher = fakeFetch(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 
     if (url === "https://testapp.authkit.app/oauth2/jwks") {

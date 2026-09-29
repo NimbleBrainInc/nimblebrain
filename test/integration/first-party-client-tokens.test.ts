@@ -17,6 +17,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,7 +47,7 @@ const testDir = join(tmpdir(), `nb-first-party-clients-${Date.now()}`);
 const seedDir = join(testDir, "seed");
 
 let privateKey: CryptoKey;
-let publicJwk: JsonWebKey;
+let publicJwk: webcrypto.JsonWebKey;
 /** Wall-clock deadline for every token, so tests share one clock. */
 let nowSec: number;
 /** A workspace USER belongs to. */
@@ -126,7 +127,7 @@ function workosProvider(config: Partial<WorkosAuth>): WorkosIdentityProvider {
       ],
     }),
   };
-  provider.fetcher = fakeFetch(async (input: RequestInfo | URL) => {
+  provider.fetcher = fakeFetch(async (input) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url !== `${AUTHKIT_ISSUER}/oauth2/jwks`) return new Response("Not Found", { status: 404 });
     const { kty, n, e } = publicJwk;

@@ -58,11 +58,16 @@
  *   in for. Narrow instead, or, for a shape deliberately off-type, cast through
  *   `unknown` with a comment naming why.
  *
- * `TS2304` "Cannot find name" is the same degradation one step further along — no
- * import at all — and is deliberately still out: its instances are mostly
- * missing DOM lib types, not drift. Widening to another code means fixing
- * that code's existing instances first, and expecting the fix to expose what the
- * dead type was hiding.
+ * - **TS2304 / TS2552** "Cannot find name" — the same degradation one step
+ *   further along, a name with no import at all. TS2552 is the variant that
+ *   suggests a near-miss. The project has no DOM lib on purpose: the suite runs
+ *   on Bun, and a DOM lib would let a server test name `window` or `document`
+ *   without complaint. A browser type a test needs has a non-DOM spelling
+ *   (`webcrypto.JsonWebKey`, `RequestInit["redirect"]`), or the fake is typed as
+ *   the structure it provides.
+ *
+ * Widening to another code means fixing that code's existing instances first,
+ * and expecting the fix to expose what the dead type was hiding.
  *
  * Recount to confirm you cleared them; do not grep. A fix can trade one code for
  * another and leave the total unchanged — repointing a dead import at the right
@@ -127,10 +132,11 @@ const TEST_EXTENSIONS = ["ts", "tsx"];
  * (TS2554), an import naming something its module does not export (TS2305,
  * TS2724, TS2459, TS2614: one defect TypeScript reports four ways), an object
  * literal naming a property its type does not have (TS2353), a stub missing one
- * it requires (TS2741, TS2739), and a cast between non-overlapping types
- * (TS2352). See the header before adding another.
+ * it requires (TS2741, TS2739), a cast between non-overlapping types (TS2352),
+ * and a name that resolves to nothing (TS2304, TS2552). See the header before
+ * adding another.
  */
-const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353, 2741, 2739, 2352];
+const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353, 2741, 2739, 2352, 2304, 2552];
 const GATED = new RegExp(`error TS(${GATED_CODES.join("|")}):`);
 
 async function main(): Promise<void> {

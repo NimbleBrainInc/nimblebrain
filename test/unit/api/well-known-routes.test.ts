@@ -159,7 +159,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
 
     // Mock global fetch to intercept the upstream request
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = fakeFetch(async (input: RequestInfo | URL) => {
+    globalThis.fetch = fakeFetch(async (input) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url === "https://auth.example.com/.well-known/oauth-authorization-server") {
         return new Response(JSON.stringify(upstreamMetadata), {

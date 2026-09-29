@@ -9,6 +9,7 @@
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
+import type { webcrypto } from "node:crypto";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
@@ -18,7 +19,8 @@ import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 interface TestKeyPair {
   privateKey: CryptoKey;
-  publicJwk: JsonWebKey;
+  /** A JWKS entry: the WebCrypto key plus its RFC 7517 `kid`. */
+  publicJwk: webcrypto.JsonWebKey & { kid?: string };
   kid: string;
 }
 

@@ -8,17 +8,26 @@ import type { BridgeCallbacks } from "../../web/src/bridge/types.ts";
 
 type Listener = (event: unknown) => void;
 
+/**
+ * The part of an iframe the bridge touches. This project has no DOM lib (the
+ * suite runs on Bun), so the fake is typed as what it provides rather than cast
+ * to `HTMLIFrameElement`.
+ */
+interface FakeIframe {
+  contentWindow: { postMessage(data: unknown, origin: string): void };
+}
+
 /** Fake iframe whose contentWindow can capture postMessage calls. */
 function makeFakeIframe() {
   const posted: unknown[] = [];
 
-  const iframe = {
+  const iframe: FakeIframe = {
     contentWindow: {
       postMessage(data: unknown, _origin: string) {
         posted.push(data);
       },
     },
-  } as unknown as HTMLIFrameElement;
+  };
 
   return { iframe, posted };
 }
@@ -45,16 +54,16 @@ beforeEach(() => {
   globalThis.window.addEventListener = ((type: string, fn: Listener) => {
     if (!windowListeners.has(type)) windowListeners.set(type, new Set());
     windowListeners.get(type)!.add(fn);
-  }) as unknown as typeof window.addEventListener;
+  }) as unknown as typeof globalThis.window.addEventListener;
 
   globalThis.window.removeEventListener = ((type: string, fn: Listener) => {
     windowListeners.get(type)?.delete(fn);
-  }) as unknown as typeof window.removeEventListener;
+  }) as unknown as typeof globalThis.window.removeEventListener;
 
   globalThis.window.dispatchEvent = ((event: Event & { detail?: unknown }) => {
     customEventsFired.push({ type: event.type, detail: event.detail });
     return true;
-  }) as unknown as typeof window.dispatchEvent;
+  }) as unknown as typeof globalThis.window.dispatchEvent;
 
   // Provide a minimal document shim so getHostThemeMode() doesn't throw.
   if (typeof globalThis.document === "undefined") {
@@ -91,7 +100,7 @@ afterEach(() => {
 });
 
 /** Simulate a postMessage from the iframe to the host. */
-function simulatePostMessage(iframe: HTMLIFrameElement, data: unknown) {
+function simulatePostMessage(iframe: FakeIframe, data: unknown) {
   const listeners = windowListeners.get("message");
   if (!listeners) return;
   const event = { data, source: iframe.contentWindow } as MessageEvent;
@@ -108,7 +117,7 @@ const { createBridge } = await import("../../web/src/bridge/bridge.ts");
 const { postToApp } = await import("../../web/src/bridge/app-channel.ts");
 
 /** The app's side of the handshake's last step; the host posts nothing unsolicited before it. */
-function completeHandshake(iframe: HTMLIFrameElement) {
+function completeHandshake(iframe: FakeIframe) {
   simulatePostMessage(iframe, {
     jsonrpc: "2.0",
     method: "ui/notifications/initialized",

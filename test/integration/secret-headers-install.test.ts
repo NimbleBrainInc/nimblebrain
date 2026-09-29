@@ -117,11 +117,9 @@ function entry(): CatalogListing {
 }
 
 /** The `providerAuth: credential` entry, as `list_directory` projects it. */
-function directEntry(): DirectoryEntry {
+function directEntry(): CatalogListing {
   return {
     id: DIRECT_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Acme DB Direct",
     description: "Authenticates as the workspace's own database credential",
     install: {
@@ -138,8 +136,6 @@ function directEntry(): DirectoryEntry {
 function operatorEntry(): CatalogListing {
   return {
     id: OPERATOR_ID,
-    registryId: "bundled-static",
-    registryType: "static",
     name: "Acme DB Operator App",
     description: "Connects through the workspace's own registered OAuth app",
     install: {
@@ -399,7 +395,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       ...plain.install,
       url: "https://mcp.acme.test/plain/mcp",
       secretHeaders: undefined,
-    } as DirectoryEntry["install"];
+    } as CatalogListing["install"];
 
     const tool = toolFor("ws_tenanta");
     await tool.handler({ action: "install", entry: plain });
