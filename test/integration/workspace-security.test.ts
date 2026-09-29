@@ -231,7 +231,7 @@ describe("Workspace security: DevIdentityProvider populates workspace connectors
 });
 
 // ---------------------------------------------------------------------------
-// Cross-workspace data leak regressions (bayze incident, 2026-04)
+// Cross-workspace data leak regressions
 // ---------------------------------------------------------------------------
 
 describe("Workspace security: same connector installed in two workspaces", () => {
