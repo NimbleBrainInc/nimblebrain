@@ -417,10 +417,10 @@ describe("integration: auth boundary", () => {
 });
 
 // =============================================================================
-// E2E Scenario 1: Install app -> tool call via API
+// E2E Scenario 1: registered app -> tool call via API
 // =============================================================================
 
-describe("E2E: install app -> tool call via API", () => {
+describe("E2E: registered app -> tool call via API", () => {
 	let runtime: Runtime;
 	let handle: ServerHandle;
 	let baseUrl: string;
@@ -464,7 +464,6 @@ describe("E2E: install app -> tool call via API", () => {
 		]);
 		const wsRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 		wsRegistry.addSource(taskSource);
-
 
 		handle = startServer({ runtime, port: 0});
 		baseUrl = `http://localhost:${handle.port}`;

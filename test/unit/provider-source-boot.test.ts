@@ -3,6 +3,7 @@ import { connectorHasStaticAuth } from "../../src/connectors/runtime/connector-a
 import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
@@ -45,10 +46,8 @@ describe("connectorHasStaticAuth", () => {
   });
 
   test("named and local-path connectors are not static-auth url sources", () => {
-    // A pre-URL record as JSON.parse leaves it on disk; ConnectorRef no longer
-    // admits the shape, and the guard under test exists for exactly that.
-    expect(connectorHasStaticAuth({ name: "n" } as unknown as ConnectorRef)).toBe(false);
-    expect(connectorHasStaticAuth({ path: "/p" } as unknown as ConnectorRef)).toBe(false);
+    expect(connectorHasStaticAuth(legacyConnectorRef({ name: "n" }))).toBe(false);
+    expect(connectorHasStaticAuth(legacyConnectorRef({ path: "/p" }))).toBe(false);
   });
 });
 

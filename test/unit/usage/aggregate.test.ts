@@ -45,11 +45,17 @@ function writeCalls(
 ): void {
   const byMonth = new Map<string, string[]>();
   for (const e of events) {
-    const ev = e as { ts: string; model: string; usage: Record<string, number>; llmMs?: number };
+    const ev = e as {
+      ts: string;
+      model: string;
+      source?: string;
+      usage: Record<string, number>;
+      llmMs?: number;
+    };
     const rates = resolveRates(ev.model);
     const entry: UsageLedgerEntry = {
       ts: ev.ts,
-      source: "main",
+      source: ev.source ?? "main",
       origin: meta.origin ?? "chat",
       model: ev.model,
       usage: ev.usage as UsageLedgerEntry["usage"],
