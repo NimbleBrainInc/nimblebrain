@@ -132,9 +132,18 @@ function isBlankText(text: string): boolean {
   return text.trim().length === 0;
 }
 
-/** Append a reasoning row for non-empty thought; an empty block renders nothing. */
+/**
+ * Append a reasoning row for non-empty thought; an empty block renders nothing.
+ *
+ * Trimmed, because the row draws the text `pre-wrap` and providers bracket a
+ * thought with newlines — so an untrimmed block renders its trailing blank
+ * line as real height inside the box, which reads as broken padding rather
+ * than as the invisible characters it is. Trimming also settles emptiness: a
+ * whitespace-only thought is nothing to show, not a blank row.
+ */
 function pushReasoning(rows: ActivityRow[], text: string): void {
-  if (text.length > 0) rows.push({ kind: "reasoning", text });
+  const thought = text.trim();
+  if (thought.length > 0) rows.push({ kind: "reasoning", text: thought });
 }
 
 /** Fold a tool block into the trailing tool row when they share a non-empty

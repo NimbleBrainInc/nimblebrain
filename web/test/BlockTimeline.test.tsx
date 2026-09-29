@@ -87,6 +87,16 @@ function liveCursorElapsed(container: HTMLElement): string | null {
 	return null;
 }
 
+/** The text of the first reasoning row's body, exactly as rendered. */
+function reasoningText(container: HTMLElement): string | null {
+	for (const el of Array.from(container.getElementsByTagName("div"))) {
+		if ((el.getAttribute("class") ?? "").split(/\s+/).includes("turn-pill__reasoning")) {
+			return el.textContent;
+		}
+	}
+	return null;
+}
+
 function timeline(container: HTMLElement): string[] {
 	const out: string[] = [];
 	const walker = container.ownerDocument!.createTreeWalker(
@@ -151,6 +161,26 @@ describe("BlockTimeline order", () => {
 			blocks: [reasoning(""), text("hi")],
 		});
 		expect(pillHeads(container).length).toBe(0);
+	});
+
+	it("skips a thought that is only the newlines a provider bracketed it with", () => {
+		const { container } = renderTimeline({
+			blocks: [reasoning("\n\n"), text("hi")],
+		});
+		expect(pillHeads(container).length).toBe(0);
+	});
+
+	it("drops the blank line a provider leaves on the end of a thought", () => {
+		// `pre-wrap` draws that newline as real height inside the box, which
+		// reads as a spacing bug rather than as the character it is.
+		const { container } = renderTimeline({
+			blocks: [reasoning("weighing the options\n\n")],
+		});
+		// The body only renders once the chip is open.
+		act(() => {
+			fireEvent.click(pillHeads(container)[0]);
+		});
+		expect(reasoningText(container)).toBe("weighing the options");
 	});
 });
 
