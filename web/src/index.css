@@ -508,8 +508,13 @@
   transform: rotate(90deg);
 }
 
+/* An open row has no rule between its head and its body, so the head's own
+   bottom padding IS the space above the content: the body repeats it below
+   rather than setting its own, or the content sits off-centre in the band it
+   opened. Left edge lines up with the head's label (12px + 5px dot + 8px gap),
+   so an opened row reads as that row continuing, not as a new column. */
 .turn-pill__row-body {
-  padding: 0 12px 10px 30px;
+  padding: 0 12px 7px 25px;
 }
 
 /* Per-call row inside a multi-call tool group */
