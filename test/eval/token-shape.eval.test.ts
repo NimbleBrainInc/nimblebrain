@@ -27,13 +27,13 @@
  */
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { AgentEngine } from "../../src/engine/engine.ts";
-import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, EngineResult, ToolSchema } from "../../src/engine/types.ts";
 import { buildModelResolver } from "../../src/model/registry.ts";
-import { recordingModel, type RecordedCall } from "../helpers/recording-model.ts";
+import { type RecordedCall, recordingModel } from "../helpers/recording-model.ts";
 import { checkInvariants, deriveShape } from "../helpers/token-shape.ts";
 
 interface ProviderSpec {

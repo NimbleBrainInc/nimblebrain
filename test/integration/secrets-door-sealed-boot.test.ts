@@ -23,8 +23,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 const KEY_ENV = "NB_TEST_BOOT_CREDENTIAL_KEY";
 const SET_LONG_AGO = new Date("2024-03-01T12:00:00.000Z");

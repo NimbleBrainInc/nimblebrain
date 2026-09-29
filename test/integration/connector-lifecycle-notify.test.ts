@@ -1,14 +1,14 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import { ensureHooks } from "../../src/hooks/reconcile.ts";
 import type { HookReconcileDeps } from "../../src/hooks/reconcile.ts";
+import { ensureHooks } from "../../src/hooks/reconcile.ts";
 import type { HookIdentity } from "../../src/hooks/token.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { LifecycleNotifyDeps } from "../../src/lifecycle/notify.ts";
@@ -20,11 +20,11 @@ import {
 import type { LifecycleDeclaration } from "../../src/lifecycle/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
-import { ToolRegistry } from "../../src/tools/registry.ts";
 import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
+import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";

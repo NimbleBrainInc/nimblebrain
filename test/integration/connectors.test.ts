@@ -1,9 +1,9 @@
-import { Server } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { McpSource } from "../../src/tools/mcp-source.ts";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { ToolRegistry } from "../../src/tools/registry.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
+import { ToolRegistry } from "../../src/tools/registry.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 
 describe("ToolRegistry", () => {
@@ -40,9 +40,12 @@ describe("ToolRegistry", () => {
 
 /** A minimal echo MCP server — the shape a third-party connector presents. */
 function createEchoServer(): Server {
-  const server = new Server({ name: "echo-test", version: "0.1.0" }, { capabilities: { tools: {} } });
+  const server = new Server(
+    { name: "echo-test", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
 
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       {
         name: "echo",
@@ -56,7 +59,7 @@ function createEchoServer(): Server {
     ],
   }));
 
-  server.setRequestHandler('tools/call', async (request) => ({
+  server.setRequestHandler("tools/call", async (request) => ({
     content: [{ type: "text", text: `Echo: ${request.params.arguments?.message}` }],
   }));
 

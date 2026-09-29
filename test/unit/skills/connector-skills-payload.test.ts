@@ -11,8 +11,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { synthesizeConnectorSkill } from "../../../src/skills/connector-skills.ts";
 import { buildSkillsLoadedPayload } from "../../../src/runtime/skills-loaded-payload.ts";
+import { synthesizeConnectorSkill } from "../../../src/skills/connector-skills.ts";
 import { selectLayer3Skills } from "../../../src/skills/select.ts";
 
 describe("skills.loaded payload — connector skill entry", () => {

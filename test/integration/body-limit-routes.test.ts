@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -42,7 +42,7 @@ beforeAll(async () => {
     },
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -114,7 +114,7 @@ describe("per-route body limits", () => {
     for (let i = 0; i < 5; i++) {
       const refused = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
         method: "POST",
-          body: multipartBody(12 * 1024 * 1024),
+        body: multipartBody(12 * 1024 * 1024),
       });
       expect(refused.status).toBe(413);
       await refused.arrayBuffer();
@@ -123,7 +123,7 @@ describe("per-route body limits", () => {
       // A regression presents as a hang here, not as a wrong status.
       const followUp = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
         method: "POST",
-          body: multipartBody(1024),
+        body: multipartBody(1024),
         signal: AbortSignal.timeout(5_000),
       });
       expect(followUp.status).not.toBe(413);

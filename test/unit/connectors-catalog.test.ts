@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 import {
   getNimbleBrainConnectorMeta,
   validateServerDetail,
 } from "../../src/connectors/catalog/server-detail.ts";
-import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
 // The catalog *contract* — the shape rules every curated catalog file

@@ -117,7 +117,8 @@ describe("verifySkillEntrypoint", () => {
   });
 
   it("matches a YAML date against the listing's string for the same instant", () => {
-    const text = "---\nname: refunds\ndescription: Process refunds\nreleased: 2026-01-01\n---\nbody\n";
+    const text =
+      "---\nname: refunds\ndescription: Process refunds\nreleased: 2026-01-01\n---\nbody\n";
     const listed = (released: string) =>
       entryFor(text, {
         frontmatter: { name: "refunds", description: "Process refunds", released },
@@ -184,7 +185,9 @@ function rpcError(code: number): Error & { code: number } {
 
 describe("McpSource skills extension", () => {
   it("asks a declaring server on either era, and an undeclared one only on the 2025 era", () => {
-    const declares = { getServerCapabilities: () => ({ extensions: { [SKILLS_EXTENSION_ID]: {} } }) };
+    const declares = {
+      getServerCapabilities: () => ({ extensions: { [SKILLS_EXTENSION_ID]: {} } }),
+    };
     expect(makeSource(declares, "modern").skillsDiscovery()).toBe("declared");
     expect(makeSource(declares, "legacy").skillsDiscovery()).toBe("declared");
     expect(makeSource({}, "modern").skillsDiscovery()).toBe("none");
@@ -200,9 +203,9 @@ describe("McpSource skills extension", () => {
       const request = client ? spyOn(client, "request") : undefined;
       // Discovery's gate: the runtime calls `listSkills` only when this is not `none`.
       if (source.skillsDiscovery() !== "none") await source.listSkills();
-      expect(request?.mock.calls.some(([r]) => (r as { method?: string }).method === "skills/list")).toBe(
-        false,
-      );
+      expect(
+        request?.mock.calls.some(([r]) => (r as { method?: string }).method === "skills/list"),
+      ).toBe(false);
     } finally {
       await source.stop();
     }

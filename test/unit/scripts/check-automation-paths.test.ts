@@ -50,13 +50,17 @@ describe("check-automation-paths — isIdentityAutomationsDataPath", () => {
   });
 
   test("matches `runtime.getIdentityContext(owner).getDataPath('automations', id)`", () => {
-    const src = parse(`const p = runtime.getIdentityContext(owner).getDataPath("automations", id);`);
+    const src = parse(
+      `const p = runtime.getIdentityContext(owner).getDataPath("automations", id);`,
+    );
     const call = findFirst(src, isGetDataPathCall);
     expect(isIdentityAutomationsDataPath(call!)).toBe(true);
   });
 
   test("matches `new IdentityContext({...}).getDataPath('automations')`", () => {
-    const src = parse(`const p = new IdentityContext({ userId, workDir }).getDataPath("automations");`);
+    const src = parse(
+      `const p = new IdentityContext({ userId, workDir }).getDataPath("automations");`,
+    );
     const call = findFirst(src, isGetDataPathCall);
     expect(isIdentityAutomationsDataPath(call!)).toBe(true);
   });

@@ -128,7 +128,7 @@ describe("ToolRegistry", () => {
     registry.addSource(a);
     registry.addSource(b);
 
-    expect((await registry.availableTools())).toHaveLength(2);
+    expect(await registry.availableTools()).toHaveLength(2);
 
     await registry.removeSource("a");
 

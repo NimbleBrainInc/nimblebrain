@@ -80,14 +80,25 @@ mock.module("@composio/core", () => ({
 // (because step 4 failed) with a message that proves startConnectorSource
 // was reached.
 
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 // Imports come after the hoisted mocks. Bun's mock.module guarantees
 // the mocks resolve first even though they appear textually above —
 // keeping the order explicit makes the precondition obvious to a
 // future reader.
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
+import {
+  composioConnectorDir,
+  hasPersistedComposioConnection,
+  saveComposioConnection,
+} from "../../src/connectors/providers/composio/connection.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
@@ -97,17 +108,6 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
-import {
-  _resetConnectorsConfigForTest,
-  setConnectorsConfig,
-} from "../../src/connectors/providers/config.ts";
-import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
-import {
-  composioConnectorDir,
-  hasPersistedComposioConnection,
-  saveComposioConnection,
-} from "../../src/connectors/providers/composio/connection.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -317,9 +317,9 @@ describe("manage_connectors.install (composio-auth)", () => {
 
     const installed = await installAndReadPersistedRef();
     expect(installed?.transport?.auth?.type).toBe("provider");
-    expect(
-      (installed?.transport?.auth as { provider?: string } | undefined)?.provider,
-    ).toBe("composio");
+    expect((installed?.transport?.auth as { provider?: string } | undefined)?.provider).toBe(
+      "composio",
+    );
 
     // Full disk-shape audit. The secret must not be on disk — and neither must
     // the env var's NAME: a persisted `${COMPOSIO_API_KEY}` is a durable pointer
@@ -659,7 +659,13 @@ describe("manage_connectors.install (composio-auth)", () => {
       connectedAt: "2026-06-02T00:00:00.000Z",
       status: "ACTIVE",
     });
-    expect(hasPersistedComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID)).toBe(true);
+    expect(
+      hasPersistedComposioConnection(
+        h.workDir,
+        { type: "workspace", wsId: personalWsId },
+        GMAIL_ID,
+      ),
+    ).toBe(true);
 
     // Drop the API key so cleanup skips the upstream revoke (offline);
     // the local-delete branch is the part that pins the wsId routing.
@@ -671,7 +677,13 @@ describe("manage_connectors.install (composio-auth)", () => {
       .getLifecycle()
       .disconnect("com-google-gmail", personalWsId, "_workspace", { workDir: h.workDir });
 
-    expect(hasPersistedComposioConnection(h.workDir, { type: "workspace", wsId: personalWsId }, GMAIL_ID)).toBe(false);
+    expect(
+      hasPersistedComposioConnection(
+        h.workDir,
+        { type: "workspace", wsId: personalWsId },
+        GMAIL_ID,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -689,7 +701,11 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     process.env.COMPOSIO_API_KEY = "k_test";
 
     const tool = buildTool(h);
-    const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    const result = await tool.handler({
+      action: "install",
+      entry: gmailEntry(),
+      scope: "identity",
+    });
 
     // No eager-start on the identity path → the fake session URL is never dialed,
     // so this succeeds outright (the workspace path fails at eager-start).
@@ -741,7 +757,11 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     // API-key-specific.
 
     const tool = buildTool(h);
-    const result = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    const result = await tool.handler({
+      action: "install",
+      entry: gmailEntry(),
+      scope: "identity",
+    });
 
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
@@ -770,9 +790,15 @@ describe("manage_connectors.install scope:identity (composio personal connector)
     const tool = buildTool(h);
     const first = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
     expect(first.isError).toBe(false);
-    expect((first.structuredContent as { alreadyInstalled?: boolean }).alreadyInstalled).toBe(false);
+    expect((first.structuredContent as { alreadyInstalled?: boolean }).alreadyInstalled).toBe(
+      false,
+    );
 
-    const second = await tool.handler({ action: "install", entry: gmailEntry(), scope: "identity" });
+    const second = await tool.handler({
+      action: "install",
+      entry: gmailEntry(),
+      scope: "identity",
+    });
     expect(second.isError).toBe(false);
     const sc = second.structuredContent as {
       ok?: boolean;
@@ -799,7 +825,11 @@ describe("manage_connectors.install scope:identity (composio personal connector)
 
     // Simulate a completed composio Connect: a connection.json under the identity
     // composio credential root (the dir the disconnect teardown must clear).
-    const composioDir = composioConnectorDir(h.workDir, { type: "user", userId: ADMIN.id }, GMAIL_ID);
+    const composioDir = composioConnectorDir(
+      h.workDir,
+      { type: "user", userId: ADMIN.id },
+      GMAIL_ID,
+    );
     mkdirSync(composioDir, { recursive: true });
     writeFileSync(
       join(composioDir, "connection.json"),

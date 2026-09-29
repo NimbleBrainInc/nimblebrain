@@ -18,8 +18,8 @@ import {
   synthesizeConnectorSkill,
 } from "../../../src/skills/connector-skills.ts";
 import { SkillMatcher } from "../../../src/skills/matcher.ts";
-import type { SkillBodyLoad } from "../../../src/skills/types.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../../src/skills/select.ts";
+import type { SkillBodyLoad } from "../../../src/skills/types.ts";
 
 describe("discoveredSkillFromEntry", () => {
   test("reads name, description, and loading config from the listing, with no body", () => {
@@ -69,9 +69,7 @@ describe("hydrateSkill", () => {
   });
 
   test("a failed fetch yields null, and a skill with no loader passes through", async () => {
-    expect(
-      await hydrateSkill(lazy(async () => ({ ok: false, reason: "unreachable" }))),
-    ).toBeNull();
+    expect(await hydrateSkill(lazy(async () => ({ ok: false, reason: "unreachable" })))).toBeNull();
     const eager = synthesizeConnectorSkill({
       serverName: "srv",
       skillName: "s",
@@ -85,7 +83,8 @@ describe("hydrateSkill", () => {
 
 describe("parseSkillMarkdown", () => {
   test("extracts name + description from frontmatter and strips it from the body", () => {
-    const raw = "---\nname: refunds\ndescription: How to process refunds.\n---\n\n# Refunds\n\nBody.";
+    const raw =
+      "---\nname: refunds\ndescription: How to process refunds.\n---\n\n# Refunds\n\nBody.";
     const parsed = parseSkillMarkdown("skill://acme/billing/refunds/SKILL.md", raw);
     expect(parsed.name).toBe("refunds");
     expect(parsed.description).toBe("How to process refunds.");

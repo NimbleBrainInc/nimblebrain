@@ -19,10 +19,9 @@ import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provid
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider, devWorkspace } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
-import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-workspace-context-${Date.now()}`);
 
@@ -130,7 +129,11 @@ describe("a resume runs only in the conversation's own workspace", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
 
     // Born focused on workspace A → the conversation lives in A.
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
 
     // From the owner's default workspace (HOME), where the conversation is not.
     await expect(
@@ -160,7 +163,11 @@ describe("a resume runs only in the conversation's own workspace", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
     await provisionTestWorkspace(runtime, WORKSPACE_B, WORKSPACE_B_NAME);
 
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
 
     await expect(
       runtime.chat({

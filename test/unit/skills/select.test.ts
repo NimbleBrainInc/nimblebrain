@@ -60,12 +60,12 @@ describe("toolMatches", () => {
   });
 
   test("exact pattern matches only its exact name", () => {
-    expect(toolMatches("synapse-collateral__patch_source", "synapse-collateral__patch_source")).toBe(
-      true,
-    );
-    expect(toolMatches("synapse-collateral__patch_sources", "synapse-collateral__patch_source")).toBe(
-      false,
-    );
+    expect(
+      toolMatches("synapse-collateral__patch_source", "synapse-collateral__patch_source"),
+    ).toBe(true);
+    expect(
+      toolMatches("synapse-collateral__patch_sources", "synapse-collateral__patch_source"),
+    ).toBe(false);
     expect(toolMatches("synapse-collateral__set_source", "synapse-collateral__patch_source")).toBe(
       false,
     );

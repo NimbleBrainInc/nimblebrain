@@ -207,7 +207,10 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     // a silent no-op). Pin the invariant.
     const lifecycle = new ConnectorLifecycleManager(new CapturingSink());
     seedInstance(lifecycle, "minted", "ws_test", { url: "https://example.test/mcp" });
-    flowSlot(lifecycle).set("minted|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
+    flowSlot(lifecycle).set(
+      "minted|ws_test|_workspace",
+      Promise.resolve({ authorizationUrl: null }),
+    );
 
     const resolveAuthUrl = mock((_url: string | null) => {});
     const source = { start: async () => {} };

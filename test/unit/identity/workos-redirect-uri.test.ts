@@ -8,10 +8,10 @@
  * provider's redirectUri as the `redirect_uri` query param; no network needed).
  */
 
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 
@@ -60,9 +60,7 @@ describe("WorkosIdentityProvider redirectUri derivation", () => {
   it("derives the platform host when no custom domain is configured", () => {
     process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     const provider = makeProvider({ adapter: "workos", clientId: "client_test" });
-    expect(redirectUriOf(provider)).toBe(
-      "https://acme.nb.example.com/v1/auth/callback",
-    );
+    expect(redirectUriOf(provider)).toBe("https://acme.nb.example.com/v1/auth/callback");
   });
 
   it("uses an explicit redirectUri over the derived one (legacy override)", () => {
@@ -76,7 +74,7 @@ describe("WorkosIdentityProvider redirectUri derivation", () => {
     expect(redirectUriOf(provider)).toBe("https://explicit.example.com/v1/auth/callback");
   });
 
-  it("treats an empty redirectUri as absent and derives (chart emits \"\" when the secret is unset)", () => {
+  it('treats an empty redirectUri as absent and derives (chart emits "" when the secret is unset)', () => {
     // The Helm init container always writes the redirectUri key; with the legacy
     // secret unset it lands as "". `??` would keep that empty value and break the
     // WorkOS authorize URL — the booby-trap the runtime must absorb.

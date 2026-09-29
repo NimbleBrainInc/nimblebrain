@@ -3,17 +3,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ListResourcesResultSchema, ReadResourceResultSchema } from "@modelcontextprotocol/core";
-import { Server, InMemoryTransport } from "@modelcontextprotocol/server";
 import type { ListResourcesResult, ReadResourceResult } from "@modelcontextprotocol/server";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
+import type { EventSink } from "../../src/engine/types.ts";
+import { createFileStore, type FileStore } from "../../src/files/store.ts";
+import type { FileEntry } from "../../src/files/types.ts";
 import {
   FileBackedHostResourcesResolver,
   HOST_RESOURCES_LIST_METHOD,
   HOST_RESOURCES_READ_METHOD,
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
-import { createFileStore, type FileStore } from "../../src/files/store.ts";
-import type { FileEntry } from "../../src/files/types.ts";
-import type { EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 
 // End-to-end wire test for the inbound host-resources handlers, without
@@ -70,9 +70,12 @@ async function seedFile(
  * end-to-end correctness.
  */
 async function buildFakeConnector(uriToRead: string) {
-  const server = new Server({ name: "fake-connector", version: "0.0.1" }, { capabilities: { tools: {} } });
+  const server = new Server(
+    { name: "fake-connector", version: "0.0.1" },
+    { capabilities: { tools: {} } },
+  );
 
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       {
         name: "read_via_host",
@@ -82,7 +85,7 @@ async function buildFakeConnector(uriToRead: string) {
     ],
   }));
 
-  server.setRequestHandler('tools/call', async () => {
+  server.setRequestHandler("tools/call", async () => {
     // Server-initiated request to the client — this is the host-resources
     // method going back to the platform side, where McpSource's inbound
     // handler dispatches to the resolver. The SDK's `Server.request`
@@ -99,9 +102,7 @@ async function buildFakeConnector(uriToRead: string) {
       };
     } catch (err) {
       return {
-        content: [
-          { type: "text", text: err instanceof Error ? err.message : String(err) },
-        ],
+        content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
         isError: true,
       };
     }
@@ -180,7 +181,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { name: "fake-connector", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler('tools/list', async () => ({
+    server.setRequestHandler("tools/list", async () => ({
       tools: [
         {
           name: "list_csvs",
@@ -189,7 +190,7 @@ describe("McpSource inbound host-resources handlers", () => {
         },
       ],
     }));
-    server.setRequestHandler('tools/call', async () => {
+    server.setRequestHandler("tools/call", async () => {
       try {
         const result = (await server.request(
           {
@@ -260,7 +261,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { name: "fake-connector", version: "0.0.1" },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler('tools/list', async () => ({
+    server.setRequestHandler("tools/list", async () => ({
       tools: [
         {
           name: "list_drafts",
@@ -269,7 +270,7 @@ describe("McpSource inbound host-resources handlers", () => {
         },
       ],
     }));
-    server.setRequestHandler('tools/call', async () => {
+    server.setRequestHandler("tools/call", async () => {
       try {
         const result = (await server.request(
           {

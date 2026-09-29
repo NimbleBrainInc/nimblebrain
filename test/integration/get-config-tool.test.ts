@@ -1,157 +1,166 @@
-import { describe, expect, it, afterAll } from "bun:test";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { createCoreToolDefs } from "../../src/tools/core-source.ts";
-import { makeInProcessSource } from "../helpers/in-process-source.ts";
+import { join } from "node:path";
 import { extractText } from "../../src/engine/content-helpers.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { asDevUser } from "../helpers/dev-provider.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import { createCoreToolDefs } from "../../src/tools/core-source.ts";
+import { asDevUser, devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeInProcessSource } from "../helpers/in-process-source.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-get-config-${Date.now()}`);
 
 afterAll(() => {
-	if (existsSync(testDir)) rmSync(testDir, { recursive: true });
+  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
 async function makeRuntime(overrides?: Record<string, unknown>): Promise<Runtime> {
-	const workDir = join(testDir, `work-${Date.now()}`);
-	mkdirSync(workDir, { recursive: true });
-	return Runtime.start({
-		identityProvider: devProvider,
-		model: { provider: "custom", adapter: createEchoModel() },
-		workDir,
-		logging: { disabled: true },
-		...overrides,
-	});
+  const workDir = join(testDir, `work-${Date.now()}`);
+  mkdirSync(workDir, { recursive: true });
+  return Runtime.start({
+    identityProvider: devProvider,
+    model: { provider: "custom", adapter: createEchoModel() },
+    workDir,
+    logging: { disabled: true },
+    ...overrides,
+  });
 }
 
 describe("get_config tool", () => {
-	it("returns all expected fields", async () => {
-		const runtime = await makeRuntime();
-		try {
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await asDevUser(() => source.execute("get_config", {}));
-			expect(result.isError).toBe(false);
-			const config = result.structuredContent as Record<string, unknown>;
-			expect(Array.isArray(config.configuredProviders)).toBe(true);
-			expect((config.configuredProviders as string[]).length).toBeGreaterThan(0);
+  it("returns all expected fields", async () => {
+    const runtime = await makeRuntime();
+    try {
+      const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+      const result = await asDevUser(() => source.execute("get_config", {}));
+      expect(result.isError).toBe(false);
+      const config = result.structuredContent as Record<string, unknown>;
+      expect(Array.isArray(config.configuredProviders)).toBe(true);
+      expect((config.configuredProviders as string[]).length).toBeGreaterThan(0);
 
-			// The limits live under `resolved`: this runtime sets none of them,
-			// and an effective value published at the top level would read as
-			// an operator override the moment a client saved it back.
-			const resolved = config.resolved as Record<string, unknown>;
-			const models = resolved.models as Record<string, string>;
-			expect(typeof models.default).toBe("string");
-			expect(models.default.length).toBeGreaterThan(0);
-			expect(typeof resolved.maxIterations).toBe("number");
-			expect(resolved.maxIterations).toBeGreaterThan(0);
-			expect(typeof resolved.maxInputTokens).toBe("number");
-			expect(resolved.maxInputTokens as number).toBeGreaterThan(0);
-			expect(typeof resolved.maxOutputTokens).toBe("number");
-			expect(resolved.maxOutputTokens as number).toBeGreaterThan(0);
-		} finally {
-			await runtime.shutdown();
-		}
-	});
+      // The limits live under `resolved`: this runtime sets none of them,
+      // and an effective value published at the top level would read as
+      // an operator override the moment a client saved it back.
+      const resolved = config.resolved as Record<string, unknown>;
+      const models = resolved.models as Record<string, string>;
+      expect(typeof models.default).toBe("string");
+      expect(models.default.length).toBeGreaterThan(0);
+      expect(typeof resolved.maxIterations).toBe("number");
+      expect(resolved.maxIterations).toBeGreaterThan(0);
+      expect(typeof resolved.maxInputTokens).toBe("number");
+      expect(resolved.maxInputTokens as number).toBeGreaterThan(0);
+      expect(typeof resolved.maxOutputTokens).toBe("number");
+      expect(resolved.maxOutputTokens as number).toBeGreaterThan(0);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 
-	it("returns correct default model from config", async () => {
-		const runtime = await makeRuntime({ defaultModel: "anthropic:claude-sonnet-4-6" });
-		try {
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await asDevUser(() => source.execute("get_config", {}));
-			const config = result.structuredContent as Record<string, unknown>;
-			const resolved = config.resolved as { models: Record<string, string> };
-			expect(resolved.models.default).toBe("anthropic:claude-sonnet-4-6");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
+  it("returns correct default model from config", async () => {
+    const runtime = await makeRuntime({ defaultModel: "anthropic:claude-sonnet-4-6" });
+    try {
+      const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+      const result = await asDevUser(() => source.execute("get_config", {}));
+      const config = result.structuredContent as Record<string, unknown>;
+      const resolved = config.resolved as { models: Record<string, string> };
+      expect(resolved.models.default).toBe("anthropic:claude-sonnet-4-6");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 
-	it("configuredProviders reflects providers from config", async () => {
-		const runtime = await makeRuntime({
-			providers: { anthropic: {}, openai: {} },
-		});
-		try {
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await asDevUser(() => source.execute("get_config", {}));
-			const config = result.structuredContent as Record<string, unknown>;
-			expect(config.configuredProviders).toContain("anthropic");
-			expect(config.configuredProviders).toContain("openai");
-			expect(config.configuredProviders).not.toContain("google");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
+  it("configuredProviders reflects providers from config", async () => {
+    const runtime = await makeRuntime({
+      providers: { anthropic: {}, openai: {} },
+    });
+    try {
+      const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+      const result = await asDevUser(() => source.execute("get_config", {}));
+      const config = result.structuredContent as Record<string, unknown>;
+      expect(config.configuredProviders).toContain("anthropic");
+      expect(config.configuredProviders).toContain("openai");
+      expect(config.configuredProviders).not.toContain("google");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 
-	it("defaults to anthropic when no providers configured", async () => {
-		const runtime = await makeRuntime();
-		try {
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await asDevUser(() => source.execute("get_config", {}));
-			const config = result.structuredContent as Record<string, unknown>;
-			expect(config.configuredProviders).toContain("anthropic");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
+  it("defaults to anthropic when no providers configured", async () => {
+    const runtime = await makeRuntime();
+    try {
+      const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+      const result = await asDevUser(() => source.execute("get_config", {}));
+      const config = result.structuredContent as Record<string, unknown>;
+      expect(config.configuredProviders).toContain("anthropic");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 
-	it("set_config then get_config reflects the change", async () => {
-		const workDir = join(testDir, `work-setget-${Date.now()}`);
-		mkdirSync(workDir, { recursive: true });
-		const configPath = join(workDir, "nimblebrain.json");
-		const { writeFileSync } = await import("node:fs");
-		writeFileSync(configPath, JSON.stringify({
-			version: "1",
-			defaultModel: "anthropic:claude-sonnet-4-6",
-			providers: { anthropic: {}, openai: {} },
-		}));
+  it("set_config then get_config reflects the change", async () => {
+    const workDir = join(testDir, `work-setget-${Date.now()}`);
+    mkdirSync(workDir, { recursive: true });
+    const configPath = join(workDir, "nimblebrain.json");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: "1",
+        defaultModel: "anthropic:claude-sonnet-4-6",
+        providers: { anthropic: {}, openai: {} },
+      }),
+    );
 
-		const runtime = await makeRuntime({
-			defaultModel: "anthropic:claude-sonnet-4-6",
-			providers: { anthropic: {}, openai: {} },
-			workDir,
-			configPath,
-		});
-		try {
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+    const runtime = await makeRuntime({
+      defaultModel: "anthropic:claude-sonnet-4-6",
+      providers: { anthropic: {}, openai: {} },
+      workDir,
+      configPath,
+    });
+    try {
+      const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 
-			const setResult = await asDevUser(() => source.execute("set_model_config", { defaultModel: "openai:gpt-4o" }));
-			expect(setResult.isError).toBe(false);
+      const setResult = await asDevUser(() =>
+        source.execute("set_model_config", { defaultModel: "openai:gpt-4o" }),
+      );
+      expect(setResult.isError).toBe(false);
 
-			const getResult = await asDevUser(() => source.execute("get_config", {}));
-			const config = getResult.structuredContent as Record<string, unknown>;
-			const resolved = config.resolved as { models: Record<string, string> };
-			expect(resolved.models.default).toBe("openai:gpt-4o");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
+      const getResult = await asDevUser(() => source.execute("get_config", {}));
+      const config = getResult.structuredContent as Record<string, unknown>;
+      const resolved = config.resolved as { models: Record<string, string> };
+      expect(resolved.models.default).toBe("openai:gpt-4o");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 
-	it("set_config rejects model from unconfigured provider", async () => {
-		const workDir = join(testDir, `work-reject-${Date.now()}`);
-		mkdirSync(workDir, { recursive: true });
-		const configPath = join(workDir, "nimblebrain.json");
-		const { writeFileSync } = await import("node:fs");
-		writeFileSync(configPath, JSON.stringify({
-			version: "1",
-			providers: { anthropic: {} },
-		}));
+  it("set_config rejects model from unconfigured provider", async () => {
+    const workDir = join(testDir, `work-reject-${Date.now()}`);
+    mkdirSync(workDir, { recursive: true });
+    const configPath = join(workDir, "nimblebrain.json");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: "1",
+        providers: { anthropic: {} },
+      }),
+    );
 
-		const runtime = await makeRuntime({
-			providers: { anthropic: {} },
-			workDir,
-			configPath,
-		});
-		try {
-			const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-			const result = await asDevUser(() => source.execute("set_model_config", { defaultModel: "openai:gpt-4o" }));
-			expect(result.isError).toBe(true);
-			expect(extractText(result.content)).toContain("Invalid model");
-		} finally {
-			await runtime.shutdown();
-		}
-	});
+    const runtime = await makeRuntime({
+      providers: { anthropic: {} },
+      workDir,
+      configPath,
+    });
+    try {
+      const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+      const result = await asDevUser(() =>
+        source.execute("set_model_config", { defaultModel: "openai:gpt-4o" }),
+      );
+      expect(result.isError).toBe(true);
+      expect(extractText(result.content)).toContain("Invalid model");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
 });

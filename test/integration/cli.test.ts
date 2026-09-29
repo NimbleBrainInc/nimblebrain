@@ -1,8 +1,8 @@
-import { spawn, spawnSync } from "bun";
+import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
+import { spawn, spawnSync } from "bun";
 
 // The runtime binary's one job is to serve. The deploy command is
 // `bun run src/cli/index.ts serve` (Dockerfile CMD; `start` and `dev:api` also
@@ -80,8 +80,11 @@ describe("serve entry", () => {
     );
     try {
       expect(await proc.exited).toBe(1);
-      const output = (await new Response(proc.stdout).text()) + (await new Response(proc.stderr).text());
-      expect(output).toContain(`No identity provider: ${join(workDir, "instance.json")} does not exist`);
+      const output =
+        (await new Response(proc.stdout).text()) + (await new Response(proc.stderr).text());
+      expect(output).toContain(
+        `No identity provider: ${join(workDir, "instance.json")} does not exist`,
+      );
       expect(output).toContain('{"auth":{"adapter":"dev"}}');
       expect(output).toContain('"adapter":"oidc"');
     } finally {

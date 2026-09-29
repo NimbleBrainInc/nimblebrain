@@ -1,5 +1,5 @@
-import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
+import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { COMPACTION_DEFAULTS } from "../../src/conversation/compaction.ts";
@@ -8,10 +8,7 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import { estimateMessageTokens } from "../../src/engine/token-estimate.ts";
 import type { EngineConfig, EngineHooks, ToolSchema } from "../../src/engine/types.ts";
-import {
-  buildMidTurnCompaction,
-  planMidTurnFold,
-} from "../../src/runtime/mid-turn-compaction.ts";
+import { buildMidTurnCompaction, planMidTurnFold } from "../../src/runtime/mid-turn-compaction.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 
 /**
@@ -131,12 +128,9 @@ async function runTurn(
     },
     ...extraHooks,
   };
-  const result = await engineWith(model, resultChars).run(
-    { ...config, hooks },
-    "sys",
-    history,
-    [TOOL],
-  );
+  const result = await engineWith(model, resultChars).run({ ...config, hooks }, "sys", history, [
+    TOOL,
+  ]);
   return { result, prompts, windowDrops: () => windowDrops };
 }
 
@@ -203,12 +197,9 @@ describe("mid-turn compaction", () => {
     // Folding here would buy a smaller prompt for a summarizer call and a full
     // cache re-anchor, on a turn with too few iterations left to repay it.
     const { summarize, folded } = countingSummarizer();
-    const { prompts, windowDrops } = await runTurn(
-      openingHistory(6, 600),
-      toolThenAnswer(5),
-      400,
-      { rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }) },
-    );
+    const { prompts, windowDrops } = await runTurn(openingHistory(6, 600), toolThenAnswer(5), 400, {
+      rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }),
+    });
 
     const peak = Math.max(...prompts.map(sizeOf));
     expect(peak).toBeLessThan(BUDGET);

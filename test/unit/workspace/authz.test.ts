@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
-import { canManageWorkspaceMembers, canWriteWorkspaceScoped } from "../../../src/workspace/authz.ts";
+import {
+  canManageWorkspaceMembers,
+  canWriteWorkspaceScoped,
+} from "../../../src/workspace/authz.ts";
 import type { Workspace, WorkspaceRole } from "../../../src/workspace/types.ts";
 
 function identity(id: string, orgRole: OrgRole = "member"): UserIdentity {
@@ -14,9 +17,7 @@ function identity(id: string, orgRole: OrgRole = "member"): UserIdentity {
   };
 }
 
-function workspace(
-  members: Array<{ userId: string; role: WorkspaceRole }>,
-): Workspace {
+function workspace(members: Array<{ userId: string; role: WorkspaceRole }>): Workspace {
   return {
     id: "ws-acme",
     name: "Acme",
@@ -75,15 +76,11 @@ describe("canWriteWorkspaceScoped", () => {
   });
 
   test("denies when the workspace is null", () => {
-    expect(canWriteWorkspaceScoped(identity("u1", "owner"), null).allowed).toBe(
-      false,
-    );
+    expect(canWriteWorkspaceScoped(identity("u1", "owner"), null).allowed).toBe(false);
   });
 
   test("denies when the workspace is undefined", () => {
-    expect(
-      canWriteWorkspaceScoped(identity("u1", "owner"), undefined).allowed,
-    ).toBe(false);
+    expect(canWriteWorkspaceScoped(identity("u1", "owner"), undefined).allowed).toBe(false);
   });
 
   test("fails closed when members is not an array (undefined)", () => {

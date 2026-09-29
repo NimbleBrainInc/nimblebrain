@@ -36,9 +36,7 @@ async function drainImmediately(stream: ReadableStream<Uint8Array>): Promise<str
     const next = reader.read();
     const settled = await Promise.race([
       next.then((r) => ({ kind: "read" as const, r })),
-      new Promise<{ kind: "tick" }>((resolve) =>
-        setTimeout(() => resolve({ kind: "tick" }), 10),
-      ),
+      new Promise<{ kind: "tick" }>((resolve) => setTimeout(() => resolve({ kind: "tick" }), 10)),
     ]);
     if (settled.kind === "tick") {
       reader.releaseLock();

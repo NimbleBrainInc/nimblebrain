@@ -17,13 +17,13 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createUsageSource } from "../../../src/platform/usage/source.ts";
-import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
-import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { validateToolInput } from "../../../src/tools/validate-input.ts";
-import type { Runtime } from "../../../src/runtime/runtime.ts";
 
 /**
  * Minimal runtime stub sufficient for every synchronous / lazy platform

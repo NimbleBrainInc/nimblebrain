@@ -1,17 +1,17 @@
-import { describe, expect, it, afterAll } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
+import type { EngineEvent, EventSink, ToolSchema } from "../../src/engine/types.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { filterTools } from "../../src/tools/surfacing.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import type { EngineEvent, EventSink, ToolSchema } from "../../src/engine/types.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-runtime-${Date.now()}`);
 
@@ -67,7 +67,11 @@ describe("Runtime", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const result = await runtime.chat({ identity: DEV_IDENTITY, message: "Hello there", workspaceId: TEST_WORKSPACE_ID });
+    const result = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "Hello there",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
 
     expect(result.response).toBe("Hello there");
     expect(result.conversationId).toMatch(/^conv_/);
@@ -100,7 +104,11 @@ describe("Runtime", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const first = await runtime.chat({ identity: DEV_IDENTITY, message: "First message", workspaceId: TEST_WORKSPACE_ID });
+    const first = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "First message",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     const second = await runtime.chat({
       identity: DEV_IDENTITY,
       message: "Second message",
@@ -121,8 +129,16 @@ describe("Runtime", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const first = await runtime.chat({ identity: DEV_IDENTITY, message: "A", workspaceId: TEST_WORKSPACE_ID });
-    const second = await runtime.chat({ identity: DEV_IDENTITY, message: "B", workspaceId: TEST_WORKSPACE_ID });
+    const first = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "A",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    const second = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "B",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
 
     expect(first.conversationId).not.toBe(second.conversationId);
 
@@ -179,7 +195,11 @@ describe("Runtime", () => {
 
     // Dev-mode owner is `usr_default`; the chat is focused on TEST_WORKSPACE_ID,
     // so the conversation is born in that workspace's owner partition.
-    await runtime.chat({ identity: DEV_IDENTITY, message: "Persistent", workspaceId: TEST_WORKSPACE_ID });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "Persistent",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
 
     const ownerDir = workspaceConversationsDir(workDir, TEST_WORKSPACE_ID, "usr_default");
     const workspaceFiles = [...new Bun.Glob("*.jsonl").scanSync(ownerDir)];
@@ -217,7 +237,11 @@ You are a friendly greeter. Always respond with enthusiasm!
     });
     await provisionTestWorkspace(runtime);
 
-    const result = await runtime.chat({ identity: DEV_IDENTITY, message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
+    const result = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "say hello and greet everyone",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     expect(result.skillName).toBe("greeter");
 
     await runtime.shutdown();
@@ -266,7 +290,11 @@ I am Nira, your AI assistant. You work at Acme Corp.
     });
     await provisionTestWorkspace(runtime);
 
-    await runtime.chat({ identity: DEV_IDENTITY, message: "Hello", workspaceId: TEST_WORKSPACE_ID });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "Hello",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
 
     expect(capturedSystem).toContain("I am Nira");
     expect(capturedSystem).toContain("Acme Corp");
@@ -292,7 +320,11 @@ I am Nira, your AI assistant. You work at Acme Corp.
     await provisionTestWorkspace(runtime);
 
     // No skills initially
-    let result = await runtime.chat({ identity: DEV_IDENTITY, message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
+    let result = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "say hello and greet everyone",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     expect(result.skillName).toBeNull();
 
     // Add a skill
@@ -312,7 +344,11 @@ Greet with enthusiasm!
 
     await runtime.reloadSkills();
 
-    result = await runtime.chat({ identity: DEV_IDENTITY, message: "say hello and greet everyone", workspaceId: TEST_WORKSPACE_ID });
+    result = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "say hello and greet everyone",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     expect(result.skillName).toBe("greeter");
 
     await runtime.shutdown();
@@ -334,7 +370,11 @@ Greet with enthusiasm!
     });
     await provisionTestWorkspace(runtime);
 
-    await runtime.chat({ identity: DEV_IDENTITY, message: "Hello", workspaceId: TEST_WORKSPACE_ID });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "Hello",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
 
     expect(events).toContain("run.start");
     expect(events).toContain("run.done");

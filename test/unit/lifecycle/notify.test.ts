@@ -131,9 +131,7 @@ describe("on_ready", () => {
 
     expect(outcome.settled).toBe(true);
     expect(outcome.notice).toBe("Setting up your workspace — watch the panel.");
-    expect(fake.calls).toEqual([
-      { tool: "workspace_ready", input: { reason: "install" } },
-    ]);
+    expect(fake.calls).toEqual([{ tool: "workspace_ready", input: { reason: "install" } }]);
   });
 
   test("a fresh install is NOT swallowed by the observer's dedupe", async () => {

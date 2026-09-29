@@ -9,10 +9,10 @@
  * fixture's read log does not grow for.
  */
 
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { readCursor, writeCursor } from "../../../src/notifications/cursors.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";

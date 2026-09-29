@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { errorLog } from "../../../src/api/middleware/error-log.ts";
 import type { AppEnv } from "../../../src/api/types.ts";
@@ -48,7 +48,11 @@ describe("errorLog middleware", () => {
     const { events, sink } = collectingSink();
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
-      c.set("identity", { id: "usr_1", email: "a@b.com", displayName: "A" } as AppEnv["Variables"]["identity"]);
+      c.set("identity", {
+        id: "usr_1",
+        email: "a@b.com",
+        displayName: "A",
+      } as AppEnv["Variables"]["identity"]);
       c.set("workspaceId", "ws_test");
       await next();
     });
@@ -81,7 +85,11 @@ describe("errorLog middleware", () => {
     const { events, sink } = collectingSink();
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
-      c.set("identity", { id: "usr_1", email: "a@b.com", displayName: "A" } as AppEnv["Variables"]["identity"]);
+      c.set("identity", {
+        id: "usr_1",
+        email: "a@b.com",
+        displayName: "A",
+      } as AppEnv["Variables"]["identity"]);
       c.set("workspaceId", "ws_test");
       await next();
     });
@@ -100,7 +108,11 @@ describe("errorLog middleware", () => {
     const { sink } = collectingSink();
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
-      c.set("identity", { id: "usr_1", email: "a@b.com", displayName: "A" } as AppEnv["Variables"]["identity"]);
+      c.set("identity", {
+        id: "usr_1",
+        email: "a@b.com",
+        displayName: "A",
+      } as AppEnv["Variables"]["identity"]);
       c.set("workspaceId", "ws_test");
       await next();
     });
@@ -120,7 +132,11 @@ describe("errorLog middleware", () => {
     const { sink } = collectingSink();
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
-      c.set("identity", { id: "usr_1", email: "a@b.com", displayName: "A" } as AppEnv["Variables"]["identity"]);
+      c.set("identity", {
+        id: "usr_1",
+        email: "a@b.com",
+        displayName: "A",
+      } as AppEnv["Variables"]["identity"]);
       c.set("workspaceId", "ws_test");
       await next();
     });
@@ -142,7 +158,11 @@ describe("errorLog middleware", () => {
     const { sink } = collectingSink();
     const app = new Hono<AppEnv>();
     app.use("*", async (c, next) => {
-      c.set("identity", { id: "usr_1", email: "a@b.com", displayName: "A" } as AppEnv["Variables"]["identity"]);
+      c.set("identity", {
+        id: "usr_1",
+        email: "a@b.com",
+        displayName: "A",
+      } as AppEnv["Variables"]["identity"]);
       c.set("workspaceId", "ws_test");
       await next();
     });

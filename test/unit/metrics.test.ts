@@ -1,7 +1,6 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
-import { log } from "../../src/observability/log.ts";
-import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import type { Counter } from "prom-client";
+import { MAX_TRACKED_RUNS, MetricsEventSink } from "../../src/adapters/metrics-events.ts";
 import {
   connectorCrashedTotal,
   connectorUnhealthy,
@@ -17,8 +16,9 @@ import {
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../../src/api/metrics.ts";
-import type { ConnectorHealth } from "../../src/tools/health-monitor.ts";
+import { log } from "../../src/observability/log.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
+import type { ConnectorHealth } from "../../src/tools/health-monitor.ts";
 
 // Read one label-series value off a counter. Tests use deltas (read → act →
 // read) rather than reset(), so they're robust to the shared process-global
@@ -247,8 +247,9 @@ describe("connector unhealthy gauge", () => {
     return undefined;
   }
 
-  const status = (...records: Array<Partial<ConnectorHealth> & { name: string; state: ConnectorHealth["state"] }>): ConnectorHealth[] =>
-    records.map((r) => ({ uptime: null, restartCount: 0, ...r }));
+  const status = (
+    ...records: Array<Partial<ConnectorHealth> & { name: string; state: ConnectorHealth["state"] }>
+  ): ConnectorHealth[] => records.map((r) => ({ uptime: null, restartCount: 0, ...r }));
 
   // Leave the gauge inert for other test files sharing the process-global
   // registry (a full-registry scrape elsewhere would otherwise invoke our
@@ -279,7 +280,9 @@ describe("connector unhealthy gauge", () => {
   it("test_connector_unhealthy_gauge_reports_1_for_cooldown_source", async () => {
     // `cooldown` (crashed, spent its quick-retry budget, now on slow re-probe)
     // can stay down indefinitely — the other involuntary-down state.
-    registerConnectorHealthGauge(() => status({ name: "com-example-enrich-mcp", state: "cooldown" }));
+    registerConnectorHealthGauge(() =>
+      status({ name: "com-example-enrich-mcp", state: "cooldown" }),
+    );
     expect(await readGauge("com-example-enrich-mcp")).toBe(1);
   });
 
@@ -409,7 +412,10 @@ describe("LLM latency + error metrics", () => {
     const beforeSum = await readTtft("sum", labels);
     // 1800ms to first token → 1.8s observed; the long round-trip (60s) is the
     // decode this metric deliberately looks past.
-    sink.emit({ type: "llm.done", data: { runId: "r1", model: "tm-ttft", llmMs: 60000, ttftMs: 1800 } });
+    sink.emit({
+      type: "llm.done",
+      data: { runId: "r1", model: "tm-ttft", llmMs: 60000, ttftMs: 1800 },
+    });
     expect((await readTtft("count", labels)) - beforeCount).toBe(1);
     expect((await readTtft("sum", labels)) - beforeSum).toBeCloseTo(1.8, 5);
   });

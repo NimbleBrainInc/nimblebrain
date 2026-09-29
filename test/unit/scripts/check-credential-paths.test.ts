@@ -45,9 +45,7 @@ function findFirst<T extends ts.Node>(
 
 describe("check-credential-paths — isUserCredentialJoin", () => {
   test("matches `join(workDir, 'users', userId, 'credentials', connectorName)`", () => {
-    const src = parse(
-      `const path = join(workDir, "users", userId, "credentials", connectorName);`,
-    );
+    const src = parse(`const path = join(workDir, "users", userId, "credentials", connectorName);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(call).toBeDefined();
     expect(isUserCredentialJoin(call!)).toBe(true);
@@ -60,9 +58,7 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
   });
 
   test("does NOT match `join(workDir, 'workspaces', wsId, 'credentials', name)` (the intended workspace shape)", () => {
-    const src = parse(
-      `const dir = join(workDir, "workspaces", wsId, "credentials", name);`,
-    );
+    const src = parse(`const dir = join(workDir, "workspaces", wsId, "credentials", name);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isUserCredentialJoin(call!)).toBe(false);
   });
@@ -100,9 +96,7 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
   });
 
   test("still matches a non-carve-out child of `users/<id>/credentials/`", () => {
-    const src = parse(
-      `const p = join(workDir, "users", userId, "credentials", "secrets", "x");`,
-    );
+    const src = parse(`const p = join(workDir, "users", userId, "credentials", "secrets", "x");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isUserCredentialJoin(call!)).toBe(true);
   });
@@ -110,18 +104,14 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
 
 describe("check-credential-paths — isUserCredentialTemplate", () => {
   test("matches a template literal that spells out the user-credential path", () => {
-    const src = parse(
-      "const p = `${workDir}/users/${userId}/credentials/${connectorName}.json`;",
-    );
+    const src = parse("const p = `${workDir}/users/${userId}/credentials/${connectorName}.json`;");
     const node = findFirst(src, ts.isTemplateExpression);
     expect(node).toBeDefined();
     expect(isUserCredentialTemplate(node!)).toBe(true);
   });
 
   test("does NOT match a template that uses /workspaces/<id>/credentials/", () => {
-    const src = parse(
-      "const p = `${workDir}/workspaces/${wsId}/credentials/${name}.json`;",
-    );
+    const src = parse("const p = `${workDir}/workspaces/${wsId}/credentials/${name}.json`;");
     const node = findFirst(src, ts.isTemplateExpression);
     expect(isUserCredentialTemplate(node!)).toBe(false);
   });
@@ -149,9 +139,7 @@ describe("check-credential-paths — isUserCredentialStringLiteral", () => {
   });
 
   test("does NOT match the sanctioned `users/<id>/credentials/mcp-oauth/...` carve-out", () => {
-    const src = parse(
-      `const p = "/work/users/user_abc/credentials/mcp-oauth/notion/tokens.json";`,
-    );
+    const src = parse(`const p = "/work/users/user_abc/credentials/mcp-oauth/notion/tokens.json";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(isUserCredentialStringLiteral(node!)).toBe(false);
   });

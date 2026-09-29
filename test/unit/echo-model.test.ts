@@ -105,13 +105,7 @@ describe("createEchoModel — doStream", () => {
       parts.push(value.type);
     }
 
-    expect(parts).toEqual([
-      "stream-start",
-      "text-start",
-      "text-delta",
-      "text-end",
-      "finish",
-    ]);
+    expect(parts).toEqual(["stream-start", "text-start", "text-delta", "text-end", "finish"]);
   });
 
   it("includes tool-call part when queued", async () => {

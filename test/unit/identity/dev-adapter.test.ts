@@ -1,10 +1,10 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test, spyOn } from "bun:test";
-import { log } from "../../../src/observability/log.ts";
 import { DevIdentityProvider } from "../../../src/identity/providers/dev.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import { log } from "../../../src/observability/log.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 let workDir: string;
@@ -152,7 +152,11 @@ describe("DevIdentityProvider", () => {
 
     test("createUser delegates to UserStore", async () => {
       const adapter = new DevIdentityProvider(workDir, userStore);
-      const { user } = await adapter.createUser({ email: "alice@example.com", displayName: "Alice", orgRole: "member" });
+      const { user } = await adapter.createUser({
+        email: "alice@example.com",
+        displayName: "Alice",
+        orgRole: "member",
+      });
 
       expect(user.email).toBe("alice@example.com");
       expect(user.displayName).toBe("Alice");
@@ -165,7 +169,11 @@ describe("DevIdentityProvider", () => {
 
     test("deleteUser delegates to UserStore", async () => {
       const adapter = new DevIdentityProvider(workDir, userStore);
-      const { user } = await adapter.createUser({ email: "bob@example.com", displayName: "Bob", orgRole: "member" });
+      const { user } = await adapter.createUser({
+        email: "bob@example.com",
+        displayName: "Bob",
+        orgRole: "member",
+      });
 
       const deleted = await adapter.deleteUser(user.id);
       expect(deleted).toBe(true);

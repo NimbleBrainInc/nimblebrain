@@ -271,7 +271,10 @@ describe("createWorkspaceRegistry — the relay", () => {
 });
 
 describe("createServerNotificationRelay — the host sets the rate", () => {
-  function relayInto(): { relay: ReturnType<typeof createServerNotificationRelay>; events: EngineEvent[] } {
+  function relayInto(): {
+    relay: ReturnType<typeof createServerNotificationRelay>;
+    events: EngineEvent[];
+  } {
     const { sink, events } = recordingSink();
     return { relay: createServerNotificationRelay(WS, sink), events };
   }

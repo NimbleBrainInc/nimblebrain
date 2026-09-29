@@ -25,11 +25,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
-import { createMockModel } from "../helpers/mock-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const SENTINEL = "DETACH_SENTINEL";
 const BACKGROUND_REPLY = "completed in the background after disconnect";
@@ -78,8 +78,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
           reject(new DOMException("The operation was aborted.", "AbortError"));
           return;
         }
-        const onAbort = () =>
-          reject(new DOMException("The operation was aborted.", "AbortError"));
+        const onAbort = () => reject(new DOMException("The operation was aborted.", "AbortError"));
         signal?.addEventListener("abort", onAbort, { once: true });
         gate.then(() => {
           signal?.removeEventListener("abort", onAbort);
@@ -97,11 +96,15 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
       workDir,
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0});
+    handle = startServer({ runtime, port: 0 });
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation to get a stable convId to assert against.
-    const seed = await runtime.chat({ identity: DEV_IDENTITY, message: "seed", workspaceId: TEST_WORKSPACE_ID });
+    const seed = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "seed",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     const convId = seed.conversationId;
 
     // Start the streamed turn. The model gates, so the run is in-flight

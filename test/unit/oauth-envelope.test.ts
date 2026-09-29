@@ -1,12 +1,12 @@
-import { createHmac, randomBytes } from "node:crypto";
 import { describe, expect, test } from "bun:test";
+import { createHmac, randomBytes } from "node:crypto";
 import {
   ALLOWED_TID_PATTERN,
   DEFAULT_TTL_SECONDS,
-  EnvelopeError,
-  ENVELOPE_VERSION,
-  MAX_INNER_LENGTH,
   deriveTenantKey,
+  ENVELOPE_VERSION,
+  EnvelopeError,
+  MAX_INNER_LENGTH,
   signEnvelope,
   verifyEnvelopeAsRouter,
   verifyEnvelopeAsTenant,
@@ -55,27 +55,40 @@ describe("envelope rejects forgeries", () => {
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey() });
     const [v, payload] = wire.split(".");
     const forged = `${v}.${payload}.${"A".repeat(43)}`;
-    expectError(() => verifyEnvelopeAsTenant({ wire: forged, tenantKey: tenantKey(), expectedTid: TID }), "bad_mac");
+    expectError(
+      () => verifyEnvelopeAsTenant({ wire: forged, tenantKey: tenantKey(), expectedTid: TID }),
+      "bad_mac",
+    );
   });
 
   test("signed with wrong tenant key → bad_mac", () => {
     const attackerKey = deriveTenantKey(MASTER, "tenant-z");
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: attackerKey });
-    expectError(() => verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID }), "bad_mac");
+    expectError(
+      () => verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID }),
+      "bad_mac",
+    );
   });
 
   test("payload tampering invalidates MAC", () => {
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey() });
     const [, , mac] = wire.split(".");
-    const tampered = Buffer.from(JSON.stringify({ tid: "tenant-b", inner: INNER, iat: 0, exp: 9e9 })).toString("base64url");
+    const tampered = Buffer.from(
+      JSON.stringify({ tid: "tenant-b", inner: INNER, iat: 0, exp: 9e9 }),
+    ).toString("base64url");
     const forged = `${ENVELOPE_VERSION}.${tampered}.${mac}`;
-    expectError(() => verifyEnvelopeAsTenant({ wire: forged, tenantKey: tenantKey(), expectedTid: TID }), "bad_mac");
+    expectError(
+      () => verifyEnvelopeAsTenant({ wire: forged, tenantKey: tenantKey(), expectedTid: TID }),
+      "bad_mac",
+    );
   });
 
   test("router rejects forged tid (HKDF gives different key)", () => {
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey() });
     const parts = wire.split(".");
-    const swapped = Buffer.from(JSON.stringify({ tid: "tenant-b", inner: INNER, iat: 1, exp: 9e9 })).toString("base64url");
+    const swapped = Buffer.from(
+      JSON.stringify({ tid: "tenant-b", inner: INNER, iat: 1, exp: 9e9 }),
+    ).toString("base64url");
     const forged = `${parts[0]}.${swapped}.${parts[2]}`;
     expectError(() => verifyEnvelopeAsRouter({ wire: forged, masterKey: MASTER }), "bad_mac");
   });
@@ -83,29 +96,52 @@ describe("envelope rejects forgeries", () => {
 
 describe("envelope rejects malformed input", () => {
   test("non-string wire → invalid_format", () => {
-    expectError(() => verifyEnvelopeAsTenant({ wire: undefined as unknown as string, tenantKey: tenantKey(), expectedTid: TID }), "invalid_format");
+    expectError(
+      () =>
+        verifyEnvelopeAsTenant({
+          wire: undefined as unknown as string,
+          tenantKey: tenantKey(),
+          expectedTid: TID,
+        }),
+      "invalid_format",
+    );
   });
 
   test("missing parts → invalid_format", () => {
-    expectError(() => verifyEnvelopeAsTenant({ wire: "v1.justone", tenantKey: tenantKey(), expectedTid: TID }), "invalid_format");
+    expectError(
+      () =>
+        verifyEnvelopeAsTenant({ wire: "v1.justone", tenantKey: tenantKey(), expectedTid: TID }),
+      "invalid_format",
+    );
   });
 
   test("wrong version prefix → invalid_format", () => {
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey() });
     const swapped = "v2" + wire.slice(2);
-    expectError(() => verifyEnvelopeAsTenant({ wire: swapped, tenantKey: tenantKey(), expectedTid: TID }), "invalid_format");
+    expectError(
+      () => verifyEnvelopeAsTenant({ wire: swapped, tenantKey: tenantKey(), expectedTid: TID }),
+      "invalid_format",
+    );
   });
 
   test("oversize wire → invalid_format", () => {
     const huge = "v1." + "A".repeat(5000) + ".AAAA";
-    expectError(() => verifyEnvelopeAsTenant({ wire: huge, tenantKey: tenantKey(), expectedTid: TID }), "invalid_format");
+    expectError(
+      () => verifyEnvelopeAsTenant({ wire: huge, tenantKey: tenantKey(), expectedTid: TID }),
+      "invalid_format",
+    );
   });
 
   test("non-JSON payload → invalid_payload", () => {
     const payloadB64 = Buffer.from("not-json").toString("base64url");
     const mac = Buffer.alloc(32).toString("base64url");
     expectError(
-      () => verifyEnvelopeAsTenant({ wire: `v1.${payloadB64}.${mac}`, tenantKey: tenantKey(), expectedTid: TID }),
+      () =>
+        verifyEnvelopeAsTenant({
+          wire: `v1.${payloadB64}.${mac}`,
+          tenantKey: tenantKey(),
+          expectedTid: TID,
+        }),
       // bad_mac fires first because MAC check precedes JSON parse; either is fine,
       // but we MUST NOT crash. Accept either failure code.
       ["bad_mac", "invalid_payload"],
@@ -126,8 +162,20 @@ describe("envelope tid handling", () => {
   });
 
   test("rejects tid mismatch between expected and payload (tenant view)", () => {
-    const wire = signEnvelope({ tid: "tenant-b", inner: INNER, tenantKey: deriveTenantKey(MASTER, "tenant-b") });
-    expectError(() => verifyEnvelopeAsTenant({ wire, tenantKey: deriveTenantKey(MASTER, "tenant-b"), expectedTid: "tenant-a" }), "tid_mismatch");
+    const wire = signEnvelope({
+      tid: "tenant-b",
+      inner: INNER,
+      tenantKey: deriveTenantKey(MASTER, "tenant-b"),
+    });
+    expectError(
+      () =>
+        verifyEnvelopeAsTenant({
+          wire,
+          tenantKey: deriveTenantKey(MASTER, "tenant-b"),
+          expectedTid: "tenant-a",
+        }),
+      "tid_mismatch",
+    );
   });
 
   test("ALLOWED_TID_PATTERN pins to RFC 1123 DNS label grammar", () => {
@@ -152,19 +200,33 @@ describe("envelope expiration", () => {
   test("rejects expired envelope", () => {
     const past = Math.floor(Date.now() / 1000) - DEFAULT_TTL_SECONDS - 60;
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey(), now: past });
-    expectError(() => verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID }), "expired");
+    expectError(
+      () => verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID }),
+      "expired",
+    );
   });
 
   test("accepts envelope inside its TTL window", () => {
     const now = Math.floor(Date.now() / 1000);
-    const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey(), now, ttlSeconds: 600 });
-    expect(() => verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID, now: now + 300 })).not.toThrow();
+    const wire = signEnvelope({
+      tid: TID,
+      inner: INNER,
+      tenantKey: tenantKey(),
+      now,
+      ttlSeconds: 600,
+    });
+    expect(() =>
+      verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID, now: now + 300 }),
+    ).not.toThrow();
   });
 
   test("rejects envelope from the far future (clock skew bound)", () => {
     const future = Math.floor(Date.now() / 1000) + 3600;
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey(), now: future });
-    expectError(() => verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID }), "issued_in_future");
+    expectError(
+      () => verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID }),
+      "issued_in_future",
+    );
   });
 
   test("accepts envelope right at the 60s clock-skew boundary", () => {
@@ -180,7 +242,8 @@ describe("envelope expiration", () => {
     const now = 1_700_000_000;
     const wire = signEnvelope({ tid: TID, inner: INNER, tenantKey: tenantKey(), now });
     expectError(
-      () => verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID, now: now - 61 }),
+      () =>
+        verifyEnvelopeAsTenant({ wire, tenantKey: tenantKey(), expectedTid: TID, now: now - 61 }),
       "issued_in_future",
     );
   });
@@ -213,7 +276,8 @@ describe("envelope payload boundary checks", () => {
     // Sign-side check keeps the contract symmetric with verify — a signer
     // should never produce wire bytes that every peer rejects.
     expectError(
-      () => signEnvelope({ tid: TID, inner: "x".repeat(MAX_INNER_LENGTH + 1), tenantKey: tenantKey() }),
+      () =>
+        signEnvelope({ tid: TID, inner: "x".repeat(MAX_INNER_LENGTH + 1), tenantKey: tenantKey() }),
       "invalid_payload",
     );
   });
@@ -317,10 +381,7 @@ describe("inner length is measured in UTF-8 bytes", () => {
     const inner = "🙂".repeat(MAX_INNER_LENGTH / 4 + 1);
     expect(inner.length).toBeLessThan(MAX_INNER_LENGTH);
     expect(Buffer.byteLength(inner, "utf8")).toBeGreaterThan(MAX_INNER_LENGTH);
-    expectError(
-      () => signEnvelope({ tid: TID, inner, tenantKey: tenantKey() }),
-      "invalid_payload",
-    );
+    expectError(() => signEnvelope({ tid: TID, inner, tenantKey: tenantKey() }), "invalid_payload");
   });
 });
 

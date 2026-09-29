@@ -12,8 +12,8 @@
  * the provider's count, but not by 50×).
  */
 
-import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { describe, expect, test } from "bun:test";
+import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import { buildContextAssembledPayload } from "../../src/runtime/runtime.ts";
 
 function makePngWithDimensions(width: number, height: number): Uint8Array {
@@ -40,8 +40,18 @@ describe("context.assembled — image-attached message regression", () => {
         role: "user",
         content: [
           { type: "text", text: "Look at these screenshots — what's broken?" },
-          { type: "file", mediaType: "image/png", data: { type: "data", data: a }, filename: "before.png" },
-          { type: "file", mediaType: "image/png", data: { type: "data", data: b }, filename: "after.png" },
+          {
+            type: "file",
+            mediaType: "image/png",
+            data: { type: "data", data: a },
+            filename: "before.png",
+          },
+          {
+            type: "file",
+            mediaType: "image/png",
+            data: { type: "data", data: b },
+            filename: "after.png",
+          },
         ],
       },
     ];

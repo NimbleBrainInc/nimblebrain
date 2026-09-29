@@ -8,8 +8,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import type { AppContext } from "../../../src/api/types.ts";
 import { mcpRoutes } from "../../../src/api/routes/mcp.ts";
+import type { AppContext } from "../../../src/api/types.ts";
 import { resolveFeatures } from "../../../src/config/features.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 

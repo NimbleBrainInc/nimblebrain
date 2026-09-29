@@ -19,21 +19,21 @@
  * server. `appContext` is the only variable.
  */
 
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const SERVER_NAME = "ai-nimblebrain-multiskill-mcp";
 
@@ -73,17 +73,17 @@ function createMultiSkillServer(): Server {
     { name: "multiskill", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: TOOL_NAMES.map((n) => ({
       name: n,
       description: `Do ${n}`,
       inputSchema: { type: "object", properties: {} },
     })),
   }));
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler('resources/list', async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: SKILLS.map((s) => ({
       uri: `skill://${s.slug}/SKILL.md`,
       name: s.slug,
@@ -91,7 +91,7 @@ function createMultiSkillServer(): Server {
     })),
   }));
   serveSkills(server, () => bodies);
-  server.setRequestHandler('resources/read', async (request) => {
+  server.setRequestHandler("resources/read", async (request) => {
     const text = bodies[request.params.uri];
     if (!text) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
@@ -128,17 +128,17 @@ ${NEIGHBOUR_PHRASE} — this rule must be in context on every turn.`;
     { name: "neighbour", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
   }));
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler('resources/list', async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [{ uri, name: "orientation", mimeType: "text/markdown" }],
   }));
   serveSkills(server, () => ({ [uri]: body }));
-  server.setRequestHandler('resources/read', async () => ({
+  server.setRequestHandler("resources/read", async () => ({
     contents: [{ uri, mimeType: "text/markdown", text: body }],
   }));
 

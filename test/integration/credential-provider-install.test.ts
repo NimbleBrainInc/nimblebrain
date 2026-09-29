@@ -26,11 +26,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { _resetCredentialProvidersForTest } from "../../src/tools/credential-provider.ts";
@@ -204,10 +204,7 @@ describe("installing a `credential` provider entry", () => {
       await authed?.("https://mcp.acme.test/mcp", { method: "POST" });
     }
 
-    expect(sent).toEqual([
-      "Bearer postgres://a.acme.test/db",
-      "Bearer postgres://b.acme.test/db",
-    ]);
+    expect(sent).toEqual(["Bearer postgres://a.acme.test/db", "Bearer postgres://b.acme.test/db"]);
   });
 
   test("a workspace that never set the key fails its connection, naming the key", async () => {

@@ -20,10 +20,8 @@
  */
 
 import { mkdirSync, rmSync } from "node:fs";
-import { namespacedToolName } from "./namespaced-tool-name.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
@@ -34,8 +32,9 @@ import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-proce
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import {} from "../../src/tools/namespace.ts";
 import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";
 import { devProvider } from "./dev-provider.ts";
+import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";
+import { namespacedToolName } from "./namespaced-tool-name.ts";
 
 // ── Public option / handle shapes ──────────────────────────────────
 

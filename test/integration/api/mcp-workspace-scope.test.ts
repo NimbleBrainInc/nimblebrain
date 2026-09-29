@@ -5,20 +5,20 @@
  * rejects tools from sources not in the workspace registry.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
 import { rmSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { Runtime } from "../../../src/runtime/runtime.ts";
-import { startServer, type ServerHandle } from "../../../src/api/server.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
+import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
-import { SharedSourceRef } from "../../../src/tools/registry.ts";
-import type { ToolSource, Tool } from "../../../src/tools/types.ts";
 import type { ToolResult } from "../../../src/engine/types.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { Runtime } from "../../../src/runtime/runtime.ts";
+import { SharedSourceRef } from "../../../src/tools/registry.ts";
+import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 // ── Fake tool sources ───────────────────────────────────────────────
 
@@ -36,10 +36,7 @@ class FakeToolSource implements ToolSource {
     return this.toolList;
   }
 
-  async execute(
-    toolName: string,
-    input: Record<string, unknown>,
-  ): Promise<ToolResult> {
+  async execute(toolName: string, input: Record<string, unknown>): Promise<ToolResult> {
     return { content: textContent(`executed ${this.name}__${toolName}`), isError: false };
   }
 }
@@ -106,7 +103,7 @@ beforeAll(async () => {
 
   // Denied source is NOT added to workspace registry
 
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -118,9 +115,7 @@ afterAll(async () => {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-async function createMcpClient(
-  headers?: Record<string, string>,
-): Promise<Client> {
+async function createMcpClient(headers?: Record<string, string>): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
     { requestInit: { headers: { ...headers } } },
@@ -162,9 +157,7 @@ describe("MCP workspace scoping", () => {
         arguments: { name: "world" },
       });
       expect(result.isError).toBeFalsy();
-      expect(result.content).toEqual([
-        { type: "text", text: `executed ${ALLOWED_SOURCE}__greet` },
-      ]);
+      expect(result.content).toEqual([{ type: "text", text: `executed ${ALLOWED_SOURCE}__greet` }]);
     } finally {
       await client.close();
     }

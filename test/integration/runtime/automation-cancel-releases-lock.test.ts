@@ -22,8 +22,8 @@ import type { Automation } from "../../../src/platform/automations/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { TaskRequest } from "../../../src/runtime/types.ts";
 import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
 const WS = "ws_cancel_lock";

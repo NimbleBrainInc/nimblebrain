@@ -72,7 +72,10 @@ describe("nb_credential_seal_failures_total", () => {
 
   test("one increment per audit event, under its own reason", async () => {
     const sink = new MetricsEventSink();
-    const before = { skipped: await failures("reseal_skipped"), kid: await failures("unknown_kid") };
+    const before = {
+      skipped: await failures("reseal_skipped"),
+      kid: await failures("unknown_kid"),
+    };
     const emit = (reason: string) =>
       sink.emit({
         type: "audit.credential_seal_failure",

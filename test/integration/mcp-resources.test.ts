@@ -2,18 +2,22 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  Client,
+  ResourceNotFoundError,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { Server } from "@modelcontextprotocol/server";
-import { Client, ResourceNotFoundError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { McpSource } from "../../src/tools/mcp-source.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
 // Fixture: a remote MCP server with two resources
@@ -40,24 +44,28 @@ function createFixtureServer(config: FixtureConfig): Server {
     { capabilities: { tools: {}, resources: {} } },
   );
 
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "ping", description: "Returns pong", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "ping",
+        description: "Returns pong",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
 
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "pong" }],
   }));
 
-  server.setRequestHandler('resources/list', async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: dashboardUri, name: "Dashboard", mimeType: "text/html" },
       { uri: greetingUri, name: "Greeting", mimeType: "text/plain" },
     ],
   }));
 
-  server.setRequestHandler('resources/read', async (request) => {
+  server.setRequestHandler("resources/read", async (request) => {
     if (request.params.uri === dashboardUri) {
       return {
         contents: [{ uri: request.params.uri, mimeType: "text/html", text: config.htmlBody }],
@@ -150,7 +158,7 @@ beforeAll(async () => {
   const otherReg = runtime.getRegistryForWorkspace(OTHER_WORKSPACE_ID);
   otherReg.addSource(otherSource);
 
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
   // Generous hook timeout: this setup starts a Runtime, provisions two
   // workspaces, and stands up two MCP servers. The 5s default hook timeout
@@ -256,9 +264,9 @@ describe("MCP /mcp — resources", () => {
   it("resources/read on an unknown URI returns a JSON-RPC error (not 500)", async () => {
     const client = await createMcpClient();
     try {
-      await expect(
-        client.readResource({ uri: "ui://fixture/does-not-exist" }),
-      ).rejects.toThrow(/not found/i);
+      await expect(client.readResource({ uri: "ui://fixture/does-not-exist" })).rejects.toThrow(
+        /not found/i,
+      );
     } finally {
       await client.close();
     }

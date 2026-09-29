@@ -1,8 +1,8 @@
-import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { Conversation } from "../../src/conversation/types.ts";
@@ -39,7 +39,11 @@ function freshStore(): EventSourcedConversationStore {
 const SYSTEM = "You are a test assistant.";
 const OVERLAY_BODY = "Always confirm the recipient before calling gmail__send.";
 const SECOND_BODY = "Keep the subject line under ten words.";
-const SEND_TOOL: ToolSchema = { name: "gmail__send", description: "Send an email", inputSchema: {} };
+const SEND_TOOL: ToolSchema = {
+  name: "gmail__send",
+  description: "Send an email",
+  inputSchema: {},
+};
 
 function config(): EngineConfig {
   return {
@@ -68,7 +72,10 @@ function sendThenAnswer(): LanguageModelV4 {
 }
 
 function router(): StaticToolRouter {
-  return new StaticToolRouter([SEND_TOOL], () => ({ content: textContent("sent"), isError: false }));
+  return new StaticToolRouter([SEND_TOOL], () => ({
+    content: textContent("sent"),
+    isError: false,
+  }));
 }
 
 async function appendUser(
@@ -144,9 +151,9 @@ describe("connector-skill surface-once (engine + event store)", () => {
     await engine.run(config(), SYSTEM, await store.history(conv), [SEND_TOOL]);
 
     // What the model actually saw on its final call, minus the system message.
-    const liveShape = rec.calls[rec.calls.length - 1]!.prompt.filter((m) => m.role !== "system").map(
-      (m) => (containsOverlay(m) ? "OVERLAY" : m.role),
-    );
+    const liveShape = rec.calls[rec.calls.length - 1]!.prompt.filter(
+      (m) => m.role !== "system",
+    ).map((m) => (containsOverlay(m) ? "OVERLAY" : m.role));
     // What replay reconstructs from the recorded events. It runs one message
     // longer — it includes the final assistant response, which had not been
     // produced yet when that last call was sent — so the live shape is a
@@ -197,7 +204,12 @@ describe("connector-skill surface-once (engine + event store)", () => {
       ...config(),
       connectorSkillCandidates: [
         { name: "gmail", body: OVERLAY_BODY, scope: "connector", toolAffinity: ["gmail__*"] },
-        { name: "gmail-etiquette", body: SECOND_BODY, scope: "connector", toolAffinity: ["gmail__*"] },
+        {
+          name: "gmail-etiquette",
+          body: SECOND_BODY,
+          scope: "connector",
+          toolAffinity: ["gmail__*"],
+        },
       ],
     };
 
@@ -210,9 +222,9 @@ describe("connector-skill surface-once (engine + event store)", () => {
       [SEND_TOOL],
     );
 
-    const liveShape = rec.calls[rec.calls.length - 1]!.prompt
-      .filter((m) => m.role !== "system")
-      .map((m) => m.role);
+    const liveShape = rec.calls[rec.calls.length - 1]!.prompt.filter(
+      (m) => m.role !== "system",
+    ).map((m) => m.role);
     const replayShape = (await store.history(conv)).map((m) => m.role);
 
     expect(replayShape.slice(0, liveShape.length)).toEqual(liveShape);

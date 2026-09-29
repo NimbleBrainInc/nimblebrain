@@ -91,8 +91,6 @@ describe("mapOrchestratorErrorToToolResult", () => {
   // without a mapping branch) under a generic reason.
   test("non-orchestrator errors are re-thrown, not coerced into a tool result", () => {
     const err = new Error("totally unrelated");
-    expect(() => mapOrchestratorErrorToToolResult(err, "whatever")).toThrow(
-      "totally unrelated",
-    );
+    expect(() => mapOrchestratorErrorToToolResult(err, "whatever")).toThrow("totally unrelated");
   });
 });

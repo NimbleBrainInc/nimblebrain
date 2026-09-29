@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { ToolSchema } from "../../src/engine/types.ts";
 import {
-  MIN_BUDGET_SAFETY_MARGIN_TOKENS,
   budgetSafetyMarginTokens,
+  MIN_BUDGET_SAFETY_MARGIN_TOKENS,
   resolveMessageBudget,
 } from "../../src/runtime/resolve-message-budget.ts";
 
@@ -34,9 +34,7 @@ describe("budgetSafetyMarginTokens", () => {
 
   it("never resolves below the floor for any window", () => {
     for (const ctx of [1, 1_000, 32_768, 100_000, 163_839]) {
-      expect(budgetSafetyMarginTokens(ctx)).toBeGreaterThanOrEqual(
-        MIN_BUDGET_SAFETY_MARGIN_TOKENS,
-      );
+      expect(budgetSafetyMarginTokens(ctx)).toBeGreaterThanOrEqual(MIN_BUDGET_SAFETY_MARGIN_TOKENS);
     }
   });
 });
@@ -148,10 +146,7 @@ describe("resolveMessageBudget", () => {
     expect(result.breakdown.toolTokens).toBeGreaterThan(0);
     // headroom = 1M − 0 − toolTokens − 16384 − margin(1M)
     const expectedHeadroom =
-      1_000_000 -
-      result.breakdown.toolTokens -
-      16_384 -
-      budgetSafetyMarginTokens(1_000_000);
+      1_000_000 - result.breakdown.toolTokens - 16_384 - budgetSafetyMarginTokens(1_000_000);
     expect(result.budget).toBe(expectedHeadroom);
   });
 
@@ -204,8 +199,6 @@ describe("resolveMessageBudget", () => {
       maxOutputTokens: 16_384,
     });
 
-    expect(default_.budget - tight.budget).toBe(
-      100_000 - budgetSafetyMarginTokens(1_000_000),
-    );
+    expect(default_.budget - tight.budget).toBe(100_000 - budgetSafetyMarginTokens(1_000_000));
   });
 });

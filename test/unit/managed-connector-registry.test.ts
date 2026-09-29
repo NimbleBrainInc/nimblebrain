@@ -12,28 +12,28 @@
  * so the load-counter assertions read the real state of the (unmocked) seam.
  */
 
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   _composioVendorLoadCountForTest,
   _resetComposioVendorForTest,
 } from "../../src/connectors/providers/composio/sdk.ts";
-import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import {
   buildManagedConnectorRegistry,
   managedConnectorRegistryOf,
 } from "../../src/connectors/providers/registry.ts";
-import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
 import {
   _resetSmitheryConfigForTest,
   validateSmitheryConfig,
 } from "../../src/connectors/providers/smithery/config.ts";
+import { _resetBouncerModeForTest } from "../../src/oauth/bouncer-config.ts";
 
 const ENV_KEYS = [
   "COMPOSIO_API_KEY",
@@ -273,7 +273,9 @@ describe("buildManagedConnectorRegistry — Smithery config gating", () => {
 describe("smithery baseUrl validation", () => {
   it("rejects a non-http(s) baseUrl — it becomes an installed connector's MCP target", () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns", baseUrl: "file:///etc/passwd" } } });
+    setConnectorsConfig({
+      providers: { smithery: { namespace: "test-ns", baseUrl: "file:///etc/passwd" } },
+    });
     _resetSmitheryConfigForTest();
 
     expect(() => validateSmitheryConfig()).toThrow(/must be http\(s\)/);
@@ -281,7 +283,9 @@ describe("smithery baseUrl validation", () => {
 
   it("rejects an unparseable baseUrl", () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    setConnectorsConfig({ providers: { smithery: { namespace: "test-ns", baseUrl: "not a url" } } });
+    setConnectorsConfig({
+      providers: { smithery: { namespace: "test-ns", baseUrl: "not a url" } },
+    });
     _resetSmitheryConfigForTest();
 
     expect(() => validateSmitheryConfig()).toThrow(/not a valid URL/);

@@ -9,12 +9,12 @@
  * - authorizationServer() discovery metadata
  */
 
+import { beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, beforeAll } from "bun:test";
-import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
+import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
 // ── Key generation helpers ──────────────────────────────────────
@@ -417,7 +417,10 @@ describe("verifyRequest reports the token's grant", () => {
 
   it("reports an AuthKit token as first-party when its client_id is configured", async () => {
     const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
-    const token = await authkitToken({ client_id: "client_test_channels", aud: "client_test_authkit" });
+    const token = await authkitToken({
+      client_id: "client_test_channels",
+      aud: "client_test_authkit",
+    });
     const verified = await provider.verifyRequest(makeRequest(token));
     expect(verified?.grant).toEqual({ kind: "first_party" });
   });
@@ -446,7 +449,10 @@ describe("verifyRequest reports the token's grant", () => {
   it("reports no AuthKit token as first-party when no client IDs are configured", async () => {
     for (const firstPartyClientIds of [undefined, [], [" "]]) {
       const { provider } = createProvider({ firstPartyClientIds });
-      const token = await authkitToken({ client_id: "client_test_channels", aud: "client_test_authkit" });
+      const token = await authkitToken({
+        client_id: "client_test_channels",
+        aud: "client_test_authkit",
+      });
       const verified = await provider.verifyRequest(makeRequest(token));
       expect(verified?.grant).toEqual({ kind: "resource", audience: ["client_test_authkit"] });
     }
@@ -481,9 +487,17 @@ describe("verifyRequest reports the token's grant", () => {
     );
     expect(firstParty?.grant).toEqual({ kind: "first_party" });
     const resource = await provider.verifyRequest(
-      makeRequest(await authkitToken({ client_id: "client_test_mcp", aud: "https://nb.example.com/mcp/ws_a" })),
+      makeRequest(
+        await authkitToken({
+          client_id: "client_test_mcp",
+          aud: "https://nb.example.com/mcp/ws_a",
+        }),
+      ),
     );
-    expect(resource?.grant).toEqual({ kind: "resource", audience: ["https://nb.example.com/mcp/ws_a"] });
+    expect(resource?.grant).toEqual({
+      kind: "resource",
+      audience: ["https://nb.example.com/mcp/ws_a"],
+    });
   });
 
   it("admits an AuthKit token with any org_id when no org is configured", async () => {

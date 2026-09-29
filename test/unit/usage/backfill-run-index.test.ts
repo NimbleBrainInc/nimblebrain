@@ -20,15 +20,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  automationRunIndexPath,
-  automationRunsDir,
-} from "../../../src/platform/automations/paths.ts";
-import {
   collectEntries,
   isRunIndex,
   LayoutMovedError,
   walk,
 } from "../../../scripts/backfill-usage-ledger.ts";
+import {
+  automationRunIndexPath,
+  automationRunsDir,
+} from "../../../src/platform/automations/paths.ts";
 
 const OWNER = "user_01ABC";
 const WS = "ws_test0001";

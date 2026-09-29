@@ -17,17 +17,17 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { startServer } from "../../src/api/server.ts";
+import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
+import { startServer } from "../../src/api/server.ts";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** The instance-configured fast slot, and the workspace override that must win. */
 const CONFIGURED_FAST_MODEL = "anthropic:configured-fast-model";
@@ -55,7 +55,9 @@ beforeAll(async () => {
       .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
       .join(" ");
     if (systemText.includes("compacting the older portion")) {
-      return { content: [{ type: "text", text: `${SUMMARY_NEEDLE} — dense summary of older turns` }] };
+      return {
+        content: [{ type: "text", text: `${SUMMARY_NEEDLE} — dense summary of older turns` }],
+      };
     }
     return { content: [{ type: "text", text: `assistant reply ${"x".repeat(3000)}` }] };
   });
@@ -122,90 +124,89 @@ function readEvents(conversationId: string): ConversationEvent[] {
 }
 
 describe("history compaction — wired path", () => {
-  test(
-    "enabling features.compaction drives a chat to compact, persist, and split projections",
-    async () => {
-      // Turn 1 carries a unique marker. It's OPERATOR (user-authored) text, so
-      // after compaction it must survive VERBATIM in the model view (retained in
-      // the summary seed's operator block) — corrections can't be summarized away.
-      const convId = await sendTurn(`First question. ${OLDEST_NEEDLE}`);
+  test("enabling features.compaction drives a chat to compact, persist, and split projections", async () => {
+    // Turn 1 carries a unique marker. It's OPERATOR (user-authored) text, so
+    // after compaction it must survive VERBATIM in the model view (retained in
+    // the summary seed's operator block) — corrections can't be summarized away.
+    const convId = await sendTurn(`First question. ${OLDEST_NEEDLE}`);
 
-      // Drive turns until compaction fires (it persists a history.compacted
-      // event), capped so a wiring regression fails fast instead of hanging.
-      let compacted = false;
-      for (let i = 0; i < 24 && !compacted; i++) {
-        await sendTurn(`Follow up number ${i} with some additional content to grow the history.`, convId);
-        compacted = readEvents(convId).some((e) => e.type === "history.compacted");
-      }
-
-      const events = readEvents(convId);
-
-      // (a) The wired path actually persisted a compaction event.
-      expect(events.some((e) => e.type === "history.compacted")).toBe(true);
-
-      // (a.2) The summarizer's usage is persisted as an aux.usage event, so the
-      // fold's cost is visible to the usage aggregator (not undercounted).
-      expect(
-        events.some(
-          (e) =>
-            e.type === "aux.usage" &&
-            (e as { source?: string }).source === "compaction" &&
-            (e as { usage?: { inputTokens?: number } }).usage?.inputTokens !== undefined,
-        ),
-      ).toBe(true);
-
-      // (a.3) The summarizer's usage is ALSO recorded to Prometheus — proves
-      // the forked-call metric wiring (the `onUsage` site) fires end-to-end,
-      // not just the aux.usage append.
-      //
-      // `origin="chat"` is the load-bearing half. This fold is forked from
-      // `chat()` outside the wrap around `engine.run`, so it only carries the
-      // conversation because `chat()` opens the turn's own scope around it. A
-      // fold that escaped that scope would still bill, still pass every other
-      // assertion here, and silently record its spend as unattributed `system`
-      // — so this pins attribution, not just that the summarizer ran.
-      const metricsBody = await (await fetch(`${baseUrl}/metrics`)).text();
-      expect(metricsBody).toMatch(
-        /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
+    // Drive turns until compaction fires (it persists a history.compacted
+    // event), capped so a wiring regression fails fast instead of hanging.
+    let compacted = false;
+    for (let i = 0; i < 24 && !compacted; i++) {
+      await sendTurn(
+        `Follow up number ${i} with some additional content to grow the history.`,
+        convId,
       );
+      compacted = readEvents(convId).some((e) => e.type === "history.compacted");
+    }
 
-      // The auto-title call is forked the same way, after the turn returns, and
-      // is the other spend that used to fall out as `system`.
-      expect(metricsBody).toMatch(
-        /nb_llm_tokens_total\{(?=[^}]*source="title")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
-      );
+    const events = readEvents(convId);
 
-      // (a.4) Running inside the turn's scope decides more than attribution:
-      // `getModelSlot("fast")` reads `workspaceModelOverride` off that context,
-      // so the fold resolves the BOUND WORKSPACE's fast slot rather than the
-      // instance-configured one. Unscoped, every line here would name
-      // CONFIGURED_FAST_MODEL — which is what it did before the wrap, and is a
-      // production behavior change worth failing on rather than discovering.
-      const foldModels = events
-        .filter((e) => e.type === "aux.usage" && (e as { source?: string }).source === "compaction")
-        .map((e) => (e as { model?: string }).model);
-      expect(foldModels.length).toBeGreaterThan(0);
-      for (const m of foldModels) expect(m).toBe(WORKSPACE_FAST_MODEL);
-      expect(foldModels).not.toContain(CONFIGURED_FAST_MODEL);
+    // (a) The wired path actually persisted a compaction event.
+    expect(events.some((e) => e.type === "history.compacted")).toBe(true);
 
-      // (b) The model-facing projection is compacted: it carries the summary
-      //     seed. And it RETAINS the oldest operator turn verbatim in the
-      //     operator block — proving the end-to-end retention path (readEvents →
-      //     extractOperatorTurns → seed) fires through the real runtime, so an
-      //     operator correction survives compaction rather than decaying into the
-      //     summary.
-      const modelView = JSON.stringify(reconstructMessages(events));
-      expect(modelView).toContain("<conversation-summary>");
-      expect(modelView).toContain(SUMMARY_NEEDLE);
-      expect(modelView).toContain("<operator-messages>");
-      expect(modelView).toContain(OLDEST_NEEDLE);
+    // (a.2) The summarizer's usage is persisted as an aux.usage event, so the
+    // fold's cost is visible to the usage aggregator (not undercounted).
+    expect(
+      events.some(
+        (e) =>
+          e.type === "aux.usage" &&
+          (e as { source?: string }).source === "compaction" &&
+          (e as { usage?: { inputTokens?: number } }).usage?.inputTokens !== undefined,
+      ),
+    ).toBe(true);
 
-      // (c) The verbatim projection (what fork/UI read) still holds every turn
-      //     and carries no summary seed.
-      const verbatimView = JSON.stringify(reconstructMessages(events, { ignoreCompaction: true }));
-      expect(verbatimView).toContain(OLDEST_NEEDLE);
-      expect(verbatimView).not.toContain("<conversation-summary>");
-    },
-    30_000,
-  );
+    // (a.3) The summarizer's usage is ALSO recorded to Prometheus — proves
+    // the forked-call metric wiring (the `onUsage` site) fires end-to-end,
+    // not just the aux.usage append.
+    //
+    // `origin="chat"` is the load-bearing half. This fold is forked from
+    // `chat()` outside the wrap around `engine.run`, so it only carries the
+    // conversation because `chat()` opens the turn's own scope around it. A
+    // fold that escaped that scope would still bill, still pass every other
+    // assertion here, and silently record its spend as unattributed `system`
+    // — so this pins attribution, not just that the summarizer ran.
+    const metricsBody = await (await fetch(`${baseUrl}/metrics`)).text();
+    expect(metricsBody).toMatch(
+      /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
+    );
+
+    // The auto-title call is forked the same way, after the turn returns, and
+    // is the other spend that used to fall out as `system`.
+    expect(metricsBody).toMatch(
+      /nb_llm_tokens_total\{(?=[^}]*source="title")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
+    );
+
+    // (a.4) Running inside the turn's scope decides more than attribution:
+    // `getModelSlot("fast")` reads `workspaceModelOverride` off that context,
+    // so the fold resolves the BOUND WORKSPACE's fast slot rather than the
+    // instance-configured one. Unscoped, every line here would name
+    // CONFIGURED_FAST_MODEL — which is what it did before the wrap, and is a
+    // production behavior change worth failing on rather than discovering.
+    const foldModels = events
+      .filter((e) => e.type === "aux.usage" && (e as { source?: string }).source === "compaction")
+      .map((e) => (e as { model?: string }).model);
+    expect(foldModels.length).toBeGreaterThan(0);
+    for (const m of foldModels) expect(m).toBe(WORKSPACE_FAST_MODEL);
+    expect(foldModels).not.toContain(CONFIGURED_FAST_MODEL);
+
+    // (b) The model-facing projection is compacted: it carries the summary
+    //     seed. And it RETAINS the oldest operator turn verbatim in the
+    //     operator block — proving the end-to-end retention path (readEvents →
+    //     extractOperatorTurns → seed) fires through the real runtime, so an
+    //     operator correction survives compaction rather than decaying into the
+    //     summary.
+    const modelView = JSON.stringify(reconstructMessages(events));
+    expect(modelView).toContain("<conversation-summary>");
+    expect(modelView).toContain(SUMMARY_NEEDLE);
+    expect(modelView).toContain("<operator-messages>");
+    expect(modelView).toContain(OLDEST_NEEDLE);
+
+    // (c) The verbatim projection (what fork/UI read) still holds every turn
+    //     and carries no summary seed.
+    const verbatimView = JSON.stringify(reconstructMessages(events, { ignoreCompaction: true }));
+    expect(verbatimView).toContain(OLDEST_NEEDLE);
+    expect(verbatimView).not.toContain("<conversation-summary>");
+  }, 30_000);
 });

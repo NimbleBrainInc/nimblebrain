@@ -54,7 +54,15 @@ describe("isAddressedWorkspaceMember", () => {
 
   it("checks the shape before any lookup", async () => {
     const { store, lookups } = makeStore();
-    for (const wsId of ["", "acme", "ws_", "ws_../etc", "ws_a-b", "ws_a/b", `ws_${"a".repeat(65)}`]) {
+    for (const wsId of [
+      "",
+      "acme",
+      "ws_",
+      "ws_../etc",
+      "ws_a-b",
+      "ws_a/b",
+      `ws_${"a".repeat(65)}`,
+    ]) {
       expect(isWorkspaceIdShape(wsId)).toBe(false);
       expect(await isAddressedWorkspaceMember(store, wsId, ALICE.id)).toBe(false);
     }

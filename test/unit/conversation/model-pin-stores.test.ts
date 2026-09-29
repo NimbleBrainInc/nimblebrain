@@ -9,10 +9,10 @@
  * through the identical spread; this keeps the two options symmetric.
  */
 
+import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
 
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import { JsonlConversationStore } from "../../../src/conversation/jsonl-store.ts";

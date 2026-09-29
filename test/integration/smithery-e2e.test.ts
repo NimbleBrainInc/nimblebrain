@@ -28,7 +28,7 @@
  * (owner, server) and is torn down by the final test.
  */
 
-import { describe, expect, it, afterAll } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,

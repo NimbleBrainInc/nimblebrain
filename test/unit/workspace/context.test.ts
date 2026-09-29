@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 
 const WS_A = "ws_alpha";
@@ -60,15 +60,11 @@ describe("WorkspaceContext.getRoot / getDataPath", () => {
 
   test("getDataPath(scope) builds workspaces/{wsId}/{scope}", () => {
     const ctx = new WorkspaceContext({ wsId: WS_A, workDir: "/tmp/nb" });
-    expect(ctx.getDataPath("conversations")).toBe(
-      "/tmp/nb/workspaces/ws_alpha/conversations",
-    );
+    expect(ctx.getDataPath("conversations")).toBe("/tmp/nb/workspaces/ws_alpha/conversations");
     expect(ctx.getDataPath("data")).toBe("/tmp/nb/workspaces/ws_alpha/data");
     expect(ctx.getDataPath("skills")).toBe("/tmp/nb/workspaces/ws_alpha/skills");
     expect(ctx.getDataPath("files")).toBe("/tmp/nb/workspaces/ws_alpha/files");
-    expect(ctx.getDataPath("credentials")).toBe(
-      "/tmp/nb/workspaces/ws_alpha/credentials",
-    );
+    expect(ctx.getDataPath("credentials")).toBe("/tmp/nb/workspaces/ws_alpha/credentials");
   });
 
   test("getDataPath accepts safe subpath segments", () => {
@@ -114,9 +110,7 @@ describe("WorkspaceContext.getRoot / getDataPath", () => {
 
   test("getDataPath rejects '..' embedded inside a slash-joined segment", () => {
     const ctx = new WorkspaceContext({ wsId: WS_A, workDir });
-    expect(() => ctx.getDataPath("credentials", "mcp-oauth/../escape")).toThrow(
-      /traversal/,
-    );
+    expect(() => ctx.getDataPath("credentials", "mcp-oauth/../escape")).toThrow(/traversal/);
   });
 
   test("getDataPath rejects empty segments", () => {

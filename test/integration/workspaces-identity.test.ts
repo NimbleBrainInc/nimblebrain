@@ -8,25 +8,22 @@
  * plus auth flow and dev mode backward compatibility.
  */
 
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
-
-import { UserStore } from "../../src/identity/user.ts";
-import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
-import { saveInstanceConfig } from "../../src/identity/instance.ts";
-import type { IdentityProvider, CreateUserResult } from "../../src/identity/provider.ts";
-import type { User } from "../../src/identity/user.ts";
-import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import { authenticateRequest } from "../../src/api/auth-middleware.ts";
 import { isAddressedWorkspaceMember } from "../../src/api/workspace-address.ts";
-import {
-  buildProcessInventory,
-} from "../../src/runtime/workspace-runtime.ts";
-import type { Workspace } from "../../src/workspace/types.ts";
+import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import type { ConversationAccessContext } from "../../src/conversation/types.ts";
+import { saveInstanceConfig } from "../../src/identity/instance.ts";
+import type { CreateUserResult, IdentityProvider } from "../../src/identity/provider.ts";
+import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
+import type { User } from "../../src/identity/user.ts";
+import { UserStore } from "../../src/identity/user.ts";
+import { buildProcessInventory } from "../../src/runtime/workspace-runtime.ts";
+import type { Workspace } from "../../src/workspace/types.ts";
+import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -203,7 +200,11 @@ describe("UC-W5: New user onboarding", () => {
     const wsStore = new WorkspaceStore(workDir);
 
     // Create user Sara directly via UserStore
-    const sara = await userStore.create({ email: "sara@test.io", displayName: "Sara", orgRole: "member" });
+    const sara = await userStore.create({
+      email: "sara@test.io",
+      displayName: "Sara",
+      orgRole: "member",
+    });
     expect(sara.email).toBe("sara@test.io");
     expect(sara.orgRole).toBe("member");
 
@@ -295,18 +296,33 @@ describe("Auth flow", () => {
         managedUsers: false,
         authorizationServer: false,
       },
-      async verifyRequest(): Promise<null> { return null; },
-      async listUsers(): Promise<User[]> { return []; },
+      async verifyRequest(): Promise<null> {
+        return null;
+      },
+      async listUsers(): Promise<User[]> {
+        return [];
+      },
       async createUser(data): Promise<CreateUserResult> {
-        const user = await userStore.create({ email: data.email, displayName: data.displayName, orgRole: data.orgRole });
+        const user = await userStore.create({
+          email: data.email,
+          displayName: data.displayName,
+          orgRole: data.orgRole,
+        });
         return { user };
       },
-      async deleteUser(userId: string): Promise<boolean> { return userStore.delete(userId); },
+      async deleteUser(userId: string): Promise<boolean> {
+        return userStore.delete(userId);
+      },
     };
 
     // Save instance config so this is not dev mode
     await saveInstanceConfig(workDir, {
-      auth: { adapter: "oidc", issuer: "https://auth.example.com", clientId: "test", allowedDomains: ["example.com"] },
+      auth: {
+        adapter: "oidc",
+        issuer: "https://auth.example.com",
+        clientId: "test",
+        allowedDomains: ["example.com"],
+      },
     });
 
     // Request with no auth header

@@ -11,24 +11,17 @@
  */
 
 import { afterEach, expect, test } from "bun:test";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { aggregateUsage } from "../../src/usage/aggregate.ts";
 import { usageMonthDir, usageMonthOf } from "../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../src/usage/types.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY } from "../helpers/test-auth-adapter.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime | undefined;
 let workDir = "";
@@ -45,9 +38,12 @@ async function start(): Promise<Runtime> {
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createMockModel(() => ({
-      content: [{ type: "text", text: "ok" }],
-    })) },
+    model: {
+      provider: "custom",
+      adapter: createMockModel(() => ({
+        content: [{ type: "text", text: "ok" }],
+      })),
+    },
     logging: { disabled: true },
     workDir,
   });

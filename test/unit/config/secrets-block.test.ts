@@ -65,7 +65,10 @@ describe("secrets.config never carries key material", () => {
     ["a rotation set", { seal: { keys: ["sk-live-abcdefghijklmnop"] } }],
     ["one buried in nested arrays", { seal: { keys: [["sk-live-abcdefghijklmnop"]] } }],
     ["an `Env` list holding a value", { seal: { keyEnv: ["NB_CREDENTIAL_KEY", "sk-live-x"] } }],
-    ["a key hiding in an `Env` name that is not a variable name", { seal: { keyEnv: "sk-live-x" } }],
+    [
+      "a key hiding in an `Env` name that is not a variable name",
+      { seal: { keyEnv: "sk-live-x" } },
+    ],
   ];
 
   for (const [label, config] of rejected) {

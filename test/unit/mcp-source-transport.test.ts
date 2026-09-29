@@ -1,8 +1,8 @@
-import { describe, it, expect, mock } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { McpSource } from "../../src/tools/mcp-source.ts";
-import type { McpTransportMode } from "../../src/tools/mcp-source.ts";
 import type { EventSink } from "../../src/engine/types.ts";
+import type { McpTransportMode } from "../../src/tools/mcp-source.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
 
 describe("McpSource transport mode", () => {
   it("isRemote() returns false for in-process mode", () => {

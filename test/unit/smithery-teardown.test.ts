@@ -12,26 +12,26 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import {
-  _resetConnectorsConfigForTest,
-  setConnectorsConfig,
-} from "../../src/connectors/providers/config.ts";
-import {
-  _resetSmitheryConfigForTest,
-  validateSmitheryConfig,
-} from "../../src/connectors/providers/smithery/config.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
-import { ToolRegistry } from "../../src/tools/registry.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
+import {
+  _resetSmitheryConfigForTest,
+  validateSmitheryConfig,
+} from "../../src/connectors/providers/smithery/config.ts";
 import {
   cleanupSmitheryConnector,
   createSmitheryProvider,
 } from "../../src/connectors/providers/smithery/provider.ts";
-import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { ToolRegistry } from "../../src/tools/registry.ts";
 
 const ENV_KEYS = ["SMITHERY_API_KEY"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -92,7 +92,9 @@ describe("cleanupSmitheryConnector", () => {
 
   it("deletes at the host recorded on the ref, not a repointed one", async () => {
     process.env.SMITHERY_API_KEY = "sk_test";
-    setConnectorsConfig({ providers: { smithery: { namespace: "current-ns", baseUrl: "https://repointed.example" } } });
+    setConnectorsConfig({
+      providers: { smithery: { namespace: "current-ns", baseUrl: "https://repointed.example" } },
+    });
     _resetSmitheryConfigForTest();
     const { calls } = stubDelete(204);
 

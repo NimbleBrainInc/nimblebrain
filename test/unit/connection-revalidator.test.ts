@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
 import type {
   ConnectionHealthProbe,
   ConnectionLiveness,
@@ -9,7 +10,6 @@ import {
   revalidatorIntervalMsFromEnv,
 } from "../../src/connectors/runtime/connection-revalidator.ts";
 import type { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
 import { log } from "../../src/observability/log.ts";
 
 // ---------------------------------------------------------------------------
@@ -200,16 +200,18 @@ describe("revalidatorIntervalMsFromEnv", () => {
   });
 
   it("converts a positive seconds value from the generic env to ms", () => {
-    expect(
-      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "300" }),
-    ).toBe(300_000);
-    expect(
-      revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "120" }),
-    ).toBe(120_000);
+    expect(revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "300" })).toBe(
+      300_000,
+    );
+    expect(revalidatorIntervalMsFromEnv({ NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS: "120" })).toBe(
+      120_000,
+    );
   });
 
   it("honors the legacy COMPOSIO_MONITOR_INTERVAL_SECONDS as a fallback (back-compat)", () => {
-    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "300" })).toBe(300_000);
+    expect(revalidatorIntervalMsFromEnv({ COMPOSIO_MONITOR_INTERVAL_SECONDS: "300" })).toBe(
+      300_000,
+    );
   });
 
   it("prefers the generic env when both are set", () => {

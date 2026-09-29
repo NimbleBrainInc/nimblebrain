@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
@@ -12,8 +12,11 @@ import {
   rejectFlow,
   resolveWithCode,
 } from "../../src/tools/oauth-flow-registry.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
-import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 
 /**
  * Regression for the silent interactive-OAuth hang fixed in
@@ -131,7 +134,11 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
     mock = startMockAuthServer();
     sink = new CapturingSink();
     lifecycle = new ConnectorLifecycleManager(sink);
-    const ref: ConnectorRef = { url: `${mock.base}/mcp`, serverName: SERVER, oauthScope: "workspace" };
+    const ref: ConnectorRef = {
+      url: `${mock.base}/mcp`,
+      serverName: SERVER,
+      oauthScope: "workspace",
+    };
     const instance: ConnectorInstance = {
       serverName: SERVER,
       connectorName: ref.url,

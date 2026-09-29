@@ -131,7 +131,9 @@ describe("purgeArchive", () => {
     await mkdir(archivedDir, { recursive: true });
     await symlink(outside, join(archivedDir, "ws_link"));
 
-    await expect(purgeArchive(archivedDir, "ws_link")).rejects.toThrow("is not an archive directory");
+    await expect(purgeArchive(archivedDir, "ws_link")).rejects.toThrow(
+      "is not an archive directory",
+    );
     expect(existsSync(join(outside, "keep.txt"))).toBe(true);
   });
 });

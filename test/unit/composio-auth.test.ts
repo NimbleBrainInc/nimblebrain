@@ -59,7 +59,7 @@ mock.module("@composio/core", () => ({
 }));
 
 import type { AppContext, AppEnv } from "../../src/api/types.ts";
-import { composioAuthRoutes } from "../../src/connectors/providers/composio/routes.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   _clearAllConnectFlows,
   registerConnectFlow,
@@ -68,19 +68,19 @@ import {
   composioConnectionPath,
   readComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
-import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
-import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
-import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
-import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
-import {
-  _resetConnectorsConfigForTest,
-  setConnectorsConfig,
-} from "../../src/connectors/providers/config.ts";
+import { composioAuthRoutes } from "../../src/connectors/providers/composio/routes.ts";
 import {
   composioCallbackUrl,
   composioUserId,
 } from "../../src/connectors/providers/composio/sdk.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 /** Auth that verifies every request as the dev user, as the `dev` provider does. */
@@ -728,7 +728,11 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
       expect(body.alreadyConnected).toBe(true);
 
       // connection.json landed on disk under the existing account id.
-      const stored = await readComposioConnection(dir, { type: "workspace", wsId: WS_ID }, "com.google/gmail");
+      const stored = await readComposioConnection(
+        dir,
+        { type: "workspace", wsId: WS_ID },
+        "com.google/gmail",
+      );
       expect(stored?.connectedAccountId).toBe("ca_already_active");
       expect(stored?.toolkit).toBe("gmail");
 
@@ -783,7 +787,11 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
       // connection.json must NOT be on disk — that's the whole point
       // of the reorder. A "connected" state marker without a running
       // source is exactly the lie the previous code was telling.
-      const stored = await readComposioConnection(dir, { type: "workspace", wsId: WS_ID }, "com.google/gmail");
+      const stored = await readComposioConnection(
+        dir,
+        { type: "workspace", wsId: WS_ID },
+        "com.google/gmail",
+      );
       expect(stored).toBeNull();
 
       // recordConnectionStateChange must NOT have been called either

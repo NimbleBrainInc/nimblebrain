@@ -1,5 +1,5 @@
-import { UnauthorizedError, ProtocolError } from "@modelcontextprotocol/client";
 import { describe, expect, it, mock, spyOn } from "bun:test";
+import { ProtocolError, UnauthorizedError } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { INFRA_ERROR_META_KEY, SKILL_ACTIVATED_META_KEY } from "../../src/engine/types.ts";
@@ -94,7 +94,9 @@ describe("policyFor — recovery policy", () => {
 
   it("auth-lost reauths only with a reauthable provider, else surfaces", () => {
     expect(policyFor("auth-lost", reauthable)).toBe("reauth");
-    expect(policyFor("auth-lost", { idempotent: false, hasReauthableProvider: true })).toBe("reauth");
+    expect(policyFor("auth-lost", { idempotent: false, hasReauthableProvider: true })).toBe(
+      "reauth",
+    );
     expect(policyFor("auth-lost", idem)).toBe("surface");
     expect(policyFor("auth-lost", task)).toBe("surface");
   });
@@ -159,9 +161,9 @@ describe("execute (tools/call) — unified recovery", () => {
       // The `dead` flag is what would hand this source to HealthMonitor's restart
       // burst. (`isAlive()` also reads `transport`, which this harness never wires,
       // so it can't distinguish the thing under test here.)
-      expect(
-        (source as unknown as { _isDeadForTesting: () => boolean })._isDeadForTesting(),
-      ).toBe(false);
+      expect((source as unknown as { _isDeadForTesting: () => boolean })._isDeadForTesting()).toBe(
+        false,
+      );
       // The agent's default repair for a failed batch is to retry the batch, which
       // is exactly wrong here — the surfaced text has to redirect it.
       const text = JSON.stringify(result.content);
@@ -276,7 +278,9 @@ describe("execute (tools/call) — unified recovery", () => {
 
   for (const [label, code, message] of CONNECTOR_AUTHORED) {
     it(`does NOT mark a connector-authored error: ${label}`, async () => {
-      const source = remoteSource({ callTool: () => Promise.reject(new ProtocolError(code, message)) });
+      const source = remoteSource({
+        callTool: () => Promise.reject(new ProtocolError(code, message)),
+      });
       const restart = spyRestart(source, false);
       try {
         const result = await source.execute("write", {});
@@ -457,9 +461,9 @@ describe("execute (tools/call) — unified recovery", () => {
       const result = await source.execute("web_fetch", {});
       expect(result.isError).toBe(true);
       expect(restart).not.toHaveBeenCalled(); // timeout → surface, never restart
-      expect(events.filter((e) => (e.data as { event?: string }).event === "source.crashed")).toHaveLength(
-        0,
-      );
+      expect(
+        events.filter((e) => (e.data as { event?: string }).event === "source.crashed"),
+      ).toHaveLength(0);
     } finally {
       restart.mockRestore();
     }
@@ -577,7 +581,10 @@ describe("readResource — unified recovery (new behaviors)", () => {
     // surface it as null — never tear down + re-init or mark the whole source
     // crashed (which would make HealthMonitor restart it on a per-read error).
     const spy = spyOn(console, "error").mockImplementation(() => {});
-    for (const err of [{ code: 429, message: "Too Many Requests" }, new Error("Unexpected token < in JSON")]) {
+    for (const err of [
+      { code: 429, message: "Too Many Requests" },
+      new Error("Unexpected token < in JSON"),
+    ]) {
       const events: EngineEvent[] = [];
       const sink: EventSink = { emit: (e) => events.push(e) };
       const source = remoteSource({ readResource: () => Promise.reject(err), sink });
@@ -649,7 +656,9 @@ describe("on-demand reconnect of a torn-down (null) client — the fleet-flap fi
     try {
       const result = await source.execute("do_thing", {});
       expect(result.isError).toBe(true);
-      expect(result.content.map((c) => ("text" in c ? c.text : "")).join("")).toContain("not started");
+      expect(result.content.map((c) => ("text" in c ? c.text : "")).join("")).toContain(
+        "not started",
+      );
       expect(restart).not.toHaveBeenCalled();
     } finally {
       restart.mockRestore();
@@ -684,7 +693,10 @@ describe("on-demand reconnect of a torn-down (null) client — the fleet-flap fi
     internal.client = null;
     const restart = spyRestartEstablishing(source, liveClient);
     try {
-      const result = await source.readResource("ui://svc/main", { logFailures: true, reconnect: true });
+      const result = await source.readResource("ui://svc/main", {
+        logFailures: true,
+        reconnect: true,
+      });
       expect(result?.text).toBe("<html>ok</html>");
       expect(restart).toHaveBeenCalledTimes(1);
     } finally {

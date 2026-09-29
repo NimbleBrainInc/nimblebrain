@@ -1,55 +1,52 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import {
-	applyReasoningReplayPolicy,
-	windowMessages,
-} from "../../src/conversation/window.ts";
+import { applyReasoningReplayPolicy, windowMessages } from "../../src/conversation/window.ts";
 
 /** Helper: create an assistant message with reasoning + text blocks. */
 function assistantWithReasoning(
-	reasoningText: string,
-	visibleText: string,
+  reasoningText: string,
+  visibleText: string,
 ): LanguageModelV4Message {
-	return {
-		role: "assistant",
-		content: [
-			{ type: "reasoning" as const, text: reasoningText },
-			{ type: "text" as const, text: visibleText },
-		],
-	};
+  return {
+    role: "assistant",
+    content: [
+      { type: "reasoning" as const, text: reasoningText },
+      { type: "text" as const, text: visibleText },
+    ],
+  };
 }
 
 /** Helper: create a simple text message. */
 function textMsg(role: "user" | "assistant", text: string): LanguageModelV4Message {
-	return { role, content: [{ type: "text" as const, text }] };
+  return { role, content: [{ type: "text" as const, text }] };
 }
 
 /** Helper: create an assistant message with one or more tool-call blocks. */
 function toolCallMsg(...toolCallIds: string[]): LanguageModelV4Message {
-	return {
-		role: "assistant",
-		content: toolCallIds.map((id) => ({
-			type: "tool-call" as const,
-			toolCallId: id,
-			toolName: "some_tool",
-			input: { query: "test" },
-		})),
-	};
+  return {
+    role: "assistant",
+    content: toolCallIds.map((id) => ({
+      type: "tool-call" as const,
+      toolCallId: id,
+      toolName: "some_tool",
+      input: { query: "test" },
+    })),
+  };
 }
 
 /** Helper: create a tool message with a tool-result block. */
 function toolResultMsg(toolCallId: string, result = "ok"): LanguageModelV4Message {
-	return {
-		role: "tool",
-		content: [
-			{
-				type: "tool-result" as const,
-				toolCallId,
-				toolName: "some_tool",
-				output: { type: "text" as const, value: result },
-			},
-		],
-	};
+  return {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result" as const,
+        toolCallId,
+        toolName: "some_tool",
+        output: { type: "text" as const, value: result },
+      },
+    ],
+  };
 }
 
 /**
@@ -58,320 +55,320 @@ function toolResultMsg(toolCallId: string, result = "ok"): LanguageModelV4Messag
  * This is the invariant that the Claude API enforces.
  */
 function assertNoOrphanedToolResults(msgs: LanguageModelV4Message[]) {
-	for (let i = 0; i < msgs.length; i++) {
-		const msg = msgs[i]!;
-		if (msg.role !== "tool") continue;
-		if (!Array.isArray(msg.content)) continue;
+  for (let i = 0; i < msgs.length; i++) {
+    const msg = msgs[i]!;
+    if (msg.role !== "tool") continue;
+    if (!Array.isArray(msg.content)) continue;
 
-		const hasResult = msg.content.some(
-			(b) => "type" in b && b.type === "tool-result",
-		);
-		if (!hasResult) continue;
+    const hasResult = msg.content.some((b) => "type" in b && b.type === "tool-result");
+    if (!hasResult) continue;
 
-		// Must have a preceding assistant message with tool-call
-		expect(i).toBeGreaterThan(0);
-		// Walk backward to find the nearest assistant with tool-call
-		let found = false;
-		for (let j = i - 1; j >= 0; j--) {
-			const prev = msgs[j]!;
-			if (prev.role === "assistant" && Array.isArray(prev.content)) {
-				const prevHasToolCall = prev.content.some(
-					(b) => "type" in b && b.type === "tool-call",
-				);
-				if (prevHasToolCall) {
-					found = true;
-					break;
-				}
-			}
-			// If we hit a user message, the tool result is orphaned
-			if (prev.role === "user") break;
-		}
-		expect(found).toBe(true);
-	}
+    // Must have a preceding assistant message with tool-call
+    expect(i).toBeGreaterThan(0);
+    // Walk backward to find the nearest assistant with tool-call
+    let found = false;
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = msgs[j]!;
+      if (prev.role === "assistant" && Array.isArray(prev.content)) {
+        const prevHasToolCall = prev.content.some((b) => "type" in b && b.type === "tool-call");
+        if (prevHasToolCall) {
+          found = true;
+          break;
+        }
+      }
+      // If we hit a user message, the tool result is orphaned
+      if (prev.role === "user") break;
+    }
+    expect(found).toBe(true);
+  }
 }
 
 describe("windowMessages", () => {
-	it("returns empty for empty history", () => {
-		expect(windowMessages([], 100_000)).toEqual([]);
-	});
+  it("returns empty for empty history", () => {
+    expect(windowMessages([], 100_000)).toEqual([]);
+  });
 
-	it("returns messages unchanged when within budget", () => {
-		const msgs: LanguageModelV4Message[] = [
-			textMsg("user", "Hello"),
-			textMsg("assistant", "Hi there"),
-			textMsg("user", "How are you?"),
-		];
-		// These messages are tiny, well within 100k tokens
-		const result = windowMessages(msgs, 100_000);
-		expect(result).toEqual(msgs);
-	});
+  it("returns messages unchanged when within budget", () => {
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "Hello"),
+      textMsg("assistant", "Hi there"),
+      textMsg("user", "How are you?"),
+    ];
+    // These messages are tiny, well within 100k tokens
+    const result = windowMessages(msgs, 100_000);
+    expect(result).toEqual(msgs);
+  });
 
-	it("preserves first message and keeps recent messages that fit", () => {
-		// Create 100 messages with predictable sizes
-		const msgs: LanguageModelV4Message[] = [];
-		for (let i = 0; i < 100; i++) {
-			const role = i % 2 === 0 ? "user" : "assistant";
-			// Each message ~100 chars = ~25 tokens
-			msgs.push(textMsg(role as "user" | "assistant", `Message number ${i} ${"x".repeat(80)}`));
-		}
+  it("preserves first message and keeps recent messages that fit", () => {
+    // Create 100 messages with predictable sizes
+    const msgs: LanguageModelV4Message[] = [];
+    for (let i = 0; i < 100; i++) {
+      const role = i % 2 === 0 ? "user" : "assistant";
+      // Each message ~100 chars = ~25 tokens
+      msgs.push(textMsg(role as "user" | "assistant", `Message number ${i} ${"x".repeat(80)}`));
+    }
 
-		// Budget: first message (~25 tokens) + workspace for ~10 more messages (~250 tokens)
-		const budget = 300;
-		const result = windowMessages(msgs, budget);
+    // Budget: first message (~25 tokens) + workspace for ~10 more messages (~250 tokens)
+    const budget = 300;
+    const result = windowMessages(msgs, budget);
 
-		// First message is always preserved
-		expect(result[0]).toEqual(msgs[0]);
+    // First message is always preserved
+    expect(result[0]).toEqual(msgs[0]);
 
-		// Should have fewer messages than original
-		expect(result.length).toBeLessThan(msgs.length);
-		expect(result.length).toBeGreaterThan(1);
+    // Should have fewer messages than original
+    expect(result.length).toBeLessThan(msgs.length);
+    expect(result.length).toBeGreaterThan(1);
 
-		// Last message of result should be the last message of input
-		expect(result[result.length - 1]).toEqual(msgs[msgs.length - 1]);
-	});
+    // Last message of result should be the last message of input
+    expect(result[result.length - 1]).toEqual(msgs[msgs.length - 1]);
+  });
 
-	it("keeps tool-call/tool-result pairs atomic — never splits them", () => {
-		const msgs: LanguageModelV4Message[] = [
-			textMsg("user", "Do something"),                           // 0 - first, always kept
-			textMsg("assistant", "Sure, let me use a tool"),           // 1
-			toolCallMsg("call_1"),                                     // 2 - tool-call
-			toolResultMsg("call_1", "x".repeat(400)),                  // 3 - tool-result (large)
-			textMsg("user", "Thanks"),                                 // 4
-			toolCallMsg("call_2"),                                     // 5 - tool-call
-			toolResultMsg("call_2", "small result"),                   // 6 - tool-result
-			textMsg("user", "Final question"),                         // 7
-			textMsg("assistant", "Final answer"),                      // 8
-		];
+  it("keeps tool-call/tool-result pairs atomic — never splits them", () => {
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "Do something"), // 0 - first, always kept
+      textMsg("assistant", "Sure, let me use a tool"), // 1
+      toolCallMsg("call_1"), // 2 - tool-call
+      toolResultMsg("call_1", "x".repeat(400)), // 3 - tool-result (large)
+      textMsg("user", "Thanks"), // 4
+      toolCallMsg("call_2"), // 5 - tool-call
+      toolResultMsg("call_2", "small result"), // 6 - tool-result
+      textMsg("user", "Final question"), // 7
+      textMsg("assistant", "Final answer"), // 8
+    ];
 
-		// Set budget tight enough that not everything fits but the last few do
-		const budget = 120;
-		const result = windowMessages(msgs, budget);
+    // Set budget tight enough that not everything fits but the last few do
+    const budget = 120;
+    const result = windowMessages(msgs, budget);
 
-		// First message preserved
-		expect(result[0]).toEqual(msgs[0]);
+    // First message preserved
+    expect(result[0]).toEqual(msgs[0]);
 
-		// Check that no tool-result appears without its corresponding tool-call
-		assertNoOrphanedToolResults(result);
-	});
+    // Check that no tool-result appears without its corresponding tool-call
+    assertNoOrphanedToolResults(result);
+  });
 
-	it("windowed history has valid message sequence (no orphaned tool results)", () => {
-		// Build a long conversation with interleaved tool calls
-		const msgs: LanguageModelV4Message[] = [textMsg("user", "Start")];
-		for (let i = 0; i < 20; i++) {
-			const callId = `call_${i}`;
-			msgs.push(toolCallMsg(callId));
-			msgs.push(toolResultMsg(callId, `Result for ${i} ${"y".repeat(50)}`));
-		}
-		msgs.push(textMsg("user", "Done"));
+  it("windowed history has valid message sequence (no orphaned tool results)", () => {
+    // Build a long conversation with interleaved tool calls
+    const msgs: LanguageModelV4Message[] = [textMsg("user", "Start")];
+    for (let i = 0; i < 20; i++) {
+      const callId = `call_${i}`;
+      msgs.push(toolCallMsg(callId));
+      msgs.push(toolResultMsg(callId, `Result for ${i} ${"y".repeat(50)}`));
+    }
+    msgs.push(textMsg("user", "Done"));
 
-		// Small budget forces heavy windowing
-		const budget = 200;
-		const result = windowMessages(msgs, budget);
+    // Small budget forces heavy windowing
+    const budget = 200;
+    const result = windowMessages(msgs, budget);
 
-		assertNoOrphanedToolResults(result);
+    assertNoOrphanedToolResults(result);
 
-		// First message always preserved
-		expect(result[0]).toEqual(msgs[0]);
-	});
+    // First message always preserved
+    expect(result[0]).toEqual(msgs[0]);
+  });
 
-	it("keeps parallel tool calls atomic — assistant + multiple tool results stay together", () => {
-		// Reproduces the production bug: model makes 4 parallel tool calls,
-		// reconstructor emits 1 assistant + 4 separate tool messages.
-		// Without proper grouping, windowing can drop the assistant but keep
-		// orphaned tool results, causing Claude API "unexpected tool_use_id" errors.
-		const msgs: LanguageModelV4Message[] = [
-			textMsg("user", "Read all the files"),
-			// First round: 4 parallel tool calls
-			toolCallMsg("call_a", "call_b", "call_c", "call_d"),
-			toolResultMsg("call_a", "file A content " + "x".repeat(200)),
-			toolResultMsg("call_b", "file B content " + "x".repeat(200)),
-			toolResultMsg("call_c", "file C content " + "x".repeat(200)),
-			toolResultMsg("call_d", "file D content " + "x".repeat(200)),
-			// Second round: 4 more parallel tool calls
-			toolCallMsg("call_e", "call_f", "call_g", "call_h"),
-			toolResultMsg("call_e", "file E content " + "x".repeat(200)),
-			toolResultMsg("call_f", "file F content " + "x".repeat(200)),
-			toolResultMsg("call_g", "file G content " + "x".repeat(200)),
-			toolResultMsg("call_h", "file H content " + "x".repeat(200)),
-			// Final text response
-			textMsg("assistant", "I've read all the files."),
-			// Next user message
-			textMsg("user", "Now take action on them"),
-		];
+  it("keeps parallel tool calls atomic — assistant + multiple tool results stay together", () => {
+    // Reproduces the production bug: model makes 4 parallel tool calls,
+    // reconstructor emits 1 assistant + 4 separate tool messages.
+    // Without proper grouping, windowing can drop the assistant but keep
+    // orphaned tool results, causing Claude API "unexpected tool_use_id" errors.
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "Read all the files"),
+      // First round: 4 parallel tool calls
+      toolCallMsg("call_a", "call_b", "call_c", "call_d"),
+      toolResultMsg("call_a", "file A content " + "x".repeat(200)),
+      toolResultMsg("call_b", "file B content " + "x".repeat(200)),
+      toolResultMsg("call_c", "file C content " + "x".repeat(200)),
+      toolResultMsg("call_d", "file D content " + "x".repeat(200)),
+      // Second round: 4 more parallel tool calls
+      toolCallMsg("call_e", "call_f", "call_g", "call_h"),
+      toolResultMsg("call_e", "file E content " + "x".repeat(200)),
+      toolResultMsg("call_f", "file F content " + "x".repeat(200)),
+      toolResultMsg("call_g", "file G content " + "x".repeat(200)),
+      toolResultMsg("call_h", "file H content " + "x".repeat(200)),
+      // Final text response
+      textMsg("assistant", "I've read all the files."),
+      // Next user message
+      textMsg("user", "Now take action on them"),
+    ];
 
-		// Budget tight enough to force dropping the first batch
-		const budget = 800;
-		const result = windowMessages(msgs, budget);
+    // Budget tight enough to force dropping the first batch
+    const budget = 800;
+    const result = windowMessages(msgs, budget);
 
-		// First message always preserved
-		expect(result[0]).toEqual(msgs[0]);
+    // First message always preserved
+    expect(result[0]).toEqual(msgs[0]);
 
-		// The critical invariant: no orphaned tool results
-		assertNoOrphanedToolResults(result);
-	});
+    // The critical invariant: no orphaned tool results
+    assertNoOrphanedToolResults(result);
+  });
 
-	it("handles structured content token estimation correctly", () => {
-		const structuredMsg: LanguageModelV4Message = {
-			role: "tool",
-			content: [
-				{
-					type: "tool-result" as const,
-					toolCallId: "call_1",
-					toolName: "some_tool",
-					output: { type: "text" as const, value: JSON.stringify({ data: "x".repeat(1000) }) },
-				},
-			],
-		};
+  it("handles structured content token estimation correctly", () => {
+    const structuredMsg: LanguageModelV4Message = {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result" as const,
+          toolCallId: "call_1",
+          toolName: "some_tool",
+          output: { type: "text" as const, value: JSON.stringify({ data: "x".repeat(1000) }) },
+        },
+      ],
+    };
 
-		// With a budget smaller than this message, windowing should drop it
-		// Note: the tool-result is paired with a tool-call assistant message
-		const assistantMsg = toolCallMsg("call_1");
-		const msgs: LanguageModelV4Message[] = [
-			textMsg("user", "Hi"),
-			assistantMsg,
-			structuredMsg,
-			textMsg("assistant", "Done"),
-		];
+    // With a budget smaller than this message, windowing should drop it
+    // Note: the tool-result is paired with a tool-call assistant message
+    const assistantMsg = toolCallMsg("call_1");
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "Hi"),
+      assistantMsg,
+      structuredMsg,
+      textMsg("assistant", "Done"),
+    ];
 
-		// Budget that fits first + last but not the big tool call pair
-		const budget = 30;
-		const result = windowMessages(msgs, budget);
-		expect(result[0]).toEqual(msgs[0]);
-		// The structured message should be dropped (too large)
-		const hasStructured = result.some((m) => m === structuredMsg);
-		expect(hasStructured).toBe(false);
-		// And the tool-call assistant should also be dropped (atomic pair)
-		const hasToolCall = result.some((m) => m === assistantMsg);
-		expect(hasToolCall).toBe(false);
-	});
+    // Budget that fits first + last but not the big tool call pair
+    const budget = 30;
+    const result = windowMessages(msgs, budget);
+    expect(result[0]).toEqual(msgs[0]);
+    // The structured message should be dropped (too large)
+    const hasStructured = result.some((m) => m === structuredMsg);
+    expect(hasStructured).toBe(false);
+    // And the tool-call assistant should also be dropped (atomic pair)
+    const hasToolCall = result.some((m) => m === assistantMsg);
+    expect(hasToolCall).toBe(false);
+  });
 
-	it("returns all messages when exactly at budget", () => {
-		const msgs: LanguageModelV4Message[] = [
-			textMsg("user", "Hello"),       // 5 chars / 4 = 2 tokens
-			textMsg("assistant", "World"),   // 5 chars / 4 = 2 tokens
-		];
-		// Total: ceil(5/4) + ceil(5/4) = 2 + 2 = 4 tokens
-		const result = windowMessages(msgs, 4);
-		expect(result).toEqual(msgs);
-	});
+  it("returns all messages when exactly at budget", () => {
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "Hello"), // 5 chars / 4 = 2 tokens
+      textMsg("assistant", "World"), // 5 chars / 4 = 2 tokens
+    ];
+    // Total: ceil(5/4) + ceil(5/4) = 2 + 2 = 4 tokens
+    const result = windowMessages(msgs, 4);
+    expect(result).toEqual(msgs);
+  });
 
-	it("returns all messages for 2 or fewer messages even if over budget", () => {
-		const msgs: LanguageModelV4Message[] = [
-			textMsg("user", "x".repeat(1000)),
-			textMsg("assistant", "y".repeat(1000)),
-		];
-		// Budget way too small, but <= 2 messages returns as-is
-		const result = windowMessages(msgs, 1);
-		expect(result).toEqual(msgs);
-	});
+  it("returns all messages for 2 or fewer messages even if over budget", () => {
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "x".repeat(1000)),
+      textMsg("assistant", "y".repeat(1000)),
+    ];
+    // Budget way too small, but <= 2 messages returns as-is
+    const result = windowMessages(msgs, 1);
+    expect(result).toEqual(msgs);
+  });
 
-	it("keeps the anchor + recent turn, not just the oldest, when the anchor alone exhausts the budget (#688)", () => {
-		// A huge anchor plus small later turns, with a budget below the anchor's
-		// size. Previously windowMessages returned only the oldest message here,
-		// so the model answered without ever seeing the recent turn.
-		const msgs: LanguageModelV4Message[] = [
-			textMsg("user", "x".repeat(2000)), // huge anchor
-			textMsg("assistant", "ok"),
-			textMsg("user", "what is my name?"), // the recent turn
-		];
-		const result = windowMessages(msgs, 5);
-		// The anchor still leads (user role — Anthropic requires it)...
-		expect(result[0]).toEqual(msgs[0]!);
-		// ...and the recent turn survives as the tail (not the stale oldest alone).
-		expect(result[result.length - 1]).toEqual(msgs[2]!);
-	});
+  it("keeps the anchor + recent turn, not just the oldest, when the anchor alone exhausts the budget (#688)", () => {
+    // A huge anchor plus small later turns, with a budget below the anchor's
+    // size. Previously windowMessages returned only the oldest message here,
+    // so the model answered without ever seeing the recent turn.
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "x".repeat(2000)), // huge anchor
+      textMsg("assistant", "ok"),
+      textMsg("user", "what is my name?"), // the recent turn
+    ];
+    const result = windowMessages(msgs, 5);
+    // The anchor still leads (user role — Anthropic requires it)...
+    expect(result[0]).toEqual(msgs[0]!);
+    // ...and the recent turn survives as the tail (not the stale oldest alone).
+    expect(result[result.length - 1]).toEqual(msgs[2]!);
+  });
 
-	it("keeps anchor-then-tool-pair (never an assistant-first list) at a tiny budget (#688)", () => {
-		// Mid-tool-loop the last atomic group is [assistant(tool-call), tool].
-		// Dropping the anchor here would emit an assistant-first message list,
-		// which Anthropic 400s on. The anchor must lead.
-		const msgs: LanguageModelV4Message[] = [
-			textMsg("user", "x".repeat(1200)), // huge anchor
-			textMsg("user", "kick off work"),
-			toolCallMsg("call_z"), // last group: tool-call...
-			toolResultMsg("call_z", "the answer"), // ...and its result (atomic)
-		];
-		const result = windowMessages(msgs, 6);
-		// First message is the user anchor — not an orphaned assistant tool-call.
-		expect(result[0]!.role).toBe("user");
-		expect(result[0]).toEqual(msgs[0]!);
-		// The last group is retained whole — never an orphaned tool-result.
-		assertNoOrphanedToolResults(result);
-		expect(result.some((m) => m === msgs[2])).toBe(true);
-		expect(result.some((m) => m === msgs[3])).toBe(true);
-	});
+  it("keeps anchor-then-tool-pair (never an assistant-first list) at a tiny budget (#688)", () => {
+    // Mid-tool-loop the last atomic group is [assistant(tool-call), tool].
+    // Dropping the anchor here would emit an assistant-first message list,
+    // which Anthropic 400s on. The anchor must lead.
+    const msgs: LanguageModelV4Message[] = [
+      textMsg("user", "x".repeat(1200)), // huge anchor
+      textMsg("user", "kick off work"),
+      toolCallMsg("call_z"), // last group: tool-call...
+      toolResultMsg("call_z", "the answer"), // ...and its result (atomic)
+    ];
+    const result = windowMessages(msgs, 6);
+    // First message is the user anchor — not an orphaned assistant tool-call.
+    expect(result[0]!.role).toBe("user");
+    expect(result[0]).toEqual(msgs[0]!);
+    // The last group is retained whole — never an orphaned tool-result.
+    assertNoOrphanedToolResults(result);
+    expect(result.some((m) => m === msgs[2])).toBe(true);
+    expect(result.some((m) => m === msgs[3])).toBe(true);
+  });
 });
 
 describe("applyReasoningReplayPolicy", () => {
-	const replayHistoryWithToolCall = (): LanguageModelV4Message[] => [
-		textMsg("user", "do something"),
-		{
-			role: "assistant",
-			content: [
-				{ type: "reasoning" as const, text: "considering options" },
-				{
-					type: "tool-call" as const,
-					toolCallId: "call_1",
-					toolName: "search",
-					input: { q: "x" },
-					providerOptions: {
-						google: { thoughtSignature: "opaque-signature" },
-					},
-				},
-			],
-		},
-		toolResultMsg("call_1"),
-		assistantWithReasoning("now reasoning again", "done"),
-	];
+  const replayHistoryWithToolCall = (): LanguageModelV4Message[] => [
+    textMsg("user", "do something"),
+    {
+      role: "assistant",
+      content: [
+        { type: "reasoning" as const, text: "considering options" },
+        {
+          type: "tool-call" as const,
+          toolCallId: "call_1",
+          toolName: "search",
+          input: { q: "x" },
+          providerOptions: {
+            google: { thoughtSignature: "opaque-signature" },
+          },
+        },
+      ],
+    },
+    toolResultMsg("call_1"),
+    assistantWithReasoning("now reasoning again", "done"),
+  ];
 
-	it("retains Anthropic reasoning on replay (cache stability over the strip optimization)", () => {
-		const msgs = replayHistoryWithToolCall();
-		const result = applyReasoningReplayPolicy(msgs, "anthropic");
+  it("retains Anthropic reasoning on replay (cache stability over the strip optimization)", () => {
+    const msgs = replayHistoryWithToolCall();
+    const result = applyReasoningReplayPolicy(msgs, "anthropic");
 
-		// Reasoning is NO LONGER stripped per-turn: stripping changes a turn's
-		// bytes the moment it stops being the latest assistant, which busts the
-		// cached prefix every iteration. Retain it (cached once, read cheaply).
-		expect(result).toBe(msgs);
-		expect(result[1]).toEqual(msgs[1]!);
-		const firstAssistant = result[1] as { content: { type: string }[] };
-		expect(firstAssistant.content.some((p) => p.type === "reasoning")).toBe(true);
-	});
+    // Reasoning is NO LONGER stripped per-turn: stripping changes a turn's
+    // bytes the moment it stops being the latest assistant, which busts the
+    // cached prefix every iteration. Retain it (cached once, read cheaply).
+    expect(result).toBe(msgs);
+    expect(result[1]).toEqual(msgs[1]!);
+    const firstAssistant = result[1] as { content: { type: string }[] };
+    expect(firstAssistant.content.some((p) => p.type === "reasoning")).toBe(true);
+  });
 
-	it("prefix is byte-stable as the latest assistant advances (no per-turn re-strip)", () => {
-		// REGRESSION GUARD (not a tautology): trivially true while the policy is a
-		// passthrough, but it fails loudly the moment anyone re-introduces per-turn
-		// reasoning stripping here — which would change a turn's bytes the instant
-		// it stops being the latest assistant and bust the rolling cache anchor
-		// just behind it. Keep it.
-		//
-		// Simulate the engine appending a new step: the previously-latest
-		// assistant must NOT change bytes when a newer assistant arrives, or the
-		// rolling cache anchor just behind it misses every turn.
-		const turnK: LanguageModelV4Message[] = [
-			textMsg("user", "go"),
-			assistantWithReasoning("thinking A", "answer A"),
-			toolResultMsg("call_a"),
-		];
-		const beforeAdvance = JSON.stringify(applyReasoningReplayPolicy(turnK, "anthropic"));
-		const turnKPlus1 = [...turnK, assistantWithReasoning("thinking B", "answer B"), toolResultMsg("call_b")];
-		const afterAdvance = applyReasoningReplayPolicy(turnKPlus1, "anthropic");
-		// the shared prefix (the first 3 messages) is byte-identical across turns
-		expect(JSON.stringify(afterAdvance.slice(0, 3))).toBe(beforeAdvance);
-	});
+  it("prefix is byte-stable as the latest assistant advances (no per-turn re-strip)", () => {
+    // REGRESSION GUARD (not a tautology): trivially true while the policy is a
+    // passthrough, but it fails loudly the moment anyone re-introduces per-turn
+    // reasoning stripping here — which would change a turn's bytes the instant
+    // it stops being the latest assistant and bust the rolling cache anchor
+    // just behind it. Keep it.
+    //
+    // Simulate the engine appending a new step: the previously-latest
+    // assistant must NOT change bytes when a newer assistant arrives, or the
+    // rolling cache anchor just behind it misses every turn.
+    const turnK: LanguageModelV4Message[] = [
+      textMsg("user", "go"),
+      assistantWithReasoning("thinking A", "answer A"),
+      toolResultMsg("call_a"),
+    ];
+    const beforeAdvance = JSON.stringify(applyReasoningReplayPolicy(turnK, "anthropic"));
+    const turnKPlus1 = [
+      ...turnK,
+      assistantWithReasoning("thinking B", "answer B"),
+      toolResultMsg("call_b"),
+    ];
+    const afterAdvance = applyReasoningReplayPolicy(turnKPlus1, "anthropic");
+    // the shared prefix (the first 3 messages) is byte-identical across turns
+    expect(JSON.stringify(afterAdvance.slice(0, 3))).toBe(beforeAdvance);
+  });
 
-	it("preserves OpenAI reasoning paired with replayed tool calls", () => {
-		const msgs = replayHistoryWithToolCall();
-		const result = applyReasoningReplayPolicy(msgs, "openai");
+  it("preserves OpenAI reasoning paired with replayed tool calls", () => {
+    const msgs = replayHistoryWithToolCall();
+    const result = applyReasoningReplayPolicy(msgs, "openai");
 
-		expect(result).toBe(msgs);
-		expect(result[1]).toEqual(msgs[1]!);
-	});
+    expect(result).toBe(msgs);
+    expect(result[1]).toEqual(msgs[1]!);
+  });
 
-	it("preserves Gemini reasoning and thought metadata paired with replayed tool calls", () => {
-		const msgs = replayHistoryWithToolCall();
-		const result = applyReasoningReplayPolicy(msgs, "google");
+  it("preserves Gemini reasoning and thought metadata paired with replayed tool calls", () => {
+    const msgs = replayHistoryWithToolCall();
+    const result = applyReasoningReplayPolicy(msgs, "google");
 
-		expect(result).toBe(msgs);
-		expect(result[1]).toEqual(msgs[1]!);
-	});
+    expect(result).toBe(msgs);
+    expect(result[1]).toEqual(msgs[1]!);
+  });
 });

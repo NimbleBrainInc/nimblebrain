@@ -23,7 +23,9 @@ describe("ensureDevInstanceConfig", () => {
   });
 
   test("leaves an existing instance.json alone", () => {
-    const existing = JSON.stringify({ auth: { adapter: "oidc", issuer: "https://idp.example.com" } });
+    const existing = JSON.stringify({
+      auth: { adapter: "oidc", issuer: "https://idp.example.com" },
+    });
     writeFileSync(join(root, "instance.json"), existing);
     expect(ensureDevInstanceConfig(root)).toBeNull();
     expect(readFileSync(join(root, "instance.json"), "utf-8")).toBe(existing);

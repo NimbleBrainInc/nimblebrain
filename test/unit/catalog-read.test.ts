@@ -2,8 +2,8 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { log } from "../../src/observability/log.ts";
 import { readCatalogServers } from "../../src/connectors/catalog/read.ts";
+import { log } from "../../src/observability/log.ts";
 
 /**
  * Directory-reading mechanics for the catalog read. A static registry's

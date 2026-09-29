@@ -179,12 +179,12 @@ describe("handleReadResource", () => {
       resource: { text: "{}", mimeType: "application/json" },
       captureCall: (c) => calls.push(c),
     });
-    await handleReadResource(
-      req({ server: "calendar", uri: "custom://whatever/123" }),
-      runtime,
-      { workspaceId: "w1" },
-    );
-    expect(calls).toEqual([{ server: "calendar", uri: "custom://whatever/123", workspaceId: "w1" }]);
+    await handleReadResource(req({ server: "calendar", uri: "custom://whatever/123" }), runtime, {
+      workspaceId: "w1",
+    });
+    expect(calls).toEqual([
+      { server: "calendar", uri: "custom://whatever/123", workspaceId: "w1" },
+    ]);
   });
 
   it("routes an identity source to readIdentityAppResource, resolving files in the focused workspace", async () => {
@@ -197,11 +197,9 @@ describe("handleReadResource", () => {
     // Files are workspace-owned: the source is still reached through the identity
     // door (no workspace registry), but the read resolves in the focused workspace,
     // threaded via workspaceId.
-    const res = await handleReadResource(
-      req({ server: "files", uri: "files://fl_abc" }),
-      runtime,
-      { workspaceId: "ws_a" },
-    );
+    const res = await handleReadResource(req({ server: "files", uri: "files://fl_abc" }), runtime, {
+      workspaceId: "ws_a",
+    });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.contents[0].text).toBe("hello world\n");
@@ -274,7 +272,11 @@ describe("handleReadResource", () => {
     );
     expect(res.status).toBe(200);
     expect(calls).toEqual([
-      { server: "synapse-collateral", uri: "collateral://exports/e.pdf", workspaceId: "ws_tenant_a" },
+      {
+        server: "synapse-collateral",
+        uri: "collateral://exports/e.pdf",
+        workspaceId: "ws_tenant_a",
+      },
     ]);
   });
 });

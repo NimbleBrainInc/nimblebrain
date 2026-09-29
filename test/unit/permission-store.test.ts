@@ -14,11 +14,7 @@ describe("PermissionStore", () => {
   test("get returns 'allow' for a tool with no recorded policy", async () => {
     const { store, cleanup } = freshStore();
     try {
-      const policy = await store.get(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        "search",
-      );
+      const policy = await store.get({ scope: "user", userId: "u1" }, "gmail", "search");
       expect(policy).toBe("allow");
     } finally {
       cleanup();
@@ -28,17 +24,13 @@ describe("PermissionStore", () => {
   test("setConnector + get round-trips a disallow policy", async () => {
     const { store, cleanup } = freshStore();
     try {
-      await store.setConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        { send_email: "disallow" },
+      await store.setConnector({ scope: "user", userId: "u1" }, "gmail", {
+        send_email: "disallow",
+      });
+      expect(await store.get({ scope: "user", userId: "u1" }, "gmail", "send_email")).toBe(
+        "disallow",
       );
-      expect(
-        await store.get({ scope: "user", userId: "u1" }, "gmail", "send_email"),
-      ).toBe("disallow");
-      expect(
-        await store.get({ scope: "user", userId: "u1" }, "gmail", "search"),
-      ).toBe("allow");
+      expect(await store.get({ scope: "user", userId: "u1" }, "gmail", "search")).toBe("allow");
     } finally {
       cleanup();
     }
@@ -47,20 +39,11 @@ describe("PermissionStore", () => {
   test("setting a tool to 'allow' deletes it from the store (default state)", async () => {
     const { store, cleanup } = freshStore();
     try {
-      await store.setConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        { send_email: "disallow" },
-      );
-      await store.setConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        { send_email: "allow" },
-      );
-      const tools = await store.getConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-      );
+      await store.setConnector({ scope: "user", userId: "u1" }, "gmail", {
+        send_email: "disallow",
+      });
+      await store.setConnector({ scope: "user", userId: "u1" }, "gmail", { send_email: "allow" });
+      const tools = await store.getConnector({ scope: "user", userId: "u1" }, "gmail");
       expect(tools).toEqual({});
     } finally {
       cleanup();
@@ -70,20 +53,12 @@ describe("PermissionStore", () => {
   test("setConnector merges — tools omitted from input are preserved", async () => {
     const { store, cleanup } = freshStore();
     try {
-      await store.setConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        { send_email: "disallow", trash: "disallow" },
-      );
-      await store.setConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        { send_email: "allow" },
-      );
-      const tools = await store.getConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-      );
+      await store.setConnector({ scope: "user", userId: "u1" }, "gmail", {
+        send_email: "disallow",
+        trash: "disallow",
+      });
+      await store.setConnector({ scope: "user", userId: "u1" }, "gmail", { send_email: "allow" });
+      const tools = await store.getConnector({ scope: "user", userId: "u1" }, "gmail");
       expect(tools).toEqual({ trash: "disallow" });
     } finally {
       cleanup();
@@ -93,19 +68,13 @@ describe("PermissionStore", () => {
   test("user and workspace scopes are isolated", async () => {
     const { store, cleanup } = freshStore();
     try {
-      await store.setConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        { send_email: "disallow" },
-      );
+      await store.setConnector({ scope: "user", userId: "u1" }, "gmail", {
+        send_email: "disallow",
+      });
       // Workspace scope at the same name should not see the user's policy.
-      expect(
-        await store.get(
-          { scope: "workspace", wsId: "ws_one" },
-          "gmail",
-          "send_email",
-        ),
-      ).toBe("allow");
+      expect(await store.get({ scope: "workspace", wsId: "ws_one" }, "gmail", "send_email")).toBe(
+        "allow",
+      );
     } finally {
       cleanup();
     }
@@ -114,14 +83,10 @@ describe("PermissionStore", () => {
   test("different users are isolated", async () => {
     const { store, cleanup } = freshStore();
     try {
-      await store.setConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        { send_email: "disallow" },
-      );
-      expect(
-        await store.get({ scope: "user", userId: "u2" }, "gmail", "send_email"),
-      ).toBe("allow");
+      await store.setConnector({ scope: "user", userId: "u1" }, "gmail", {
+        send_email: "disallow",
+      });
+      expect(await store.get({ scope: "user", userId: "u2" }, "gmail", "send_email")).toBe("allow");
     } finally {
       cleanup();
     }
@@ -130,16 +95,12 @@ describe("PermissionStore", () => {
   test("deleteConnector removes all policies for a connector", async () => {
     const { store, cleanup } = freshStore();
     try {
-      await store.setConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-        { send_email: "disallow", trash: "disallow" },
-      );
+      await store.setConnector({ scope: "user", userId: "u1" }, "gmail", {
+        send_email: "disallow",
+        trash: "disallow",
+      });
       await store.deleteConnector({ scope: "user", userId: "u1" }, "gmail");
-      const tools = await store.getConnector(
-        { scope: "user", userId: "u1" },
-        "gmail",
-      );
+      const tools = await store.getConnector({ scope: "user", userId: "u1" }, "gmail");
       expect(tools).toEqual({});
     } finally {
       cleanup();
@@ -153,9 +114,7 @@ describe("PermissionStore", () => {
       // get returns the default ("allow") because no record can be loaded.
       const bad = { scope: "user" as const, userId: "../../etc/passwd" };
       expect(await store.get(bad, "gmail", "send_email")).toBe("allow");
-      await expect(
-        store.setConnector(bad, "gmail", { send_email: "disallow" }),
-      ).rejects.toThrow();
+      await expect(store.setConnector(bad, "gmail", { send_email: "disallow" })).rejects.toThrow();
     } finally {
       cleanup();
     }
@@ -249,9 +208,9 @@ describe("PermissionStore — personal-connector grants", () => {
       });
       await store.grantConnector("u1", "granola", WS);
       // Both survive round-trips through the shared file.
-      expect(
-        await store.get({ scope: "user", userId: "u1" }, "granola", "delete_note"),
-      ).toBe("disallow");
+      expect(await store.get({ scope: "user", userId: "u1" }, "granola", "delete_note")).toBe(
+        "disallow",
+      );
       expect(await store.isConnectorGranted("u1", "granola", WS)).toBe(true);
       // And a tool-policy edit doesn't clobber the grant.
       await store.setConnector({ scope: "user", userId: "u1" }, "granola", {
@@ -267,9 +226,7 @@ describe("PermissionStore — personal-connector grants", () => {
     const { store, cleanup } = freshStore();
     try {
       await expect(store.grantConnector("u1", "bad name!", WS)).rejects.toThrow();
-      await expect(
-        store.grantConnector("u1", "granola", "../../etc"),
-      ).rejects.toThrow();
+      await expect(store.grantConnector("u1", "granola", "../../etc")).rejects.toThrow();
     } finally {
       cleanup();
     }

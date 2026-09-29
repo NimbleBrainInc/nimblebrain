@@ -15,24 +15,26 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
-import type { ConnectionLiveness, ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import { uninstallWorkspaceConnector } from "../../src/connectors/runtime/uninstall.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type {
   BrokeredStateOptions,
   ManagedConnectorProvider,
 } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
+import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
+import type {
+  ConnectionLiveness,
+  ProbeTarget,
+} from "../../src/connectors/runtime/connection-probe.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { uninstallWorkspaceConnector } from "../../src/connectors/runtime/uninstall.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -85,7 +87,8 @@ function exampleBroker(
       return { upstreamDeleted: true, localDeleted: false };
     },
 
-    hasConnection: (o) => (opts.connectedLeases ?? new Set()).has(o.brokered.providerRef?.lease ?? ""),
+    hasConnection: (o) =>
+      (opts.connectedLeases ?? new Set()).has(o.brokered.providerRef?.lease ?? ""),
 
     probe: () => ({
       providerId: PROVIDER_ID,

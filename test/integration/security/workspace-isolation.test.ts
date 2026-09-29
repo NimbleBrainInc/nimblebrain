@@ -12,24 +12,21 @@
  *    install the same connector (the briefing/nav leak class)
  */
 
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import type {
-  ConnectorRef,
-  ConnectorUiMeta,
-} from "../../../src/connectors/runtime/types.ts";
+import { SseEventManager } from "../../../src/api/events.ts";
+import type { ServerHandle } from "../../../src/api/server.ts";
+import { startServer } from "../../../src/api/server.ts";
+import type { ConnectorRef, ConnectorUiMeta } from "../../../src/connectors/runtime/types.ts";
+import type { ToolResult } from "../../../src/engine/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { readConnected } from "../../helpers/sse.ts";
 import { TEST_IDENTITY, TestAuthAdapter } from "../../helpers/test-auth-adapter.ts";
-import { startServer } from "../../../src/api/server.ts";
-import type { ServerHandle } from "../../../src/api/server.ts";
-import { SseEventManager } from "../../../src/api/events.ts";
-import type { ToolResult } from "../../../src/engine/types.ts";
-import type { Tool, ToolSource } from "../../../src/tools/types.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 // ── Test setup: authenticated server ────────────────────────────
 
@@ -338,9 +335,7 @@ describe("V6: getConnectorInstancesForWorkspace — two workspaces, same connect
 
     // Unscoped snapshot still holds both (confirms the bug was reachable
     // from a serverName-only filter over lifecycle.getInstances()).
-    const allWithServer = lifecycle
-      .getInstances()
-      .filter((i) => i.serverName === serverName);
+    const allWithServer = lifecycle.getInstances().filter((i) => i.serverName === serverName);
     expect(allWithServer).toHaveLength(2);
   });
 

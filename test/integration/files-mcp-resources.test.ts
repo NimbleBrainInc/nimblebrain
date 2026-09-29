@@ -17,14 +17,18 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, ResourceNotFoundError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  ResourceNotFoundError,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // Files are workspace-owned. Chat-multipart uploads land in the workspace in
 // the request path, and the downstream `files__*` tools / `resources/read`
@@ -33,8 +37,7 @@ import { devProvider } from "../helpers/dev-provider.ts";
 let DEV_WS_ID: string;
 
 const PNG_BYTES = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
 ]);
 
 let runtime: Runtime;
@@ -56,7 +59,7 @@ beforeAll(async () => {
   });
   DEV_WS_ID = devWs.id;
   await runtime.ensureWorkspaceRegistry(DEV_WS_ID);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -66,7 +69,11 @@ afterAll(async () => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-async function uploadChatFile(content: string | Buffer, filename: string, mimeType: string): Promise<string> {
+async function uploadChatFile(
+  content: string | Buffer,
+  filename: string,
+  mimeType: string,
+): Promise<string> {
   const form = new FormData();
   form.append("message", "uploaded a file");
   form.append("workspaceId", TEST_WORKSPACE_ID);
@@ -112,7 +119,9 @@ describe("workspace files exposed as MCP resources", () => {
     const { status, body } = await readResource(`files://${id}`);
     expect(status).toBe(200);
 
-    const result = body as { contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }> };
+    const result = body as {
+      contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }>;
+    };
     expect(result.contents).toHaveLength(1);
     const first = result.contents[0]!;
     expect(first.uri).toBe(`files://${id}`);
@@ -130,7 +139,9 @@ describe("workspace files exposed as MCP resources", () => {
     const { status, body } = await readResource(`files://${id}`);
     expect(status).toBe(200);
 
-    const result = body as { contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }> };
+    const result = body as {
+      contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }>;
+    };
     const first = result.contents[0]!;
     expect(first.mimeType).toBe("image/png");
     expect(first.text).toBeUndefined();

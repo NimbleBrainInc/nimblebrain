@@ -17,16 +17,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
-import {
-  createCredentialSealer,
-  type CredentialSealer,
-} from "../../src/tools/credential-seal.ts";
+import { type CredentialSealer, createCredentialSealer } from "../../src/tools/credential-seal.ts";
+import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";
 import {
   createCredentialStore,
   registerBuiltinCredentialStoreBackends,
   runSealCanary,
 } from "../../src/tools/credential-store-backend.ts";
-import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
@@ -217,7 +214,11 @@ describe("a presence probe never opens anything", () => {
     const { store, dir, cleanup } = fresh(sealer);
     try {
       await store.put(WS, "good.one", "v1");
-      seed(dir, "bad.one", createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"));
+      seed(
+        dir,
+        "bad.one",
+        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
+      );
       await store.put(WS, "good.two", "v2");
       const probes = await Promise.all(
         ["good.one", "bad.one", "good.two"].map((k) => store.get(WS, k, READ)),
@@ -346,8 +347,9 @@ describe("what is on disk", () => {
       await store.put(WS, "k1", "v1");
       const path = join(dir, "workspaces", "ws_test", "credentials", "secrets", "k1");
       expect(statSync(path).mode & 0o777).toBe(0o600);
-      expect(statSync(join(dir, "workspaces", "ws_test", "credentials", "secrets")).mode & 0o777)
-        .toBe(0o700);
+      expect(
+        statSync(join(dir, "workspaces", "ws_test", "credentials", "secrets")).mode & 0o777,
+      ).toBe(0o700);
     } finally {
       cleanup();
     }

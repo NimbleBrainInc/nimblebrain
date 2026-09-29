@@ -18,10 +18,9 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationWorkspaceAccessDeniedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider, devWorkspace } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
-import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-membership-${Date.now()}`);
 const WORKSPACE_A = "ws_workspace_a";
@@ -47,7 +46,11 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("chat-removed");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
     await runtime.getWorkspaceStore().removeMember(WORKSPACE_A, OWNER);
 
     let thrown: unknown;
@@ -73,7 +76,11 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("start-removed");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
     await runtime.getWorkspaceStore().removeMember(WORKSPACE_A, OWNER);
 
     let thrown: unknown;
@@ -96,7 +103,11 @@ describe("resume requires current membership of the conversation's workspace", (
     const runtime = await startRuntime("still-member");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
     // No removal — Alice stays a member.
     const resumed = await runtime.chat({
       identity: DEV_IDENTITY,
@@ -115,7 +126,11 @@ describe("resume requires current membership of the conversation's workspace", (
     // Born in the caller's own workspace, where they are a member; the resume
     // names the same workspace and is not gated.
     const home = await devWorkspace(runtime);
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from home", workspaceId: home });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from home",
+      workspaceId: home,
+    });
     const resumed = await runtime.chat({
       identity: DEV_IDENTITY,
       workspaceId: home,

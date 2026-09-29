@@ -25,8 +25,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -166,7 +166,10 @@ describe("conversation access after the owner is removed from its workspace", ()
     // the directory — and NOT in a flat top-level `conversations/` dir. The
     // owner partition is what makes it survive removal: dropping Alice from
     // sharedA's member list doesn't touch her conversation file.
-    const workspacePath = join(workspaceConversationsDir(workDir, sharedA, ALICE.id), `${convId}.jsonl`);
+    const workspacePath = join(
+      workspaceConversationsDir(workDir, sharedA, ALICE.id),
+      `${convId}.jsonl`,
+    );
     const flatPath = join(workDir, "conversations", `${convId}.jsonl`);
     expect((await stat(workspacePath)).isFile()).toBe(true);
     let flatExists = true;

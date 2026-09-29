@@ -21,8 +21,8 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 let runtime: Runtime;
 let testDir: string;
@@ -85,7 +85,10 @@ test("nothing under src/tools or src/platform imports the operator command", asy
   const root = join(import.meta.dir, "..", "..", "src");
   const offenders: string[] = [];
   for (const dir of ["tools", "platform"]) {
-    for await (const file of new Glob("**/*.{ts,tsx}").scan({ cwd: join(root, dir), absolute: true })) {
+    for await (const file of new Glob("**/*.{ts,tsx}").scan({
+      cwd: join(root, dir),
+      absolute: true,
+    })) {
       if (IMPORTS_THE_COMMAND.test(await Bun.file(file).text())) offenders.push(file);
     }
   }

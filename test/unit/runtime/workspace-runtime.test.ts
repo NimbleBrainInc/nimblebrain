@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
-import type { Workspace } from "../../../src/workspace/types.ts";
 import {
   buildProcessInventory,
   type ProcessInventoryEntry,
   resolveConnectorStartConcurrency,
 } from "../../../src/runtime/workspace-runtime.ts";
+import type { Workspace } from "../../../src/workspace/types.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -63,9 +63,7 @@ describe("buildProcessInventory", () => {
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries).toHaveLength(1);
-    expect(entries[0].dataDir).toBe(
-      join(WORK_DIR, "workspaces", "ws_engineering", "data", "crm"),
-    );
+    expect(entries[0].dataDir).toBe(join(WORK_DIR, "workspaces", "ws_engineering", "data", "crm"));
   });
 
   it("entry has plain serverName (no compound key)", () => {
