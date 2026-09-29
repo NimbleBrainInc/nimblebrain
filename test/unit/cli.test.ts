@@ -66,7 +66,7 @@ describe("loadConfig", () => {
       // Instance fields still loaded
       expect(config.defaultModel).toBe("claude-opus-4-6");
       // Workspace-owned fields stripped
-      expect(config.agents).toBeUndefined();
+      expect("agents" in config).toBe(false);
       expect(config.skillDirs).toBeUndefined();
       expect(config.preferences).toBeUndefined();
       expect(config.home).toBeUndefined();

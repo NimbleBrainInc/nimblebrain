@@ -62,6 +62,14 @@
  *   reads, a helper typed narrower than the value it is given, or a fake built
  *   on a retired SDK. Type shared helpers on the real types
  *   (`test/helpers/tool-result.ts`) so one signature serves every caller.
+ * - **TS2339** "Property does not exist on type" — a read of a field the value
+ *   does not have. A read off `unknown` checks nothing, so an HTTP body is read
+ *   through `readJson<T>` (`test/helpers/http.ts`) with the server's own type
+ *   where one exists. A read off a union narrows first: the relaxed project has
+ *   `strictNullChecks` off, which stops a boolean discriminant from narrowing
+ *   (`if (!r.ok)`), so compare it explicitly (`r.ok === false`). A class's
+ *   private member collapses an intersection with a same-named field to
+ *   `never`, taking every read on it down too.
  *
  * - **TS2304 / TS2552** "Cannot find name" — the same degradation one step
  *   further along, a name with no import at all. TS2552 is the variant that
@@ -138,10 +146,11 @@ const TEST_EXTENSIONS = ["ts", "tsx"];
  * TS2724, TS2459, TS2614: one defect TypeScript reports four ways), an object
  * literal naming a property its type does not have (TS2353), a stub missing one
  * it requires (TS2741, TS2739), a cast between non-overlapping types (TS2352),
- * a name that resolves to nothing (TS2304, TS2552), and an argument its
- * parameter does not accept (TS2345). See the header before adding another.
+ * a name that resolves to nothing (TS2304, TS2552), an argument its parameter
+ * does not accept (TS2345), and a read of a property the value does not have
+ * (TS2339). See the header before adding another.
  */
-const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353, 2741, 2739, 2352, 2304, 2552, 2345];
+const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353, 2741, 2739, 2352, 2304, 2552, 2345, 2339];
 const GATED = new RegExp(`error TS(${GATED_CODES.join("|")}):`);
 
 async function main(): Promise<void> {

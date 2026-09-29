@@ -41,7 +41,7 @@ describe("canWriteWorkspaceScoped", () => {
     const decision = canWriteWorkspaceScoped(identity("u1"), ws);
 
     expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error("expected denial");
+    if (decision.allowed !== false) throw new Error("expected denial");
     expect(decision.reason).toContain("admin");
     expect(decision.reason).toContain("ws-acme");
   });
@@ -51,7 +51,7 @@ describe("canWriteWorkspaceScoped", () => {
     const decision = canWriteWorkspaceScoped(identity("outsider", "owner"), ws);
 
     expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error("expected denial");
+    if (decision.allowed !== false) throw new Error("expected denial");
     expect(decision.reason).toContain("Not a member");
     expect(decision.reason).toContain("ws-acme");
   });
@@ -61,7 +61,7 @@ describe("canWriteWorkspaceScoped", () => {
     const decision = canWriteWorkspaceScoped(identity("outsider", "admin"), ws);
 
     expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error("expected denial");
+    if (decision.allowed !== false) throw new Error("expected denial");
     expect(decision.reason).toContain("Not a member");
   });
 
@@ -90,7 +90,7 @@ describe("canWriteWorkspaceScoped", () => {
     const decision = canWriteWorkspaceScoped(identity("u1", "owner"), ws);
 
     expect(decision.allowed).toBe(false);
-    if (decision.allowed) throw new Error("expected denial");
+    if (decision.allowed !== false) throw new Error("expected denial");
     expect(decision.reason).toContain("Not a member");
   });
 });

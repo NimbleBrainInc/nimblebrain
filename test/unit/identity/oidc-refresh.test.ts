@@ -20,6 +20,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { handleOidcRefresh } from "../../../src/api/handlers.ts";
+import type { ApiErrorBody } from "../../../src/api/types.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import {
   type IdentityProvider,
@@ -27,6 +28,7 @@ import {
   type TokenResult,
 } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
+import { readJson } from "../../helpers/http.ts";
 
 // ── Layer 1: WorkOS provider classification ──────────────────────────
 
@@ -157,7 +159,7 @@ describe("handleOidcRefresh status mapping", () => {
     });
     const res = await handleOidcRefresh(withCookie(), provider, false);
     expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe("refresh_failed");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_failed");
   });
 
   test("unavailable → 503 refresh_unavailable + Retry-After (keep session)", async () => {
@@ -167,7 +169,7 @@ describe("handleOidcRefresh status mapping", () => {
     const res = await handleOidcRefresh(withCookie(), provider, false);
     expect(res.status).toBe(503);
     expect(res.headers.get("Retry-After")).toBe("1");
-    expect((await res.json()).error).toBe("refresh_unavailable");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_unavailable");
   });
 
   test("a non-RefreshTokenError throw still defaults to 503 (never logs out on a surprise)", async () => {
@@ -176,7 +178,7 @@ describe("handleOidcRefresh status mapping", () => {
     });
     const res = await handleOidcRefresh(withCookie(), provider, false);
     expect(res.status).toBe(503);
-    expect((await res.json()).error).toBe("refresh_unavailable");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("refresh_unavailable");
   });
 
   test("success → 200 with a fresh nb_session cookie", async () => {
@@ -200,7 +202,7 @@ describe("handleOidcRefresh status mapping", () => {
       false,
     );
     expect(res.status).toBe(401);
-    expect((await res.json()).error).toBe("no_refresh_token");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("no_refresh_token");
   });
 
   test("provider can't refresh → 400 not_configured", async () => {
@@ -209,6 +211,6 @@ describe("handleOidcRefresh status mapping", () => {
     });
     const res = await handleOidcRefresh(withCookie(), provider, false);
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe("not_configured");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("not_configured");
   });
 });

@@ -22,6 +22,7 @@ import { join } from "node:path";
 
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
 import { saveInstanceConfig } from "../../src/identity/instance.ts";
 import type {
   CreateUserInput,
@@ -35,8 +36,10 @@ import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
 import { ConversationNotFoundError } from "../../src/runtime/errors.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { ChatResult } from "../../src/runtime/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
@@ -337,7 +340,7 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ message: "hello", conversationId }),
     });
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     return { status: res.status, body };
   }
 
@@ -385,6 +388,6 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
       body: JSON.stringify({ message: "back in B", conversationId: aliceConvInB }),
     });
     expect(res.status).toBe(200);
-    expect((await res.json()).conversationId).toBe(aliceConvInB);
+    expect((await readJson<ChatResult>(res)).conversationId).toBe(aliceConvInB);
   });
 });

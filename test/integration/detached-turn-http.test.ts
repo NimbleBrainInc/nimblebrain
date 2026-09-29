@@ -3,11 +3,23 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+
+/** What `POST /v1/conversations/:id/cancel` answers. */
+interface CancelBody {
+  cancelled: boolean;
+}
+
+/** What `POST …/chat/start` answers: the turn runs on, the id comes back now. */
+interface ChatStartBody {
+  conversationId: string;
+}
 
 // Dev-mode caller (no identity provider) — every request resolves to this
 // owner, and conversations are born in TEST_WORKSPACE_ID's owner partition.
@@ -74,7 +86,7 @@ describe("detached turn HTTP surface", () => {
       body: JSON.stringify({ message: "Hello over HTTP", workspaceId: TEST_WORKSPACE_ID }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ChatStartBody>(res);
     expect(body.conversationId).toMatch(/^conv_/);
   });
 
@@ -84,7 +96,7 @@ describe("detached turn HTTP surface", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Replay me", workspaceId: TEST_WORKSPACE_ID }),
     });
-    const { conversationId } = await startRes.json();
+    const { conversationId } = await readJson<ChatStartBody>(startRes);
 
     // Let the echo turn run + buffer, then connect a fresh viewer — it should
     // replay the whole turn from the RunBus (within the grace window).
@@ -104,12 +116,12 @@ describe("detached turn HTTP surface", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "cancel target", workspaceId: TEST_WORKSPACE_ID }),
     });
-    const { conversationId } = await startRes.json();
+    const { conversationId } = await readJson<ChatStartBody>(startRes);
     const res = await fetch(`${baseUrl}/v1/conversations/${conversationId}/cancel`, {
       method: "POST",
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<CancelBody>(res);
     expect(typeof body.cancelled).toBe("boolean");
   });
 
@@ -147,7 +159,7 @@ describe("detached turn HTTP surface", () => {
       }),
     });
     expect(res.status).toBe(422);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("conversation_corrupted");
   });
 
@@ -162,7 +174,7 @@ describe("detached turn HTTP surface", () => {
       }),
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -175,7 +187,7 @@ describe("detached turn HTTP surface", () => {
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -198,7 +210,7 @@ describe("detached turn HTTP surface", () => {
     await seedOtherUserConversation(convId);
     const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`);
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("conversation_access_denied");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_access_denied");
   });
 
   it("POST /v1/conversations/:id/cancel on another user's conversation is 403", async () => {
@@ -208,19 +220,19 @@ describe("detached turn HTTP surface", () => {
       method: "POST",
     });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("conversation_access_denied");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_access_denied");
   });
 
   it("malformed conversationId on the events + cancel routes is 400, not 500", async () => {
     const evRes = await fetch(`${baseUrl}/v1/conversations/bogus/events`);
     expect(evRes.status).toBe(400);
-    expect((await evRes.json()).error).toBe("bad_request");
+    expect((await readJson<ApiErrorBody>(evRes)).error).toBe("bad_request");
 
     const cancelRes = await fetch(`${baseUrl}/v1/conversations/not-a-conv-id/cancel`, {
       method: "POST",
     });
     expect(cancelRes.status).toBe(400);
-    expect((await cancelRes.json()).error).toBe("bad_request");
+    expect((await readJson<ApiErrorBody>(cancelRes)).error).toBe("bad_request");
   });
 
   it("POST /v1/workspaces/:wsId/chat/start on another user's conversation is 404, as for an unknown one", async () => {
@@ -236,7 +248,7 @@ describe("detached turn HTTP surface", () => {
       }),
     });
     expect(res.status).toBe(404);
-    expect((await res.json()).error).toBe("conversation_not_found");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("conversation_not_found");
     expect(runtime.isTurnActive(convId)).toBe(false);
   });
 });

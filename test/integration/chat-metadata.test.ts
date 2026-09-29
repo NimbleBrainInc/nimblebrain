@@ -15,14 +15,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { ChatResult } from "../../src/runtime/types.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Setup: Runtime + HTTP server with echo model
 // ---------------------------------------------------------------------------
+
+/**
+ * What `POST /v1/workspaces/:wsId/chat` sends: the run's result with its token
+ * counts lifted to the top level, and `usage` replaced by its wire form.
+ */
+type ChatResponse = Omit<ChatResult, "usage"> & { inputTokens: number; outputTokens: number };
 
 const API_KEY = "chat-metadata-test-key-1234";
 let runtime: Runtime;
@@ -77,7 +86,7 @@ describe("POST /v1/workspaces/:wsId/chat — metadata passthrough", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ChatResponse>(res);
     expect(body.conversationId).toBeDefined();
 
     // The conversation should exist and we can continue it
@@ -91,7 +100,7 @@ describe("POST /v1/workspaces/:wsId/chat — metadata passthrough", () => {
     });
 
     expect(followUp.status).toBe(200);
-    const followUpBody = await followUp.json();
+    const followUpBody = await readJson<ChatResponse>(followUp);
     // Same conversation
     expect(followUpBody.conversationId).toBe(body.conversationId);
   });
@@ -107,7 +116,7 @@ describe("POST /v1/workspaces/:wsId/chat — metadata passthrough", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
     // Schema validator surfaces the offending field in the message;
     // exact wording is owned by the validator and may change.
@@ -147,7 +156,7 @@ describe("POST /v1/workspaces/:wsId/chat — allowedTools filtering", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ChatResponse>(res);
     expect(body.response).toBeDefined();
     expect(body.conversationId).toBeDefined();
   });
@@ -163,7 +172,7 @@ describe("POST /v1/workspaces/:wsId/chat — allowedTools filtering", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
     expect(body.message).toContain("allowedTools");
   });
@@ -197,7 +206,7 @@ describe("POST /v1/workspaces/:wsId/chat — regression (no metadata, no allowed
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ChatResponse>(res);
 
     expect(body.response).toBeDefined();
     expect(typeof body.response).toBe("string");
@@ -215,7 +224,7 @@ describe("POST /v1/workspaces/:wsId/chat — regression (no metadata, no allowed
         message: "First message",
       }),
     });
-    const body1 = await res1.json();
+    const body1 = await readJson<ChatResponse>(res1);
     const convId = body1.conversationId;
 
     // Second message in same conversation
@@ -229,7 +238,7 @@ describe("POST /v1/workspaces/:wsId/chat — regression (no metadata, no allowed
     });
 
     expect(res2.status).toBe(200);
-    const body2 = await res2.json();
+    const body2 = await readJson<ChatResponse>(res2);
     expect(body2.conversationId).toBe(convId);
     expect(body2.response).toBeDefined();
   });

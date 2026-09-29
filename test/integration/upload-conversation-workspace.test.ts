@@ -19,11 +19,20 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
+import type { FileEntry } from "../../src/files/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
+
+/** What `POST …/resources` answers: the stored entries, plus per-file errors. */
+interface UploadBody {
+  files: FileEntry[];
+  errors?: string[];
+}
 
 const testDir = join(tmpdir(), `nb-upload-conversation-workspace-${Date.now()}`);
 
@@ -106,7 +115,7 @@ describe("an upload attached to a conversation writes only to the workspace in t
 
       expect(inA.status).toBe(404);
       expect(unknown.status).toBe(404);
-      const inABody = await inA.json();
+      const inABody = await readJson<ApiErrorBody>(inA);
       expect(inABody.error).toBe("conversation_not_found");
       expect(shape(inABody, born.conversationId)).toEqual(shape(await unknown.json(), unknownId));
       // Neither the path's partition nor the conversation's gained a file.
@@ -125,7 +134,7 @@ describe("an upload attached to a conversation writes only to the workspace in t
       body: attachmentForm(born.conversationId),
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadBody>(res);
     expect(body.files).toHaveLength(1);
     const fileId: string = body.files[0].id;
     expect(body.files[0].workspaceId).toBe(WORKSPACE_A);

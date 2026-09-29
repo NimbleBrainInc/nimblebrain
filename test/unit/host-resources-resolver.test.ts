@@ -9,6 +9,7 @@ import {
   FileBackedHostResourcesResolver,
   type HostResourceContext,
 } from "../../src/host-resources/index.ts";
+import { blobOf, textOf } from "../helpers/resource-contents.ts";
 
 // The resolver is the single chokepoint between a connector's inbound
 // host-resources request and the workspace-owned FileStore. Files are
@@ -87,8 +88,8 @@ describe("FileBackedHostResourcesResolver.read", () => {
     const entry = result.contents[0];
     expect(entry?.uri).toBe(`files://${id}`);
     expect(entry?.mimeType).toBe("text/csv");
-    expect(entry?.text).toBe("company,email\nfoo,foo@x");
-    expect(entry?.blob).toBeUndefined();
+    expect(textOf(entry)).toBe("company,email\nfoo,foo@x");
+    expect(blobOf(entry)).toBeUndefined();
   });
 
   it("returns base64 blob contents for a binary mime", async () => {
@@ -107,11 +108,11 @@ describe("FileBackedHostResourcesResolver.read", () => {
 
     const result = await makeResolver().read(`files://${saved.id}`, ctxA);
     const entry = result.contents[0];
-    expect(entry?.text).toBeUndefined();
-    expect(typeof entry?.blob).toBe("string");
+    expect(textOf(entry)).toBeUndefined();
+    expect(typeof blobOf(entry)).toBe("string");
     // Round-trip the base64 back to bytes and compare byte-for-byte —
     // tolerant of any binary/utf-8 mojibake in the test infrastructure.
-    expect(Buffer.from(entry?.blob as string, "base64").equals(rawBytes)).toBe(true);
+    expect(Buffer.from(blobOf(entry) as string, "base64").equals(rawBytes)).toBe(true);
   });
 
   it("rejects URIs whose scheme is not in the allowlist", async () => {
@@ -153,7 +154,7 @@ describe("FileBackedHostResourcesResolver.read", () => {
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
     // The same lookup from workspace B succeeds, proving the file does exist.
     const ok = await makeResolver().read(`files://${idInB}`, ctxB);
-    expect(ok.contents[0]?.text).toBe("ws_b only");
+    expect(textOf(ok.contents[0])).toBe("ws_b only");
   });
 
   it("scopes by ctx.workspaceId — a file in workspace A is ABSENT under workspace B", async () => {
@@ -161,7 +162,7 @@ describe("FileBackedHostResourcesResolver.read", () => {
     // workspace) → found.
     const id = await seedFile(storeA, "a-only.txt", "ws_a only", "text/plain");
     const okA = await makeResolver().read(`files://${id}`, ctxA);
-    expect(okA.contents[0]?.text).toBe("ws_a only");
+    expect(textOf(okA.contents[0])).toBe("ws_a only");
 
     // The SAME id under ctx workspace B: the resolver passes `ctx.workspaceId`
     // to the store factory, which lands in storeB (no such file) → -32002. If

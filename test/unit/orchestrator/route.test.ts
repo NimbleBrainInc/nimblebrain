@@ -30,9 +30,19 @@ import {
   WorkspaceAccessDenied,
   WorkspaceToolUnavailable,
 } from "../../../src/orchestrator/index.ts";
+import type { RoutedToolCall } from "../../../src/orchestrator/route.ts";
 import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+
+/** The routed call as the variant the test expects, or a failed test. */
+function asKind<K extends RoutedToolCall["kind"]>(
+  routed: RoutedToolCall,
+  kind: K,
+): Extract<RoutedToolCall, { kind: K }> {
+  expect(routed.kind).toBe(kind);
+  return routed as Extract<RoutedToolCall, { kind: K }>;
+}
 
 // ── Stub source ───────────────────────────────────────────────────
 
@@ -171,7 +181,7 @@ describe("routeToolCall — happy path", () => {
       runtime: buildHappyRuntime(),
     });
 
-    expect(routed.context.workspaceId).toBe(SHARED_WS);
+    expect(asKind(routed, "workspace").context.workspaceId).toBe(SHARED_WS);
     expect(routed.toolName).toBe("crm__search");
     expect(routed.source.name).toBe("crm");
   });
@@ -313,7 +323,7 @@ describe("routeToolCall — a workspace only the caller belongs to", () => {
       runtime: buildHappyRuntime(),
     });
 
-    expect(routed.context.workspaceId).toBe(PERSONAL_WS);
+    expect(asKind(routed, "workspace").context.workspaceId).toBe(PERSONAL_WS);
     expect(routed.toolName).toBe("gmail__send");
     expect(routed.source.name).toBe("gmail");
   });
@@ -340,8 +350,8 @@ describe("routeToolCall — context isolation", () => {
 
     expect(first.context).not.toBe(second.context);
     expect(first.context.getRoot()).not.toBe(second.context.getRoot());
-    expect(first.context.workspaceId).toBe(SHARED_WS);
-    expect(second.context.workspaceId).toBe(PERSONAL_WS);
+    expect(asKind(first, "workspace").context.workspaceId).toBe(SHARED_WS);
+    expect(asKind(second, "workspace").context.workspaceId).toBe(PERSONAL_WS);
     expect(runtime.contextCallCount()).toBe(2);
   });
 });
@@ -358,7 +368,7 @@ describe("routeToolCall — no ambient state", () => {
       runtime: buildHappyRuntime(),
     });
 
-    expect(routed.context.workspaceId).toBe(SHARED_WS);
+    expect(asKind(routed, "workspace").context.workspaceId).toBe(SHARED_WS);
   });
 });
 
@@ -709,7 +719,7 @@ describe("routeToolCall — bare names are workspace-scoped, with no legacy fall
     // The marker is stripped at the door: everything downstream keys on
     // `serverName`, including `assertToolAllowed`, whose store defaults to allow.
     expect(routed.toolName).toBe("gmail__send");
-    expect(routed.policyOwner).toEqual({ scope: "user", userId: USER_ID });
+    expect(asKind(routed, "identity").policyOwner).toEqual({ scope: "user", userId: USER_ID });
   });
 
   test("a marker with no tool segment is rejected, not dispatched as `<connector>__`", async () => {

@@ -101,7 +101,7 @@ describe("validateFrontmatter", () => {
   test("surfaces error paths for fail-soft logging", () => {
     const r = validateFrontmatter({ name: "Bad", description: "x" });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors.length).toBeGreaterThan(0);
+    if (r.ok === false) expect(r.errors.length).toBeGreaterThan(0);
   });
 });
 

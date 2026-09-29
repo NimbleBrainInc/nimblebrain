@@ -4,14 +4,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import type { ToolResult } from "../../src/engine/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { ChatResult } from "../../src/runtime/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { readConnected } from "../helpers/sse.ts";
 import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+import { resultText } from "../helpers/tool-result.ts";
+
+/** The chat route's body: the run's `ChatResult` plus its token totals at the top level. */
+type ChatResponse = ChatResult & { inputTokens: number; outputTokens: number };
+/** The tools/call route's body. */
+type ToolCallResponse = Pick<ToolResult, "content" | "structuredContent" | "isError">;
 
 // --- SSE parsing helper ---
 
@@ -89,7 +99,7 @@ describe("integration: full flow with auth", () => {
     // 1. Health is open without auth
     const healthRes = await fetch(`${baseUrl}/v1/health`);
     expect(healthRes.status).toBe(200);
-    const health = await healthRes.json();
+    const health = await readJson<{ status: string }>(healthRes);
     expect(health.status).toBe("ok");
 
     // 2. Chat without auth is rejected
@@ -107,7 +117,7 @@ describe("integration: full flow with auth", () => {
       body: JSON.stringify({ message: "Hello integration" }),
     });
     expect(chatRes.status).toBe(200);
-    const chatBody = await chatRes.json();
+    const chatBody = await readJson<ChatResponse>(chatRes);
     expect(chatBody.response).toBe("Hello integration");
     expect(chatBody.conversationId).toMatch(/^conv_/);
     const convId = chatBody.conversationId;
@@ -122,7 +132,7 @@ describe("integration: full flow with auth", () => {
       }),
     });
     expect(chat2Res.status).toBe(200);
-    const chat2Body = await chat2Res.json();
+    const chat2Body = await readJson<ChatResponse>(chat2Res);
     expect(chat2Body.response).toBe("Follow up message");
     expect(chat2Body.conversationId).toBe(convId);
 
@@ -184,7 +194,7 @@ describe("integration: concurrent authenticated load", () => {
           method: "POST",
           headers: authHeaders(API_KEY),
           body: JSON.stringify({ message }),
-        }).then((res) => res.json()),
+        }).then((res) => readJson<ChatResponse>(res)),
       ),
     );
 
@@ -215,7 +225,7 @@ describe("integration: concurrent authenticated load", () => {
     for (let i = 0; i < 10; i++) {
       if (i % 2 === 0) {
         expect(responses[i].status).toBe(200);
-        const body = await responses[i].json();
+        const body = await readJson<ChatResponse>(responses[i]);
         expect(body.response).toBe(`Mixed auth ${i}`);
       } else {
         expect(responses[i].status).toBe(401);
@@ -265,7 +275,7 @@ describe("integration: windowing under load", () => {
       }),
     });
     expect(firstRes.status).toBe(200);
-    const firstBody = await firstRes.json();
+    const firstBody = await readJson<ChatResponse>(firstRes);
     const convId = firstBody.conversationId;
 
     // Send 49 more messages in the same conversation sequentially
@@ -279,7 +289,7 @@ describe("integration: windowing under load", () => {
         }),
       });
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = await readJson<ChatResponse>(res);
       // Echo model echoes the last user message in the windowed prompt,
       // which may differ from the sent message once windowing truncates history
       expect(typeof body.response).toBe("string");
@@ -294,7 +304,7 @@ describe("integration: windowing under load", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Seed message for concurrent windowing test" }),
     });
-    const firstBody = await firstRes.json();
+    const firstBody = await readJson<ChatResponse>(firstRes);
     const convId = firstBody.conversationId;
 
     // Add 10 messages sequentially to build up history
@@ -320,7 +330,10 @@ describe("integration: windowing under load", () => {
             message: `Concurrent on long conv ${i}`,
             conversationId: convId,
           }),
-        }).then(async (r) => ({ status: r.status, body: await r.json() })),
+        }).then(async (r) => ({
+          status: r.status,
+          body: await readJson<ChatResponse | ApiErrorBody>(r),
+        })),
       ),
     );
 
@@ -329,11 +342,12 @@ describe("integration: windowing under load", () => {
     expect(ok.length + rejected.length).toBe(5);
     expect(ok.length).toBeGreaterThanOrEqual(1);
     for (const r of ok) {
-      expect(typeof r.body.response).toBe("string");
-      expect(r.body.conversationId).toBe(convId);
+      const body = r.body as ChatResponse;
+      expect(typeof body.response).toBe("string");
+      expect(body.conversationId).toBe(convId);
     }
     for (const r of rejected) {
-      expect(r.body.error).toBe("run_in_progress");
+      expect((r.body as ApiErrorBody).error).toBe("run_in_progress");
     }
   });
 });
@@ -480,9 +494,9 @@ describe("E2E: registered app -> tool call via API", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ToolCallResponse>(res);
     expect(body.isError).toBe(false);
-    const parsed = JSON.parse(body.content[0].text);
+    const parsed = JSON.parse(resultText(body));
     expect(parsed.id).toBe("task-001");
     expect(parsed.title).toBe("Write tests");
   }, 10_000);
@@ -548,7 +562,7 @@ describe("E2E: tool call via API", () => {
       }),
     });
     expect(toolRes.status).toBe(200);
-    const toolBody = await toolRes.json();
+    const toolBody = await readJson<ToolCallResponse>(toolRes);
     expect(toolBody.content).toEqual([{ type: "text", text: "Saved: Important note" }]);
     expect(toolBody.isError).toBe(false);
   }, 10_000);
@@ -603,7 +617,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
         }),
       });
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = await readJson<ChatResponse>(res);
       expect(body.response).toBe(msg);
       if (!convId) convId = body.conversationId;
       expect(body.conversationId).toBe(convId);

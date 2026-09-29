@@ -7,10 +7,24 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type {
+  AuthorizationServerMetadata,
+  OAuthProtectedResourceMetadata,
+} from "@modelcontextprotocol/server";
 import { Hono } from "hono";
 import { wellKnownRoutes } from "../../../src/api/routes/well-known.ts";
 import type { AppContext } from "../../../src/api/types.ts";
 import { fakeFetch } from "../../helpers/fake-fetch.ts";
+import { readJson } from "../../helpers/http.ts";
+
+/**
+ * The error body these routes answer with. They build it inline rather than
+ * through `apiError`, so `message` is present only where a route sets one.
+ */
+interface WellKnownError {
+  error: string;
+  message?: string;
+}
 
 // ── Test helpers ──────────────────────────────────────────────────
 
@@ -80,7 +94,7 @@ describe("GET /.well-known/oauth-protected-resource/mcp/:wsId", () => {
     );
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<OAuthProtectedResourceMetadata>(res);
     expect(body.resource).toBe(`${ORIGIN}/mcp/ws_a`);
     expect(body.authorization_servers).toEqual(["https://auth.example.com"]);
     expect(body.bearer_methods_supported).toEqual(["header"]);
@@ -94,7 +108,9 @@ describe("GET /.well-known/oauth-protected-resource/mcp/:wsId", () => {
     );
 
     expect(res.status).toBe(200);
-    expect((await res.json()).resource).toBe(`${ORIGIN}/mcp/ws_a`);
+    expect((await readJson<OAuthProtectedResourceMetadata>(res)).resource).toBe(
+      `${ORIGIN}/mcp/ws_a`,
+    );
   });
 
   it("answers for any well-formed id without looking the workspace up", async () => {
@@ -104,7 +120,9 @@ describe("GET /.well-known/oauth-protected-resource/mcp/:wsId", () => {
     const res = await app.request("/.well-known/oauth-protected-resource/mcp/ws_nosuchworkspace");
 
     expect(res.status).toBe(200);
-    expect((await res.json()).resource).toBe(`${ORIGIN}/mcp/ws_nosuchworkspace`);
+    expect((await readJson<OAuthProtectedResourceMetadata>(res)).resource).toBe(
+      `${ORIGIN}/mcp/ws_nosuchworkspace`,
+    );
   });
 
   it("returns 404 for an id that is not shaped like a workspace id", async () => {
@@ -118,7 +136,7 @@ describe("GET /.well-known/oauth-protected-resource/mcp/:wsId", () => {
     const res = await app.request("/.well-known/oauth-protected-resource/mcp/ws_a");
 
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<WellKnownError>(res);
     expect(body.error).toBe("MCP OAuth not configured");
   });
 });
@@ -129,8 +147,8 @@ describe("GET /.well-known/oauth-protected-resource", () => {
     const res = await app.request("http://api.example.com/.well-known/oauth-protected-resource");
 
     expect(res.status).toBe(404);
-    const body = await res.json();
-    expect(body.resource).toBeUndefined();
+    const body = await readJson<WellKnownError>(res);
+    expect("resource" in body).toBe(false);
     expect(body.message).toContain("/.well-known/oauth-protected-resource/mcp/<workspaceId>");
   });
 
@@ -140,8 +158,8 @@ describe("GET /.well-known/oauth-protected-resource", () => {
       const res = await app.request(`/.well-known/oauth-protected-resource${suffix}`);
 
       expect(res.status).toBe(404);
-      const body = await res.json();
-      expect(body.resource).toBeUndefined();
+      const body = await readJson<WellKnownError>(res);
+      expect("resource" in body).toBe(false);
       expect(body.message).toContain("/.well-known/oauth-protected-resource/mcp/<workspaceId>");
     }
   });
@@ -175,7 +193,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = await readJson<AuthorizationServerMetadata>(res);
       expect(body.issuer).toBe("https://auth.example.com");
       expect(body.authorization_endpoint).toBe("https://auth.example.com/authorize");
       expect(body.token_endpoint).toBe("https://auth.example.com/oauth/token");
@@ -195,7 +213,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(502);
-      const body = await res.json();
+      const body = await readJson<WellKnownError>(res);
       expect(body.error).toBe("Failed to fetch upstream metadata");
     } finally {
       globalThis.fetch = originalFetch;
@@ -213,7 +231,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
       const res = await app.request("/.well-known/oauth-authorization-server");
 
       expect(res.status).toBe(502);
-      const body = await res.json();
+      const body = await readJson<WellKnownError>(res);
       expect(body.error).toBe("Failed to fetch upstream metadata");
     } finally {
       globalThis.fetch = originalFetch;
@@ -225,7 +243,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
     const res = await app.request("/.well-known/oauth-authorization-server");
 
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<WellKnownError>(res);
     expect(body.error).toBe("MCP OAuth not configured");
   });
 
@@ -247,11 +265,13 @@ describe("GET /.well-known/oauth-authorization-server", () => {
         "http://api.example.com/.well-known/oauth-protected-resource/mcp/ws_a",
       );
       expect(discovery.status).toBe(200);
-      expect((await discovery.json()).authorization_servers).toEqual(["https://myapp.example.com"]);
+      expect(
+        (await readJson<OAuthProtectedResourceMetadata>(discovery)).authorization_servers,
+      ).toEqual(["https://myapp.example.com"]);
 
       const proxied = await app.request("/.well-known/oauth-authorization-server");
       expect(proxied.status).toBe(404);
-      expect((await proxied.json()).error).toBe("MCP OAuth not configured");
+      expect((await readJson<WellKnownError>(proxied)).error).toBe("MCP OAuth not configured");
     } finally {
       globalThis.fetch = originalFetch;
     }

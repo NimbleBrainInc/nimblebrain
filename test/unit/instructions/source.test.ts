@@ -22,6 +22,7 @@ import { createInstructionsSource } from "../../../src/platform/instructions/sou
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
+import { textOf } from "../../helpers/resource-contents.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ describe("instructions source — resources", () => {
       .write({ wsId: "ws_demo", text: "ws-body", updatedBy: "ui" });
     const client = src.getClient()!;
     const data = await client.readResource({ uri: "instructions://workspace" });
-    expect(data.contents?.[0]?.text).toBe("ws-body");
+    expect(textOf(data.contents?.[0])).toBe("ws-body");
   });
 
   test("text is read fresh on every call (no caching)", async () => {
@@ -156,12 +157,12 @@ describe("instructions source — resources", () => {
 
     await runtime.getInstructionsStore().write({ wsId: "ws_demo", text: "v1", updatedBy: "ui" });
     expect(
-      (await client.readResource({ uri: "instructions://workspace" })).contents?.[0]?.text,
+      textOf((await client.readResource({ uri: "instructions://workspace" })).contents?.[0]),
     ).toBe("v1");
 
     await runtime.getInstructionsStore().write({ wsId: "ws_demo", text: "v2", updatedBy: "agent" });
     expect(
-      (await client.readResource({ uri: "instructions://workspace" })).contents?.[0]?.text,
+      textOf((await client.readResource({ uri: "instructions://workspace" })).contents?.[0]),
     ).toBe("v2");
   });
 });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
+import type { ApiErrorBody } from "../../../src/api/types.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -17,6 +18,7 @@ import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { readJson } from "../../helpers/http.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
@@ -138,7 +140,7 @@ describe("chat rate limiting", () => {
     });
 
     expect(res.status).toBe(429);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
     expect(body.message).toBe("Rate limit exceeded");
     expect(res.headers.get("Retry-After")).toBe("60");
@@ -170,7 +172,7 @@ describe("tool-call rate limiting", () => {
     });
 
     expect(res.status).toBe(429);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
   });
 
@@ -203,7 +205,7 @@ describe("mcp rate limiting", () => {
     });
 
     expect(res.status).toBe(429);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
   });
 });

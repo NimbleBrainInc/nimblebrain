@@ -58,7 +58,7 @@ describe("skillManagement: false", () => {
   });
 
   afterAll(async () => {
-    await runtime?.stop?.();
+    await runtime?.shutdown();
     dir?.cleanup();
   });
 
@@ -121,7 +121,7 @@ describe("skillManagement: true (the default)", () => {
   });
 
   afterAll(async () => {
-    await runtime?.stop?.();
+    await runtime?.shutdown();
     dir?.cleanup();
   });
 

@@ -6,7 +6,7 @@ import type { McpSource } from "../../src/tools/mcp-source.ts";
 /** Mock remote source — has isRemote() returning true. */
 function makeMockRemoteSource(name: string): McpSource & {
   alive: boolean;
-  stopped: boolean;
+  userStopped: boolean;
   startResult: boolean;
   stopCalls: number;
   startCalls: number;
@@ -15,7 +15,7 @@ function makeMockRemoteSource(name: string): McpSource & {
   const mock = {
     name,
     alive: true,
-    stopped: false,
+    userStopped: false,
     startResult: true,
     stopCalls: 0,
     startCalls: 0,
@@ -26,7 +26,7 @@ function makeMockRemoteSource(name: string): McpSource & {
       return mock.alive;
     },
     isStopped() {
-      return mock.stopped;
+      return mock.userStopped;
     },
     uptime() {
       return startedAt !== null ? Date.now() - startedAt : null;
@@ -58,7 +58,7 @@ function makeMockRemoteSource(name: string): McpSource & {
     },
   } as unknown as McpSource & {
     alive: boolean;
-    stopped: boolean;
+    userStopped: boolean;
     startResult: boolean;
     stopCalls: number;
     startCalls: number;
@@ -67,21 +67,24 @@ function makeMockRemoteSource(name: string): McpSource & {
 }
 
 /** Mock in-process source — no isRemote() method (or returns false). */
-function makeMockLocalSource(
-  name: string,
-): McpSource & { alive: boolean; stopped: boolean; restartResult: boolean; restartCalls: number } {
+function makeMockLocalSource(name: string): McpSource & {
+  alive: boolean;
+  userStopped: boolean;
+  restartResult: boolean;
+  restartCalls: number;
+} {
   let startedAt: number | null = Date.now();
   const mock = {
     name,
     alive: true,
-    stopped: false,
+    userStopped: false,
     restartResult: true,
     restartCalls: 0,
     isAlive() {
       return mock.alive;
     },
     isStopped() {
-      return mock.stopped;
+      return mock.userStopped;
     },
     uptime() {
       return startedAt !== null ? Date.now() - startedAt : null;
@@ -96,7 +99,7 @@ function makeMockLocalSource(
     },
   } as unknown as McpSource & {
     alive: boolean;
-    stopped: boolean;
+    userStopped: boolean;
     restartResult: boolean;
     restartCalls: number;
   };
@@ -326,7 +329,7 @@ describe("HealthMonitor — remote sources", () => {
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
 
     source.alive = false;
-    source.stopped = true; // deliberate stop()
+    source.userStopped = true; // deliberate stop()
 
     await monitor.check();
 
@@ -354,7 +357,7 @@ describe("HealthMonitor — remote sources", () => {
     const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
 
     source.alive = false; // dropped, but NOT via stop()
-    expect(source.stopped).toBe(false);
+    expect(source.userStopped).toBe(false);
 
     await monitor.check();
 

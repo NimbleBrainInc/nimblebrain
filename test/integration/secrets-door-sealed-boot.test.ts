@@ -60,7 +60,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await runtime?.stop?.();
+  await runtime?.shutdown();
   if (previousKey === undefined) delete process.env[KEY_ENV];
   else process.env[KEY_ENV] = previousKey;
   rmSync(testDir, { recursive: true, force: true });

@@ -15,10 +15,11 @@ import { ToolRegistry } from "../../../src/tools/registry.ts";
  * would obscure it.
  */
 function runtimeWith(registries: Map<string, ToolRegistry>): Runtime {
-  const rt = Object.create(Runtime.prototype) as Runtime & {
-    _workspaceRegistries: Map<string, ToolRegistry>;
-  };
-  rt._workspaceRegistries = registries;
+  const rt = Object.create(Runtime.prototype) as Runtime;
+  // Seeds the private registry map the method under test reads. Intersecting
+  // `Runtime` with the field instead collapses to `never`, since it is private.
+  (rt as unknown as { _workspaceRegistries: Map<string, ToolRegistry> })._workspaceRegistries =
+    registries;
   return rt;
 }
 

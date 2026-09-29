@@ -2,6 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { BodyLimitOptions } from "../../../src/api/middleware/body-limit.ts";
 import { bodyLimit } from "../../../src/api/middleware/body-limit.ts";
+import type { ApiErrorBody } from "../../../src/api/types.ts";
+import { readJson } from "../../helpers/http.ts";
+
+/** The middleware's 413: an `apiError` body whose details name the bound it hit. */
+type PayloadTooLarge = ApiErrorBody & {
+  details: { limit: number; received: number; contentType: string };
+};
+
+/** What the test app's own `/test` route answers when a request gets through. */
+interface TestRouteBody {
+  ok: boolean;
+}
 
 function createTestApp(maxBytes = 1024, opts?: BodyLimitOptions) {
   const app = new Hono();
@@ -19,7 +31,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "2048", "Content-Type": "application/json" },
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<PayloadTooLarge>(res);
     expect(body.error).toBe("payload_too_large");
     expect(body.message).toBe("Payload too large");
   });
@@ -31,7 +43,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "4096", "Content-Type": "application/json" },
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<PayloadTooLarge>(res);
     expect(body.details).toEqual({
       limit: 1024,
       received: 4096,
@@ -46,7 +58,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "512" },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -56,7 +68,7 @@ describe("bodyLimit middleware", () => {
       method: "POST",
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -67,7 +79,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "abc", "Content-Type": "application/json" },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -87,7 +99,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "2048" },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -101,7 +113,7 @@ describe("bodyLimit middleware", () => {
       },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<TestRouteBody>(res);
     expect(body.ok).toBe(true);
   });
 
@@ -115,7 +127,7 @@ describe("bodyLimit middleware", () => {
       },
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<PayloadTooLarge>(res);
     expect(body.details?.limit).toBe(4096);
     expect(body.details?.received).toBe(8192);
     expect(body.details?.contentType).toContain("multipart/form-data");
@@ -131,7 +143,7 @@ describe("bodyLimit middleware", () => {
       },
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<PayloadTooLarge>(res);
     expect(body.details?.limit).toBe(1024);
   });
 
@@ -367,7 +379,7 @@ describe("bodyLimit middleware", () => {
       headers: { "Content-Length": "4096", "Content-Type": "application/json" },
     });
     expect(oversizedJson.status).toBe(413);
-    const body = await oversizedJson.json();
+    const body = await readJson<PayloadTooLarge>(oversizedJson);
     expect(body.details?.limit).toBe(1024);
   });
 });

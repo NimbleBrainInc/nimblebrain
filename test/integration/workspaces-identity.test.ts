@@ -334,8 +334,8 @@ describe("Auth flow", () => {
       eventSink: new NoopEventSink(),
     });
 
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(401);
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
   });
 });
 

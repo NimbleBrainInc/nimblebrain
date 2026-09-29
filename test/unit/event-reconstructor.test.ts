@@ -16,6 +16,14 @@ import type {
   UserMessageEvent,
 } from "../../src/conversation/types.ts";
 
+type StoredPart = Exclude<StoredMessage["content"], string>[number];
+
+/** A reconstructed message's content parts; every message these tests read carries parts. */
+function partsOf(m: StoredMessage): StoredPart[] {
+  if (typeof m.content === "string") throw new Error("expected content parts, got a string");
+  return m.content;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers — event factories
 // ---------------------------------------------------------------------------
@@ -358,11 +366,11 @@ describe("reconstructMessages", () => {
     const messages = reconstructMessages(events);
     expect(messages).toHaveLength(2);
     const assistant = messages[1]!;
-    const reasoningBlock = assistant.content.find(
-      (c): c is { type: "reasoning"; text: string } => c.type === "reasoning",
+    const reasoningBlock = partsOf(assistant).find(
+      (c): c is Extract<StoredPart, { type: "reasoning" }> => c.type === "reasoning",
     );
-    const textBlock = assistant.content.find(
-      (c): c is { type: "text"; text: string } => c.type === "text",
+    const textBlock = partsOf(assistant).find(
+      (c): c is Extract<StoredPart, { type: "text" }> => c.type === "text",
     );
     expect(reasoningBlock?.text).toBe("Computing 6 * 7 carefully...");
     expect(textBlock?.text).toBe("The answer is 42.");
@@ -392,8 +400,8 @@ describe("reconstructMessages", () => {
     const assistantMessages = messages.filter((m) => m.role === "assistant");
     expect(assistantMessages).toHaveLength(2);
 
-    const firstReasoning = assistantMessages[0]!.content.find((c) => c.type === "reasoning");
-    const secondReasoning = assistantMessages[1]!.content.find((c) => c.type === "reasoning");
+    const firstReasoning = partsOf(assistantMessages[0]!).find((c) => c.type === "reasoning");
+    const secondReasoning = partsOf(assistantMessages[1]!).find((c) => c.type === "reasoning");
     expect(firstReasoning).toBeDefined();
     expect(secondReasoning).toBeUndefined();
   });
@@ -419,8 +427,8 @@ describe("reconstructMessages", () => {
     expect(placeholder.role).toBe("assistant");
     expect(placeholder.metadata!.finishReason).toBe("length");
     // Carries explicit marker text so LLM history isn't an empty msg
-    const text = placeholder.content.find(
-      (c): c is { type: "text"; text: string } => c.type === "text",
+    const text = partsOf(placeholder).find(
+      (c): c is Extract<StoredPart, { type: "text" }> => c.type === "text",
     );
     expect(text?.text).toContain("cut off");
   });
@@ -472,8 +480,7 @@ describe("reconstructMessages", () => {
     // Both signatures must round-trip via providerOptions so the AI SDK
     // Anthropic provider re-emits both thinking blocks on the next call.
     const reasonings = assistant!.content.filter(
-      (c): c is { type: "reasoning"; text: string; providerOptions?: unknown } =>
-        c.type === "reasoning",
+      (c): c is Extract<StoredPart, { type: "reasoning" }> => c.type === "reasoning",
     );
     expect(reasonings).toHaveLength(2);
     expect(reasonings[0]!.providerOptions).toEqual({ anthropic: { signature: "sig-A" } });
@@ -507,9 +514,8 @@ describe("reconstructMessages", () => {
     const messages = reconstructMessages(events);
     const assistant = messages.find((m) => m.role === "assistant");
     expect(assistant).toBeDefined();
-    const reasoning = assistant!.content.find(
-      (c): c is { type: "reasoning"; text: string; providerOptions?: unknown } =>
-        c.type === "reasoning",
+    const reasoning = partsOf(assistant!).find(
+      (c): c is Extract<StoredPart, { type: "reasoning" }> => c.type === "reasoning",
     );
     expect(reasoning?.providerOptions).toEqual({ anthropic: { signature: "sig-abc-123" } });
   });
@@ -533,9 +539,9 @@ describe("reconstructMessages", () => {
       withSig,
       runDone("run-1"),
     ]);
-    const reasoning = withSigMessages[1]!.content.find((c) => c.type === "reasoning");
+    const reasoning = partsOf(withSigMessages[1]!).find((c) => c.type === "reasoning");
     expect(reasoning).toBeDefined();
-    expect(withSigMessages[1]!.content.find((c) => c.type === "text")).toBeUndefined();
+    expect(partsOf(withSigMessages[1]!).find((c) => c.type === "text")).toBeUndefined();
   });
 
   it("placeholder falls back to marker text when reasoning has no provider metadata", () => {
@@ -554,11 +560,11 @@ describe("reconstructMessages", () => {
       runDone("run-1"),
     ]);
     const placeholder = messages[1]!;
-    const text = placeholder.content.find(
-      (c): c is { type: "text"; text: string } => c.type === "text",
+    const text = partsOf(placeholder).find(
+      (c): c is Extract<StoredPart, { type: "text" }> => c.type === "text",
     );
     expect(text?.text).toContain("cut off");
-    expect(placeholder.content.find((c) => c.type === "reasoning")).toBeUndefined();
+    expect(partsOf(placeholder).find((c) => c.type === "reasoning")).toBeUndefined();
   });
 
   it("forwards finishReason from llm.response into assistant message metadata", () => {
@@ -1331,7 +1337,8 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     // continues rather than answers.
     expect(synthetic!.role).toBe("user");
     expect(synthetic!.metadata?.skill).toBe("gmail");
-    const text = synthetic!.content[0]?.type === "text" ? synthetic!.content[0].text : "";
+    const first = partsOf(synthetic!)[0];
+    const text = first?.type === "text" ? first.text : "";
     expect(text).toContain("<connector-skill>");
     expect(text).toContain("</connector-skill>");
     expect(text).toContain("Confirm the recipient before sending.");
@@ -1401,7 +1408,8 @@ describe("reconstructMessages — connector.skill.injected (P4)", () => {
     ];
 
     const synthetic = findConnectorSkillMessage(reconstructMessages(events))!;
-    const text = synthetic.content[0]?.type === "text" ? synthetic.content[0].text : "";
+    const first = partsOf(synthetic)[0];
+    const text = first?.type === "text" ? first.text : "";
     expect(text).toContain("&lt;/connector-skill>");
     // Only the wrapper's own closing tag remains real.
     expect(text.split("</connector-skill>").length - 1).toBe(1);

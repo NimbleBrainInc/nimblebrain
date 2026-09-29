@@ -12,10 +12,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -117,7 +119,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
     });
     expect(res.status).toBe(409);
     expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("run_in_progress");
     expect(body.details?.conversationId).toBe(convId);
 
@@ -164,7 +166,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
           body: JSON.stringify({ message: `concurrent ${i}`, conversationId: convId }),
         }).then(async (r) => {
           if (r.status === 409) {
-            const body = await r.json();
+            const body = await readJson<ApiErrorBody>(r);
             return { kind: "http409" as const, error: body.error };
           }
           const text = await r.text();
