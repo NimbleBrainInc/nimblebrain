@@ -154,7 +154,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
   const notifications = parseNotificationsDeclaration(getNimbleBrainHostMeta(s));
   const lifecycle = parseLifecycleDeclaration(getNimbleBrainHostMeta(s));
-  const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(s));
+  const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(s), s.name);
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
   // placement that survives `sanitizePlacements` (the same check registration uses).
@@ -241,8 +241,7 @@ function hostVersionViolation(s: ServerDetail): string | null {
  * major is a contract: blocks are added under major 1 without a bump and are
  * enabled by being present. A different major is a contract this runtime
  * predates, and it would otherwise parse that block as major 1 and ignore what
- * it does not know. For `admin_tools`, which only narrows who may call a tool,
- * ignoring it would widen access, so the entry is dropped instead.
+ * it does not know, so the entry is dropped: it cannot be installed.
  */
 function isSupportedHostVersion(v: unknown): boolean {
   return typeof v === "string" && /^1(\.\d+)?$/.test(v);

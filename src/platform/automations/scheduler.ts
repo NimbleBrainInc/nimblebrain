@@ -161,9 +161,9 @@ export function computeNextRunAt(
 ): number | null {
   const { schedule } = automation;
 
-  // An event schedule has no position in time. Null is what every caller here
-  // already reads as "leave nextRunAt alone", so the timer never arms for it
-  // and no backoff or skip path invents a moment for it either.
+  // An event schedule has no position in time. Null means "no next run": every
+  // caller clears nextRunAt on it (see setNextRunAt), so the timer never arms
+  // for it and no backoff or skip path invents a moment for it either.
   if (isEventSchedule(schedule)) return null;
 
   if (schedule.type === "cron" && schedule.expression) {
@@ -185,17 +185,36 @@ export function computeNextRunAt(
 }
 
 /**
+ * Store a computed next run on `automation`, clearing `nextRunAt` when there is
+ * none. A cron schedule can have no next run: a date that never occurs
+ * (`0 9 31 2 *`) or a year field that has passed. Keeping the old value there
+ * would leave a past `nextRunAt` that never advances, so the automation stays
+ * due and re-runs back to back.
+ */
+export function setNextRunAt(automation: Automation, nextRun: number | null): void {
+  automation.nextRunAt = nextRun === null ? undefined : new Date(nextRun).toISOString();
+}
+
+/**
+ * Whether an automation with no `nextRunAt` is due now. Only an interval
+ * schedule that has not been given one yet is (its first run fires
+ * immediately); a cron schedule without one has no next run, and an event
+ * schedule never has one.
+ */
+function dueWithoutNextRunAt(automation: Automation): boolean {
+  return automation.schedule.type === "interval";
+}
+
+/**
  * Check if an automation is due to run.
  */
 export function isDue(automation: Automation, now: number): boolean {
   if (!automation.enabled) return false;
-  // Never due from the timer. The absent `nextRunAt` below means "due
-  // immediately" for a clock schedule that has not run yet, and an event
-  // schedule has no `nextRunAt` by construction — so without this test the
-  // timer would fire it on every tick and the run would carry the wrong
+  // Never due from the timer. An event schedule has no `nextRunAt` by
+  // construction, and the timer would otherwise fire it with the wrong
   // trigger, an empty batch, and none of the fire ceiling.
   if (isEventSchedule(automation.schedule)) return false;
-  if (!automation.nextRunAt) return true; // No nextRunAt → due immediately (interval first-run)
+  if (!automation.nextRunAt) return dueWithoutNextRunAt(automation);
   return now >= new Date(automation.nextRunAt).getTime();
 }
 
@@ -330,7 +349,10 @@ function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: numbe
 /** Compute and set nextRunAt, pushing it out by backoff during an error streak. */
 function applyNextRunAt(auto: Automation, now: number, defaultTimezone?: string): void {
   const nextRun = computeNextRunAt(auto, now, defaultTimezone);
-  if (nextRun === null) return;
+  if (nextRun === null) {
+    setNextRunAt(auto, null);
+    return;
+  }
 
   // In backoff, push nextRunAt forward by the backoff delay but never schedule
   // sooner than the natural interval.
@@ -464,23 +486,44 @@ export class Scheduler {
   }
 
   /**
-   * Compute initial `nextRunAt` for any enabled automation missing one, and
-   * persist the owners whose stores changed. Shared by start + reload.
+   * Compute initial `nextRunAt` for any enabled automation missing one, clear
+   * it on any whose schedule has no next run, and persist the automations that
+   * changed. Shared by start + reload, so a stored automation whose `nextRunAt`
+   * outlived its schedule is corrected before the timer reads it.
    */
   private seedNextRunAt(): void {
     const now = Date.now();
     const dirty: Automation[] = [];
     for (const auto of this.definitions.values()) {
-      if (isEventSchedule(auto.schedule)) continue;
-      if (auto.enabled && !auto.nextRunAt && auto.ownerId && auto.workspaceId) {
-        const next = computeNextRunAt(auto, now, this.config.defaultTimezone);
-        if (next !== null) {
-          auto.nextRunAt = new Date(next).toISOString();
-          dirty.push(auto);
-        }
-      }
+      if (this.reconcileNextRunAt(auto, now)) dirty.push(auto);
     }
     for (const auto of dirty) this.persistAutomation(auto);
+  }
+
+  /**
+   * Seed a missing `nextRunAt`, or clear one whose schedule has no next run.
+   * One on a schedule that still has a next run is left alone. Returns
+   * whether it changed.
+   */
+  private reconcileNextRunAt(auto: Automation, now: number): boolean {
+    if (isEventSchedule(auto.schedule)) return false;
+    if (!auto.enabled || !auto.ownerId || !auto.workspaceId) return false;
+    let next: number | null;
+    try {
+      next = computeNextRunAt(auto, now, this.config.defaultTimezone);
+    } catch (err) {
+      // One unreadable schedule must not stop the scheduler starting for
+      // every workspace; it keeps its stored nextRunAt.
+      log.warn("[automations] could not compute next run", {
+        automationId: auto.id,
+        workspaceId: auto.workspaceId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+    const changed = next === null ? Boolean(auto.nextRunAt) : !auto.nextRunAt;
+    if (changed) setNextRunAt(auto, next);
+    return changed;
   }
 
   /**
@@ -552,6 +595,12 @@ export class Scheduler {
   /**
    * Trigger an immediate run of a specific automation, bypassing schedule
    * and backoff checks. Respects concurrency guards.
+   *
+   * Runs a disabled automation. `enabled` decides whether the automation fires
+   * unattended — from its schedule or from events — and Run now is a person's
+   * deliberate act, which is how a disabled automation is tested before it is
+   * enabled (the create form's test run creates it disabled and runs it).
+   * `handleRun` tells the caller the automation is disabled.
    */
   async runNow(wsId: string, ownerId: string, automationId: string): Promise<AutomationRun | null> {
     const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
@@ -592,6 +641,7 @@ export class Scheduler {
     const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
     const auto = this.definitions.get(key);
     if (!auto) return { skipped: "the automation is no longer in this workspace" };
+    // Unattended, so `enabled` gates it; `runNow` is the attended trigger that does not.
     if (!auto.enabled) return { skipped: "the automation is disabled" };
     if (this.activeRuns.has(key)) {
       this.recordSkipped(auto, "Already running (event)");
@@ -660,6 +710,7 @@ export class Scheduler {
       // delay for as long as such an automation exists.
       if (isEventSchedule(auto.schedule)) continue;
       if (!auto.nextRunAt) {
+        if (!dueWithoutNextRunAt(auto)) continue;
         // Due immediately
         minDelay = 0;
         break;
@@ -909,7 +960,9 @@ export class Scheduler {
         // Ensure nextRunAt is in the future — if the computed time is past
         // (e.g., interval based on old lastRunAt), advance by intervalMs from now
         const effectiveNext = nextRun > now ? nextRun : now + (fresh.schedule.intervalMs ?? 60_000);
-        fresh.nextRunAt = new Date(effectiveNext).toISOString();
+        setNextRunAt(fresh, effectiveNext);
+      } else {
+        setNextRunAt(fresh, null);
       }
       fresh.updatedAt = new Date(now).toISOString();
       saveAutomation(this.config.workDir, wsId, ownerId, fresh);

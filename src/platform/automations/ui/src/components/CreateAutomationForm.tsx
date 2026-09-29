@@ -34,6 +34,16 @@ export const TEMPLATES: Array<{
   },
 ];
 
+const hintStyle = { fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 } as const;
+
+/** Split the comma-separated tools field into patterns, dropping blanks. */
+export function parseToolList(value: string): string[] {
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export function CreateAutomationForm({
   onCreated,
   onCancel,
@@ -57,6 +67,7 @@ export function CreateAutomationForm({
   const [model, setModel] = useState("");
   const [budgetEnabled, setBudgetEnabled] = useState(false);
   const [budgetMaxInput, setBudgetMaxInput] = useState(500_000);
+  const [allowedTools, setAllowedTools] = useState("");
   const [creating, setCreating] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
@@ -101,6 +112,8 @@ export function CreateAutomationForm({
     if (budgetEnabled) {
       manifest.tokenBudget = { maxInputTokens: budgetMaxInput, period: "daily" as const };
     }
+    const tools = parseToolList(allowedTools);
+    if (tools.length > 0) manifest.allowedTools = tools;
 
     try {
       const result = await createTool.call({ manifest, body: prompt.trim() });
@@ -247,6 +260,73 @@ export function CreateAutomationForm({
             })()}
         </div>
 
+        <div className="detail-section">
+          <div className="detail-section-title">Limits</div>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={budgetEnabled}
+              onChange={(e) => setBudgetEnabled(e.target.checked)}
+            />
+            Daily token budget
+          </label>
+          {budgetEnabled && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginTop: 6,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                Max input tokens per day:
+              </span>
+              <input
+                className="inline-edit-input"
+                type="number"
+                min={10000}
+                step={50000}
+                value={budgetMaxInput}
+                onChange={(e) => setBudgetMaxInput(Number(e.target.value))}
+                style={{ width: 110 }}
+              />
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                ({formatTokens(budgetMaxInput)})
+              </span>
+            </div>
+          )}
+          <div style={hintStyle}>
+            Counted in tokens, not dollars. Checked after each run: once the day's total passes the
+            budget, the automation turns off until you turn it back on.
+          </div>
+
+          <div className="detail-config-label" style={{ marginTop: 12 }}>
+            Allowed tools
+          </div>
+          <input
+            className="inline-edit-input"
+            type="text"
+            value={allowedTools}
+            onChange={(e) => setAllowedTools(e.target.value)}
+            placeholder="All tools"
+          />
+          <div style={hintStyle}>
+            Comma-separated names or globs, e.g. <code>gmail__*</code>, <code>files__read</code> (a
+            personal connection is <code>my_gmail__*</code>). Runs can't use anything else, apart
+            from system tools. Leave empty to allow every tool.
+          </div>
+        </div>
+
         {/* Advanced toggle */}
         <div className="detail-section">
           {/* biome-ignore lint/a11y/useKeyWithClickEvents: toggle disclosure */}
@@ -291,50 +371,6 @@ export function CreateAutomationForm({
                   value={maxRunDurationSec}
                   onChange={(e) => setMaxRunDurationSec(Number(e.target.value))}
                 />
-              </div>
-              <div className="detail-config-item" style={{ gridColumn: "1 / -1" }}>
-                <div
-                  className="detail-config-label"
-                  style={{ display: "flex", alignItems: "center", gap: 8 }}
-                >
-                  <label
-                    style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={budgetEnabled}
-                      onChange={(e) => setBudgetEnabled(e.target.checked)}
-                    />
-                    Daily token budget
-                  </label>
-                </div>
-                {budgetEnabled && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      marginTop: 4,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-                      Max input tokens/day:
-                    </span>
-                    <input
-                      className="inline-edit-input"
-                      type="number"
-                      min={10000}
-                      step={50000}
-                      value={budgetMaxInput}
-                      onChange={(e) => setBudgetMaxInput(Number(e.target.value))}
-                      style={{ width: 100 }}
-                    />
-                    <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                      ({formatTokens(budgetMaxInput)})
-                    </span>
-                  </div>
-                )}
               </div>
             </div>
           )}

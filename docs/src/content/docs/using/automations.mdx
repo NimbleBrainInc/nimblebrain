@@ -16,7 +16,7 @@ An automation has:
 - **A name** — becomes a kebab-case ID (for example, "Weekly Report" → `weekly-report`)
 - **A prompt** — the instruction sent to the agent on each run
 - **A schedule** — a cron expression, a fixed interval, or a set of notifications to run on
-- **Optional run-time policy** — a model override, a forced skill match, iteration and token caps
+- **Optional run-time policy** — a model override, a forced skill match, iteration and token caps, a token budget, and the tools it may use
 
 ## Who an automation runs as
 
@@ -32,7 +32,7 @@ Automation runs use your **timezone** for cron scheduling. The default is `Pacif
 
 Three schedule types:
 
-- **Cron** — a standard 5-field cron expression (for example, `0 9 * * 1` for 9:00 AM every Monday)
+- **Cron** — a standard 5-field cron expression (for example, `0 9 * * 1` for 9:00 AM every Monday). An expression that matches no future date, such as `0 9 31 2 *` (February 31), is refused, since it would never run
 - **Interval** — a fixed interval in milliseconds, minimum 60000 (one minute)
 - **Event** — no time at all: the automation runs when a notification reaches it
 
@@ -114,6 +114,17 @@ the contact. Don't send anything.
 The agent will create it with an event schedule — and should tell you that it
 will not run until a workspace admin routes those notifications to it.
 
+## Limiting spend and tools
+
+Both limits sit under **Limits** in the create form, and the agent can set them when it creates an automation.
+
+![The create form's Limits section, with a daily token budget and an allowed-tools list filled in](../../../assets/guide/automation-create-limits.png)
+
+- **Token budget** — a cap on the tokens (not dollars) an automation's runs use per day or month, or over its lifetime. It is checked after each run finishes: once the period's total passes the cap, the automation turns off and stays off until you turn it back on. The run that crosses the cap still finishes, so to bound a single run, use the per-run token and iteration caps.
+- **Allowed tools** — tool names or globs the automation's runs may use, such as `gmail__*` for a workspace connector's tools, `my_gmail__*` for your personal connection, or `files__read` for a single tool. A run can't activate or call anything outside the list; NimbleBrain's own system tools (`nb__*`) stay available. Prefer a `<connector>__*` glob, since a connector can rename its tools. Leave it empty to allow every tool. The list can't include the tools that create, update, or delete automations.
+
+A shorter tool list also makes each run cheaper, because the model is sent fewer tool definitions.
+
 ## Managing automations
 
 Browse and manage automations from the **Automations** panel in the sidebar, or ask the agent in chat. Both surfaces let you:
@@ -128,7 +139,7 @@ Browse and manage automations from the **Automations** panel in the sidebar, or 
 
 4. **Resume a paused automation** — re-enable it on its existing schedule.
 
-5. **Trigger an immediate run** — bypass the schedule and run now. Short runs return the full run record; runs that take longer than about 30 seconds continue in the background, and the panel updates when they finish.
+5. **Trigger an immediate run** — bypass the schedule and run now. This runs a paused automation too, which is how you test one before enabling it; a paused automation is never fired by its schedule or by events. Short runs return the full run record. A run that takes longer than about 30 seconds keeps going in the background: the response says it is still running, and its record appears in the run history when it ends.
 
 </Steps>
 

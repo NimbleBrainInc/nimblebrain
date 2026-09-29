@@ -13,11 +13,13 @@ export function toolRoutes(ctx: AppContext) {
   // (conversations, files, automations) reads and writes that workspace's
   // partition. `/v1/files/:fileId` is identity-scoped: the file id locates its
   // workspace, within the caller's own files.
+  const auth = requireAuth(ctx.authOptions);
+  const logErrors = errorLog(ctx);
   return new Hono<AppEnv>()
-    .use("*", requireAuth(ctx.authOptions))
-    .use("*", errorLog(ctx))
     .post(
       `${WORKSPACE_ROUTE_PREFIX}/tools/call`,
+      auth,
+      logErrors,
       requireWorkspace(ctx),
       bodyLimit(1_048_576),
       requestRateLimit(ctx.toolCallLimiter),
@@ -29,10 +31,10 @@ export function toolRoutes(ctx: AppContext) {
           workspaceId: c.var.workspaceId,
         }),
     )
-    .get(`${WORKSPACE_ROUTE_PREFIX}/shell`, requireWorkspace(ctx), (c) =>
+    .get(`${WORKSPACE_ROUTE_PREFIX}/shell`, auth, logErrors, requireWorkspace(ctx), (c) =>
       handleShell(ctx.runtime, c.var.workspaceId),
     )
-    .get("/v1/files/:fileId", (c) => {
+    .get("/v1/files/:fileId", auth, logErrors, (c) => {
       // Files are workspace-owned but addressed by their globally-unique id alone:
       // the server resolves the workspace from the id within the caller's own
       // owner partitions (see handleFileServe). No workspace in the URL, so a

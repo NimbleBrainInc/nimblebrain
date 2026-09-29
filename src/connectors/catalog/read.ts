@@ -30,7 +30,11 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { log } from "../../observability/log.ts";
-import { projectServerDetailToCatalogListing, validateServerDetailSafety } from "./projection.ts";
+import {
+  projectServerDetailToCatalogListing,
+  serverDetailToCatalogEntry,
+  validateServerDetailSafety,
+} from "./projection.ts";
 import { type ServerDetail, validateServerDetail } from "./server-detail.ts";
 
 const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
@@ -87,8 +91,9 @@ export function readCatalogServers(path: string): ServerDetail[] {
 }
 
 /**
- * Report the entries at `path` that would not reach Browse, without
- * loading them into a registry and without logging.
+ * Report the entries at `path` that would not reach Browse, or would reach it
+ * with every tool admin-only (a malformed `admin_tools`, which the runtime
+ * keeps and fails closed on), without loading them into a registry.
  *
  * An entry is removed silently at three points, and all three show the
  * operator the same nothing — the connector is absent, no error anywhere:
@@ -143,6 +148,16 @@ export function validateCatalog(path: string): CatalogDiagnostic[] {
         index,
         name: detail.name,
         message: `${tag} dropped at the directory boundary — not installable: needs a \`remotes\` entry (this runtime connects to remote MCP servers; it does not acquire \`packages\`)`,
+      });
+      continue;
+    }
+    const adminTools = serverDetailToCatalogEntry(detail)?.adminTools;
+    if (adminTools?.kind === "all") {
+      diagnostics.push({
+        source,
+        index,
+        name: detail.name,
+        message: `${tag} every tool is admin-only — ${adminTools.reason}`,
       });
     }
   }

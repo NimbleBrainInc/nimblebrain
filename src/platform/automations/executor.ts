@@ -125,10 +125,10 @@ export interface ExecutorContext {
 /**
  * Recursive-call guard. An automation whose `allowedTools` includes a
  * tool that creates more automations would spawn an unbounded loop on
- * every scheduled run. The LLM-facing schema doesn't accept
- * `allowedTools`, but operator file edits and connector-contributed
- * schedules can still set it — so the guard lives at the executor,
- * which sees the merged Automation regardless of how it was authored.
+ * every scheduled run. The create and update tools refuse such a list, but
+ * operator file edits and connector-contributed schedules can still set it —
+ * so the guard also lives at the executor, which sees the merged Automation
+ * regardless of how it was authored.
  *
  * This is a narrow, operator-input guard, NOT the run-time boundary: an
  * unattended run is barred from the whole automation-authoring surface at
@@ -193,7 +193,9 @@ function buildRequest(
   if (automation.model != null) req.model = automation.model;
   if (automation.maxIterations != null) req.maxIterations = automation.maxIterations;
   if (automation.maxInputTokens != null) req.maxRunInputTokens = automation.maxInputTokens;
-  if (automation.allowedTools != null) req.allowedTools = automation.allowedTools;
+  // An empty list means no narrowing, as the form shows it ("all"), not a run
+  // with only the system tools.
+  if (automation.allowedTools?.length) req.allowedTools = automation.allowedTools;
   if (ctx?.workspaceId) req.workspaceId = ctx.workspaceId;
   if (ctx?.identity) req.identity = ctx.identity;
   return req;

@@ -188,6 +188,23 @@ describe("validateCatalog", () => {
     }
   });
 
+  test("a malformed admin_tools is reported, though the entry is kept", () => {
+    // The runtime keeps the entry and makes every tool on it admin-only, so
+    // members lose the connector; the gate is where that typo is caught.
+    const withAdmin = (admin_tools: unknown) => ({
+      ...VALID_ENTRY,
+      _meta: { "ai.nimblebrain/host": { host_version: "1.0", admin_tools } },
+    });
+    writeCatalog("catalog.json", [withAdmin("configure")]);
+    const diagnostics = validateCatalog(dir);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.message).toContain("every tool is admin-only");
+    expect(diagnostics[0]?.message).toContain("admin_tools is not a list");
+
+    writeCatalog("catalog.json", [withAdmin(["configure", "configure"])]);
+    expect(validateCatalog(dir)).toEqual([]);
+  });
+
   test("an entry with neither packages nor remotes is reported as not installable", () => {
     // `packages` and `remotes` are both optional in ServerDetail, so this
     // is schema-valid and safety-clean, and the directory's projection

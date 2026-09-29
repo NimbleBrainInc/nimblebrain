@@ -703,10 +703,10 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
 // Recursive-call guard at the executor
 // ---------------------------------------------------------------------------
 //
-// `allowedTools` is no longer in the LLM-facing schema (PR #127), but
-// operator file edits and connector-contributed schedules can still set it.
-// The guard lives at the executor — closest to the actual chat() call —
-// so it sees the merged Automation regardless of how the field got there.
+// The create and update tools refuse a recursive `allowedTools`, but operator
+// file edits and connector-contributed schedules can still set one. The guard
+// also lives at the executor — closest to the actual run — so it sees the
+// merged Automation regardless of how the field got there.
 
 describe("createDirectExecutor — recursive-call guard", () => {
 	test("refuses to run when allowedTools includes automations__create", async () => {
@@ -731,6 +731,23 @@ describe("createDirectExecutor — recursive-call guard", () => {
 		});
 
 		await expect(executor(automation)).rejects.toThrow(/allowedTools/);
+	});
+
+	test("sends allowedTools to the run, and none for an empty list", async () => {
+		const seen: Array<string[] | undefined> = [];
+		const taskFn: TaskFn = async (req) => {
+			seen.push(req.allowedTools);
+			return makeDirectTaskFn()(req);
+		};
+		const executor = createDirectExecutor(taskFn, () => ({
+			workspaceId: "ws_test",
+			identity: { id: "u" },
+		}));
+
+		await executor(makeAutomation({ allowedTools: ["crm__*"] }));
+		await executor(makeAutomation({ allowedTools: [] }));
+
+		expect(seen).toEqual([["crm__*"], undefined]);
 	});
 
 	test("permits non-recursive allowedTools", async () => {

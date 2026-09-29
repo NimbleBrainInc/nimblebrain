@@ -609,6 +609,145 @@ describe("Scheduler — cron scheduling", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: Scheduler — a cron schedule with no next run
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — cron schedule with no next run", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = makeTmpDir();
+	});
+
+	afterEach(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	const FEB_31 = { type: "cron" as const, expression: "0 9 31 2 *" };
+	const PAST_YEAR = { type: "cron" as const, expression: "0 0 9 1 1 * 2020" };
+
+	it("isDue is false for a cron schedule with no nextRunAt", () => {
+		const auto = makeAutomation({ schedule: FEB_31, nextRunAt: undefined });
+		expect(isDue(auto, Date.now())).toBe(false);
+	});
+
+	it("never runs a stored automation with no nextRunAt", async () => {
+		const auto = makeAutomation({ schedule: FEB_31, nextRunAt: undefined });
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		const originalSetTimeout = globalThis.setTimeout;
+		let capturedDelay = -1;
+		globalThis.setTimeout = ((fn: Function, delay?: number) => {
+			capturedDelay = delay ?? 0;
+			return originalSetTimeout(fn, delay);
+		}) as typeof globalThis.setTimeout;
+
+		try {
+			scheduler.start();
+			expect(capturedDelay).toBe(60_000);
+			await scheduler.onTimer();
+			await scheduler.onTimer();
+			expect(executor).not.toHaveBeenCalled();
+		} finally {
+			scheduler.stop();
+			globalThis.setTimeout = originalSetTimeout;
+		}
+	});
+
+	it("clears a stale past nextRunAt on start and never runs it", async () => {
+		const auto = makeAutomation({
+			schedule: FEB_31,
+			nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+		});
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		scheduler.start();
+		await scheduler.onTimer();
+		scheduler.stop();
+
+		expect(executor).not.toHaveBeenCalled();
+		expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+		expect(loadDefs(tmpDir).get(auto.id)?.nextRunAt).toBeUndefined();
+	});
+
+	it("runs a cron whose last date has passed once, then never again", async () => {
+		const auto = makeAutomation({
+			schedule: { type: "cron", expression: "* * * * *" },
+			nextRunAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		scheduler.start();
+
+		// The schedule runs out of dates between reconciles: the stored file
+		// now has a year that has passed while the timer still holds a due run.
+		const stored = loadDefs(tmpDir).get(auto.id)!;
+		saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
+		defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+
+		await scheduler.onTimer();
+		await scheduler.onTimer();
+		scheduler.stop();
+
+		expect(executor).toHaveBeenCalledTimes(1);
+		expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+	});
+
+	it("clears nextRunAt on a skipped run whose cron has no next run", async () => {
+		const auto = makeAutomation({
+			schedule: { type: "cron", expression: "* * * * *" },
+			nextRunAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+		const { executor, resolve } = createBlockingExecutor();
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		scheduler.start();
+		scheduler.onTimer();
+		await new Promise((r) => setTimeout(r, 50));
+
+		// While the first run is still active, the schedule runs out of dates
+		// and the timer still holds a due run, so the next tick skips it.
+		const stored = loadDefs(tmpDir).get(auto.id)!;
+		saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
+		defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+		await scheduler.onTimer();
+
+		expect(executor).toHaveBeenCalledTimes(1);
+		expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+
+		resolve(makeSuccessRun(auto.id));
+		scheduler.stop();
+	});
+
+	it("still runs a normal cron and advances nextRunAt", async () => {
+		const auto = makeAutomation({
+			schedule: { type: "cron", expression: "* * * * *" },
+			nextRunAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		scheduler.start();
+		await scheduler.onTimer();
+		await scheduler.onTimer();
+		scheduler.stop();
+
+		expect(executor).toHaveBeenCalledTimes(1);
+		const next = defOf(scheduler, auto.id)?.nextRunAt;
+		expect(next).toBeDefined();
+		expect(new Date(next!).getTime()).toBeGreaterThan(Date.now());
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Tests: Scheduler — concurrency
 // ---------------------------------------------------------------------------
 
@@ -965,6 +1104,27 @@ describe("Scheduler — runNow", () => {
 		const run = await scheduler.runNow(WS, OWNER, auto.id);
 
 		expect(run).not.toBeNull();
+		expect(run!.status).toBe("success");
+		expect(executor).toHaveBeenCalledTimes(1);
+
+		scheduler.stop();
+	});
+
+	it("runNow() runs a disabled automation that an event would skip", async () => {
+		// One rule for `enabled`: it gates unattended triggers, and Run now is
+		// the attended one. Both triggers against the same disabled automation.
+		const auto = makeAutomation({ enabled: false });
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+		const executor = createMockExecutor();
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		scheduler.start();
+
+		const fromEvent = await scheduler.runFromEvent(WS, OWNER, auto.id, { preamble: "x" });
+		expect(fromEvent).toEqual({ skipped: "the automation is disabled" });
+		expect(executor).not.toHaveBeenCalled();
+
+		const run = await scheduler.runNow(WS, OWNER, auto.id);
 		expect(run!.status).toBe("success");
 		expect(executor).toHaveBeenCalledTimes(1);
 

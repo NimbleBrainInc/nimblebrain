@@ -582,6 +582,58 @@ describe("handleUpdate", () => {
 			handleUpdate(updateArgs("Nonexistent"), ctx),
 		).toThrow("Automation not found");
 	});
+	test("sets allowedTools", () => {
+		const ctx = makeCtx();
+		handleCreate(
+			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }),
+			ctx,
+		);
+
+		const result = handleUpdate(
+			updateArgs("Scoped", { allowedTools: ["crm__*"] }),
+			ctx,
+		) as { automation: Automation };
+
+		expect(result.automation.allowedTools).toEqual(["crm__*"]);
+	});
+
+	test("refuses allowedTools that name an automation-authoring tool", () => {
+		const ctx = makeCtx();
+		handleCreate(
+			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }),
+			ctx,
+		);
+
+		expect(() =>
+			handleUpdate(updateArgs("Scoped", { allowedTools: ["automations__update"] }), ctx),
+		).toThrow(/allowedTools may not include "automations__update"/);
+	});
+});
+
+describe("handleCreate — allowedTools", () => {
+	test("stores the list on the automation", () => {
+		const ctx = makeCtx();
+		const result = handleCreate(
+			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }, {
+				allowedTools: ["crm__*", "files__read"],
+			}),
+			ctx,
+		) as { automation: Automation };
+
+		expect(result.automation.allowedTools).toEqual(["crm__*", "files__read"]);
+	});
+
+	test("refuses a list that names automations__create", () => {
+		const ctx = makeCtx();
+		expect(() =>
+			handleCreate(
+				createArgs("Loop", "Do it", { type: "interval", intervalMs: 60_000 }, {
+					allowedTools: ["files__*", "automations__create"],
+				}),
+				ctx,
+			),
+		).toThrow(/allowedTools may not include/);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -830,6 +882,84 @@ describe("handleRun", () => {
 		expect(result.run.status).toBe("success");
 	});
 
+	test("runs a disabled automation and says it is disabled", async () => {
+		const ctx = makeCtx();
+		handleCreate(
+			createArgs("Paused", "Run now", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
+			ctx,
+		);
+
+		const result = await handleRun({ name: "Paused" }, ctx);
+
+		if (!("run" in result)) {
+			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+		}
+		expect(result.run.status).toBe("success");
+		expect(result.enabled).toBe(false);
+		expect(result.message).toContain("is disabled");
+	});
+
+	test("an enabled automation's run carries no disabled message", async () => {
+		const ctx = makeCtx();
+		handleCreate(createArgs("Live", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
+
+		const result = await handleRun({ name: "Live" }, ctx);
+
+		if (!("run" in result)) {
+			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+		}
+		expect(result.enabled).toBe(true);
+		expect(result.message).toBeUndefined();
+	});
+
+	test("reports enabled as it stands after the run, when the run disabled it", async () => {
+		// A run that trips the failure auto-disable or the token budget leaves
+		// the automation disabled; the response must say so.
+		const base = makeCtx();
+		const ctx = makeCtx({
+			runNow: async (id) => {
+				const run = await base.runNow(id);
+				const defs = loadDefs();
+				defs.get(id)!.enabled = false;
+				saveDefs(defs);
+				return run;
+			},
+		});
+		handleCreate(createArgs("Trips", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+
+		const result = await handleRun({ name: "Trips" }, ctx);
+
+		if (!("run" in result)) {
+			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+		}
+		expect(result.enabled).toBe(false);
+		expect(result.message).toContain("is disabled");
+	});
+
+	test("a disabled automation's dispatched envelope says it is disabled", async () => {
+		let resolveRun: ((value: AutomationRun | null) => void) | undefined;
+		const runPromise = new Promise<AutomationRun | null>((resolve) => {
+			resolveRun = resolve;
+		});
+		const slowCtx = makeCtx({ handleRunSyncWaitMs: 20, runNow: () => runPromise });
+		handleCreate(
+			createArgs("Slow paused", "p", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
+			slowCtx,
+		);
+
+		try {
+			const result = await handleRun({ name: "Slow paused" }, slowCtx);
+			if (!("status" in result)) {
+				throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
+			}
+			expect(result.enabled).toBe(false);
+			expect(result.message).toContain("still running");
+			expect(result.message).toContain("is disabled");
+		} finally {
+			resolveRun?.(null);
+		}
+	});
+
 	test("throws for nonexistent automation", async () => {
 		const ctx = makeCtx();
 		await expect(handleRun({ name: "Nope" }, ctx)).rejects.toThrow(
@@ -874,7 +1004,15 @@ describe("handleRun", () => {
 			}
 			expect(result.status).toBe("dispatched");
 			expect(result.automationId).toBe("slow");
+			expect(result.enabled).toBe(true);
+			expect(Number.isNaN(Date.parse(result.startedAt))).toBe(false);
+			// Says the run is still going, and where its result will appear.
 			expect(result.message).toContain("still running");
+			expect(result.message).toContain("has not failed");
+			expect(result.message).toContain("automations__runs");
+			expect(result.message).toContain(result.startedAt);
+			expect(result.message).toContain("automations__run_result");
+			expect(result.message).not.toContain("disabled");
 		} finally {
 			// Drain the pending runNow promise so it doesn't sit live past
 			// the test (handleRun no longer awaits it after the sync-wait
@@ -1154,6 +1292,40 @@ describe("handleCreate — validation", () => {
 			),
 		).toThrow("Invalid cron");
 	});
+
+	test("rejects creation with a cron that matches no date", () => {
+		const ctx = makeCtx();
+		expect(() =>
+			handleCreate(
+				createArgs("February 31", "test", { type: "cron", expression: "0 9 31 2 *" }),
+				ctx,
+			),
+		).toThrow("matches no future date");
+	});
+
+	test("rejects creation with a cron whose year has passed", () => {
+		const ctx = makeCtx();
+		expect(() =>
+			handleCreate(
+				createArgs("Past Year", "test", { type: "cron", expression: "0 0 9 1 1 * 2020" }),
+				ctx,
+			),
+		).toThrow("matches no future date");
+	});
+
+	test("rejects creation with an unknown timezone", () => {
+		const ctx = makeCtx();
+		expect(() =>
+			handleCreate(
+				createArgs("Bad Zone", "test", {
+					type: "cron",
+					expression: "0 9 * * *",
+					timezone: "Bogus/Zone",
+				}),
+				ctx,
+			),
+		).toThrow("Invalid cron expression");
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1176,6 +1348,23 @@ describe("handleUpdate — validation", () => {
 				ctx,
 			),
 		).toThrow("at least 1 minute");
+	});
+
+	test("rejects update to a cron that matches no date", () => {
+		const ctx = makeCtx();
+		handleCreate(
+			createArgs("Update To Feb 31", "test", { type: "cron", expression: "0 9 * * *" }),
+			ctx,
+		);
+
+		expect(() =>
+			handleUpdate(
+				updateArgs("Update To Feb 31", {
+					schedule: { type: "cron", expression: "0 9 31 2 *" },
+				}),
+				ctx,
+			),
+		).toThrow("matches no future date");
 	});
 
 	test("accepts valid schedule update", () => {

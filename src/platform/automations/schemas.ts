@@ -82,7 +82,15 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: "run",
     description:
-      "Trigger an immediate execution of an automation, bypassing schedule and backoff. Returns the full run record when the run completes within ~30s; longer runs return {status: 'dispatched', automationId, message} and continue in the background — poll automations__runs to observe completion. Both shapes indicate the run was kicked off successfully; only an error response indicates failure to dispatch.",
+      "Run an automation now, bypassing schedule and backoff. Runs it even when it is disabled " +
+      "(enabled: false): Run now is a deliberate act, while a disabled automation is never fired " +
+      "by its schedule or by events. The response carries `enabled` and says when it is false. " +
+      "Returns the full run record when the run completes within ~30s. A longer run returns " +
+      "{status: 'dispatched', automationId, startedAt, enabled, message}: it is still running in " +
+      "the background, not failed and not ignored. Its record appears in automations__runs " +
+      "(automationId, since: startedAt) when it ends; read the full output with " +
+      "automations__run_result, or stop it with automations__cancel. Only an error response " +
+      "means the run did not start.",
     inputSchema: AutomationsRunInput,
   },
   {

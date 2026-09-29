@@ -90,17 +90,12 @@ describe("outbound-OAuth callbacks are public under adapter auth", () => {
 	});
 });
 
-// The safety of the authenticated route groups' `authed.use("*", requireAuth)`
-// wildcards (resources/tools/chat/bootstrap/mcp) rests on a MOUNT-ORDER
-// invariant in app.ts: every public/special route is registered BEFORE the
-// authenticated tail, so the leaked `/*` matcher never reaches them. That
-// invariant is enforced by comments today. Pin it under CI: a reorder, or a
-// new leaking wildcard mounted ahead of these, flips them to 401 and fails
-// here instead of reaching production.
-// Real platform GET routes only. The bare test server has no Caddy/ALB in
-// front, so liveness paths (/healthz, /readyz) aren't platform routes here and
-// an unregistered path falls through to a late authenticated `.use("*")` and
-// 401s — a harness artifact, not the invariant under test.
+// Each router chains requireAuth on its own routes, so a public route answers
+// without auth wherever it is mounted. A router that gave itself a
+// `.use("*", requireAuth)` would 401 these; this pins them under CI.
+// Registered routes only: the runtime answers a path no router registered
+// with 404. `route-middleware-scope.test.ts` walks the whole route table and
+// pins that 404.
 const PUBLIC_GET_ROUTES = [
 	"/.well-known/oauth-protected-resource",
 	"/.well-known/oauth-authorization-server",
@@ -109,7 +104,7 @@ const PUBLIC_GET_ROUTES = [
 	"/v1/composio-auth/callback",
 ];
 
-describe("public/special routes stay reachable without auth (mount-order invariant)", () => {
+describe("public/special routes stay reachable without auth", () => {
 	for (const path of PUBLIC_GET_ROUTES) {
 		it(`GET ${path} is not 401`, async () => {
 			const res = await fetch(`${baseUrl}${path}`);

@@ -24,12 +24,14 @@ export function resourceRoutes(ctx: AppContext) {
   // served from the identity host; the workspace in the URL decides nothing for
   // it, but the web shell renders every app inside a workspace, so one route
   // serves both.
+  const auth = requireAuth(ctx.authOptions);
+  const logErrors = errorLog(ctx);
   return (
     new Hono<AppEnv>()
-      .use("*", requireAuth(ctx.authOptions))
-      .use("*", errorLog(ctx))
       .post(
         `${WORKSPACE_ROUTE_PREFIX}/resources/read`,
+        auth,
+        logErrors,
         requireWorkspace(ctx),
         bodyLimit(1_048_576),
         (c) =>
@@ -39,16 +41,22 @@ export function resourceRoutes(ctx: AppContext) {
           }),
       )
       // Uploads write to the workspace in the URL, under the owner partition.
-      .post(`${WORKSPACE_ROUTE_PREFIX}/resources`, requireWorkspace(ctx), uploadLimit, (c) =>
-        handleResourceUpload(
-          c.req.raw,
-          ctx.runtime,
-          ctx.features,
-          c.var.identity,
-          c.var.workspaceId,
-        ),
+      .post(
+        `${WORKSPACE_ROUTE_PREFIX}/resources`,
+        auth,
+        logErrors,
+        requireWorkspace(ctx),
+        uploadLimit,
+        (c) =>
+          handleResourceUpload(
+            c.req.raw,
+            ctx.runtime,
+            ctx.features,
+            c.var.identity,
+            c.var.workspaceId,
+          ),
       )
-      .get(APP_RESOURCES_ROUTE, requireWorkspace(ctx), (c) => {
+      .get(APP_RESOURCES_ROUTE, auth, logErrors, requireWorkspace(ctx), (c) => {
         const name = decodeURIComponent(c.req.param("name"));
         // Extract the full resource path after /resources/
         const url = new URL(c.req.url);
