@@ -21,6 +21,7 @@ import { log } from "../../../observability/log.ts";
 import type {
   BrokeredCleanupResult,
   BrokeredStateOptions,
+  ConnectedAccountIdentity,
   ConnectManagedApiKeyOptions,
   CreateManagedSessionOptions,
   ManagedConnectorProvider,
@@ -204,6 +205,7 @@ async function connectApiKey(
     userId,
     connectedAt: new Date().toISOString(),
     status: connected.status,
+    ...(connected.displayName ? { displayName: connected.displayName } : {}),
   };
   await saveComposioConnection(opts.workDir, opts.owner, opts.connectorId, connection);
 
@@ -259,6 +261,24 @@ function hasConnection(opts: BrokeredStateOptions): boolean {
 }
 
 /**
+ * The account recorded on `connection.json` when the connection landed. Reads
+ * the local file only; a missing or corrupt file answers null so a bad record
+ * can never fail a connectors listing.
+ */
+async function identity(opts: BrokeredStateOptions): Promise<ConnectedAccountIdentity | null> {
+  try {
+    const connection = await readComposioConnection(
+      opts.workDir,
+      opts.owner,
+      opts.brokered.connectorId,
+    );
+    return connection?.displayName ? { name: connection.displayName } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Build the Composio `ManagedConnectorProvider`. Called only when Composio is
  * configured (`buildManagedConnectorRegistry`), so the broker credential is
  * present. Reads the monitor switch once here — the same "resolve config once at
@@ -297,6 +317,8 @@ export function createComposioProvider(): ManagedConnectorProvider {
     cleanup,
 
     hasConnection,
+
+    identity,
 
     ...(monitorEnabled ? { probe: (directory) => new ComposioConnectionProbe(directory) } : {}),
 

@@ -173,6 +173,25 @@ describe("readComposioConnection", () => {
       cleanup();
     }
   });
+
+  test("round-trips the optional displayName, and omits it when absent", async () => {
+    const { dir, cleanup } = freshDir();
+    const owner = { type: "workspace", wsId: "ws_test" } as const;
+    try {
+      await saveComposioConnection(dir, owner, "com.google/gmail", {
+        ...SAMPLE,
+        displayName: "user@example.com",
+      });
+      const withName = await readComposioConnection(dir, owner, "com.google/gmail");
+      expect(withName?.displayName).toBe("user@example.com");
+
+      await saveComposioConnection(dir, owner, "com.google/gmail", SAMPLE);
+      const withoutName = await readComposioConnection(dir, owner, "com.google/gmail");
+      expect(withoutName).not.toHaveProperty("displayName");
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe("hasPersistedComposioConnection", () => {

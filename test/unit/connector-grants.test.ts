@@ -21,6 +21,7 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
+import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import {
   installTestCredentialStore,
@@ -99,7 +100,12 @@ async function buildHarness(opts: {
 function sc(result: { structuredContent?: unknown }): {
   ok?: boolean;
   error?: string;
-  connectors?: Array<{ serverName: string; grantedWorkspaces: string[]; state?: string }>;
+  connectors?: Array<{
+    serverName: string;
+    grantedWorkspaces: string[];
+    state?: string;
+    identity?: Record<string, unknown>;
+  }>;
 } {
   return (result.structuredContent ?? {}) as never;
 }
@@ -193,6 +199,30 @@ describe("manage_connectors — personal-connector grants", () => {
     const res = await h.tool.handler({ action: "list_personal_connectors" });
     const granola = (sc(res).connectors ?? []).find((c) => c.serverName === "granola");
     expect(granola?.state).toBe("running");
+  });
+
+  test("list_personal_connectors names the signed-in account from the OIDC identity record", async () => {
+    h = await buildHarness({ personalConnectors: ["granola", "notion"] });
+    const owner = { type: "user", userId: ALICE.id } as const;
+    for (const serverName of ["granola", "notion"]) {
+      await new McpOAuthRecords({ owner, serverName, workDir: h.workDir }).write("tokens", {
+        access_token: "at",
+        token_type: "Bearer",
+      });
+    }
+    await new McpOAuthRecords({ owner, serverName: "granola", workDir: h.workDir }).write(
+      "identity",
+      { sub: "vendor-subject", email: "alice@vendor.example", name: "Alice V" },
+    );
+    const res = await h.tool.handler({ action: "list_personal_connectors" });
+    const connectors = sc(res).connectors ?? [];
+    const granola = connectors.find((c) => c.serverName === "granola");
+    const notion = connectors.find((c) => c.serverName === "notion");
+    expect(granola?.state).toBe("running");
+    // Display fields only — the vendor subject never leaves the server.
+    expect(granola?.identity).toEqual({ email: "alice@vendor.example", name: "Alice V" });
+    expect(notion?.state).toBe("running");
+    expect(notion?.identity).toBeUndefined();
   });
 
   test("all grant actions require authentication", async () => {
