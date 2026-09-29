@@ -8,8 +8,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import type { AppContext } from "../../../src/api/types.ts";
 import { wellKnownRoutes } from "../../../src/api/routes/well-known.ts";
+import type { AppContext } from "../../../src/api/types.ts";
 
 // ── Test helpers ──────────────────────────────────────────────────
 
@@ -246,9 +246,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
         "http://api.example.com/.well-known/oauth-protected-resource/mcp/ws_a",
       );
       expect(discovery.status).toBe(200);
-      expect((await discovery.json()).authorization_servers).toEqual([
-        "https://myapp.example.com",
-      ]);
+      expect((await discovery.json()).authorization_servers).toEqual(["https://myapp.example.com"]);
 
       const proxied = await app.request("/.well-known/oauth-authorization-server");
       expect(proxied.status).toBe(404);

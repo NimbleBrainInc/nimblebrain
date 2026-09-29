@@ -17,7 +17,11 @@ class CapturingSink implements EventSink {
   }
 }
 
-function seedInstance(lifecycle: ConnectorLifecycleManager, serverName: string, wsId: string): ConnectorInstance {
+function seedInstance(
+  lifecycle: ConnectorLifecycleManager,
+  serverName: string,
+  wsId: string,
+): ConnectorInstance {
   const instance: ConnectorInstance = {
     serverName,
     connectorName: "https://example.test/mcp",
@@ -89,7 +93,9 @@ describe("ConnectorLifecycleManager — Connection state transitions", () => {
     lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
       authorizationUrl: "https://x.test/?state=s",
     });
-    expect(instance.connections!.get("_workspace")!.authorizationUrl).toBe("https://x.test/?state=s");
+    expect(instance.connections!.get("_workspace")!.authorizationUrl).toBe(
+      "https://x.test/?state=s",
+    );
 
     lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
     expect(instance.connections!.get("_workspace")!.authorizationUrl).toBeUndefined();
@@ -173,6 +179,10 @@ describe("ConnectorLifecycleManager — connection transition log lines", () => 
 
     const lines = transitionLines(warn);
     expect(lines).toHaveLength(1);
-    expect(lines[0]![1]).toMatchObject({ from: "running", to: "dead", lastError: "auth flow timed out" });
+    expect(lines[0]![1]).toMatchObject({
+      from: "running",
+      to: "dead",
+      lastError: "auth flow timed out",
+    });
   });
 });

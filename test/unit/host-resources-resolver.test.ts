@@ -3,12 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProtocolError } from "@modelcontextprotocol/server";
+import { createFileStore, type FileStore } from "../../src/files/store.ts";
+import type { FileEntry } from "../../src/files/types.ts";
 import {
   FileBackedHostResourcesResolver,
   type HostResourceContext,
 } from "../../src/host-resources/index.ts";
-import { createFileStore, type FileStore } from "../../src/files/store.ts";
-import type { FileEntry } from "../../src/files/types.ts";
 
 // The resolver is the single chokepoint between a connector's inbound
 // host-resources request and the workspace-owned FileStore. Files are
@@ -246,10 +246,7 @@ describe("FileBackedHostResourcesResolver.list", () => {
       // through `unknown` because the resolver's TS signature would
       // otherwise reject this at compile time — the runtime guard is
       // what we're exercising.
-      await makeResolver().list(
-        { filter: { tags: "draft" as unknown as string[] } },
-        ctxA,
-      );
+      await makeResolver().list({ filter: { tags: "draft" as unknown as string[] } }, ctxA);
     } catch (e) {
       caught = e as ProtocolError;
     }

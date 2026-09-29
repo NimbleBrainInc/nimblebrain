@@ -14,8 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createCredentialSealer } from "../../src/tools/credential-seal.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 const KEY_ENV = "NB_TEST_WRONG_KEY_CREDENTIAL_KEY";
 const KEY_A = Buffer.alloc(32, 0x5a);

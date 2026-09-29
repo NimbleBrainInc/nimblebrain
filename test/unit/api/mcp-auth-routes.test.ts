@@ -1,8 +1,8 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
@@ -156,10 +156,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
 
   test("adds Secure flag when secureCookies is set", async () => {
     lifecycle.instances.set(`granola|${WS_ID}`, { oauthScope: "workspace" });
-    lifecycle.authUrls.set(
-      `granola|${WS_ID}|_workspace`,
-      "https://granola.test/auth?state=s",
-    );
+    lifecycle.authUrls.set(`granola|${WS_ID}|_workspace`, "https://granola.test/auth?state=s");
     const prodApp = makeApp(lifecycle, /* secureCookies */ true);
 
     const res = await prodApp.request(`http://api.example.com${INITIATE_PATH}`, {
@@ -230,10 +227,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     // A URL without `?state=…` shouldn't reach this code path in production,
     // but the route guards against it explicitly.
     lifecycle.instances.set(`bad|${WS_ID}`, { oauthScope: "workspace" });
-    lifecycle.authUrls.set(
-      `bad|${WS_ID}|_workspace`,
-      "https://granola.test/auth?client_id=x",
-    );
+    lifecycle.authUrls.set(`bad|${WS_ID}|_workspace`, "https://granola.test/auth?client_id=x");
 
     const res = await app.request(`http://localhost${INITIATE_PATH}`, {
       method: "POST",
@@ -367,9 +361,7 @@ describe("GET /v1/mcp-auth/callback", () => {
     // tests) fails here before it ships as an unstyled page in prod.
     const styleMatch = html.match(/<style>([\s\S]*?)<\/style>/);
     expect(styleMatch).not.toBeNull();
-    const servedStyleHash = createHash("sha256")
-      .update(styleMatch![1])
-      .digest("base64");
+    const servedStyleHash = createHash("sha256").update(styleMatch![1]).digest("base64");
     expect(csp!).toContain(`'sha256-${servedStyleHash}'`);
     await expect(flowPromise).resolves.toBe("auth-code-csp");
   });
@@ -404,10 +396,9 @@ describe("GET /v1/mcp-auth/callback", () => {
     // Cookie is sha256(some-other-state), not sha256(state) — the timing-safe
     // comparison must reject.
     const wrongCookie = `nb_oauth_state=${sha256Hex("some-other-state")}`;
-    const res = await app.request(
-      `http://localhost/v1/mcp-auth/callback?code=c&state=${state}`,
-      { headers: { cookie: wrongCookie } },
-    );
+    const res = await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`, {
+      headers: { cookie: wrongCookie },
+    });
 
     expect(res.status).toBe(400);
     const html = await res.text();
@@ -424,10 +415,9 @@ describe("GET /v1/mcp-auth/callback", () => {
     const state = "ghost-state";
     const cookie = `nb_oauth_state=${sha256Hex(state)}`;
 
-    const res = await app.request(
-      `http://localhost/v1/mcp-auth/callback?code=c&state=${state}`,
-      { headers: { cookie } },
-    );
+    const res = await app.request(`http://localhost/v1/mcp-auth/callback?code=c&state=${state}`, {
+      headers: { cookie },
+    });
 
     expect(res.status).toBe(404);
     const html = await res.text();
@@ -457,9 +447,7 @@ describe("GET /v1/mcp-auth/callback", () => {
   });
 
   test("response is not cacheable", async () => {
-    const res = await app.request(
-      "http://localhost/v1/mcp-auth/callback?code=x&state=y",
-    );
+    const res = await app.request("http://localhost/v1/mcp-auth/callback?code=x&state=y");
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(res.headers.get("Pragma")).toBe("no-cache");
   });

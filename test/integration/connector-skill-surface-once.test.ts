@@ -21,21 +21,21 @@
  * the duplication survived the existing connector-skill suite.
  */
 
-import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** Reverse-DNS slug, like a fleet connector — never the skills' own names. */
 const SERVER = "ai-nimblebrain-surface-mcp";
@@ -59,20 +59,22 @@ function createFixtureServer(): Server {
     { name: "surface", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
-  server.setRequestHandler('tools/list', async () => ({
-    tools: [{ name: "doit", description: "Do it", inputSchema: { type: "object", properties: {} } }],
+  server.setRequestHandler("tools/list", async () => ({
+    tools: [
+      { name: "doit", description: "Do it", inputSchema: { type: "object", properties: {} } },
+    ],
   }));
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler('resources/list', async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: "skill://alpha/SKILL.md", name: "alpha", mimeType: "text/markdown" },
       { uri: "skill://beta/SKILL.md", name: "beta", mimeType: "text/markdown" },
     ],
   }));
   serveSkills(server, () => bodies);
-  server.setRequestHandler('resources/read', async (r) => {
+  server.setRequestHandler("resources/read", async (r) => {
     const text = bodies[r.params.uri];
     if (!text) throw new Error(`Resource not found: ${r.params.uri}`);
     return { contents: [{ uri: r.params.uri, mimeType: "text/markdown", text }] };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../../src/util/atomic-json.ts";
@@ -56,9 +56,7 @@ describe("writeJsonAtomic", () => {
       // 10 concurrent writes — last-writer-wins on the rename target;
       // intermediate tmps land in the same dir and get cleaned up by
       // each rename. Test that no tmp survives.
-      await Promise.all(
-        Array.from({ length: 10 }, (_, i) => writeJsonAtomic(path, { i })),
-      );
+      await Promise.all(Array.from({ length: 10 }, (_, i) => writeJsonAtomic(path, { i })));
       expect(existsSync(path)).toBe(true);
       const leftovers = readdirSync(dir).filter((f) => f.endsWith(".tmp"));
       expect(leftovers).toEqual([]);

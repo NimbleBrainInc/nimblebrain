@@ -7,11 +7,11 @@
  * cross-cutting platform overlays.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { InstructionsStore, MAX_INSTRUCTIONS_BYTES } from "../../../src/instructions/index.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
@@ -49,7 +49,6 @@ describe("InstructionsStore — round-trip", () => {
     expect(meta?.updated_at).toBe(result.updated_at);
     expect(meta?.updated_by).toBe("ui");
   });
-
 });
 
 describe("InstructionsStore — missing files", () => {
@@ -97,28 +96,22 @@ describe("InstructionsStore — length cap", () => {
 
   test("write of 8 KB + 1 byte rejects", async () => {
     const body = "x".repeat(MAX_INSTRUCTIONS_BYTES + 1);
-    await expect(
-      store.write({ wsId: "ws_demo", text: body, updatedBy: "ui" }),
-    ).rejects.toThrow(/8192/);
+    await expect(store.write({ wsId: "ws_demo", text: body, updatedBy: "ui" })).rejects.toThrow(
+      /8192/,
+    );
   });
 
   test("byte length is UTF-8, not character length (multibyte counted correctly)", async () => {
     // "🙂" is 4 bytes in UTF-8; 2049 of them is 8196 bytes — over cap.
     const body = "🙂".repeat(2049);
-    await expect(
-      store.write({ wsId: "ws_demo", text: body, updatedBy: "ui" }),
-    ).rejects.toThrow();
+    await expect(store.write({ wsId: "ws_demo", text: body, updatedBy: "ui" })).rejects.toThrow();
   });
 });
 
 describe("InstructionsStore — path validation", () => {
   test("rejects wsId containing '..'", async () => {
-    await expect(
-      store.write({ wsId: "ws_../evil", text: "x", updatedBy: "ui" }),
-    ).rejects.toThrow();
-    await expect(
-      store.read({ wsId: "ws_../evil" }),
-    ).rejects.toThrow();
+    await expect(store.write({ wsId: "ws_../evil", text: "x", updatedBy: "ui" })).rejects.toThrow();
+    await expect(store.read({ wsId: "ws_../evil" })).rejects.toThrow();
   });
 
   test("rejects wsId starting with '/'", async () => {
@@ -128,9 +121,7 @@ describe("InstructionsStore — path validation", () => {
   });
 
   test("rejects null byte in identifiers", async () => {
-    await expect(
-      store.write({ wsId: "ws_a\0b", text: "x", updatedBy: "ui" }),
-    ).rejects.toThrow();
+    await expect(store.write({ wsId: "ws_a\0b", text: "x", updatedBy: "ui" })).rejects.toThrow();
   });
 
   test("workspace scope without wsId rejects", async () => {
@@ -157,8 +148,6 @@ describe("InstructionsStore — overwrite semantics", () => {
 
     expect(await store.read({ wsId: "ws_demo" })).toBe("v2");
     expect(second.updated_at >= first.updated_at).toBe(true);
-    expect((await store.readMeta({ wsId: "ws_demo" }))?.updated_by).toBe(
-      "agent",
-    );
+    expect((await store.readMeta({ wsId: "ws_demo" }))?.updated_by).toBe("agent");
   });
 });

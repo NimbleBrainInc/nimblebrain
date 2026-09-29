@@ -1,9 +1,9 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { readCatalogServers, validateCatalog } from "../../src/connectors/catalog/read.ts";
+import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 
 /**
  * `validateCatalog` is what a pre-merge gate runs over a catalog
@@ -173,9 +173,7 @@ describe("validateCatalog", () => {
     expect(diagnostics[0]?.message).toContain("host_version must be major 1");
 
     // A null block is no block, as every host-block parser reads it.
-    writeCatalog("catalog.json", [
-      { ...VALID_ENTRY, _meta: { "ai.nimblebrain/host": null } },
-    ]);
+    writeCatalog("catalog.json", [{ ...VALID_ENTRY, _meta: { "ai.nimblebrain/host": null } }]);
     expect(validateCatalog(dir)).toEqual([]);
 
     for (const v of ["1", "1.0", "1.1", "1.5", "1.12"]) {

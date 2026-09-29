@@ -1,35 +1,32 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type {
-	Automation,
-	AutomationRun,
-} from "../../../../src/platform/automations/types.ts";
 import {
-	appendRun,
-	deleteAutomationDefinition,
-	loadOwnerAutomations,
-	readAllRuns,
-	readRunResult,
-	readRuns,
-	saveAutomation,
-} from "../../../../src/platform/automations/store.ts";
-import {
-	formatSchedule,
-	formatRelativeTime,
-	toKebabCase,
-	handleCreate,
-	handleUpdate,
-	handleDelete,
-	handleList,
-	handleStatus,
-	handleRuns,
-	handleRun,
-	handleCancel,
-	validateAutomationFields,
-	estimateRunsPerDay,
-	type ToolContext,
+  estimateRunsPerDay,
+  formatRelativeTime,
+  formatSchedule,
+  handleCancel,
+  handleCreate,
+  handleDelete,
+  handleList,
+  handleRun,
+  handleRuns,
+  handleStatus,
+  handleUpdate,
+  type ToolContext,
+  toKebabCase,
+  validateAutomationFields,
 } from "../../../../src/platform/automations/server.ts";
+import {
+  appendRun,
+  deleteAutomationDefinition,
+  loadOwnerAutomations,
+  readAllRuns,
+  readRunResult,
+  readRuns,
+  saveAutomation,
+} from "../../../../src/platform/automations/store.ts";
+import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_test";
@@ -37,25 +34,25 @@ const OWNER = "usr_test";
 
 /** Load this test's single workspace+owner automations. */
 function loadDefs(): Map<string, Automation> {
-	return loadOwnerAutomations(TMP_DIR, WS, OWNER);
+  return loadOwnerAutomations(TMP_DIR, WS, OWNER);
 }
 
 /** Reconcile a definitions map to the per-automation store (write each, delete removed). */
 function saveDefs(map: Map<string, Automation>): void {
-	const onDisk = loadOwnerAutomations(TMP_DIR, WS, OWNER);
-	for (const auto of map.values()) {
-		if (!auto.workspaceId) auto.workspaceId = WS;
-		if (!auto.ownerId) auto.ownerId = OWNER;
-		saveAutomation(TMP_DIR, WS, OWNER, auto);
-	}
-	for (const id of onDisk.keys()) {
-		if (!map.has(id)) deleteAutomationDefinition(TMP_DIR, WS, OWNER, id);
-	}
+  const onDisk = loadOwnerAutomations(TMP_DIR, WS, OWNER);
+  for (const auto of map.values()) {
+    if (!auto.workspaceId) auto.workspaceId = WS;
+    if (!auto.ownerId) auto.ownerId = OWNER;
+    saveAutomation(TMP_DIR, WS, OWNER, auto);
+  }
+  for (const id of onDisk.keys()) {
+    if (!map.has(id)) deleteAutomationDefinition(TMP_DIR, WS, OWNER, id);
+  }
 }
 
 /** Append a run summary for this test's workspace+owner. */
 function seedRun(automationId: string, run: AutomationRun): void {
-	appendRun(TMP_DIR, WS, OWNER, automationId, run);
+  appendRun(TMP_DIR, WS, OWNER, automationId, run);
 }
 
 // ---------------------------------------------------------------------------
@@ -64,24 +61,21 @@ function seedRun(automationId: string, run: AutomationRun): void {
 
 /** Build the new {manifest, body} shape for handleCreate without ceremony. */
 function createArgs(
-	name: string,
-	prompt: string,
-	schedule: { type: string; [k: string]: unknown },
-	extra: Record<string, unknown> = {},
+  name: string,
+  prompt: string,
+  schedule: { type: string; [k: string]: unknown },
+  extra: Record<string, unknown> = {},
 ): Record<string, unknown> {
-	return { manifest: { name, schedule, ...extra }, body: prompt };
+  return { manifest: { name, schedule, ...extra }, body: prompt };
 }
 
 /** Build the {name, manifest?, body?} shape for handleUpdate. */
-function updateArgs(
-	name: string,
-	patch: Record<string, unknown> = {},
-): Record<string, unknown> {
-	const { body, ...manifest } = patch as { body?: string } & Record<string, unknown>;
-	const out: Record<string, unknown> = { name };
-	if (Object.keys(manifest).length > 0) out.manifest = manifest;
-	if (body !== undefined) out.body = body;
-	return out;
+function updateArgs(name: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
+  const { body, ...manifest } = patch as { body?: string } & Record<string, unknown>;
+  const out: Record<string, unknown> = { name };
+  if (Object.keys(manifest).length > 0) out.manifest = manifest;
+  if (body !== undefined) out.body = body;
+  return out;
 }
 
 const TMP_DIR = join(import.meta.dir, ".tmp-automation-server");
@@ -90,67 +84,67 @@ let savedDefs: Map<string, Automation>;
 let schedulerReloaded: boolean;
 
 function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
-	savedDefs = loadDefs();
-	schedulerReloaded = false;
+  savedDefs = loadDefs();
+  schedulerReloaded = false;
 
-	return {
-		definitions: () => loadDefs(),
-		save: (defs) => {
-			saveDefs(defs);
-			savedDefs = defs;
-		},
-		reloadScheduler: () => {
-			schedulerReloaded = true;
-		},
-		runNow: async (automationId: string): Promise<AutomationRun | null> => {
-			const auto = loadDefs().get(automationId);
-			if (!auto) return null;
-			const run: AutomationRun = {
-				id: `run_test${Date.now()}`,
-				automationId,
-				startedAt: new Date().toISOString(),
-				completedAt: new Date().toISOString(),
-				status: "success",
-				inputTokens: 100,
-				outputTokens: 50,
-				toolCalls: 2,
-				iterations: 1,
-				resultPreview: "Test run completed",
-			};
-			seedRun(automationId, run);
-			return run;
-		},
-		cancelRun: (_automationId: string) => false,
-		readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
-		readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),
-		readRunResult: (id, runId) => readRunResult(TMP_DIR, WS, OWNER, id, runId),
-		defaultTimezone: "Pacific/Honolulu",
-		...overrides,
-	};
+  return {
+    definitions: () => loadDefs(),
+    save: (defs) => {
+      saveDefs(defs);
+      savedDefs = defs;
+    },
+    reloadScheduler: () => {
+      schedulerReloaded = true;
+    },
+    runNow: async (automationId: string): Promise<AutomationRun | null> => {
+      const auto = loadDefs().get(automationId);
+      if (!auto) return null;
+      const run: AutomationRun = {
+        id: `run_test${Date.now()}`,
+        automationId,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        status: "success",
+        inputTokens: 100,
+        outputTokens: 50,
+        toolCalls: 2,
+        iterations: 1,
+        resultPreview: "Test run completed",
+      };
+      seedRun(automationId, run);
+      return run;
+    },
+    cancelRun: (_automationId: string) => false,
+    readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
+    readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),
+    readRunResult: (id, runId) => readRunResult(TMP_DIR, WS, OWNER, id, runId),
+    defaultTimezone: "Pacific/Honolulu",
+    ...overrides,
+  };
 }
 
 function makeRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
-	return {
-		id: `run_${Math.random().toString(36).slice(2, 8)}`,
-		automationId: "daily-report",
-		startedAt: new Date().toISOString(),
-		completedAt: new Date().toISOString(),
-		status: "success",
-		inputTokens: 100,
-		outputTokens: 50,
-		toolCalls: 2,
-		iterations: 1,
-		...overrides,
-	};
+  return {
+    id: `run_${Math.random().toString(36).slice(2, 8)}`,
+    automationId: "daily-report",
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    status: "success",
+    inputTokens: 100,
+    outputTokens: 50,
+    toolCalls: 2,
+    iterations: 1,
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
-	mkdirSync(TMP_DIR, { recursive: true });
-	seedWorkspaceRoot(TMP_DIR, WS);
+  mkdirSync(TMP_DIR, { recursive: true });
+  seedWorkspaceRoot(TMP_DIR, WS);
 });
 
 afterEach(() => {
-	rmSync(TMP_DIR, { recursive: true, force: true });
+  rmSync(TMP_DIR, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -158,49 +152,41 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("formatSchedule", () => {
-	test("interval in minutes", () => {
-		expect(formatSchedule({ type: "interval", intervalMs: 1_800_000 })).toBe(
-			"Every 30 minutes",
-		);
-	});
+  test("interval in minutes", () => {
+    expect(formatSchedule({ type: "interval", intervalMs: 1_800_000 })).toBe("Every 30 minutes");
+  });
 
-	test("interval in hours", () => {
-		expect(formatSchedule({ type: "interval", intervalMs: 7_200_000 })).toBe(
-			"Every 2 hours",
-		);
-	});
+  test("interval in hours", () => {
+    expect(formatSchedule({ type: "interval", intervalMs: 7_200_000 })).toBe("Every 2 hours");
+  });
 
-	test("daily cron", () => {
-		expect(
-			formatSchedule({
-				type: "cron",
-				expression: "0 8 * * *",
-				timezone: "Pacific/Honolulu",
-			}),
-		).toBe("Daily at 8:00 AM HST");
-	});
+  test("daily cron", () => {
+    expect(
+      formatSchedule({
+        type: "cron",
+        expression: "0 8 * * *",
+        timezone: "Pacific/Honolulu",
+      }),
+    ).toBe("Daily at 8:00 AM HST");
+  });
 
-	test("weekly cron (Monday)", () => {
-		expect(
-			formatSchedule({
-				type: "cron",
-				expression: "0 9 * * 1",
-				timezone: "Pacific/Honolulu",
-			}),
-		).toBe("Mondays at 9:00 AM HST");
-	});
+  test("weekly cron (Monday)", () => {
+    expect(
+      formatSchedule({
+        type: "cron",
+        expression: "0 9 * * 1",
+        timezone: "Pacific/Honolulu",
+      }),
+    ).toBe("Mondays at 9:00 AM HST");
+  });
 
-	test("every N minutes cron", () => {
-		expect(
-			formatSchedule({ type: "cron", expression: "*/30 * * * *" }),
-		).toBe("Every 30 minutes");
-	});
+  test("every N minutes cron", () => {
+    expect(formatSchedule({ type: "cron", expression: "*/30 * * * *" })).toBe("Every 30 minutes");
+  });
 
-	test("single minute interval", () => {
-		expect(formatSchedule({ type: "interval", intervalMs: 60_000 })).toBe(
-			"Every 1 minute",
-		);
-	});
+  test("single minute interval", () => {
+    expect(formatSchedule({ type: "interval", intervalMs: 60_000 })).toBe("Every 1 minute");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -208,32 +194,32 @@ describe("formatSchedule", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatRelativeTime", () => {
-	const now = new Date("2025-06-15T12:00:00.000Z").getTime();
+  const now = new Date("2025-06-15T12:00:00.000Z").getTime();
 
-	test("past hours", () => {
-		const twoHoursAgo = new Date(now - 2 * 3_600_000).toISOString();
-		expect(formatRelativeTime(twoHoursAgo, now)).toBe("2h ago");
-	});
+  test("past hours", () => {
+    const twoHoursAgo = new Date(now - 2 * 3_600_000).toISOString();
+    expect(formatRelativeTime(twoHoursAgo, now)).toBe("2h ago");
+  });
 
-	test("future hours", () => {
-		const inTwentyTwoHours = new Date(now + 22 * 3_600_000).toISOString();
-		expect(formatRelativeTime(inTwentyTwoHours, now)).toBe("in 22h");
-	});
+  test("future hours", () => {
+    const inTwentyTwoHours = new Date(now + 22 * 3_600_000).toISOString();
+    expect(formatRelativeTime(inTwentyTwoHours, now)).toBe("in 22h");
+  });
 
-	test("past days", () => {
-		const threeDaysAgo = new Date(now - 3 * 86_400_000).toISOString();
-		expect(formatRelativeTime(threeDaysAgo, now)).toBe("3d ago");
-	});
+  test("past days", () => {
+    const threeDaysAgo = new Date(now - 3 * 86_400_000).toISOString();
+    expect(formatRelativeTime(threeDaysAgo, now)).toBe("3d ago");
+  });
 
-	test("past minutes", () => {
-		const fiveMinAgo = new Date(now - 5 * 60_000).toISOString();
-		expect(formatRelativeTime(fiveMinAgo, now)).toBe("5m ago");
-	});
+  test("past minutes", () => {
+    const fiveMinAgo = new Date(now - 5 * 60_000).toISOString();
+    expect(formatRelativeTime(fiveMinAgo, now)).toBe("5m ago");
+  });
 
-	test("future minutes", () => {
-		const inTenMin = new Date(now + 10 * 60_000).toISOString();
-		expect(formatRelativeTime(inTenMin, now)).toBe("in 10m");
-	});
+  test("future minutes", () => {
+    const inTenMin = new Date(now + 10 * 60_000).toISOString();
+    expect(formatRelativeTime(inTenMin, now)).toBe("in 10m");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -241,17 +227,17 @@ describe("formatRelativeTime", () => {
 // ---------------------------------------------------------------------------
 
 describe("toKebabCase", () => {
-	test("converts spaces", () => {
-		expect(toKebabCase("Daily Report")).toBe("daily-report");
-	});
+  test("converts spaces", () => {
+    expect(toKebabCase("Daily Report")).toBe("daily-report");
+  });
 
-	test("strips special chars", () => {
-		expect(toKebabCase("My Automation!@#$%")).toBe("my-automation");
-	});
+  test("strips special chars", () => {
+    expect(toKebabCase("My Automation!@#$%")).toBe("my-automation");
+  });
 
-	test("handles multiple spaces", () => {
-		expect(toKebabCase("  hello   world  ")).toBe("hello-world");
-	});
+  test("handles multiple spaces", () => {
+    expect(toKebabCase("  hello   world  ")).toBe("hello-world");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -259,61 +245,61 @@ describe("toKebabCase", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleCreate", () => {
-	test("creates automation with defaults", () => {
-		const ctx = makeCtx();
-		const result = handleCreate(
-			{
-				manifest: {
-					name: "Daily Report",
-					schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
-				},
-				body: "Generate daily report",
-			},
-			ctx,
-		) as { automation: Automation; created: boolean };
+  test("creates automation with defaults", () => {
+    const ctx = makeCtx();
+    const result = handleCreate(
+      {
+        manifest: {
+          name: "Daily Report",
+          schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
+        },
+        body: "Generate daily report",
+      },
+      ctx,
+    ) as { automation: Automation; created: boolean };
 
-		expect(result.created).toBe(true);
-		expect(result.automation.id).toBe("daily-report");
-		expect(result.automation.name).toBe("Daily Report");
-		expect(result.automation.enabled).toBe(true);
-		expect(result.automation.source).toBe("agent");
-		expect(result.automation.runCount).toBe(0);
-		expect(result.automation.consecutiveErrors).toBe(0);
-		expect(result.automation.createdAt).toBeDefined();
-		expect(result.automation.updatedAt).toBeDefined();
-		expect(schedulerReloaded).toBe(true);
-	});
+    expect(result.created).toBe(true);
+    expect(result.automation.id).toBe("daily-report");
+    expect(result.automation.name).toBe("Daily Report");
+    expect(result.automation.enabled).toBe(true);
+    expect(result.automation.source).toBe("agent");
+    expect(result.automation.runCount).toBe(0);
+    expect(result.automation.consecutiveErrors).toBe(0);
+    expect(result.automation.createdAt).toBeDefined();
+    expect(result.automation.updatedAt).toBeDefined();
+    expect(schedulerReloaded).toBe(true);
+  });
 
-	test("idempotent — returns existing for duplicate name", () => {
-		const ctx = makeCtx();
-		const first = handleCreate(
-			{
-				manifest: {
-					name: "Daily Report",
-					schedule: { type: "interval", intervalMs: 60_000 },
-				},
-				body: "Generate daily report",
-			},
-			ctx,
-		) as { automation: Automation; created: boolean };
+  test("idempotent — returns existing for duplicate name", () => {
+    const ctx = makeCtx();
+    const first = handleCreate(
+      {
+        manifest: {
+          name: "Daily Report",
+          schedule: { type: "interval", intervalMs: 60_000 },
+        },
+        body: "Generate daily report",
+      },
+      ctx,
+    ) as { automation: Automation; created: boolean };
 
-		expect(first.created).toBe(true);
+    expect(first.created).toBe(true);
 
-		const second = handleCreate(
-			{
-				manifest: {
-					name: "Daily Report",
-					schedule: { type: "interval", intervalMs: 120_000 },
-				},
-				body: "Different prompt",
-			},
-			ctx,
-		) as { automation: Automation; created: boolean };
+    const second = handleCreate(
+      {
+        manifest: {
+          name: "Daily Report",
+          schedule: { type: "interval", intervalMs: 120_000 },
+        },
+        body: "Different prompt",
+      },
+      ctx,
+    ) as { automation: Automation; created: boolean };
 
-		expect(second.created).toBe(false);
-		expect(second.automation.id).toBe(first.automation.id);
-		expect(second.automation.prompt).toBe("Generate daily report"); // original prompt
-	});
+    expect(second.created).toBe(false);
+    expect(second.automation.id).toBe(first.automation.id);
+    expect(second.automation.prompt).toBe("Generate daily report"); // original prompt
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -321,28 +307,28 @@ describe("handleCreate", () => {
 // ---------------------------------------------------------------------------
 
 describe("create → list", () => {
-	test("created automation appears in list", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			{
-				manifest: {
-					name: "Daily Report",
-					schedule: { type: "interval", intervalMs: 1_800_000 },
-				},
-				body: "Generate daily report",
-			},
-			ctx,
-		);
+  test("created automation appears in list", () => {
+    const ctx = makeCtx();
+    handleCreate(
+      {
+        manifest: {
+          name: "Daily Report",
+          schedule: { type: "interval", intervalMs: 1_800_000 },
+        },
+        body: "Generate daily report",
+      },
+      ctx,
+    );
 
-		const result = handleList({}, ctx) as {
-			automations: Array<{ id: string; name: string; schedule: string }>;
-			total: number;
-		};
+    const result = handleList({}, ctx) as {
+      automations: Array<{ id: string; name: string; schedule: string }>;
+      total: number;
+    };
 
-		expect(result.total).toBe(1);
-		expect(result.automations[0]!.name).toBe("Daily Report");
-		expect(result.automations[0]!.schedule).toBe("Every 30 minutes");
-	});
+    expect(result.total).toBe(1);
+    expect(result.automations[0]!.name).toBe("Daily Report");
+    expect(result.automations[0]!.schedule).toBe("Every 30 minutes");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -350,185 +336,185 @@ describe("create → list", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleList paging", () => {
-	type ListResult = {
-		automations: Array<{ id: string; name: string }>;
-		total: number;
-		returned: number;
-		nextCursor: string | null;
-		hasMore: boolean;
-		truncated?: string;
-	};
+  type ListResult = {
+    automations: Array<{ id: string; name: string }>;
+    total: number;
+    returned: number;
+    nextCursor: string | null;
+    hasMore: boolean;
+    truncated?: string;
+  };
 
-	/** Seed n automations through the real create path. */
-	function seed(ctx: ToolContext, n: number): void {
-		for (let i = 0; i < n; i++) {
-			handleCreate(
-				{
-					manifest: {
-						name: `Seeded ${String(i).padStart(3, "0")}`,
-						schedule: { type: "interval", intervalMs: 1_800_000 },
-					},
-					body: "noop",
-				},
-				ctx,
-			);
-		}
-	}
+  /** Seed n automations through the real create path. */
+  function seed(ctx: ToolContext, n: number): void {
+    for (let i = 0; i < n; i++) {
+      handleCreate(
+        {
+          manifest: {
+            name: `Seeded ${String(i).padStart(3, "0")}`,
+            schedule: { type: "interval", intervalMs: 1_800_000 },
+          },
+          body: "noop",
+        },
+        ctx,
+      );
+    }
+  }
 
-	test("caps at the default limit and reports the unpaged total", () => {
-		const ctx = makeCtx();
-		seed(ctx, 105);
+  test("caps at the default limit and reports the unpaged total", () => {
+    const ctx = makeCtx();
+    seed(ctx, 105);
 
-		const r = handleList({}, ctx) as ListResult;
-		// `total` must describe every match, not the page — a caller that reads
-		// `total` as "what I received" is exactly the bug this guards.
-		expect(r.total).toBe(105);
-		expect(r.returned).toBe(100);
-		expect(r.automations).toHaveLength(100);
-		expect(r.hasMore).toBe(true);
-	});
+    const r = handleList({}, ctx) as ListResult;
+    // `total` must describe every match, not the page — a caller that reads
+    // `total` as "what I received" is exactly the bug this guards.
+    expect(r.total).toBe(105);
+    expect(r.returned).toBe(100);
+    expect(r.automations).toHaveLength(100);
+    expect(r.hasMore).toBe(true);
+  });
 
-	test("orders pages deterministically", () => {
-		// Definitions are built from a directory read with no ordering, so
-		// without an explicit sort the page boundary is undefined and a record
-		// can land on both pages or neither.
-		const ctx = makeCtx();
-		seed(ctx, 12);
+  test("orders pages deterministically", () => {
+    // Definitions are built from a directory read with no ordering, so
+    // without an explicit sort the page boundary is undefined and a record
+    // can land on both pages or neither.
+    const ctx = makeCtx();
+    seed(ctx, 12);
 
-		const ids = (handleList({ limit: 12 }, ctx) as ListResult).automations.map((a) => a.id);
-		expect(ids).toEqual([...ids].sort());
-		// Stable across calls, not merely sorted once.
-		const again = (handleList({ limit: 12 }, ctx) as ListResult).automations.map((a) => a.id);
-		expect(again).toEqual(ids);
-	});
+    const ids = (handleList({ limit: 12 }, ctx) as ListResult).automations.map((a) => a.id);
+    expect(ids).toEqual([...ids].sort());
+    // Stable across calls, not merely sorted once.
+    const again = (handleList({ limit: 12 }, ctx) as ListResult).automations.map((a) => a.id);
+    expect(again).toEqual(ids);
+  });
 
-	test("says so in prose when the page hid matches, and names what remains", () => {
-		const ctx = makeCtx();
-		seed(ctx, 105);
+  test("says so in prose when the page hid matches, and names what remains", () => {
+    const ctx = makeCtx();
+    seed(ctx, 105);
 
-		const r = handleList({}, ctx) as ListResult;
-		// A silent cap is worse than an error here: the caller concludes "not
-		// found" from a set it never saw. The remainder must be in the text.
-		expect(r.truncated).toBeDefined();
-		expect(r.truncated).toContain("105");
-		expect(r.truncated).toContain("5 more remain");
-		expect(r.truncated).toContain(r.nextCursor as string);
-	});
+    const r = handleList({}, ctx) as ListResult;
+    // A silent cap is worse than an error here: the caller concludes "not
+    // found" from a set it never saw. The remainder must be in the text.
+    expect(r.truncated).toBeDefined();
+    expect(r.truncated).toContain("105");
+    expect(r.truncated).toContain("5 more remain");
+    expect(r.truncated).toContain(r.nextCursor as string);
+  });
 
-	test("the remainder count is exact at a mid-sequence cursor", () => {
-		const ctx = makeCtx();
-		seed(ctx, 105);
+  test("the remainder count is exact at a mid-sequence cursor", () => {
+    const ctx = makeCtx();
+    seed(ctx, 105);
 
-		const first = handleList({ limit: 50 }, ctx) as ListResult;
-		const second = handleList({ limit: 25, cursor: first.nextCursor as string }, ctx) as ListResult;
-		// 105 total, 50 + 25 read, so 30 are genuinely left — not a figure
-		// derived from a caller history the handler cannot see.
-		expect(second.truncated).toContain("30 more remain");
-	});
+    const first = handleList({ limit: 50 }, ctx) as ListResult;
+    const second = handleList({ limit: 25, cursor: first.nextCursor as string }, ctx) as ListResult;
+    // 105 total, 50 + 25 read, so 30 are genuinely left — not a figure
+    // derived from a caller history the handler cannot see.
+    expect(second.truncated).toContain("30 more remain");
+  });
 
-	test("cursor walks the remainder and clears the flag on the last page", () => {
-		const ctx = makeCtx();
-		seed(ctx, 105);
+  test("cursor walks the remainder and clears the flag on the last page", () => {
+    const ctx = makeCtx();
+    seed(ctx, 105);
 
-		const first = handleList({}, ctx) as ListResult;
-		const last = handleList({ cursor: first.nextCursor as string }, ctx) as ListResult;
-		expect(last.returned).toBe(5);
-		expect(last.total).toBe(105);
-		expect(last.hasMore).toBe(false);
-		expect(last.nextCursor).toBeNull();
-		expect(last.truncated).toBeUndefined();
-	});
+    const first = handleList({}, ctx) as ListResult;
+    const last = handleList({ cursor: first.nextCursor as string }, ctx) as ListResult;
+    expect(last.returned).toBe(5);
+    expect(last.total).toBe(105);
+    expect(last.hasMore).toBe(false);
+    expect(last.nextCursor).toBeNull();
+    expect(last.truncated).toBeUndefined();
+  });
 
-	test("a delete behind the cursor does not skip the records ahead of it", () => {
-		// The failure a numeric offset has: removing an entry from an earlier
-		// page shifts everything back, and the next slice steps over whatever
-		// crossed the boundary.
-		const ctx = makeCtx();
-		seed(ctx, 30);
+  test("a delete behind the cursor does not skip the records ahead of it", () => {
+    // The failure a numeric offset has: removing an entry from an earlier
+    // page shifts everything back, and the next slice steps over whatever
+    // crossed the boundary.
+    const ctx = makeCtx();
+    seed(ctx, 30);
 
-		const first = handleList({ limit: 10 }, ctx) as ListResult;
-		handleDelete({ name: first.automations[0]!.name }, ctx);
-		const second = handleList({ limit: 10, cursor: first.nextCursor as string }, ctx) as ListResult;
+    const first = handleList({ limit: 10 }, ctx) as ListResult;
+    handleDelete({ name: first.automations[0]!.name }, ctx);
+    const second = handleList({ limit: 10, cursor: first.nextCursor as string }, ctx) as ListResult;
 
-		const seen = new Set([...first.automations, ...second.automations].map((a) => a.id));
-		const wanted = (handleList({ limit: 500 }, ctx) as ListResult).automations
-			.map((a) => a.id)
-			.slice(0, 19);
-		for (const id of wanted) expect(seen.has(id)).toBe(true);
-	});
+    const seen = new Set([...first.automations, ...second.automations].map((a) => a.id));
+    const wanted = (handleList({ limit: 500 }, ctx) as ListResult).automations
+      .map((a) => a.id)
+      .slice(0, 19);
+    for (const id of wanted) expect(seen.has(id)).toBe(true);
+  });
 
-	test("an unknown cursor re-serves the first page rather than skipping", () => {
-		const ctx = makeCtx();
-		seed(ctx, 5);
+  test("an unknown cursor re-serves the first page rather than skipping", () => {
+    const ctx = makeCtx();
+    seed(ctx, 5);
 
-		const r = handleList({ cursor: "no-such-automation" }, ctx) as ListResult;
-		expect(r.returned).toBe(5);
-		expect(r.total).toBe(5);
-	});
+    const r = handleList({ cursor: "no-such-automation" }, ctx) as ListResult;
+    expect(r.returned).toBe(5);
+    expect(r.total).toBe(5);
+  });
 
-	test("honors an explicit limit and its floor", () => {
-		const ctx = makeCtx();
-		seed(ctx, 12);
+  test("honors an explicit limit and its floor", () => {
+    const ctx = makeCtx();
+    seed(ctx, 12);
 
-		expect((handleList({ limit: 3 }, ctx) as ListResult).returned).toBe(3);
-		// Below the floor clamps up rather than returning an empty page.
-		expect((handleList({ limit: 0 }, ctx) as ListResult).returned).toBe(1);
-	});
+    expect((handleList({ limit: 3 }, ctx) as ListResult).returned).toBe(3);
+    // Below the floor clamps up rather than returning an empty page.
+    expect((handleList({ limit: 0 }, ctx) as ListResult).returned).toBe(1);
+  });
 
-	test("clamps a limit above the ceiling to 500", () => {
-		// Needs more than 500 records or the assertion holds with or without the
-		// clamp. Built as one map through a single save: seeding 501 through
-		// handleCreate re-saves the whole store per create and takes ~30s.
-		const ctx = makeCtx();
-		const now = new Date().toISOString();
-		const map = new Map<string, Automation>();
-		for (let i = 0; i < 501; i++) {
-			const id = `bulk-${String(i).padStart(4, "0")}`;
-			map.set(id, {
-				id,
-				name: id,
-				prompt: "noop",
-				schedule: { type: "interval", intervalMs: 1_800_000 },
-				enabled: true,
-				source: "agent",
-				createdAt: now,
-				updatedAt: now,
-				runCount: 0,
-				ownerId: OWNER,
-				workspaceId: WS,
-			});
-		}
-		ctx.save(map);
+  test("clamps a limit above the ceiling to 500", () => {
+    // Needs more than 500 records or the assertion holds with or without the
+    // clamp. Built as one map through a single save: seeding 501 through
+    // handleCreate re-saves the whole store per create and takes ~30s.
+    const ctx = makeCtx();
+    const now = new Date().toISOString();
+    const map = new Map<string, Automation>();
+    for (let i = 0; i < 501; i++) {
+      const id = `bulk-${String(i).padStart(4, "0")}`;
+      map.set(id, {
+        id,
+        name: id,
+        prompt: "noop",
+        schedule: { type: "interval", intervalMs: 1_800_000 },
+        enabled: true,
+        source: "agent",
+        createdAt: now,
+        updatedAt: now,
+        runCount: 0,
+        ownerId: OWNER,
+        workspaceId: WS,
+      });
+    }
+    ctx.save(map);
 
-		const r = handleList({ limit: 10_000 }, ctx) as ListResult;
-		expect(r.total).toBe(501);
-		expect(r.returned).toBe(500);
-		expect(r.hasMore).toBe(true);
-		expect(r.nextCursor).not.toBeNull();
-	});
+    const r = handleList({ limit: 10_000 }, ctx) as ListResult;
+    expect(r.total).toBe(501);
+    expect(r.returned).toBe(500);
+    expect(r.hasMore).toBe(true);
+    expect(r.nextCursor).not.toBeNull();
+  });
 
-	test("no truncation notice when everything fits", () => {
-		const ctx = makeCtx();
-		seed(ctx, 3);
+  test("no truncation notice when everything fits", () => {
+    const ctx = makeCtx();
+    seed(ctx, 3);
 
-		const r = handleList({}, ctx) as ListResult;
-		expect(r.total).toBe(3);
-		expect(r.returned).toBe(3);
-		expect(r.hasMore).toBe(false);
-		expect(r.nextCursor).toBeNull();
-		expect(r.truncated).toBeUndefined();
-	});
+    const r = handleList({}, ctx) as ListResult;
+    expect(r.total).toBe(3);
+    expect(r.returned).toBe(3);
+    expect(r.hasMore).toBe(false);
+    expect(r.nextCursor).toBeNull();
+    expect(r.truncated).toBeUndefined();
+  });
 
-	test("total counts filter matches, not the whole store", () => {
-		const ctx = makeCtx();
-		seed(ctx, 4);
-		handleUpdate({ name: "Seeded 000", manifest: { enabled: false } }, ctx);
+  test("total counts filter matches, not the whole store", () => {
+    const ctx = makeCtx();
+    seed(ctx, 4);
+    handleUpdate({ name: "Seeded 000", manifest: { enabled: false } }, ctx);
 
-		const r = handleList({ enabled: false }, ctx) as ListResult;
-		expect(r.total).toBe(1);
-		expect(r.returned).toBe(1);
-		expect(r.hasMore).toBe(false);
-	});
+    const r = handleList({ enabled: false }, ctx) as ListResult;
+    expect(r.total).toBe(1);
+    expect(r.returned).toBe(1);
+    expect(r.hasMore).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -536,104 +522,102 @@ describe("handleList paging", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleUpdate", () => {
-	test("updates enabled status", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Daily Report", "Generate report", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("updates enabled status", () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs("Daily Report", "Generate report", { type: "interval", intervalMs: 60_000 }),
+      ctx,
+    );
 
-		const result = handleUpdate(
-			updateArgs("Daily Report", { enabled: false }),
-			ctx,
-		) as { automation: Automation; updated: boolean };
+    const result = handleUpdate(updateArgs("Daily Report", { enabled: false }), ctx) as {
+      automation: Automation;
+      updated: boolean;
+    };
 
-		expect(result.updated).toBe(true);
-		expect(result.automation.enabled).toBe(false);
+    expect(result.updated).toBe(true);
+    expect(result.automation.enabled).toBe(false);
 
-		// Verify reflected in list
-		const listResult = handleList({}, ctx) as {
-			automations: Array<{ enabled: boolean }>;
-		};
-		expect(listResult.automations[0]!.enabled).toBe(false);
-	});
+    // Verify reflected in list
+    const listResult = handleList({}, ctx) as {
+      automations: Array<{ enabled: boolean }>;
+    };
+    expect(listResult.automations[0]!.enabled).toBe(false);
+  });
 
-	test("updates schedule and reloads scheduler", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("My Task", "Do it", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("updates schedule and reloads scheduler", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("My Task", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		schedulerReloaded = false;
-		handleUpdate(
-			updateArgs("My Task", {
-				schedule: { type: "cron", expression: "0 9 * * 1", timezone: "Pacific/Honolulu" },
-			}),
-			ctx,
-		);
+    schedulerReloaded = false;
+    handleUpdate(
+      updateArgs("My Task", {
+        schedule: { type: "cron", expression: "0 9 * * 1", timezone: "Pacific/Honolulu" },
+      }),
+      ctx,
+    );
 
-		expect(schedulerReloaded).toBe(true);
-	});
+    expect(schedulerReloaded).toBe(true);
+  });
 
-	test("throws for nonexistent automation", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleUpdate(updateArgs("Nonexistent"), ctx),
-		).toThrow("Automation not found");
-	});
-	test("sets allowedTools", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("throws for nonexistent automation", () => {
+    const ctx = makeCtx();
+    expect(() => handleUpdate(updateArgs("Nonexistent"), ctx)).toThrow("Automation not found");
+  });
+  test("sets allowedTools", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		const result = handleUpdate(
-			updateArgs("Scoped", { allowedTools: ["crm__*"] }),
-			ctx,
-		) as { automation: Automation };
+    const result = handleUpdate(updateArgs("Scoped", { allowedTools: ["crm__*"] }), ctx) as {
+      automation: Automation;
+    };
 
-		expect(result.automation.allowedTools).toEqual(["crm__*"]);
-	});
+    expect(result.automation.allowedTools).toEqual(["crm__*"]);
+  });
 
-	test("refuses allowedTools that name an automation-authoring tool", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("refuses allowedTools that name an automation-authoring tool", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		expect(() =>
-			handleUpdate(updateArgs("Scoped", { allowedTools: ["automations__update"] }), ctx),
-		).toThrow(/allowedTools may not include "automations__update"/);
-	});
+    expect(() =>
+      handleUpdate(updateArgs("Scoped", { allowedTools: ["automations__update"] }), ctx),
+    ).toThrow(/allowedTools may not include "automations__update"/);
+  });
 });
 
 describe("handleCreate — allowedTools", () => {
-	test("stores the list on the automation", () => {
-		const ctx = makeCtx();
-		const result = handleCreate(
-			createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }, {
-				allowedTools: ["crm__*", "files__read"],
-			}),
-			ctx,
-		) as { automation: Automation };
+  test("stores the list on the automation", () => {
+    const ctx = makeCtx();
+    const result = handleCreate(
+      createArgs(
+        "Scoped",
+        "Do it",
+        { type: "interval", intervalMs: 60_000 },
+        {
+          allowedTools: ["crm__*", "files__read"],
+        },
+      ),
+      ctx,
+    ) as { automation: Automation };
 
-		expect(result.automation.allowedTools).toEqual(["crm__*", "files__read"]);
-	});
+    expect(result.automation.allowedTools).toEqual(["crm__*", "files__read"]);
+  });
 
-	test("refuses a list that names automations__create", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate(
-				createArgs("Loop", "Do it", { type: "interval", intervalMs: 60_000 }, {
-					allowedTools: ["files__*", "automations__create"],
-				}),
-				ctx,
-			),
-		).toThrow(/allowedTools may not include/);
-	});
+  test("refuses a list that names automations__create", () => {
+    const ctx = makeCtx();
+    expect(() =>
+      handleCreate(
+        createArgs(
+          "Loop",
+          "Do it",
+          { type: "interval", intervalMs: 60_000 },
+          {
+            allowedTools: ["files__*", "automations__create"],
+          },
+        ),
+        ctx,
+      ),
+    ).toThrow(/allowedTools may not include/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -641,28 +625,23 @@ describe("handleCreate — allowedTools", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleDelete", () => {
-	test("removes automation from list", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Temp", "Temporary", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("removes automation from list", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Temp", "Temporary", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		const delResult = handleDelete({ name: "Temp" }, ctx) as {
-			deleted: boolean;
-		};
-		expect(delResult.deleted).toBe(true);
+    const delResult = handleDelete({ name: "Temp" }, ctx) as {
+      deleted: boolean;
+    };
+    expect(delResult.deleted).toBe(true);
 
-		const listResult = handleList({}, ctx) as { total: number };
-		expect(listResult.total).toBe(0);
-	});
+    const listResult = handleList({}, ctx) as { total: number };
+    expect(listResult.total).toBe(0);
+  });
 
-	test("throws for nonexistent automation", () => {
-		const ctx = makeCtx();
-		expect(() => handleDelete({ name: "Nope" }, ctx)).toThrow(
-			"Automation not found",
-		);
-	});
+  test("throws for nonexistent automation", () => {
+    const ctx = makeCtx();
+    expect(() => handleDelete({ name: "Nope" }, ctx)).toThrow("Automation not found");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -670,83 +649,82 @@ describe("handleDelete", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleList filters", () => {
-	// `source` is set by the runtime, not by the tool input — the LLM-facing
-	// schema doesn't accept it. To exercise filter-by-source, seed the store
-	// directly with automations whose `source` is set as an operator would.
-	function seedAutomations(ctx: ToolContext): void {
-		handleCreate(
-			createArgs("Active Operator", "p", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
-		handleCreate(
-			createArgs("Disabled User", "p", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
-			ctx,
-		);
-		handleCreate(
-			createArgs("Active Agent", "p", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
-		// Stamp non-default sources directly — bypasses the tool input contract,
-		// which is the right shape for this test (filtering, not authoring).
-		const defs = ctx.definitions();
-		defs.get("active-operator")!.source = "user";
-		ctx.save(defs);
-	}
+  // `source` is set by the runtime, not by the tool input — the LLM-facing
+  // schema doesn't accept it. To exercise filter-by-source, seed the store
+  // directly with automations whose `source` is set as an operator would.
+  function seedAutomations(ctx: ToolContext): void {
+    handleCreate(createArgs("Active Operator", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(
+      createArgs(
+        "Disabled User",
+        "p",
+        { type: "interval", intervalMs: 60_000 },
+        { enabled: false },
+      ),
+      ctx,
+    );
+    handleCreate(createArgs("Active Agent", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    // Stamp non-default sources directly — bypasses the tool input contract,
+    // which is the right shape for this test (filtering, not authoring).
+    const defs = ctx.definitions();
+    defs.get("active-operator")!.source = "user";
+    ctx.save(defs);
+  }
 
-	test("filter enabled: true", () => {
-		const ctx = makeCtx();
-		seedAutomations(ctx);
+  test("filter enabled: true", () => {
+    const ctx = makeCtx();
+    seedAutomations(ctx);
 
-		const result = handleList({ enabled: true }, ctx) as {
-			automations: Array<{ enabled: boolean }>;
-			total: number;
-		};
-		expect(result.total).toBe(2);
-		expect(result.automations.every((a) => a.enabled)).toBe(true);
-	});
+    const result = handleList({ enabled: true }, ctx) as {
+      automations: Array<{ enabled: boolean }>;
+      total: number;
+    };
+    expect(result.total).toBe(2);
+    expect(result.automations.every((a) => a.enabled)).toBe(true);
+  });
 
-	// A definition written before a source value left the union still loads: the
-	// store parses without validating and the projection passes the string
-	// through. The CHANGELOG promises this, so it is pinned here rather than
-	// resting on the absence of a validation pass nobody has added yet.
-	test("a definition whose source is outside the union still lists", () => {
-		const ctx = makeCtx();
-		seedAutomations(ctx);
-		const defs = ctx.definitions();
-		defs.get("active-agent")!.source = "retired-source" as never;
-		ctx.save(defs);
+  // A definition written before a source value left the union still loads: the
+  // store parses without validating and the projection passes the string
+  // through. The CHANGELOG promises this, so it is pinned here rather than
+  // resting on the absence of a validation pass nobody has added yet.
+  test("a definition whose source is outside the union still lists", () => {
+    const ctx = makeCtx();
+    seedAutomations(ctx);
+    const defs = ctx.definitions();
+    defs.get("active-agent")!.source = "retired-source" as never;
+    ctx.save(defs);
 
-		const result = handleList({}, ctx) as {
-			automations: Array<{ id: string; source: string }>;
-			total: number;
-		};
-		expect(result.total).toBe(3);
-		expect(result.automations.find((a) => a.id === "active-agent")?.source).toBe("retired-source");
-	});
+    const result = handleList({}, ctx) as {
+      automations: Array<{ id: string; source: string }>;
+      total: number;
+    };
+    expect(result.total).toBe(3);
+    expect(result.automations.find((a) => a.id === "active-agent")?.source).toBe("retired-source");
+  });
 
-	test("filter source: user", () => {
-		const ctx = makeCtx();
-		seedAutomations(ctx);
+  test("filter source: user", () => {
+    const ctx = makeCtx();
+    seedAutomations(ctx);
 
-		const result = handleList({ source: "user" }, ctx) as {
-			automations: Array<{ source: string }>;
-			total: number;
-		};
-		expect(result.total).toBe(1);
-		expect(result.automations[0]!.source).toBe("user");
-	});
+    const result = handleList({ source: "user" }, ctx) as {
+      automations: Array<{ source: string }>;
+      total: number;
+    };
+    expect(result.total).toBe(1);
+    expect(result.automations[0]!.source).toBe("user");
+  });
 
-	test("filter enabled: false", () => {
-		const ctx = makeCtx();
-		seedAutomations(ctx);
+  test("filter enabled: false", () => {
+    const ctx = makeCtx();
+    seedAutomations(ctx);
 
-		const result = handleList({ enabled: false }, ctx) as {
-			automations: Array<{ enabled: boolean }>;
-			total: number;
-		};
-		expect(result.total).toBe(1);
-		expect(result.automations[0]!.enabled).toBe(false);
-	});
+    const result = handleList({ enabled: false }, ctx) as {
+      automations: Array<{ enabled: boolean }>;
+      total: number;
+    };
+    expect(result.total).toBe(1);
+    expect(result.automations[0]!.enabled).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -754,55 +732,50 @@ describe("handleList filters", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleStatus", () => {
-	test("returns automation with recent runs (newest first)", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Status Test", "p", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("returns automation with recent runs (newest first)", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Status Test", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		// Seed some runs
-		const runs = [
-			makeRun({
-				automationId: "status-test",
-				startedAt: "2025-06-15T10:00:00.000Z",
-				status: "success",
-			}),
-			makeRun({
-				automationId: "status-test",
-				startedAt: "2025-06-15T11:00:00.000Z",
-				status: "failure",
-				error: "something broke",
-			}),
-			makeRun({
-				automationId: "status-test",
-				startedAt: "2025-06-15T12:00:00.000Z",
-				status: "success",
-			}),
-		];
-		for (const run of runs) {
-			seedRun("status-test", run);
-		}
+    // Seed some runs
+    const runs = [
+      makeRun({
+        automationId: "status-test",
+        startedAt: "2025-06-15T10:00:00.000Z",
+        status: "success",
+      }),
+      makeRun({
+        automationId: "status-test",
+        startedAt: "2025-06-15T11:00:00.000Z",
+        status: "failure",
+        error: "something broke",
+      }),
+      makeRun({
+        automationId: "status-test",
+        startedAt: "2025-06-15T12:00:00.000Z",
+        status: "success",
+      }),
+    ];
+    for (const run of runs) {
+      seedRun("status-test", run);
+    }
 
-		const result = handleStatus({ name: "Status Test", limit: 5 }, ctx) as {
-			automation: Automation & { scheduleHuman: string };
-			recentRuns: AutomationRun[];
-		};
+    const result = handleStatus({ name: "Status Test", limit: 5 }, ctx) as {
+      automation: Automation & { scheduleHuman: string };
+      recentRuns: AutomationRun[];
+    };
 
-		expect(result.automation.id).toBe("status-test");
-		expect(result.automation.scheduleHuman).toBe("Every 1 minute");
-		expect(result.recentRuns.length).toBe(3);
-		// Newest first
-		expect(result.recentRuns[0]!.startedAt).toBe("2025-06-15T12:00:00.000Z");
-		expect(result.recentRuns[2]!.startedAt).toBe("2025-06-15T10:00:00.000Z");
-	});
+    expect(result.automation.id).toBe("status-test");
+    expect(result.automation.scheduleHuman).toBe("Every 1 minute");
+    expect(result.recentRuns.length).toBe(3);
+    // Newest first
+    expect(result.recentRuns[0]!.startedAt).toBe("2025-06-15T12:00:00.000Z");
+    expect(result.recentRuns[2]!.startedAt).toBe("2025-06-15T10:00:00.000Z");
+  });
 
-	test("throws for nonexistent automation", () => {
-		const ctx = makeCtx();
-		expect(() => handleStatus({ name: "Nope" }, ctx)).toThrow(
-			"Automation not found",
-		);
-	});
+  test("throws for nonexistent automation", () => {
+    const ctx = makeCtx();
+    expect(() => handleStatus({ name: "Nope" }, ctx)).toThrow("Automation not found");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -810,50 +783,56 @@ describe("handleStatus", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleRuns", () => {
-	test("filters by status", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Run Filter Test", "p", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("filters by status", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Run Filter Test", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		seedRun("run-filter-test", makeRun({
-				automationId: "run-filter-test",
-				status: "success",
-				startedAt: "2025-06-15T10:00:00.000Z",
-			}));
-		seedRun("run-filter-test", makeRun({
-				automationId: "run-filter-test",
-				status: "failure",
-				error: "oops",
-				startedAt: "2025-06-15T11:00:00.000Z",
-			}));
-		seedRun("run-filter-test", makeRun({
-				automationId: "run-filter-test",
-				status: "success",
-				startedAt: "2025-06-15T12:00:00.000Z",
-			}));
+    seedRun(
+      "run-filter-test",
+      makeRun({
+        automationId: "run-filter-test",
+        status: "success",
+        startedAt: "2025-06-15T10:00:00.000Z",
+      }),
+    );
+    seedRun(
+      "run-filter-test",
+      makeRun({
+        automationId: "run-filter-test",
+        status: "failure",
+        error: "oops",
+        startedAt: "2025-06-15T11:00:00.000Z",
+      }),
+    );
+    seedRun(
+      "run-filter-test",
+      makeRun({
+        automationId: "run-filter-test",
+        status: "success",
+        startedAt: "2025-06-15T12:00:00.000Z",
+      }),
+    );
 
-		const result = handleRuns(
-			{ automationId: "run-filter-test", status: "failure" },
-			ctx,
-		) as { runs: AutomationRun[]; total: number };
+    const result = handleRuns({ automationId: "run-filter-test", status: "failure" }, ctx) as {
+      runs: AutomationRun[];
+      total: number;
+    };
 
-		expect(result.total).toBe(1);
-		expect(result.runs[0]!.status).toBe("failure");
-	});
+    expect(result.total).toBe(1);
+    expect(result.runs[0]!.status).toBe("failure");
+  });
 
-	test("queries across all automations", () => {
-		const ctx = makeCtx();
-		handleCreate(createArgs("A", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-		handleCreate(createArgs("B", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+  test("queries across all automations", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("A", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    handleCreate(createArgs("B", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		seedRun("a", makeRun({ automationId: "a", startedAt: "2025-06-15T10:00:00.000Z" }));
-		seedRun("b", makeRun({ automationId: "b", startedAt: "2025-06-15T11:00:00.000Z" }));
+    seedRun("a", makeRun({ automationId: "a", startedAt: "2025-06-15T10:00:00.000Z" }));
+    seedRun("b", makeRun({ automationId: "b", startedAt: "2025-06-15T11:00:00.000Z" }));
 
-		const result = handleRuns({}, ctx) as { runs: AutomationRun[]; total: number };
-		expect(result.total).toBe(2);
-	});
+    const result = handleRuns({}, ctx) as { runs: AutomationRun[]; total: number };
+    expect(result.total).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -861,166 +840,157 @@ describe("handleRuns", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleRun", () => {
-	test("triggers immediate execution and returns result", async () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Immediate", "Run now", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("triggers immediate execution and returns result", async () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Immediate", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		const result = await handleRun({ name: "Immediate" }, ctx);
+    const result = await handleRun({ name: "Immediate" }, ctx);
 
-		// Narrow the discriminated union explicitly. `as { run }` is the
-		// anti-pattern that masked the dispatched-envelope branch — see
-		// `AutomationsRunOutput` in src/platform/schemas/automations.ts.
-		if (!("run" in result)) {
-			throw new Error(
-				`expected sync run shape, got ${JSON.stringify(result)}`,
-			);
-		}
-		expect(result.run.automationId).toBe("immediate");
-		expect(result.run.status).toBe("success");
-	});
+    // Narrow the discriminated union explicitly. `as { run }` is the
+    // anti-pattern that masked the dispatched-envelope branch — see
+    // `AutomationsRunOutput` in src/platform/schemas/automations.ts.
+    if (!("run" in result)) {
+      throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+    }
+    expect(result.run.automationId).toBe("immediate");
+    expect(result.run.status).toBe("success");
+  });
 
-	test("runs a disabled automation and says it is disabled", async () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Paused", "Run now", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
-			ctx,
-		);
+  test("runs a disabled automation and says it is disabled", async () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs("Paused", "Run now", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
+      ctx,
+    );
 
-		const result = await handleRun({ name: "Paused" }, ctx);
+    const result = await handleRun({ name: "Paused" }, ctx);
 
-		if (!("run" in result)) {
-			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
-		}
-		expect(result.run.status).toBe("success");
-		expect(result.enabled).toBe(false);
-		expect(result.message).toContain("is disabled");
-	});
+    if (!("run" in result)) {
+      throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+    }
+    expect(result.run.status).toBe("success");
+    expect(result.enabled).toBe(false);
+    expect(result.message).toContain("is disabled");
+  });
 
-	test("an enabled automation's run carries no disabled message", async () => {
-		const ctx = makeCtx();
-		handleCreate(createArgs("Live", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
+  test("an enabled automation's run carries no disabled message", async () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Live", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		const result = await handleRun({ name: "Live" }, ctx);
+    const result = await handleRun({ name: "Live" }, ctx);
 
-		if (!("run" in result)) {
-			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
-		}
-		expect(result.enabled).toBe(true);
-		expect(result.message).toBeUndefined();
-	});
+    if (!("run" in result)) {
+      throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+    }
+    expect(result.enabled).toBe(true);
+    expect(result.message).toBeUndefined();
+  });
 
-	test("reports enabled as it stands after the run, when the run disabled it", async () => {
-		// A run that trips the failure auto-disable or the token budget leaves
-		// the automation disabled; the response must say so.
-		const base = makeCtx();
-		const ctx = makeCtx({
-			runNow: async (id) => {
-				const run = await base.runNow(id);
-				const defs = loadDefs();
-				defs.get(id)!.enabled = false;
-				saveDefs(defs);
-				return run;
-			},
-		});
-		handleCreate(createArgs("Trips", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+  test("reports enabled as it stands after the run, when the run disabled it", async () => {
+    // A run that trips the failure auto-disable or the token budget leaves
+    // the automation disabled; the response must say so.
+    const base = makeCtx();
+    const ctx = makeCtx({
+      runNow: async (id) => {
+        const run = await base.runNow(id);
+        const defs = loadDefs();
+        defs.get(id)!.enabled = false;
+        saveDefs(defs);
+        return run;
+      },
+    });
+    handleCreate(createArgs("Trips", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		const result = await handleRun({ name: "Trips" }, ctx);
+    const result = await handleRun({ name: "Trips" }, ctx);
 
-		if (!("run" in result)) {
-			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
-		}
-		expect(result.enabled).toBe(false);
-		expect(result.message).toContain("is disabled");
-	});
+    if (!("run" in result)) {
+      throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+    }
+    expect(result.enabled).toBe(false);
+    expect(result.message).toContain("is disabled");
+  });
 
-	test("a disabled automation's dispatched envelope says it is disabled", async () => {
-		let resolveRun: ((value: AutomationRun | null) => void) | undefined;
-		const runPromise = new Promise<AutomationRun | null>((resolve) => {
-			resolveRun = resolve;
-		});
-		const slowCtx = makeCtx({ handleRunSyncWaitMs: 20, runNow: () => runPromise });
-		handleCreate(
-			createArgs("Slow paused", "p", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
-			slowCtx,
-		);
+  test("a disabled automation's dispatched envelope says it is disabled", async () => {
+    let resolveRun: ((value: AutomationRun | null) => void) | undefined;
+    const runPromise = new Promise<AutomationRun | null>((resolve) => {
+      resolveRun = resolve;
+    });
+    const slowCtx = makeCtx({ handleRunSyncWaitMs: 20, runNow: () => runPromise });
+    handleCreate(
+      createArgs("Slow paused", "p", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
+      slowCtx,
+    );
 
-		try {
-			const result = await handleRun({ name: "Slow paused" }, slowCtx);
-			if (!("status" in result)) {
-				throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
-			}
-			expect(result.enabled).toBe(false);
-			expect(result.message).toContain("still running");
-			expect(result.message).toContain("is disabled");
-		} finally {
-			resolveRun?.(null);
-		}
-	});
+    try {
+      const result = await handleRun({ name: "Slow paused" }, slowCtx);
+      if (!("status" in result)) {
+        throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
+      }
+      expect(result.enabled).toBe(false);
+      expect(result.message).toContain("still running");
+      expect(result.message).toContain("is disabled");
+    } finally {
+      resolveRun?.(null);
+    }
+  });
 
-	test("throws for nonexistent automation", async () => {
-		const ctx = makeCtx();
-		await expect(handleRun({ name: "Nope" }, ctx)).rejects.toThrow(
-			"Automation not found",
-		);
-	});
+  test("throws for nonexistent automation", async () => {
+    const ctx = makeCtx();
+    await expect(handleRun({ name: "Nope" }, ctx)).rejects.toThrow("Automation not found");
+  });
 
-	test("returns 'dispatched' envelope when run outlasts the sync-wait window", async () => {
-		// Regression for the production failure where `automations__run` on a
-		// multi-minute automation collided with the SDK's 60s MCP request
-		// timeout and surfaced to the agent as a false -32001 failure. With
-		// the bounded sync-wait, long-running calls return a dispatched
-		// envelope instead of hanging the request.
-		//
-		// The runNow mock returns a promise we control explicitly so the
-		// test cleans up its own timer instead of leaving a long setTimeout
-		// pending past the assertion. Pattern matters — copy-pasted tests
-		// with leaked timers add up.
-		let resolveRun: ((value: AutomationRun | null) => void) | undefined;
-		const runPromise = new Promise<AutomationRun | null>((resolve) => {
-			resolveRun = resolve;
-		});
-		const slowCtx = makeCtx({
-			handleRunSyncWaitMs: 20,
-			runNow: () => runPromise,
-		});
-		handleCreate(
-			createArgs("Slow", "Takes forever", { type: "interval", intervalMs: 60_000 }),
-			slowCtx,
-		);
+  test("returns 'dispatched' envelope when run outlasts the sync-wait window", async () => {
+    // Regression for the production failure where `automations__run` on a
+    // multi-minute automation collided with the SDK's 60s MCP request
+    // timeout and surfaced to the agent as a false -32001 failure. With
+    // the bounded sync-wait, long-running calls return a dispatched
+    // envelope instead of hanging the request.
+    //
+    // The runNow mock returns a promise we control explicitly so the
+    // test cleans up its own timer instead of leaving a long setTimeout
+    // pending past the assertion. Pattern matters — copy-pasted tests
+    // with leaked timers add up.
+    let resolveRun: ((value: AutomationRun | null) => void) | undefined;
+    const runPromise = new Promise<AutomationRun | null>((resolve) => {
+      resolveRun = resolve;
+    });
+    const slowCtx = makeCtx({
+      handleRunSyncWaitMs: 20,
+      runNow: () => runPromise,
+    });
+    handleCreate(
+      createArgs("Slow", "Takes forever", { type: "interval", intervalMs: 60_000 }),
+      slowCtx,
+    );
 
-		try {
-			const result = await handleRun({ name: "Slow" }, slowCtx);
+    try {
+      const result = await handleRun({ name: "Slow" }, slowCtx);
 
-			// Narrow to the "dispatched" branch of the union — if the
-			// handler ever stops emitting this branch (regression to a
-			// blocking handleRun), this test fails to compile.
-			if (!("status" in result)) {
-				throw new Error(
-					`expected dispatched envelope, got ${JSON.stringify(result)}`,
-				);
-			}
-			expect(result.status).toBe("dispatched");
-			expect(result.automationId).toBe("slow");
-			expect(result.enabled).toBe(true);
-			expect(Number.isNaN(Date.parse(result.startedAt))).toBe(false);
-			// Says the run is still going, and where its result will appear.
-			expect(result.message).toContain("still running");
-			expect(result.message).toContain("has not failed");
-			expect(result.message).toContain("automations__runs");
-			expect(result.message).toContain(result.startedAt);
-			expect(result.message).toContain("automations__run_result");
-			expect(result.message).not.toContain("disabled");
-		} finally {
-			// Drain the pending runNow promise so it doesn't sit live past
-			// the test (handleRun no longer awaits it after the sync-wait
-			// times out, and Bun's runner doesn't pin the suite on it, but
-			// hygiene matters when the file grows).
-			resolveRun?.(null);
-		}
-	});
+      // Narrow to the "dispatched" branch of the union — if the
+      // handler ever stops emitting this branch (regression to a
+      // blocking handleRun), this test fails to compile.
+      if (!("status" in result)) {
+        throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
+      }
+      expect(result.status).toBe("dispatched");
+      expect(result.automationId).toBe("slow");
+      expect(result.enabled).toBe(true);
+      expect(Number.isNaN(Date.parse(result.startedAt))).toBe(false);
+      // Says the run is still going, and where its result will appear.
+      expect(result.message).toContain("still running");
+      expect(result.message).toContain("has not failed");
+      expect(result.message).toContain("automations__runs");
+      expect(result.message).toContain(result.startedAt);
+      expect(result.message).toContain("automations__run_result");
+      expect(result.message).not.toContain("disabled");
+    } finally {
+      // Drain the pending runNow promise so it doesn't sit live past
+      // the test (handleRun no longer awaits it after the sync-wait
+      // times out, and Bun's runner doesn't pin the suite on it, but
+      // hygiene matters when the file grows).
+      resolveRun?.(null);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1028,25 +998,22 @@ describe("handleRun", () => {
 // ---------------------------------------------------------------------------
 
 describe("delete preserves run history", () => {
-	test("runs still accessible after deletion", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Deletable", "p", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("runs still accessible after deletion", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Deletable", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-		seedRun("deletable", makeRun({ automationId: "deletable", status: "success" }));
+    seedRun("deletable", makeRun({ automationId: "deletable", status: "success" }));
 
-		handleDelete({ name: "Deletable" }, ctx);
+    handleDelete({ name: "Deletable" }, ctx);
 
-		// Runs still accessible via runs tool
-		const result = handleRuns({ automationId: "deletable" }, ctx) as {
-			runs: AutomationRun[];
-			total: number;
-		};
-		expect(result.total).toBe(1);
-		expect(result.runs[0]!.status).toBe("success");
-	});
+    // Runs still accessible via runs tool
+    const result = handleRuns({ automationId: "deletable" }, ctx) as {
+      runs: AutomationRun[];
+      total: number;
+    };
+    expect(result.total).toBe(1);
+    expect(result.runs[0]!.status).toBe("success");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1054,22 +1021,27 @@ describe("delete preserves run history", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleCreate — new fields", () => {
-	test("stores maxRunDurationMs and tokenBudget", () => {
-		const ctx = makeCtx();
-		const result = handleCreate(
-			createArgs("Budget Test", "test", { type: "interval", intervalMs: 60_000 }, {
-				maxRunDurationMs: 60_000,
-				tokenBudget: { maxInputTokens: 10000, period: "daily" },
-			}),
-			ctx,
-		) as Record<string, unknown>;
+  test("stores maxRunDurationMs and tokenBudget", () => {
+    const ctx = makeCtx();
+    const result = handleCreate(
+      createArgs(
+        "Budget Test",
+        "test",
+        { type: "interval", intervalMs: 60_000 },
+        {
+          maxRunDurationMs: 60_000,
+          tokenBudget: { maxInputTokens: 10000, period: "daily" },
+        },
+      ),
+      ctx,
+    ) as Record<string, unknown>;
 
-		const auto = (result.automation as Automation);
-		expect(auto.maxRunDurationMs).toBe(60_000);
-		expect(auto.tokenBudget).toEqual({ maxInputTokens: 10000, period: "daily" });
-		expect(auto.cumulativeInputTokens).toBe(0);
-		expect(auto.cumulativeOutputTokens).toBe(0);
-	});
+    const auto = result.automation as Automation;
+    expect(auto.maxRunDurationMs).toBe(60_000);
+    expect(auto.tokenBudget).toEqual({ maxInputTokens: 10000, period: "daily" });
+    expect(auto.cumulativeInputTokens).toBe(0);
+    expect(auto.cumulativeOutputTokens).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1077,34 +1049,34 @@ describe("handleCreate — new fields", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleUpdate — re-enable clears disable state", () => {
-	test("enabled=true clears disabledAt, disabledReason, and consecutiveErrors", () => {
-		const ctx = makeCtx();
-		// Create an automation first
-		handleCreate(
-			createArgs("Disabled Test", "test", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("enabled=true clears disabledAt, disabledReason, and consecutiveErrors", () => {
+    const ctx = makeCtx();
+    // Create an automation first
+    handleCreate(
+      createArgs("Disabled Test", "test", { type: "interval", intervalMs: 60_000 }),
+      ctx,
+    );
 
-		// Simulate auto-disable by writing directly
-		const defs = loadDefs();
-		const auto = defs.get("disabled-test")!;
-		auto.enabled = false;
-		auto.disabledAt = new Date().toISOString();
-		auto.disabledReason = "Auto-disabled after 10 consecutive failures";
-		auto.consecutiveErrors = 10;
-		saveDefs(defs);
+    // Simulate auto-disable by writing directly
+    const defs = loadDefs();
+    const auto = defs.get("disabled-test")!;
+    auto.enabled = false;
+    auto.disabledAt = new Date().toISOString();
+    auto.disabledReason = "Auto-disabled after 10 consecutive failures";
+    auto.consecutiveErrors = 10;
+    saveDefs(defs);
 
-		// Re-enable
-		const result = handleUpdate(
-			updateArgs("Disabled Test", { enabled: true }),
-			ctx,
-		) as Record<string, unknown>;
-		const updated = (result.automation as Automation);
-		expect(updated.enabled).toBe(true);
-		expect(updated.consecutiveErrors).toBe(0);
-		expect(updated.disabledAt).toBeUndefined();
-		expect(updated.disabledReason).toBeUndefined();
-	});
+    // Re-enable
+    const result = handleUpdate(updateArgs("Disabled Test", { enabled: true }), ctx) as Record<
+      string,
+      unknown
+    >;
+    const updated = result.automation as Automation;
+    expect(updated.enabled).toBe(true);
+    expect(updated.consecutiveErrors).toBe(0);
+    expect(updated.disabledAt).toBeUndefined();
+    expect(updated.disabledReason).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1112,25 +1084,28 @@ describe("handleUpdate — re-enable clears disable state", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleCancel", () => {
-	test("calls cancelRun and returns result", () => {
-		let cancelledId: string | null = null;
-		const ctx = makeCtx({
-			cancelRun: (id) => { cancelledId = id; return true; },
-		});
-		handleCreate(
-			createArgs("Cancel Target", "test", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("calls cancelRun and returns result", () => {
+    let cancelledId: string | null = null;
+    const ctx = makeCtx({
+      cancelRun: (id) => {
+        cancelledId = id;
+        return true;
+      },
+    });
+    handleCreate(
+      createArgs("Cancel Target", "test", { type: "interval", intervalMs: 60_000 }),
+      ctx,
+    );
 
-		const result = handleCancel({ name: "Cancel Target" }, ctx) as Record<string, unknown>;
-		expect(result.cancelled).toBe(true);
-		expect(cancelledId).toBe("cancel-target");
-	});
+    const result = handleCancel({ name: "Cancel Target" }, ctx) as Record<string, unknown>;
+    expect(result.cancelled).toBe(true);
+    expect(cancelledId).toBe("cancel-target");
+  });
 
-	test("throws for non-existent automation", () => {
-		const ctx = makeCtx();
-		expect(() => handleCancel({ name: "Nonexistent" }, ctx)).toThrow("not found");
-	});
+  test("throws for non-existent automation", () => {
+    const ctx = makeCtx();
+    expect(() => handleCancel({ name: "Nonexistent" }, ctx)).toThrow("not found");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1138,26 +1113,26 @@ describe("handleCancel", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleList — disable info", () => {
-	test("includes disabledReason when auto-disabled", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("List Disabled", "test", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("includes disabledReason when auto-disabled", () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs("List Disabled", "test", { type: "interval", intervalMs: 60_000 }),
+      ctx,
+    );
 
-		// Simulate auto-disable
-		const defs = loadDefs();
-		const auto = defs.get("list-disabled")!;
-		auto.enabled = false;
-		auto.disabledAt = new Date().toISOString();
-		auto.disabledReason = "Token budget exceeded";
-		saveDefs(defs);
+    // Simulate auto-disable
+    const defs = loadDefs();
+    const auto = defs.get("list-disabled")!;
+    auto.enabled = false;
+    auto.disabledAt = new Date().toISOString();
+    auto.disabledReason = "Token budget exceeded";
+    saveDefs(defs);
 
-		const result = handleList({}, ctx) as Record<string, unknown>;
-		const automations = result.automations as Array<Record<string, unknown>>;
-		const entry = automations.find(a => a.id === "list-disabled")!;
-		expect(entry.disabledReason).toBe("Token budget exceeded");
-	});
+    const result = handleList({}, ctx) as Record<string, unknown>;
+    const automations = result.automations as Array<Record<string, unknown>>;
+    const entry = automations.find((a) => a.id === "list-disabled")!;
+    expect(entry.disabledReason).toBe("Token budget exceeded");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1165,107 +1140,93 @@ describe("handleList — disable info", () => {
 // ---------------------------------------------------------------------------
 
 describe("validateAutomationFields", () => {
-	test("rejects intervalMs below 60000", () => {
-		expect(() =>
-			validateAutomationFields({
-				schedule: { type: "interval", intervalMs: 30_000 },
-			}),
-		).toThrow("at least 1 minute");
-	});
+  test("rejects intervalMs below 60000", () => {
+    expect(() =>
+      validateAutomationFields({
+        schedule: { type: "interval", intervalMs: 30_000 },
+      }),
+    ).toThrow("at least 1 minute");
+  });
 
-	test("accepts intervalMs at 60000", () => {
-		expect(() =>
-			validateAutomationFields({
-				schedule: { type: "interval", intervalMs: 60_000 },
-			}),
-		).not.toThrow();
-	});
+  test("accepts intervalMs at 60000", () => {
+    expect(() =>
+      validateAutomationFields({
+        schedule: { type: "interval", intervalMs: 60_000 },
+      }),
+    ).not.toThrow();
+  });
 
-	test("rejects interval type without intervalMs", () => {
-		expect(() =>
-			validateAutomationFields({
-				schedule: { type: "interval" },
-			}),
-		).toThrow("intervalMs is required");
-	});
+  test("rejects interval type without intervalMs", () => {
+    expect(() =>
+      validateAutomationFields({
+        schedule: { type: "interval" },
+      }),
+    ).toThrow("intervalMs is required");
+  });
 
-	test("rejects cron type without expression", () => {
-		expect(() =>
-			validateAutomationFields({
-				schedule: { type: "cron" },
-			}),
-		).toThrow("expression is required");
-	});
+  test("rejects cron type without expression", () => {
+    expect(() =>
+      validateAutomationFields({
+        schedule: { type: "cron" },
+      }),
+    ).toThrow("expression is required");
+  });
 
-	test("rejects invalid cron expression", () => {
-		expect(() =>
-			validateAutomationFields({
-				schedule: { type: "cron", expression: "not a cron" },
-			}),
-		).toThrow("Invalid cron expression");
-	});
+  test("rejects invalid cron expression", () => {
+    expect(() =>
+      validateAutomationFields({
+        schedule: { type: "cron", expression: "not a cron" },
+      }),
+    ).toThrow("Invalid cron expression");
+  });
 
-	test("accepts valid cron expression", () => {
-		expect(() =>
-			validateAutomationFields({
-				schedule: { type: "cron", expression: "0 8 * * *" },
-			}),
-		).not.toThrow();
-	});
+  test("accepts valid cron expression", () => {
+    expect(() =>
+      validateAutomationFields({
+        schedule: { type: "cron", expression: "0 8 * * *" },
+      }),
+    ).not.toThrow();
+  });
 
-	test("rejects maxIterations below 1", () => {
-		expect(() =>
-			validateAutomationFields({ maxIterations: 0 }),
-		).toThrow("between 1 and 50");
-	});
+  test("rejects maxIterations below 1", () => {
+    expect(() => validateAutomationFields({ maxIterations: 0 })).toThrow("between 1 and 50");
+  });
 
-	test("rejects maxIterations above 50", () => {
-		expect(() =>
-			validateAutomationFields({ maxIterations: 51 }),
-		).toThrow("between 1 and 50");
-	});
+  test("rejects maxIterations above 50", () => {
+    expect(() => validateAutomationFields({ maxIterations: 51 })).toThrow("between 1 and 50");
+  });
 
-	test("accepts maxIterations at the 50 cap", () => {
-		expect(() =>
-			validateAutomationFields({ maxIterations: 50 }),
-		).not.toThrow();
-	});
+  test("accepts maxIterations at the 50 cap", () => {
+    expect(() => validateAutomationFields({ maxIterations: 50 })).not.toThrow();
+  });
 
-	test("accepts maxIterations at 25", () => {
-		expect(() =>
-			validateAutomationFields({ maxIterations: 25 }),
-		).not.toThrow();
-	});
+  test("accepts maxIterations at 25", () => {
+    expect(() => validateAutomationFields({ maxIterations: 25 })).not.toThrow();
+  });
 
-	test("rejects maxInputTokens below 1000", () => {
-		expect(() =>
-			validateAutomationFields({ maxInputTokens: 500 }),
-		).toThrow("between 1,000 and 1,000,000");
-	});
+  test("rejects maxInputTokens below 1000", () => {
+    expect(() => validateAutomationFields({ maxInputTokens: 500 })).toThrow(
+      "between 1,000 and 1,000,000",
+    );
+  });
 
-	test("accepts maxInputTokens at 200000", () => {
-		expect(() =>
-			validateAutomationFields({ maxInputTokens: 200_000 }),
-		).not.toThrow();
-	});
+  test("accepts maxInputTokens at 200000", () => {
+    expect(() => validateAutomationFields({ maxInputTokens: 200_000 })).not.toThrow();
+  });
 
-	test("rejects maxRunDurationMs below 10000", () => {
-		expect(() =>
-			validateAutomationFields({ maxRunDurationMs: 5_000 }),
-		).toThrow("between 10 seconds and 10 minutes");
-	});
+  test("rejects maxRunDurationMs below 10000", () => {
+    expect(() => validateAutomationFields({ maxRunDurationMs: 5_000 })).toThrow(
+      "between 10 seconds and 10 minutes",
+    );
+  });
 
-	test("accepts maxRunDurationMs at 120000", () => {
-		expect(() =>
-			validateAutomationFields({ maxRunDurationMs: 120_000 }),
-		).not.toThrow();
-	});
+  test("accepts maxRunDurationMs at 120000", () => {
+    expect(() => validateAutomationFields({ maxRunDurationMs: 120_000 })).not.toThrow();
+  });
 
-	test("passes with no validation-relevant fields", () => {
-		expect(() =>
-			validateAutomationFields({}),
-		).not.toThrow();
-	});
+  test("passes with no validation-relevant fields", () => {
+    expect(() => validateAutomationFields({})).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1273,59 +1234,56 @@ describe("validateAutomationFields", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleCreate — validation", () => {
-	test("rejects creation with invalid intervalMs", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate(
-				createArgs("Bad Interval", "test", { type: "interval", intervalMs: 10_000 }),
-				ctx,
-			),
-		).toThrow("at least 1 minute");
-	});
+  test("rejects creation with invalid intervalMs", () => {
+    const ctx = makeCtx();
+    expect(() =>
+      handleCreate(
+        createArgs("Bad Interval", "test", { type: "interval", intervalMs: 10_000 }),
+        ctx,
+      ),
+    ).toThrow("at least 1 minute");
+  });
 
-	test("rejects creation with invalid cron", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate(
-				createArgs("Bad Cron", "test", { type: "cron", expression: "nope" }),
-				ctx,
-			),
-		).toThrow("Invalid cron");
-	});
+  test("rejects creation with invalid cron", () => {
+    const ctx = makeCtx();
+    expect(() =>
+      handleCreate(createArgs("Bad Cron", "test", { type: "cron", expression: "nope" }), ctx),
+    ).toThrow("Invalid cron");
+  });
 
-	test("rejects creation with a cron that matches no date", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate(
-				createArgs("February 31", "test", { type: "cron", expression: "0 9 31 2 *" }),
-				ctx,
-			),
-		).toThrow("matches no future date");
-	});
+  test("rejects creation with a cron that matches no date", () => {
+    const ctx = makeCtx();
+    expect(() =>
+      handleCreate(
+        createArgs("February 31", "test", { type: "cron", expression: "0 9 31 2 *" }),
+        ctx,
+      ),
+    ).toThrow("matches no future date");
+  });
 
-	test("rejects creation with a cron whose year has passed", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate(
-				createArgs("Past Year", "test", { type: "cron", expression: "0 0 9 1 1 * 2020" }),
-				ctx,
-			),
-		).toThrow("matches no future date");
-	});
+  test("rejects creation with a cron whose year has passed", () => {
+    const ctx = makeCtx();
+    expect(() =>
+      handleCreate(
+        createArgs("Past Year", "test", { type: "cron", expression: "0 0 9 1 1 * 2020" }),
+        ctx,
+      ),
+    ).toThrow("matches no future date");
+  });
 
-	test("rejects creation with an unknown timezone", () => {
-		const ctx = makeCtx();
-		expect(() =>
-			handleCreate(
-				createArgs("Bad Zone", "test", {
-					type: "cron",
-					expression: "0 9 * * *",
-					timezone: "Bogus/Zone",
-				}),
-				ctx,
-			),
-		).toThrow("Invalid cron expression");
-	});
+  test("rejects creation with an unknown timezone", () => {
+    const ctx = makeCtx();
+    expect(() =>
+      handleCreate(
+        createArgs("Bad Zone", "test", {
+          type: "cron",
+          expression: "0 9 * * *",
+          timezone: "Bogus/Zone",
+        }),
+        ctx,
+      ),
+    ).toThrow("Invalid cron expression");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1333,55 +1291,55 @@ describe("handleCreate — validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleUpdate — validation", () => {
-	test("rejects update with invalid intervalMs", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Update Target", "test", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("rejects update with invalid intervalMs", () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs("Update Target", "test", { type: "interval", intervalMs: 60_000 }),
+      ctx,
+    );
 
-		expect(() =>
-			handleUpdate(
-				updateArgs("Update Target", {
-					schedule: { type: "interval", intervalMs: 5_000 },
-				}),
-				ctx,
-			),
-		).toThrow("at least 1 minute");
-	});
+    expect(() =>
+      handleUpdate(
+        updateArgs("Update Target", {
+          schedule: { type: "interval", intervalMs: 5_000 },
+        }),
+        ctx,
+      ),
+    ).toThrow("at least 1 minute");
+  });
 
-	test("rejects update to a cron that matches no date", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Update To Feb 31", "test", { type: "cron", expression: "0 9 * * *" }),
-			ctx,
-		);
+  test("rejects update to a cron that matches no date", () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs("Update To Feb 31", "test", { type: "cron", expression: "0 9 * * *" }),
+      ctx,
+    );
 
-		expect(() =>
-			handleUpdate(
-				updateArgs("Update To Feb 31", {
-					schedule: { type: "cron", expression: "0 9 31 2 *" },
-				}),
-				ctx,
-			),
-		).toThrow("matches no future date");
-	});
+    expect(() =>
+      handleUpdate(
+        updateArgs("Update To Feb 31", {
+          schedule: { type: "cron", expression: "0 9 31 2 *" },
+        }),
+        ctx,
+      ),
+    ).toThrow("matches no future date");
+  });
 
-	test("accepts valid schedule update", () => {
-		const ctx = makeCtx();
-		handleCreate(
-			createArgs("Update Target Valid", "test", { type: "interval", intervalMs: 60_000 }),
-			ctx,
-		);
+  test("accepts valid schedule update", () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs("Update Target Valid", "test", { type: "interval", intervalMs: 60_000 }),
+      ctx,
+    );
 
-		const result = handleUpdate(
-			updateArgs("Update Target Valid", {
-				schedule: { type: "cron", expression: "0 9 * * 1" },
-			}),
-			ctx,
-		) as Record<string, unknown>;
-		expect(result.updated).toBe(true);
-	});
+    const result = handleUpdate(
+      updateArgs("Update Target Valid", {
+        schedule: { type: "cron", expression: "0 9 * * 1" },
+      }),
+      ctx,
+    ) as Record<string, unknown>;
+    expect(result.updated).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1389,69 +1347,69 @@ describe("handleUpdate — validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("automation ownership", () => {
-	test("handleCreate sets ownerId from context", () => {
-		const ctx = makeCtx({ currentUserId: "usr_alice" });
-		const result = handleCreate(
-			createArgs("Owned Automation", "do something", {
-				type: "interval",
-				intervalMs: 60_000,
-			}),
-			ctx,
-		) as { automation: Automation; created: boolean };
+  test("handleCreate sets ownerId from context", () => {
+    const ctx = makeCtx({ currentUserId: "usr_alice" });
+    const result = handleCreate(
+      createArgs("Owned Automation", "do something", {
+        type: "interval",
+        intervalMs: 60_000,
+      }),
+      ctx,
+    ) as { automation: Automation; created: boolean };
 
-		expect(result.created).toBe(true);
-		expect(result.automation.ownerId).toBe("usr_alice");
-	});
+    expect(result.created).toBe(true);
+    expect(result.automation.ownerId).toBe("usr_alice");
+  });
 
-	test("handleCreate sets workspaceId from context", () => {
-		const ctx = makeCtx({ currentWorkspaceId: "ws_engineering" });
-		const result = handleCreate(
-			createArgs("Workspace Automation", "do something", {
-				type: "interval",
-				intervalMs: 60_000,
-			}),
-			ctx,
-		) as { automation: Automation; created: boolean };
+  test("handleCreate sets workspaceId from context", () => {
+    const ctx = makeCtx({ currentWorkspaceId: "ws_engineering" });
+    const result = handleCreate(
+      createArgs("Workspace Automation", "do something", {
+        type: "interval",
+        intervalMs: 60_000,
+      }),
+      ctx,
+    ) as { automation: Automation; created: boolean };
 
-		expect(result.created).toBe(true);
-		expect(result.automation.workspaceId).toBe("ws_engineering");
-	});
+    expect(result.created).toBe(true);
+    expect(result.automation.workspaceId).toBe("ws_engineering");
+  });
 
-	test("handleCreate sets both ownerId and workspaceId", () => {
-		const ctx = makeCtx({
-			currentUserId: "usr_bob",
-			currentWorkspaceId: "ws_ops",
-		});
-		const result = handleCreate(
-			createArgs("Full Context Automation", "do something", {
-				type: "cron",
-				expression: "0 9 * * *",
-			}),
-			ctx,
-		) as { automation: Automation; created: boolean };
+  test("handleCreate sets both ownerId and workspaceId", () => {
+    const ctx = makeCtx({
+      currentUserId: "usr_bob",
+      currentWorkspaceId: "ws_ops",
+    });
+    const result = handleCreate(
+      createArgs("Full Context Automation", "do something", {
+        type: "cron",
+        expression: "0 9 * * *",
+      }),
+      ctx,
+    ) as { automation: Automation; created: boolean };
 
-		expect(result.created).toBe(true);
-		expect(result.automation.ownerId).toBe("usr_bob");
-		expect(result.automation.workspaceId).toBe("ws_ops");
-	});
+    expect(result.created).toBe(true);
+    expect(result.automation.ownerId).toBe("usr_bob");
+    expect(result.automation.workspaceId).toBe("ws_ops");
+  });
 
-	test("create without an explicit context still binds owner+workspace from the store path", () => {
-		// Automations are workspace-owned: even when the create context carries no
-		// currentUserId/currentWorkspaceId, the save path stamps the binding from
-		// the dir the automation is written to (the path is the wall).
-		const ctx = makeCtx(); // no currentUserId or currentWorkspaceId
-		const result = handleCreate(
-			createArgs("Legacy Automation", "do something", {
-				type: "interval",
-				intervalMs: 120_000,
-			}),
-			ctx,
-		) as { automation: Automation; created: boolean };
+  test("create without an explicit context still binds owner+workspace from the store path", () => {
+    // Automations are workspace-owned: even when the create context carries no
+    // currentUserId/currentWorkspaceId, the save path stamps the binding from
+    // the dir the automation is written to (the path is the wall).
+    const ctx = makeCtx(); // no currentUserId or currentWorkspaceId
+    const result = handleCreate(
+      createArgs("Legacy Automation", "do something", {
+        type: "interval",
+        intervalMs: 120_000,
+      }),
+      ctx,
+    ) as { automation: Automation; created: boolean };
 
-		expect(result.created).toBe(true);
-		expect(result.automation.ownerId).toBe(OWNER);
-		expect(result.automation.workspaceId).toBe(WS);
-	});
+    expect(result.created).toBe(true);
+    expect(result.automation.ownerId).toBe(OWNER);
+    expect(result.automation.workspaceId).toBe(WS);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1459,79 +1417,79 @@ describe("automation ownership", () => {
 // ---------------------------------------------------------------------------
 
 describe("event schedules", () => {
-	const match = { source: "precision-outbound", name: "reply.*" };
+  const match = { source: "precision-outbound", name: "reply.*" };
 
-	test("format as the notifications they wait for", () => {
-		expect(formatSchedule({ type: "event", match })).toBe(
-			"On notifications from precision-outbound, matching reply.*",
-		);
-		expect(formatSchedule({ type: "event", match: { level: "urgent" } })).toBe(
-			"On notifications at urgent or above",
-		);
-		expect(formatSchedule({ type: "event", match: {} })).toBe("On any routed notification");
-	});
+  test("format as the notifications they wait for", () => {
+    expect(formatSchedule({ type: "event", match })).toBe(
+      "On notifications from precision-outbound, matching reply.*",
+    );
+    expect(formatSchedule({ type: "event", match: { level: "urgent" } })).toBe(
+      "On notifications at urgent or above",
+    );
+    expect(formatSchedule({ type: "event", match: {} })).toBe("On any routed notification");
+  });
 
-	// How often it fires is a property of the connector, not of the definition,
-	// so a per-day cost figure would be a number nothing supports.
-	test("estimate no runs per day", () => {
-		expect(estimateRunsPerDay({ type: "event", match })).toBe(0);
-	});
+  // How often it fires is a property of the connector, not of the definition,
+  // so a per-day cost figure would be a number nothing supports.
+  test("estimate no runs per day", () => {
+    expect(estimateRunsPerDay({ type: "event", match })).toBe(0);
+  });
 
-	test("require a match", () => {
-		expect(() =>
-			validateAutomationFields({ schedule: { type: "event" } }),
-		).toThrow(/match is required/);
-		expect(() => validateAutomationFields({ schedule: { type: "event", match } })).not.toThrow();
-	});
+  test("require a match", () => {
+    expect(() => validateAutomationFields({ schedule: { type: "event" } })).toThrow(
+      /match is required/,
+    );
+    expect(() => validateAutomationFields({ schedule: { type: "event", match } })).not.toThrow();
+  });
 
-	test("bound the debounce window on both sides", () => {
-		expect(() =>
-			validateAutomationFields({ schedule: { type: "event", match, debounceMs: 500 } }),
-		).toThrow(/debounceMs/);
-		expect(() =>
-			validateAutomationFields({ schedule: { type: "event", match, debounceMs: 900_001 } }),
-		).toThrow(/debounceMs/);
-		expect(() =>
-			validateAutomationFields({ schedule: { type: "event", match, debounceMs: 60_000 } }),
-		).not.toThrow();
-	});
+  test("bound the debounce window on both sides", () => {
+    expect(() =>
+      validateAutomationFields({ schedule: { type: "event", match, debounceMs: 500 } }),
+    ).toThrow(/debounceMs/);
+    expect(() =>
+      validateAutomationFields({ schedule: { type: "event", match, debounceMs: 900_001 } }),
+    ).toThrow(/debounceMs/);
+    expect(() =>
+      validateAutomationFields({ schedule: { type: "event", match, debounceMs: 60_000 } }),
+    ).not.toThrow();
+  });
 
-	test("bound the fire ceiling on both sides, and require a whole number", () => {
-		for (const maxFiresPerHour of [0, 61, 2.5]) {
-			expect(() =>
-				validateAutomationFields({ schedule: { type: "event", match, maxFiresPerHour } }),
-			).toThrow(/maxFiresPerHour/);
-		}
-		expect(() =>
-			validateAutomationFields({ schedule: { type: "event", match, maxFiresPerHour: 6 } }),
-		).not.toThrow();
-	});
+  test("bound the fire ceiling on both sides, and require a whole number", () => {
+    for (const maxFiresPerHour of [0, 61, 2.5]) {
+      expect(() =>
+        validateAutomationFields({ schedule: { type: "event", match, maxFiresPerHour } }),
+      ).toThrow(/maxFiresPerHour/);
+    }
+    expect(() =>
+      validateAutomationFields({ schedule: { type: "event", match, maxFiresPerHour: 6 } }),
+    ).not.toThrow();
+  });
 
-	test("are created and read back through the tool surface", async () => {
-		const ctx = makeCtx();
-		const created = await handleCreate(
-			{
-				manifest: {
-					name: "Reply triage",
-					schedule: { type: "event", match, debounceMs: 60_000, maxFiresPerHour: 6 },
-				},
-				body: "Triage the replies in the event block.",
-			},
-			ctx,
-		);
-		expect(created.created).toBe(true);
+  test("are created and read back through the tool surface", async () => {
+    const ctx = makeCtx();
+    const created = await handleCreate(
+      {
+        manifest: {
+          name: "Reply triage",
+          schedule: { type: "event", match, debounceMs: 60_000, maxFiresPerHour: 6 },
+        },
+        body: "Triage the replies in the event block.",
+      },
+      ctx,
+    );
+    expect(created.created).toBe(true);
 
-		const status = await handleStatus({ name: "Reply triage" }, ctx);
-		expect(status.automation.schedule).toEqual({
-			type: "event",
-			match,
-			debounceMs: 60_000,
-			maxFiresPerHour: 6,
-		});
-		expect(status.automation.scheduleHuman).toBe(
-			"On notifications from precision-outbound, matching reply.*",
-		);
-		expect(status.automation.nextRunAt).toBeUndefined();
-		expect(status.automation.estimatedCostPerDay).toBe(0);
-	});
+    const status = await handleStatus({ name: "Reply triage" }, ctx);
+    expect(status.automation.schedule).toEqual({
+      type: "event",
+      match,
+      debounceMs: 60_000,
+      maxFiresPerHour: 6,
+    });
+    expect(status.automation.scheduleHuman).toBe(
+      "On notifications from precision-outbound, matching reply.*",
+    );
+    expect(status.automation.nextRunAt).toBeUndefined();
+    expect(status.automation.estimatedCostPerDay).toBe(0);
+  });
 });

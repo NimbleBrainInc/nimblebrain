@@ -26,21 +26,21 @@
  * body off the prompt the model actually received.
  */
 
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** Reverse-DNS slug, like a real fleet connector — never the skill's own name. */
 const SERVER_NAME = "ai-nimblebrain-capture-mcp";
@@ -93,7 +93,7 @@ function createFixtureServer(): Server {
     { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       {
         name: "record",
@@ -103,11 +103,11 @@ function createFixtureServer(): Server {
     ],
   }));
 
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "recorded" }],
   }));
 
-  server.setRequestHandler('resources/list', async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: "skill://capture/SKILL.md", name: "capture", mimeType: "text/markdown" },
       { uri: "skill://quiet/SKILL.md", name: "quiet", mimeType: "text/markdown" },
@@ -115,7 +115,7 @@ function createFixtureServer(): Server {
   }));
 
   serveSkills(server, () => bodies);
-  server.setRequestHandler('resources/read', async (request) => {
+  server.setRequestHandler("resources/read", async (request) => {
     const text = bodies[request.params.uri];
     if (!text) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };

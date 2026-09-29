@@ -59,7 +59,12 @@ function freshRegistry(): {
   const source = new MockSource("mock");
   registry.addSource(source);
   const permStore = new PermissionStore(dir);
-  return { registry, source, permStore, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return {
+    registry,
+    source,
+    permStore,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
 }
 
 describe("ToolRegistry.execute permission gate", () => {
@@ -90,11 +95,9 @@ describe("ToolRegistry.execute permission gate", () => {
     const { registry, source, permStore, cleanup } = freshRegistry();
     try {
       registry.setPermissionContext("ws_test", permStore);
-      await permStore.setConnector(
-        { scope: "workspace", wsId: "ws_test" },
-        "mock",
-        { destructive: "disallow" },
-      );
+      await permStore.setConnector({ scope: "workspace", wsId: "ws_test" }, "mock", {
+        destructive: "disallow",
+      });
       const result = await registry.execute({ name: "mock__destructive", input: {} });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({
@@ -113,11 +116,9 @@ describe("ToolRegistry.execute permission gate", () => {
     const { registry, source, permStore, cleanup } = freshRegistry();
     try {
       registry.setPermissionContext("ws_test", permStore);
-      await permStore.setConnector(
-        { scope: "workspace", wsId: "ws_test" },
-        "mock",
-        { readonly: "allow" },
-      );
+      await permStore.setConnector({ scope: "workspace", wsId: "ws_test" }, "mock", {
+        readonly: "allow",
+      });
       const result = await registry.execute({ name: "mock__readonly", input: {} });
       expect(result.isError).toBe(false);
       expect(source.callCount).toBe(1);
@@ -132,11 +133,9 @@ describe("ToolRegistry.execute permission gate", () => {
       const sourceB = new MockSource("other");
       registry.addSource(sourceB);
       registry.setPermissionContext("ws_test", permStore);
-      await permStore.setConnector(
-        { scope: "workspace", wsId: "ws_test" },
-        "mock",
-        { readonly: "disallow" },
-      );
+      await permStore.setConnector({ scope: "workspace", wsId: "ws_test" }, "mock", {
+        readonly: "disallow",
+      });
       // Same tool name on different connector — should not be blocked.
       const result = await registry.execute({ name: "other__readonly", input: {} });
       expect(result.isError).toBe(false);

@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { _clearAll } from "../../src/tools/oauth-flow-registry.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";

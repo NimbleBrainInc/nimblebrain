@@ -18,15 +18,15 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { isModelVisible } from "../../../../src/engine/types.ts";
+import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
+import { createNotificationsSource } from "../../../../src/platform/notifications/source.ts";
 import {
   NOTIFICATION_SOURCES_MAX,
   type NotificationRouteInput,
   type NotificationsSettingsOutput,
 } from "../../../../src/platform/schemas/notifications.ts";
-import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createNotificationsSource } from "../../../../src/platform/notifications/source.ts";
-import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
 
 const WS = "ws_outbound";
@@ -45,7 +45,11 @@ class FakeRuntime {
     },
     // A clock automation is a legal thing for a route to name and a useless
     // one, so the picker has to be able to say so.
-    { id: "auto_digest", name: "Weekly digest", schedule: { type: "cron", expression: "0 9 * * 1" } },
+    {
+      id: "auto_digest",
+      name: "Weekly digest",
+      schedule: { type: "cron", expression: "0 9 * * 1" },
+    },
   ];
 
   getCurrentIdentity() {
@@ -69,7 +73,11 @@ class FakeRuntime {
   }
   async listNotificationSources() {
     return [
-      { source: "precision-outbound", label: "Precision Outbound", description: "Domain lifecycle." },
+      {
+        source: "precision-outbound",
+        label: "Precision Outbound",
+        description: "Domain lifecycle.",
+      },
     ];
   }
   async ensureWorkspaceRegistry() {
@@ -120,8 +128,9 @@ beforeEach(async () => {
 
 /** Run a tool with `WS` as the request's bound workspace. */
 function exec(tool: string, args: Record<string, unknown> = {}) {
-  return runWithRequestContext({ identity: { id: runtime.identity?.id } as never, workspaceId: WS }, () =>
-    source.execute(tool, args),
+  return runWithRequestContext(
+    { identity: { id: runtime.identity?.id } as never, workspaceId: WS },
+    () => source.execute(tool, args),
   );
 }
 
@@ -170,7 +179,10 @@ describe("a member cannot configure the workspace", () => {
   });
 
   test("cannot raise a ceiling", async () => {
-    const res = await exec("set_source_level", { source: "precision-outbound", maxLevel: "urgent" });
+    const res = await exec("set_source_level", {
+      source: "precision-outbound",
+      maxLevel: "urgent",
+    });
     expect(res.isError).toBe(true);
     // And nothing was written.
     expect(runtime.workspaces.get(WS)?.notifications).toBeUndefined();
@@ -196,7 +208,10 @@ describe("the ceiling", () => {
   });
 
   test("raising it persists and reads back as configured", async () => {
-    const res = await exec("set_source_level", { source: "precision-outbound", maxLevel: "urgent" });
+    const res = await exec("set_source_level", {
+      source: "precision-outbound",
+      maxLevel: "urgent",
+    });
     expect(res.isError).toBe(false);
     const out = res.structuredContent as unknown as NotificationsSettingsOutput;
     expect(out.sources[0]).toMatchObject({ maxLevel: "urgent", configured: true });
@@ -339,9 +354,7 @@ describe("a route may only name what the workspace has", () => {
     // It would be delivered as the literal characters `{{campaign}}`, which
     // reads as an almost-right message nobody investigates.
     const res = await exec("set_routes", {
-      routes: [
-        route({ deliver: [{ kind: "tool", tool: TOOL, input: { text: "{{campaign}}" } }] }),
-      ],
+      routes: [route({ deliver: [{ kind: "tool", tool: TOOL, input: { text: "{{campaign}}" } }] })],
     });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toContain("{{campaign}}");
@@ -388,13 +401,7 @@ describe("what the editor is told", () => {
     expect(out.deliverableTools).toEqual(["slack__list_channels", TOOL]);
     // Four the connector supplies, and `inbox.url`, which only the runtime can
     // build — the editor offers all five because the write accepts all five.
-    expect(out.placeholders).toEqual([
-      "title",
-      "body",
-      "subject",
-      "link.resource",
-      "inbox.url",
-    ]);
+    expect(out.placeholders).toEqual(["title", "body", "subject", "link.resource", "inbox.url"]);
   });
 
   test("the automation picker says which of them can actually be woken", async () => {

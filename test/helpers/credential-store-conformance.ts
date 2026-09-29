@@ -95,7 +95,9 @@ export function describeCredentialStoreConformance(
       const { store, cleanup } = freshStore();
       try {
         await expect(store.put({ kind: "workspace", wsId: "../evil" }, "k", "v")).rejects.toThrow();
-        await expect(store.put({ kind: "workspace", wsId: "not-a-ws" }, "k", "v")).rejects.toThrow();
+        await expect(
+          store.put({ kind: "workspace", wsId: "not-a-ws" }, "k", "v"),
+        ).rejects.toThrow();
         await expect(store.put({ kind: "workspace", wsId: "" }, "k", "v")).rejects.toThrow();
       } finally {
         cleanup();

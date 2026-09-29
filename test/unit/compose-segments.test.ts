@@ -211,7 +211,9 @@ describe("composeSystemSegments — skill catalog layer", () => {
 
   it("sits after the Skills section and before Installed Apps", () => {
     const { stableSystem } = full();
-    expect(stableSystem.indexOf("## Skills")).toBeLessThan(stableSystem.indexOf("## Skill Catalog"));
+    expect(stableSystem.indexOf("## Skills")).toBeLessThan(
+      stableSystem.indexOf("## Skill Catalog"),
+    );
     expect(stableSystem.indexOf("## Skill Catalog")).toBeLessThan(
       stableSystem.indexOf("## Installed Apps"),
     );

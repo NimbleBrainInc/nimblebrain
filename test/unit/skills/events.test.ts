@@ -15,10 +15,10 @@
  *   - Resource integration — covered by skills-source.test.ts.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../../src/adapters/static-router.ts";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
@@ -27,8 +27,8 @@ import type {
   ConversationEvent,
   SkillsLoadedEvent,
 } from "../../../src/conversation/types.ts";
-import { AgentEngine } from "../../../src/engine/engine.ts";
 import { textContent } from "../../../src/engine/content-helpers.ts";
+import { AgentEngine } from "../../../src/engine/engine.ts";
 import type {
   EngineConfig,
   EngineEvent,
@@ -100,10 +100,13 @@ function makeConfigWithMetadata(): EngineConfig {
 function makeEngine(events: EventSink): AgentEngine {
   return new AgentEngine(
     createEchoModel(),
-    new StaticToolRouter([], (_call: ToolCall): ToolResult => ({
-      content: textContent(""),
-      isError: false,
-    })),
+    new StaticToolRouter(
+      [],
+      (_call: ToolCall): ToolResult => ({
+        content: textContent(""),
+        isError: false,
+      }),
+    ),
     events,
   );
 }

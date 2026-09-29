@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import { join } from "node:path";
 import { deriveUsageMetrics } from "../../src/conversation/event-reconstructor.ts";
+import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
 
 function makeDirs() {
@@ -52,7 +52,9 @@ describe("Event-sourced integration", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     // Verify file contains events
-    const lines = readFileSync(join(dirs.dir, `${conv.id}.jsonl`), "utf-8").trim().split("\n");
+    const lines = readFileSync(join(dirs.dir, `${conv.id}.jsonl`), "utf-8")
+      .trim()
+      .split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(5); // meta + user.message + run.start + llm.response + run.done
 
     const events = lines.slice(1).map((l) => JSON.parse(l));
@@ -66,7 +68,9 @@ describe("Event-sourced integration", () => {
     expect(messages.length).toBe(2);
     expect(messages[0].role).toBe("user");
     expect(messages[1].role).toBe("assistant");
-    expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe("Hi there!");
+    expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe(
+      "Hi there!",
+    );
     expect(messages[1].metadata?.usage?.inputTokens).toBe(100);
     expect(messages[1].metadata?.usage?.outputTokens).toBe(20);
     expect(messages[1].metadata?.model).toBe("claude-sonnet-4-5-20250929");
@@ -123,9 +127,13 @@ describe("Event-sourced integration", () => {
     const messages = await store.history(conv!);
     expect(messages.length).toBe(2);
     expect(messages[0].role).toBe("user");
-    expect((messages[0].content as Array<{ type: string; text: string }>)[0].text).toBe("Legacy question");
+    expect((messages[0].content as Array<{ type: string; text: string }>)[0].text).toBe(
+      "Legacy question",
+    );
     expect(messages[1].role).toBe("assistant");
-    expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe("Legacy answer");
+    expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe(
+      "Legacy answer",
+    );
   });
 
   it("debug vs normal logging: verbose fields persisted only in debug mode", async () => {
@@ -155,8 +163,12 @@ describe("Event-sourced integration", () => {
     debugStore.setActiveConversation(debugConv.id);
     debugStore.emit(engineEvent);
 
-    const normalLines = readFileSync(join(normalDirs.dir, `${normalConv.id}.jsonl`), "utf-8").trim().split("\n");
-    const debugLines = readFileSync(join(debugDirs.dir, `${debugConv.id}.jsonl`), "utf-8").trim().split("\n");
+    const normalLines = readFileSync(join(normalDirs.dir, `${normalConv.id}.jsonl`), "utf-8")
+      .trim()
+      .split("\n");
+    const debugLines = readFileSync(join(debugDirs.dir, `${debugConv.id}.jsonl`), "utf-8")
+      .trim()
+      .split("\n");
 
     const normalEvent = JSON.parse(normalLines[1]);
     const debugEvent = JSON.parse(debugLines[1]);
@@ -215,10 +227,9 @@ describe("Event-sourced integration", () => {
     ];
 
     const metrics = deriveUsageMetrics(events);
-    expect(metrics.totalInputTokens).toBe(500);   // 200 + 300
-    expect(metrics.totalOutputTokens).toBe(130);   // 50 + 80
+    expect(metrics.totalInputTokens).toBe(500); // 200 + 300
+    expect(metrics.totalOutputTokens).toBe(130); // 50 + 80
     expect(metrics.lastModel).toBe("claude-sonnet-4-5-20250929");
     expect(metrics.totalCostUsd).toBeGreaterThan(0); // computed from catalog
   });
-
 });

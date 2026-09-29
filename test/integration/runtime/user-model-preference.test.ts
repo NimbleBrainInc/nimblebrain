@@ -3,15 +3,15 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ModelNotAllowedError } from "../../../src/runtime/errors.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
-import type { ModelSlots } from "../../../src/runtime/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
+import type { ModelSlots } from "../../../src/runtime/types.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-user-model-pref-${Date.now()}`);
 
@@ -168,9 +168,9 @@ describe("a workspace's model overrides", () => {
 
 /** Invoke `set_preferences` through the real core tool, as the given user. */
 async function setPreference(runtime: Runtime, userId: string, model: string | null) {
-    const identity = (await runtime.getUserStore().get(userId)) as unknown as UserIdentity;
-    const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
-    if (!tool) throw new Error("set_preferences tool not found");
+  const identity = (await runtime.getUserStore().get(userId)) as unknown as UserIdentity;
+  const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
+  if (!tool) throw new Error("set_preferences tool not found");
   return runWithRequestContext({ identity, workspaceId: null } as never, () =>
     tool.handler({ model }),
   );

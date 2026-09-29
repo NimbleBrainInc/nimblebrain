@@ -6,10 +6,11 @@
  * nothing here resets the process-global registry that the rest of the suite
  * shares (the convention documented in `test/unit/metrics.test.ts`).
  */
+
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { llmCallsTotal, llmTokensTotal } from "../../../src/api/metrics.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { UsageLedger } from "../../../src/usage/ledger.ts";
@@ -56,12 +57,9 @@ describe("originOf", () => {
     runWithRequestContext({ identity: null, runId: "run-1", unattended: true }, () => {
       expect(originOf()).toBe("task");
     });
-    runWithRequestContext(
-      { identity: null, conversationId: "conv-1", unattended: true },
-      () => {
-        expect(originOf()).toBe("task");
-      },
-    );
+    runWithRequestContext({ identity: null, conversationId: "conv-1", unattended: true }, () => {
+      expect(originOf()).toBe("task");
+    });
   });
 });
 

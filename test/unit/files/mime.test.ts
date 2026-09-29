@@ -1,6 +1,6 @@
-import { describe, test, expect } from "bun:test";
-import { EXTENSION_MIME, isTextMime, resolveMimeType } from "../../../src/files/mime.ts";
+import { describe, expect, test } from "bun:test";
 import { isExtractable } from "../../../src/files/ingest.ts";
+import { EXTENSION_MIME, isTextMime, resolveMimeType } from "../../../src/files/mime.ts";
 
 describe("resolveMimeType", () => {
   test("recovers text/plain for a .typ upload with no Content-Type", () => {

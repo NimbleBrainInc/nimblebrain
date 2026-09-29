@@ -46,7 +46,7 @@ beforeAll(async () => {
   await store.addMember(wsForeign, "usr_someone_else", "admin");
   for (const id of [wsA, wsB]) await runtime.ensureWorkspaceRegistry(id);
 
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -82,7 +82,12 @@ function uploadForm(): FormData {
 }
 
 /** One representative workspace-scoped request per router, relative to `/v1/workspaces/<wsId>`. */
-const WORKSPACE_ROUTES: Array<{ router: string; method: string; suffix: string; body?: () => unknown }> = [
+const WORKSPACE_ROUTES: Array<{
+  router: string;
+  method: string;
+  suffix: string;
+  body?: () => unknown;
+}> = [
   { router: "chat", method: "POST", suffix: "/chat/start", body: () => ({ message: "hi" }) },
   { router: "chat", method: "POST", suffix: "/chat", body: () => ({ message: "hi" }) },
   {
@@ -127,7 +132,11 @@ const RETIRED_ROUTES: Array<{ method: string; path: string; body?: () => unknown
   { method: "POST", path: "/v1/resources", body: uploadForm },
   { method: "GET", path: "/v1/apps/conversations/resources/primary" },
   { method: "POST", path: "/v1/mcp-auth/initiate", body: () => ({ serverName: "x" }) },
-  { method: "POST", path: "/v1/composio-auth/initiate", body: () => ({ connectorId: "com.acme/x" }) },
+  {
+    method: "POST",
+    path: "/v1/composio-auth/initiate",
+    body: () => ({ connectorId: "com.acme/x" }),
+  },
 ];
 
 describe("retired workspace-scoped paths", () => {
@@ -273,18 +282,31 @@ describe("a name that carries a workspace", () => {
   // The workspace is the one in the path. A `ws_<id>-` qualified server, app or
   // tool is refused with a 400 — even naming a workspace the caller belongs to —
   // rather than routed there or stripped to its bare remainder.
-  const QUALIFIED: Array<{ label: string; method: string; suffix: () => string; body?: () => unknown }> = [
+  const QUALIFIED: Array<{
+    label: string;
+    method: string;
+    suffix: () => string;
+    body?: () => unknown;
+  }> = [
     {
       label: "tools/call server",
       method: "POST",
       suffix: () => "/tools/call",
-      body: () => ({ server: `${wsB}-nb`, tool: "manage_workspaces", arguments: { action: "list" } }),
+      body: () => ({
+        server: `${wsB}-nb`,
+        tool: "manage_workspaces",
+        arguments: { action: "list" },
+      }),
     },
     {
       label: "tools/call tool",
       method: "POST",
       suffix: () => "/tools/call",
-      body: () => ({ server: "nb", tool: `${wsB}-nb__manage_workspaces`, arguments: { action: "list" } }),
+      body: () => ({
+        server: "nb",
+        tool: `${wsB}-nb__manage_workspaces`,
+        arguments: { action: "list" },
+      }),
     },
     {
       label: "resources/read server",

@@ -1,12 +1,12 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createIdentityProvider } from "../../../src/identity/provider.ts";
+import type { InstanceConfig } from "../../../src/identity/instance.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { createIdentityProvider } from "../../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../../src/identity/providers/dev.ts";
 import { OidcIdentityProvider } from "../../../src/identity/providers/oidc.ts";
-import type { InstanceConfig } from "../../../src/identity/instance.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 
@@ -31,7 +31,9 @@ describe("createIdentityProvider", () => {
 
   test("throws descriptive error for unknown adapter type", () => {
     const config = { auth: { adapter: "foobar" } } as unknown as InstanceConfig;
-    expect(() => createIdentityProvider(config, userStore, workDir)).toThrow('Unknown identity provider: "foobar"');
+    expect(() => createIdentityProvider(config, userStore, workDir)).toThrow(
+      'Unknown identity provider: "foobar"',
+    );
   });
 
   test("creates OidcIdentityProvider for oidc config", () => {
@@ -66,7 +68,9 @@ describe("createIdentityProvider", () => {
     const config = {
       auth: { adapter: "nosuch" },
     } as unknown as InstanceConfig;
-    expect(() => createIdentityProvider(config, userStore, workDir)).toThrow('Unknown identity provider: "nosuch"');
+    expect(() => createIdentityProvider(config, userStore, workDir)).toThrow(
+      'Unknown identity provider: "nosuch"',
+    );
   });
 });
 

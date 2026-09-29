@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { sanitizeFilename } from "../../../src/api/handlers.ts";
 
 describe("sanitizeFilename", () => {
@@ -19,8 +19,6 @@ describe("sanitizeFilename", () => {
   });
 
   test("handles unicode filenames", () => {
-    expect(sanitizeFilename("\u30EC\u30DD\u30FC\u30C8.pdf")).toBe(
-      "\u30EC\u30DD\u30FC\u30C8.pdf",
-    );
+    expect(sanitizeFilename("\u30EC\u30DD\u30FC\u30C8.pdf")).toBe("\u30EC\u30DD\u30FC\u30C8.pdf");
   });
 });

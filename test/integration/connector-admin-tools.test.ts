@@ -467,9 +467,9 @@ describe("kernel-originated calls", () => {
     expect(warnings.some((w) => w.includes('"workspace_ready"') && w.includes("on_ready"))).toBe(
       true,
     );
-    expect(warnings.some((w) => w.includes('"set_webhook_url"') && w.includes("register_tool"))).toBe(
-      true,
-    );
+    expect(
+      warnings.some((w) => w.includes('"set_webhook_url"') && w.includes("register_tool")),
+    ).toBe(true);
     expect(warnings.some((w) => w.includes('"ghost"') && w.includes("not among"))).toBe(true);
     expect(warnings.some((w) => w.includes('"configure"'))).toBe(false);
   });

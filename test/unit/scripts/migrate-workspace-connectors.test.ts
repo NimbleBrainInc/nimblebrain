@@ -100,7 +100,9 @@ describe("migrateWorkspaceContent", () => {
   });
 
   test("a non-array connector list is an error, not a silent rewrite", () => {
-    expect(migrateWorkspaceContent(JSON.stringify({ ...RECORD, bundles: {} })).status).toBe("error");
+    expect(migrateWorkspaceContent(JSON.stringify({ ...RECORD, bundles: {} })).status).toBe(
+      "error",
+    );
     const { bundles: _drop, ...rest } = RECORD;
     expect(migrateWorkspaceContent(JSON.stringify({ ...rest, connectors: "x" })).status).toBe(
       "error",

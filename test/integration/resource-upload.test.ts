@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -30,7 +30,7 @@ beforeAll(async () => {
     },
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -123,11 +123,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
 
   it("rejects a disallowed MIME type with 400 file_upload_error", async () => {
     const form = new FormData();
-    form.append(
-      "file",
-      new Blob(["MZ\x90\x00"], { type: "application/x-msdownload" }),
-      "evil.exe",
-    );
+    form.append("file", new Blob(["MZ\x90\x00"], { type: "application/x-msdownload" }), "evil.exe");
 
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
@@ -150,7 +146,8 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
   });
 
   it("persists tags / description / conversationId metadata onto the FileEntry", async () => {
-    const { conversationId } = await runtime.chat({ identity: DEV_IDENTITY,
+    const { conversationId } = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "a conversation to attach to",
       workspaceId: TEST_WORKSPACE_ID,
     });

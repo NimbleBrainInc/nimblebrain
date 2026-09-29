@@ -3,10 +3,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineEvent } from "../../src/engine/types.ts";
-import {
-  credentialScopeLabel,
-  FileCredentialStore,
-} from "../../src/tools/credential-store.ts";
+import { credentialScopeLabel, FileCredentialStore } from "../../src/tools/credential-store.ts";
 import {
   describeCredentialStoreConformance,
   INSTANCE,

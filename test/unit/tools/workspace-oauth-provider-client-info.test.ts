@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { CredentialStore } from "../../../src/tools/credential-store.ts";
 import { mcpOAuthKey } from "../../../src/tools/mcp-oauth-records.ts";
 import {
@@ -51,9 +51,7 @@ afterEach(async () => {
 
 /** Whether the DCR registration is still stored — i.e. was not discarded. */
 async function clientRecordStored(): Promise<boolean> {
-  return (
-    (await store.get(SCOPE, CLIENT_KEY, { caller: "test", purpose: "assert" })) !== null
-  );
+  return (await store.get(SCOPE, CLIENT_KEY, { caller: "test", purpose: "assert" })) !== null;
 }
 
 function makeProvider(): WorkspaceOAuthProvider {

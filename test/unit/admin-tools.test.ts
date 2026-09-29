@@ -54,9 +54,7 @@ describe("isAdminToolAllowed", () => {
 
   test("refuses an org admin who is not a member of the workspace", () => {
     expect(isAdminToolAllowed(identity("u_org", "admin"), WS, DECLARED, "configure")).toBe(false);
-    expect(isAdminToolAllowed(identity("u_owner", "owner"), WS, DECLARED, "configure")).toBe(
-      false,
-    );
+    expect(isAdminToolAllowed(identity("u_owner", "owner"), WS, DECLARED, "configure")).toBe(false);
   });
 
   test("refuses when there is no identity", () => {
@@ -92,7 +90,9 @@ describe("parseAdminToolsDeclaration", () => {
 
   test("declares nothing for a host block that is not an object", () => {
     for (const host of ["1.0", 7]) {
-      expect(parseAdminToolsDeclaration(host as unknown as HostManifestMeta, "ai.acme/crm")).toBeUndefined();
+      expect(
+        parseAdminToolsDeclaration(host as unknown as HostManifestMeta, "ai.acme/crm"),
+      ).toBeUndefined();
     }
   });
 
@@ -137,7 +137,9 @@ describe("the catalog projection", () => {
   test("keeps the entry, gating every tool, when admin_tools is malformed", () => {
     // Enforcement reads the live catalog, so dropping the entry would un-gate
     // an installed connector.
-    const entry = serverDetailToCatalogEntry(detail({ host_version: "1.5", admin_tools: "configure" }));
+    const entry = serverDetailToCatalogEntry(
+      detail({ host_version: "1.5", admin_tools: "configure" }),
+    );
     expect(entry?.adminTools?.kind).toBe("all");
   });
 

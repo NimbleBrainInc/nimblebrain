@@ -134,9 +134,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
     // The second fixture create()s a fresh workspace store under a new
     // temp workDir; ensure the stranger workspace exists in the live
     // fixture's store too (same id).
-    await fixture.runtime
-      .getWorkspaceStore()
-      .create("Stranger Workspace", stranger.id.slice(3));
+    await fixture.runtime.getWorkspaceStore().create("Stranger Workspace", stranger.id.slice(3));
 
     const result = await fixture.runtime.chat(
       fixture.buildChatRequest({ message: "trigger workspace_access_denied" }),

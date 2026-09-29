@@ -1,89 +1,87 @@
 import { describe, expect, it } from "bun:test";
-import { resolveFeatures, isToolEnabled, isToolVisibleToRole } from "../../src/config/features.ts";
+import { isToolEnabled, isToolVisibleToRole, resolveFeatures } from "../../src/config/features.ts";
 
 describe("resolveFeatures", () => {
-	it("defaults all flags to true when called with no args", () => {
-		const features = resolveFeatures();
-		expect(features.skillManagement).toBe(true);
-		expect(features.toolDiscovery).toBe(true);
-		expect(features.catalogSearch).toBe(true);
-		expect(features.compaction).toBe(true);
-	});
+  it("defaults all flags to true when called with no args", () => {
+    const features = resolveFeatures();
+    expect(features.skillManagement).toBe(true);
+    expect(features.toolDiscovery).toBe(true);
+    expect(features.catalogSearch).toBe(true);
+    expect(features.compaction).toBe(true);
+  });
 
-	it("merges partial config correctly", () => {
-		const features = resolveFeatures({ catalogSearch: false });
-		expect(features.catalogSearch).toBe(false);
-		expect(features.skillManagement).toBe(true);
-		expect(features.toolDiscovery).toBe(true);
-	});
-
+  it("merges partial config correctly", () => {
+    const features = resolveFeatures({ catalogSearch: false });
+    expect(features.catalogSearch).toBe(false);
+    expect(features.skillManagement).toBe(true);
+    expect(features.toolDiscovery).toBe(true);
+  });
 });
 
 describe("isToolEnabled", () => {
-	it("gates the whole skill surface, reads and writes alike, on skillManagement", () => {
-		const features = resolveFeatures({ skillManagement: false });
-		// `restore` writes and `history` reads the mutation surface's audit
-		// trail; either one live in a deployment that turned skill management
-		// off is the operator kill switch failing to switch something off.
-		for (const tool of [
-			"skills__create",
-			"skills__update",
-			"skills__delete",
-			"skills__activate",
-			"skills__deactivate",
-			"skills__history",
-			"skills__restore",
-			"skills__set_status",
-		]) {
-			expect(isToolEnabled(tool, features)).toBe(false);
-		}
-	});
+  it("gates the whole skill surface, reads and writes alike, on skillManagement", () => {
+    const features = resolveFeatures({ skillManagement: false });
+    // `restore` writes and `history` reads the mutation surface's audit
+    // trail; either one live in a deployment that turned skill management
+    // off is the operator kill switch failing to switch something off.
+    for (const tool of [
+      "skills__create",
+      "skills__update",
+      "skills__delete",
+      "skills__activate",
+      "skills__deactivate",
+      "skills__history",
+      "skills__restore",
+      "skills__set_status",
+    ]) {
+      expect(isToolEnabled(tool, features)).toBe(false);
+    }
+  });
 
+  it("returns true for nb__status (not feature-gated)", () => {
+    const features = resolveFeatures();
+    expect(isToolEnabled("nb__status", features)).toBe(true);
+  });
 
-	it("returns true for nb__status (not feature-gated)", () => {
-		const features = resolveFeatures();
-		expect(isToolEnabled("nb__status", features)).toBe(true);
-	});
-
-	it("returns true for unknown/unmapped tools", () => {
-		const features = resolveFeatures();
-		expect(isToolEnabled("unknown_tool", features)).toBe(true);
-	});
+  it("returns true for unknown/unmapped tools", () => {
+    const features = resolveFeatures();
+    expect(isToolEnabled("unknown_tool", features)).toBe(true);
+  });
 });
 
 describe("isToolVisibleToRole", () => {
-	it("hides set_model_config from non-admin users", () => {
-		expect(isToolVisibleToRole("nb__set_model_config", "member")).toBe(false);
-		expect(isToolVisibleToRole("set_model_config", "member")).toBe(false);
-	});
+  it("hides set_model_config from non-admin users", () => {
+    expect(isToolVisibleToRole("nb__set_model_config", "member")).toBe(false);
+    expect(isToolVisibleToRole("set_model_config", "member")).toBe(false);
+  });
 
-	it("shows set_model_config to admin users", () => {
-		expect(isToolVisibleToRole("nb__set_model_config", "admin")).toBe(true);
-		expect(isToolVisibleToRole("nb__set_model_config", "owner")).toBe(true);
-	});
+  it("shows set_model_config to admin users", () => {
+    expect(isToolVisibleToRole("nb__set_model_config", "admin")).toBe(true);
+    expect(isToolVisibleToRole("nb__set_model_config", "owner")).toBe(true);
+  });
 
-	it("hides manage_workspaces from non-admin users", () => {
-		expect(isToolVisibleToRole("nb__manage_workspaces", "member")).toBe(false);
-	});
+  it("hides manage_workspaces from non-admin users", () => {
+    expect(isToolVisibleToRole("nb__manage_workspaces", "member")).toBe(false);
+  });
 
-	it("shows non-admin tools to all roles", () => {
-		expect(isToolVisibleToRole("nb__search", "member")).toBe(true);
-		expect(isToolVisibleToRole("nb__set_preferences", "member")).toBe(true);
-		expect(isToolVisibleToRole("nb__status", "member")).toBe(true);
-	});
+  it("shows non-admin tools to all roles", () => {
+    expect(isToolVisibleToRole("nb__search", "member")).toBe(true);
+    expect(isToolVisibleToRole("nb__set_preferences", "member")).toBe(true);
+    expect(isToolVisibleToRole("nb__status", "member")).toBe(true);
+  });
 
-	it("hides admin tools when role is null (unauthenticated)", () => {
-		expect(isToolVisibleToRole("nb__set_model_config", null)).toBe(false);
-		expect(isToolVisibleToRole("nb__search", null)).toBe(true);
-	});
+  it("hides admin tools when role is null (unauthenticated)", () => {
+    expect(isToolVisibleToRole("nb__set_model_config", null)).toBe(false);
+    expect(isToolVisibleToRole("nb__search", null)).toBe(true);
+  });
 
-	it("hides admin tools when role is undefined", () => {
-		expect(isToolVisibleToRole("nb__set_model_config", undefined)).toBe(false);
-		expect(isToolVisibleToRole("nb__search", undefined)).toBe(true);
-	});
+  it("hides admin tools when role is undefined", () => {
+    expect(isToolVisibleToRole("nb__set_model_config", undefined)).toBe(false);
+    expect(isToolVisibleToRole("nb__search", undefined)).toBe(true);
+  });
 
-	it("treats an unrecognized role string as non-admin", () => {
-		expect(isToolVisibleToRole("nb__set_model_config", "superuser")).toBe(false);
-		expect(isToolVisibleToRole("nb__search", "superuser")).toBe(true);
-	});
+  it("treats an unrecognized role string as non-admin", () => {
+    expect(isToolVisibleToRole("nb__set_model_config", "superuser")).toBe(false);
+    expect(isToolVisibleToRole("nb__search", "superuser")).toBe(true);
+  });
 });

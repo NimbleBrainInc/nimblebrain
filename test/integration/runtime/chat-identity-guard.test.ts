@@ -12,8 +12,8 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Runtime } from "../../../src/runtime/runtime.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { Runtime } from "../../../src/runtime/runtime.ts";
 import { devProvider, devWorkspace } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 
@@ -63,9 +63,7 @@ describe("runtime.chat() with auth configured", () => {
     });
 
     try {
-      await expect(runtime.chat({ message: "hello" })).rejects.toThrow(
-        /no identity on request/,
-      );
+      await expect(runtime.chat({ message: "hello" })).rejects.toThrow(/no identity on request/);
     } finally {
       await runtime.shutdown();
     }

@@ -1,7 +1,7 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { OidcIdentityProvider } from "../../../src/identity/providers/oidc.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
@@ -14,7 +14,12 @@ const KID = "test-key-1";
 
 beforeAll(async () => {
   const keyPair = await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
     true,
     ["sign", "verify"],
   );
@@ -148,7 +153,11 @@ describe("OidcIdentityProvider", () => {
   describe("verifyRequest", () => {
     test("valid JWT with correct issuer/audience/domain returns UserIdentity", async () => {
       // Pre-create the user (task 001 does NOT auto-provision)
-      await userStore.create({ email: "alice@example.com", displayName: "Alice", orgRole: "member" });
+      await userStore.create({
+        email: "alice@example.com",
+        displayName: "Alice",
+        orgRole: "member",
+      });
 
       const token = await buildJwt({ email: "alice@example.com" });
       const identity = await adapter.verifyRequest(bearerRequest(token));
@@ -159,7 +168,11 @@ describe("OidcIdentityProvider", () => {
     });
 
     test("valid JWT for unknown user auto-provisions with member role", async () => {
-      const token = await buildJwt({ email: "nobody@example.com", sub: "oidc-sub-123", name: "Nobody Test" });
+      const token = await buildJwt({
+        email: "nobody@example.com",
+        sub: "oidc-sub-123",
+        name: "Nobody Test",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).not.toBeNull();
       expect(identity!.email).toBe("nobody@example.com");
@@ -169,7 +182,11 @@ describe("OidcIdentityProvider", () => {
     });
 
     test("authentication creates no workspace (bootstrap provisions)", async () => {
-      const token = await buildJwt({ email: "carol@example.com", sub: "oidc-sub-carol", name: "Carol" });
+      const token = await buildJwt({
+        email: "carol@example.com",
+        sub: "oidc-sub-carol",
+        name: "Carol",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).not.toBeNull();
       expect(await workspaceStore.getWorkspacesForUser(identity!.id)).toHaveLength(0);
@@ -178,7 +195,10 @@ describe("OidcIdentityProvider", () => {
     test("expired JWT returns null", async () => {
       await userStore.create({ email: "alice@example.com", displayName: "Alice" });
 
-      const token = await buildJwt({ email: "alice@example.com", exp: Math.floor(Date.now() / 1000) - 60 });
+      const token = await buildJwt({
+        email: "alice@example.com",
+        exp: Math.floor(Date.now() / 1000) - 60,
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).toBeNull();
     });
@@ -305,7 +325,11 @@ describe("OidcIdentityProvider", () => {
 
   describe("createUser", () => {
     test("delegates to UserStore.create()", async () => {
-      const { user } = await adapter.createUser({ email: "new@example.com", displayName: "New User", orgRole: "admin" });
+      const { user } = await adapter.createUser({
+        email: "new@example.com",
+        displayName: "New User",
+        orgRole: "admin",
+      });
       expect(user.email).toBe("new@example.com");
       expect(user.orgRole).toBe("admin");
 
@@ -350,7 +374,11 @@ describe("OidcIdentityProvider", () => {
     });
 
     test("display name extracted from name claim", async () => {
-      const token = await buildJwt({ email: "named@example.com", sub: "named-sub", name: "Alice Smith" });
+      const token = await buildJwt({
+        email: "named@example.com",
+        sub: "named-sub",
+        name: "Alice Smith",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity!.displayName).toBe("Alice Smith");
     });
@@ -379,7 +407,11 @@ describe("OidcIdentityProvider", () => {
         orgRole: "admin",
       });
 
-      const token = await buildJwt({ email: "admin-created@example.com", sub: "admin-sub", name: "Different Name" });
+      const token = await buildJwt({
+        email: "admin-created@example.com",
+        sub: "admin-sub",
+        name: "Different Name",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).not.toBeNull();
       expect(identity!.id).toBe(adminUser.id);
@@ -393,7 +425,11 @@ describe("OidcIdentityProvider", () => {
 
       // OidcIdentityProvider no longer auto-adds to workspaces — that is handled
       // by the runtime layer. Verify the user is provisioned and can be manually added.
-      const token = await buildJwt({ email: "ws-user@example.com", sub: "ws-sub", name: "WS User" });
+      const token = await buildJwt({
+        email: "ws-user@example.com",
+        sub: "ws-sub",
+        name: "WS User",
+      });
       const identity = await adapter.verifyRequest(bearerRequest(token));
       expect(identity).not.toBeNull();
 

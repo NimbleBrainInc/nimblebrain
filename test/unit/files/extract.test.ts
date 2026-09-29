@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { extractText } from "../../../src/files/extract.ts";
 
@@ -99,7 +99,10 @@ describe("extractText", () => {
   });
 
   test("application/x-executable returns null", async () => {
-    const result = await extractText(Buffer.from([0x7f, 0x45, 0x4c, 0x46]), "application/x-executable");
+    const result = await extractText(
+      Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+      "application/x-executable",
+    );
     expect(result).toBeNull();
   });
 

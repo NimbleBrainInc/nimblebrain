@@ -45,9 +45,9 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 import { TASKS_EXTENSION_ID } from "../../src/tools/mcp-task-client.ts";
 import { SharedSourceRef } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 
 const FACETS = "ai.nimblebrain/facets";
 const APP_HTML = "<!doctype html><title>era</title>";
@@ -211,39 +211,38 @@ describe("McpSource era fallback", () => {
     }
   });
 
-  it.each([502, 503, 504])(
-    "does not fall back to the 2025 era when a gateway answers the probe with %i",
-    async (status) => {
-      // A 2026 server behind an edge whose upstream is restarting: the probe
-      // meets the gateway's error, and the next connect meets the server.
-      const modern = modernServer();
-      let gatewayDown = true;
-      const seen: string[] = [];
-      const served = serve(async (request) => {
-        const body = await bodyOf(request);
-        if (body?.method) seen.push(body.method);
-        if (gatewayDown && body?.method === "server/discover") {
-          return new Response("bad gateway", { status });
-        }
-        return modern(request);
-      });
-      const source = new McpSource(
-        "era",
-        { type: "remote", url: new URL(served.url), allowInsecure: true },
-        new NoopEventSink(),
-      );
-      try {
-        await expect(source.start()).rejects.toBeDefined();
-        expect(seen).not.toContain("initialize");
-        gatewayDown = false;
-        await source.start();
-        expect(source.getNegotiatedProtocolVersion()).toBe("2026-07-28");
-      } finally {
-        await source.stop();
-        served.close();
+  it.each([
+    502, 503, 504,
+  ])("does not fall back to the 2025 era when a gateway answers the probe with %i", async (status) => {
+    // A 2026 server behind an edge whose upstream is restarting: the probe
+    // meets the gateway's error, and the next connect meets the server.
+    const modern = modernServer();
+    let gatewayDown = true;
+    const seen: string[] = [];
+    const served = serve(async (request) => {
+      const body = await bodyOf(request);
+      if (body?.method) seen.push(body.method);
+      if (gatewayDown && body?.method === "server/discover") {
+        return new Response("bad gateway", { status });
       }
-    },
-  );
+      return modern(request);
+    });
+    const source = new McpSource(
+      "era",
+      { type: "remote", url: new URL(served.url), allowInsecure: true },
+      new NoopEventSink(),
+    );
+    try {
+      await expect(source.start()).rejects.toBeDefined();
+      expect(seen).not.toContain("initialize");
+      gatewayDown = false;
+      await source.start();
+      expect(source.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
 
   it("does not retry on the 2025 era when the probe is refused for authorization", async () => {
     const legacy = legacyServer();
@@ -362,13 +361,21 @@ function sep2663Server(status: "working" | "input_required"): { served: Served; 
   const modern = modernServer({ extensions: { [TASKS_EXTENSION_ID]: {} } });
   const now = new Date().toISOString();
   const seen: string[] = [];
-  const task = { taskId: "t-held", createdAt: now, lastUpdatedAt: now, ttlMs: 60_000, pollIntervalMs: 10 };
+  const task = {
+    taskId: "t-held",
+    createdAt: now,
+    lastUpdatedAt: now,
+    ttlMs: 60_000,
+    pollIntervalMs: 10,
+  };
   const served = serve(async (request) => {
     const body = await bodyOf(request);
     if (body?.method === "tools/call" || body?.method?.startsWith("tasks/")) {
       seen.push(String(body.method));
-      if (body.method === "tools/call") return answer(body.id, { resultType: "task", status: "working", ...task });
-      if (body.method === "tasks/get") return answer(body.id, { resultType: "complete", status, ...task });
+      if (body.method === "tools/call")
+        return answer(body.id, { resultType: "task", status: "working", ...task });
+      if (body.method === "tasks/get")
+        return answer(body.id, { resultType: "complete", status, ...task });
       return answer(body.id, { resultType: "complete" });
     }
     return modern(request);
@@ -387,7 +394,14 @@ describe("the task wire", () => {
       if (body?.method === "tools/call" && body.params?.task) {
         seen.push("tools/call+task");
         return answer(body.id, {
-          task: { taskId: "t-legacy", status: "working", createdAt: now, lastUpdatedAt: now, ttl: 60_000, pollInterval: 10 },
+          task: {
+            taskId: "t-legacy",
+            status: "working",
+            createdAt: now,
+            lastUpdatedAt: now,
+            ttl: 60_000,
+            pollInterval: 10,
+          },
         });
       }
       if (body?.method === "tasks/get") {
@@ -567,8 +581,10 @@ describe("/mcp/<wsId> on both eras", () => {
       workDir,
     });
     await provisionTestWorkspace(runtime);
-    runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(new SharedSourceRef(new FixtureSource()));
-    handle = startServer({ runtime, port: 0});
+    runtime
+      .getRegistryForWorkspace(TEST_WORKSPACE_ID)
+      .addSource(new SharedSourceRef(new FixtureSource()));
+    handle = startServer({ runtime, port: 0 });
   });
 
   afterAll(async () => {
@@ -584,7 +600,9 @@ describe("/mcp/<wsId> on both eras", () => {
       negotiate ? { versionNegotiation: { mode: "auto" } } : {},
     );
     await c.connect(
-      new StreamableHTTPClientTransport(new URL(`http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`)),
+      new StreamableHTTPClientTransport(
+        new URL(`http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`),
+      ),
     );
     return c;
   }

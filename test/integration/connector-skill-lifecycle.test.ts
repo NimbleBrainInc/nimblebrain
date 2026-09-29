@@ -1,16 +1,16 @@
-import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { extractText, textContent } from "../../src/engine/content-helpers.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 /**
  * Connector-skill binding lifecycle (P4), through the real Runtime — hermetic
@@ -71,7 +71,6 @@ async function callTool(
   );
   return { content: extractText(result.content), isError: result.isError ?? false };
 }
-
 
 describe("connector-skill binding lifecycle (runtime wiring)", () => {
   it("binds at install, loads as a candidate, lists, hides from skills__list, removes on uninstall", async () => {
@@ -148,7 +147,9 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
       if (!tool) return { content: [{ type: "text", text: "no tool" }] };
       counter += 1;
       return {
-        content: [{ type: "tool-call", toolCallId: `c${counter}`, toolName: tool.name, input: "{}" }],
+        content: [
+          { type: "tool-call", toolCallId: `c${counter}`, toolName: tool.name, input: "{}" },
+        ],
       };
     });
 

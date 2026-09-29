@@ -14,10 +14,10 @@
  * no FS watcher, no real `WorkspaceStore`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { ToolCall, ToolResult, ToolSchema } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";

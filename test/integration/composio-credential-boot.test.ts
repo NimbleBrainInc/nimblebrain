@@ -28,8 +28,8 @@ import {
   _resetCredentialProvidersForTest,
   getCredentialProvider,
 } from "../../src/tools/credential-provider.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 let runtime: Runtime;
 let testDir: string;

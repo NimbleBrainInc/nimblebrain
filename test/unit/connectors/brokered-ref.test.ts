@@ -33,7 +33,9 @@ describe("brokeredRef", () => {
   });
 
   it("returns undefined for a runtime-native ref — url match is its only path", () => {
-    expect(brokeredRef({ url: "https://mcp.notion.com/mcp", serverName: "com-notion-mcp" })).toBeUndefined();
+    expect(
+      brokeredRef({ url: "https://mcp.notion.com/mcp", serverName: "com-notion-mcp" }),
+    ).toBeUndefined();
     expect(brokeredRef(undefined)).toBeUndefined();
   });
 });

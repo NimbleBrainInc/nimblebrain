@@ -9,15 +9,15 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
-import { authenticateRequest, isAuthError } from "../../../src/api/auth-middleware.ts";
 import type { AuthMiddlewareOptions } from "../../../src/api/auth-middleware.ts";
-import { FIRST_PARTY_GRANT, TransientAuthError } from "../../../src/identity/provider.ts";
+import { authenticateRequest, isAuthError } from "../../../src/api/auth-middleware.ts";
+import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import type {
   IdentityProvider,
   UserIdentity,
   VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
+import { FIRST_PARTY_GRANT, TransientAuthError } from "../../../src/identity/provider.ts";
 
 const IDENTITY: UserIdentity = {
   id: "user_1",
@@ -46,7 +46,10 @@ const req = () => new Request("https://example.test/v1/bootstrap");
 describe("authenticateRequest — verdict vs unavailability", () => {
   it("maps a terminal null to 401 and audits it", async () => {
     const { sink, events } = recordingSink();
-    const result = await authenticateRequest(req(), optionsWith(async () => null, sink));
+    const result = await authenticateRequest(
+      req(),
+      optionsWith(async () => null, sink),
+    );
 
     expect(isAuthError(result)).toBe(true);
     expect((result as Response).status).toBe(401);
@@ -91,7 +94,12 @@ describe("authenticateRequest — verdict vs unavailability", () => {
         throw boom;
       }, sink),
     );
-    expect(await promise.then(() => null, (e) => e)).toBe(boom);
+    expect(
+      await promise.then(
+        () => null,
+        (e) => e,
+      ),
+    ).toBe(boom);
   });
 
   it("still returns the identity on success", async () => {

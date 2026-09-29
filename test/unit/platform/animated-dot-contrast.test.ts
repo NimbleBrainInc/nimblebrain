@@ -210,7 +210,10 @@ describe("every looping indicator is classified", () => {
   test("no looping token-painted rule is silently unguarded", () => {
     const guarded = new Set(GUARDED.map((g) => `${g.file}::${g.selector}`));
     const unclassified = derivedCandidates()
-      .filter((c) => !guarded.has(`${c.file}::${c.selector}`) && !(exemptKey(c.file, c.selector) in EXEMPT))
+      .filter(
+        (c) =>
+          !guarded.has(`${c.file}::${c.selector}`) && !(exemptKey(c.file, c.selector) in EXEMPT),
+      )
       .map((c) => `${c.selector} — ${relative(REPO, c.file)}`);
 
     expect(unclassified).toEqual([]);

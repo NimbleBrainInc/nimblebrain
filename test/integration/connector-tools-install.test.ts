@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
-import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
@@ -18,8 +17,8 @@ import { FileCredentialStore } from "../../src/tools/credential-store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { writeFileSync } from "node:fs";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { installTestCredentialStore } from "../helpers/credential-store.ts";
 
 /**
  * Integration coverage for T010's `manage_connectors.install` contract:
@@ -72,7 +71,9 @@ interface Harness {
   runtime: Runtime;
 }
 
-async function buildHarness(opts: { sessionWsId: string | null } = { sessionWsId: null }): Promise<Harness> {
+async function buildHarness(
+  opts: { sessionWsId: string | null } = { sessionWsId: null },
+): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-install-t010-"));
   const sharedWsId = "ws_helix";
 
@@ -222,10 +223,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
     const personalDoc = JSON.parse(
-      readFileSync(
-        join(h.workDir, "workspaces", h.personalWsId, "workspace.json"),
-        "utf-8",
-      ),
+      readFileSync(join(h.workDir, "workspaces", h.personalWsId, "workspace.json"), "utf-8"),
     );
     expect((sharedDoc.connectors as unknown[]).length).toBe(0);
     expect((personalDoc.connectors as unknown[]).length).toBe(0);
@@ -281,7 +279,8 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     // (`ai-granola-mcp`). This fixture serves the overlay ONLY at the correct
     // `/granola/SKILL.md` path, so a regression that derives the identity from
     // the slug 404s and binds nothing — failing the assertion below.
-    const overlayBody = "---\nname: granola-usage\ndescription: How to use Granola.\n---\nUse Granola carefully.\n";
+    const overlayBody =
+      "---\nname: granola-usage\ndescription: How to use Granola.\n---\nUse Granola carefully.\n";
     const fetchOnlyGranola = (async (url: string | URL | Request) => {
       const u = typeof url === "string" ? url : url.toString();
       return u.includes("/granola/SKILL.md")

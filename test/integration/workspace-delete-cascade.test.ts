@@ -20,20 +20,20 @@
  *      half-deleted.
  */
 
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { Runtime } from "../../src/runtime/runtime.ts";
-import { ARCHIVE_MARKER_FILENAME } from "../../src/workspace/workspace-store.ts";
-import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
 import type { Tool, ToolResult, ToolSource } from "../../src/tools/types.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
+import { ARCHIVE_MARKER_FILENAME } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 const ADMIN = { id: "usr_admin", email: "admin@example.test" };
 const WS_ID = "ws_helix";

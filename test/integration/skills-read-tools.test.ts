@@ -18,9 +18,9 @@ import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createMockModel } from "../helpers/mock-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-skills-read-${Date.now()}`);
 
@@ -74,8 +74,8 @@ describe("skills read tools — end-to-end", () => {
       skillPath,
       [
         "---",
-        'name: voice-rules',
-        'description: Voice rules',
+        "name: voice-rules",
+        "description: Voice rules",
         // dynamic + tool-affinity (nb__* is always surfaced) → loads into Layer 3
         // (skills.loaded / loading_log), where this test asserts.
         "metadata:",
@@ -153,12 +153,7 @@ describe("skills read tools — end-to-end", () => {
       expect(read.content).toContain("loads: tool_affinity");
 
       // skills__loading_log — at least one entry for this conversation.
-      const log = await callTool(
-        runtime,
-        "skills__loading_log",
-        { conversation_id: convId },
-        wsId,
-      );
+      const log = await callTool(runtime, "skills__loading_log", { conversation_id: convId }, wsId);
       expect(log.isError).toBe(false);
       const loads = (log.structured as { loads?: unknown[] }).loads as Array<{
         run_id?: string;

@@ -3,13 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { AgentEngine } from "../../src/engine/engine.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import type {
-  EngineConfig,
-  ToolResult,
-  ToolSchema,
-} from "../../src/engine/types.ts";
+import { AgentEngine } from "../../src/engine/engine.ts";
+import type { EngineConfig, ToolResult, ToolSchema } from "../../src/engine/types.ts";
 import { IdentityContext } from "../../src/identity/context.ts";
 import type { OrchestratorRuntime } from "../../src/orchestrator/index.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
@@ -81,14 +77,19 @@ const ENGINE_CONFIG: EngineConfig = {
  * on the workspace path; the identity accessors are present to satisfy the
  * structural type and never invoked here.
  */
-function makeRuntime(workDir: string, source: ToolSource, store: PermissionStore): OrchestratorRuntime {
+function makeRuntime(
+  workDir: string,
+  source: ToolSource,
+  store: PermissionStore,
+): OrchestratorRuntime {
   return {
     getWorkspaceContext: (wsId: string) => new WorkspaceContext({ wsId, workDir }),
     getRegistryForWorkspace: () => ({
       getSource: (n: string) => (n === source.name ? source : undefined),
     }),
     getIdentitySource: () => undefined,
-    getIdentityContext: (identityId: string) => new IdentityContext({ userId: identityId, workDir }),
+    getIdentityContext: (identityId: string) =>
+      new IdentityContext({ userId: identityId, workDir }),
     listToolsForWorkspace: async () => ACTIVE_TOOLS,
     getPermissionStore: () => store,
   };
@@ -153,11 +154,9 @@ describe("connector permission gate — enforced on the engine door", () => {
   });
 
   test("disallow blocks a chat-turn tool call before source.execute", async () => {
-    await h.store.setConnector(
-      { scope: "workspace", wsId: WS_ID },
-      "mock",
-      { destructive_write: "disallow" },
-    );
+    await h.store.setConnector({ scope: "workspace", wsId: WS_ID }, "mock", {
+      destructive_write: "disallow",
+    });
 
     const { captured } = await runTurnCalling(h.router, "mock__destructive_write");
 
@@ -174,11 +173,9 @@ describe("connector permission gate — enforced on the engine door", () => {
   });
 
   test("a tool without a disallow policy still runs through the engine door", async () => {
-    await h.store.setConnector(
-      { scope: "workspace", wsId: WS_ID },
-      "mock",
-      { destructive_write: "disallow" },
-    );
+    await h.store.setConnector({ scope: "workspace", wsId: WS_ID }, "mock", {
+      destructive_write: "disallow",
+    });
 
     const { captured } = await runTurnCalling(h.router, "mock__safe_read");
 
@@ -188,11 +185,9 @@ describe("connector permission gate — enforced on the engine door", () => {
   });
 
   test("registry door (REST) denies the same call identically — doors agree", async () => {
-    await h.store.setConnector(
-      { scope: "workspace", wsId: WS_ID },
-      "mock",
-      { destructive_write: "disallow" },
-    );
+    await h.store.setConnector({ scope: "workspace", wsId: WS_ID }, "mock", {
+      destructive_write: "disallow",
+    });
 
     const registry = new ToolRegistry();
     const registrySource = new MockSource();

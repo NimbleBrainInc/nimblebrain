@@ -7,8 +7,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { matchesNameGlob } from "../../../src/notifications/name-glob.ts";
 import { NOTIFICATION_NAME_MAX } from "../../../src/notifications/envelope.ts";
+import { matchesNameGlob } from "../../../src/notifications/name-glob.ts";
 
 describe("an omitted pattern", () => {
   test("matches every name, because a filter nobody set narrows nothing", () => {

@@ -1,4 +1,9 @@
-import { InMemoryTransport, Server, ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import {
+  InMemoryTransport,
+  ProtocolError,
+  ProtocolErrorCode,
+  Server,
+} from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 
@@ -95,9 +100,9 @@ export async function makeOutboxFixture(
           },
         );
 
-        server.setRequestHandler('tools/list', async () => ({ tools: [] }));
-        server.setRequestHandler('resources/list', async () => ({ resources: [] }));
-        server.setRequestHandler('resources/templates/list', async () => ({
+        server.setRequestHandler("tools/list", async () => ({ tools: [] }));
+        server.setRequestHandler("resources/list", async () => ({ resources: [] }));
+        server.setRequestHandler("resources/templates/list", async () => ({
           resourceTemplates: [
             {
               uriTemplate: `${FIXTURE_OUTBOX_URI}{?cursor,maxEvents,maxAgeMs}`,
@@ -108,18 +113,20 @@ export async function makeOutboxFixture(
         }));
 
         if (options.supportsSubscribe) {
-          server.setRequestHandler('resources/subscribe', async (request) => {
+          server.setRequestHandler("resources/subscribe", async (request) => {
             subscriptions.push(request.params.uri);
             return {};
           });
-          server.setRequestHandler('resources/unsubscribe', async () => ({}));
+          server.setRequestHandler("resources/unsubscribe", async () => ({}));
         }
 
-        server.setRequestHandler('resources/read', async (request) => {
+        server.setRequestHandler("resources/read", async (request) => {
           const { uri } = request.params;
           const [base, query = ""] = uri.split("?", 2);
           if (base !== FIXTURE_OUTBOX_URI) {
-            throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Resource not found: ${uri}`, { uri });
+            throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Resource not found: ${uri}`, {
+              uri,
+            });
           }
           const params = new URLSearchParams(query);
           const rawCursor = params.get("cursor") ?? undefined;

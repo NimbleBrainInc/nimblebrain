@@ -32,7 +32,7 @@ describe("parseDotenv", () => {
   });
 
   test("strips wrapping single and double quotes", () => {
-    const m = parseDotenv(['SINGLE=\'hello world\'', 'DOUBLE="hello world"'].join("\n"));
+    const m = parseDotenv(["SINGLE='hello world'", 'DOUBLE="hello world"'].join("\n"));
     expect(m.get("SINGLE")).toBe("hello world");
     expect(m.get("DOUBLE")).toBe("hello world");
   });

@@ -13,16 +13,16 @@
  *   - The response echoes the resolved `scope`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import type { UsageReportOutput } from "../../../../src/platform/schemas/usage.ts";
+import { createUsageSource } from "../../../../src/platform/usage/source.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { usageMonthDir, usageMonthOf } from "../../../../src/usage/paths.ts";
 import type { UsageLedgerEntry } from "../../../../src/usage/types.ts";
-import type { UsageReportOutput } from "../../../../src/platform/schemas/usage.ts";
-import { createUsageSource } from "../../../../src/platform/usage/source.ts";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────
 

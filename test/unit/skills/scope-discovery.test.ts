@@ -19,10 +19,10 @@
  * the engine.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { loadScopedSkills, loadSkillDir, mergeScopedSkills } from "../../../src/skills/loader.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 
@@ -134,11 +134,7 @@ function makeSkill(name: string, scope: "org" | "workspace" | "user", body = "")
 
 describe("mergeScopedSkills — precedence", () => {
   test("org-only skills appear with scope=org", () => {
-    const merged = mergeScopedSkills(
-      [makeSkill("only-org", "org")],
-      [],
-      [],
-    );
+    const merged = mergeScopedSkills([makeSkill("only-org", "org")], [], []);
     expect(merged).toHaveLength(1);
     expect(merged[0]!.manifest.name).toBe("only-org");
     expect(merged[0]!.manifest.scope).toBe("org");

@@ -16,14 +16,14 @@ export function startFakeConnectorServer(toolNames: string[]): FakeConnectorServ
       { name: "fake-connector", version: "0.1.0" },
       { capabilities: { tools: {} } },
     );
-    server.setRequestHandler('tools/list', async () => ({
+    server.setRequestHandler("tools/list", async () => ({
       tools: toolNames.map((name) => ({
         name,
         description: name,
         inputSchema: { type: "object", properties: {} },
       })),
     }));
-    server.setRequestHandler('tools/call', async () => ({
+    server.setRequestHandler("tools/call", async () => ({
       content: [{ type: "text", text: "ok" }],
     }));
     return server;

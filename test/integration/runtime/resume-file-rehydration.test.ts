@@ -18,10 +18,9 @@ import type { FileStore } from "../../../src/files/store.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider, devWorkspace } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
-import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-file-rehydration-${Date.now()}`);
 
@@ -53,13 +52,21 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
 
     // 1) Born in workspace A (focused on WORKSPACE_A) — the conversation lives
     //    under workspaces/ws_workspace_a/conversations/<owner>/.
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from workspace A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from workspace A",
+      workspaceId: WORKSPACE_A,
+    });
     const convId = born.conversationId;
 
     // 2) Attach a file into workspace A's partition (the same workspace the
     //    conversation lives in). This is the partition the resume must resolve to.
     const fileStoreA = runtime.getWorkspaceFileStore(WORKSPACE_A, OWNER);
-    const saved = await fileStoreA.saveFile(Buffer.from("workspace-A bytes"), "attach.txt", "text/plain");
+    const saved = await fileStoreA.saveFile(
+      Buffer.from("workspace-A bytes"),
+      "attach.txt",
+      "text/plain",
+    );
     await fileStoreA.appendRegistry({
       id: saved.id,
       filename: "attach.txt",
@@ -104,7 +111,12 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
     expect(calls).toEqual([]);
 
     // 5) The resume in A rehydrates from A.
-    await runtime.chat({ identity: DEV_IDENTITY, message: "resume in A", conversationId: convId, workspaceId: WORKSPACE_A });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "resume in A",
+      conversationId: convId,
+      workspaceId: WORKSPACE_A,
+    });
 
     runtime.getWorkspaceFileStore = origGetFileStore;
 

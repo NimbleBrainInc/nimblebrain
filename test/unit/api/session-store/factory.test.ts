@@ -32,9 +32,9 @@ describe("resolveSessionStoreConfig", () => {
   });
 
   it("throws when type='redis' and url is whitespace", () => {
-    expect(() =>
-      resolveSessionStoreConfig({ type: "redis", redis: { url: "   " } }),
-    ).toThrow(/requires sessionStore.redis.url/);
+    expect(() => resolveSessionStoreConfig({ type: "redis", redis: { url: "   " } })).toThrow(
+      /requires sessionStore.redis.url/,
+    );
   });
 
   it("returns redis with defaults applied when url is provided", () => {

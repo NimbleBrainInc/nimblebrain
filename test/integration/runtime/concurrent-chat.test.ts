@@ -2,12 +2,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { RunInProgressError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-concurrent-chat-${Date.now()}`);
 
@@ -84,8 +84,16 @@ describe("concurrent chat rejection", () => {
     });
     await provisionTestWorkspace(runtime);
 
-    const a = await runtime.chat({ identity: DEV_IDENTITY, message: "a", workspaceId: TEST_WORKSPACE_ID });
-    const b = await runtime.chat({ identity: DEV_IDENTITY, message: "b", workspaceId: TEST_WORKSPACE_ID });
+    const a = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "a",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+    const b = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "b",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     expect(a.conversationId).not.toBe(b.conversationId);
 
     // Parallel resumes on the two distinct conversations must both succeed.
@@ -140,11 +148,20 @@ describe("concurrent chat rejection", () => {
 
     await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, alice.id, "member");
     await runtime.getWorkspaceStore().addMember(TEST_WORKSPACE_ID, bob.id, "member");
-    const seed = await runtime.chat({ message: "seed", identity: alice, workspaceId: TEST_WORKSPACE_ID });
+    const seed = await runtime.chat({
+      message: "seed",
+      identity: alice,
+      workspaceId: TEST_WORKSPACE_ID,
+    });
     const convId = seed.conversationId;
 
     await expect(
-      runtime.chat({ message: "bad", conversationId: convId, identity: bob, workspaceId: TEST_WORKSPACE_ID }),
+      runtime.chat({
+        message: "bad",
+        conversationId: convId,
+        identity: bob,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
     ).rejects.toThrow();
 
     expect(runtime.isConversationActive(convId)).toBe(false);

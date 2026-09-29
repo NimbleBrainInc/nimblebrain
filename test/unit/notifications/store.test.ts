@@ -7,11 +7,11 @@
  * one workspace cannot see or mark another's items.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "@sinclair/typebox/value";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { NotificationCreatedPayload } from "../../../src/engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
@@ -82,7 +82,9 @@ describe("the runtime stamps provenance; a server cannot", () => {
       seq: 999,
       receivedAt: "1999-01-01T00:00:00.000Z",
       readAt: "1999-01-01T00:00:00.000Z",
-      deliveries: [{ routeId: "rt", target: "slack__send_message", attempts: 1, outcome: "delivered" }],
+      deliveries: [
+        { routeId: "rt", target: "slack__send_message", attempts: 1, outcome: "delivered" },
+      ],
     });
     const { item } = storeFor(WS_A).append("acme", forged);
     expect(item.source).toBe("acme");
@@ -170,8 +172,16 @@ describe("the workspace is the boundary", () => {
   test("a store sees only its own workspace's items", () => {
     storeFor(WS_A).append("acme", envelope({ eventId: "a1" }));
     storeFor(WS_B).append("acme", envelope({ eventId: "b1" }));
-    expect(storeFor(WS_A).list().map((i) => i.envelope.eventId)).toEqual(["a1"]);
-    expect(storeFor(WS_B).list().map((i) => i.envelope.eventId)).toEqual(["b1"]);
+    expect(
+      storeFor(WS_A)
+        .list()
+        .map((i) => i.envelope.eventId),
+    ).toEqual(["a1"]);
+    expect(
+      storeFor(WS_B)
+        .list()
+        .map((i) => i.envelope.eventId),
+    ).toEqual(["b1"]);
   });
 
   test("markRead cannot reach another workspace's item", () => {

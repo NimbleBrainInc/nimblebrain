@@ -46,9 +46,7 @@ describe("the five placeholders", () => {
   });
 
   test("whitespace inside the braces is allowed, as the validator's is", () => {
-    expect(render({ text: "{{  title  }}" }, FULL).input.text).toBe(
-      "acme-outreach.com is active",
-    );
+    expect(render({ text: "{{  title  }}" }, FULL).input.text).toBe("acme-outreach.com is active");
   });
 
   test("a known name with no value renders empty and is NOT a miss", () => {
@@ -120,21 +118,27 @@ describe("what it does not do", () => {
   });
 
   test("no escaping — a value with markup or quotes survives intact", () => {
-    const { input } = render({ text: "{{title}}" }, {
-      level: "info",
-      title: `it's <b>"live"</b> & well`,
-    });
+    const { input } = render(
+      { text: "{{title}}" },
+      {
+        level: "info",
+        title: `it's <b>"live"</b> & well`,
+      },
+    );
     expect(input.text).toBe(`it's <b>"live"</b> & well`);
   });
 
   test("a rendered value is not itself re-rendered", () => {
     // A connector that writes `{{title}}` into its own body cannot make the
     // runtime expand it: substitution is one pass over the template.
-    const { input, misses } = render({ text: "{{body}}" }, {
-      level: "info",
-      title: "t",
-      body: "{{title}}",
-    });
+    const { input, misses } = render(
+      { text: "{{body}}" },
+      {
+        level: "info",
+        title: "t",
+        body: "{{title}}",
+      },
+    );
     expect(input.text).toBe("{{title}}");
     expect(misses).toBe(0);
   });
@@ -143,9 +147,7 @@ describe("what it does not do", () => {
 describe("inbox.url — the one placeholder the host supplies", () => {
   test("resolves to the address the dispatcher built", () => {
     const { input, misses } = render({ text: "Open: {{inbox.url}}" }, MINIMAL);
-    expect(input.text).toBe(
-      "Open: https://tenant.example/w/team/notifications?item=acme%3Aevt_1",
-    );
+    expect(input.text).toBe("Open: https://tenant.example/w/team/notifications?item=acme%3Aevt_1");
     expect(misses).toBe(0);
   });
 

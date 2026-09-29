@@ -28,7 +28,10 @@ const LEGACY_VALUE = "${COMPOSIO_API_KEY}";
 describe("transport: legacy Composio refs map forward", () => {
   it("rewrites the pre-seam env-template auth to name the provider", () => {
     const { transportConfig } = resolveRefTransport(
-      ref({ type: "streamable-http", auth: { type: "header", name: "x-api-key", value: LEGACY_VALUE } }),
+      ref({
+        type: "streamable-http",
+        auth: { type: "header", name: "x-api-key", value: LEGACY_VALUE },
+      }),
     );
     expect(transportConfig?.auth).toEqual({
       type: "provider",
@@ -64,15 +67,23 @@ describe("fleetInternal: only the minted rail earns the in-cluster exception", (
     // grant the exception here, letting a hostile session URL reach an
     // in-cluster service over plain HTTP.
     const { fleetInternal } = resolveRefTransport(
-      ref({ type: "streamable-http", auth: { type: "provider", provider: "composio", config: {} } }),
+      ref({
+        type: "streamable-http",
+        auth: { type: "provider", provider: "composio", config: {} },
+      }),
     );
     expect(fleetInternal).toBe(false);
-    expect(() => validateConnectorUrl(IN_CLUSTER, { allowInsecure: false, fleetInternal })).toThrow();
+    expect(() =>
+      validateConnectorUrl(IN_CLUSTER, { allowInsecure: false, fleetInternal }),
+    ).toThrow();
   });
 
   it("denies it to a legacy Composio ref, which maps to composio provider auth", () => {
     const { fleetInternal } = resolveRefTransport(
-      ref({ type: "streamable-http", auth: { type: "header", name: "x-api-key", value: LEGACY_VALUE } }),
+      ref({
+        type: "streamable-http",
+        auth: { type: "header", name: "x-api-key", value: LEGACY_VALUE },
+      }),
     );
     expect(fleetInternal).toBe(false);
   });

@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
+import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 
 function freshWorkDir(): string {
   return mkdtempSync(join(tmpdir(), "nb-idc-store-"));

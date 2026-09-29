@@ -1,350 +1,348 @@
 import { describe, expect, it } from "bun:test";
-import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
-import { DEFAULT_MAX_DIRECT_TOOLS } from "../../../src/limits.ts";
-import { surfaceTools } from "../../../src/tools/surfacing.ts";
-import { composeSystemPrompt } from "../../../src/prompt/compose.ts";
-import type { PromptAppInfo } from "../../../src/prompt/compose.ts";
 import type { ToolSchema } from "../../../src/engine/types.ts";
+import { DEFAULT_MAX_DIRECT_TOOLS } from "../../../src/limits.ts";
+import type { PromptAppInfo } from "../../../src/prompt/compose.ts";
+import { composeSystemPrompt } from "../../../src/prompt/compose.ts";
 import type { Skill } from "../../../src/skills/types.ts";
 import {} from "../../../src/tools/namespace.ts";
+import { surfaceTools } from "../../../src/tools/surfacing.ts";
+import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
 
 // --- Helpers ---
 
 function makeTool(name: string): ToolSchema {
-	return { name, description: `${name} tool`, inputSchema: { type: "object", properties: {} } };
+  return { name, description: `${name} tool`, inputSchema: { type: "object", properties: {} } };
 }
 
 function makeSystemTools(count = 4): ToolSchema[] {
-	const names = ["nb__search", "nb__use_skill", "nb__status", "nb__set_preferences"];
-	return names.slice(0, count).map(makeTool);
+  const names = ["nb__search", "nb__use_skill", "nb__status", "nb__set_preferences"];
+  return names.slice(0, count).map(makeTool);
 }
 
 function makeAppTools(prefix: string, count: number): ToolSchema[] {
-	return Array.from({ length: count }, (_, i) => makeTool(`${prefix}__tool_${i}`));
+  return Array.from({ length: count }, (_, i) => makeTool(`${prefix}__tool_${i}`));
 }
 
 function makeSkill(opts: { allowedTools?: string[] } = {}): Skill {
-	return {
-		manifest: {
-			name: "test-skill",
-			description: "Test",
-			version: "1.0.0",
-			priority: 50,
-			allowedTools: opts.allowedTools,
-		},
-		body: "You are a test expert.",
-		sourcePath: "/test/skill.md",
-	};
+  return {
+    manifest: {
+      name: "test-skill",
+      description: "Test",
+      version: "1.0.0",
+      priority: 50,
+      allowedTools: opts.allowedTools,
+    },
+    body: "You are a test expert.",
+    sourcePath: "/test/skill.md",
+  };
 }
 
 // --- surfaceTools tests ---
 
 describe("surfaceTools", () => {
-	it("Tier 1: 10 total tools — all surfaced directly, nothing proxied", () => {
-		const system = makeSystemTools();
-		const app = makeAppTools("tasks", 6);
-		const all = [...system, ...app];
+  it("Tier 1: 10 total tools — all surfaced directly, nothing proxied", () => {
+    const system = makeSystemTools();
+    const app = makeAppTools("tasks", 6);
+    const all = [...system, ...app];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		expect(result.direct).toHaveLength(10);
-		expect(result.proxied).toHaveLength(0);
-	});
+    expect(result.direct).toHaveLength(10);
+    expect(result.proxied).toHaveLength(0);
+  });
 
-	it("Tier 1: exactly maxDirectTools — all surfaced directly", () => {
-		const system = makeSystemTools();
-		const app = makeAppTools("tasks", 26);
-		const all = [...system, ...app];
+  it("Tier 1: exactly maxDirectTools — all surfaced directly", () => {
+    const system = makeSystemTools();
+    const app = makeAppTools("tasks", 26);
+    const all = [...system, ...app];
 
-		const result = surfaceTools(all, null, { maxDirectTools: DEFAULT_MAX_DIRECT_TOOLS });
+    const result = surfaceTools(all, null, { maxDirectTools: DEFAULT_MAX_DIRECT_TOOLS });
 
-		expect(result.direct).toHaveLength(DEFAULT_MAX_DIRECT_TOOLS);
-		expect(result.proxied).toHaveLength(0);
-	});
+    expect(result.direct).toHaveLength(DEFAULT_MAX_DIRECT_TOOLS);
+    expect(result.proxied).toHaveLength(0);
+  });
 
-	it("Tier 2: 50 total tools, no skill — only nb__* direct, rest proxied", () => {
-		const system = makeSystemTools(4);
-		const appA = makeAppTools("tasks", 23);
-		const appB = makeAppTools("weather", 23);
-		const all = [...system, ...appA, ...appB];
+  it("Tier 2: 50 total tools, no skill — only nb__* direct, rest proxied", () => {
+    const system = makeSystemTools(4);
+    const appA = makeAppTools("tasks", 23);
+    const appB = makeAppTools("weather", 23);
+    const all = [...system, ...appA, ...appB];
 
-		expect(all).toHaveLength(50);
+    expect(all).toHaveLength(50);
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		expect(result.direct).toHaveLength(4);
-		expect(result.proxied).toHaveLength(46);
-		for (const t of result.direct) {
-			expect(t.name.startsWith("nb__")).toBe(true);
-		}
-		for (const t of result.proxied) {
-			expect(t.name.startsWith("nb__")).toBe(false);
-		}
-	});
+    expect(result.direct).toHaveLength(4);
+    expect(result.proxied).toHaveLength(46);
+    for (const t of result.direct) {
+      expect(t.name.startsWith("nb__")).toBe(true);
+    }
+    for (const t of result.proxied) {
+      expect(t.name.startsWith("nb__")).toBe(false);
+    }
+  });
 
-	it("Tier 2: skill matched but has no allowedTools — falls through to Tier 2", () => {
-		const system = makeSystemTools(4);
-		const app = makeAppTools("tasks", 30);
-		const all = [...system, ...app];
-		const skill = makeSkill(); // no allowedTools
+  it("Tier 2: skill matched but has no allowedTools — falls through to Tier 2", () => {
+    const system = makeSystemTools(4);
+    const app = makeAppTools("tasks", 30);
+    const all = [...system, ...app];
+    const skill = makeSkill(); // no allowedTools
 
-		const result = surfaceTools(all, skill);
+    const result = surfaceTools(all, skill);
 
-		expect(result.direct).toHaveLength(4);
-		expect(result.proxied).toHaveLength(30);
-	});
+    expect(result.direct).toHaveLength(4);
+    expect(result.proxied).toHaveLength(30);
+  });
 
-	it("Tier 3: skill with allowed-tools glob — matching + system direct", () => {
-		const system = makeSystemTools(4);
-		const tasks = makeAppTools("tasks", 10);
-		const weather = makeAppTools("weather", 10);
-		const crm = makeAppTools("crm", 10);
-		const all = [...system, ...tasks, ...weather, ...crm];
-		const skill = makeSkill({ allowedTools: ["tasks__*"] });
+  it("Tier 3: skill with allowed-tools glob — matching + system direct", () => {
+    const system = makeSystemTools(4);
+    const tasks = makeAppTools("tasks", 10);
+    const weather = makeAppTools("weather", 10);
+    const crm = makeAppTools("crm", 10);
+    const all = [...system, ...tasks, ...weather, ...crm];
+    const skill = makeSkill({ allowedTools: ["tasks__*"] });
 
-		const result = surfaceTools(all, skill);
+    const result = surfaceTools(all, skill);
 
-		// 4 system + 10 tasks = 14 direct
-		expect(result.direct).toHaveLength(14);
-		// 10 weather + 10 crm = 20 proxied
-		expect(result.proxied).toHaveLength(20);
+    // 4 system + 10 tasks = 14 direct
+    expect(result.direct).toHaveLength(14);
+    // 10 weather + 10 crm = 20 proxied
+    expect(result.proxied).toHaveLength(20);
 
-		const directNames = result.direct.map((t) => t.name);
-		for (const t of tasks) {
-			expect(directNames).toContain(t.name);
-		}
-		for (const t of system) {
-			expect(directNames).toContain(t.name);
-		}
-	});
+    const directNames = result.direct.map((t) => t.name);
+    for (const t of tasks) {
+      expect(directNames).toContain(t.name);
+    }
+    for (const t of system) {
+      expect(directNames).toContain(t.name);
+    }
+  });
 
-	it("Tier 3: skill with multiple allowed-tools globs", () => {
-		const system = makeSystemTools(4);
-		const tasks = makeAppTools("tasks", 5);
-		const weather = makeAppTools("weather", 5);
-		const crm = makeAppTools("crm", 5);
-		const all = [...system, ...tasks, ...weather, ...crm];
-		const skill = makeSkill({ allowedTools: ["tasks__*", "crm__*"] });
+  it("Tier 3: skill with multiple allowed-tools globs", () => {
+    const system = makeSystemTools(4);
+    const tasks = makeAppTools("tasks", 5);
+    const weather = makeAppTools("weather", 5);
+    const crm = makeAppTools("crm", 5);
+    const all = [...system, ...tasks, ...weather, ...crm];
+    const skill = makeSkill({ allowedTools: ["tasks__*", "crm__*"] });
 
-		const result = surfaceTools(all, skill);
+    const result = surfaceTools(all, skill);
 
-		// 4 system + 5 tasks + 5 crm = 14 direct
-		expect(result.direct).toHaveLength(14);
-		expect(result.proxied).toHaveLength(5); // only weather
-	});
+    // 4 system + 5 tasks + 5 crm = 14 direct
+    expect(result.direct).toHaveLength(14);
+    expect(result.proxied).toHaveLength(5); // only weather
+  });
 
-	it("Tier 3: skill with exact tool name in allowedTools", () => {
-		const system = makeSystemTools(4);
-		const tasks = makeAppTools("tasks", 5);
-		const all = [...system, ...tasks];
-		const skill = makeSkill({ allowedTools: ["tasks__tool_0"] });
+  it("Tier 3: skill with exact tool name in allowedTools", () => {
+    const system = makeSystemTools(4);
+    const tasks = makeAppTools("tasks", 5);
+    const all = [...system, ...tasks];
+    const skill = makeSkill({ allowedTools: ["tasks__tool_0"] });
 
-		const result = surfaceTools(all, skill);
+    const result = surfaceTools(all, skill);
 
-		// 4 system + 1 exact match = 5 direct
-		expect(result.direct).toHaveLength(5);
-		expect(result.proxied).toHaveLength(4);
-	});
+    // 4 system + 1 exact match = 5 direct
+    expect(result.direct).toHaveLength(5);
+    expect(result.proxied).toHaveLength(4);
+  });
 
-	it("custom maxDirectTools threshold", () => {
-		const system = makeSystemTools(4);
-		const app = makeAppTools("tasks", 7);
-		const all = [...system, ...app];
+  it("custom maxDirectTools threshold", () => {
+    const system = makeSystemTools(4);
+    const app = makeAppTools("tasks", 7);
+    const all = [...system, ...app];
 
-		// 11 total tools, max 10 → Tier 2
-		const result = surfaceTools(all, null, { maxDirectTools: 10 });
+    // 11 total tools, max 10 → Tier 2
+    const result = surfaceTools(all, null, { maxDirectTools: 10 });
 
-		expect(result.direct).toHaveLength(4);
-		expect(result.proxied).toHaveLength(7);
-	});
+    expect(result.direct).toHaveLength(4);
+    expect(result.proxied).toHaveLength(7);
+  });
 
-	it("direct and proxied are mutually exclusive and cover all tools", () => {
-		const system = makeSystemTools(4);
-		const app = makeAppTools("tasks", 40);
-		const all = [...system, ...app];
+  it("direct and proxied are mutually exclusive and cover all tools", () => {
+    const system = makeSystemTools(4);
+    const app = makeAppTools("tasks", 40);
+    const all = [...system, ...app];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		const combined = [...result.direct, ...result.proxied];
-		expect(combined).toHaveLength(all.length);
+    const combined = [...result.direct, ...result.proxied];
+    expect(combined).toHaveLength(all.length);
 
-		const directSet = new Set(result.direct.map((t) => t.name));
-		for (const t of result.proxied) {
-			expect(directSet.has(t.name)).toBe(false);
-		}
-	});
+    const directSet = new Set(result.direct.map((t) => t.name));
+    for (const t of result.proxied) {
+      expect(directSet.has(t.name)).toBe(false);
+    }
+  });
 });
 
 // --- focusedServerName promotion tests ---
 
 describe("surfaceTools — focusedServerName", () => {
-	it("Tier 2: focused app's tools promoted to direct, others remain proxied", () => {
-		const system = makeSystemTools(4);
-		const tasks = makeAppTools("tasks", 20);
-		const weather = makeAppTools("weather", 20);
-		const all = [...system, ...tasks, ...weather];
+  it("Tier 2: focused app's tools promoted to direct, others remain proxied", () => {
+    const system = makeSystemTools(4);
+    const tasks = makeAppTools("tasks", 20);
+    const weather = makeAppTools("weather", 20);
+    const all = [...system, ...tasks, ...weather];
 
-		expect(all).toHaveLength(44);
+    expect(all).toHaveLength(44);
 
-		const result = surfaceTools(all, null, { focusedServerName: "tasks" });
+    const result = surfaceTools(all, null, { focusedServerName: "tasks" });
 
-		// 4 system + 20 tasks promoted = 24 direct
-		expect(result.direct).toHaveLength(24);
-		// 20 weather remain proxied
-		expect(result.proxied).toHaveLength(20);
+    // 4 system + 20 tasks promoted = 24 direct
+    expect(result.direct).toHaveLength(24);
+    // 20 weather remain proxied
+    expect(result.proxied).toHaveLength(20);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		for (const t of tasks) {
-			expect(directNames.has(t.name)).toBe(true);
-		}
-		for (const t of system) {
-			expect(directNames.has(t.name)).toBe(true);
-		}
-		for (const t of weather) {
-			expect(directNames.has(t.name)).toBe(false);
-		}
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    for (const t of tasks) {
+      expect(directNames.has(t.name)).toBe(true);
+    }
+    for (const t of system) {
+      expect(directNames.has(t.name)).toBe(true);
+    }
+    for (const t of weather) {
+      expect(directNames.has(t.name)).toBe(false);
+    }
+  });
 
-	it("Tier 3: focused app's tools in direct even if not in skill globs", () => {
-		const system = makeSystemTools(4);
-		const tasks = makeAppTools("tasks", 10);
-		const weather = makeAppTools("weather", 10);
-		const crm = makeAppTools("crm", 10);
-		const all = [...system, ...tasks, ...weather, ...crm];
-		const skill = makeSkill({ allowedTools: ["tasks__*"] });
+  it("Tier 3: focused app's tools in direct even if not in skill globs", () => {
+    const system = makeSystemTools(4);
+    const tasks = makeAppTools("tasks", 10);
+    const weather = makeAppTools("weather", 10);
+    const crm = makeAppTools("crm", 10);
+    const all = [...system, ...tasks, ...weather, ...crm];
+    const skill = makeSkill({ allowedTools: ["tasks__*"] });
 
-		const result = surfaceTools(all, skill, { focusedServerName: "crm" });
+    const result = surfaceTools(all, skill, { focusedServerName: "crm" });
 
-		// 4 system + 10 tasks (skill) + 10 crm (focused) = 24 direct
-		expect(result.direct).toHaveLength(24);
-		// 10 weather proxied
-		expect(result.proxied).toHaveLength(10);
+    // 4 system + 10 tasks (skill) + 10 crm (focused) = 24 direct
+    expect(result.direct).toHaveLength(24);
+    // 10 weather proxied
+    expect(result.proxied).toHaveLength(10);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		for (const t of crm) {
-			expect(directNames.has(t.name)).toBe(true);
-		}
-		for (const t of tasks) {
-			expect(directNames.has(t.name)).toBe(true);
-		}
-		for (const t of weather) {
-			expect(directNames.has(t.name)).toBe(false);
-		}
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    for (const t of crm) {
+      expect(directNames.has(t.name)).toBe(true);
+    }
+    for (const t of tasks) {
+      expect(directNames.has(t.name)).toBe(true);
+    }
+    for (const t of weather) {
+      expect(directNames.has(t.name)).toBe(false);
+    }
+  });
 
-	it("Tier 1: no change when all tools already direct", () => {
-		const system = makeSystemTools(4);
-		const app = makeAppTools("tasks", 6);
-		const all = [...system, ...app];
+  it("Tier 1: no change when all tools already direct", () => {
+    const system = makeSystemTools(4);
+    const app = makeAppTools("tasks", 6);
+    const all = [...system, ...app];
 
-		const result = surfaceTools(all, null, { focusedServerName: "tasks" });
+    const result = surfaceTools(all, null, { focusedServerName: "tasks" });
 
-		expect(result.direct).toHaveLength(10);
-		expect(result.proxied).toHaveLength(0);
-	});
+    expect(result.direct).toHaveLength(10);
+    expect(result.proxied).toHaveLength(0);
+  });
 
-	it("without focusedServerName: existing tier behavior unchanged", () => {
-		const system = makeSystemTools(4);
-		const tasks = makeAppTools("tasks", 20);
-		const weather = makeAppTools("weather", 20);
-		const all = [...system, ...tasks, ...weather];
+  it("without focusedServerName: existing tier behavior unchanged", () => {
+    const system = makeSystemTools(4);
+    const tasks = makeAppTools("tasks", 20);
+    const weather = makeAppTools("weather", 20);
+    const all = [...system, ...tasks, ...weather];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		// Tier 2: only system tools direct
-		expect(result.direct).toHaveLength(4);
-		expect(result.proxied).toHaveLength(40);
-	});
+    // Tier 2: only system tools direct
+    expect(result.direct).toHaveLength(4);
+    expect(result.proxied).toHaveLength(40);
+  });
 
-	it("nb__* tools always in direct regardless of focused app", () => {
-		const system = makeSystemTools(4);
-		const tasks = makeAppTools("tasks", 20);
-		const weather = makeAppTools("weather", 20);
-		const all = [...system, ...tasks, ...weather];
+  it("nb__* tools always in direct regardless of focused app", () => {
+    const system = makeSystemTools(4);
+    const tasks = makeAppTools("tasks", 20);
+    const weather = makeAppTools("weather", 20);
+    const all = [...system, ...tasks, ...weather];
 
-		const result = surfaceTools(all, null, { focusedServerName: "weather" });
+    const result = surfaceTools(all, null, { focusedServerName: "weather" });
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		for (const t of system) {
-			expect(directNames.has(t.name)).toBe(true);
-		}
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    for (const t of system) {
+      expect(directNames.has(t.name)).toBe(true);
+    }
+  });
 });
 
 // --- composeSystemPrompt apps injection tests ---
 
 describe("composeSystemPrompt — apps injection", () => {
-	const apps: PromptAppInfo[] = [
-		{ name: "Tasks", ui: { name: "Tasks" } },
-		{ name: "Weather", ui: null },
-	];
+  const apps: PromptAppInfo[] = [
+    { name: "Tasks", ui: { name: "Tasks" } },
+    { name: "Weather", ui: null },
+  ];
 
-	it("injects Installed Apps section with correct names, UI status, and trust scores", () => {
-		const result = composeSystemPrompt([], null, apps);
+  it("injects Installed Apps section with correct names, UI status, and trust scores", () => {
+    const result = composeSystemPrompt([], null, apps);
 
-		expect(result).toContain("## Installed Apps");
-		expect(result).toContain("- Tasks (has UI: Tasks)");
-		expect(result).toContain("- Weather (no UI)");
-	});
+    expect(result).toContain("## Installed Apps");
+    expect(result).toContain("- Tasks (has UI: Tasks)");
+    expect(result).toContain("- Weather (no UI)");
+  });
 
-	it("includes sidebar instruction when apps have UI", () => {
-		const result = composeSystemPrompt([], null, apps);
+  it("includes sidebar instruction when apps have UI", () => {
+    const result = composeSystemPrompt([], null, apps);
 
-		expect(result).toContain(
-			"When you create or modify data in apps that have a UI, mention that the user can view the result in the sidebar.",
-		);
-	});
+    expect(result).toContain(
+      "When you create or modify data in apps that have a UI, mention that the user can view the result in the sidebar.",
+    );
+  });
 
-	it("no apps section injected when apps list is empty", () => {
-		const result = composeSystemPrompt([], null, []);
+  it("no apps section injected when apps list is empty", () => {
+    const result = composeSystemPrompt([], null, []);
 
-		expect(result).not.toContain("## Installed Apps");
-		expect(result).not.toContain("Installed Apps");
-	});
+    expect(result).not.toContain("## Installed Apps");
+    expect(result).not.toContain("Installed Apps");
+  });
 
-	it("no apps section injected when apps parameter is undefined", () => {
-		const result = composeSystemPrompt([]);
+  it("no apps section injected when apps parameter is undefined", () => {
+    const result = composeSystemPrompt([]);
 
-		expect(result).not.toContain("## Installed Apps");
-	});
+    expect(result).not.toContain("## Installed Apps");
+  });
 
-	it("apps section placed between context skills and matched skill", () => {
-		const ctx: Skill = {
-			manifest: { name: "soul", description: "", version: "1.0.0", priority: 0 },
-			body: "I am the identity layer.",
-			sourcePath: "/test/soul.md",
-		};
-		const skill: Skill = {
-			manifest: {
-				name: "test",
-				description: "",
-				version: "1.0.0",
-				priority: 50,
-			},
-			body: "Skill instructions here.",
-			sourcePath: "/test/skill.md",
-		};
+  it("apps section placed between context skills and matched skill", () => {
+    const ctx: Skill = {
+      manifest: { name: "soul", description: "", version: "1.0.0", priority: 0 },
+      body: "I am the identity layer.",
+      sourcePath: "/test/soul.md",
+    };
+    const skill: Skill = {
+      manifest: {
+        name: "test",
+        description: "",
+        version: "1.0.0",
+        priority: 50,
+      },
+      body: "Skill instructions here.",
+      sourcePath: "/test/skill.md",
+    };
 
-		const result = composeSystemPrompt([ctx], skill, apps);
+    const result = composeSystemPrompt([ctx], skill, apps);
 
-		const identityIdx = result.indexOf("I am the identity layer.");
-		const appsIdx = result.indexOf("## Installed Apps");
-		const skillIdx = result.indexOf("Skill instructions here.");
+    const identityIdx = result.indexOf("I am the identity layer.");
+    const appsIdx = result.indexOf("## Installed Apps");
+    const skillIdx = result.indexOf("Skill instructions here.");
 
-		expect(identityIdx).toBeGreaterThanOrEqual(0);
-		expect(appsIdx).toBeGreaterThan(identityIdx);
-		expect(skillIdx).toBeGreaterThan(appsIdx);
-	});
+    expect(identityIdx).toBeGreaterThanOrEqual(0);
+    expect(appsIdx).toBeGreaterThan(identityIdx);
+    expect(skillIdx).toBeGreaterThan(appsIdx);
+  });
 
-	it("names the UI by its ui.name, not the app name", () => {
-		const appWithUi: PromptAppInfo[] = [
-			{ name: "CRM", ui: { name: "Contact Manager" } },
-		];
+  it("names the UI by its ui.name, not the app name", () => {
+    const appWithUi: PromptAppInfo[] = [{ name: "CRM", ui: { name: "Contact Manager" } }];
 
-		const result = composeSystemPrompt([], null, appWithUi);
+    const result = composeSystemPrompt([], null, appWithUi);
 
-		expect(result).toContain("- CRM (has UI: Contact Manager)");
-	});
+    expect(result).toContain("- CRM (has UI: Contact Manager)");
+  });
 });
 
 // --- Stage 2: namespaced (cross-workspace) tool names ---
@@ -358,60 +356,72 @@ describe("composeSystemPrompt — apps injection", () => {
 // model an empty tool list and forcing it to hallucinate tool calls.
 
 describe("surfaceTools — namespaced (cross-workspace) names", () => {
-	const WS = "ws_helix";
-	const ns = (name: string) => namespacedToolName(WS, name);
-	const makeNsSystemTools = (count = 4): ToolSchema[] =>
-		makeSystemTools(count).map((t) => makeTool(ns(t.name)));
-	const makeNsAppTools = (prefix: string, count: number): ToolSchema[] =>
-		makeAppTools(prefix, count).map((t) => makeTool(ns(t.name)));
+  const WS = "ws_helix";
+  const ns = (name: string) => namespacedToolName(WS, name);
+  const makeNsSystemTools = (count = 4): ToolSchema[] =>
+    makeSystemTools(count).map((t) => makeTool(ns(t.name)));
+  const makeNsAppTools = (prefix: string, count: number): ToolSchema[] =>
+    makeAppTools(prefix, count).map((t) => makeTool(ns(t.name)));
 
-	it("Tier 2: namespaced nb__* tools are still classified as direct system tools", () => {
-		const all = [...makeNsSystemTools(4), ...makeNsAppTools("tasks", 23), ...makeNsAppTools("weather", 23)];
-		expect(all).toHaveLength(50);
+  it("Tier 2: namespaced nb__* tools are still classified as direct system tools", () => {
+    const all = [
+      ...makeNsSystemTools(4),
+      ...makeNsAppTools("tasks", 23),
+      ...makeNsAppTools("weather", 23),
+    ];
+    expect(all).toHaveLength(50);
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		// Regression: pre-fix this was 0 — namespaced names never matched
-		// `startsWith("nb__")`, emptying the direct list.
-		expect(result.direct).toHaveLength(4);
-		expect(result.proxied).toHaveLength(46);
-		for (const t of result.direct) {
-			expect(t.name.startsWith(`${WS}-nb__`)).toBe(true);
-		}
-	});
+    // Regression: pre-fix this was 0 — namespaced names never matched
+    // `startsWith("nb__")`, emptying the direct list.
+    expect(result.direct).toHaveLength(4);
+    expect(result.proxied).toHaveLength(46);
+    for (const t of result.direct) {
+      expect(t.name.startsWith(`${WS}-nb__`)).toBe(true);
+    }
+  });
 
-	it("Tier 2: never yields an empty direct list when system tools are present", () => {
-		// The exact failure mode: a large cross-workspace union with
-		// namespaced system tools must still surface them directly so the
-		// model can search/promote the rest.
-		const all = [...makeNsSystemTools(3), ...makeNsAppTools("crm", 40)];
+  it("Tier 2: never yields an empty direct list when system tools are present", () => {
+    // The exact failure mode: a large cross-workspace union with
+    // namespaced system tools must still surface them directly so the
+    // model can search/promote the rest.
+    const all = [...makeNsSystemTools(3), ...makeNsAppTools("crm", 40)];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		expect(result.direct).toHaveLength(3);
-		expect(result.direct.length).toBeGreaterThan(0);
-	});
+    expect(result.direct).toHaveLength(3);
+    expect(result.direct.length).toBeGreaterThan(0);
+  });
 
-	it("Tier 3: a BARE allowedTools glob matches namespaced app tools", () => {
-		const all = [...makeNsSystemTools(4), ...makeNsAppTools("tasks", 10), ...makeNsAppTools("weather", 10)];
-		const skill = makeSkill({ allowedTools: ["tasks__*"] });
+  it("Tier 3: a BARE allowedTools glob matches namespaced app tools", () => {
+    const all = [
+      ...makeNsSystemTools(4),
+      ...makeNsAppTools("tasks", 10),
+      ...makeNsAppTools("weather", 10),
+    ];
+    const skill = makeSkill({ allowedTools: ["tasks__*"] });
 
-		const result = surfaceTools(all, skill);
+    const result = surfaceTools(all, skill);
 
-		// 4 system + 10 tasks = 14 direct (bare glob matches namespaced name)
-		expect(result.direct).toHaveLength(14);
-		expect(result.proxied).toHaveLength(10);
-	});
+    // 4 system + 10 tasks = 14 direct (bare glob matches namespaced name)
+    expect(result.direct).toHaveLength(14);
+    expect(result.proxied).toHaveLength(10);
+  });
 
-	it("focusedServerName (namespaced) promotes the focused app's namespaced tools", () => {
-		const all = [...makeNsSystemTools(4), ...makeNsAppTools("tasks", 20), ...makeNsAppTools("weather", 20)];
+  it("focusedServerName (namespaced) promotes the focused app's namespaced tools", () => {
+    const all = [
+      ...makeNsSystemTools(4),
+      ...makeNsAppTools("tasks", 20),
+      ...makeNsAppTools("weather", 20),
+    ];
 
-		const result = surfaceTools(all, null, { focusedServerName: ns("tasks") });
+    const result = surfaceTools(all, null, { focusedServerName: ns("tasks") });
 
-		// 4 system + 20 tasks promoted = 24 direct
-		expect(result.direct).toHaveLength(24);
-		expect(result.proxied).toHaveLength(20);
-	});
+    // 4 system + 20 tasks promoted = 24 direct
+    expect(result.direct).toHaveLength(24);
+    expect(result.proxied).toHaveLength(20);
+  });
 });
 
 // --- Kernel identity sources are always-direct (§4.2) ---
@@ -423,66 +433,66 @@ describe("surfaceTools — namespaced (cross-workspace) names", () => {
 // the conversation's cached prefix. Keeping them direct keeps the prefix stable.
 
 describe("surfaceTools — kernel identity tools always direct", () => {
-	it("Tier 2: identity-source tools surface direct alongside nb__, connector tools proxy", () => {
-		const system = makeSystemTools(4); // nb__*
-		const identity = [
-			makeTool("files__read"),
-			makeTool("files__search"),
-			makeTool("conversations__search"),
-			makeTool("automations__create"),
-		];
-		const app = makeAppTools("tasks", 40); // non-kernel connector tools
-		const all = [...system, ...identity, ...app];
+  it("Tier 2: identity-source tools surface direct alongside nb__, connector tools proxy", () => {
+    const system = makeSystemTools(4); // nb__*
+    const identity = [
+      makeTool("files__read"),
+      makeTool("files__search"),
+      makeTool("conversations__search"),
+      makeTool("automations__create"),
+    ];
+    const app = makeAppTools("tasks", 40); // non-kernel connector tools
+    const all = [...system, ...identity, ...app];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		expect(result.direct).toHaveLength(system.length + identity.length);
-		for (const t of [...system, ...identity]) {
-			expect(directNames.has(t.name)).toBe(true);
-		}
-		for (const t of app) {
-			expect(directNames.has(t.name)).toBe(false);
-		}
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    expect(result.direct).toHaveLength(system.length + identity.length);
+    for (const t of [...system, ...identity]) {
+      expect(directNames.has(t.name)).toBe(true);
+    }
+    for (const t of app) {
+      expect(directNames.has(t.name)).toBe(false);
+    }
+  });
 
-	it("Tier 2: a source that only resembles an identity source is still proxied", () => {
-		// Guards the exact-source match: `filesystem__*` / `fileshare__*` are NOT
-		// the `files` identity source — a prefix check would wrongly promote them.
-		const system = makeSystemTools(4);
-		const lookalikes = [makeTool("filesystem__list"), makeTool("fileshare__get")];
-		const app = makeAppTools("tasks", 40);
-		const all = [...system, ...lookalikes, ...app];
+  it("Tier 2: a source that only resembles an identity source is still proxied", () => {
+    // Guards the exact-source match: `filesystem__*` / `fileshare__*` are NOT
+    // the `files` identity source — a prefix check would wrongly promote them.
+    const system = makeSystemTools(4);
+    const lookalikes = [makeTool("filesystem__list"), makeTool("fileshare__get")];
+    const app = makeAppTools("tasks", 40);
+    const all = [...system, ...lookalikes, ...app];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		for (const t of lookalikes) {
-			expect(directNames.has(t.name)).toBe(false);
-		}
-		expect(result.direct).toHaveLength(4); // only nb__*
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    for (const t of lookalikes) {
+      expect(directNames.has(t.name)).toBe(false);
+    }
+    expect(result.direct).toHaveLength(4); // only nb__*
+  });
 
-	it("Tier 3: identity tools stay direct even when a skill glob doesn't name them", () => {
-		const system = makeSystemTools(4);
-		const identity = [makeTool("files__read"), makeTool("conversations__search")];
-		const tasks = makeAppTools("tasks", 10);
-		const weather = makeAppTools("weather", 10);
-		const all = [...system, ...identity, ...tasks, ...weather];
-		const skill = makeSkill({ allowedTools: ["tasks__*"] });
+  it("Tier 3: identity tools stay direct even when a skill glob doesn't name them", () => {
+    const system = makeSystemTools(4);
+    const identity = [makeTool("files__read"), makeTool("conversations__search")];
+    const tasks = makeAppTools("tasks", 10);
+    const weather = makeAppTools("weather", 10);
+    const all = [...system, ...identity, ...tasks, ...weather];
+    const skill = makeSkill({ allowedTools: ["tasks__*"] });
 
-		const result = surfaceTools(all, skill);
+    const result = surfaceTools(all, skill);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		// 4 nb__ + 2 identity + 10 tasks = 16 direct; 10 weather proxied.
-		expect(result.direct).toHaveLength(16);
-		for (const t of identity) {
-			expect(directNames.has(t.name)).toBe(true);
-		}
-		for (const t of weather) {
-			expect(directNames.has(t.name)).toBe(false);
-		}
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    // 4 nb__ + 2 identity + 10 tasks = 16 direct; 10 weather proxied.
+    expect(result.direct).toHaveLength(16);
+    for (const t of identity) {
+      expect(directNames.has(t.name)).toBe(true);
+    }
+    for (const t of weather) {
+      expect(directNames.has(t.name)).toBe(false);
+    }
+  });
 });
 
 // --- The overlay write stays off the model's surface ---
@@ -494,147 +504,147 @@ describe("surfaceTools — kernel identity tools always direct", () => {
 // the user at settings (see bootstrap.md), never to write the overlay itself.
 
 describe("surfaceTools — instructions write is app-only", () => {
-	const internalWrite: ToolSchema = {
-		name: "instructions__write_instructions",
-		description: "Save workspace-wide custom instructions",
-		inputSchema: { type: "object", properties: {} },
-		meta: { ui: { visibility: ["app"] } },
-	};
+  const internalWrite: ToolSchema = {
+    name: "instructions__write_instructions",
+    description: "Save workspace-wide custom instructions",
+    inputSchema: { type: "object", properties: {} },
+    meta: { ui: { visibility: ["app"] } },
+  };
 
-	it("never surfaces direct or proxied, even in a bare workspace", () => {
-		const system = makeSystemTools(4);
+  it("never surfaces direct or proxied, even in a bare workspace", () => {
+    const system = makeSystemTools(4);
 
-		const result = surfaceTools([...system, internalWrite], null);
+    const result = surfaceTools([...system, internalWrite], null);
 
-		expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
-		expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
-		expect(result.direct).toHaveLength(4); // only nb__*
-	});
+    expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
+    expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
+    expect(result.direct).toHaveLength(4); // only nb__*
+  });
 
-	it("stays invisible under a skill glob that names it", () => {
-		const system = makeSystemTools(4);
-		const tasks = makeAppTools("tasks", 10);
-		const skill = makeSkill({ allowedTools: ["instructions__*", "tasks__*"] });
+  it("stays invisible under a skill glob that names it", () => {
+    const system = makeSystemTools(4);
+    const tasks = makeAppTools("tasks", 10);
+    const skill = makeSkill({ allowedTools: ["instructions__*", "tasks__*"] });
 
-		const result = surfaceTools([...system, internalWrite, ...tasks], skill);
+    const result = surfaceTools([...system, internalWrite, ...tasks], skill);
 
-		expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
-		expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
-	});
+    expect(result.direct.map((t) => t.name)).not.toContain("instructions__write_instructions");
+    expect(result.proxied.map((t) => t.name)).not.toContain("instructions__write_instructions");
+  });
 
-	it("an instructions source without the annotation gets no special tier", () => {
-		// No kernel special-case remains for the source name: an un-annotated
-		// instructions tool proxies like any other platform tool.
-		const system = makeSystemTools(4);
-		const plain = makeTool("instructions__write_instructions");
-		const app = makeAppTools("tasks", 40);
+  it("an instructions source without the annotation gets no special tier", () => {
+    // No kernel special-case remains for the source name: an un-annotated
+    // instructions tool proxies like any other platform tool.
+    const system = makeSystemTools(4);
+    const plain = makeTool("instructions__write_instructions");
+    const app = makeAppTools("tasks", 40);
 
-		const result = surfaceTools([...system, plain, ...app], null);
+    const result = surfaceTools([...system, plain, ...app], null);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		expect(directNames.has("instructions__write_instructions")).toBe(false);
-		expect(result.direct).toHaveLength(4); // only nb__*
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    expect(directNames.has("instructions__write_instructions")).toBe(false);
+    expect(result.direct).toHaveLength(4); // only nb__*
+  });
 
-	it("the skills authoring surface stays proxied", () => {
-		// Nine tools for a surface reached deliberately, not reflexively — it is
-		// named in the bootstrap briefing instead of spent from the direct tier.
-		const system = makeSystemTools(4);
-		const skills = makeAppTools("skills", 10);
-		const app = makeAppTools("tasks", 40);
+  it("the skills authoring surface stays proxied", () => {
+    // Nine tools for a surface reached deliberately, not reflexively — it is
+    // named in the bootstrap briefing instead of spent from the direct tier.
+    const system = makeSystemTools(4);
+    const skills = makeAppTools("skills", 10);
+    const app = makeAppTools("tasks", 40);
 
-		const result = surfaceTools([...system, ...skills, ...app], null);
+    const result = surfaceTools([...system, ...skills, ...app], null);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		for (const t of skills) {
-			expect(directNames.has(t.name)).toBe(false);
-		}
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    for (const t of skills) {
+      expect(directNames.has(t.name)).toBe(false);
+    }
+  });
 });
 
 describe("surfaceTools — catalog activation is reachable without a promote", () => {
-	// The Skill Catalog renders into the STABLE system prefix, so it reaches the
-	// model on every turn. The tool that acts on it has to be reachable on every
-	// turn too, or using the catalog costs an `nb__manage_tools` promote first —
-	// a tools-block rewrite, which is the most expensive cache bust in the
-	// request and precisely what a stable catalog exists to avoid. Worse, a
-	// promoted tool is LRU-evictable (`evictPromotedToolsToCap`), and this one is
-	// touched rarely enough to sit at the old end of that LRU, so the bust
-	// recurs. `nb__use_skill` carries the kernel prefix to make this structural.
-	it("Tier 2: nb__use_skill is direct in a workspace far past the direct-tool budget", () => {
-		const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
-		const app = makeAppTools("crm", DEFAULT_MAX_DIRECT_TOOLS * 2);
-		const all = [...system, ...app];
+  // The Skill Catalog renders into the STABLE system prefix, so it reaches the
+  // model on every turn. The tool that acts on it has to be reachable on every
+  // turn too, or using the catalog costs an `nb__manage_tools` promote first —
+  // a tools-block rewrite, which is the most expensive cache bust in the
+  // request and precisely what a stable catalog exists to avoid. Worse, a
+  // promoted tool is LRU-evictable (`evictPromotedToolsToCap`), and this one is
+  // touched rarely enough to sit at the old end of that LRU, so the bust
+  // recurs. `nb__use_skill` carries the kernel prefix to make this structural.
+  it("Tier 2: nb__use_skill is direct in a workspace far past the direct-tool budget", () => {
+    const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
+    const app = makeAppTools("crm", DEFAULT_MAX_DIRECT_TOOLS * 2);
+    const all = [...system, ...app];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		expect(directNames.has("nb__use_skill")).toBe(true);
-		expect(result.proxied.some((t) => t.name === "nb__use_skill")).toBe(false);
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    expect(directNames.has("nb__use_skill")).toBe(true);
+    expect(result.proxied.some((t) => t.name === "nb__use_skill")).toBe(false);
+  });
 
-	it("Tier 3: nb__use_skill stays direct when a skill glob doesn't name it", () => {
-		const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
-		const all = [...system, ...makeAppTools("crm", 40)];
-		const skill = makeSkill({ allowedTools: ["crm__*"] });
+  it("Tier 3: nb__use_skill stays direct when a skill glob doesn't name it", () => {
+    const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
+    const all = [...system, ...makeAppTools("crm", 40)];
+    const skill = makeSkill({ allowedTools: ["crm__*"] });
 
-		const result = surfaceTools(all, skill);
+    const result = surfaceTools(all, skill);
 
-		expect(new Set(result.direct.map((t) => t.name)).has("nb__use_skill")).toBe(true);
-	});
+    expect(new Set(result.direct.map((t) => t.name)).has("nb__use_skill")).toBe(true);
+  });
 
-	it("the authoring siblings on the skills source stay proxied", () => {
-		// The split is deliberate: `skills__*` are authoring tools, reached for
-		// while EDITING skills (occasional, a promote is fine). Pulling the whole
-		// source kernel-direct to fix the activation tool would put six more tool
-		// schemas in every cached prefix to solve a one-tool problem.
-		const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
-		const authoring = [
-			makeTool("skills__list"),
-			makeTool("skills__read"),
-			makeTool("skills__create"),
-		];
-		const all = [...system, ...authoring, ...makeAppTools("crm", 40)];
+  it("the authoring siblings on the skills source stay proxied", () => {
+    // The split is deliberate: `skills__*` are authoring tools, reached for
+    // while EDITING skills (occasional, a promote is fine). Pulling the whole
+    // source kernel-direct to fix the activation tool would put six more tool
+    // schemas in every cached prefix to solve a one-tool problem.
+    const system = [...makeSystemTools(4), makeTool("nb__use_skill")];
+    const authoring = [
+      makeTool("skills__list"),
+      makeTool("skills__read"),
+      makeTool("skills__create"),
+    ];
+    const all = [...system, ...authoring, ...makeAppTools("crm", 40)];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		const directNames = new Set(result.direct.map((t) => t.name));
-		for (const t of authoring) {
-			expect(directNames.has(t.name)).toBe(false);
-		}
-	});
+    const directNames = new Set(result.direct.map((t) => t.name));
+    for (const t of authoring) {
+      expect(directNames.has(t.name)).toBe(false);
+    }
+  });
 });
 
 describe("surfaceTools — ui.visibility filtering", () => {
-	it("excludes tools whose ui.visibility lacks \"model\" from direct tools", () => {
-		const internalTool: ToolSchema = {
-			name: "nb__app_only",
-			description: "App-only tool",
-			inputSchema: { type: "object", properties: {} },
-			meta: { ui: { visibility: ["app"] } },
-		};
-		const visibleTool = makeTool("nb__search");
-		const all = [internalTool, visibleTool];
+  it('excludes tools whose ui.visibility lacks "model" from direct tools', () => {
+    const internalTool: ToolSchema = {
+      name: "nb__app_only",
+      description: "App-only tool",
+      inputSchema: { type: "object", properties: {} },
+      meta: { ui: { visibility: ["app"] } },
+    };
+    const visibleTool = makeTool("nb__search");
+    const all = [internalTool, visibleTool];
 
-		const result = surfaceTools(all, null);
+    const result = surfaceTools(all, null);
 
-		const directNames = result.direct.map((t) => t.name);
-		expect(directNames).not.toContain("nb__app_only");
-		expect(directNames).toContain("nb__search");
-	});
+    const directNames = result.direct.map((t) => t.name);
+    expect(directNames).not.toContain("nb__app_only");
+    expect(directNames).toContain("nb__search");
+  });
 
-	it("excludes app-only tools even when total is under maxDirectTools", () => {
-		const internalTool: ToolSchema = {
-			name: "nb__get_config",
-			description: "Internal config",
-			inputSchema: { type: "object", properties: {} },
-			meta: { ui: { visibility: ["app"] } },
-		};
-		const tools = [...makeSystemTools(4), internalTool];
+  it("excludes app-only tools even when total is under maxDirectTools", () => {
+    const internalTool: ToolSchema = {
+      name: "nb__get_config",
+      description: "Internal config",
+      inputSchema: { type: "object", properties: {} },
+      meta: { ui: { visibility: ["app"] } },
+    };
+    const tools = [...makeSystemTools(4), internalTool];
 
-		const result = surfaceTools(tools, null);
+    const result = surfaceTools(tools, null);
 
-		expect(result.direct).toHaveLength(4); // app-only excluded
-		expect(result.proxied).toHaveLength(0); // app-only not proxied either
-	});
+    expect(result.direct).toHaveLength(4); // app-only excluded
+    expect(result.proxied).toHaveLength(0); // app-only not proxied either
+  });
 });

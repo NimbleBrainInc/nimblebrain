@@ -4,9 +4,7 @@ import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 
 /** Minimal mock of McpSource exposing only what HealthMonitor needs. */
-function makeMockSource(
-  name: string,
-): McpSource & {
+function makeMockSource(name: string): McpSource & {
   alive: boolean;
   stopped: boolean;
   restartResult: boolean;
@@ -309,7 +307,10 @@ describe("HealthMonitor", () => {
     const healthy = makeMockSource("healthy-one");
     const crashed = makeMockSource("crashed-one");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([healthy, crashed], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor([healthy, crashed], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Verify initial state
     let status = monitor.getStatus();

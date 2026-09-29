@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
+  CORE_PRIORITY_THRESHOLD,
   composeSystemPrompt,
   composeSystemPromptTraced,
-  CORE_PRIORITY_THRESHOLD,
   DEFAULT_IDENTITY,
   type FocusedAppInfo,
   type Layer3SkillEntry,
@@ -113,9 +113,7 @@ describe("composeSystemPrompt", () => {
   });
 });
 
-const sampleApps: PromptAppInfo[] = [
-  { name: "tasks", ui: { name: "Tasks" } },
-];
+const sampleApps: PromptAppInfo[] = [{ name: "tasks", ui: { name: "Tasks" } }];
 
 const sampleFocusedApp: FocusedAppInfo = {
   name: "Tasks",
@@ -129,24 +127,14 @@ describe("composeSystemPrompt — focusedApp", () => {
   it("without focusedApp: output is identical to before", () => {
     const soul = makeContextSkill("soul", 0, "Identity.");
     const withoutFocused = composeSystemPrompt([soul], testSkill, sampleApps);
-    const withUndefined = composeSystemPrompt(
-      [soul],
-      testSkill,
-      sampleApps,
-      undefined,
-    );
+    const withUndefined = composeSystemPrompt([soul], testSkill, sampleApps, undefined);
     expect(withoutFocused).toBe(withUndefined);
     expect(withoutFocused).not.toContain("Active App");
   });
 
   it("with focusedApp (no skill resource): contains Active App section with guide and rules", () => {
     const soul = makeContextSkill("soul", 0, "Identity.");
-    const result = composeSystemPrompt(
-      [soul],
-      null,
-      sampleApps,
-      sampleFocusedApp,
-    );
+    const result = composeSystemPrompt([soul], null, sampleApps, sampleFocusedApp);
     expect(result).toContain("## Active App: Tasks");
     expect(result).toContain(
       "The user is currently viewing the **Tasks** app alongside this chat.",
@@ -159,7 +147,7 @@ describe("composeSystemPrompt — focusedApp", () => {
       "No app-specific guide available. Use the available tools to help the user.",
     );
     expect(result).toContain("### Interaction Rules");
-    expect(result).toContain("call `nb__search` with `scope: \"tools\"` and a keyword");
+    expect(result).toContain('call `nb__search` with `scope: "tools"` and a keyword');
     expect(result).not.toContain("[App Context");
   });
 
@@ -179,12 +167,7 @@ describe("composeSystemPrompt — focusedApp", () => {
 
   it("Active App section appears between Installed Apps and matched skill", () => {
     const soul = makeContextSkill("soul", 0, "Identity.");
-    const result = composeSystemPrompt(
-      [soul],
-      testSkill,
-      sampleApps,
-      sampleFocusedApp,
-    );
+    const result = composeSystemPrompt([soul], testSkill, sampleApps, sampleFocusedApp);
 
     const appsIdx = result.indexOf("## Installed Apps");
     const activeAppIdx = result.indexOf("## Active App: Tasks");
@@ -212,16 +195,13 @@ describe("composeSystemPrompt — focusedApp", () => {
   });
 
   it("contains all 7 interaction rules", () => {
-    const result = composeSystemPrompt(
-      [],
-      null,
-      undefined,
-      sampleFocusedApp,
-    );
+    const result = composeSystemPrompt([], null, undefined, sampleFocusedApp);
     // Verify all 6 rules are present
-    expect(result).toContain("Do not ask for confirmation unless the action is destructive or ambiguous.");
+    expect(result).toContain(
+      "Do not ask for confirmation unless the action is destructive or ambiguous.",
+    );
     expect(result).toContain("The app view refreshes automatically — do not describe the UI.");
-    expect(result).toContain("call `nb__search` with `scope: \"tools\"` and a keyword.");
+    expect(result).toContain('call `nb__search` with `scope: "tools"` and a keyword.');
     expect(result).toContain('the user says "undo" or "go back,"');
     expect(result).toContain("ask ONE clarifying question about what specifically to change.");
     expect(result).toContain("Other apps are still available via `nb__search`");
@@ -660,9 +640,7 @@ describe("composeSystemPrompt — workspace overlay", () => {
 
   it("layer order: identity → core → workspace → apps → focused/skill", () => {
     const soul = makeContextSkill("soul", 0, "Identity layer.");
-    const apps: PromptAppInfo[] = [
-      { name: "ipinfo", ui: null },
-    ];
+    const apps: PromptAppInfo[] = [{ name: "ipinfo", ui: null }];
     const focused: FocusedAppInfo = { name: "ipinfo", tools: [] };
     const overlays: OverlayLayers = { workspace: "WS" };
 
@@ -995,9 +973,7 @@ describe("composeSystemPromptTraced", () => {
       loadedBy: "always",
       reason: "loading_strategy: always",
     };
-    const apps: PromptAppInfo[] = [
-      { name: "synapse-collateral", ui: { name: "Collateral" } },
-    ];
+    const apps: PromptAppInfo[] = [{ name: "synapse-collateral", ui: { name: "Collateral" } }];
     const traced = composeSystemPromptTraced(
       [soul, userCtx],
       null,
@@ -1061,10 +1037,7 @@ describe("composeSystemPromptTraced", () => {
     const traced = composeSystemPromptTraced([soul, voice, dl]);
     const userCtx = traced.layers.filter((l) => l.kind === "user_context_skill");
     expect(userCtx).toHaveLength(2);
-    expect(userCtx.map((l) => l.id).sort()).toEqual([
-      "/test/dl-memory.md",
-      "/test/voice.md",
-    ]);
+    expect(userCtx.map((l) => l.id).sort()).toEqual(["/test/dl-memory.md", "/test/voice.md"]);
   });
 
   it("layer3_skills section carries one subItem per skill, keyed on its source path", () => {
@@ -1113,11 +1086,7 @@ describe("composeSystemPromptTraced", () => {
       { name: "synapse-collateral", ui: { name: "Collateral" } },
       { name: "synapse-crm", ui: null, customInstructions: "Use stages strictly." },
     ];
-    const traced = composeSystemPromptTraced(
-      [makeContextSkill("soul", 0, "I am.")],
-      null,
-      apps,
-    );
+    const traced = composeSystemPromptTraced([makeContextSkill("soul", 0, "I am.")], null, apps);
     const section = traced.layers.find((l) => l.kind === "apps");
     expect(section).toBeDefined();
     expect(section!.subItems).toHaveLength(2);

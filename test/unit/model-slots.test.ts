@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { listModels, listProviders } from "../../src/model/catalog.ts";
 import { resolveModelString } from "../../src/model/registry.ts";
-import { MODEL_SLOTS, isModelSlot, parseModelSlotRef } from "../../src/model/slots.ts";
+import { isModelSlot, MODEL_SLOTS, parseModelSlotRef } from "../../src/model/slots.ts";
 
 describe("parseModelSlotRef", () => {
   // The bug: workspace.json agent profiles document a BARE slot name
@@ -60,12 +60,11 @@ describe("slot names vs the model catalog", () => {
   // rejected, it is stamped with `anthropic:`. That fallback is deliberate
   // (pinned/bespoke ids served under their own name), which is why slot
   // resolution must happen BEFORE it rather than inside it.
-  test.each([...MODEL_SLOTS])(
-    "resolveModelString would stamp anthropic: on bare %s — the failure slot parsing prevents",
-    (slot) => {
-      expect(resolveModelString(slot)).toBe(`anthropic:${slot}`);
-    },
-  );
+  test.each([
+    ...MODEL_SLOTS,
+  ])("resolveModelString would stamp anthropic: on bare %s — the failure slot parsing prevents", (slot) => {
+    expect(resolveModelString(slot)).toBe(`anthropic:${slot}`);
+  });
 
   test("resolveModelString leaves a qualified id alone", () => {
     expect(resolveModelString("nebius:openai/gpt-oss-120b")).toBe("nebius:openai/gpt-oss-120b");

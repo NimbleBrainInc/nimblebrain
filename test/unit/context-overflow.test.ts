@@ -43,7 +43,10 @@ describe("isContextOverflowError", () => {
       status: 400,
       message: "Bad Request",
       responseBody: {
-        error: { message: "prompt is too long: 1.5M tokens > 1M maximum", type: "invalid_request_error" },
+        error: {
+          message: "prompt is too long: 1.5M tokens > 1M maximum",
+          type: "invalid_request_error",
+        },
       },
     };
     expect(isContextOverflowError(err)).toBe(true);

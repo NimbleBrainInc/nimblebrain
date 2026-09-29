@@ -22,8 +22,8 @@
  * in `bun run test` or `bun run verify`.
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
-import { runEval, shutdownEvalRuntime, assertSearchedFor } from "./helpers.ts";
+import { afterAll, describe, expect, it } from "bun:test";
+import { assertSearchedFor, runEval, shutdownEvalRuntime } from "./helpers.ts";
 
 afterAll(async () => {
   await shutdownEvalRuntime();
@@ -41,9 +41,7 @@ function assertManageToolsAdded(
   const manageCalls = result.toolCalls.filter((tc) => tc.name === "nb__manage_tools");
   if (manageCalls.length === 0) {
     const seen = result.toolCalls.map((tc) => tc.name).join(", ") || "(none)";
-    throw new Error(
-      `Expected nb__manage_tools to be called. Tools called: ${seen}`,
-    );
+    throw new Error(`Expected nb__manage_tools to be called. Tools called: ${seen}`);
   }
   const allAdds = manageCalls.flatMap((tc) => {
     const add = tc.input.add;
@@ -71,15 +69,10 @@ describe("explicit tool promotion workflow", () => {
       assertSearchedFor(result, "files");
 
       // A1+A2: well-formed manage_tools call adding a files-source tool
-      assertManageToolsAdded(result, [
-        "files__list",
-        "files__search",
-      ]);
+      assertManageToolsAdded(result, ["files__list", "files__search"]);
 
       // End-to-end: the discovered tool actually runs
-      const calledFilesList = result.toolCalls.some((tc) =>
-        tc.name.startsWith("files__"),
-      );
+      const calledFilesList = result.toolCalls.some((tc) => tc.name.startsWith("files__"));
       expect(calledFilesList).toBe(true);
     }, 60_000);
 
@@ -87,14 +80,9 @@ describe("explicit tool promotion workflow", () => {
       const result = await runEval("show me my recent conversations");
 
       assertSearchedFor(result, "conversations");
-      assertManageToolsAdded(result, [
-        "conversations__list",
-        "conversations__search",
-      ]);
+      assertManageToolsAdded(result, ["conversations__list", "conversations__search"]);
 
-      const calledConv = result.toolCalls.some((tc) =>
-        tc.name.startsWith("conversations__"),
-      );
+      const calledConv = result.toolCalls.some((tc) => tc.name.startsWith("conversations__"));
       expect(calledConv).toBe(true);
     }, 60_000);
   });

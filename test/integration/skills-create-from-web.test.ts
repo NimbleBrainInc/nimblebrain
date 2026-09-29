@@ -27,15 +27,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ToolInput } from "../../src/platform/schemas/catalog.ts";
-import type {
-  SkillDetail,
-  SkillsListOutput,
-} from "../../src/platform/schemas/skills.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import type { SkillDetail, SkillsListOutput } from "../../src/platform/schemas/skills.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -51,7 +48,7 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

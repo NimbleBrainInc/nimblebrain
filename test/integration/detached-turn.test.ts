@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { ConversationNotFoundError, RunInProgressError } from "../../src/runtime/errors.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
 import type { BufferedRunEvent, RunStatus } from "../../src/runtime/run-bus.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
 const testDir = join(tmpdir(), `nimblebrain-detached-${Date.now()}`);
@@ -132,9 +132,16 @@ describe("detached turns (server-authoritative streaming)", () => {
     try {
       const id = "conv_face0000face0001"; // conv_ + 16 hex, not on disk
       await expect(
-        runtime.startTurn({ identity: DEV_IDENTITY, message: "a", conversationId: id, workspaceId: TEST_WORKSPACE_ID }),
+        runtime.startTurn({
+          identity: DEV_IDENTITY,
+          message: "a",
+          conversationId: id,
+          workspaceId: TEST_WORKSPACE_ID,
+        }),
       ).rejects.toBeInstanceOf(ConversationNotFoundError);
-      expect(createSpy.mock.calls.filter((c) => (c[0] as { id?: string })?.id === id)).toHaveLength(0);
+      expect(createSpy.mock.calls.filter((c) => (c[0] as { id?: string })?.id === id)).toHaveLength(
+        0,
+      );
       expect(runtime.isTurnActive(id)).toBe(false);
       expect(await runtime.findConversation(id)).toBeNull();
     } finally {
@@ -151,8 +158,18 @@ describe("detached turns (server-authoritative streaming)", () => {
     await awaitTurn(id);
 
     const results = await Promise.allSettled([
-      runtime.startTurn({ identity: DEV_IDENTITY, message: "a", conversationId: id, workspaceId: TEST_WORKSPACE_ID }),
-      runtime.startTurn({ identity: DEV_IDENTITY, message: "b", conversationId: id, workspaceId: TEST_WORKSPACE_ID }),
+      runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "a",
+        conversationId: id,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+      runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "b",
+        conversationId: id,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
     ]);
     const rejected = results.filter((r) => r.status === "rejected");
     expect(rejected.length).toBe(1);
@@ -183,7 +200,12 @@ describe("detached turns (server-authoritative streaming)", () => {
     );
 
     await expect(
-      runtime.startTurn({ identity: DEV_IDENTITY, message: "hijack", conversationId: convId, workspaceId: TEST_WORKSPACE_ID }),
+      runtime.startTurn({
+        identity: DEV_IDENTITY,
+        message: "hijack",
+        conversationId: convId,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
     // The run was never reserved.
     expect(runtime.isTurnActive(convId)).toBe(false);
@@ -214,7 +236,6 @@ describe("detached turns (server-authoritative streaming)", () => {
     await expect(
       runtime.startTurn({ identity: DEV_IDENTITY, message: "no workspace here" }),
     ).rejects.toThrow("request names no workspace");
-
   });
 });
 

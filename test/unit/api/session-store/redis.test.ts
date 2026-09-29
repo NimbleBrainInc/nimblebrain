@@ -9,10 +9,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import {
-  type RedisLike,
-  RedisSessionRegistry,
-} from "../../../../src/api/session-store/redis.ts";
+import { type RedisLike, RedisSessionRegistry } from "../../../../src/api/session-store/redis.ts";
 import { registrySpec } from "./conformance.ts";
 
 class FakeRedis implements RedisLike {

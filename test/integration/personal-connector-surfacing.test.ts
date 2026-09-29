@@ -20,14 +20,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import {
+  type FakeConnectorServer,
+  startFakeConnectorServer,
+} from "../helpers/fake-connector-server.ts";
 
 const testDir = join(tmpdir(), `nb-pc-surfacing-${Date.now()}`);
 const SHARED_WS = "ws_helix";

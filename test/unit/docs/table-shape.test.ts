@@ -145,7 +145,9 @@ describe("docs markdown tables", () => {
   test("every table row has as many cells as its header", () => {
     const bad = files.flatMap((f) => malformedRows(f, readFileSync(f, "utf8")));
     const report = bad
-      .map((b) => `${b.file}:${b.line} — header has ${b.want} cells, row has ${b.got}\n    ${b.text}`)
+      .map(
+        (b) => `${b.file}:${b.line} — header has ${b.want} cells, row has ${b.got}\n    ${b.text}`,
+      )
       .join("\n");
     expect(report).toBe("");
   });

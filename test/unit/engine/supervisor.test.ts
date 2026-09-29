@@ -409,10 +409,7 @@ describe("supervisor — input-aware success fingerprinting", () => {
   it("varied successful inputs and outputs do not trip (baseline)", () => {
     const sup = createRunSupervisor();
     for (let i = 0; i < 5; i++) {
-      const v = sup.observe(
-        call("foo", { i }),
-        textResult(`{"index":${i},"applied":true}`, false),
-      );
+      const v = sup.observe(call("foo", { i }), textResult(`{"index":${i},"applied":true}`, false));
       expect(v.type).toBe("pass");
     }
   });

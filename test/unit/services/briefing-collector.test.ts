@@ -43,7 +43,10 @@ async function serve(name: string, opts: Parameters<typeof startFacetsSource>[1]
   return fixture;
 }
 
-function collectorFor(sources: McpSource[], extra: { now?: () => number; readTimeoutMs?: number } = {}) {
+function collectorFor(
+  sources: McpSource[],
+  extra: { now?: () => number; readTimeoutMs?: number } = {},
+) {
   return createBriefingCollector({
     resolveSource: (_wsId, serverName) => sources.find((s) => s.name === serverName) ?? null,
     ...extra,

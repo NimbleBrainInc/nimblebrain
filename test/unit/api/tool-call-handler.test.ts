@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { handleResourceProxy, handleToolCall } from "../../../src/api/handlers.ts";
 import type { ResolvedFeatures } from "../../../src/config/features.ts";
-import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 
 // On REST the workspace is the one in the URL path (ADR-0037). A qualified
 // `ws_<id>-<name>` server, app or tool is refused with a 400 — never routed to
@@ -155,10 +155,15 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
 
   it("resolves a bare source in the workspace from the URL", async () => {
     const { runtime, executed, registryWs } = makeToolCallRuntime({ sourceName: "calendar" });
-    const res = await handleToolCall(toolReq({ server: "calendar", tool: "preview" }), runtime, features, {
-      workspaceId: "ws_user_u1",
-      identity: identityU1,
-    });
+    const res = await handleToolCall(
+      toolReq({ server: "calendar", tool: "preview" }),
+      runtime,
+      features,
+      {
+        workspaceId: "ws_user_u1",
+        identity: identityU1,
+      },
+    );
     expect(res.status).toBe(200);
     expect(registryWs).toEqual(["ws_user_u1"]);
     expect(executed).toEqual(["calendar__preview"]);

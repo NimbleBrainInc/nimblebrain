@@ -1,11 +1,11 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
-import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import {
   createManageMembersTool,
@@ -19,7 +19,10 @@ function extractText(result: { content: Array<{ type: string; text: string }> })
   return result.content[0].text;
 }
 
-function parseResult(result: { content: Array<{ type: string; text: string }>; structuredContent?: Record<string, unknown> }): unknown {
+function parseResult(result: {
+  content: Array<{ type: string; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}): unknown {
   if (result.structuredContent) return result.structuredContent;
   return JSON.parse(extractText(result));
 }
@@ -580,7 +583,9 @@ describe("nb__manage_members", () => {
       });
       expect(removed.isError).toBe(false);
       const after = await wsStore.get(ws.id);
-      expect(after!.members).toEqual([expect.objectContaining({ userId: anotherUser.id, role: "admin" })]);
+      expect(after!.members).toEqual([
+        expect.objectContaining({ userId: anotherUser.id, role: "admin" }),
+      ]);
     });
 
     test("org admin cannot remove or demote a workspace's last admin", async () => {

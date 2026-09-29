@@ -6,10 +6,10 @@
  * relies on, and keeps its top-level structure stable across edits.
  */
 
+import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "bun:test";
 import matter from "gray-matter";
 import { parseSkillFile } from "../../../src/skills/loader.ts";
 import { validateFrontmatter } from "../../../src/skills/schemas/skill-manifest.ts";

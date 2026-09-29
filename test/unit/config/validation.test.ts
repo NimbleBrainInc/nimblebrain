@@ -58,9 +58,7 @@ describe("config schema validation", () => {
     const hasAdditional = errors.some((e) => e.keyword === "additionalProperties");
     // Schema may or may not enforce additionalProperties at root — verify behavior
     if (hasAdditional) {
-      expect(
-        errors.some((e) => e.params?.additionalProperty === "madeUpField"),
-      ).toBe(true);
+      expect(errors.some((e) => e.params?.additionalProperty === "madeUpField")).toBe(true);
     }
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fileIdToUri, FILE_URI_SCHEME, uriToFileId } from "../../../src/files/uri.ts";
+import { FILE_URI_SCHEME, fileIdToUri, uriToFileId } from "../../../src/files/uri.ts";
 
 describe("file URI helpers", () => {
   test("scheme constant is `files`", () => {

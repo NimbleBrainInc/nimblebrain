@@ -1,6 +1,6 @@
+import { describe, expect, test } from "bun:test";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { describe, expect, test } from "bun:test";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
 import { rehydrateUserResources } from "../../../src/files/rehydrate.ts";
 import type { FileStore } from "../../../src/files/store.ts";
@@ -17,7 +17,14 @@ import type { FileStore } from "../../../src/files/store.ts";
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function storeWith(id: string, data: Buffer, mimeType: string, filename: string): FileStore {
-  const entry = { id, filename, mimeType, size: data.length, tags: [], createdAt: "2026-05-07T00:00:00.000Z" };
+  const entry = {
+    id,
+    filename,
+    mimeType,
+    size: data.length,
+    tags: [],
+    createdAt: "2026-05-07T00:00:00.000Z",
+  };
   return {
     saveFile: () => Promise.reject(new Error("not used")),
     readFile: async (wanted) => {
@@ -57,7 +64,9 @@ async function anthropicRequestBody(prompt: LanguageModelV4Message[]): Promise<{
     }) as unknown as typeof fetch,
   }).languageModel("claude-sonnet-4-5");
 
-  await (model as unknown as { doGenerate: (o: unknown) => Promise<unknown> }).doGenerate({ prompt });
+  await (model as unknown as { doGenerate: (o: unknown) => Promise<unknown> }).doGenerate({
+    prompt,
+  });
   return captured as never;
 }
 
@@ -67,7 +76,12 @@ describe("rehydrated file parts survive a real provider converter", () => {
       role: "user",
       content: [
         { type: "text", text: "what's in this picture?" },
-        { type: "resource_link", uri: "files://fl_wire1", mimeType: "image/png", name: "photo.png" },
+        {
+          type: "resource_link",
+          uri: "files://fl_wire1",
+          mimeType: "image/png",
+          name: "photo.png",
+        },
       ],
       timestamp: "2026-05-07T00:00:00.000Z",
     };

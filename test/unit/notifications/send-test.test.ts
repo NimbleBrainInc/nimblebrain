@@ -12,10 +12,10 @@
  * ceiling-blocked route and a broken one look like alike.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink, ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
@@ -276,9 +276,7 @@ describe("a route that names no source", () => {
     route = ANY_SOURCE,
   ) {
     const config = {
-      sources: Object.fromEntries(
-        Object.entries(ceilings).map(([k, v]) => [k, { maxLevel: v }]),
-      ),
+      sources: Object.fromEntries(Object.entries(ceilings).map(([k, v]) => [k, { maxLevel: v }])),
       routes: [route],
     };
     await workspaceStore.update(wsId, { notifications: config });

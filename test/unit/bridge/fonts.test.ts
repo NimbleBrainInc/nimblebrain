@@ -16,7 +16,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { buildCSP } from "../../../web/src/bridge/iframe.ts";
 import {
   FONT_SPECS,
   fontOrigin,
@@ -28,6 +27,7 @@ import {
   buildHostExtensions,
   buildHostStyles,
 } from "../../../web/src/bridge/host-extensions.ts";
+import { buildCSP } from "../../../web/src/bridge/iframe.ts";
 import { paletteToExtAppsTokens } from "../../../web/src/theme/projections.ts";
 
 /** A real host serves the shell over http(s), so the default fixture supplies a
@@ -41,7 +41,9 @@ let priorWindow: unknown;
 /** The browser entry supplies these at runtime; fixtures stand in here so the
  *  mapping is exercised without `web/` dependencies. */
 function registerFixtures(): void {
-  registerHostFontUrls(Object.fromEntries(FONT_SPECS.map((s) => [s.family, `/assets/${s.family}.woff2`])));
+  registerHostFontUrls(
+    Object.fromEntries(FONT_SPECS.map((s) => [s.family, `/assets/${s.family}.woff2`])),
+  );
   priorWindow = (globalThis as { window?: unknown }).window;
   (globalThis as { window?: unknown }).window = { location: { origin: HOST_ORIGIN } };
 }
@@ -78,8 +80,7 @@ function familiesNamedByTokens(): string[] {
   const named = new Set<string>();
   for (const value of Object.values(paletteToExtAppsTokens("light"))) {
     const parts = value.split(",").map((p) => p.trim());
-    const looksLikeFontStack =
-      parts.some((p) => GENERIC.test(p)) || /^['"]/.test(parts[0] ?? "");
+    const looksLikeFontStack = parts.some((p) => GENERIC.test(p)) || /^['"]/.test(parts[0] ?? "");
     if (!looksLikeFontStack) continue;
     // First entry is the intended face; the rest is the web-safe tail.
     const first = (parts[0] ?? "").replace(/^['"]|['"]$/g, "");

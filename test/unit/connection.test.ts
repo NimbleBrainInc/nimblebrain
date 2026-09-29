@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  WORKSPACE_PRINCIPAL_ID,
   type Connection,
   summarizeConnectionState,
+  WORKSPACE_PRINCIPAL_ID,
 } from "../../src/connectors/runtime/connection.ts";
 
 function conn(state: Connection["state"]): Connection {
@@ -15,7 +15,14 @@ describe("summarizeConnectionState", () => {
   });
 
   test("single connection: state passes through", () => {
-    for (const state of ["starting", "running", "pending_auth", "crashed", "dead", "stopped"] as const) {
+    for (const state of [
+      "starting",
+      "running",
+      "pending_auth",
+      "crashed",
+      "dead",
+      "stopped",
+    ] as const) {
       const m = new Map<string, Connection>();
       m.set("p", conn(state));
       expect(summarizeConnectionState(m)).toBe(state);

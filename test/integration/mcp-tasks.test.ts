@@ -14,7 +14,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,28 +25,28 @@ import {
   CancelTaskResultSchema,
   type CreateTaskResult,
   CreateTaskResultSchema,
-  type GetTaskResult,
   GetTaskPayloadResultSchema,
+  type GetTaskResult,
   GetTaskResultSchema,
   RELATED_TASK_META_KEY,
   type Task,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
-import { startServer, type ServerHandle } from "../../src/api/server.ts";
+import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import {
   TaskAlreadyTerminalError,
-  type TaskOwnerContext,
   TaskNotFoundError,
+  type TaskOwnerContext,
   type Tool,
   type ToolSource,
 } from "../../src/tools/types.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // FakeTaskAwareSource: minimal surface matching McpSource's task API.
@@ -353,7 +353,7 @@ beforeAll(async () => {
     })),
   );
 
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

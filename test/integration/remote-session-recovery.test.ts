@@ -1,5 +1,5 @@
-import { Server } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
@@ -20,51 +20,51 @@ import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-m
 const UI_HTML = "<html><body>main</body></html>";
 
 function createMcpServer(): Server {
-	const server = new Server(
-		{ name: "rolling-remote", version: "0.1.0" },
-		{ capabilities: { resources: {} } },
-	);
-	server.setRequestHandler('resources/list', async () => ({
-		resources: [{ uri: "ui://main", name: "main", mimeType: "text/html" }],
-	}));
-	server.setRequestHandler('resources/read', async (req) => ({
-		contents: [{ uri: req.params.uri, mimeType: "text/html", text: UI_HTML }],
-	}));
-	return server;
+  const server = new Server(
+    { name: "rolling-remote", version: "0.1.0" },
+    { capabilities: { resources: {} } },
+  );
+  server.setRequestHandler("resources/list", async () => ({
+    resources: [{ uri: "ui://main", name: "main", mimeType: "text/html" }],
+  }));
+  server.setRequestHandler("resources/read", async (req) => ({
+    contents: [{ uri: req.params.uri, mimeType: "text/html", text: UI_HTML }],
+  }));
+  return server;
 }
 
 describe("McpSource — remote session recovery (issue #571)", () => {
-	let server: RemoteMcpFixture;
-	let source: McpSource;
+  let server: RemoteMcpFixture;
+  let source: McpSource;
 
-	beforeEach(() => {
-		server = startRemoteMcpServer(createMcpServer);
-	});
+  beforeEach(() => {
+    server = startRemoteMcpServer(createMcpServer);
+  });
 
-	afterEach(async () => {
-		await source?.stop();
-		server?.close();
-	});
+  afterEach(async () => {
+    await source?.stop();
+    server?.close();
+  });
 
-	it("recovers a ui:// read after the server drops the session — no manual bounce", async () => {
-		source = new McpSource(
-			"rolling-remote",
-			{ type: "remote", url: new URL(server.url), allowInsecure: true },
-			new NoopEventSink(),
-		);
-		await source.start();
+  it("recovers a ui:// read after the server drops the session — no manual bounce", async () => {
+    source = new McpSource(
+      "rolling-remote",
+      { type: "remote", url: new URL(server.url), allowInsecure: true },
+      new NoopEventSink(),
+    );
+    await source.start();
 
-		// Baseline: the read works while the session is live.
-		const before = await source.readResource("ui://main", { logFailures: true });
-		expect(before?.text).toBe(UI_HTML);
+    // Baseline: the read works while the session is live.
+    const before = await source.readResource("ui://main", { logFailures: true });
+    expect(before?.text).toBe(UI_HTML);
 
-		// The server rolls: every live session id is now stale.
-		server.roll();
+    // The server rolls: every live session id is now stale.
+    server.roll();
 
-		// Without recovery this returns null ("Resource not found" in the UI). With
-		// the fix, readResource detects the lost session, re-initializes, retries,
-		// and returns the resource on the same call.
-		const after = await source.readResource("ui://main", { logFailures: true });
-		expect(after?.text).toBe(UI_HTML);
-	}, 20_000);
+    // Without recovery this returns null ("Resource not found" in the UI). With
+    // the fix, readResource detects the lost session, re-initializes, retries,
+    // and returns the resource on the same call.
+    const after = await source.readResource("ui://main", { logFailures: true });
+    expect(after?.text).toBe(UI_HTML);
+  }, 20_000);
 });
