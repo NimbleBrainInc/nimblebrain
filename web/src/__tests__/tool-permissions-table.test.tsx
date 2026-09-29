@@ -151,7 +151,11 @@ describe("ToolPermissionsTable — collapsed until asked", () => {
     expect(policyButtons(mounted.container)).toHaveLength(4);
     const toggle = buttonsNamed(mounted.container, "Hide tools")[0];
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
-    expect(mounted.container.querySelector(`#${CSS.escape(toggle?.getAttribute("aria-controls") ?? "")}`)).toBeTruthy();
+    expect(
+      mounted.container.querySelector(
+        `#${CSS.escape(toggle?.getAttribute("aria-controls") ?? "")}`,
+      ),
+    ).toBeTruthy();
     await act(async () => {
       buttonsNamed(mounted!.container, "Hide tools")[0]?.click();
     });
