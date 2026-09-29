@@ -24,7 +24,6 @@ function seedInstance(lifecycle: ConnectorLifecycleManager, serverName: string, 
     version: "remote",
     state: "starting",
     ui: null,
-    type: "plain",
     wsId,
   };
   // Reach through to register via the lifecycle's instance map. The

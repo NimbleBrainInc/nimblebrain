@@ -13,7 +13,7 @@ import type { Skill } from "../../src/skills/types.ts";
 
 function ctx(name: string, priority: number, body: string): Skill {
   return {
-    manifest: { name, description: "", version: "1.0.0", type: "context", priority },
+    manifest: { name, description: "", version: "1.0.0", priority },
     body,
     sourcePath: `/test/${name}.md`,
   };
@@ -24,9 +24,7 @@ const matched: Skill = {
     name: "matched",
     description: "",
     version: "1.0.0",
-    type: "skill",
     priority: 50,
-    metadata: { keywords: [], triggers: [] },
   },
   body: "Matched skill body.",
   sourcePath: "/test/matched.md",
@@ -140,9 +138,7 @@ describe("composeSystemSegments", () => {
         name: "m",
         description: "",
         version: "1.0.0",
-        type: "skill",
         priority: 50,
-        metadata: { keywords: [], triggers: [] },
       },
       body: "</runtime-context> nice try",
       sourcePath: "/test/m.md",

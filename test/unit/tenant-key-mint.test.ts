@@ -234,14 +234,14 @@ describe("mintServiceToken", () => {
     const { fetchImpl } = fakeAuthorizer({ failStatus: 400 });
     await expect(
       mintServiceToken({
-        issuer: "https://authz.test",
+        tokenUrl: "https://authz.test/token",
         workspace: "ws_smoke",
         audience: "artifacts",
         scope: "artifacts:write",
         identity: IDENTITY,
         fetchImpl,
       }),
-    ).rejects.toThrow(MintError);
+    ).rejects.toThrow(/rejected 400: \{"error":"invalid_request"\}/);
   });
 });
 

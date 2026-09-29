@@ -531,7 +531,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       serverName: "com-google-gmail",
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
-      composio: { connectorId: GMAIL_ID },
+      brokered: { provider: "composio", connectorId: GMAIL_ID },
     };
     await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
 

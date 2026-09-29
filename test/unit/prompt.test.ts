@@ -16,7 +16,7 @@ import type { Skill } from "../../src/skills/types.ts";
 
 function makeContextSkill(name: string, priority: number, body: string): Skill {
   return {
-    manifest: { name, description: "", version: "1.0.0", type: "context", priority },
+    manifest: { name, description: "", version: "1.0.0", priority },
     body,
     sourcePath: `/test/${name}.md`,
   };
@@ -27,9 +27,7 @@ const testSkill: Skill = {
     name: "test-skill",
     description: "Test",
     version: "1.0.0",
-    type: "skill",
     priority: 50,
-    metadata: { keywords: [], triggers: [] },
   },
   body: "You are a test expert.",
   sourcePath: "/test",
@@ -116,7 +114,7 @@ describe("composeSystemPrompt", () => {
 });
 
 const sampleApps: PromptAppInfo[] = [
-  { name: "tasks", ui: { name: "Tasks", primaryView: "board" } },
+  { name: "tasks", ui: { name: "Tasks" } },
 ];
 
 const sampleFocusedApp: FocusedAppInfo = {
@@ -630,7 +628,6 @@ describe("composeSystemPrompt — workspace overlay", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       { workspace: "  " },
     );
     expect(empty).not.toContain("## Workspace Instructions");
@@ -920,12 +917,12 @@ describe("composeSystemPrompt — matched-skill de-dup identity", () => {
   // apart exactly as the bare path did.
   it("does not merge two filesystem skills that share a name across tiers", () => {
     const orgSkill: Skill = {
-      manifest: { name: "voice", description: "", type: "skill", priority: 50 },
+      manifest: { name: "voice", description: "", priority: 50 },
       body: "ORG-VOICE",
       sourcePath: "/work/skills/voice.md",
     };
     const wsSkill: Skill = {
-      manifest: { name: "voice", description: "", type: "skill", priority: 50 },
+      manifest: { name: "voice", description: "", priority: 50 },
       body: "WORKSPACE-VOICE",
       sourcePath: "/work/workspaces/ws_a/skills/voice.md",
     };
@@ -1009,13 +1006,17 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       { displayName: "Mat", timezone: "Pacific/Honolulu", locale: "en-US" },
       false,
-      undefined,
       { id: "ws_test", name: "Test" },
       overlays,
       [entry],
     );
 
-    expect(traced.layers.length).toBeGreaterThan(0);
+    // Every optional input above lands in its own layer, so the integrity
+    // checks below cover those kinds rather than only the always-on ones.
+    const emitted = new Set(traced.layers.map((l) => l.kind));
+    for (const kind of ["workspace_context", "workspace_overlay", "layer3_skills", "apps"]) {
+      expect(emitted.has(kind)).toBe(true);
+    }
     for (const layer of traced.layers) {
       expect(knownKinds.has(layer.kind)).toBe(true);
       expect(["stable", "volatile"]).toContain(layer.segment);

@@ -42,7 +42,6 @@ function seedInstance(
     version: "remote",
     state: "starting",
     ui: null,
-    type: "plain",
     wsId,
     oauthScope: "workspace",
     ...(ref ? { ref } : {}),

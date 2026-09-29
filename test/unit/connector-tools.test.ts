@@ -730,7 +730,11 @@ describe("manage_connectors.install", () => {
   });
 
   test("connectorsAllowList blocks entries whose id isn't on the list", async () => {
-    await h.workspaceStore.update(h.wsId, { connectorsAllowList: ["ipinfo"] });
+    // An operator authors the allow-list in workspace.json; no runtime path
+    // writes it, so the test seeds the record the same way.
+    const wsFile = join(h.workspaceStore.getWorkspacesDir(), h.wsId, "workspace.json");
+    const ws = await h.workspaceStore.get(h.wsId);
+    writeFileSync(wsFile, JSON.stringify({ ...ws, connectorsAllowList: ["ipinfo"] }));
 
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({

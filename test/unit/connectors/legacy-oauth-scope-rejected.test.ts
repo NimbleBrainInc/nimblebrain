@@ -64,10 +64,12 @@ describe("assertConnectorRefIsPostStage2", () => {
   });
 
   test("accepts non-URL refs unchanged (named, local-path) — oauthScope only applies to URL connectors", () => {
-    const named: ConnectorRef = { name: "@scope/some-connector" };
+    // A pre-URL record as JSON.parse leaves it on disk; ConnectorRef no longer
+    // admits the shape, and the guard under test exists for exactly that.
+    const named = { name: "@scope/some-connector" } as unknown as ConnectorRef;
     expect(() => assertConnectorRefIsPostStage2(named)).not.toThrow();
 
-    const local: ConnectorRef = { path: "/tmp/some/path" };
+    const local = { path: "/tmp/some/path" } as unknown as ConnectorRef;
     expect(() => assertConnectorRefIsPostStage2(local)).not.toThrow();
   });
 

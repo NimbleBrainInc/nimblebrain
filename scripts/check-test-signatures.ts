@@ -39,10 +39,18 @@
  *   TS2459 when the name is declared but its `export` was dropped — the way a
  *   named export most often rots. Gating a subset would make coverage depend on
  *   whether an unrelated module carries a default.
+ * - **TS2353** "Object literal may only specify known properties" — a fixture or
+ *   options object naming a field its type no longer has. The code ignores the
+ *   field, so a test that sets it to configure behavior runs without that
+ *   configuration and still passes: an auth adapter handed to a server that
+ *   takes none leaves the suite running unauthenticated. A field that is only
+ *   stale data costs nothing to drop; one the test depends on must be wired to
+ *   the option that replaced it. A record that is deliberately a shape the type
+ *   forbids (a legacy row as it sits on disk) says so with a commented cast.
  *
  * `TS2304` "Cannot find name" is the same degradation one step further along — no
- * import at all — and is deliberately still out: its 29 instances today are
- * mostly missing DOM lib types, not drift. Widening to another code means fixing
+ * import at all — and is deliberately still out: its instances are mostly
+ * missing DOM lib types, not drift. Widening to another code means fixing
  * that code's existing instances first, and expecting the fix to expose what the
  * dead type was hiding.
  *
@@ -106,11 +114,12 @@ const TEST_EXTENSIONS = ["ts", "tsx"];
 
 /**
  * The diagnostics this gate covers — a call site that fell behind its callee
- * (TS2554), and an import naming something its module does not export (the
- * other four, which are one defect TypeScript reports four ways). See the
+ * (TS2554), an import naming something its module does not export (TS2305,
+ * TS2724, TS2459, TS2614: one defect TypeScript reports four ways), and an
+ * object literal naming a property its type does not have (TS2353). See the
  * header before adding another.
  */
-const GATED_CODES = [2554, 2305, 2724, 2459, 2614];
+const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353];
 const GATED = new RegExp(`error TS(${GATED_CODES.join("|")}):`);
 
 async function main(): Promise<void> {
@@ -168,15 +177,18 @@ async function main(): Promise<void> {
   if (violations.length > 0) {
     console.error(`✗ Found ${violations.length} test(s) written against a shape that moved:\n`);
     for (const v of violations) console.error(`  ${v}`);
-    console.error("\nNeither kind stops a test from running, which is why they survive. A wrong");
+    console.error("\nNone of these stops a test from running, which is why they survive. A wrong");
     console.error("arity still executes — JavaScript drops the extras and fills the missing with");
     console.error("undefined. A dead type import degrades to the error type, so every annotation");
-    console.error("written in terms of it stops constraining anything. Both go on passing while");
-    console.error("asserting something the runtime can no longer do. Update the test.");
+    console.error("written in terms of it stops constraining anything. An unknown property is");
+    console.error("ignored by the code it configures. All go on passing while asserting something");
+    console.error("the runtime can no longer do. Update the test.");
     process.exit(1);
   }
 
-  console.log(`✓ No call-site or import drift across ${onDisk.length} files under test/`);
+  console.log(
+    `✓ No call-site, import, or excess-property drift across ${onDisk.length} files under test/`,
+  );
 }
 
 main().catch((err: unknown) => {

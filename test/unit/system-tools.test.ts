@@ -984,7 +984,9 @@ describe("search — scope: catalog", () => {
 	];
 
 	/** Build a runtime whose ConnectorCatalog reads a directory holding `servers`. */
-	function runtimeWithCatalog(servers = TWO_SERVERS): Runtime {
+	// `servers` is written to catalog.json verbatim, so it takes any raw record,
+	// including shapes the catalog refuses on load.
+	function runtimeWithCatalog(servers: Record<string, unknown>[] = TWO_SERVERS): Runtime {
 		workDir = mkdtempSync(join(tmpdir(), "nb-search-catalog-"));
 		const catalogDir = join(workDir, "catalog");
 		mkdirSync(catalogDir);
@@ -1092,7 +1094,7 @@ describe("status tool — scope: overview", () => {
 		const registry = await makeRegistry();
 		const getSkills: GetSkillsFn = () => ({
 			context: [{
-				manifest: { name: "soul", description: "Identity", version: "1.0.0", type: "context", priority: 0 },
+				manifest: { name: "soul", description: "Identity", version: "1.0.0", priority: 0 },
 				body: "You are helpful.",
 				sourcePath: "/src/skills/core/soul.md",
 			}],

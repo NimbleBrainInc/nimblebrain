@@ -41,7 +41,6 @@ function selected(overrides: Partial<SelectedSkill["skill"]>, loadedBy: LoadedBy
         name: "test-skill",
         description: "A test skill",
         version: "1.0.0",
-        type: "context",
         priority: 50,
         ...(overrides.manifest ?? {}),
       },

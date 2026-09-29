@@ -52,7 +52,6 @@ function seedInstance(
     version: "remote",
     state: "starting",
     ui: null,
-    type: "plain",
     wsId,
     oauthScope,
     ...(ref ? { ref } : {}),
@@ -94,7 +93,11 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
   });
 
   test("rejects when connector ref has no URL (named or local connector)", async () => {
-    seedInstance(lifecycle, "stdio", "ws_test", "workspace", { name: "@scope/stdio" });
+    // A pre-URL record as JSON.parse leaves it on disk; ConnectorRef no longer
+    // admits the shape, and the guard under test exists for exactly that.
+    seedInstance(lifecycle, "stdio", "ws_test", "workspace", {
+      name: "@scope/stdio",
+    } as unknown as ConnectorRef);
     await expect(
       lifecycle.startAuth("stdio", "ws_test", "_workspace", OPTS),
     ).rejects.toThrow(/missing URL ref/);
@@ -151,7 +154,11 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
   });
 
   test("rejects when connector has no URL ref (revocation requires the AS URL)", async () => {
-    seedInstance(lifecycle, "stdio", "ws_test", "workspace", { name: "@scope/stdio" });
+    // A pre-URL record as JSON.parse leaves it on disk; ConnectorRef no longer
+    // admits the shape, and the guard under test exists for exactly that.
+    seedInstance(lifecycle, "stdio", "ws_test", "workspace", {
+      name: "@scope/stdio",
+    } as unknown as ConnectorRef);
     await expect(
       lifecycle.disconnect("stdio", "ws_test", "_workspace", { workDir: "/tmp" }),
     ).rejects.toThrow(/missing URL ref/);

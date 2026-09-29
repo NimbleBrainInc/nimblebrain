@@ -77,8 +77,6 @@ function makeSpySource(
 
 interface StubRuntimeOpts {
   registries: Map<string, ToolSource[]>;
-  memberships: Map<string, string[]>;
-  existingWorkspaces: Set<string>;
   workDir: string;
   identitySources?: Map<string, ToolSource>;
   /** Reachable tool surface per workspace (the wall: one workspace + identity). */
@@ -89,17 +87,6 @@ interface StubRuntimeOpts {
 
 function makeStubRuntime(opts: StubRuntimeOpts): OrchestratorRuntime {
   return {
-    getWorkspaceStore() {
-      return {
-        async get(wsId: string) {
-          return opts.existingWorkspaces.has(wsId) ? { id: wsId } : null;
-        },
-        async getWorkspacesForUser(userId: string) {
-          const ids = opts.memberships.get(userId) ?? [];
-          return ids.map((id) => ({ id }));
-        },
-      };
-    },
     getWorkspaceContext(wsId: string) {
       return new WorkspaceContext({ wsId, workDir: opts.workDir });
     },
@@ -151,8 +138,6 @@ describe("IdentityToolRouter — construction", () => {
   test("rejects an empty identityId", () => {
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map(),
-      existingWorkspaces: new Set(),
       workDir,
     });
     expect(
@@ -184,8 +169,6 @@ describe("IdentityToolRouter — availableTools", () => {
       workspaceId: SHARED_WS,
       runtime: makeStubRuntime({
         registries: new Map(),
-        memberships: new Map(),
-        existingWorkspaces: new Set(),
         workDir,
         toolsByWorkspace: new Map([[SHARED_WS, surface]]),
       }),
@@ -206,8 +189,6 @@ describe("IdentityToolRouter — availableTools", () => {
       workspaceId: SHARED_WS,
       runtime: makeStubRuntime({
         registries: new Map(),
-        memberships: new Map(),
-        existingWorkspaces: new Set(),
         workDir,
         listCalls,
       }),
@@ -217,7 +198,7 @@ describe("IdentityToolRouter — availableTools", () => {
       {
         // A different workspace sits in AsyncLocalStorage. The router must
         // ignore it and query SHARED_WS, the bound workspace.
-        identity: { id: OTHER_USER, email: "other@x", emailVerified: true, orgRole: null },
+        identity: { id: OTHER_USER, email: "other@x", orgRole: null },
         workspaceId: OTHER_WS,
       },
       async () => {
@@ -239,8 +220,6 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [crm]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
     });
     const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
@@ -262,15 +241,13 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [crm]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS, PERSONAL_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS, PERSONAL_WS]),
       workDir,
     });
     const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
 
     await runWithRequestContext(
       {
-        identity: { id: USER_ID, email: "u1@x", emailVerified: true, orgRole: null },
+        identity: { id: USER_ID, email: "u1@x", orgRole: null },
         workspaceId: PERSONAL_WS,
       },
       async () => {
@@ -289,8 +266,6 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
       registries: new Map([[SHARED_WS, [crm]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
     });
     const hook: WorkspaceDispatchHook = (callId, wsId) => {
@@ -319,11 +294,9 @@ describe("IdentityToolRouter — the wall (cross-workspace reach is unexpressibl
   test("denies a call to a workspace other than the bound one", async () => {
     const crm = makeSpySource("crm");
     const runtime = makeStubRuntime({
-      // The other workspace's source exists and the user is a member — only
-      // the wall stops the reach.
+      // The other workspace's source exists. Membership is checked when the
+      // session is established, not here, so only the wall stops the reach.
       registries: new Map([[OTHER_WS, [crm]]]),
-      memberships: new Map([[USER_ID, [SHARED_WS, OTHER_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS, OTHER_WS]),
       workDir,
     });
     const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
@@ -345,8 +318,6 @@ describe("IdentityToolRouter — the wall (cross-workspace reach is unexpressibl
   test("invalid namespaced input → isError:true with reason invalid_tool_name", async () => {
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map([[USER_ID, [SHARED_WS]]]),
-      existingWorkspaces: new Set([SHARED_WS]),
       workDir,
     });
     const router = new IdentityToolRouter({ identityId: USER_ID, workspaceId: SHARED_WS, runtime });
@@ -368,8 +339,6 @@ describe("IdentityToolRouter — execute (identity door)", () => {
     const conversations = makeSpySource("conversations");
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map([[USER_ID, []]]),
-      existingWorkspaces: new Set(),
       workDir,
       identitySources: new Map([["conversations", conversations]]),
     });
@@ -394,8 +363,6 @@ describe("IdentityToolRouter — execute (identity door)", () => {
     const conversations = makeSpySource("conversations");
     const runtime = makeStubRuntime({
       registries: new Map(),
-      memberships: new Map([[USER_ID, []]]),
-      existingWorkspaces: new Set(),
       workDir,
       identitySources: new Map([["conversations", conversations]]),
     });

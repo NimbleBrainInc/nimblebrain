@@ -1,36 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import type { ChatRequest } from "../../../src/runtime/types.ts";
 
-describe("ChatRequest/ChatResult workspaceId", () => {
-  it("ChatRequest type accepts workspaceId field", async () => {
-    // Type-level check — if this compiles, the type is correct
-    const { ChatRequest } = await import("../../../src/runtime/types.ts");
+describe("ChatRequest workspaceId", () => {
+  // A type-level check: `check:test-signatures` gates excess properties, so
+  // this stops compiling if ChatRequest drops the field.
+  it("ChatRequest type accepts workspaceId field", () => {
     const req = {
       message: "test",
       workspaceId: "ws_test",
-    } satisfies import("../../../src/runtime/types.ts").ChatRequest;
+    } satisfies ChatRequest;
     expect(req.workspaceId).toBe("ws_test");
-  });
-
-  it("ChatResult type accepts workspaceId field", async () => {
-    const result = {
-      response: "hello",
-      conversationId: "conv_1",
-      workspaceId: "ws_test",
-      skillName: null,
-      toolCalls: [],
-      inputTokens: 100,
-      outputTokens: 50,
-      stopReason: "end_turn",
-      usage: {
-        inputTokens: 100,
-        outputTokens: 50,
-        cacheReadTokens: 0,
-        costUsd: 0.001,
-        model: "test",
-        llmMs: 500,
-        iterations: 1,
-      },
-    } satisfies import("../../../src/runtime/types.ts").ChatResult;
-    expect(result.workspaceId).toBe("ws_test");
   });
 });

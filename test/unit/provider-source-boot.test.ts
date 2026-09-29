@@ -45,8 +45,10 @@ describe("connectorHasStaticAuth", () => {
   });
 
   test("named and local-path connectors are not static-auth url sources", () => {
-    expect(connectorHasStaticAuth({ name: "n" })).toBe(false);
-    expect(connectorHasStaticAuth({ path: "/p" })).toBe(false);
+    // A pre-URL record as JSON.parse leaves it on disk; ConnectorRef no longer
+    // admits the shape, and the guard under test exists for exactly that.
+    expect(connectorHasStaticAuth({ name: "n" } as unknown as ConnectorRef)).toBe(false);
+    expect(connectorHasStaticAuth({ path: "/p" } as unknown as ConnectorRef)).toBe(false);
   });
 });
 

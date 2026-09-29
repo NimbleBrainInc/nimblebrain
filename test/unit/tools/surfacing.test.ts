@@ -29,10 +29,8 @@ function makeSkill(opts: { allowedTools?: string[] } = {}): Skill {
 			name: "test-skill",
 			description: "Test",
 			version: "1.0.0",
-			type: "skill",
 			priority: 50,
 			allowedTools: opts.allowedTools,
-			metadata: { keywords: ["test"], triggers: [] },
 		},
 		body: "You are a test expert.",
 		sourcePath: "/test/skill.md",
@@ -277,7 +275,7 @@ describe("surfaceTools — focusedServerName", () => {
 
 describe("composeSystemPrompt — apps injection", () => {
 	const apps: PromptAppInfo[] = [
-		{ name: "Tasks", ui: { name: "Tasks", primaryView: "Task Board" } },
+		{ name: "Tasks", ui: { name: "Tasks" } },
 		{ name: "Weather", ui: null },
 	];
 
@@ -312,7 +310,7 @@ describe("composeSystemPrompt — apps injection", () => {
 
 	it("apps section placed between context skills and matched skill", () => {
 		const ctx: Skill = {
-			manifest: { name: "soul", description: "", version: "1.0.0", type: "context", priority: 0 },
+			manifest: { name: "soul", description: "", version: "1.0.0", priority: 0 },
 			body: "I am the identity layer.",
 			sourcePath: "/test/soul.md",
 		};
@@ -321,9 +319,7 @@ describe("composeSystemPrompt — apps injection", () => {
 				name: "test",
 				description: "",
 				version: "1.0.0",
-				type: "skill",
 				priority: 50,
-				metadata: { keywords: [], triggers: [] },
 			},
 			body: "Skill instructions here.",
 			sourcePath: "/test/skill.md",
@@ -340,12 +336,12 @@ describe("composeSystemPrompt — apps injection", () => {
 		expect(skillIdx).toBeGreaterThan(appsIdx);
 	});
 
-	it("UI with no primaryView falls back to app name", () => {
-		const appWithUiNoPrimaryView: PromptAppInfo[] = [
+	it("names the UI by its ui.name, not the app name", () => {
+		const appWithUi: PromptAppInfo[] = [
 			{ name: "CRM", ui: { name: "Contact Manager" } },
 		];
 
-		const result = composeSystemPrompt([], null, appWithUiNoPrimaryView);
+		const result = composeSystemPrompt([], null, appWithUi);
 
 		expect(result).toContain("- CRM (has UI: Contact Manager)");
 	});

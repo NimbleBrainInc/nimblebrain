@@ -96,7 +96,9 @@ describe("Event-sourced integration", () => {
       content: [{ type: "text", text: "Legacy question" }],
       timestamp: "2026-01-01T00:00:00Z",
     };
-    const assistantMsg: StoredMessage = {
+    // Untyped like `meta`: a legacy line as it sits on disk, with the token
+    // counts that per-message metadata carried then.
+    const assistantMsg = {
       role: "assistant",
       content: [{ type: "text", text: "Legacy answer" }],
       timestamp: "2026-01-01T00:00:01Z",

@@ -99,11 +99,10 @@ function llmEvent(overrides: Partial<{
 // ---------------------------------------------------------------------------
 
 describe("aggregateUsage", () => {
-  it("aggregates tokens from llm.response events even when metadata has zero tokens", async () => {
+  it("sums tokens across a session's ledger entries", async () => {
     const dir = makeTmpDir();
-    // Metadata has zero tokens (the old bug: event-sourced store never rewrites line 1)
     writeCalls(dir, 
-      { id: "conv-1", updatedAt: "2026-04-10T14:00:00Z", totalInputTokens: 0, totalOutputTokens: 0 },
+      { id: "conv-1" },
       [
         llmEvent({ inputTokens: 500, outputTokens: 200 }),
         llmEvent({ inputTokens: 300, outputTokens: 100 }),
@@ -120,7 +119,7 @@ describe("aggregateUsage", () => {
 
   it("counts aux.usage events (forked compaction/title calls) toward totals", async () => {
     const dir = makeTmpDir();
-    writeCalls(dir, { id: "conv-aux", updatedAt: "2026-04-10T14:00:00Z" }, [
+    writeCalls(dir, { id: "conv-aux" }, [
       llmEvent({ inputTokens: 1000, outputTokens: 500 }),
       {
         type: "aux.usage",
@@ -140,12 +139,10 @@ describe("aggregateUsage", () => {
     expect(report.totals.llmCalls).toBe(2);
   });
 
-  it("filters usage by llm.response timestamp, not conversation updatedAt", async () => {
+  it("excludes an entry timestamped before the report window", async () => {
     const dir = makeTmpDir();
 
-    // Conversation updated inside range, but its only LLM usage happened before
-    // the report window. It should not make today's usage non-zero.
-    writeCalls(dir, { id: "updated-today", updatedAt: "2026-04-12T10:00:00Z" }, [
+    writeCalls(dir, { id: "updated-today" }, [
         llmEvent({ ts: "2026-04-11T23:00:00Z", inputTokens: 9999, outputTokens: 9999 }),
       ]);
 
@@ -164,10 +161,10 @@ describe("aggregateUsage", () => {
     expect(report.breakdown[0].llmCalls).toBe(0);
   });
 
-  it("counts in-range llm.response events even when conversation updatedAt is outside range", async () => {
+  it("counts an entry timestamped inside the report window", async () => {
     const dir = makeTmpDir();
 
-    writeCalls(dir, { id: "updated-later", updatedAt: "2026-05-01T10:00:00Z" }, [
+    writeCalls(dir, { id: "updated-later" }, [
         llmEvent({ ts: "2026-04-10T12:00:00Z", inputTokens: 100, outputTokens: 50 }),
       ]);
 
@@ -188,7 +185,7 @@ describe("aggregateUsage", () => {
     // Cache writes bill at the 1-hour TTL rate the engine uses: 2x input = $6/M.
     // AI SDK V3 contract: inputTokens is grand total = noCache + cacheRead + cacheWrite.
     // So 2_000_000 total = 500K noCache + 500K cacheRead + 1M cacheWrite.
-    writeCalls(dir, { id: "cost-conv", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "cost-conv" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
           inputTokens: 2_000_000,
@@ -218,7 +215,7 @@ describe("aggregateUsage", () => {
   it("groups by day correctly using event timestamp", async () => {
     const dir = makeTmpDir();
 
-    writeCalls(dir, { id: "md", updatedAt: "2026-04-12T10:00:00Z" }, [
+    writeCalls(dir, { id: "md" }, [
         llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
         llmEvent({ ts: "2026-04-10T09:00:00Z", inputTokens: 200, outputTokens: 100 }),
         llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
@@ -264,7 +261,7 @@ describe("aggregateUsage", () => {
 
   it("zero-fills missing days in bounded period", async () => {
     const dir = makeTmpDir();
-    writeCalls(dir, { id: "sp", updatedAt: "2026-04-12T10:00:00Z" }, [
+    writeCalls(dir, { id: "sp" }, [
         llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
         llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
       ]);
@@ -280,11 +277,11 @@ describe("aggregateUsage", () => {
 
   it("returns multiple breakdown dimensions from one aggregation", async () => {
     const dir = makeTmpDir();
-    writeCalls(dir, { id: "alice", updatedAt: "2026-04-12T10:00:00Z", ownerId: "usr_alice" }, [
+    writeCalls(dir, { id: "alice", ownerId: "usr_alice" }, [
         llmEvent({ ts: "2026-04-10T08:00:00Z", inputTokens: 100, outputTokens: 50 }),
         llmEvent({ ts: "2026-04-12T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
       ]);
-    writeCalls(dir, { id: "bob", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_bob" }, [
+    writeCalls(dir, { id: "bob", ownerId: "usr_bob" }, [
         llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 400, outputTokens: 200 }),
       ]);
 
@@ -321,7 +318,7 @@ describe("aggregateUsage", () => {
       cacheWriteTokens: 1_000_000,
       reasoningTokens: 200_000,
     };
-    writeCalls(dir, { id: "drift", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "drift" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
           ...usage,
@@ -340,7 +337,7 @@ describe("aggregateUsage", () => {
     // set so any future rename fails this test instead of going
     // unnoticed until a UI panel throws on render.
     const dir = makeTmpDir();
-    writeCalls(dir, { id: "shape", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "shape" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
           inputTokens: 1000,
@@ -408,7 +405,7 @@ describe("aggregateUsage", () => {
     const dir = makeTmpDir();
     // One call: 1000 input total = 700 cacheRead + 200 cacheWrite + 100 non-cached.
     // hit rate = 700 / (100 + 700 + 200) = 0.7
-    writeCalls(dir, { id: "hit", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "hit" }, [
         llmEvent({
           model: "claude-sonnet-4-5-20250929",
           inputTokens: 1000,
@@ -435,13 +432,13 @@ describe("aggregateUsage", () => {
 describe("aggregateUsage — by user", () => {
   /** Two owners, three conversations: alice has two, bob has one. */
   function seedTwoOwners(dir: string): void {
-    writeCalls(dir, { id: "alice-1", updatedAt: "2026-04-10T10:00:00Z", ownerId: "usr_alice" }, [
+    writeCalls(dir, { id: "alice-1", ownerId: "usr_alice" }, [
         llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
       ]);
-    writeCalls(dir, { id: "alice-2", updatedAt: "2026-04-11T10:00:00Z", ownerId: "usr_alice" }, [
+    writeCalls(dir, { id: "alice-2", ownerId: "usr_alice" }, [
         llmEvent({ ts: "2026-04-11T10:00:00Z", inputTokens: 200, outputTokens: 100 }),
       ]);
-    writeCalls(dir, { id: "bob-1", updatedAt: "2026-04-10T11:00:00Z", ownerId: "usr_bob" }, [
+    writeCalls(dir, { id: "bob-1", ownerId: "usr_bob" }, [
         llmEvent({ ts: "2026-04-10T11:00:00Z", inputTokens: 400, outputTokens: 200 }),
       ]);
   }
@@ -500,7 +497,7 @@ describe("aggregateUsage — by user", () => {
   it("conversations missing ownerId bucket under 'unknown' for groupBy:user", async () => {
     const dir = makeTmpDir();
     // No ownerId on line 1 (legacy/corrupt) — still counted, bucketed as unknown.
-    writeCalls(dir, { id: "legacy", updatedAt: "2026-04-10T10:00:00Z" }, [
+    writeCalls(dir, { id: "legacy" }, [
         llmEvent({ ts: "2026-04-10T10:00:00Z", inputTokens: 100, outputTokens: 50 }),
       ]);
 

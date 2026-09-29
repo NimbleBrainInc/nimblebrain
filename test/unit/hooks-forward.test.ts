@@ -115,7 +115,6 @@ describe("the connection's own credential", () => {
   test("cannot be displaced by an inbound header of the same name", () => {
     const headers = buildForwardHeaders({
       inbound: new Headers({ "x-connector-key": "attacker-value" }),
-      kid: "hk_abc",
       credentialHeaders: { "x-connector-key": "operator-value" },
     });
     expect(headers.get("x-connector-key")).toBe("operator-value");
