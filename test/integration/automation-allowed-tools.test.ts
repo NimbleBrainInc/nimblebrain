@@ -184,4 +184,24 @@ describe("an unattended run's allowedTools and the nb__ tools", () => {
     expect(shown).not.toContain("nb__status");
     expect(shown.some((n) => n.startsWith("files__"))).toBe(true);
   });
+
+  // The skill catalog is opened only through `nb__use_skill`, so a run whose
+  // list does not name that tool is not offered one.
+  it("offers the skill catalog only when the list allows nb__use_skill", async () => {
+    const systemPromptOf = async (allowedTools: string[]) => {
+      recorded.calls.length = 0;
+      await nbRuntime.executeTask({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        prompt: "tidy the files",
+        trigger: "schedule",
+        allowedTools,
+      });
+      return JSON.stringify(recorded.calls[0]?.prompt.filter((m) => m.role === "system"));
+    };
+    const catalogInstruction = "When a task matches a listed skill, load it with `nb__use_skill`";
+
+    expect(await systemPromptOf(["files__*", "nb__use_skill"])).toContain(catalogInstruction);
+    expect(await systemPromptOf(["files__*"])).not.toContain(catalogInstruction);
+  });
 });
