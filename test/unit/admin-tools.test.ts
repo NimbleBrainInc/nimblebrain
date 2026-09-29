@@ -260,8 +260,52 @@ describe("auditArguments", () => {
     expect(auditArguments({ extra: 3 }, schema)).toEqual({ extra: 3 });
   });
 
-  test("marks only top-level properties: a nested writeOnly is recorded", () => {
-    expect(auditArguments({ nested: { token: "t" } }, schema)).toEqual({ nested: { token: "t" } });
+  test("redacts a whole argument that holds a nested writeOnly", () => {
+    expect(auditArguments({ nested: { token: "t" } }, schema)).toEqual({
+      nested: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("redacts an optional secret: writeOnly in an anyOf branch", () => {
+    // The shape Pydantic emits for `SecretStr | None`.
+    const optional = {
+      type: "object",
+      properties: {
+        opt_secret: {
+          anyOf: [{ type: "string", format: "password", writeOnly: true }, { type: "null" }],
+          default: null,
+        },
+      },
+    };
+    expect(auditArguments({ opt_secret: "s2" }, optional)).toEqual({
+      opt_secret: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("redacts a model-typed argument whose $ref'd definition holds a writeOnly", () => {
+    const refd = {
+      type: "object",
+      $defs: {
+        Auth: {
+          type: "object",
+          properties: { user: { type: "string" }, token: { type: "string", writeOnly: true } },
+        },
+        Plain: { type: "object", properties: { note: { type: "string" } } },
+      },
+      properties: { auth: { $ref: "#/$defs/Auth" }, plain: { $ref: "#/$defs/Plain" } },
+    };
+    expect(
+      auditArguments({ auth: { user: "u", token: "s3" }, plain: { note: "hi" } }, refd),
+    ).toEqual({ auth: REDACTED_ARGUMENT, plain: { note: "hi" } });
+  });
+
+  test("terminates on a recursive $ref", () => {
+    const recursive = {
+      type: "object",
+      $defs: { Node: { type: "object", properties: { next: { $ref: "#/$defs/Node" } } } },
+      properties: { tree: { $ref: "#/$defs/Node" } },
+    };
+    expect(auditArguments({ tree: { next: null } }, recursive)).toEqual({ tree: { next: null } });
   });
 
   test("keeps only the names when there is no schema to read", () => {

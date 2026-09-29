@@ -146,10 +146,18 @@ export const REDACTED_ARGUMENT = "[redacted]";
 
 /**
  * A call's arguments as the audit line records them: every argument, with the
- * value of each top-level property the tool's input schema marks `writeOnly`
- * replaced. `writeOnly` is JSON Schema's own word for a value that is sent and
- * never read back, which is what a secret is; a tool that takes one and does
- * not mark it has its value written to the workspace log.
+ * whole value of each top-level argument whose schema contains
+ * `"writeOnly": true` anywhere replaced. `writeOnly` is JSON Schema's own word
+ * for a value that is sent and never read back, which is what a secret is; a
+ * tool that takes one and does not mark it has its value written to the
+ * workspace log.
+ *
+ * "Anywhere" covers the shapes schema generators emit for a secret that is not
+ * a plain top-level string: a branch of `anyOf` / `oneOf` / `allOf` (an
+ * optional secret), a nested property or array item, and a local `$ref` into
+ * the schema's `$defs` or `definitions` (a model-typed argument). The argument
+ * is redacted whole rather than field by field, so a secret nested in it is
+ * never recorded.
  *
  * With no schema to read (the source is down, or no longer lists the tool),
  * every value is replaced and only the names are kept: a secret the schema
@@ -166,17 +174,44 @@ export function auditArguments(
       : undefined;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
-    out[key] = described === undefined || isWriteOnly(described[key]) ? REDACTED_ARGUMENT : value;
+    const secret =
+      described === undefined || containsWriteOnly(described[key], inputSchema, new Set());
+    out[key] = secret ? REDACTED_ARGUMENT : value;
   }
   return out;
 }
 
-function isWriteOnly(prop: unknown): boolean {
-  return (
-    typeof prop === "object" &&
-    prop !== null &&
-    (prop as { writeOnly?: unknown }).writeOnly === true
-  );
+/**
+ * Whether `writeOnly: true` appears anywhere in `node`, following local `$ref`s
+ * against `root`. Every nested object and array is walked, whatever keyword
+ * holds it, so a combinator this does not name is still covered. `seen` stops a
+ * recursive `$ref`.
+ */
+function containsWriteOnly(node: unknown, root: unknown, seen: Set<unknown>): boolean {
+  if (typeof node !== "object" || node === null || seen.has(node)) return false;
+  seen.add(node);
+  if (Array.isArray(node)) return node.some((item) => containsWriteOnly(item, root, seen));
+  const obj = node as Record<string, unknown>;
+  if (obj.writeOnly === true) return true;
+  if (
+    typeof obj.$ref === "string" &&
+    containsWriteOnly(resolveLocalRef(root, obj.$ref), root, seen)
+  ) {
+    return true;
+  }
+  return Object.values(obj).some((value) => containsWriteOnly(value, root, seen));
+}
+
+/** The node a `#/…` JSON Pointer names in `root`, or undefined. */
+function resolveLocalRef(root: unknown, ref: string): unknown {
+  if (!ref.startsWith("#/")) return undefined;
+  let node: unknown = root;
+  for (const raw of ref.slice(2).split("/")) {
+    const segment = decodeURIComponent(raw).replace(/~1/g, "/").replace(/~0/g, "~");
+    if (typeof node !== "object" || node === null) return undefined;
+    node = (node as Record<string, unknown>)[segment];
+  }
+  return node;
 }
 
 /**
