@@ -1783,7 +1783,14 @@ export class Runtime {
     }
 
     // ── The tool set ────────────────────────────────────────────────────────
-    const allTools = await this.listRunTools(spec.workspaceId, identity, attended);
+    // An unattended run's `allowedTools` bounds what its router reaches (see
+    // `_buildIdentityToolRouter`), so the same predicate bounds what it is
+    // shown; otherwise the model is offered tools every call to which is refused.
+    const runAllowedTools = attended ? undefined : spec.input.allowedTools;
+    const listedTools = await this.listRunTools(spec.workspaceId, identity, attended);
+    const allTools = runAllowedTools
+      ? listedTools.filter((t) => isToolAllowedForRun(t.name, runAllowedTools))
+      : listedTools;
 
     // ── The skill pools ─────────────────────────────────────────────────────
     // Per-run skill pool. The boot-time `this.skillMatcher` only ever scans
@@ -1930,13 +1937,18 @@ export class Runtime {
       this.loadConnectorSkillCandidates(spec.workspaceId),
       suppressed,
     );
-    const skillCatalog = toCatalogEntries(
-      collectActivatableSkills({
-        fsCapability: poolCapability,
-        connectorCapability,
-        connectorCandidates: connectorOverlayCandidates,
-      }),
-    );
+    // The catalog is loaded through `nb__use_skill`, so a run whose list does
+    // not name that tool gets no catalog rather than one it cannot open.
+    const skillCatalog =
+      runAllowedTools && !isToolAllowedForRun("nb__use_skill", runAllowedTools)
+        ? []
+        : toCatalogEntries(
+            collectActivatableSkills({
+              fsCapability: poolCapability,
+              connectorCapability,
+              connectorCandidates: connectorOverlayCandidates,
+            }),
+          );
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
     // deliverable rather than a conversational reply. The runtime owns that
