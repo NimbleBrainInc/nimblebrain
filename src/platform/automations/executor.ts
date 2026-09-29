@@ -328,6 +328,12 @@ function inputKey(input: unknown): string {
   return JSON.stringify(normalize(input)) ?? "undefined";
 }
 
+/** A tool call's top-level argument names, sorted: the shape a validation error rejects. */
+function argumentNames(input: unknown): string {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return "";
+  return JSON.stringify(Object.keys(input).sort());
+}
+
 /**
  * Failed tool calls that nothing later in the run made good, as
  * `{ name, count }` per tool in first-failure order.
@@ -344,6 +350,13 @@ function inputKey(input: unknown): string {
  *     then the corrected one.
  *   - Nothing succeeded → every failure is unresolved.
  *
+ * Under either of the first two, a later success whose top-level argument
+ * names differ from the failed call's also resolves it: a validation error
+ * rejects a shape (a missing required argument, an unexpected one), and the
+ * next call with other argument names is its correction. A write that failed
+ * on one item is still unresolved when later writes of the same shape succeed
+ * on other items.
+ *
  * Read from the activity log alone. Tool annotations (`readOnlyHint`) would
  * separate a failed read from a failed write, but they are the server's claim
  * about itself and must not relax a check (see `ToolSchema.annotations`).
@@ -355,6 +368,7 @@ function unresolvedFailures(
   const calls = toolCalls.map((tc) => ({
     name: typeof tc.name === "string" ? tc.name : "(unknown tool)",
     key: inputKey(tc.input),
+    shape: argumentNames(tc.input),
     ok: tc.ok === true,
     misnamed: typeof tc.errorReason === "string" && MISNAMED_TOOL_REASONS.has(tc.errorReason),
   }));
@@ -371,7 +385,12 @@ function unresolvedFailures(
     const oneJob = successKeys.get(c.name)?.size === 1;
     const resolved = calls
       .slice(i + 1)
-      .some((later) => later.ok && later.name === c.name && (oneJob || later.key === c.key));
+      .some(
+        (later) =>
+          later.ok &&
+          later.name === c.name &&
+          (oneJob || later.key === c.key || later.shape !== c.shape),
+      );
     if (!resolved) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
   });
   return [...counts].map(([name, count]) => ({ name, count }));

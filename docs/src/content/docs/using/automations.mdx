@@ -161,7 +161,7 @@ A run's status comes from what its tool calls did, not from what its final answe
 | `timeout` | The run hit its duration or iteration limit. |
 | `skipped` / `cancelled` | The run did not start, or was stopped. |
 
-A failed call counts as retried when a later call to the same tool with the same input succeeds. When a tool succeeded on only one input in the run, a failure before that success counts as an earlier attempt at it, such as a rejected argument the agent then corrected. Only a later call to the same tool counts, so two healthy patterns still read `degraded`: a lookup that fails as not found and is followed by a create on another tool, and a fallback to a different tool after one fails. A degraded run does not count toward the ten consecutive failures that pause an automation, and does not delay its next run.
+A failed call counts as retried when a later call to the same tool with the same input succeeds. When a tool succeeded on only one input in the run, a failure before that success counts as an earlier attempt at it, such as a rejected argument the agent then corrected. A later success with different argument names counts too, since that is the corrected form of a call the tool rejected. Only a later call to the same tool counts, so two healthy patterns still read `degraded`: a lookup that fails as not found and is followed by a create on another tool, and a fallback to a different tool after one fails. A degraded run does not count toward the ten consecutive failures that pause an automation, and does not delay its next run.
 
 ## What's next
 

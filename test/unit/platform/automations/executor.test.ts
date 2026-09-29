@@ -608,6 +608,26 @@ describe("createDirectExecutor — degraded runs", () => {
 		expect(run.status).toBe("success");
 	});
 
+	test("rejected arguments corrected on a many-job tool stay success", async () => {
+		const run = await runWith([
+			call("records__create", { id: "a" }, true),
+			call("records__create", { record_id: "b" }, false),
+			call("records__create", { id: "b" }, true),
+			call("records__create", { id: "c" }, true),
+		]);
+		expect(run.status).toBe("success");
+	});
+
+	test("a failed write is not resolved by a later success of the same shape on another item", async () => {
+		const run = await runWith([
+			call("records__create", { id: "a", note: "x" }, false),
+			call("records__create", { id: "b", note: "y" }, true),
+			call("records__create", { id: "c", note: "z" }, true),
+		]);
+		expect(run.status).toBe("degraded");
+		expect(run.error).toMatch(/records__create ×1/);
+	});
+
 	test("a failure after a one-job tool's only success is degraded", async () => {
 		// The success came first, so it cannot have been the retry of the failure.
 		const run = await runWith([
