@@ -130,6 +130,7 @@ function gmailEntry(): import("../../src/connectors/catalog/types.ts").CatalogLi
     install: {
       kind: "remote-oauth",
       url: GMAIL_URL,
+      transportType: "streamable-http",
       auth: "composio",
       composio: {
         toolkit: "gmail",

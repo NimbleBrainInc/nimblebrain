@@ -6,6 +6,7 @@ import type {
   CreateUserResult,
   IdentityProvider,
   UserIdentity,
+  VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
@@ -34,7 +35,7 @@ function createMockProvider(store: UserStore): IdentityProvider {
       managedUsers: false,
       authorizationServer: false,
     },
-    async verifyRequest(): Promise<UserIdentity | null> {
+    async verifyRequest(): Promise<VerifiedIdentity | null> {
       return null;
     },
     async listUsers(): Promise<User[]> {

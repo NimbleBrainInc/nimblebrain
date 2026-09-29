@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import {
   CredentialSealError,
+  type CredentialSealFailure,
   createCredentialSealer,
   isSealedValue,
   parseSealedValue,
@@ -111,7 +112,7 @@ describe("tampering", () => {
   // Each flip pins its reason, not just a throw. A decoded flip re-encodes
   // canonically, so every field past the magic reaches the ring lookup or the
   // cipher; a mutation that only fails the grammar shows up as `malformed`.
-  const EXPECTED: Record<(typeof FIELDS)[number], string> = {
+  const EXPECTED: Record<(typeof FIELDS)[number], CredentialSealFailure> = {
     magic: "malformed",
     kid: "unknown_kid",
     salt: "auth_failed",

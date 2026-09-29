@@ -1797,7 +1797,7 @@ describe("AgentEngine", () => {
         {
           ...defaultConfig,
           model: "anthropic:claude-sonnet-4-6",
-          thinking: { mode: "enabled", budgetTokens: 4096 },
+          thinking: { mode: "enabled", budgetTokens: 4096, effort: "high", source: "operator" },
         },
         "",
         [{ role: "user", content: [{ type: "text", text: "x" }] }],

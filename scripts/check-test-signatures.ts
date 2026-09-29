@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 /**
  * Lint: no test under `test/` is written against a shape that moved — a call with
- * the wrong number of arguments, or an import naming something no longer exported.
+ * the wrong number of arguments, an import naming something no longer exported, a
+ * fixture missing a field or naming one its type dropped. Every diagnostic tsc
+ * reports for a file under `test/` fails the check.
  *
  * `tsconfig.json`'s `include` is `src` / `instrument` / `scripts`, so `bun run
  * check` never sees `test/`. A signature change therefore does not break its
@@ -18,11 +20,11 @@
  * doing and is tracked separately; it is not a precondition for closing the one
  * failure mode above.
  *
- * So this gates the diagnostics that catch it without importing that migration.
- * Each one has no false-positive story — the code is either wrong or it is not,
- * with no fixture-ergonomics judgment in between — and none needs the strictness
- * the rest of the suite would fail. `tsconfig.test.json` is the base config with
- * that strictness relaxed, so the compiler still resolves every signature.
+ * So this gates every diagnostic tsc reports under `tsconfig.test.json`, the base
+ * config with that strictness relaxed (see the options it turns off). The
+ * compiler still resolves every signature, and what it reports under those
+ * options has no false-positive story: the code is either wrong or it is not.
+ * The codes below are the ones drift most often produces, with how to fix each.
  *
  * - **TS2554** "Expected N arguments, but got M" — a call site that fell behind
  *   its callee. An arity mismatch is always wrong.
@@ -79,8 +81,8 @@
  *   (`webcrypto.JsonWebKey`, `RequestInit["redirect"]`), or the fake is typed as
  *   the structure it provides.
  *
- * Widening to another code means fixing that code's existing instances first,
- * and expecting the fix to expose what the dead type was hiding.
+ * Tightening an option `tsconfig.test.json` relaxes means fixing what it
+ * reports first, and expecting a fix to expose what a dead type was hiding.
  *
  * Recount to confirm you cleared them; do not grep. A fix can trade one code for
  * another and leave the total unchanged — repointing a dead import at the right
@@ -140,18 +142,8 @@ const TEST_ROOT = join(ROOT, "test") + sep;
  */
 const TEST_EXTENSIONS = ["ts", "tsx"];
 
-/**
- * The diagnostics this gate covers — a call site that fell behind its callee
- * (TS2554), an import naming something its module does not export (TS2305,
- * TS2724, TS2459, TS2614: one defect TypeScript reports four ways), an object
- * literal naming a property its type does not have (TS2353), a stub missing one
- * it requires (TS2741, TS2739), a cast between non-overlapping types (TS2352),
- * a name that resolves to nothing (TS2304, TS2552), an argument its parameter
- * does not accept (TS2345), and a read of a property the value does not have
- * (TS2339). See the header before adding another.
- */
-const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353, 2741, 2739, 2352, 2304, 2552, 2345, 2339];
-const GATED = new RegExp(`error TS(${GATED_CODES.join("|")}):`);
+/** Any tsc diagnostic line. */
+const DIAGNOSTIC = /error TS\d+:/;
 
 async function main(): Promise<void> {
   // tsc exits non-zero whenever it reports anything, and under the relaxed
@@ -202,7 +194,7 @@ async function main(): Promise<void> {
   // "clean" or "the format moved" — the silent green this gate refuses. A path
   // under TEST_ROOT is unambiguously a test file, so accepting both costs nothing.
   const violations = lines
-    .filter((l) => (l.startsWith(`test${sep}`) || l.startsWith(TEST_ROOT)) && GATED.test(l))
+    .filter((l) => (l.startsWith(`test${sep}`) || l.startsWith(TEST_ROOT)) && DIAGNOSTIC.test(l))
     .map((l) => l.trim());
 
   if (violations.length > 0) {

@@ -66,7 +66,11 @@ beforeAll(async () => {
     logging: { disabled: true },
     workDir: testDir,
     connectors: {
-      gateways: { acme: { apiKey: { ref: "credential", key: "acme.gateway_key" } } },
+      // The runtime resolves credential refs at boot; `RuntimeConfig` types the
+      // resolved string, so the ref this test boots with is cast.
+      gateways: {
+        acme: { apiKey: { ref: "credential", key: "acme.gateway_key" } as unknown as string },
+      },
     },
   });
 });

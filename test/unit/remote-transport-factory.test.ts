@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   FetchLike,
-  OAuthClientInformationFull,
   OAuthClientProvider,
   OAuthTokens,
+  StoredOAuthClientInformation,
   Transport,
 } from "@modelcontextprotocol/client";
 import {
@@ -485,7 +485,7 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
   }
 
   function memoryProvider(): OAuthClientProvider {
-    let client: OAuthClientInformationFull | undefined;
+    let client: StoredOAuthClientInformation | undefined;
     let tokens: OAuthTokens | undefined;
     let verifier = "";
     return {

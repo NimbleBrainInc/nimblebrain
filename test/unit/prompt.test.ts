@@ -1166,9 +1166,9 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       undefined,
       undefined,
-      undefined,
       wsCtx,
     );
+    expect(traced.layers.some((l) => l.kind === "workspace_context")).toBe(true);
     const sum = traced.layers.reduce((s, l) => s + l.tokens, 0);
     expect(traced.totalTokens).toBe(sum);
     expect(traced.totalTokens).toBeGreaterThan(0);

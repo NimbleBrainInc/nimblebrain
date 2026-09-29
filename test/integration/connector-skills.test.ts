@@ -469,8 +469,11 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
     // And it rides the conversation history as a `<connector-skill>` block —
     // the surface-once channel, never the cached system prefix.
     const historyText = reconstructMessages(events)
-      .flatMap((m) => m.content)
-      .map((p) => ("text" in p ? p.text : ""))
+      .map((m) =>
+        typeof m.content === "string"
+          ? m.content
+          : (m.content as ReadonlyArray<{ text?: string }>).map((p) => p.text ?? "").join("\n"),
+      )
       .join("\n");
     expect(historyText).toContain("<connector-skill");
   });

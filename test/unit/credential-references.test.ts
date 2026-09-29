@@ -185,13 +185,16 @@ describe("audit", () => {
   });
 });
 
+// `resolveInstanceCredentialRefs<T>` is typed to return its input's type, but
+// resolution replaces each `{ ref, key }` with the secret's string, so a
+// resolved field is read here as `unknown`.
 describe("instance config references", () => {
   test("a provider key resolves from the instance scope and the config path is the purpose", async () => {
     await store.put({ kind: "instance" }, "anthropic.key", "sk-stored");
     const resolved = await resolveInstanceCredentialRefs({
       providers: { anthropic: { apiKey: { ref: "credential", key: "anthropic.key" } } },
     });
-    expect(resolved.providers.anthropic.apiKey).toBe("sk-stored");
+    expect(resolved.providers.anthropic.apiKey as unknown).toBe("sk-stored");
     expect(events[0]?.data).toMatchObject({
       scope: "instance",
       key: "anthropic.key",
@@ -207,7 +210,7 @@ describe("instance config references", () => {
         gateways: { acme: { apiKey: { ref: "credential", key: "acme.gateway_key" } } },
       },
     });
-    expect(resolved.connectors.gateways.acme.apiKey).toBe("gw-stored");
+    expect(resolved.connectors.gateways.acme.apiKey as unknown).toBe("gw-stored");
   });
 
   test("a config with no references comes back as the very same object", async () => {
@@ -228,7 +231,7 @@ describe("instance config references", () => {
       providers: { anthropic: { apiKey: { ref: "credential", key: "k" } } },
     };
     const resolved = await resolveInstanceCredentialRefs(config);
-    expect(resolved.providers.anthropic.apiKey).toBe("v");
+    expect(resolved.providers.anthropic.apiKey as unknown).toBe("v");
     expect(resolved.events[0]).toBe(sink);
     expect(resolved.events[0]).toBeInstanceOf(Sink);
   });

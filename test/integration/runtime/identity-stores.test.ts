@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { InstanceConfig } from "../../../src/identity/instance.ts";
 import { DevIdentityProvider } from "../../../src/identity/providers/dev.ts";
 import { OidcIdentityProvider } from "../../../src/identity/providers/oidc.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
@@ -64,7 +65,7 @@ describe("Runtime identity stores wiring", () => {
     dirs.push(workDir);
 
     // Write a valid instance.json with oidc auth
-    const instanceConfig = {
+    const instanceConfig: InstanceConfig = {
       auth: {
         adapter: "oidc",
         issuer: "https://auth.example.com",

@@ -69,6 +69,7 @@ function dropboxEntry(over: Partial<CatalogListing> = {}): CatalogListing {
     install: {
       kind: "remote-oauth",
       url: DROPBOX_URL,
+      transportType: "streamable-http",
       auth: "static",
       operatorSetup: {
         portalUrl: "https://www.dropbox.com/developers/apps",

@@ -265,11 +265,10 @@ describe("structured logger (JSON mode)", () => {
     process.env.NB_LOG_FORMAT = "json";
     const lines: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
-    // @ts-expect-error narrow override for capture
-    process.stderr.write = (chunk: string) => {
+    process.stderr.write = ((chunk: string) => {
       lines.push(String(chunk));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       // Inside a span so the line carries the active trace id.
       await runWithRequestContext(identityCtx(), () =>
@@ -302,11 +301,10 @@ describe("structured logger (JSON mode)", () => {
     process.env.NB_LOG_FORMAT = "json";
     const lines: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
-    // @ts-expect-error narrow override for capture
-    process.stderr.write = (chunk: string) => {
+    process.stderr.write = ((chunk: string) => {
       lines.push(String(chunk));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       log.info("connector.auth", {
         token: "sk-bare",
@@ -354,11 +352,10 @@ describe("structured logger (JSON mode)", () => {
     process.env.NB_LOG_LEVEL = "warn";
     const lines: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
-    // @ts-expect-error narrow override for capture
-    process.stderr.write = (chunk: string) => {
+    process.stderr.write = ((chunk: string) => {
       lines.push(String(chunk));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       log.info("should.drop");
       log.warn("should.keep");

@@ -250,7 +250,7 @@ describe("Bridge — methods the host does not serve", () => {
   it("ignores the synapse/download-file notification older SDKs send", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");
-    const createObjectURL = mock(() => "blob:x");
+    const createObjectURL = mock((): `blob:${string}` => "blob:x");
     const original = URL.createObjectURL;
     URL.createObjectURL = createObjectURL;
     try {

@@ -72,7 +72,10 @@ describe("McpOAuthRecords — roundtrip and scope", () => {
     );
     expect(JSON.parse(stored?.reveal() ?? "null")).toEqual({ access_token: "a" });
     expect(
-      await records(WS, "example-provider").read("tokens", { caller: "test", purpose: "assert" }),
+      await records(WS, "example-provider").read<{ access_token: string }>("tokens", {
+        caller: "test",
+        purpose: "assert",
+      }),
     ).toEqual({ access_token: "a" });
   });
 
@@ -81,10 +84,14 @@ describe("McpOAuthRecords — roundtrip and scope", () => {
     await records(USER, "example-provider").write("tokens", { access_token: "user" });
 
     const read = { caller: "test", purpose: "assert" } as const;
-    expect(await records(WS, "example-provider").read("tokens", read)).toEqual({
+    expect(
+      await records(WS, "example-provider").read<{ access_token: string }>("tokens", read),
+    ).toEqual({
       access_token: "ws",
     });
-    expect(await records(USER, "example-provider").read("tokens", read)).toEqual({
+    expect(
+      await records(USER, "example-provider").read<{ access_token: string }>("tokens", read),
+    ).toEqual({
       access_token: "user",
     });
   });
@@ -96,7 +103,10 @@ describe("McpOAuthRecords — roundtrip and scope", () => {
       "{",
     );
     expect(
-      await records(WS, "example-provider").read("tokens", { caller: "test", purpose: "assert" }),
+      await records(WS, "example-provider").read<{ access_token: string }>("tokens", {
+        caller: "test",
+        purpose: "assert",
+      }),
     ).toBeNull();
   });
 
@@ -113,7 +123,7 @@ describe("McpOAuthRecords — roundtrip and scope", () => {
     await records(WS, "example-provider").write("tokens", { access_token: "a" });
     events.length = 0;
 
-    await records(WS, "example-provider").read("tokens", {
+    await records(WS, "example-provider").read<{ access_token: string }>("tokens", {
       caller: "oauth:tokens",
       purpose: "transport example-provider",
     });
@@ -133,7 +143,7 @@ describe("McpOAuthRecords — legacy import", () => {
   test("a legacy file is imported on first read and removed", async () => {
     const path = plantLegacy(WS, "example-provider", "tokens", { access_token: "legacy" });
 
-    const value = await records(WS, "example-provider").read("tokens", {
+    const value = await records(WS, "example-provider").read<{ access_token: string }>("tokens", {
       caller: "test",
       purpose: "assert",
     });
@@ -153,7 +163,7 @@ describe("McpOAuthRecords — legacy import", () => {
     plantLegacy(WS, "example-provider", "client", { client_id: "cid" });
     const read = { caller: "test", purpose: "assert" } as const;
 
-    await records(WS, "example-provider").read("tokens", read);
+    await records(WS, "example-provider").read<{ access_token: string }>("tokens", read);
     await records(WS, "example-provider").read("client", read);
 
     expect(existsSync(legacyMcpOAuthDir(workDir, WS, "example-provider"))).toBe(false);
@@ -167,7 +177,10 @@ describe("McpOAuthRecords — legacy import", () => {
     plantLegacy(WS, "example-provider", "tokens", { access_token: "stale" });
 
     expect(
-      await records(WS, "example-provider").read("tokens", { caller: "test", purpose: "assert" }),
+      await records(WS, "example-provider").read<{ access_token: string }>("tokens", {
+        caller: "test",
+        purpose: "assert",
+      }),
     ).toEqual({ access_token: "current" });
   });
 
@@ -182,7 +195,10 @@ describe("McpOAuthRecords — legacy import", () => {
     expect(existsSync(path)).toBe(false);
     expect(existsSync(legacyMcpOAuthDir(workDir, WS, "example-provider"))).toBe(false);
     expect(
-      await records(WS, "example-provider").read("verifier", { caller: "test", purpose: "assert" }),
+      await records(WS, "example-provider").read<{ codeVerifier: string }>("verifier", {
+        caller: "test",
+        purpose: "assert",
+      }),
     ).toEqual({ codeVerifier: "new" });
   });
 

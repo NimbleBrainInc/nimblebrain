@@ -118,7 +118,7 @@ function makeApp(): Hono {
   return app;
 }
 
-function post(app: Hono, path: string, token?: string): Promise<Response> {
+async function post(app: Hono, path: string, token?: string): Promise<Response> {
   return app.request(`http://api.example.com${path}`, {
     method: "POST",
     headers: {

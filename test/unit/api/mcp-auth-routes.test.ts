@@ -580,11 +580,10 @@ describe("GET /v1/mcp-auth/callback — the line a deployed pod actually writes"
     process.env.NB_LOG_FORMAT = "json";
     const lines: string[] = [];
     const origWrite = process.stderr.write.bind(process.stderr);
-    // @ts-expect-error narrow override for capture
-    process.stderr.write = (chunk: string) => {
+    process.stderr.write = ((chunk: string) => {
       lines.push(String(chunk));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       // No cookie header → the session check refuses, which is the branch that
       // carries the field.

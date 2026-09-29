@@ -7,6 +7,19 @@ import { handleFork } from "../../../../../src/platform/conversations/tools/fork
 
 const TMP_DIR = join(import.meta.dir, ".tmp-fork");
 
+/** What `handleFork` returns; it is declared as `object`. */
+interface ForkResult {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  lastModel: string | null;
+  preview: string;
+}
+
 function writeTmpFile(name: string, lines: string[]): string {
   const path = join(TMP_DIR, name);
   writeFileSync(path, lines.map((l) => `${l}\n`).join(""));
@@ -98,7 +111,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = (await handleFork({ id: SOURCE_ID }, index)) as ForkResult;
 
     // Result should have a new ID
     expect(result.id).not.toBe(SOURCE_ID);
@@ -143,7 +156,7 @@ describe("handleFork", () => {
     writeSourceConversation({ model });
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = (await handleFork({ id: SOURCE_ID }, index)) as ForkResult;
 
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
     const newConv = await readConversation(newFilePath);
@@ -156,7 +169,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = (await handleFork({ id: SOURCE_ID }, index)) as ForkResult;
 
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
     const newConv = await readConversation(newFilePath);
@@ -171,10 +184,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID, atMessage: 3 }, index)) as Record<
-      string,
-      unknown
-    >;
+    const result = (await handleFork({ id: SOURCE_ID, atMessage: 3 }, index)) as ForkResult;
 
     // Should have 3 messages (indices 0, 1, 2)
     expect(result.messageCount).toBe(3);
@@ -234,7 +244,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = (await handleFork({ id: SOURCE_ID }, index)) as ForkResult;
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
 
     // Read raw content and verify structure
@@ -269,10 +279,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID, atMessage: 0 }, index)) as Record<
-      string,
-      unknown
-    >;
+    const result = (await handleFork({ id: SOURCE_ID, atMessage: 0 }, index)) as ForkResult;
 
     expect(result.messageCount).toBe(0);
     expect(result.totalInputTokens).toBe(0);
@@ -295,7 +302,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = (await handleFork({ id: SOURCE_ID }, index)) as ForkResult;
     const id = result.id as string;
 
     expect(id).toMatch(/^conv_[0-9a-f]{16}$/);

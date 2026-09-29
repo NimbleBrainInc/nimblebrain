@@ -21,6 +21,7 @@ function makeIdentity(overrides?: Partial<UserIdentity>): UserIdentity {
     email: "test@example.com",
     displayName: "Test User",
     orgRole: "admin" as OrgRole,
+    preferences: {},
     ...overrides,
   };
 }

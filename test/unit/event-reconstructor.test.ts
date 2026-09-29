@@ -87,7 +87,7 @@ function llmToolCall(
     type: "llm.response",
     runId,
     model: opts?.model ?? "claude-sonnet-4-5-20250929",
-    content: [{ type: "tool-call", toolCallId, toolName, input }],
+    content: [{ type: "tool-call", toolCallId, toolName, input: JSON.stringify(input) }],
     usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
   };
@@ -108,7 +108,7 @@ function llmParallelToolCalls(
       type: "tool-call" as const,
       toolCallId: c.toolCallId,
       toolName: c.toolName,
-      input: c.input ?? {},
+      input: JSON.stringify(c.input ?? {}),
     })),
     usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
@@ -260,9 +260,7 @@ describe("reconstructMessages", () => {
         type: "llm.response",
         runId: "run-1",
         model: "claude-haiku-4-5-20251001",
-        content: [
-          { type: "tool-call", toolCallId: "tc-1", toolName: "seed_data", input: "{}" as unknown },
-        ],
+        content: [{ type: "tool-call", toolCallId: "tc-1", toolName: "seed_data", input: "{}" }],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
       } as LlmResponseEvent,
@@ -376,6 +374,33 @@ describe("reconstructMessages", () => {
     expect(textBlock?.text).toBe("The answer is 42.");
   });
 
+  it("accepts tool-call input stored as an already-parsed object", () => {
+    // The stream persists input as a JSON string (the other fixtures here);
+    // `parseToolInput` also takes an object, which the event type does not
+    // admit, so this one fixture casts.
+    const objectInput: LlmResponseEvent = {
+      ...llmToolCall("run-1", "tc-1", "lookup"),
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "lookup",
+          input: { id: "x" } as unknown as string,
+        },
+      ],
+    };
+    const messages = reconstructMessages([
+      userMessage("Look up X"),
+      runStart("run-1"),
+      objectInput,
+      toolStart("run-1", "tc-1", "lookup"),
+      toolDone("run-1", "tc-1", "lookup"),
+      runDone("run-1"),
+    ]);
+    const call = partsOf(messages[1]!).find((c) => c.type === "tool-call");
+    expect(call).toMatchObject({ toolCallId: "tc-1", input: { id: "x" } });
+  });
+
   it("attaches reasoning to the FIRST assistant message of a turn (tool-call before text)", () => {
     // When a turn produces both a tool-call message AND a text message,
     // reasoning attaches only to the first to avoid UI duplication.
@@ -383,7 +408,12 @@ describe("reconstructMessages", () => {
       ...llmToolCall("run-1", "tc-1", "lookup", { id: "x" }),
       content: [
         { type: "reasoning", text: "Need to look this up." },
-        { type: "tool-call", toolCallId: "tc-1", toolName: "lookup", input: { id: "x" } },
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "lookup",
+          input: JSON.stringify({ id: "x" }),
+        },
       ],
     };
     const finalText = llmText("run-1", "Found it.");
@@ -449,13 +479,23 @@ describe("reconstructMessages", () => {
           text: "Plan: search then fetch.",
           providerMetadata: { anthropic: { signature: "sig-A" } },
         },
-        { type: "tool-call", toolCallId: "tc-1", toolName: "search", input: { q: "x" } },
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "search",
+          input: JSON.stringify({ q: "x" }),
+        },
         {
           type: "reasoning",
           text: "Now fetch the top result.",
           providerMetadata: { anthropic: { signature: "sig-B" } },
         },
-        { type: "tool-call", toolCallId: "tc-2", toolName: "fetch", input: { id: 1 } },
+        {
+          type: "tool-call",
+          toolCallId: "tc-2",
+          toolName: "fetch",
+          input: JSON.stringify({ id: 1 }),
+        },
       ],
     };
     const events: ConversationEvent[] = [
@@ -500,7 +540,12 @@ describe("reconstructMessages", () => {
           text: "Need to look this up.",
           providerMetadata: { anthropic: { signature: "sig-abc-123" } },
         },
-        { type: "tool-call", toolCallId: "tc-1", toolName: "lookup", input: { id: "x" } },
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "lookup",
+          input: JSON.stringify({ id: "x" }),
+        },
       ],
     };
     const events: ConversationEvent[] = [
@@ -765,8 +810,18 @@ describe("reconstructMessages", () => {
         model: "claude-sonnet-4-5-20250929",
         content: [
           { type: "text", text: "Let me read those files for you." },
-          { type: "tool-call", toolCallId: "tc-1", toolName: "files__read", input: {} },
-          { type: "tool-call", toolCallId: "tc-2", toolName: "files__read", input: {} },
+          {
+            type: "tool-call",
+            toolCallId: "tc-1",
+            toolName: "files__read",
+            input: JSON.stringify({}),
+          },
+          {
+            type: "tool-call",
+            toolCallId: "tc-2",
+            toolName: "files__read",
+            input: JSON.stringify({}),
+          },
         ],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
@@ -1073,8 +1128,8 @@ describe("reconstructMessages structural invariants", () => {
         model: "claude-sonnet-4-5-20250929",
         content: [
           { type: "text", text: "I'll read the files now." },
-          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: {} },
-          { type: "tool-call", toolCallId: "tc2", toolName: "read", input: {} },
+          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: JSON.stringify({}) },
+          { type: "tool-call", toolCallId: "tc2", toolName: "read", input: JSON.stringify({}) },
         ],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
@@ -1160,7 +1215,7 @@ describe("reconstructMessages — cancelled runs", () => {
         model: "claude-sonnet-4-5-20250929",
         content: [
           { type: "text", text: "Reading the file now." },
-          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: {} },
+          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: JSON.stringify({}) },
         ],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
@@ -1193,7 +1248,7 @@ describe("reconstructMessages — cancelled runs", () => {
         content: [
           reasoning,
           { type: "text", text: "Partial answer" },
-          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: {} },
+          { type: "tool-call", toolCallId: "tc1", toolName: "read", input: JSON.stringify({}) },
         ],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
