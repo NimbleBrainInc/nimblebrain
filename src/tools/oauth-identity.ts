@@ -24,7 +24,7 @@ export interface IdentityMetadata {
   userinfoEndpoint?: string;
 }
 
-/** Bound on each identity read, so a slow server delays a sign-in by at most this a read. */
+/** Bound on each identity read, so a slow server delays a sign-in by at most this per read. */
 export const IDENTITY_FETCH_TIMEOUT_MS = 3_000;
 
 /** Largest metadata or userinfo body read. Real ones run to a few KB. */
