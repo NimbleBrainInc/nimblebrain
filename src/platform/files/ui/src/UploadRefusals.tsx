@@ -20,8 +20,9 @@ export function UploadRefusals({ refusal, onDismiss }: UploadRefusalsProps) {
         </button>
       </div>
       <ul>
-        {refusal.errors.map((reason) => (
-          <li key={reason}>{reason}</li>
+        {refusal.errors.map((reason, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the list is replaced whole, never reordered, and two refusals can share a reason string
+          <li key={i}>{reason}</li>
         ))}
       </ul>
     </div>

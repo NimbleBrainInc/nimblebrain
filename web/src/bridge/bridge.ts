@@ -1380,7 +1380,7 @@ class FilesRefusedError extends Error {
     const more = data.errors.length - REFUSALS_IN_MESSAGE;
     const stored = data.files.length > 0 ? ` ${data.files.length} stored.` : "";
     super(
-      `${data.errors.length} of ${picked} files refused: ${named}${more > 0 ? `; and ${more} more` : ""}.${stored}`,
+      `${data.errors.length} of ${picked} ${picked === 1 ? "file" : "files"} refused: ${named}${more > 0 ? `; and ${more} more` : ""}.${stored}`,
     );
     this.name = "FilesRefusedError";
     this.data = data;
