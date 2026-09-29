@@ -21,7 +21,7 @@ interface Workspace {
   id: string;
   name: string;
   memberCount: number;
-  connectors?: Array<{ name?: string; path?: string }>;
+  connectors?: Array<{ serverName: string; name: string }>;
   createdAt?: string;
 }
 

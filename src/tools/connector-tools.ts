@@ -1,5 +1,6 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
+import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
 import {
   connectorSkillIdentityFrom,
   type SecretHeaderRef,
@@ -650,30 +651,15 @@ interface InstalledEntryDeps {
   onlyServerName?: string;
 }
 
-/**
- * Match a connector instance's ref to its catalog entry. Prefers a URL match;
- * EVERY brokered connector stores a per-install session URL that misses
- * `catalogByUrl`, so they fall back to the catalog id their provider stamped on
- * the ref at install — recovered by `brokeredRef`, which owns the
- * provider list.
- *
- * The fallback must cover each brokered kind: without it the connector reads as
- * uncatalogued — slug instead of display name, letter avatar instead of icon,
- * and every catalog-gated section of the Configure page dark.
- */
+/** The ref's URL and its catalog entry (see `catalogEntryForRef`). */
 function resolveInstanceCatalog(
   instance: ConnectorInstance,
   catalogByUrl: Map<string, ConnectorCatalogEntry>,
   catalogById: Map<string, ConnectorCatalogEntry>,
 ): { url: string | undefined; cat: ConnectorCatalogEntry | undefined } {
   const ref = instance.ref;
-  const url = ref?.url;
-  const connectorId = ref ? brokeredRef(ref)?.connectorId : undefined;
-  let cat = url ? catalogByUrl.get(url) : undefined;
-  if (!cat && connectorId) {
-    cat = catalogById.get(connectorId);
-  }
-  return { url, cat };
+  if (!ref) return { url: undefined, cat: undefined };
+  return { url: ref.url, cat: catalogEntryForRef(ref, catalogByUrl, catalogById) };
 }
 
 /**

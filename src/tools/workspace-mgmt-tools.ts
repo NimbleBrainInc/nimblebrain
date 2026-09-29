@@ -1,3 +1,5 @@
+import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
+import { serverNameFromRef } from "../connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -545,6 +547,16 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
   try {
     const workspaces = await ctx.workspaceStore.list();
     const identity = ctx.getIdentity();
+    const catalog = ctx.runtime.getConnectorCatalog();
+    const [byUrl, byId] = await Promise.all([catalog.catalogByUrl(), catalog.catalogByIdMap()]);
+    // A listing names each connector; it does not hand out the ref. The ref
+    // carries transport auth, headers and OAuth client config, which may hold
+    // inline secrets. The name comes from the catalog, as on the Connectors page.
+    const describe = (ref: ConnectorRef) => {
+      const serverName = serverNameFromRef(ref) ?? ref.url;
+      const name = catalogEntryForRef(ref, byUrl, byId)?.name ?? ref.ui?.name ?? serverName;
+      return { serverName, name };
+    };
     const result = workspaces.map((ws) => {
       const userRole = identity
         ? ws.members.find((m) => m.userId === identity.id)?.role
@@ -553,7 +565,7 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
         id: ws.id,
         name: ws.name,
         memberCount: ws.members.length,
-        connectors: ws.connectors,
+        connectors: ws.connectors.map(describe),
         createdAt: ws.createdAt,
         // The requester's role within this workspace, when applicable. Lets the
         // web client gate workspace-admin UI without an extra `list_members`

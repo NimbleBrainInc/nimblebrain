@@ -26,11 +26,17 @@ import {
   SettingsPageHeader,
 } from "./components";
 
+/** One installed connector as `manage_workspaces list` names it. */
+interface WorkspaceConnector {
+  serverName: string;
+  name: string;
+}
+
 interface Workspace {
   id: string;
   name: string;
   memberCount: number;
-  connectors?: Array<{ name?: string; path?: string }>;
+  connectors?: WorkspaceConnector[];
   createdAt?: string;
 }
 
@@ -501,16 +507,16 @@ function MembersTable({
 }
 
 /** Renders the installed-connector cards, or an empty state when none are present. */
-function ConnectorsList({ connectors }: { connectors?: Array<{ name?: string; path?: string }> }) {
+function ConnectorsList({ connectors }: { connectors?: WorkspaceConnector[] }) {
   if (!connectors || connectors.length === 0) {
     return <EmptyState message="No connectors installed." />;
   }
   return (
     <div className="space-y-2">
-      {connectors.map((b, i) => (
-        <Card key={b.name ?? b.path ?? i}>
+      {connectors.map((c) => (
+        <Card key={c.serverName}>
           <CardContent className="py-3 px-4">
-            <span className="text-sm font-medium">{b.name ?? b.path ?? "Unknown connector"}</span>
+            <span className="text-sm font-medium">{c.name}</span>
           </CardContent>
         </Card>
       ))}
