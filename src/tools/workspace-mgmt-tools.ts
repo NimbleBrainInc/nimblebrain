@@ -547,13 +547,15 @@ function describeConnectorTeardown(total: number, failed: Array<{ serverName: st
 interface ConnectorSummary {
   serverName: string;
   name: string;
+  /** The catalog entry's icon, when it ships one; the UI falls back to a letter avatar. */
+  iconUrl?: string;
 }
 
 /**
  * How every action of this tool reports a workspace's connectors: by name, never
  * by ref. A ref carries transport auth, headers and OAuth client config, any of
- * which may hold an inline secret. The name comes from the catalog, as on the
- * Connectors page. Resolves the catalog once, so a caller maps many refs cheaply.
+ * which may hold an inline secret. The name and icon come from the catalog, as
+ * on the Connectors page. Resolves the catalog once, so a caller maps many refs cheaply.
  */
 async function connectorDescriber(
   ctx: ManageWorkspacesContext,
@@ -562,8 +564,9 @@ async function connectorDescriber(
   const [byUrl, byId] = await Promise.all([catalog.catalogByUrl(), catalog.catalogByIdMap()]);
   return (ref) => {
     const serverName = serverNameFromRef(ref) ?? ref.url;
-    const name = catalogEntryForRef(ref, byUrl, byId)?.name ?? ref.ui?.name ?? serverName;
-    return { serverName, name };
+    const entry = catalogEntryForRef(ref, byUrl, byId);
+    const name = entry?.name ?? ref.ui?.name ?? serverName;
+    return { serverName, name, ...(entry?.iconUrl ? { iconUrl: entry.iconUrl } : {}) };
   };
 }
 

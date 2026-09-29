@@ -539,7 +539,12 @@ describe("nb__manage_workspaces", () => {
 
     test("names each connector from the catalog and never returns the ref", async () => {
       catalogEntries = [
-        { id: "com.example/echo", name: "Echo", url: "https://echo.example.com/mcp" },
+        {
+          id: "com.example/echo",
+          name: "Echo",
+          url: "https://echo.example.com/mcp",
+          iconUrl: "https://static.example.com/echo.svg",
+        },
         { id: "com.example/mail", name: "Mail", url: "https://catalog.example.com/mail" },
       ] as ConnectorCatalogEntry[];
       await tool.handler({ action: "create", name: "Alpha" });
@@ -569,7 +574,15 @@ describe("nb__manage_workspaces", () => {
       const connectors = parsed.workspaces[0].connectors;
       expect(connectors.map((c) => c.name)).toEqual(["Echo", "Mail", connectors[2].serverName]);
       expect(connectors[2].serverName).toBeTruthy();
-      for (const c of connectors) expect(Object.keys(c).sort()).toEqual(["name", "serverName"]);
+      expect(connectors.map((c) => c.iconUrl)).toEqual([
+        "https://static.example.com/echo.svg",
+        undefined,
+        undefined,
+      ]);
+      expect(Object.keys(connectors[0]).sort()).toEqual(["iconUrl", "name", "serverName"]);
+      for (const c of connectors.slice(1)) {
+        expect(Object.keys(c).sort()).toEqual(["name", "serverName"]);
+      }
       expect(JSON.stringify(parsed)).not.toContain("inline-secret");
     });
 
