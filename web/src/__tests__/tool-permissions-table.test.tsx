@@ -138,6 +138,9 @@ describe("ToolPermissionsTable — collapsed until asked", () => {
     expect(policyButtons(mounted.container)).toHaveLength(0);
     expect(buttonsNamed(mounted.container, "Allow all")).toHaveLength(0);
     expect(buttonsNamed(mounted.container, "Show tools")).toHaveLength(1);
+    expect(buttonsNamed(mounted.container, "Show tools")[0]?.getAttribute("aria-expanded")).toBe(
+      "false",
+    );
   });
 
   test("opens to the full list, and closes again", async () => {
@@ -146,6 +149,9 @@ describe("ToolPermissionsTable — collapsed until asked", () => {
       buttonsNamed(mounted!.container, "Show tools")[0]?.click();
     });
     expect(policyButtons(mounted.container)).toHaveLength(4);
+    const toggle = buttonsNamed(mounted.container, "Hide tools")[0];
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(mounted.container.querySelector(`#${CSS.escape(toggle?.getAttribute("aria-controls") ?? "")}`)).toBeTruthy();
     await act(async () => {
       buttonsNamed(mounted!.container, "Hide tools")[0]?.click();
     });

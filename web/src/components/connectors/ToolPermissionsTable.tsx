@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   type ConnectorTool,
   listConnectorToolsWithPermissions,
@@ -50,6 +50,7 @@ export function ToolPermissionsTable({
   const [error, setError] = useState<string | null>(null);
   const [savingTool, setSavingTool] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const listId = useId();
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +180,7 @@ export function ToolPermissionsTable({
         <button
           type="button"
           aria-expanded={expanded}
+          aria-controls={listId}
           onClick={() => setExpanded((v) => !v)}
           className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-4"
         >
@@ -186,7 +188,7 @@ export function ToolPermissionsTable({
         </button>
       </div>
       {expanded && (
-        <ul className="border-t border-border/60">
+        <ul id={listId} className="border-t border-border/60">
           {tools.map((tool) => (
             <ToolPermissionRow
               key={tool.name}

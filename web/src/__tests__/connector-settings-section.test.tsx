@@ -4,7 +4,8 @@
 // Pins the contract of the `settings` placement slot:
 //
 //   1. The page renders the connector's first `settings` placement by priority,
-//      after the host's sections, and nothing when there is none. A second
+//      under a Settings heading and before tool permissions, and nothing when
+//      there is none. A second
 //      placement for the same connector, and another connector's, are ignored.
 //   2. Every member who reaches the page sees it; `canManage` is not a
 //      visibility gate.

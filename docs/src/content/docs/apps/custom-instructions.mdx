@@ -96,7 +96,7 @@ If you want a UI surface where a workspace admin edits the instructions (versus 
 }
 ```
 
-Then publish the section's HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain renders it on your connector's settings page, **Settings → Connectors → My App**, after the host's own sections.
+Then publish the section's HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain renders it on your connector's settings page, **Settings → Connectors → My App**, under a Settings heading, before tool permissions.
 
 The section is shown to every member who can open that page. The host passes `hostContext.connector.canManage`, which is `true` only for a workspace admin; use it to disable the editor for everyone else. The flag reflects controls; it is not the permission. The tool that writes the instructions stays callable by any member and by the agent, so the flag alone does not keep a member from changing them.
 
