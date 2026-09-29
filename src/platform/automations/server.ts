@@ -16,11 +16,14 @@ import {
 import type {
   AutomationSummary,
   AutomationsCancelOutput,
+  AutomationsCreateOutput,
+  AutomationsDeleteOutput,
   AutomationsListOutput,
   AutomationsRunOutput,
   AutomationsRunResultOutput,
   AutomationsRunsOutput,
   AutomationsStatusOutput,
+  AutomationsUpdateOutput,
 } from "../schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
@@ -450,7 +453,10 @@ interface CreateInput {
   body: string;
 }
 
-export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleCreate(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): AutomationsCreateOutput {
   const { manifest, body } = args as unknown as CreateInput;
 
   validateAutomationFields(manifest);
@@ -491,7 +497,10 @@ interface UpdateInput {
   body?: string;
 }
 
-export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleUpdate(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): AutomationsUpdateOutput {
   const { name, manifest: patch, body } = args as unknown as UpdateInput;
   if (!name) throw new Error("Missing required field: name");
 
@@ -510,7 +519,10 @@ export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): o
   );
 }
 
-export function handleDelete(args: Record<string, unknown>, ctx: ToolContext): object {
+export function handleDelete(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): AutomationsDeleteOutput {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
   return deleteAutomation(name, ctx);

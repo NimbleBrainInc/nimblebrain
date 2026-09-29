@@ -10,6 +10,7 @@
  * single tool call.
  */
 
+import type { ConversationsGetOutput, DisplayMessage } from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import { readConversation } from "../jsonl-reader.ts";
 
@@ -40,26 +41,27 @@ export const DEFAULT_GET_LIMIT = 20;
 export const DEFAULT_GET_CHAR_CAP = 30_000;
 
 interface GetMessagesResult {
-  messages: unknown[];
+  messages: DisplayMessage[];
   /** Count of messages omitted from the front of the selected window. */
   droppedOlderMessages: number;
   /** True when the char cap forced messages to be dropped. */
   truncated: boolean;
 }
 
-function selectByCharCap(messages: unknown[], cap: number): GetMessagesResult {
+function selectByCharCap(messages: DisplayMessage[], cap: number): GetMessagesResult {
   if (cap <= 0 || messages.length === 0) {
     return { messages, droppedOlderMessages: 0, truncated: false };
   }
   // Walk newest → oldest, keeping messages whose cumulative size fits.
   // Always keep at least one (the most recent) so the response is useful
   // even if a single message exceeds the cap.
-  const kept: unknown[] = [];
+  const kept: DisplayMessage[] = [];
   let used = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
-    const size = JSON.stringify(messages[i]).length;
+    const message = messages[i]!;
+    const size = JSON.stringify(message).length;
     if (kept.length > 0 && used + size > cap) break;
-    kept.unshift(messages[i]);
+    kept.unshift(message);
     used += size;
   }
   const dropped = messages.length - kept.length;
@@ -76,7 +78,7 @@ export async function handleGet(
    * log — without it a turn whose writer died reads as still in flight.
    */
   runActive?: boolean,
-): Promise<object> {
+): Promise<ConversationsGetOutput> {
   // `index.get` returns undefined for both not-found and exists-but-
   // not-yours when `access` is supplied — one error message, no leak.
   const entry = index.get(input.id, access);

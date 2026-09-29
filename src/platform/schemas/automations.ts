@@ -573,3 +573,57 @@ export interface AutomationsCancelOutput {
   id: string;
   message: string;
 }
+
+/**
+ * A stored automation, as `automations__create` and `automations__update`
+ * return it. Mirror of `Automation` (`src/platform/automations/types.ts`); the
+ * handlers' return annotations check the domain type against it.
+ */
+export interface AutomationRecord {
+  id: string;
+  name: string;
+  description?: string;
+  prompt: string;
+  schedule: AutomationScheduleSpec;
+  skill?: string;
+  allowedTools?: string[];
+  maxIterations?: number;
+  maxInputTokens?: number;
+  maxRunDurationMs?: number;
+  model?: string | null;
+  enabled: boolean;
+  ownerId?: string;
+  workspaceId?: string;
+  source: "user" | "agent";
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt?: string;
+  lastRunStatus?: AutomationLastRunStatus;
+  nextRunAt?: string;
+  runCount: number;
+  consecutiveErrors: number;
+  disabledAt?: string;
+  disabledReason?: string;
+  cumulativeInputTokens: number;
+  cumulativeOutputTokens: number;
+  tokenBudget?: AutomationTokenBudget;
+  budgetResetAt?: string;
+}
+
+export interface AutomationsCreateOutput {
+  automation: AutomationRecord;
+  created: boolean;
+  message: string;
+}
+
+export interface AutomationsUpdateOutput {
+  automation: AutomationRecord;
+  updated: boolean;
+  message: string;
+}
+
+export interface AutomationsDeleteOutput {
+  deleted: boolean;
+  id: string;
+  message: string;
+}

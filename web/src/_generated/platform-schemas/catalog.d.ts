@@ -357,7 +357,7 @@ export declare const PlatformToolCatalog: {
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 }>;
                 body: import("@sinclair/typebox").TString;
-                encoding: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"base64" | "text">>;
+                encoding: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"text" | "base64">>;
             }>;
         };
         readonly info: {

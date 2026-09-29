@@ -102,11 +102,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-5msgs" }, index)) as {
-      metadata: Record<string, unknown>;
-      messages: Array<{ role: string; content: string }>;
-      totalMessages: number;
-    };
+    const result = await handleGet({ id: "conv-5msgs" }, index);
 
     expect(result.metadata.id).toBe("conv-5msgs");
     expect(result.metadata.title).toBe("Test Chat");
@@ -125,9 +121,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-ws", { workspaceId: "ws_alpha" });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-ws", expand: "metadata" }, index)) as {
-      metadata: Record<string, unknown>;
-    };
+    const result = await handleGet({ id: "conv-ws", expand: "metadata" }, index);
 
     expect(result.metadata.workspaceId).toBe("ws_alpha");
   });
@@ -136,9 +130,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-legacy"); // no workspaceId written
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-legacy", expand: "metadata" }, index)) as {
-      metadata: Record<string, unknown>;
-    };
+    const result = await handleGet({ id: "conv-legacy", expand: "metadata" }, index);
 
     expect("workspaceId" in result.metadata).toBe(false);
   });
@@ -156,10 +148,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-limited", limit: 2 }, index)) as {
-      messages: Array<{ role: string; content: string }>;
-      totalMessages: number;
-    };
+    const result = await handleGet({ id: "conv-limited", limit: 2 }, index);
 
     expect(result.messages).toHaveLength(2);
     expect(result.messages[0]!.content).toBe("Fourth");
@@ -208,20 +197,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-meta" }, index)) as {
-      messages: Array<{
-        role: string;
-        content: string;
-        blocks?: Array<{ type: string }>;
-        toolCalls?: Array<{ id: string; name: string; ok: boolean }>;
-        usage?: {
-          inputTokens: number;
-          outputTokens: number;
-          model: string;
-          llmMs: number;
-        };
-      }>;
-    };
+    const result = await handleGet({ id: "conv-meta" }, index);
 
     expect(result.messages).toHaveLength(2);
 
@@ -249,11 +225,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-meta-only", expand: "metadata" }, index)) as {
-      metadata: Record<string, unknown>;
-      messages: unknown[];
-      totalMessages: number;
-    };
+    const result = await handleGet({ id: "conv-meta-only", expand: "metadata" }, index);
 
     expect(result.metadata.id).toBe("conv-meta-only");
     expect(result.metadata.title).toBe("Metadata only");
@@ -272,11 +244,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-many", { messages });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-many" }, index)) as {
-      messages: Array<{ content: string }>;
-      totalMessages: number;
-      truncated?: boolean;
-    };
+    const result = await handleGet({ id: "conv-many" }, index);
 
     expect(result.totalMessages).toBe(totalMsgs);
     expect(result.messages).toHaveLength(DEFAULT_GET_LIMIT);
@@ -299,11 +267,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-full", { messages });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-full", expand: "full" }, index)) as {
-      messages: unknown[];
-      totalMessages: number;
-      truncated?: boolean;
-    };
+    const result = await handleGet({ id: "conv-full", expand: "full" }, index);
 
     expect(result.messages).toHaveLength(10);
     expect(result.totalMessages).toBe(10);
@@ -321,13 +285,7 @@ describe("conversations__get", () => {
     writeConversation(dir, "conv-bigwindow", { messages });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-bigwindow" }, index)) as {
-      messages: Array<{ content: string }>;
-      totalMessages: number;
-      truncated?: boolean;
-      droppedOlderMessages?: number;
-      truncationHint?: string;
-    };
+    const result = await handleGet({ id: "conv-bigwindow" }, index);
 
     expect(result.totalMessages).toBe(10);
     expect(result.truncated).toBe(true);
@@ -349,11 +307,7 @@ describe("conversations__get", () => {
     });
     await index.build(dir);
 
-    const result = (await handleGet({ id: "conv-onehuge" }, index)) as {
-      messages: Array<{ content: string }>;
-      totalMessages: number;
-      truncated?: boolean;
-    };
+    const result = await handleGet({ id: "conv-onehuge" }, index);
 
     // Single most recent message kept even though it alone exceeds cap.
     expect(result.messages).toHaveLength(1);

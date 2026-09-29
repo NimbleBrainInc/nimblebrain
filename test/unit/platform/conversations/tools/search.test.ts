@@ -81,9 +81,7 @@ describe("conversations__search", () => {
     });
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "orchestration" }, index, SCOPE)) as {
-      results: Array<{ id: string; matches: Array<{ snippet: string }> }>;
-    };
+    const result = await handleSearch({ query: "orchestration" }, index, SCOPE);
 
     expect(result.results).toHaveLength(1);
     expect(result.results[0]!.id).toBe("conv-1");
@@ -99,9 +97,7 @@ describe("conversations__search", () => {
     });
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "Auth" }, index, SCOPE)) as {
-      results: Array<{ id: string; matches: Array<{ messageIndex: number }> }>;
-    };
+    const result = await handleSearch({ query: "Auth" }, index, SCOPE);
 
     // Should match the first message ("auth middleware") case-insensitively
     expect(result.results).toHaveLength(1);
@@ -120,9 +116,7 @@ describe("conversations__search", () => {
     });
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "deploy" }, index, SCOPE)) as {
-      results: Array<{ id: string; matches: Array<{ messageIndex: number }> }>;
-    };
+    const result = await handleSearch({ query: "deploy" }, index, SCOPE);
 
     expect(result.results).toHaveLength(1);
     expect(result.results[0]!.matches).toHaveLength(3);
@@ -137,9 +131,7 @@ describe("conversations__search", () => {
     });
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "database", limit: 1 }, index, SCOPE)) as {
-      results: Array<{ id: string }>;
-    };
+    const result = await handleSearch({ query: "database", limit: 1 }, index, SCOPE);
 
     expect(result.results).toHaveLength(1);
   });
@@ -169,9 +161,7 @@ describe("conversations__search", () => {
     });
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "xyznonexistent" }, index, SCOPE)) as {
-      results: Array<unknown>;
-    };
+    const result = await handleSearch({ query: "xyznonexistent" }, index, SCOPE);
 
     expect(result.results).toHaveLength(0);
   });
@@ -186,9 +176,7 @@ describe("conversations__search", () => {
     });
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "target_word" }, index, SCOPE)) as {
-      results: Array<{ matches: Array<{ snippet: string }> }>;
-    };
+    const result = await handleSearch({ query: "target_word" }, index, SCOPE);
 
     expect(result.results).toHaveLength(1);
     const snippet = result.results[0]!.matches[0]!.snippet;
@@ -209,9 +197,7 @@ describe("conversations__search", () => {
     });
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "special keyword" }, index, SCOPE)) as {
-      results: Array<{ id: string; title: string | null; matches: Array<{ snippet: string }> }>;
-    };
+    const result = await handleSearch({ query: "special keyword" }, index, SCOPE);
 
     expect(result.results).toHaveLength(1);
     expect(result.results[0]!.id).toBe("conv-titled");
@@ -222,9 +208,7 @@ describe("conversations__search", () => {
   it("returns empty results for empty directory", async () => {
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "anything" }, index, SCOPE)) as {
-      results: Array<unknown>;
-    };
+    const result = await handleSearch({ query: "anything" }, index, SCOPE);
 
     expect(result.results).toHaveLength(0);
   });
@@ -244,10 +228,7 @@ describe("conversations__search", () => {
     });
     await index.build(dir);
 
-    const result = (await handleSearch({ query: "shared term" }, index, SCOPE)) as {
-      results: Array<{ id: string }>;
-      totalMatches: number;
-    };
+    const result = await handleSearch({ query: "shared term" }, index, SCOPE);
 
     expect(result.results).toHaveLength(2);
     expect(result.totalMatches).toBe(2);

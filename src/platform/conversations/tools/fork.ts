@@ -8,6 +8,7 @@
 
 import { rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { ConversationsForkOutput } from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import type { ConversationMeta, DisplayMessage, DisplayUsage } from "../jsonl-reader.ts";
 import { readConversation } from "../jsonl-reader.ts";
@@ -119,7 +120,7 @@ export async function handleFork(
   input: ForkInput,
   index: ConversationIndex,
   access?: AccessContext,
-): Promise<object> {
+): Promise<ConversationsForkOutput> {
   const entry = index.get(input.id, access);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);

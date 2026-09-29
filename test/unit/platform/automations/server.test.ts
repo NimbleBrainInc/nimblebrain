@@ -253,7 +253,7 @@ describe("handleCreate", () => {
         body: "Generate daily report",
       },
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.id).toBe("daily-report");
@@ -278,7 +278,7 @@ describe("handleCreate", () => {
         body: "Generate daily report",
       },
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(first.created).toBe(true);
 
@@ -291,7 +291,7 @@ describe("handleCreate", () => {
         body: "Different prompt",
       },
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(second.created).toBe(false);
     expect(second.automation.id).toBe(first.automation.id);
@@ -529,10 +529,7 @@ describe("handleUpdate", () => {
       ctx,
     );
 
-    const result = handleUpdate(updateArgs("Daily Report", { enabled: false }), ctx) as {
-      automation: Automation;
-      updated: boolean;
-    };
+    const result = handleUpdate(updateArgs("Daily Report", { enabled: false }), ctx);
 
     expect(result.updated).toBe(true);
     expect(result.automation.enabled).toBe(false);
@@ -567,9 +564,7 @@ describe("handleUpdate", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = handleUpdate(updateArgs("Scoped", { allowedTools: ["crm__*"] }), ctx) as {
-      automation: Automation;
-    };
+    const result = handleUpdate(updateArgs("Scoped", { allowedTools: ["crm__*"] }), ctx);
 
     expect(result.automation.allowedTools).toEqual(["crm__*"]);
   });
@@ -597,7 +592,7 @@ describe("handleCreate — allowedTools", () => {
         },
       ),
       ctx,
-    ) as { automation: Automation };
+    );
 
     expect(result.automation.allowedTools).toEqual(["crm__*", "files__read"]);
   });
@@ -629,9 +624,7 @@ describe("handleDelete", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Temp", "Temporary", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const delResult = handleDelete({ name: "Temp" }, ctx) as {
-      deleted: boolean;
-    };
+    const delResult = handleDelete({ name: "Temp" }, ctx);
     expect(delResult.deleted).toBe(true);
 
     const listResult = handleList({}, ctx) as { total: number };
@@ -1034,7 +1027,7 @@ describe("handleCreate — new fields", () => {
         },
       ),
       ctx,
-    ) as Record<string, unknown>;
+    );
 
     const auto = result.automation as Automation;
     expect(auto.maxRunDurationMs).toBe(60_000);
@@ -1067,10 +1060,7 @@ describe("handleUpdate — re-enable clears disable state", () => {
     saveDefs(defs);
 
     // Re-enable
-    const result = handleUpdate(updateArgs("Disabled Test", { enabled: true }), ctx) as Record<
-      string,
-      unknown
-    >;
+    const result = handleUpdate(updateArgs("Disabled Test", { enabled: true }), ctx);
     const updated = result.automation as Automation;
     expect(updated.enabled).toBe(true);
     expect(updated.consecutiveErrors).toBe(0);
@@ -1337,7 +1327,7 @@ describe("handleUpdate — validation", () => {
         schedule: { type: "cron", expression: "0 9 * * 1" },
       }),
       ctx,
-    ) as Record<string, unknown>;
+    );
     expect(result.updated).toBe(true);
   });
 });
@@ -1355,7 +1345,7 @@ describe("automation ownership", () => {
         intervalMs: 60_000,
       }),
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.ownerId).toBe("usr_alice");
@@ -1369,7 +1359,7 @@ describe("automation ownership", () => {
         intervalMs: 60_000,
       }),
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.workspaceId).toBe("ws_engineering");
@@ -1386,7 +1376,7 @@ describe("automation ownership", () => {
         expression: "0 9 * * *",
       }),
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.ownerId).toBe("usr_bob");
@@ -1404,7 +1394,7 @@ describe("automation ownership", () => {
         intervalMs: 120_000,
       }),
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.ownerId).toBe(OWNER);
@@ -1477,7 +1467,7 @@ describe("event schedules", () => {
       },
       ctx,
     );
-    expect(created).toMatchObject({ created: true });
+    expect(created.created).toBe(true);
 
     const status = await handleStatus({ name: "Reply triage" }, ctx);
     expect(status.automation.schedule).toEqual({

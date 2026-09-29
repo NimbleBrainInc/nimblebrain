@@ -77,10 +77,7 @@ describe("handleUpdate", () => {
 
     await index.build(TMP_DIR);
 
-    const result = (await handleUpdate(
-      { id: "conv_test001", title: "New title" },
-      index,
-    )) as Record<string, unknown>;
+    const result = await handleUpdate({ id: "conv_test001", title: "New title" }, index);
 
     expect(result.id).toBe("conv_test001");
     expect(result.title).toBe("New title");
@@ -191,10 +188,7 @@ describe("handleUpdate", () => {
 
     await index.build(TMP_DIR);
 
-    const result = (await handleUpdate({ id: "conv_empty", title: "Empty conv" }, index)) as Record<
-      string,
-      unknown
-    >;
+    const result = await handleUpdate({ id: "conv_empty", title: "Empty conv" }, index);
 
     expect(result.id).toBe("conv_empty");
     expect(result.title).toBe("Empty conv");
