@@ -7,7 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 Your server holds work that needs someone: drafts awaiting review, tasks
 blocked, invoices unpaid. A **facet** is one of those, as a number. The
-workspace overview shows each facet whose count is above zero as one line,
+workspace overview shows each facet whose count is above zero as one row,
 `<count> <title>`, and clicking it opens your app.
 
 Facets are an [MCP extension](https://modelcontextprotocol.io/extensions/overview),
@@ -142,7 +142,7 @@ quick: a `count(*)`, not a page of rows you count afterwards.
 
 | Situation | Result |
 |---|---|
-| The count is above zero | One row in the overview's "Needs attention" panel: `<count> <title>` with your facet's level, opening your app's first placement route. An app with no placement route shows the line without an action. Lines are ordered by level, then by the shell's app order. |
+| The count is above zero | One row in the overview's "Needs attention" panel: `<count> <title>` with your facet's level, opening your app's first placement route. An app with no placement route shows the row without an action. Rows are ordered by level, then by the shell's app order. |
 | The count is zero | Nothing. |
 | The read fails, returns an invalid count, or takes longer than 5 seconds | The title, marked unavailable. Your other facets, and every other server's, render normally. |
 | Your server did not advertise the extension | Nothing is listed or read. |

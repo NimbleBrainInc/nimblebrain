@@ -187,7 +187,7 @@ function Row({ row, onHide }: { row: PanelRow; onHide: () => void }) {
         aria-label="Hide until it changes"
         title="Hide until it changes"
         data-testid="briefing-hide"
-        className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
       >
         <X className="h-4 w-4" />
       </button>
@@ -222,17 +222,25 @@ export function BriefingView({
   // the server's order (sort is stable).
   all.sort((a, b) => LEVELS[a.level].rank - LEVELS[b.level].rank);
 
-  // A hidden row that has gone away is forgotten, so if it comes back it shows.
+  // Keep each hidden entry true to what the row says now. A row that went away
+  // is forgotten, so its return shows. A hidden row whose count fell records
+  // the lower count, so new work past it shows. A row that changed and shows
+  // again is no longer hidden, so a later fall does not hide it again.
   const settled = !loading && !error && briefing !== null;
-  const liveKeys = all.map((r) => r.key).join("\n");
   useEffect(() => {
     if (!settled) return;
-    const live = new Set(liveKeys.split("\n"));
-    const stale = Object.keys(prefs.hidden).filter((k) => !live.has(k));
-    if (stale.length === 0) return;
-    const hidden = { ...prefs.hidden };
-    for (const k of stale) delete hidden[k];
-    update({ ...prefs, hidden });
+    const now = new Map(all.map((r) => [r.key, r.signature]));
+    const hidden: Record<string, string> = {};
+    let changed = false;
+    for (const [k, was] of Object.entries(prefs.hidden)) {
+      const sig = now.get(k);
+      if (sig === was) hidden[k] = was;
+      else {
+        changed = true;
+        if (sig !== undefined && isHidden(prefs, k, sig)) hidden[k] = sig;
+      }
+    }
+    if (changed) update({ ...prefs, hidden });
   });
 
   if (loading || (all.length === 0 && !error)) return null;
@@ -253,7 +261,7 @@ export function BriefingView({
       <div
         className={cn(
           "flex items-center gap-2 bg-muted/50 py-1.5 pl-4 pr-2",
-          open && (visible.length > 0 || error) && "border-b border-border",
+          ((open && visible.length > 0) || error) && "border-b border-border",
         )}
       >
         <span className="text-2xs font-bold uppercase tracking-[0.08em] text-muted-foreground">
@@ -298,7 +306,7 @@ export function BriefingView({
         </ul>
       )}
 
-      {open && error && (
+      {error && (
         <div
           className="bg-destructive/5 px-4 py-3 text-sm text-destructive"
           data-testid="workspace-briefing-error"

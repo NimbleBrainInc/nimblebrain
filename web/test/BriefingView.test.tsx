@@ -340,6 +340,23 @@ describe("BriefingView", () => {
       expect(rows()).toHaveLength(0);
     });
 
+    test("comes back when new work follows progress", async () => {
+      mounted = await mount(view({ briefing: one(2) }));
+      await hideFirst();
+      await rerender(view({ briefing: one(1) }));
+      expect(rows()).toHaveLength(0);
+      await rerender(view({ briefing: one(2) }));
+      expect(rows().map((r) => r.textContent)).toEqual(["Critical: 2 Tasks blocked · Tasks"]);
+    });
+
+    test("once back, a later fall does not hide it again", async () => {
+      mounted = await mount(view({ briefing: one(2) }));
+      await hideFirst();
+      await rerender(view({ briefing: one(3) }));
+      await rerender(view({ briefing: one(2) }));
+      expect(rows()).toHaveLength(1);
+    });
+
     test("comes back when the count rises", async () => {
       mounted = await mount(view({ briefing: one(2) }));
       await hideFirst();
@@ -379,6 +396,17 @@ describe("BriefingView", () => {
       expect(findByTestId(mounted.container, "workspace-briefing")).not.toBeNull();
       expect(findByTestId(mounted.container, "briefing-show-hidden")).not.toBeNull();
     });
+  });
+
+  test("an error shows while the panel is collapsed", async () => {
+    mounted = await mount(view());
+    await act(async () => {
+      findByTestId(mounted!.container, "briefing-toggle")?.click();
+    });
+    mounted.unmount();
+    mounted = await mount(view({ error: "boom" }));
+    expect(findByTestId(mounted.container, "briefing-toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(findByTestId(mounted.container, "workspace-briefing-error")?.textContent).toContain("boom");
   });
 
   test("collapses and expands, and remembers it", async () => {
