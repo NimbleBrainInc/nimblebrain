@@ -740,12 +740,13 @@ export class McpSource implements ToolSource {
     try {
       const code = await authProvider.awaitPendingFlow();
       const authable = transport as AuthFinishableTransport;
-      if (typeof authable.finishAuth !== "function") {
+      const finishAuth = authable.finishAuth?.bind(authable);
+      if (typeof finishAuth !== "function") {
         throw new Error(
           `[mcp-source] transport does not support finishAuth (got ${transport.constructor.name})`,
         );
       }
-      await authable.finishAuth(code);
+      await authProvider.exchangeAuthorizationCode(() => finishAuth(code));
       log.debug("mcp", `[oauth] ${this.name}: finishAuth ok, recreating transport for retry`);
 
       // Drop the first-attempt transport+client. Both are single-use after a
