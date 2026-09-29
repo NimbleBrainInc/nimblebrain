@@ -642,20 +642,18 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-/** Apply the transformPrompt hook when present; otherwise the system prompt verbatim. */
-/** Estimated input tokens of one model call: system prompt, messages, and tool definitions. */
+/** Estimated input tokens of one model call: every prompt message (system included) and tool definition. */
 function estimatePromptTokens(
-  systemPrompt: string,
-  messages: LanguageModelV4Message[],
+  prompt: LanguageModelV4Message[],
   tools: LanguageModelV4FunctionTool[],
 ): number {
   return (
-    estimateMessageTokens({ role: "system", content: systemPrompt }) +
-    messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
+    prompt.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
     tools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0)
   );
 }
 
+/** Apply the transformPrompt hook when present; otherwise the system prompt verbatim. */
 function resolveCallPrompt(config: EngineConfig, systemPrompt: string): string {
   return config.hooks?.transformPrompt ? config.hooks.transformPrompt(systemPrompt) : systemPrompt;
 }
@@ -1208,7 +1206,10 @@ export class AgentEngine {
         if (config.maxRunInputTokens !== undefined) {
           const projected = Math.max(
             lastCallInputTokens,
-            estimatePromptTokens(callPrompt, callMessages, modelTools),
+            estimatePromptTokens(
+              [{ role: "system", content: callPrompt }, ...callMessages],
+              modelTools,
+            ),
           );
           if (cumulativeUsage.inputTokens + projected > config.maxRunInputTokens) {
             runInputCapReached = true;
@@ -1250,9 +1251,7 @@ export class AgentEngine {
           // `cachedPrompt` is the full prompt array (system message +
           // messages), so this covers everything billed as input except the
           // provider's own per-request overhead.
-          estimatedInputTokens =
-            cachedPrompt.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
-            cachedTools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0);
+          estimatedInputTokens = estimatePromptTokens(cachedPrompt, cachedTools);
           return withRetry(
             () =>
               callModel(
