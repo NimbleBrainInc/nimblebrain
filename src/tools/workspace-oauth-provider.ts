@@ -299,7 +299,7 @@ function originOf(value: string | URL): string | undefined {
 /**
  * Apply OAuth 2.1 client authentication to a token request. This mirrors the
  * MCP SDK's internal `applyClientAuthentication` (in
- * `@modelcontextprotocol/sdk/client/auth.js`), which the SDK runs by default
+ * `@modelcontextprotocol/client`), which the SDK runs by default
  * but which is NOT exported. We reproduce it because defining
  * `addClientAuthentication` on the provider REPLACES the SDK's default for
  * every token endpoint — so the provider must re-apply client auth itself.

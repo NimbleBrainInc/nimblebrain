@@ -8,7 +8,7 @@ import { log } from "../observability/log.ts";
  *
  * The MCP SDK's `auth()` collapses three distinct token-refresh outcomes
  * into one indistinguishable `redirectToAuthorization()` call
- * (`@modelcontextprotocol/sdk/client/auth.js`, the `catch` at the refresh
+ * (`@modelcontextprotocol/client`, the `catch` at the refresh
  * `try`): a transient failure (network throw, or a 5xx/`server_error` that
  * `parseErrorResponse` maps to `ServerError`) is **swallowed** and falls
  * through to a fresh-authorization attempt — exactly like a genuinely dead
