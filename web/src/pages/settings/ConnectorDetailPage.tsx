@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { getInstalledConnector, type InstalledConnector } from "../../api/client";
+import { ConnectorHeader } from "../../components/connectors/ConnectorHeader";
 import { ConnectorSettingsSection } from "../../components/connectors/ConnectorSettingsSection";
-import { ConnectorStatusHero } from "../../components/connectors/ConnectorStatusHero";
-import { OAuthConnectionSection } from "../../components/connectors/OAuthConnectionSection";
 import { OperatorOAuthSection } from "../../components/connectors/OperatorOAuthSection";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
 import { UninstallConnectorDialog } from "../../components/connectors/UninstallConnectorDialog";
@@ -15,21 +14,16 @@ import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
  * `installed.status` — a generic UI status the server derives from
  * the underlying ConnectionState + credential probes:
  *
- *   - The hero block carries the page's primary CTA (Configure /
- *     Set up OAuth / Connect / Reconnect) when status ≠ ready, and
- *     fades to just the title block when ready.
+ *   - The header (`ConnectorHeader`) is the same for every connector:
+ *     icon, display name and status on one line, the description under
+ *     them, and a ⋯ menu holding Documentation, Disconnect, Uninstall and
+ *     the technical details. A status banner with the primary CTA appears
+ *     under it only when status ≠ ready.
  *
- *   - The action bar (top-right) groups secondary management
- *     affordances: Docs and Uninstall, keeping the page body focused
- *     on status + connection state + tool permissions with all
- *     "manage this connector" entry points in one consistent place.
- *
- *   - Tool permissions render inline as the page's primary content
- *     for any ready connector — that's what users come here for once
- *     setup is past.
- *
- *   - The connector's own settings component, when it declares one,
- *     renders last: host sections first, then the connector's.
+ *   - Then the sections, in one order, one rule between each: how the
+ *     connector is reached (operator OAuth, secrets), how it behaves (its
+ *     own settings section, when it declares one), and what the agent may
+ *     call (tool permissions, collapsed to a summary).
  *
  * Reachable from `/w/:slug/settings/connectors/:serverName`.
  */
@@ -84,7 +78,7 @@ export function ConnectorDetailPage() {
   if (orphanNotice) {
     return (
       <div className="max-w-3xl mx-auto space-y-3">
-        <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
+        <Link to={backPath} className="block w-fit text-xs text-muted-foreground hover:underline">
           ← All connectors
         </Link>
         <p
@@ -102,7 +96,7 @@ export function ConnectorDetailPage() {
   if (!installed) {
     return (
       <div className="max-w-3xl mx-auto space-y-3">
-        <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
+        <Link to={backPath} className="block w-fit text-xs text-muted-foreground hover:underline">
           ← All connectors
         </Link>
         <p className="text-sm">Connector "{serverName}" is not installed.</p>
@@ -110,43 +104,22 @@ export function ConnectorDetailPage() {
     );
   }
 
-  const cat = installed.catalog;
-
   return (
     <div className="max-w-3xl mx-auto space-y-8">
-      {/* Action bar — back link on the left, secondary management
-          affordances on the right (Docs / Configure / Uninstall). */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
-          ← All connectors
-        </Link>
-        <div className="flex items-center gap-3">
-          {cat?.docsUrl && (
-            <a
-              href={cat.docsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
-            >
-              Docs ↗
-            </a>
-          )}
-          {canManage && (
-            <button
-              type="button"
-              onClick={() => setConfirmingUninstall(true)}
-              className="text-xs text-destructive hover:underline"
-            >
-              Uninstall
-            </button>
-          )}
-        </div>
-      </div>
+      {/* A block, not inline: the column's spacing is a margin on each child, which
+          an inline element ignores. */}
+      <Link to={backPath} className="block w-fit text-xs text-muted-foreground hover:underline">
+        ← All connectors
+      </Link>
 
-      {/* Hero — title block plus a status row that absorbs the
-          primary CTA. Quiet when ready; anchored when there's
-          something to do. */}
-      <ConnectorStatusHero installed={installed} canManage={canManage} onChanged={refresh} />
+      {/* Identity, status and the connector's menu (docs, disconnect, uninstall,
+          details), then a status banner only when something needs doing. */}
+      <ConnectorHeader
+        installed={installed}
+        canManage={canManage}
+        onChanged={refresh}
+        onUninstall={() => setConfirmingUninstall(true)}
+      />
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
@@ -155,7 +128,6 @@ export function ConnectorDetailPage() {
           how it behaves (its own settings), to what the agent may call — the tool list is
           the longest and least often changed, so it comes last and starts collapsed. */}
       <div className="divide-y divide-border/60 [&>*]:py-6 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0">
-        <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
         <WorkspaceSecretsSection installed={installed} canManage={canManage} />
         <ConnectorSettingsSection serverName={installed.serverName} canManage={canManage} />

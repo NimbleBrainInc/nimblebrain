@@ -39,7 +39,7 @@ function entry(id: string, ui?: ConnectorUiMeta): ConnectorCatalogEntry {
 
 function installed(serverName: string, ui: ConnectorUiMeta | null) {
   const connector: ConnectorRef = { url: "https://example.test/mcp", serverName, ui };
-  const meta: LocalConnectorMeta = { version: "remote (3 tools)", ui };
+  const meta: LocalConnectorMeta = { version: "remote", ui };
   return { wsId: "ws_a", serverName, connector, meta, dataDir: "/d" };
 }
 

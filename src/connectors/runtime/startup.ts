@@ -413,7 +413,9 @@ async function finalizeUrlSourceStart(
   log.info(`[connectors] ✓ ${sourceName} ready (${tools.length} tools, remote)`);
   return {
     meta: {
-      version: `remote (${tools.length} tools)`,
+      // "remote" is the sentinel for "a remote connector declares no version"; the
+      // tool count and the connection state are their own fields, never the version.
+      version: "remote",
       ui: ref.ui ?? null,
     },
     sourceName,
@@ -594,7 +596,7 @@ async function startUrlConnectorSource(
     startPromise.catch(() => {});
     return {
       meta: {
-        version: "remote (pending auth)",
+        version: "remote",
         ui: ref.ui ?? null,
       },
       sourceName,

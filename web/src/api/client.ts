@@ -678,6 +678,12 @@ export async function initiateComposioOAuth(
 export interface InstalledConnector {
   serverName: string;
   connectorName: string;
+  /** The name to show a person, resolved by the server (catalog name, the
+   *  connector's declared host name, else the server name). Never re-derive it. */
+  displayName: string;
+  /** Whether Disconnect means anything: the connection rests on a credential a
+   *  person authorized. False for a fleet connector or a static credential. */
+  disconnectable: boolean;
   /** Declared version — the catalog/manifest's stated version. */
   version: string;
   /**

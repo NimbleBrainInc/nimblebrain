@@ -35,6 +35,8 @@ function installed(): InstalledConnector {
   return {
     serverName: SERVER,
     connectorName: SERVER,
+    displayName: "Acme CRM",
+    disconnectable: false,
     version: "1.0.0",
     state: "running",
     status: "ready",

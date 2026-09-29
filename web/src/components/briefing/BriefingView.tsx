@@ -27,7 +27,7 @@ import type {
 } from "../../_generated/platform-schemas/home";
 import type { InstalledConnector } from "../../api/client";
 import { cn } from "../../lib/utils";
-import { statusLabel } from "../connectors/ConnectorStatusHero";
+import { statusLabel } from "../connectors/ConnectorHeader";
 
 interface BriefingViewProps {
   briefing: BriefingOutput | null;
@@ -150,7 +150,7 @@ function ConnectorRow({
     >
       <span>
         {statusLabel(connector.status)}
-        <AppName name={connector.catalog?.name ?? connector.serverName} />
+        <AppName name={connector.displayName} />
       </span>
     </Row>
   );

@@ -570,6 +570,18 @@ function handleListBoundSkills(ctx: ManageConnectorsContext, wsId: string | null
 type InstalledEntry = {
   serverName: string;
   connectorName: string;
+  /**
+   * The name to show a person, resolved once here so every surface shows the same
+   * one: the catalog entry's name, else the name the connector declares for its
+   * host UI, else the server name. Clients read this and never re-derive it.
+   */
+  displayName: string;
+  /**
+   * Whether Disconnect means anything for this connector: its connection rests on a
+   * credential a person authorized (see `ConnectorLifecycleManager.isDisconnectable`).
+   * False for a fleet connector's platform-minted token or a stored static credential.
+   */
+  disconnectable: boolean;
   version: string;
   /**
    * The version the running server reports in its MCP `initialize` handshake
@@ -861,6 +873,8 @@ async function buildInstalledEntry(
   const entry: InstalledEntry = {
     serverName: instance.serverName,
     connectorName: instance.connectorName,
+    displayName: cat?.name || instance.ui?.name || instance.serverName,
+    disconnectable: deps.ctx.runtime.getLifecycle().isDisconnectable(instance.ref),
     version: instance.version,
     ...(handshakeVersion ? { handshakeVersion } : {}),
     state: instance.state,
@@ -2408,6 +2422,12 @@ async function handleDisconnect(
   // the same gate cleanly covers both shapes.
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
+  if (!lifecycle.isDisconnectable(lifecycle.getInstance(serverName, wsId)?.ref)) {
+    return errResult(
+      `"${serverName}" has no sign-in to disconnect: its credential is configuration, not ` +
+        "an authorization a person made. Uninstall it to remove it.",
+    );
+  }
   if (!isWorkspaceAdmin(ws, identity)) {
     return {
       content: textContent("Workspace admin role required to disconnect shared connectors."),

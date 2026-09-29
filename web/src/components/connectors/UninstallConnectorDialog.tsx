@@ -86,7 +86,7 @@ export function UninstallConnectorDialog({
   onUninstalled: (notice?: { text: string; tone: "error" | "info" }) => void;
 }) {
   const cat = installed.catalog;
-  const displayName = cat?.name ?? installed.connectorName ?? installed.serverName;
+  const displayName = installed.displayName;
   // Every key the entry names, from BOTH declaration sites — `secretHeaders`
   // and, for the built-in `credential` provider, `providerAuth.config.key`.
   // The rotation section reads only the first, which is right for a form that

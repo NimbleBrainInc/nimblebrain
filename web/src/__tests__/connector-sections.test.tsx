@@ -10,11 +10,11 @@
 //      section, and a Granola DCR connector would render an empty
 //      operator section.
 //
-//   2. State→affordance mapping on OAuthConnectionSection mirrors the
-//      ConnectionState union exactly (running → Disconnect; reauth_required
-//      / crashed / dead → Reconnect; not_authenticated → Connect;
-//      pending_auth / starting → no button). A regression here would
-//      strand the user with no way to recover a broken connection.
+//   2. State→affordance mapping on ConnectorHeader mirrors the
+//      ConnectionState union exactly (running → Disconnect, in its menu;
+//      reauth_required / crashed / dead → Reconnect; not_authenticated →
+//      Connect; pending_auth / starting → no button). A regression here
+//      would strand the user with no way to recover a broken connection.
 //
 //   3. `canManage=false` hides the affordances the server admin-gates —
 //      Edit, Disconnect, Clear, Cancel — while member-actionable ones
@@ -84,7 +84,6 @@ const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 
-const { OAuthConnectionSection } = await import("../components/connectors/OAuthConnectionSection");
 const { OperatorOAuthSection } = await import("../components/connectors/OperatorOAuthSection");
 const { ComposioApiKeyModal } = await import("../components/connectors/ComposioApiKeyModal");
 
@@ -152,6 +151,8 @@ function uncataloguedConnector(over: Partial<InstalledConnector> = {}): Installe
   return {
     serverName: "ipinfo",
     connectorName: "https://ipinfo.example.com/mcp",
+    displayName: "ipinfo",
+    disconnectable: false,
     version: "1.0.0",
     state: "running",
     status: "ready",
@@ -166,6 +167,8 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
   return {
     serverName: "granola",
     connectorName: "granola",
+    displayName: "Granola",
+    disconnectable: true,
     version: "remote",
     type: "remote",
     state: "running",
@@ -193,6 +196,7 @@ function composioApiKeyConnector(over: Partial<InstalledConnector> = {}): Instal
     ...dcrConnector(),
     serverName: "posthog",
     connectorName: "posthog",
+    displayName: "PostHog",
     catalogId: "com.posthog/analytics",
     catalog: {
       id: "com.posthog/analytics",
@@ -211,6 +215,8 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
   return {
     serverName: "asana",
     connectorName: "asana",
+    displayName: "Asana",
+    disconnectable: true,
     version: "remote",
     type: "remote",
     state: "running",
@@ -243,87 +249,78 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
   };
 }
 
-// ── OAuthConnectionSection ──────────────────────────────────────────
+// ── ConnectorHeader: status badge and menu ──────────────────────────
 //
-// Refactored: this section is now ONLY the connection-details surface
-// for an established connection. The hero (ConnectorStatusHero) owns
-// every primary CTA (Connect / Reconnect / Configure / Set up). The
-// section renders only on the happy path: running + remote-OAuth.
-// Non-running states are handled by the hero with the right copy +
-// CTA, so duplicating them here would double-count the message.
+// The connection is stated by the badge beside the name, and Disconnect,
+// Uninstall and the technical details sit behind the ⋯ menu. The menu's popup
+// renders in a portal, so its contents are read from `document.body`.
 
-describe("OAuthConnectionSection", () => {
-  test("renders nothing for a connector with no url on its ref", async () => {
+describe("ConnectorHeader — badge and menu", () => {
+  test("names the connector by its resolved display name, never its server name", async () => {
     mounted = await mount(
-      <OAuthConnectionSection
-        installed={uncataloguedConnector()}
+      <ConnectorHeader
+        installed={dcrConnector()}
         canManage={true}
         onChanged={() => {}}
+        onUninstall={() => {}}
       />,
     );
-    expect(mounted.container.textContent).toBe("");
+    const title = mounted.container.getElementsByTagName("h1")[0]?.textContent;
+    expect(title).toBe("Granola");
   });
 
-  test("renders nothing for non-running states — hero owns those", async () => {
-    // The hero handles needs_auth (Connect), needs_auth+reauth_required
-    // (Reconnect), failed (Reconnect), and connecting (waiting state).
-    // Surfacing them here too would double-count.
-    for (const state of [
-      "not_authenticated",
-      "reauth_required",
-      "crashed",
-      "dead",
-      "pending_auth",
-      "starting",
-      "stopped",
-    ] as const) {
-      mounted?.unmount();
-      mounted = await mount(
-        <OAuthConnectionSection
-          installed={dcrConnector({ state })}
-          canManage={true}
-          onChanged={() => {}}
-        />,
-      );
-      expect(mounted.container.textContent).toBe("");
-    }
-  });
-
-  test("running + identity.email → 'Connected as ...' + Disconnect (admin)", async () => {
+  test("states the connection on the badge, with the account when one is known", async () => {
     mounted = await mount(
-      <OAuthConnectionSection
+      <ConnectorHeader
         installed={dcrConnector({ state: "running", identity: { email: "you@example.com" } })}
         canManage={true}
         onChanged={() => {}}
+        onUninstall={() => {}}
       />,
     );
-    expect(mounted.container.textContent).toContain("Connected as");
-    expect(mounted.container.textContent).toContain("you@example.com");
-    expect(findButton(mounted.container, "Disconnect")).not.toBeNull();
-  });
-
-  test("running without identity → 'Connected' (no name) + Disconnect", async () => {
-    mounted = await mount(
-      <OAuthConnectionSection
-        installed={dcrConnector({ state: "running" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("Connected");
-    expect(findButton(mounted.container, "Disconnect")).not.toBeNull();
-  });
-
-  test("running + canManage=false hides Disconnect but keeps the connection label", async () => {
-    mounted = await mount(
-      <OAuthConnectionSection
-        installed={dcrConnector({ state: "running", identity: { email: "you@example.com" } })}
-        canManage={false}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("Connected as");
+    expect(mounted.container.textContent).toContain("Connected as you@example.com");
+    // No Disconnect on the page itself; it is in the menu.
     expect(findButton(mounted.container, "Disconnect")).toBeNull();
+  });
+
+  test("offers an admin Disconnect, Uninstall and the details, in that order", () => {
+    const kinds = connectorMenuItems(
+      dcrConnector({ state: "running", handshakeVersion: "4.0.10" }),
+      true,
+    ).map((i) => i.kind);
+    expect(kinds).toEqual(["disconnect", "uninstall", "details"]);
+  });
+
+  test("offers a member only the documentation and the details", () => {
+    const withDocs = dcrConnector({ state: "running" });
+    withDocs.catalog = { ...withDocs.catalog!, docsUrl: "https://docs.granola.test" };
+    expect(connectorMenuItems(withDocs, false)).toEqual([
+      { kind: "docs", href: "https://docs.granola.test" },
+      { kind: "details", text: "3 tools" },
+    ]);
+  });
+
+  test("offers Disconnect only for an established connection a person signed in to", () => {
+    const kinds = (c: InstalledConnector) => connectorMenuItems(c, true).map((i) => i.kind);
+    expect(kinds(uncataloguedConnector())).not.toContain("disconnect");
+    expect(kinds(dcrConnector({ state: "reauth_required" }))).not.toContain("disconnect");
+    // A fleet connector: running, remote, and its token is minted by the platform, so
+    // there is no sign-in to revoke.
+    expect(kinds(dcrConnector({ state: "running", disconnectable: false }))).not.toContain(
+      "disconnect",
+    );
+  });
+});
+
+describe("connectorDetails", () => {
+  test("joins version, tool count and interface, and drops what it lacks", () => {
+    expect(connectorDetails(dcrConnector({ handshakeVersion: "4.0.10", interactive: true }))).toBe(
+      "v4.0.10 · 3 tools · Interactive",
+    );
+    expect(connectorDetails(dcrConnector({ toolCount: 1 }))).toBe("1 tool");
+    expect(connectorDetails(uncataloguedConnector({ handshakeVersion: "2.0.0" }))).toBe(
+      "v2.0.0 · catalog v1.0.0 · 5 tools",
+    );
   });
 });
 
@@ -397,19 +394,22 @@ describe("OperatorOAuthSection", () => {
 // directly. The modal owns its own Clear-configuration affordance,
 // so the inline section had no remaining job.
 
-// ── ConnectorStatusHero ─────────────────────────────────────────────
+// ── ConnectorHeader: banner and primary action ─────────────────────────────────────────────
 //
 // New component. Owns the page's primary CTA — the dispatcher between
 // status and the right next-action affordance. Status pill colors,
 // copy, and admin gating are pinned here so future regressions can't
 // strand a user with no recovery path.
 
-const { ConnectorStatusHero } = await import("../components/connectors/ConnectorStatusHero");
+const { ConnectorHeader, connectorDetails, connectorMenuItems } = await import(
+  "../components/connectors/ConnectorHeader"
+);
 
-describe("ConnectorStatusHero", () => {
+describe("ConnectorHeader — banner and primary action", () => {
   test("status=ready → no status block + no CTA (page reads quiet)", async () => {
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({ state: "running", status: "ready" })}
         canManage={true}
         onChanged={() => {}}
@@ -426,7 +426,8 @@ describe("ConnectorStatusHero", () => {
 
   test("status=needs_setup + missingOperatorSetup → 'Set up OAuth' (admin)", async () => {
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={staticAuthConnector({
           status: "needs_setup",
           missingOperatorSetup: true,
@@ -443,7 +444,8 @@ describe("ConnectorStatusHero", () => {
 
   test("status=needs_auth + state=not_authenticated → 'Connect'", async () => {
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({ status: "needs_auth", state: "not_authenticated" })}
         canManage={true}
         onChanged={() => {}}
@@ -454,80 +456,24 @@ describe("ConnectorStatusHero", () => {
     expect(findButton(mounted.container, "Reconnect")).toBeNull();
   });
 
-  // ── version line (identity row) ──────────────────────────────────
+  // ── version, in the menu's details ──────────────────────────────
   // A fleet connector reports a v-prefixed handshake version (image tags carry the
-  // "v") and declares no catalog version ("unknown"): render exactly one "v" and no
-  // bogus drift note.
-  test("version: v-prefixed handshake + declared 'unknown' → single 'v', no catalog note", async () => {
-    mounted = await mount(
-      <ConnectorStatusHero
-        installed={dcrConnector({ handshakeVersion: "v0.1.0", version: "unknown" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("v0.1.0");
-    expect(mounted.container.textContent).not.toContain("vv0.1.0");
-    expect(mounted.container.textContent).not.toContain("vunknown");
-    expect(mounted.container.textContent).not.toContain("catalog v");
-  });
-
-  // Edge-channel fleet connectors report the build SHA as their version; a SHA is
-  // not semver, so show it as-is (no bogus "v" prefix) and no catalog note.
-  test("version: build-SHA handshake + 'remote' declared → SHA as-is, no 'v', no catalog note", async () => {
-    mounted = await mount(
-      <ConnectorStatusHero
-        installed={dcrConnector({ handshakeVersion: "cd0ab7f", version: "remote" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("cd0ab7f");
-    expect(mounted.container.textContent).not.toContain("vcd0ab7f");
-    expect(mounted.container.textContent).not.toContain("catalog v");
-  });
-
-  test("version: a plain semver renders one 'v'", async () => {
-    mounted = await mount(
-      <ConnectorStatusHero
-        installed={uncataloguedConnector({ version: "1.0.0" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("v1.0.0");
-    expect(mounted.container.textContent).not.toContain("vv1.0.0");
-    expect(mounted.container.textContent).not.toContain("catalog v");
-  });
-
-  test("version: real drift (running != declared) shows a catalog note, each one 'v'", async () => {
-    mounted = await mount(
-      <ConnectorStatusHero
-        installed={uncataloguedConnector({ handshakeVersion: "v0.2.0", version: "0.1.0" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("v0.2.0");
-    expect(mounted.container.textContent).toContain("catalog v0.1.0");
-    expect(mounted.container.textContent).not.toContain("vv");
-  });
-
-  test("version: no false drift when running and declared differ only by the 'v' prefix", async () => {
-    mounted = await mount(
-      <ConnectorStatusHero
-        installed={uncataloguedConnector({ handshakeVersion: "v0.1.0", version: "0.1.0" })}
-        canManage={true}
-        onChanged={() => {}}
-      />,
-    );
-    expect(mounted.container.textContent).toContain("v0.1.0");
-    expect(mounted.container.textContent).not.toContain("catalog v");
+  // "v") and may declare none ("unknown"); an edge build reports its SHA. Exactly
+  // one "v" on a version number, none on a SHA, and a catalog note only on real drift.
+  test("version: one 'v' on a version number, none on a SHA, a note only on real drift", () => {
+    const d = (over: Partial<InstalledConnector>) =>
+      connectorDetails(uncataloguedConnector({ toolCount: 0, ...over }));
+    expect(d({ handshakeVersion: "v0.1.0", version: "unknown" })).toBe("v0.1.0");
+    expect(d({ handshakeVersion: "cd0ab7f", version: "remote" })).toBe("cd0ab7f");
+    expect(d({ version: "1.0.0" })).toBe("v1.0.0");
+    expect(d({ handshakeVersion: "v0.2.0", version: "0.1.0" })).toBe("v0.2.0 · catalog v0.1.0");
+    expect(d({ handshakeVersion: "v0.1.0", version: "0.1.0" })).toBe("v0.1.0");
   });
 
   test("status=needs_auth + state=reauth_required → 'Reconnect'", async () => {
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({ status: "needs_auth", state: "reauth_required" })}
         canManage={true}
         onChanged={() => {}}
@@ -541,7 +487,8 @@ describe("ConnectorStatusHero", () => {
     for (const status of ["connecting", "starting"] as const) {
       mounted?.unmount();
       mounted = await mount(
-        <ConnectorStatusHero
+        <ConnectorHeader
+          onUninstall={() => {}}
           installed={dcrConnector({ status, state: status })}
           canManage={true}
           onChanged={() => {}}
@@ -557,7 +504,8 @@ describe("ConnectorStatusHero", () => {
   test("Cancel on a wedged connect calls disconnectConnector + onChanged", async () => {
     const onChanged = mock(() => {});
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({ status: "connecting", state: "pending_auth" })}
         canManage={true}
         onChanged={onChanged}
@@ -575,7 +523,8 @@ describe("ConnectorStatusHero", () => {
 
   test("status=failed on remote connector → 'Reconnect' + statusReason", async () => {
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({
           status: "failed",
           state: "crashed",
@@ -596,7 +545,8 @@ describe("ConnectorStatusHero", () => {
     initiateMcpOAuth.mockResolvedValueOnce({ authorizationUrl: null });
     locationAssign.mockClear();
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({ status: "failed", state: "crashed" })}
         canManage={true}
         onChanged={onChanged}
@@ -616,7 +566,8 @@ describe("ConnectorStatusHero", () => {
   test("admin-gated CTAs hidden when canManage=false; member-actionable kept", async () => {
     // Set up OAuth (admin) → hidden for non-admins.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={staticAuthConnector({
           status: "needs_setup",
           missingOperatorSetup: true,
@@ -633,7 +584,8 @@ describe("ConnectorStatusHero", () => {
     // Connect (member-actionable) → still visible for non-admins:
     // a workspace member can authenticate their own session.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({ status: "needs_auth", state: "not_authenticated" })}
         canManage={false}
         onChanged={() => {}}
@@ -647,7 +599,8 @@ describe("ConnectorStatusHero", () => {
     // non-admin outright. Offering it left a member clicking into a red
     // "Workspace admin role required" with the connector still wedged.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({ status: "connecting", state: "pending_auth" })}
         canManage={false}
         onChanged={() => {}}
@@ -662,7 +615,8 @@ describe("ConnectorStatusHero", () => {
 
     // ...and present for someone who can actually complete it.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={dcrConnector({ status: "connecting", state: "pending_auth" })}
         canManage={true}
         onChanged={() => {}}
@@ -677,7 +631,8 @@ describe("ConnectorStatusHero", () => {
     // is pinned in connector-browse-card-action.test.tsx. Pinning one side
     // doesn't pin the pair — this is the other side.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={staticAuthConnector({
           status: "needs_setup",
           missingOperatorSetup: true,
@@ -699,7 +654,8 @@ describe("ConnectorStatusHero", () => {
     // exists, which is exactly reauth_required/failed. Offering Reconnect
     // there walks a member through the key form to a refusal on submit.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={composioApiKeyConnector({ status: "needs_auth", state: "reauth_required" })}
         canManage={false}
         onChanged={() => {}}
@@ -709,7 +665,8 @@ describe("ConnectorStatusHero", () => {
     mounted.unmount();
 
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={composioApiKeyConnector({ status: "needs_auth", state: "reauth_required" })}
         canManage={true}
         onChanged={() => {}}
@@ -726,7 +683,8 @@ describe("ConnectorStatusHero", () => {
     // divergence #741 exists to remove. This pins the API_KEY discriminator:
     // without it, every composio connector would be gated.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={composioApiKeyConnector({
           status: "needs_auth",
           state: "reauth_required",
@@ -752,7 +710,8 @@ describe("ConnectorStatusHero", () => {
     // that died still offers Reconnect, and for an API-key connector that is
     // the same admin-gated rotation.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={composioApiKeyConnector({ status: "failed", state: "crashed" })}
         canManage={false}
         onChanged={() => {}}
@@ -762,7 +721,8 @@ describe("ConnectorStatusHero", () => {
     mounted.unmount();
 
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={composioApiKeyConnector({ status: "failed", state: "crashed" })}
         canManage={true}
         onChanged={() => {}}
@@ -775,7 +735,8 @@ describe("ConnectorStatusHero", () => {
     // The server only refuses once `prior.connectedAccountId` exists, so the
     // gate must not swallow the first-time case.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={composioApiKeyConnector({ status: "needs_auth", state: "not_authenticated" })}
         canManage={false}
         onChanged={() => {}}
@@ -789,7 +750,8 @@ describe("ConnectorStatusHero", () => {
     // predicate can't fire, so this degrades to the same ungated behaviour a
     // native flow has — documented, and it resolves when that gap does.
     mounted = await mount(
-      <ConnectorStatusHero
+      <ConnectorHeader
+        onUninstall={() => {}}
         installed={composioApiKeyConnector({
           status: "needs_auth",
           state: "reauth_required",
