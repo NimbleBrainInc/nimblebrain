@@ -155,6 +155,6 @@ describe("ToolPermissionsTable — a personal connector", () => {
   test("says why the section is empty when no tools could be listed", async () => {
     listedTools = [];
     mounted = await mount(true, "identity");
-    expect(mounted.container.textContent).toContain("Couldn't list this connector's tools");
+    expect(mounted.container.textContent).toContain("No tools to show right now");
   });
 });

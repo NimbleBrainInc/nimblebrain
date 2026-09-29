@@ -42,7 +42,7 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { LifecycleContractError } from "../lifecycle/declaration.ts";
 import { notifyReady } from "../lifecycle/notify.ts";
 import { log } from "../observability/log.ts";
-import type { PermissionOwner } from "../permissions/permission-store.ts";
+import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
@@ -2712,24 +2712,40 @@ async function handleListToolsWithPermissions(
   // alongside an empty tools list so the UI can render the
   // permissions surface as "no tools currently available" without
   // a hard error.
-  const notRunning = async (): Promise<ToolResult> => {
-    const permissions = await ctx.runtime.getPermissionStore().getConnector(owner, serverName);
-    return {
-      content: textContent("Tools: 0 (connector not running)."),
-      structuredContent: { scope: owner.scope, serverName, tools: [], permissions },
-      isError: false,
-    };
+  const notRunning = (permissions: Record<string, ToolPolicy>): ToolResult => ({
+    content: textContent("Tools: 0 (connector not running)."),
+    structuredContent: { scope: owner.scope, serverName, tools: [], permissions },
+    isError: false,
+  });
+  if (!source) {
+    return notRunning(await ctx.runtime.getPermissionStore().getConnector(owner, serverName));
+  }
+
+  // A personal source can be registered yet unstarted (a start that stopped to
+  // wait for re-authorization), so its tools/list throws; that is the same
+  // "not running" state, not a failed request. Only the tools read is excused:
+  // a failed policy read is still an error.
+  const listTools = async (running: ToolSource): Promise<Tool[] | null> => {
+    try {
+      return await readConnectorTools(running);
+    } catch (err) {
+      if (owner.scope !== "user") throw err;
+      log.warn(
+        `[connectors] personal connector "${serverName}" could not list tools: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   };
-  if (!source) return notRunning();
 
   try {
     // Run the two reads in parallel — they don't depend on each
     // other and the permission store hits disk while tools/list may
     // round-trip to the connector subprocess.
     const [tools, permissions] = await Promise.all([
-      readConnectorTools(source),
+      listTools(source),
       ctx.runtime.getPermissionStore().getConnector(owner, serverName),
     ]);
+    if (tools === null) return notRunning(permissions);
     const prefix = `${serverName}__`;
     return {
       content: textContent(`Tools: ${tools.length}, ${Object.keys(permissions).length} overrides.`),
@@ -2746,15 +2762,6 @@ async function handleListToolsWithPermissions(
       isError: false,
     };
   } catch (err) {
-    // A personal source can be registered yet unstarted (a start that stopped
-    // to wait for re-authorization), so its tools/list throws; that is the
-    // same "not running" state, not a failed request.
-    if (owner.scope === "user") {
-      log.warn(
-        `[connectors] personal connector "${serverName}" could not list tools: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return notRunning();
-    }
     return errResult(err instanceof Error ? err.message : String(err));
   }
 }

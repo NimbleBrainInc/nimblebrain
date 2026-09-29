@@ -47,9 +47,16 @@ const disconnectPersonalConnector = mock(async () => ({
   serverName: "granola",
   revokedWorkspaces: 0,
 }));
+const listConnectorToolsWithPermissions = mock(async (serverName: string) => ({
+  scope: "user" as const,
+  serverName,
+  tools: [{ name: "list_notes", description: "List notes", inputSchema: { type: "object" } }],
+  permissions: {},
+}));
 
 mock.module("../api/client", () => ({
   ...realClient,
+  listConnectorToolsWithPermissions,
   listPersonalConnectors,
   listPersonalCatalog,
   installPersonalConnector,
@@ -170,6 +177,7 @@ beforeEach(() => {
   grantConnector.mockClear();
   revokeConnector.mockClear();
   disconnectPersonalConnector.mockClear();
+  listConnectorToolsWithPermissions.mockClear();
   windowConfirm.mockClear();
   confirmReturn = true;
   nextConnectors = [];
@@ -245,6 +253,58 @@ describe("ProfileConnectorsTab", () => {
     expect(text).toContain("Connected as user@example.com");
     expect(text).not.toContain("A User");
     expect(text).toContain("Connected as other@example.com");
+  });
+
+  test("offers Tool permissions only on a connected connector", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+      {
+        serverName: "gmail",
+        displayName: "Gmail",
+        description: null,
+        state: "not_authenticated",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    const links = [...mounted.container.getElementsByTagName("button")].filter(
+      (b) => b.textContent === "Tool permissions",
+    );
+    expect(links).toHaveLength(1);
+  });
+
+  test("lists a personal connector's tools only once its Tool permissions opens", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    // Listing tools starts a cold connector, so page load must not do it.
+    expect(listConnectorToolsWithPermissions).not.toHaveBeenCalled();
+
+    const link = [...mounted.container.getElementsByTagName("button")].find(
+      (b) => b.textContent === "Tool permissions",
+    );
+    await click(link);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(listConnectorToolsWithPermissions).toHaveBeenCalledWith("granola", "identity");
+    expect(mounted.container.textContent ?? "").toContain("list_notes");
   });
 
   test("pluralizes the grant count for 2+ workspaces", async () => {

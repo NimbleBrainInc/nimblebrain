@@ -157,7 +157,7 @@ export function ToolPermissionsTable({
       <section className="space-y-3">
         {header}
         <p className="text-sm text-muted-foreground">
-          Couldn't list this connector's tools right now. If it persists, disconnect and connect it
+          No tools to show right now. If this connector should have tools, disconnect and connect it
           again.
         </p>
       </section>
