@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { serverDetailToCatalogEntry } from "../../src/connectors/catalog/projection.ts";
 import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
+import type { AdminToolsDeclaration } from "../../src/connectors/catalog/types.ts";
 import type { HostManifestMeta } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { OrgRole } from "../../src/identity/types.ts";
@@ -34,7 +35,9 @@ function hostMeta(adminTools: unknown): HostManifestMeta {
   return { host_version: "1.5", admin_tools: adminTools } as HostManifestMeta;
 }
 
-const DECLARED = ["configure"];
+const DECLARED: AdminToolsDeclaration = { kind: "names", names: ["configure"] };
+const ALL: AdminToolsDeclaration = { kind: "all", reason: "admin_tools is not a list" };
+const names = (...n: string[]): AdminToolsDeclaration => ({ kind: "names", names: n });
 const WS = workspace([
   { userId: "u_admin", role: "admin" },
   { userId: "u_member", role: "member" },
@@ -66,38 +69,44 @@ describe("isAdminToolAllowed", () => {
     expect(isAdminToolAllowed(null, WS, DECLARED, "search")).toBe(true);
     expect(isAdminToolAllowed(identity("u_member"), WS, undefined, "configure")).toBe(true);
   });
+
+  test("a malformed declaration gates every tool, and an admin still passes", () => {
+    expect(isAdminToolAllowed(identity("u_member"), WS, ALL, "search")).toBe(false);
+    expect(isAdminToolAllowed(null, WS, ALL, "search")).toBe(false);
+    expect(isAdminToolAllowed(identity("u_admin"), WS, ALL, "search")).toBe(true);
+  });
 });
 
 describe("parseAdminToolsDeclaration", () => {
+  const parse = (raw: unknown) => parseAdminToolsDeclaration(hostMeta(raw), "ai.acme/crm");
+
   test("reads bare names, deduped", () => {
-    expect(parseAdminToolsDeclaration(hostMeta(["configure", "rotate", "configure"]))).toEqual([
-      "configure",
-      "rotate",
-    ]);
+    expect(parse(["configure", "rotate", "configure"])).toEqual(names("configure", "rotate"));
   });
 
   test("declares nothing when absent or empty", () => {
-    expect(parseAdminToolsDeclaration(undefined)).toBeUndefined();
-    expect(parseAdminToolsDeclaration({ host_version: "1.5" })).toBeUndefined();
-    expect(parseAdminToolsDeclaration(hostMeta([]))).toBeUndefined();
+    expect(parseAdminToolsDeclaration(undefined, "ai.acme/crm")).toBeUndefined();
+    expect(parseAdminToolsDeclaration({ host_version: "1.5" }, "ai.acme/crm")).toBeUndefined();
+    expect(parse([])).toBeUndefined();
   });
 
-  test("ignores a block that is not an array", () => {
-    expect(parseAdminToolsDeclaration(hostMeta("configure"))).toBeUndefined();
-    expect(parseAdminToolsDeclaration(hostMeta({ configure: true }))).toBeUndefined();
+  // The field only narrows, so dropping any part of it would widen access.
+  test("gates every tool when the declaration is not a list, null included", () => {
+    for (const raw of ["configure", { configure: true }, null, 7]) {
+      expect(parse(raw)?.kind).toBe("all");
+    }
   });
 
-  test("drops malformed entries and keeps the rest", () => {
-    expect(
-      parseAdminToolsDeclaration(
-        hostMeta(["configure", "", 7, null, "has space", "x".repeat(129), "rotate"]),
-      ),
-    ).toEqual(["configure", "rotate"]);
+  test("gates every tool when any entry is not a bare tool name", () => {
+    for (const bad of ["", 7, null, "configure ", "has space", "x".repeat(129)]) {
+      expect(parse(["configure", bad, "rotate"])?.kind).toBe("all");
+    }
   });
 
-  test("caps the count", () => {
-    const names = Array.from({ length: 80 }, (_, i) => `tool_${i}`);
-    expect(parseAdminToolsDeclaration(hostMeta(names))).toHaveLength(64);
+  test("gates every tool past the cap rather than ignoring the rest", () => {
+    const at = Array.from({ length: 64 }, (_, i) => `tool_${i}`);
+    expect(parse(at)?.kind).toBe("names");
+    expect(parse([...at, "tool_64"])?.kind).toBe("all");
   });
 });
 
@@ -116,7 +125,14 @@ describe("the catalog projection", () => {
     const entry = serverDetailToCatalogEntry(
       detail({ host_version: "1.5", admin_tools: ["configure"] }),
     );
-    expect(entry?.adminTools).toEqual(["configure"]);
+    expect(entry?.adminTools).toEqual(names("configure"));
+  });
+
+  test("keeps the entry, gating every tool, when admin_tools is malformed", () => {
+    // Enforcement reads the live catalog, so dropping the entry would un-gate
+    // an installed connector.
+    const entry = serverDetailToCatalogEntry(detail({ host_version: "1.5", admin_tools: "configure" }));
+    expect(entry?.adminTools?.kind).toBe("all");
   });
 
   test("omits the field when nothing is declared", () => {
@@ -169,7 +185,7 @@ describe("adminToolsContractWarnings", () => {
   test("warns about a name the kernel calls itself", () => {
     const warnings = adminToolsContractWarnings({
       connector: "acme",
-      adminTools: ["workspace_ready", "set_url"],
+      adminTools: names("workspace_ready", "set_url"),
       lifecycle: { on_ready: "workspace_ready" },
       hooks: [{ vendor: "acme", route: "/in", register_tool: "set_url" }],
     });
@@ -179,7 +195,7 @@ describe("adminToolsContractWarnings", () => {
   });
 
   test("warns about an unadvertised name only when the tool list is known", () => {
-    const opts = { connector: "acme", adminTools: ["configure", "ghost"] };
+    const opts = { connector: "acme", adminTools: names("configure", "ghost") };
     expect(adminToolsContractWarnings(opts)).toEqual([]);
     const warnings = adminToolsContractWarnings({ ...opts, tools: [tool("configure")] });
     expect(warnings).toHaveLength(1);
@@ -191,10 +207,22 @@ describe("adminToolsContractWarnings", () => {
     expect(
       adminToolsContractWarnings({
         connector: "acme",
-        adminTools: ["configure"],
+        adminTools: names("configure"),
         lifecycle: { on_ready: "workspace_ready" },
         tools: [tool("configure"), tool("workspace_ready")],
       }),
     ).toEqual([]);
+  });
+
+  test("a malformed declaration is one warning, naming the connector and the reason", () => {
+    const warnings = adminToolsContractWarnings({
+      connector: "acme",
+      adminTools: ALL,
+      tools: [tool("configure")],
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"acme"');
+    expect(warnings[0]).toContain("admin_tools is not a list");
+    expect(warnings[0]).toContain("every tool");
   });
 });

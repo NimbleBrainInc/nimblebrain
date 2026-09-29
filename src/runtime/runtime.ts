@@ -18,7 +18,7 @@ import {
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
-import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
+import type { AdminToolsDeclaration, ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
 import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
@@ -4031,10 +4031,10 @@ export class Runtime {
 
   /** Declared `admin_tools` by installed source name, from the trusted catalog,
    *  by the same slug rule {@link trustedCatalogEntryFor} uses. */
-  private async adminToolsByServer(): Promise<Map<string, readonly string[]>> {
+  private async adminToolsByServer(): Promise<Map<string, AdminToolsDeclaration>> {
     const entries = await this.getConnectorCatalog().catalogEntries();
     const seen = new Set<string>();
-    const out = new Map<string, readonly string[]>();
+    const out = new Map<string, AdminToolsDeclaration>();
     for (const e of entries) {
       // First entry per slug wins, declaring or not, as in `trustedCatalogEntryFor`.
       const slug = slugifyServerName(e.id);
