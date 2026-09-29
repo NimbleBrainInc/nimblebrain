@@ -28,13 +28,18 @@ import {
   type ManagedConnectorRegistry,
 } from "../connectors/providers/registry.ts";
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
+import { catalogUiByServerName, withCatalogUi } from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
-import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
+import type {
+  ConnectorInstance,
+  ConnectorUiMeta,
+  PlacementDeclaration,
+} from "../connectors/runtime/types.ts";
 import {
   type ConnectorTeardownOutcome,
   uninstallWorkspaceConnector,
@@ -946,8 +951,14 @@ export class Runtime {
     // the lifecycle has to see those workspaces too.
     lifecycle.bindWorkspaceRegistries(() => rt.getWorkspaceRegistries());
 
-    // Seed lifecycle instances for workspace connectors.
-    await seedWorkspaceConnectorInstances(lifecycle, placementRegistry, workspaceConnectorEntries);
+    // Seed lifecycle instances for workspace connectors, with each one's host UI
+    // taken from the catalog rather than the copy its install stored, so a
+    // placement the catalog gained since install reaches it (`catalog-ui.ts`).
+    await seedWorkspaceConnectorInstances(
+      lifecycle,
+      placementRegistry,
+      withCatalogUi(workspaceConnectorEntries, await bootCatalogUi(rt)),
+    );
 
     // Reconcile connector-skill overlays to the pinned version. Overlays bind
     // only at connector install, and the pin is deploy-time config — so boot
@@ -5387,6 +5398,25 @@ function registerPlatformPlacements(
     if (placements.length > 0) {
       placementRegistry.register(src.name, placements);
     }
+  }
+}
+
+/**
+ * The catalog's host UI by server name, for the boot seed. A catalog that cannot
+ * be read yields an empty map, which leaves every connector with its stored `ui`:
+ * a bad catalog file must not take every app out of the shell.
+ */
+async function bootCatalogUi(rt: Runtime): Promise<Map<string, ConnectorUiMeta | null>> {
+  try {
+    return catalogUiByServerName(await rt.getConnectorCatalog().catalogEntries());
+  } catch (err) {
+    log.warn(
+      "[connectors] catalog unreadable at boot; installed connectors keep their stored host UI",
+      {
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+    return new Map();
   }
 }
 

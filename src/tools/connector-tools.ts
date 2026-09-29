@@ -29,6 +29,7 @@ import type {
   BrokeredRef,
   ConnectorInstance,
   ConnectorRef,
+  ConnectorUiMeta,
   RemoteTransportConfig,
 } from "../connectors/runtime/types.ts";
 import { uninstallWorkspaceConnector } from "../connectors/runtime/uninstall.ts";
@@ -1642,7 +1643,15 @@ async function handleInstallRemoteOAuth(
 
   // Dedup (which self-heals an orphaned workspace.json entry) short-circuits
   // before any expensive wiring so a re-click doesn't burn a brokered session.
-  const dupResult = await handleDuplicateInstall(ctx, wsId, ws, entry, action, serverName);
+  const dupResult = await handleDuplicateInstall(
+    ctx,
+    wsId,
+    ws,
+    entry,
+    action,
+    serverName,
+    trustedUi,
+  );
   if (dupResult) return dupResult;
 
   // Fresh-install: resolve the wiring now that we know we're going to commit.
@@ -2188,8 +2197,9 @@ function buildRemoteConnectorRef(
     // and teardown.
     ...(brokeredWiring ? { brokered: brokeredWiring.brokered } : {}),
     // Host UI placement from the operator-trusted catalog (see `trustedUi`).
-    // Persisted on the ref so the placement survives restarts; the lifecycle
-    // registers + re-validates it via `startConnectorSource` → `instance.ui`.
+    // Persisted on the ref for a connector no catalog entry names at boot; one
+    // the catalog does name takes its `ui` from there at every boot instead
+    // (`catalog-ui.ts`). The lifecycle re-validates it via `instance.ui`.
     ...(trustedUi ? { ui: trustedUi } : {}),
   };
 }
@@ -2212,6 +2222,7 @@ async function handleDuplicateInstall(
   entry: CatalogListing,
   action: RemoteOAuthInstall,
   serverName: string,
+  trustedUi: ConnectorUiMeta | undefined,
 ): Promise<ToolResult | null> {
   const lifecycle = ctx.runtime.getLifecycle();
   const dup = ws.connectors.find((b) => {
@@ -2224,9 +2235,16 @@ async function handleDuplicateInstall(
   // Self-heal: workspace.json says yes but lifecycle lost the instance (prior
   // uninstall that didn't clean workspace.json). Re-seed instead of reporting
   // alreadyInstalled — the latter would skip seedInstance and fail the next
-  // OAuth initiate.
+  // OAuth initiate. The host UI comes from the catalog, as it does at boot
+  // (`catalog-ui.ts`), not from the copy the original install stored.
   if (!lifecycle.getInstance(dupServerName, wsId)) {
-    await lifecycle.seedInstance(dupServerName, action.url, dup, undefined, wsId);
+    await lifecycle.seedInstance(
+      dupServerName,
+      action.url,
+      { ...dup, ui: trustedUi ?? null },
+      undefined,
+      wsId,
+    );
     lifecycle.notifyInstalled(dupServerName, wsId);
     return {
       content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
