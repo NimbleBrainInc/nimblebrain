@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { log } from "../observability/log.ts";
 import { estimateCost } from "../usage/cost.ts";
 import type { TokenUsage } from "../usage/types.ts";
+import { previewTextOf } from "./preview.ts";
 import type {
   ConversationAccessContext,
   ConversationListResult,
@@ -195,24 +196,6 @@ function isEventFormat(meta: Record<string, unknown>, secondLine?: string): bool
 }
 
 /**
- * Extract preview text from a user.message event's content array.
- */
-function extractEventPreview(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  for (const part of content) {
-    if (
-      part &&
-      typeof part === "object" &&
-      "type" in part &&
-      (part as { type: string }).type === "text"
-    ) {
-      return (part as { text?: string }).text ?? "";
-    }
-  }
-  return "";
-}
-
-/**
  * Heuristic check: did parseFileHeader bail because the file is
  * structurally OK but lacks `ownerId`? Used by `populate` to count
  * ownerless skips so operators see a "you have N pre-migration files"
@@ -297,7 +280,7 @@ function applyEventLine(metrics: DerivedMetrics, line: string): void {
   if (event.type === "user.message") {
     metrics.messageCount++;
     if (!metrics.preview) {
-      metrics.preview = extractEventPreview(event.content);
+      metrics.preview = previewTextOf(event.content);
     }
   } else if (event.type === "run.done") {
     metrics.messageCount++;
@@ -320,7 +303,7 @@ function applyMessageLine(metrics: DerivedMetrics, line: string): void {
   const msg = JSON.parse(line) as StoredMessage;
   metrics.messageCount++;
   if (!metrics.preview && msg.role === "user") {
-    metrics.preview = typeof msg.content === "string" ? msg.content : "";
+    metrics.preview = previewTextOf(msg.content);
   }
   if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
     metrics.inputTokens += msg.metadata.usage.inputTokens;
