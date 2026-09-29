@@ -2027,8 +2027,24 @@ export class AgentEngine {
       };
     }
 
-    // Extract UI resourceUri from the tool's `_meta` if present
+    // A tool without "model" in its `ui.visibility` is withheld from every list
+    // the model sees, and that alone does not stop a model that names it: an
+    // injected instruction can carry the name. The engine is the host on this
+    // door, so the refusal is enforced here, at the call.
     const meta = ctx.toolMeta.get(gatedCall.name);
+    if (!isModelVisible({ meta })) {
+      return {
+        toolCall,
+        gatedCall,
+        result: {
+          content: textContent(`${gatedCall.name} is not available to the agent.`),
+          isError: true,
+        } as ToolResult,
+        ms: 0,
+      };
+    }
+
+    // Extract UI resourceUri from the tool's `_meta` if present
     const uiMeta = meta?.ui as Record<string, unknown> | undefined;
     const resourceUri = typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
 

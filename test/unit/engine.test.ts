@@ -623,6 +623,70 @@ describe("AgentEngine", () => {
     expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(1);
   });
 
+  it("refuses a model call that names an app-only tool, without running it", async () => {
+    let callCount = 0;
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_hidden",
+              toolName: "internal__secret",
+              input: JSON.stringify({}),
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call_public",
+              toolName: "app__public",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      {
+        name: "app__public",
+        description: "Public tool",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "internal__secret",
+        description: "Internal secret tool",
+        inputSchema: { type: "object", properties: {} },
+        meta: { ui: { visibility: ["app"] } },
+      },
+    ];
+
+    const executed: string[] = [];
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        executed.push(call.name);
+        return { content: textContent("ran"), isError: false };
+      }),
+      { emit: () => {} },
+    );
+
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Call both" }] }],
+      [toolSchemas[0]!],
+    );
+
+    expect(executed).toEqual(["app__public"]);
+    const hidden = result.toolCalls.find((c) => c.name === "internal__secret");
+    expect(hidden?.ok).toBe(false);
+    expect(result.toolCalls.find((c) => c.name === "app__public")?.ok).toBe(true);
+  });
+
   it("nb__manage_tools add rejects role/feature-ineligible tools per-item", async () => {
     let callCount = 0;
     const seenToolLists: string[][] = [];
