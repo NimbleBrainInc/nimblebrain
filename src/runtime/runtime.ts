@@ -210,7 +210,10 @@ import {
   isTaskForbiddenIdentityTool,
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
-import { resolveInstanceCredentialRefs } from "../tools/instance-credentials.ts";
+import {
+  resolveInstanceCredentialRefs,
+  type WithCredentialRefs,
+} from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
@@ -316,7 +319,23 @@ function reportStrandedSlots(rt: Runtime, allowed: string[] | undefined): void {
   }
 }
 
-function resolveWorkDir(config: RuntimeConfig): string {
+/**
+ * The `RuntimeConfig` fields `Runtime.start` reads before the credential store
+ * exists: the store lives under `workDir`, is chosen by `secrets`, and audits
+ * through the sink `events`, `logging` and `telemetry` build. None of them can
+ * be a credential reference, because nothing could resolve it yet.
+ */
+export type PreStoreConfigKey = "workDir" | "secrets" | "telemetry" | "logging" | "events";
+
+/**
+ * `RuntimeConfig` as a caller declares it: a credential reference admitted
+ * wherever the runtime resolves one at boot (`resolveInstanceCredentialRefs`),
+ * which is every string outside the pre-store fields.
+ */
+export type DeclaredRuntimeConfig = Pick<RuntimeConfig, PreStoreConfigKey> &
+  WithCredentialRefs<Omit<RuntimeConfig, PreStoreConfigKey>>;
+
+function resolveWorkDir(config: Pick<RuntimeConfig, "workDir">): string {
   if (config.workDir) return config.workDir;
   // Hard guard: under `bun test` (NODE_ENV=test is set automatically by the
   // bun test runner), defaulting to `~/.nimblebrain` would pollute the
@@ -567,7 +586,7 @@ export class Runtime {
   }
 
   /** Create and start a runtime from config. */
-  static async start(declaredConfig: RuntimeConfig): Promise<Runtime> {
+  static async start(declaredConfig: DeclaredRuntimeConfig): Promise<Runtime> {
     // The secrets door, opened before anything reads config, because config is
     // read THROUGH it. `nimblebrain.json` may point at an instance-scope secret
     // rather than carry one (`{ ref: "credential", key }`), and the readers of
@@ -5483,7 +5502,7 @@ function initWorkDir(config: RuntimeConfig): void {
 // are workspace-owned, so each chat/task turn routes its engine events through its
 // own per-call workspace store (see `_chatInner`). There is no flat top-level
 // conversation store.
-function buildEventSink(config: RuntimeConfig): EventSink {
+function buildEventSink(config: Pick<RuntimeConfig, "workDir" | "events" | "logging">): EventSink {
   const sinks: EventSink[] = config.events ? [...config.events] : [];
   if (!config.logging?.disabled) {
     const workDir = resolveWorkDir(config);
@@ -5506,7 +5525,10 @@ function buildEventSink(config: RuntimeConfig): EventSink {
  * (increments in memory whether or not `/metrics` is scraped), so it is safe in
  * a local `bun run dev` with no Prometheus.
  */
-function buildRuntimeEventSink(config: RuntimeConfig, telemetry: TelemetryManager): EventSink {
+function buildRuntimeEventSink(
+  config: Pick<RuntimeConfig, "workDir" | "events" | "logging">,
+  telemetry: TelemetryManager,
+): EventSink {
   const sinks: EventSink[] = [buildEventSink(config), new MetricsEventSink()];
   if (telemetry.isEnabled()) {
     sinks.push(new PostHogEventSink(telemetry));

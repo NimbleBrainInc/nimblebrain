@@ -35,7 +35,7 @@
  * at each use instead.
  */
 
-import { isCredentialRef } from "./credential-ref.ts";
+import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import { type CredentialScope, resolveCredentialValue } from "./credential-store.ts";
 
 const INSTANCE_SCOPE: CredentialScope = { kind: "instance" };
@@ -111,6 +111,49 @@ async function deref(value: unknown, path: string): Promise<unknown> {
  * A config with no references never touches the store, so a caller that has not
  * installed one (a unit test loading an `instance.json`) is unaffected.
  */
-export async function resolveInstanceCredentialRefs<T>(config: T): Promise<T> {
-  return (await deref(config, "")) as T;
+export async function resolveInstanceCredentialRefs<const T>(
+  config: T,
+): Promise<ResolvedCredentialRefs<T>> {
+  return (await deref(config, "")) as ResolvedCredentialRefs<T>;
 }
+
+/** Values the walk returns as they are. */
+type Opaque =
+  | number
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined
+  | ((...args: never[]) => unknown);
+
+/**
+ * `T` as an operator may declare it: a credential reference admitted wherever
+ * `T` takes any string, which is the rule the walk implements. A field typed as
+ * a set of literals (`provider: "anthropic" | ...`) takes no reference: a
+ * resolved secret is an arbitrary string, which such a field does not accept.
+ * Like the walk it descends into arrays and objects; the type cannot tell a
+ * plain object from a class instance, so it is looser than the walk there.
+ */
+export type WithCredentialRefs<T> = T extends string
+  ? string extends T
+    ? T | CredentialRef
+    : T
+  : T extends Opaque
+    ? T
+    : T extends readonly (infer U)[]
+      ? WithCredentialRefs<U>[]
+      : T extends object
+        ? { [K in keyof T]: WithCredentialRefs<T[K]> }
+        : T;
+
+/** `T` with every credential reference replaced by its secret, as the walk returns it. */
+export type ResolvedCredentialRefs<T> = T extends CredentialRef
+  ? string
+  : T extends string | Opaque
+    ? T
+    : T extends readonly (infer U)[]
+      ? ResolvedCredentialRefs<U>[]
+      : T extends object
+        ? { [K in keyof T]: ResolvedCredentialRefs<T[K]> }
+        : T;
