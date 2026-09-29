@@ -304,6 +304,10 @@ It returns an error result whose `structuredContent` is
 - **It only narrows.** It removes callers and grants nothing.
 - **Enforced by name.** A name your server does not advertise is still refused
   to non-admins, and is a warning on install.
+- **A malformed list gates every tool.** If `admin_tools` is present but is not a
+  list of at most 64 tool names with no whitespace (`null` included), the host
+  cannot tell which tools you meant, so it refuses every tool on your server to
+  non-admins and warns on install. An empty list declares nothing.
 - **The host's own calls pass.** The host calls your `lifecycle` handlers and
   `hooks` `register_tool` itself; those calls are not checked. Naming one of them
   here is a warning on install.
