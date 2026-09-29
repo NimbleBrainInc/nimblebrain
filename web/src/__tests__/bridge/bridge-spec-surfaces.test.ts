@@ -29,7 +29,7 @@ import { REQUEST_FILE_METHOD } from "../../bridge/extensions";
  * the imported binding. Defaults to throwing: a test that reaches the uploader
  * without meaning to should say so, not silently upload nothing.
  */
-let uploadStub: (files: File[]) => Promise<{ files: unknown[] }> = async () => {
+let uploadStub: (files: File[]) => Promise<{ files: unknown[]; errors?: string[] }> = async () => {
   throw new Error("uploadResource not stubbed in this test");
 };
 
@@ -677,5 +677,128 @@ describe("ai.nimblebrain/request-file", () => {
       document.createElement = origCreate as typeof document.createElement;
       uploadStub = origUpload;
     }
+  });
+
+  // A refused file must reach the app. The SDK's `pickFiles` returns
+  // `result.files` alone, so a refusal is a JSON-RPC error whose `data` names
+  // each refused file and why, and the entries stored anyway.
+
+  /** Pick `picked` with `upload` as the server, and answer the reply. */
+  async function pickWith(
+    id: string,
+    picked: File[],
+    upload: typeof uploadStub,
+    maxSize = 1024,
+  ): Promise<{ result?: unknown; error?: { code: number; message: string; data?: unknown } }> {
+    const origUpload = uploadStub;
+    uploadStub = upload;
+    const origCreate = document.createElement.bind(document);
+    document.createElement = ((tag: string) => {
+      const el = origCreate(tag) as HTMLInputElement;
+      if (tag !== "input") return el;
+      Object.defineProperty(el, "files", { configurable: true, get: () => picked });
+      el.click = () => {
+        el.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("change"));
+      };
+      return el;
+    }) as typeof document.createElement;
+
+    try {
+      const frame = mount();
+      await handshake(frame);
+      frame.send({
+        jsonrpc: "2.0",
+        id,
+        method: REQUEST_FILE_METHOD,
+        params: { multiple: true, maxSize },
+      });
+      return (await frame.waitFor(isReplyTo(id), 2000)) as {
+        result?: unknown;
+        error?: { code: number; message: string; data?: unknown };
+      };
+    } finally {
+      document.createElement = origCreate as typeof document.createElement;
+      uploadStub = origUpload;
+    }
+  }
+
+  test("a mixed upload answers the refused files, and the stored ones, in error.data", async () => {
+    const stored = { id: "fl_a", filename: "notes.txt", mimeType: "text/plain", size: 1 };
+    const refused = 'File "setup.exe" has disallowed type: application/x-msdownload';
+    const reply = await pickWith(
+      "pick-mixed",
+      [
+        new File(["a"], "notes.txt", { type: "text/plain" }),
+        new File(["b"], "setup.exe", { type: "application/x-msdownload" }),
+      ],
+      async () => ({ files: [stored], errors: [refused] }),
+    );
+
+    expect(reply.result).toBeUndefined();
+    expect(reply.error?.code).toBe(-32602);
+    expect(reply.error?.data).toEqual({ files: [stored], errors: [refused] });
+    expect(reply.error?.message).toContain(refused);
+    expect(reply.error?.message).toContain("1 of 2 files refused");
+  });
+
+  test("an upload the server refused entirely answers its per-file reasons", async () => {
+    const reasons = [
+      'File "a.exe" has disallowed type: application/x-msdownload',
+      'File "b.exe" has disallowed type: application/x-msdownload',
+    ];
+    const reply = await pickWith(
+      "pick-all-refused",
+      [new File(["a"], "a.exe"), new File(["b"], "b.exe")],
+      async () => {
+        // What `uploadResource` throws for the route's 400: the reasons ride in `details`.
+        throw Object.assign(new Error("All uploads were rejected"), {
+          code: "file_upload_error",
+          status: 400,
+          details: { errors: reasons },
+        });
+      },
+    );
+
+    expect(reply.error?.data).toEqual({ files: [], errors: reasons });
+    expect(reply.error?.message).toContain("2 of 2 files refused");
+  });
+
+  test("a failure that names no file answers its message and no data", async () => {
+    const reply = await pickWith("pick-too-large", [new File(["a"], "a.txt")], async () => {
+      throw Object.assign(new Error("Upload is 30 MB; the limit is 25 MB per upload."), {
+        code: "payload_too_large",
+        status: 413,
+        details: { size: 1, limit: 1 },
+      });
+    });
+
+    expect(reply.error).toEqual({
+      code: -32602,
+      message: "Upload is 30 MB; the limit is 25 MB per upload.",
+    });
+  });
+
+  test("every oversize file is refused before anything is uploaded", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-oversize",
+      [
+        new File(["x".repeat(2048)], "big-1.bin"),
+        new File(["ok"], "small.txt"),
+        new File(["x".repeat(2048)], "big-2.bin"),
+      ],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      1024,
+    );
+
+    expect(uploaded).toBe(false);
+    const data = reply.error?.data as { files: unknown[]; errors: string[] };
+    expect(data.files).toEqual([]);
+    expect(data.errors).toHaveLength(2);
+    expect(data.errors[0]).toContain('"big-1.bin"');
+    expect(data.errors[1]).toContain('"big-2.bin"');
   });
 });

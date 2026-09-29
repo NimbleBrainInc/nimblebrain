@@ -975,7 +975,9 @@ function handleSynapseAction(
 
 /**
  * Handle an ai.nimblebrain/request-file: open the native file picker and forward the
- * uploaded entries — or a JSON-RPC `-32602` error — back to the iframe.
+ * uploaded entries — or a JSON-RPC `-32602` error — back to the iframe. A refusal
+ * carries `data: { files, errors }` so the app learns which files were refused and
+ * which were stored anyway.
  */
 function handleRequestFile(
   params: SynapseRequestFileMessage["params"] | undefined,
@@ -995,7 +997,11 @@ function handleRequestFile(
       postToIframe({
         jsonrpc: "2.0",
         id,
-        error: { code: -32602, message: errorMsg },
+        error: {
+          code: -32602,
+          message: errorMsg,
+          ...(err instanceof FilesRefusedError ? { data: err.data } : {}),
+        },
       });
     });
 }
@@ -1347,15 +1353,57 @@ async function pickFiles(
  * `null` and never settles the call. One shape covers both pickers: the SDK's
  * `pickFile` takes the first entry, `pickFiles` takes them all, and a cancel is
  * an empty list rather than a second shape.
+ *
+ * The call resolves only when every picked file was stored. When any was refused
+ * it rejects with this shape as the JSON-RPC `error.data`: `files` are the entries
+ * that were stored anyway, `errors` name each refused file and why. It is an error
+ * rather than an extra result field because the SDK's `pickFiles` returns
+ * `result.files` alone, so a result field would never reach the app.
  */
 interface RequestFileResult {
   files: WorkspaceFile[];
 }
 
+interface RequestFileRefusal extends RequestFileResult {
+  errors: string[];
+}
+
+/** How many refusals the error message names before summarising the rest. */
+const REFUSALS_IN_MESSAGE = 3;
+
+/** Some picked files were refused. `data` becomes the JSON-RPC `error.data`. */
+class FilesRefusedError extends Error {
+  readonly data: RequestFileRefusal;
+
+  constructor(picked: number, data: RequestFileRefusal) {
+    const named = data.errors.slice(0, REFUSALS_IN_MESSAGE).join("; ");
+    const more = data.errors.length - REFUSALS_IN_MESSAGE;
+    const stored = data.files.length > 0 ? ` ${data.files.length} stored.` : "";
+    super(
+      `${data.errors.length} of ${picked} files refused: ${named}${more > 0 ? `; and ${more} more` : ""}.${stored}`,
+    );
+    this.name = "FilesRefusedError";
+    this.data = data;
+  }
+}
+
+/**
+ * The per-file reasons the upload route puts in `details.errors` when it refuses
+ * every file. Any other failure (auth, a request over the total limit, the
+ * network) names no file, and answers `undefined`.
+ */
+function refusedFileErrors(err: unknown): string[] | undefined {
+  const errors = (err as { details?: { errors?: unknown } } | null)?.details?.errors;
+  if (!Array.isArray(errors) || errors.length === 0) return undefined;
+  return errors.every((e) => typeof e === "string") ? errors : undefined;
+}
+
 /**
  * Validate picked files against `maxSize`, upload them via `POST /v1/workspaces/:wsId/resources`,
  * and resolve to the persisted entries — an empty list when nothing was chosen.
- * Throws on the first oversize file or an upload failure.
+ * Throws `FilesRefusedError` when any file was refused: every oversize file,
+ * before anything is uploaded, or the files the server refused, after it stored
+ * the rest. Any other upload failure is rethrown as is.
  */
 async function processPickedFiles(
   files: FileList | null,
@@ -1363,14 +1411,25 @@ async function processPickedFiles(
 ): Promise<RequestFileResult> {
   if (!files || files.length === 0) return { files: [] };
   const selected = Array.from(files);
-  for (const file of selected) {
-    if (file.size > maxSize) {
-      throw new Error(
-        `File "${file.name}" exceeds maximum size of ${Math.round(maxSize / 1_048_576)} MB`,
-      );
-    }
+  const oversize = selected
+    .filter((file) => file.size > maxSize)
+    .map(
+      (file) => `File "${file.name}" exceeds maximum size of ${Math.round(maxSize / 1_048_576)} MB`,
+    );
+  if (oversize.length > 0) {
+    throw new FilesRefusedError(selected.length, { files: [], errors: oversize });
   }
-  const result = await uploadResource(selected);
+  let result: Awaited<ReturnType<typeof uploadResource>>;
+  try {
+    result = await uploadResource(selected);
+  } catch (err) {
+    const errors = refusedFileErrors(err);
+    if (errors) throw new FilesRefusedError(selected.length, { files: [], errors });
+    throw err;
+  }
+  if (result.errors && result.errors.length > 0) {
+    throw new FilesRefusedError(selected.length, { files: result.files, errors: result.errors });
+  }
   return { files: result.files };
 }
 
