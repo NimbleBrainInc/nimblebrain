@@ -165,7 +165,7 @@ describe("reads", () => {
     expect(items.map((i) => i.facet)).toEqual(["blocked", "drafts"]);
   });
 
-  it("orders by declared level before app order, reading an unknown level as action", async () => {
+  it("orders by declared level before app order, reading an unknown level as warning", async () => {
     const first = await serve("first", {
       resources: () => [
         facetEntry("drafts", "Drafts", "info"),
