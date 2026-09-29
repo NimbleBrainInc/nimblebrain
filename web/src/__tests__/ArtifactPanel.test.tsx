@@ -161,8 +161,9 @@ describe("ArtifactPanel (document surface)", () => {
     }));
 
     mounted = await mountSurface();
+    const open = findOpenButton(mounted.container);
     await act(async () => {
-      findOpenButton(mounted.container).click();
+      open.click();
     });
     await settle();
 
@@ -180,8 +181,9 @@ describe("ArtifactPanel (document surface)", () => {
     });
 
     mounted = await mountSurface();
+    const open = findOpenButton(mounted.container);
     await act(async () => {
-      findOpenButton(mounted.container).click();
+      open.click();
     });
     await settle();
 

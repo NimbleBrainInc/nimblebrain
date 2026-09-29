@@ -99,29 +99,26 @@ async function mountPanel(convId?: string): Promise<void> {
       React.createElement(
         MemoryRouter,
         { initialEntries: ["/w/a/overview"] },
-        React.createElement(
-          WorkspaceProvider,
-          { initialWorkspaces: [WS_A], initialActiveId: "ws_a" },
-          React.createElement(
-            ChatProvider,
-            {
-              ...(convId ? { initialConversationId: convId } : {}),
-              currentUserId: "u1",
-              initialConfig: {
-                configuredProviders: ["anthropic"],
-                newConversationModel: "anthropic:claude-sonnet-5",
-                availableModels: AVAILABLE,
-              },
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS_A],
+          initialActiveId: "ws_a",
+          children: React.createElement(ChatProvider, {
+            ...(convId ? { initialConversationId: convId } : {}),
+            currentUserId: "u1",
+            initialConfig: {
+              configuredProviders: ["anthropic"],
+              newConversationModel: "anthropic:claude-sonnet-5",
+              availableModels: AVAILABLE,
             },
-            React.createElement(ChatPanel, {
+            children: React.createElement(ChatPanel, {
               messages: [],
               isStreaming: false,
               error: null,
               sendMessage: async () => {},
               newConversation: () => {},
             }),
-          ),
-        ),
+          }),
+        }),
       ),
     );
   });

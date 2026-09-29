@@ -33,6 +33,7 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
+import type * as ApiClient from "../api/client";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,13 +48,15 @@ const disconnectConnector = mock(async () => ({
   revoked: {},
   deletedLocal: true,
 }));
-const initiateMcpOAuth = mock(async () => ({ authorizationUrl: "https://example.test/auth" }));
+const initiateMcpOAuth = mock<typeof ApiClient.initiateMcpOAuth>(async () => ({
+  authorizationUrl: "https://example.test/auth",
+}));
 const setupConnectorOperator = mock(async () => ({
   ok: true,
   catalogId: "io.asana/mcp",
   clientId: "cid-rotated",
 }));
-const connectComposioApiKey = mock(async () => ({
+const connectComposioApiKey = mock<typeof ApiClient.connectComposioApiKey>(async () => ({
   connected: true,
   serverName: "com-posthog-analytics",
   status: "ACTIVE",
@@ -80,7 +83,6 @@ Object.defineProperty(window, "location", {
   value: { ...window.location, assign: locationAssign },
 });
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 
@@ -167,7 +169,6 @@ function dcrConnector(over: Partial<InstalledConnector> = {}): InstalledConnecto
     serverName: "granola",
     connectorName: "granola",
     version: "remote",
-    type: "remote",
     state: "running",
     status: "ready",
     scope: "workspace",
@@ -212,7 +213,6 @@ function staticAuthConnector(over: Partial<InstalledConnector> = {}): InstalledC
     serverName: "asana",
     connectorName: "asana",
     version: "remote",
-    type: "remote",
     state: "running",
     status: "ready",
     scope: "workspace",

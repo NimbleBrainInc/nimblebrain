@@ -70,7 +70,7 @@ describe("MessageList CopyButton feedback", () => {
 			<MessageList
 				messages={[assistantMsg]}
 				isStreaming={false}
-				streamingState="idle"
+				streamingState={null}
 				displayDetail="balanced"
 			/>,
 		);
@@ -98,7 +98,7 @@ describe("MessageList CopyButton feedback", () => {
 			<MessageList
 				messages={[assistantMsg]}
 				isStreaming={false}
-				streamingState="idle"
+				streamingState={null}
 				displayDetail="balanced"
 			/>,
 		);
@@ -122,7 +122,7 @@ describe("MessageList CopyButton feedback", () => {
 			<MessageList
 				messages={[assistantMsg]}
 				isStreaming={false}
-				streamingState="idle"
+				streamingState={null}
 				displayDetail="balanced"
 			/>,
 		);
@@ -161,7 +161,7 @@ describe("MessageList usage chip", () => {
 			<MessageList
 				messages={[usageMsg]}
 				isStreaming={false}
-				streamingState="idle"
+				streamingState={null}
 				displayDetail="balanced"
 			/>,
 		);

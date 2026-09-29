@@ -91,11 +91,10 @@
  *
  * ## What this does NOT cover
  *
- * Only the `test/` tree. `web/`'s suite (`web/tsconfig.json` excludes
- * `src/**\/*.test.ts(x)` and `src/**\/__tests__`) has the identical hole and is
- * not gated here. The platform app UIs, excluded from this project by the base
- * config, are each their own package and are gated under their own configs by
- * `scripts/check-platform-apps.ts`.
+ * Only the `test/` tree. `web/`'s suite is its own package, gated under web's
+ * strict config by `scripts/check-web-tests.ts`. The platform app UIs, excluded
+ * from this project by the base config, are each their own package and are
+ * gated under their own configs by `scripts/check-platform-apps.ts`.
  *
  * ## Why it proves tsc actually ran
  *

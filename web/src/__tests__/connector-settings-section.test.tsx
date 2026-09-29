@@ -253,14 +253,16 @@ function lastHostContextChange(app: AppSide): Record<string, unknown> | undefine
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe("ConnectorDetailPage — the connector's settings section", () => {
-  test("renders the connector's settings placement, headed by its name and attributed", async () => {
+  test("renders the connector's settings placement, headed by its name and nothing else", async () => {
     const { container } = await mountPage(workspace("admin"), [placement({})]);
 
     expect(getResources).toHaveBeenCalledWith(SERVER, `${SERVER}/settings`);
     expect(container.getElementsByTagName("iframe").length).toBe(1);
     const headings = Array.from(container.getElementsByTagName("h2")).map((h) => h.textContent);
     expect(headings).toContain("Acme CRM");
-    expect(container.textContent).toContain(`Provided by ${SERVER}`);
+    // No attribution line: the section sits on this connector's own page,
+    // under its name, so naming the server again says nothing.
+    expect(container.textContent).not.toContain("Provided by");
   });
 
   test("renders after the host's sections", async () => {
@@ -284,7 +286,6 @@ describe("ConnectorDetailPage — the connector's settings section", () => {
 
     expect(getResources).not.toHaveBeenCalled();
     expect(container.getElementsByTagName("iframe").length).toBe(0);
-    expect(container.textContent).not.toContain("Provided by");
   });
 
   test("renders the first by priority and ignores a second", async () => {

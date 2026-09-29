@@ -68,16 +68,20 @@ async function mount(initialWorkspaces: WorkspaceInfo[], initialActiveId?: strin
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        WorkspaceProvider,
-        { initialWorkspaces, initialActiveId },
-        React.createElement(ActiveProbe),
-        React.createElement(
-          RequireActiveWorkspace,
+      React.createElement(WorkspaceProvider, {
+        initialWorkspaces,
+        initialActiveId,
+        children: React.createElement(
+          React.Fragment,
           null,
-          React.createElement("span", { "data-testid": "scoped" }, "scoped"),
+          React.createElement(ActiveProbe),
+          React.createElement(
+            RequireActiveWorkspace,
+            null,
+            React.createElement("span", { "data-testid": "scoped" }, "scoped"),
+          ),
         ),
-      ),
+      }),
     );
   });
   unmount = () => {

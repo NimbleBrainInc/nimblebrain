@@ -25,6 +25,7 @@ import {
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import type { FilesListOutput } from "../../src/platform/schemas/files.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -97,9 +98,7 @@ async function uploadChatFile(
     body: JSON.stringify({ server: "files", tool: "list", arguments: { limit: 100 } }),
   });
   const listBody = (await listRes.json()) as { content: { type: string; text: string }[] };
-  const listed = JSON.parse(listBody.content[0]!.text) as {
-    files: { id: string; filename: string }[];
-  };
+  const listed = JSON.parse(listBody.content[0]!.text) as FilesListOutput;
   const match = listed.files.find((f) => f.filename === filename);
   if (!match) throw new Error(`uploaded file ${filename} not found in registry`);
   return match.id;

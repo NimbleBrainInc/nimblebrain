@@ -24,7 +24,6 @@ import { CardAction } from "../pages/settings/ConnectorBrowsePage";
   }
 }
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");

@@ -55,8 +55,6 @@ const SHARED_SLUG = "nimblebrain_shared";
 
 function ws(overrides: Partial<WorkspaceInfo> & { id: string; name: string }): WorkspaceInfo {
   return {
-    id: overrides.id,
-    name: overrides.name,
     connectorCount: 0,
     memberCount: 1,
     userRole: overrides.userRole ?? "admin",

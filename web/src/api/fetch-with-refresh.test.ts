@@ -8,7 +8,7 @@ function res(status: number): Response {
 
 describe("fetchWithRefresh", () => {
   test("passes through non-401 responses unchanged", async () => {
-    const fakeFetch = async () => res(200);
+    const fakeFetch = async (_input: string | URL | Request) => res(200);
     const fetcher = createFetchWithRefresh({
       fetch: fakeFetch as typeof fetch,
       refreshUrl: "/refresh",

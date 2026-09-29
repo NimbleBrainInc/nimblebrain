@@ -16,7 +16,10 @@ import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
 import { workspaceFilesDir } from "../../../../src/files/paths.ts";
 import { createFileStore } from "../../../../src/files/store.ts";
 import { createFilesSource } from "../../../../src/platform/files/source.ts";
-import type { FilesReadPdfPagesOutput } from "../../../../src/platform/schemas/files.ts";
+import type {
+  FilesCreateOutput,
+  FilesReadPdfPagesOutput,
+} from "../../../../src/platform/schemas/files.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
@@ -160,7 +163,7 @@ describe("files app", () => {
       body: encoded,
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
     expect(id).toMatch(/^fl_/);
 
     const read = await exec("read", { id });
@@ -206,7 +209,7 @@ describe("files app", () => {
       body: pngBase64,
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
 
     const read = await exec("read", { id });
     expect(read.isError).toBe(false);
@@ -258,7 +261,7 @@ describe("files app", () => {
       encoding: "text",
     });
     expect(created.isError).toBe(false);
-    const { id, size } = parseFirst(created) as { id: string; size: number };
+    const { id, size } = parseFirst(created) as FilesCreateOutput;
     expect(size).toBe(Buffer.byteLength(payload, "utf8"));
 
     const read = await exec("read", { id });
@@ -275,7 +278,7 @@ describe("files app", () => {
     });
     expect(created.isError).toBe(false);
 
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
     const read = await exec("read", { id });
     expect(read.structuredContent).toMatchObject({ extractedText: payload });
   });
@@ -312,7 +315,7 @@ describe("files app", () => {
       });
       expect(created.isError).toBe(false);
 
-      const { id } = parseFirst(created) as { id: string };
+      const { id } = parseFirst(created) as FilesCreateOutput;
       const read = await exec("read", { id });
       expect(read.structuredContent).toMatchObject({ extractedText: payload });
     }
@@ -367,7 +370,7 @@ describe("files app", () => {
       body: pdf.toString("base64"),
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
 
     const result = await exec("read_pdf_pages", { id, pages: [2] });
     expect(result.isError).toBe(false);
@@ -410,7 +413,7 @@ describe("files app", () => {
       body: pdf.toString("base64"),
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
 
     const result = await exec("read_pdf_pages", { id, pages: [99, 1, 1] });
     expect(result.isError).toBe(false);
@@ -432,7 +435,7 @@ describe("files app", () => {
       body: Buffer.from("not a pdf").toString("base64"),
     });
     expect(created.isError).toBe(false);
-    const { id } = parseFirst(created) as { id: string };
+    const { id } = parseFirst(created) as FilesCreateOutput;
 
     const result = await exec("read_pdf_pages", { id, pages: [1] });
     expect(result.isError).toBe(true);

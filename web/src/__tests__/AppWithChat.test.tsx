@@ -111,20 +111,20 @@ async function mountApp(): Promise<void> {
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(
-            WorkspaceProvider,
-            { initialWorkspaces: [WS_A], initialActiveId: "ws_a" },
-            React.createElement(
-              ChatProvider,
-              { currentUserId: "u1", initialConfig: { configuredProviders: ["anthropic"] } },
-              React.createElement(
+          React.createElement(WorkspaceProvider, {
+            initialWorkspaces: [WS_A],
+            initialActiveId: "ws_a",
+            children: React.createElement(ChatProvider, {
+              currentUserId: "u1",
+              initialConfig: { configuredProviders: ["anthropic"] },
+              children: React.createElement(
                 ChatPanelProvider,
                 null,
                 React.createElement(PanelProbe),
                 React.createElement(AppWithChat, { placement: PLACEMENT }),
               ),
-            ),
-          ),
+            }),
+          }),
         ),
       ),
     );

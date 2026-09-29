@@ -23,7 +23,6 @@ import type { WorkspaceInfo } from "../src/context/WorkspaceContext";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { ToolCallProvenance, workspaceBadgeVariant } = await import(
@@ -73,7 +72,7 @@ function ws(over: Partial<WorkspaceInfo>): WorkspaceInfo {
     id: "ws_helix",
     name: "Helix",
     memberCount: 1,
-    connectors: [],
+    connectorCount: 0,
     ...over,
   };
 }

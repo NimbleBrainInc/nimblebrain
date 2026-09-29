@@ -44,7 +44,6 @@ mock.module("../api/client", () => ({
   setWorkspaceSecret,
 }));
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 

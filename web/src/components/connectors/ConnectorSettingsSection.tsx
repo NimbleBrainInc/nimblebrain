@@ -1,6 +1,5 @@
 import { useShellContext } from "../../context/ShellContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { ProvidedBy } from "../../pages/settings/components";
 import { SlotRenderer } from "../SlotRenderer";
 
 /**
@@ -46,7 +45,6 @@ export function ConnectorSettingsSection({
         {name}
       </h2>
       <SlotRenderer placements={[placement]} canManage={canManage} fitContent />
-      <ProvidedBy serverName={placement.serverName} />
     </section>
   );
 }
