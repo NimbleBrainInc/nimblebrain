@@ -21,10 +21,13 @@ import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupMod
  * `needs_auth`, `failed`), the status row appears as the page's first
  * actionable concern, ahead of the secondary sections that show
  * connection details / OAuth client audit / connector config.
+ * `not_connected` shows the same row in a neutral tone: nothing is
+ * wrong, but Connect is still the one thing to do here.
  *
  * Owns the primary CTA dispatch:
  *   - needs_setup + missing operator OAuth → OperatorSetupModal
- *   - needs_auth (any cause)                → initiateMcpOAuth
+ *   - not_connected                         → initiateMcpOAuth (Connect)
+ *   - needs_auth                            → initiateMcpOAuth (Reconnect)
  *   - failed                                → initiateMcpOAuth (same as Reconnect)
  *   - connecting/starting                   → Cancel (reset a wedged OAuth)
  *
@@ -333,6 +336,8 @@ function StatusDot({ status }: { status: InstalledConnector["status"] }) {
   const cls: Record<InstalledConnector["status"], string> = {
     ready: "bg-emerald-500",
     needs_setup: "bg-amber-500",
+    // At rest, not a warning: never connected, or disconnected on purpose.
+    not_connected: "bg-muted-foreground/50",
     needs_auth: "bg-amber-500",
     // Pulse on connecting/starting is the one motion exception — it
     // signals "in-flight, do not retry yet" and disappears as soon
@@ -352,8 +357,10 @@ export function statusLabel(status: InstalledConnector["status"]): string {
       return "Ready";
     case "needs_setup":
       return "Configuration required";
+    case "not_connected":
+      return "Not connected";
     case "needs_auth":
-      return "Sign-in required";
+      return "Reconnection needed";
     case "connecting":
       return "Connecting…";
     case "starting":
@@ -437,12 +444,13 @@ function resolveAction(
       return null;
     }
 
-    case "needs_auth": {
-      // First-time auth vs re-auth: same flow, different verb. The
-      // user has stronger context if we tell them which.
-      const verb = installed.state === "reauth_required" ? "Reconnect" : "Connect";
-      return { kind: "oauth", label: verb, adminOnly: authRotatesSharedCredential };
-    }
+    // First-time auth vs re-auth: same flow, different verb. The user has
+    // stronger context if we tell them which.
+    case "not_connected":
+      return { kind: "oauth", label: "Connect", adminOnly: authRotatesSharedCredential };
+
+    case "needs_auth":
+      return { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential };
 
     case "failed":
       // Reconnect is usually the fix (token upstream rejected, transport

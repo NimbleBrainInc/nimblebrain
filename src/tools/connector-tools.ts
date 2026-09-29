@@ -145,14 +145,28 @@ export interface StatusInputs {
   lastError?: string;
 }
 
+/** The status {@link deriveConnectorStatus} returns. */
+export type ConnectorStatus =
+  | "ready"
+  | "needs_setup"
+  | "not_connected"
+  | "needs_auth"
+  | "connecting"
+  | "failed"
+  | "starting";
+
 /**
  * Collapse a connector's underlying flags into a generic, type-agnostic
- * status for the UI. Six values:
+ * status for the UI:
  *
  *   ready          — works
  *   needs_setup    — admin must configure the operator OAuth client before
  *                     this is usable
- *   needs_auth     — workspace member must (re)authenticate (Connect / Reconnect)
+ *   not_connected  — installed with no connection: never connected, or
+ *                     disconnected on purpose. A resting state, not an error
+ *                     (Connect)
+ *   needs_auth     — a connection that worked broke without anyone asking:
+ *                     its credential was revoked or expired (Reconnect)
  *   connecting     — OAuth flow in flight
  *   failed         — connection dead with no actionable next step
  *   starting       — connection being established
@@ -167,15 +181,15 @@ export interface StatusInputs {
  * reason string for tooltips / banners.
  */
 export function deriveConnectorStatus(input: StatusInputs): {
-  status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+  status: ConnectorStatus;
   statusReason?: string;
 } {
   // 1. Setup gates everything. Operator OAuth missing → admin acts first.
   if (input.missingOperatorSetup) {
     return { status: "needs_setup", statusReason: "OAuth app not configured for this workspace." };
   }
-  // 2. Auth lifecycle. Reconnect outranks first-time connect (a token
-  //    that just expired is more disruptive than one never used).
+  // 2. Auth lifecycle. A broken connection needs someone to act; one that
+  //    was never connected, or was disconnected, is at rest.
   if (input.state === "reauth_required") {
     return {
       status: "needs_auth",
@@ -183,7 +197,7 @@ export function deriveConnectorStatus(input: StatusInputs): {
     };
   }
   if (input.state === "not_authenticated") {
-    return { status: "needs_auth", statusReason: "Connect to use this connector." };
+    return { status: "not_connected", statusReason: "Connect to use this connector." };
   }
   // 3. Transient flows.
   if (input.state === "pending_auth") {
@@ -638,16 +652,13 @@ type InstalledEntry = {
   };
   /**
    * Generic, type-agnostic status the UI renders without re-deriving
-   * from the underlying ConnectionState + credential probes. Six values
-   * collapse what would otherwise be ~10 specific failure modes —
+   * from the underlying ConnectionState + credential probes. A handful of
+   * values collapse what would otherwise be ~10 specific failure modes —
    * the connector-type detail (which credentials missing, which
-   * action label) is derived in the UI from the other fields.
-   *
-   * Priority when multiple flags apply: setup blocks auth blocks
-   * usage. needs_setup > needs_auth > failed > connecting/starting >
-   * ready.
+   * action label) is derived in the UI from the other fields. See
+   * {@link deriveConnectorStatus} for the values and their priority.
    */
-  status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+  status: ConnectorStatus;
   /** Human-readable detail for status. Surfaces in tooltips / banners. */
   statusReason?: string;
 };

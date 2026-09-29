@@ -174,9 +174,13 @@ export function BriefingView({
   onOpen,
   onOpenConnector,
 }: BriefingViewProps) {
-  // Every status but `ready`, `connecting` and `starting` included: an OAuth
-  // abandoned mid-flow stays `connecting`, and its page is where it is cancelled.
-  const needsAttention = connectors.filter((c) => c.status !== "ready");
+  // Every status but `ready` and `not_connected`: a connector never connected,
+  // or disconnected on purpose, is at rest and asks nothing of anyone. One still
+  // `connecting` stays in, because an OAuth abandoned mid-flow stays there and
+  // its page is where it is cancelled.
+  const needsAttention = connectors.filter(
+    (c) => c.status !== "ready" && c.status !== "not_connected",
+  );
   const items = briefing?.items ?? [];
   const empty = !loading && !error && items.length === 0 && needsAttention.length === 0;
   // One list, most urgent first. Within a level, connector rows lead and facet

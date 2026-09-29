@@ -727,12 +727,22 @@ export interface InstalledConnector {
    *
    *   ready          — works
    *   needs_setup    — admin must configure the operator OAuth client
-   *   needs_auth     — workspace member must (re)authenticate
+   *   not_connected  — installed, no connection (never connected, or
+   *                     disconnected): at rest, not an error
+   *   needs_auth     — a working connection broke (credential revoked or
+   *                     expired): someone must reconnect
    *   connecting     — OAuth flow in flight
    *   failed         — dead, no actionable next step
    *   starting       — connection being established
    */
-  status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+  status:
+    | "ready"
+    | "needs_setup"
+    | "not_connected"
+    | "needs_auth"
+    | "connecting"
+    | "failed"
+    | "starting";
   /** Human-readable detail for `status` (tooltip / banner copy). */
   statusReason?: string;
 }

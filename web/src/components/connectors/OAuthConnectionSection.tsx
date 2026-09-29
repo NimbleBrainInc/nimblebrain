@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { disconnectConnector, type InstalledConnector } from "../../api/client";
+import { ConfirmDialog } from "../ui/confirm-dialog";
 
 /**
  * Connection details for a remote OAuth connector — the *settings*
@@ -13,6 +14,11 @@ import { disconnectConnector, type InstalledConnector } from "../../api/client";
  * as ..." label plus a small Disconnect link for admins. Disconnect
  * lives here, not in the hero, because it's a destructive affordance
  * — the hero carries forward-motion CTAs only.
+ *
+ * Disconnect asks first, and says what it leaves: the connection is shared,
+ * so it goes for everyone, while the install and its tool permissions stay
+ * and Uninstall is what removes them. Without that, a disconnected connector
+ * reads as something to clean up rather than a connector at rest.
  */
 export function OAuthConnectionSection({
   installed,
@@ -23,8 +29,7 @@ export function OAuthConnectionSection({
   canManage: boolean;
   onChanged: () => void;
 }) {
-  const [acting, setActing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   // Render only on the happy path. needs_auth / failed / connecting
   // states are handled by the hero with the right CTA + status copy;
@@ -32,26 +37,7 @@ export function OAuthConnectionSection({
   if (!installed.url) return null;
   if (installed.state !== "running") return null;
 
-  const onDisconnect = async () => {
-    // No confirm() here. Disconnect is reversible — Connect re-runs
-    // the OAuth flow and re-establishes the session. Browsers also
-    // suppress window.confirm() after a few uses in a session, which
-    // makes the destructive-confirm pattern unreliable for buttons
-    // the user might click repeatedly. Uninstall keeps its confirm
-    // (that one drops credentials + permissions, not recoverable
-    // with a single click).
-    setActing(true);
-    setError(null);
-    try {
-      await disconnectConnector(installed.serverName, installed.scope);
-      onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActing(false);
-    }
-  };
-
+  const name = installed.catalog?.name ?? installed.connectorName ?? installed.serverName;
   const label = installed.identity?.email ?? installed.identity?.name;
 
   return (
@@ -69,15 +55,33 @@ export function OAuthConnectionSection({
         {canManage && (
           <button
             type="button"
-            onClick={onDisconnect}
-            disabled={acting}
-            className="text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4 disabled:opacity-60"
+            onClick={() => setConfirming(true)}
+            className="text-xs text-muted-foreground hover:text-destructive hover:underline underline-offset-4"
           >
-            {acting ? "Disconnecting…" : "Disconnect"}
+            Disconnect
           </button>
         )}
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {canManage && (
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={setConfirming}
+          title={`Disconnect ${name}?`}
+          description="Disconnects it for everyone in this workspace. Its tools stop working in chats and automations until someone connects it again."
+          confirmLabel="Disconnect"
+          pendingLabel="Disconnecting…"
+          onConfirm={async () => {
+            await disconnectConnector(installed.serverName, installed.scope);
+            setConfirming(false);
+            onChanged();
+          }}
+        >
+          <p className="text-muted-foreground">
+            {name} stays installed, with its tool permissions and settings. To remove it, use
+            Uninstall.
+          </p>
+        </ConfirmDialog>
+      )}
     </section>
   );
 }
