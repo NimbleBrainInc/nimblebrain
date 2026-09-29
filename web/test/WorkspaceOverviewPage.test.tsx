@@ -214,7 +214,7 @@ describe("WorkspaceOverviewPage — briefing", () => {
     );
 
     const row = findByTestId(mounted.container, "briefing-connector-status");
-    expect(row?.textContent).toBe("Sign-in required · gmail");
+    expect(row?.textContent).toBe("Blocked: Sign-in required · gmail");
     expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
     await act(async () => {
       row?.getElementsByTagName("button")[0]?.click();

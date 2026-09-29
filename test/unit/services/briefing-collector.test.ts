@@ -78,6 +78,7 @@ describe("discovery", () => {
         facet: "drafts",
         label: "Drafts awaiting review",
         count: 3,
+        level: "action",
         route: "@acme/app",
         state: "ok",
       },
@@ -86,6 +87,7 @@ describe("discovery", () => {
         facet: "blocked",
         label: "Tasks blocked",
         count: 2,
+        level: "action",
         route: "@acme/app",
         state: "ok",
       },
@@ -163,6 +165,35 @@ describe("reads", () => {
     expect(items.map((i) => i.facet)).toEqual(["blocked", "drafts"]);
   });
 
+  it("orders by declared level before app order, reading an unknown level as action", async () => {
+    const first = await serve("first", {
+      resources: () => [
+        facetEntry("drafts", "Drafts", "info"),
+        facetEntry("blocked", "Blocked", "action"),
+      ],
+      read: (uri) => counts[uri] ?? "{}",
+    });
+    const second = await serve("second", {
+      resources: () => [
+        facetEntry("drafts", "Stopped", "blocked"),
+        facetEntry("x", "Odd", "urgent"),
+      ],
+      read: () => '{"count": 1}',
+    });
+
+    const items = await collectorFor([first.source, second.source]).collect(WS, [
+      instance("first"),
+      instance("second"),
+    ]);
+
+    expect(items.map((i) => [i.label, i.level])).toEqual([
+      ["Stopped", "blocked"],
+      ["Blocked", "action"],
+      ["Odd", "action"],
+      ["Drafts", "info"],
+    ]);
+  });
+
   it("omits a zero count and renders no action for an app without a route", async () => {
     const { source } = await serve("mixed", {
       resources: () => [facetEntry("zero", "Nothing"), facetEntry("drafts", "Drafts")],
@@ -195,6 +226,7 @@ describe("reads", () => {
         facet: "drafts",
         label: "Drafts awaiting review",
         count: 0,
+        level: "action",
         route: "@acme/app",
         state: "unavailable",
       },

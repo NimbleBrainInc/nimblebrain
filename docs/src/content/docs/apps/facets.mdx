@@ -72,7 +72,7 @@ identifier as a `_meta` key:
   "title": "Drafts awaiting review",
   "mimeType": "application/json",
   "_meta": {
-    "ai.nimblebrain/facets": {}
+    "ai.nimblebrain/facets": { "level": "action" }
   }
 }
 ```
@@ -83,7 +83,18 @@ identifier as a `_meta` key:
 | `name` | Yes | Stable within your server. The host caches by it. |
 | `title` | Yes | The label, phrased so a count reads naturally before it: "Drafts awaiting review", "Tasks blocked". The host renders `<count> <title>`. |
 | `mimeType` | Yes | Must be `application/json`. |
-| `_meta["ai.nimblebrain/facets"]` | Yes | An object, empty in version 1. The host tolerates fields it does not know. |
+| `_meta["ai.nimblebrain/facets"]` | Yes | An object. The host tolerates fields it does not know. |
+| `_meta["ai.nimblebrain/facets"].level` | No | How urgent a non-zero count is: `blocked`, `action` or `info` (below). Defaults to `action`. |
+
+Pick the level by what the count means, not by how big it is:
+
+| Level | Use it when | Example | On the overview |
+|---|---|---|---|
+| `blocked` | Something has stopped until someone acts | Tasks blocked, invoices overdue | Red, stop icon, listed first |
+| `action` | Someone should act; nothing has stopped | Drafts awaiting review | Amber, alert icon |
+| `info` | Worth knowing; nothing is asked | Replies received | Muted, info icon, listed last |
+
+The host reads a level it does not recognise as `action`.
 
 A marked entry without a `title`, or whose `mimeType` is not
 `application/json`, is not a facet; the host skips it and logs why.
@@ -129,11 +140,11 @@ quick: a `count(*)`, not a page of rows you count afterwards.
 
 | Situation | Result |
 |---|---|
-| The count is above zero | One line: `<count> <title>`, opening your app's first placement route. An app with no placement route shows the line without an action. |
+| The count is above zero | One line: `<count> <title>` with your facet's level, opening your app's first placement route. An app with no placement route shows the line without an action. Lines are ordered by level, then by the shell's app order. |
 | The count is zero | Nothing. |
 | The read fails, returns an invalid count, or takes longer than 5 seconds | The title, marked unavailable. Your other facets, and every other server's, render normally. |
 | Your server did not advertise the extension | Nothing is listed or read. |
-| Your connector is not connected in the workspace | Its facets are not read. Until it is ready (signed in, configured, connected), the overview shows its status in their place, opening the connector's page. |
+| Your connector is not connected in the workspace | Its facets are not read. Until it is ready (signed in, configured, connected), the overview shows its status in their place, opening the connector's page. Sign-in required, configuration required and failed show as `blocked`; connecting and starting show as `info`. |
 | No facet anywhere in the workspace has a count, and every connector is ready | One line: "Nothing needs you in this workspace." |
 
 Counts are cached per workspace, server, and facet: a count is reused for 60
@@ -169,7 +180,7 @@ export function createServer(countDrafts: () => Promise<number>): Server {
         name: "drafts-awaiting-review",
         title: "Drafts awaiting review",
         mimeType: "application/json",
-        _meta: { [FACETS]: {} },
+        _meta: { [FACETS]: { level: "action" } },
       },
     ],
   }));
@@ -197,7 +208,7 @@ opening your app.
 - A host that does not implement the extension sees ordinary resources with a
   JSON body and may ignore them. A server that does not implement it lists no
   marked resources and shows nothing. Neither side rejects the other.
-- This is version 1. New optional fields in the read result or the settings
-  object keep the identifier. Removing or renaming `count` or `title`, changing
+- This is version 1. New optional fields in the read result, the marker object
+  or the settings object keep the identifier; `level` is one. Removing or renaming `count` or `title`, changing
   their types, or adding a required field would ship under a new identifier
   (`ai.nimblebrain/facets-v2`).
