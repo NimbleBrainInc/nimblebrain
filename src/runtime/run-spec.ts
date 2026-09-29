@@ -104,7 +104,11 @@ export interface RunInput {
    * prompt is a task description, not a phrase a skill should claim.
    */
   matchOn?: string;
-  /** Glob patterns limiting which tools the run can list, activate, and call (`nb__*` always). */
+  /**
+   * Glob patterns narrowing the run's tools (`nb__*` always pass). A chat's set
+   * only the turn-start tools; an unattended run's also bound what it can
+   * activate and call.
+   */
   allowedTools?: string[];
   /** Scopes the run to one app's briefing and tool surface. Chat only. */
   appContext?: AppContext;
