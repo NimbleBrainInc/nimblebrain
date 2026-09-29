@@ -48,7 +48,8 @@ members can be added to it like any other.
   there while it was private shares them by adding a member. There is no
   consent step for that first share.
 - Admin rules are the same everywhere. An admin the owner adds can remove the
-  owner, and a workspace left with no admin is recovered through `claim_admin`.
+  owner, and a workspace left with no admin is recovered by an org admin
+  seating an admin with `add_member`.
 - A workspace provisioned before this keeps a `ws_user_<userId>` id. It is in
   URLs, `/mcp/<wsId>` endpoints configured in external clients, and on-disk
   paths, and ids are opaque, so it stays.

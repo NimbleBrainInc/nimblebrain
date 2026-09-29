@@ -72,7 +72,8 @@ export function canWriteWorkspaceScoped(
  * members of any workspace, as they may create or delete it, and a workspace
  * admin member may manage their own. Content writes stay with
  * `canWriteWorkspaceScoped`; an org admin who wants to write content seats
- * themselves as a member first, which leaves them visible in the roster.
+ * themselves as a member first, which shows in the roster and in the
+ * member-change log.
  */
 export function canManageWorkspaceMembers(
   identity: Pick<UserIdentity, "id" | "orgRole"> | null | undefined,
