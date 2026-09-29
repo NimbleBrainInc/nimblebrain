@@ -140,12 +140,16 @@ quick: a `count(*)`, not a page of rows you count afterwards.
 
 | Situation | Result |
 |---|---|
-| The count is above zero | One line: `<count> <title>` with your facet's level, opening your app's first placement route. An app with no placement route shows the line without an action. Lines are ordered by level, then by the shell's app order. |
+| The count is above zero | One row in the overview's "Needs attention" panel: `<count> <title>` with your facet's level, opening your app's first placement route. An app with no placement route shows the line without an action. Lines are ordered by level, then by the shell's app order. |
 | The count is zero | Nothing. |
 | The read fails, returns an invalid count, or takes longer than 5 seconds | The title, marked unavailable. Your other facets, and every other server's, render normally. |
 | Your server did not advertise the extension | Nothing is listed or read. |
 | Your connector is not connected in the workspace | Its facets are not read. Until it is ready (signed in, configured, connected), the overview shows its status in their place, opening the connector's page. Sign-in required, configuration required and failed show as `critical`; connecting and starting show as `info`. |
-| No facet anywhere in the workspace has a count, and every connector is ready | One line: "Nothing needs you in this workspace." |
+| No facet anywhere in the workspace has a count, and every connector is ready | No panel at all. |
+
+A member can hide a row until it changes and collapse the panel. Both are
+remembered in their own browser only, never on the server: a hidden row
+returns when its count rises or its connector's status changes.
 
 Counts are cached per workspace, server, and facet: a count is reused for 60
 seconds, then served for up to 10 minutes while one fresh read runs in the

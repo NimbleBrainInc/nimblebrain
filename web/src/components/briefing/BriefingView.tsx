@@ -15,21 +15,40 @@
 // it: `critical` (something has stopped), then `warning` (someone should act),
 // then `info` (worth knowing). A facet's level is its server's; a connector
 // row's is the host's (`statusLevel`).
-// With neither kind of row, the list is one line saying nothing needs the member.
+//
+// The rows sit in one panel. A member can hide a row until it changes and
+// collapse the panel; both are per-browser preferences (`briefing-prefs.ts`).
+// With no row at all, and while loading, the panel is not rendered.
 // ---------------------------------------------------------------------------
 
-import { CircleAlert, Info, type LucideIcon, OctagonAlert } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Info,
+  type LucideIcon,
+  OctagonAlert,
+  X,
+} from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import type {
   BriefingItem,
   BriefingLevel,
   BriefingOutput,
 } from "../../_generated/platform-schemas/home";
 import type { InstalledConnector } from "../../api/client";
+import {
+  type BriefingPrefs,
+  isHidden,
+  loadBriefingPrefs,
+  saveBriefingPrefs,
+} from "../../lib/briefing-prefs";
 import { cn } from "../../lib/utils";
 import { statusLabel } from "../connectors/ConnectorStatusHero";
 
 interface BriefingViewProps {
+  /** Scopes the member's hidden rows and collapsed state. */
+  workspaceId: string;
   briefing: BriefingOutput | null;
   /** The workspace's installed connectors; each needing attention adds a row. */
   connectors: readonly InstalledConnector[];
@@ -44,11 +63,16 @@ interface BriefingViewProps {
 
 const LEVELS: Record<
   BriefingLevel,
-  { rank: number; icon: LucideIcon; tone: string; name: string }
+  { rank: number; icon: LucideIcon; badge: string; name: string }
 > = {
-  critical: { rank: 0, icon: OctagonAlert, tone: "text-destructive", name: "Critical" },
-  warning: { rank: 1, icon: CircleAlert, tone: "text-warning", name: "Warning" },
-  info: { rank: 2, icon: Info, tone: "text-muted-foreground", name: "Info" },
+  critical: {
+    rank: 0,
+    icon: OctagonAlert,
+    badge: "bg-destructive/10 text-destructive",
+    name: "Critical",
+  },
+  warning: { rank: 1, icon: CircleAlert, badge: "bg-warning/10 text-warning", name: "Warning" },
+  info: { rank: 2, icon: Info, badge: "bg-muted text-muted-foreground", name: "Info" },
 };
 
 /**
@@ -65,107 +89,110 @@ function levelOf(level: string): BriefingLevel {
   return Object.hasOwn(LEVELS, level) ? (level as BriefingLevel) : "warning";
 }
 
-function Row({
-  onClick,
-  muted,
-  level,
-  children,
-  testId,
-}: {
-  onClick?: () => void;
-  muted?: boolean;
+/** One row of the panel, whatever produced it. */
+interface PanelRow {
+  key: string;
+  /** What the row says now; a hidden row returns when this changes. */
+  signature: string;
   level: BriefingLevel;
-  children: ReactNode;
   testId: string;
-}) {
-  const { icon: Icon, tone, name } = LEVELS[level];
-  const className = cn(
-    "flex w-full items-center gap-2 px-3 py-2 -mx-3 rounded-sm text-left text-sm",
-    muted || level === "info" ? "text-muted-foreground" : "text-foreground",
-  );
-  const body = (
+  muted: boolean;
+  onOpen?: () => void;
+  content: ReactNode;
+  app: string;
+}
+
+function facetRow(item: BriefingItem, onOpen: (route: string) => void): PanelRow {
+  const unavailable = item.state === "unavailable";
+  const { route } = item;
+  return {
+    key: `facet:${item.app}/${item.facet}`,
+    signature: unavailable ? "unavailable" : `ok:${item.count}`,
+    level: levelOf(item.level),
+    testId: unavailable ? "briefing-item-unavailable" : "briefing-item",
+    muted: unavailable,
+    onOpen: route ? () => onOpen(route) : undefined,
+    content: unavailable ? (
+      <>{item.label} — unavailable</>
+    ) : (
+      <>
+        <span className="font-bold tabular-nums">{item.count}</span> {item.label}
+      </>
+    ),
+    app: item.app,
+  };
+}
+
+function connectorRow(c: InstalledConnector, onOpen: (serverName: string) => void): PanelRow {
+  const level = statusLevel(c.status);
+  return {
+    key: `connector:${c.serverName}`,
+    signature: c.status,
+    level,
+    testId: "briefing-connector-status",
+    muted: level === "info",
+    onOpen: () => onOpen(c.serverName),
+    content: statusLabel(c.status),
+    app: c.catalog?.name ?? c.serverName,
+  };
+}
+
+function Row({ row, onHide }: { row: PanelRow; onHide: () => void }) {
+  const { icon: Icon, badge, name } = LEVELS[row.level];
+  const inner = (
     <>
-      <Icon className={cn("h-4 w-4 shrink-0", tone)} aria-hidden />
+      <span
+        className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-md", badge)}
+        aria-hidden
+      >
+        <Icon className="h-4 w-4" />
+      </span>
       <span className="sr-only">{name}: </span>
-      {children}
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate",
+          row.muted ? "text-muted-foreground" : "text-foreground",
+        )}
+      >
+        {row.content}
+      </span>
+      <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+        <span className="sr-only"> · </span>
+        {row.app}
+      </span>
     </>
   );
+  const base = "flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-4 text-left text-sm";
   return (
-    <li data-testid={testId} data-level={level}>
-      {onClick ? (
-        <button
-          type="button"
-          onClick={onClick}
-          className={cn(className, "hover:bg-foreground/5 transition-colors")}
-        >
-          {body}
+    <li
+      className="group flex items-center pr-2 hover:bg-foreground/5 transition-colors"
+      data-testid={row.testId}
+      data-level={row.level}
+    >
+      {row.onOpen ? (
+        <button type="button" onClick={row.onOpen} className={base}>
+          {inner}
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         </button>
       ) : (
-        <div className={className}>{body}</div>
+        <div className={base}>{inner}</div>
       )}
+      <button
+        type="button"
+        onClick={onHide}
+        aria-label="Hide until it changes"
+        title="Hide until it changes"
+        data-testid="briefing-hide"
+        className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+      >
+        <X className="h-4 w-4" />
+      </button>
     </li>
   );
 }
 
-function AppName({ name }: { name: string }) {
-  return <span className="text-muted-foreground"> · {name}</span>;
-}
-
-function FacetRow({ item, onOpen }: { item: BriefingItem; onOpen: (route: string) => void }) {
-  const { route } = item;
-  const unavailable = item.state === "unavailable";
-  return (
-    <Row
-      testId={unavailable ? "briefing-item-unavailable" : "briefing-item"}
-      muted={unavailable}
-      level={levelOf(item.level)}
-      onClick={route ? () => onOpen(route) : undefined}
-    >
-      <span>
-        {unavailable ? (
-          <>{item.label} — unavailable</>
-        ) : (
-          <>
-            <span className="font-semibold tabular-nums">{item.count}</span> {item.label}
-          </>
-        )}
-        <AppName name={item.app} />
-      </span>
-    </Row>
-  );
-}
-
-function ConnectorRow({
-  connector,
-  onOpen,
-}: {
-  connector: InstalledConnector;
-  onOpen: (serverName: string) => void;
-}) {
-  return (
-    <Row
-      testId="briefing-connector-status"
-      level={statusLevel(connector.status)}
-      onClick={() => onOpen(connector.serverName)}
-    >
-      <span>
-        {statusLabel(connector.status)}
-        <AppName name={connector.catalog?.name ?? connector.serverName} />
-      </span>
-    </Row>
-  );
-}
-
-function Skeleton() {
-  return (
-    <div className="space-y-1" aria-hidden data-testid="workspace-briefing-loading">
-      <div className="h-9 rounded-sm bg-muted/50 motion-safe:animate-pulse" />
-      <div className="h-9 rounded-sm bg-muted/50 motion-safe:animate-pulse" />
-    </div>
-  );
-}
-
 export function BriefingView({
+  workspaceId,
   briefing,
   connectors,
   loading,
@@ -174,56 +201,113 @@ export function BriefingView({
   onOpen,
   onOpenConnector,
 }: BriefingViewProps) {
-  // Every status but `ready`, `connecting` and `starting` included: an OAuth
-  // abandoned mid-flow stays `connecting`, and its page is where it is cancelled.
-  const needsAttention = connectors.filter((c) => c.status !== "ready");
-  const items = briefing?.items ?? [];
-  const empty = !loading && !error && items.length === 0 && needsAttention.length === 0;
-  // One list, most urgent first. Within a level, connector rows lead and facet
-  // items keep the server's order (sort is stable).
-  const rows = [
-    ...needsAttention.map((c) => ({
-      rank: LEVELS[statusLevel(c.status)].rank,
-      node: (
-        <ConnectorRow key={`connector:${c.serverName}`} connector={c} onOpen={onOpenConnector} />
-      ),
-    })),
-    ...items.map((item) => ({
-      rank: LEVELS[levelOf(item.level)].rank,
-      node: <FacetRow key={`${item.app}/${item.facet}`} item={item} onOpen={onOpen} />,
-    })),
-  ].sort((a, b) => a.rank - b.rank);
+  const [prefs, setPrefs] = useState<BriefingPrefs>(() => loadBriefingPrefs(workspaceId));
+  useEffect(() => setPrefs(loadBriefingPrefs(workspaceId)), [workspaceId]);
+  const update = (next: BriefingPrefs) => {
+    setPrefs(next);
+    saveBriefingPrefs(workspaceId, next);
+  };
+
+  // Every status but `ready`: an OAuth abandoned mid-flow stays `connecting`,
+  // and its page is where it is cancelled.
+  const all: PanelRow[] = [
+    ...connectors.filter((c) => c.status !== "ready").map((c) => connectorRow(c, onOpenConnector)),
+    ...(briefing?.items ?? []).map((item) => facetRow(item, onOpen)),
+  ];
+  // Most urgent first; within a level, connector rows lead and facet items keep
+  // the server's order (sort is stable).
+  all.sort((a, b) => LEVELS[a.level].rank - LEVELS[b.level].rank);
+
+  // A hidden row that has gone away is forgotten, so if it comes back it shows.
+  const settled = !loading && !error && briefing !== null;
+  const liveKeys = all.map((r) => r.key).join("\n");
+  useEffect(() => {
+    if (!settled) return;
+    const live = new Set(liveKeys.split("\n"));
+    const stale = Object.keys(prefs.hidden).filter((k) => !live.has(k));
+    if (stale.length === 0) return;
+    const hidden = { ...prefs.hidden };
+    for (const k of stale) delete hidden[k];
+    update({ ...prefs, hidden });
+  });
+
+  if (loading || (all.length === 0 && !error)) return null;
+
+  const visible = all.filter((r) => !isHidden(prefs, r.key, r.signature));
+  const hiddenCount = all.length - visible.length;
+  const criticalCount = visible.filter((r) => r.level === "critical").length;
+  const open = !prefs.collapsed;
+  const hide = (row: PanelRow) =>
+    update({ ...prefs, hidden: { ...prefs.hidden, [row.key]: row.signature } });
 
   return (
-    <section data-testid="workspace-briefing">
-      {loading ? (
-        <Skeleton />
-      ) : (
-        <>
-          {rows.length > 0 && <ul>{rows.map((row) => row.node)}</ul>}
+    <section
+      className="mb-10 overflow-hidden rounded-lg border border-border"
+      aria-label="Needs attention"
+      data-testid="workspace-briefing"
+    >
+      <div
+        className={cn(
+          "flex items-center gap-2 bg-muted/50 py-1.5 pl-4 pr-2",
+          open && (visible.length > 0 || error) && "border-b border-border",
+        )}
+      >
+        <span className="text-2xs font-bold uppercase tracking-[0.08em] text-muted-foreground">
+          Needs attention
+        </span>
+        {criticalCount > 0 && (
+          <span
+            className="rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive"
+            data-testid="briefing-critical-count"
+          >
+            {criticalCount} critical
+          </span>
+        )}
+        <span className="flex-1" />
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => update({ ...prefs, hidden: {} })}
+            className="rounded-sm px-2 py-1 text-xs text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+            data-testid="briefing-show-hidden"
+          >
+            {hiddenCount} hidden · Show
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => update({ ...prefs, collapsed: open })}
+          aria-expanded={open}
+          aria-label={open ? "Collapse" : "Expand"}
+          className="flex h-8 w-8 items-center justify-center rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+          data-testid="briefing-toggle"
+        >
+          <ChevronDown className={cn("h-4 w-4 transition-transform", !open && "-rotate-90")} />
+        </button>
+      </div>
 
-          {error && (
-            <div
-              className="mt-2 rounded-sm border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-              data-testid="workspace-briefing-error"
-            >
-              <p>{error}</p>
-              <button
-                type="button"
-                onClick={onRetry}
-                className="mt-2 text-xs font-medium text-destructive hover:underline"
-              >
-                Retry
-              </button>
-            </div>
-          )}
+      {open && visible.length > 0 && (
+        <ul className="divide-y divide-border">
+          {visible.map((row) => (
+            <Row key={row.key} row={row} onHide={() => hide(row)} />
+          ))}
+        </ul>
+      )}
 
-          {empty && (
-            <p className="text-sm text-muted-foreground" data-testid="workspace-briefing-empty">
-              Nothing needs you in this workspace.
-            </p>
-          )}
-        </>
+      {open && error && (
+        <div
+          className="bg-destructive/5 px-4 py-3 text-sm text-destructive"
+          data-testid="workspace-briefing-error"
+        >
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-2 text-xs font-medium text-destructive hover:underline"
+          >
+            Retry
+          </button>
+        </div>
       )}
     </section>
   );
