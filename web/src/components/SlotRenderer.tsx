@@ -62,6 +62,30 @@ function appendLoadError(container: HTMLElement, entry: PlacementEntry, err: unk
 }
 
 /**
+ * Placeholder shown in an app's place while its UI resource is fetched.
+ *
+ * The resource is one inlined HTML document, often several hundred KB, so the
+ * fetch can take seconds, and without this the slot is blank for all of it —
+ * indistinguishable from an app that failed or has nothing to show. Built as a
+ * DOM node for the same reason `appendLoadError` is: the container is populated
+ * imperatively. The caller removes it once the fetch settles either way.
+ */
+function appendLoading(container: HTMLElement, entry: PlacementEntry): HTMLElement {
+  const box = document.createElement("div");
+  box.setAttribute("role", "status");
+  box.className = "flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground";
+  const spinner = document.createElement("span");
+  spinner.className =
+    "inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent";
+  spinner.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = `Loading ${entry.label ?? "app"}…`;
+  box.append(spinner, label);
+  container.appendChild(box);
+  return box;
+}
+
+/**
  * Mount one placement's sandboxed iframe into `container` and wire its bridge.
  *
  * Extracted from the render loop so that loop stays a readable
@@ -166,10 +190,13 @@ export function SlotRenderer({
     // own message in place of the iframe and yields no bridge, so one broken app
     // never stops the placements after it from mounting.
     async function renderOne(entry: PlacementEntry): Promise<BridgeHandle | null> {
+      const loading = appendLoading(container!, entry);
       try {
         // Pass the full path after ui:// (e.g., "ui://crm/main" -> "crm/main")
         const resourcePath = uiPathFromUri(entry.resourceUri);
-        const resource = await getResources(entry.serverName, resourcePath);
+        const resource = await getResources(entry.serverName, resourcePath).finally(() =>
+          loading.remove(),
+        );
         if (cancelled) return null;
         return mountPlacement(
           container!,

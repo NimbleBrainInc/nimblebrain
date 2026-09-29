@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import { handleReadResource, handleResourceProxy, handleResourceUpload } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
@@ -56,7 +57,12 @@ export function resourceRoutes(ctx: AppContext) {
             c.var.workspaceId,
           ),
       )
-      .get(APP_RESOURCES_ROUTE, auth, logErrors, requireWorkspace(ctx), (c) => {
+      // Compressed: an app's UI is one inlined HTML document, commonly several
+      // hundred KB, and the shell shows nothing until it arrives, so on a slow
+      // link the transfer is the whole wait. Scoped to this route, which answers
+      // one JSON body; the streamed `/mcp` and SSE responses must not pass
+      // through an encoder.
+      .get(APP_RESOURCES_ROUTE, compress(), auth, logErrors, requireWorkspace(ctx), (c) => {
         const name = decodeURIComponent(c.req.param("name"));
         // Extract the full resource path after /resources/
         const url = new URL(c.req.url);

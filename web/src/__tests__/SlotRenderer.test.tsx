@@ -146,3 +146,44 @@ describe("SlotRenderer — failed placement", () => {
     expect(container.getElementsByTagName("iframe").length).toBe(1);
   });
 });
+
+// happy-dom's selector parser rejects attribute selectors; find by attribute instead.
+function loadingStatus(container: HTMLElement): Element | undefined {
+  return Array.from(container.getElementsByTagName("div")).find(
+    (d) => d.getAttribute("role") === "status",
+  );
+}
+
+describe("SlotRenderer — while the resource loads", () => {
+  test("pendingFetch_showsALoadingStatusInTheAppsPlace", async () => {
+    let release: (v: { html: string }) => void = () => {};
+    getResources.mockImplementation(
+      () => new Promise<{ html: string }>((resolve) => (release = resolve)),
+    );
+
+    const { container } = await mount([placement("memory", "Memory")]);
+
+    const status = loadingStatus(container);
+    expect(status?.textContent).toBe("Loading Memory…");
+    expect(container.getElementsByTagName("iframe").length).toBe(0);
+
+    await act(async () => {
+      release({ html: "<p>ok</p>" });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(loadingStatus(container)).toBeUndefined();
+    expect(container.getElementsByTagName("iframe").length).toBe(1);
+  });
+
+  test("failedFetch_replacesTheLoadingStatusWithTheError", async () => {
+    getResources.mockImplementation(async () => {
+      throw new Error("boom");
+    });
+
+    const { container } = await mount([placement("memory", "Memory")]);
+
+    expect(loadingStatus(container)).toBeUndefined();
+    expect(container.textContent).toContain("couldn’t be loaded");
+  });
+});
