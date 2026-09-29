@@ -699,6 +699,33 @@ describe("Scheduler — cron schedule with no next run", () => {
 		expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
 	});
 
+	it("clears nextRunAt on a skipped run whose cron has no next run", async () => {
+		const auto = makeAutomation({
+			schedule: { type: "cron", expression: "* * * * *" },
+			nextRunAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+		const { executor, resolve } = createBlockingExecutor();
+		const scheduler = new Scheduler(executor, { workDir: tmpDir });
+		scheduler.start();
+		scheduler.onTimer();
+		await new Promise((r) => setTimeout(r, 50));
+
+		// While the first run is still active, the schedule runs out of dates
+		// and the timer still holds a due run, so the next tick skips it.
+		const stored = loadDefs(tmpDir).get(auto.id)!;
+		saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
+		defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+		await scheduler.onTimer();
+
+		expect(executor).toHaveBeenCalledTimes(1);
+		expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+
+		resolve(makeSuccessRun(auto.id));
+		scheduler.stop();
+	});
+
 	it("still runs a normal cron and advances nextRunAt", async () => {
 		const auto = makeAutomation({
 			schedule: { type: "cron", expression: "* * * * *" },
