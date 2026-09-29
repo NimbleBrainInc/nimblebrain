@@ -121,7 +121,7 @@ Both limits sit under **Limits** in the create form, and the agent can set them 
 ![The create form's Limits section, with a daily token budget and an allowed-tools list filled in](../../../assets/guide/automation-create-limits.png)
 
 - **Token budget** — a cap on the tokens (not dollars) an automation's runs use per day or month, or over its lifetime. It is checked after each run finishes: once the period's total passes the cap, the automation turns off and stays off until you turn it back on. The run that crosses the cap still finishes, so to bound a single run, use the per-run token and iteration caps.
-- **Allowed tools** — tool names or globs the automation's runs may use, such as `gmail__*` for one connector's tools or `files__read` for a single tool. A run can't see, activate, or call anything outside the list; NimbleBrain's own system tools (`nb__*`) stay available. Prefer a `<connector>__*` glob, since a connector can rename its tools. Leave it empty to allow every tool. The list can't include the tools that create, update, or delete automations.
+- **Allowed tools** — tool names or globs the automation's runs may use, such as `gmail__*` for a workspace connector's tools, `my_gmail__*` for your personal connection, or `files__read` for a single tool. A run can't activate or call anything outside the list; NimbleBrain's own system tools (`nb__*`) stay available. Prefer a `<connector>__*` glob, since a connector can rename its tools. Leave it empty to allow every tool. The list can't include the tools that create, update, or delete automations.
 
 A shorter tool list also makes each run cheaper, because the model is sent fewer tool definitions.
 
