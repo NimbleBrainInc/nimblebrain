@@ -51,12 +51,12 @@ interface MockOAuthMcpServer {
  * id_token in the token response — while the resource's own metadata names
  * only its `mcp` scope.
  *
- * `refusesIdentity`: an `oidc` server that still refuses `openid` to this
- * client, answering `invalid_scope` on the redirect, while its userinfo
- * endpoint answers any token.
+ * `refuses`: an `oidc` server that still refuses this scope to this client,
+ * answering `invalid_scope` on the redirect, while its userinfo endpoint
+ * answers any token. `resourceScopes`: what the resource's own metadata names.
  */
 function startMockOAuthMcpServer(
-  opts: { oidc?: boolean; refusesIdentity?: boolean } = {},
+  opts: { oidc?: boolean; refuses?: string; resourceScopes?: string[] } = {},
 ): MockOAuthMcpServer {
   const ISSUED = new Map<string, { code: string; scope: string }>(); // client_id → code
   const VALID_TOKENS = new Map<string, { scope: string; sub: string; email: string }>();
@@ -93,7 +93,7 @@ function startMockOAuthMcpServer(
         return Response.json({
           resource: base,
           authorization_servers: [base],
-          ...(opts.oidc ? { scopes_supported: ["mcp"] } : {}),
+          ...(opts.oidc ? { scopes_supported: opts.resourceScopes ?? ["mcp"] } : {}),
         });
       }
       if (url.pathname === "/.well-known/openid-configuration" && opts.oidc) {
@@ -111,7 +111,7 @@ function startMockOAuthMcpServer(
         // A server that refuses `openid` may still answer userinfo for any
         // token, so the account a sign-in names must not rest on it refusing.
         const granted =
-          grant && (opts.refusesIdentity || grant.scope.split(" ").includes("openid"));
+          grant && (opts.refuses !== undefined || grant.scope.split(" ").includes("openid"));
         if (!granted) return new Response(null, { status: 401 });
         return Response.json({ sub: grant.sub, email: grant.email });
       }
@@ -153,7 +153,7 @@ function startMockOAuthMcpServer(
         const code = `mock-code-${Math.random().toString(36).slice(2, 10)}`;
         const scope = url.searchParams.get("scope");
         authorizeScopes.push(scope);
-        if (opts.refusesIdentity && scope?.split(" ").includes("openid")) {
+        if (opts.refuses && scope?.split(" ").includes(opts.refuses)) {
           const refused = new URL(redirectUri);
           refused.searchParams.set("error", "invalid_scope");
           refused.searchParams.set("state", state);
@@ -481,7 +481,7 @@ describe("McpSource — OAuth retry path", () => {
 
   it("a server that advertises openid and refuses it still signs in, naming no account", async () => {
     server.stop();
-    server = startMockOAuthMcpServer({ oidc: true, refusesIdentity: true });
+    server = startMockOAuthMcpServer({ oidc: true, refuses: "openid" });
 
     const { provider, offered } = await connectInteractively("refuses-identity");
 
@@ -500,6 +500,20 @@ describe("McpSource — OAuth retry path", () => {
     const { provider } = await connectInteractively("accepts-identity");
 
     expect(server.authorizeScopes).toEqual(["mcp openid email"]);
+    expect(await provider.identity()).toEqual({ sub: "user-a", email: "a@example.com" });
+  }, 15_000);
+
+  it("a fallback that keeps the connector's own openid still names the account", async () => {
+    server.stop();
+    server = startMockOAuthMcpServer({
+      oidc: true,
+      refuses: "email",
+      resourceScopes: ["mcp", "openid"],
+    });
+
+    const { provider } = await connectInteractively("keeps-openid");
+
+    expect(server.authorizeScopes).toEqual(["mcp openid email", "mcp openid"]);
     expect(await provider.identity()).toEqual({ sub: "user-a", email: "a@example.com" });
   }, 15_000);
 });
