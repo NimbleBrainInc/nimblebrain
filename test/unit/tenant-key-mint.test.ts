@@ -113,7 +113,7 @@ describe("buildMintRequest — authorizer parity", () => {
     });
     const v = verifyMintAsAuthorizer(wire, MASTER, now);
     expect(v.ok).toBe(false);
-    if (v.ok) return;
+    if (v.ok !== false) return;
     expect(v.reason).toBe("bad_mac");
   });
 
@@ -130,7 +130,7 @@ describe("buildMintRequest — authorizer parity", () => {
     });
     const v = verifyMintAsAuthorizer(wire, MASTER, iat + 61);
     expect(v.ok).toBe(false);
-    if (v.ok) return;
+    if (v.ok !== false) return;
     expect(v.reason).toBe("expired");
   });
 });
@@ -210,7 +210,7 @@ function fakeAuthorizer(
     expect(body.get("grant_type")).toBe("urn:nimblebrain:params:oauth:grant-type:tenant-key");
     const wire = body.get("tenant_assertion") ?? "";
     const v = verifyMintAsAuthorizer(wire, MASTER, now());
-    if (!v.ok) return new Response(`{"error":"${v.reason}"}`, { status: 400 });
+    if (v.ok === false) return new Response(`{"error":"${v.reason}"}`, { status: 400 });
     return Response.json({
       access_token: `tok-${v.audience}-${calls}`,
       token_type: "Bearer",

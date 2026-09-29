@@ -165,6 +165,7 @@ describe("authenticateRequest — identity in return value", () => {
     const provider = createMockProvider("my-key", identity);
     const options = {
       provider,
+      eventSink: noopSink,
     };
 
     const req = makeRequest("/v1/workspaces/ws_a/shell", {
@@ -188,9 +189,11 @@ describe("authenticateRequest — identity in return value", () => {
 
     const options1 = {
       provider: provider1,
+      eventSink: noopSink,
     };
     const options2 = {
       provider: provider2,
+      eventSink: noopSink,
     };
 
     const req1 = makeRequest("/v1/workspaces/ws_a/shell", {

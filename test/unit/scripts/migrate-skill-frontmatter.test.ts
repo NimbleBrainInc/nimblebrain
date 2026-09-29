@@ -136,7 +136,7 @@ describe("migrateSkillContent", () => {
     const { content } = migrateSkillContent(LEGACY);
     const { data } = matter(content);
     const v = validateFrontmatter(data);
-    if (!v.ok) throw new Error(`expected valid frontmatter: ${v.errors.join(", ")}`);
+    if (v.ok === false) throw new Error(`expected valid frontmatter: ${v.errors.join(", ")}`);
     const m = mapFrontmatterToManifest(v.value);
 
     expect(m.name).toBe("voice-rules");

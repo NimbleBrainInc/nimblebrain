@@ -79,7 +79,7 @@ describe("authoring-guide Layer 1 skill", () => {
     if (!block) throw new Error("no ```yaml example block found in the guide body");
     const example = matter(block[1] as string);
     const result = validateFrontmatter(example.data);
-    if (!result.ok) {
+    if (result.ok === false) {
       throw new Error(`worked example frontmatter is invalid: ${result.errors.join("; ")}`);
     }
     expect(result.ok).toBe(true);

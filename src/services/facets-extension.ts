@@ -21,6 +21,29 @@ export function facetsClientExtension(): Record<string, Record<string, never>> {
   return { [FACETS_EXTENSION_ID]: {} };
 }
 
+/**
+ * How urgent a facet's non-zero count is, most urgent first: something has
+ * stopped, someone should act, worth knowing. The server declares it in the
+ * facet's marker; the host orders and colours by it.
+ */
+export const FACET_LEVELS = ["critical", "warning", "info"] as const;
+export type FacetLevel = (typeof FACET_LEVELS)[number];
+
+/**
+ * A level absent from the marker, or one this host does not know, reads as
+ * `warning`: a level added later never hides a facet or promotes it.
+ */
+export const DEFAULT_FACET_LEVEL: FacetLevel = "warning";
+
+/** Position in {@link FACET_LEVELS}, for ordering: lower is more urgent. */
+export function facetLevelRank(level: FacetLevel): number {
+  return FACET_LEVELS.indexOf(level);
+}
+
+function isFacetLevel(value: unknown): value is FacetLevel {
+  return typeof value === "string" && (FACET_LEVELS as readonly string[]).includes(value);
+}
+
 /** One facet a server listed: what the host reads and what it renders beside the count. */
 export interface DiscoveredFacet {
   uri: string;
@@ -28,6 +51,8 @@ export interface DiscoveredFacet {
   name: string;
   /** The label, rendered as `<count> <title>`. */
   title: string;
+  /** The marker's `level`, or {@link DEFAULT_FACET_LEVEL}. */
+  level: FacetLevel;
 }
 
 /** A listed resource that carries the marker but breaks the contract, with why. */
@@ -78,7 +103,9 @@ function checkFacetEntry(entry: Record<string, unknown>): DiscoveredFacet | Reje
   if (typeof title !== "string" || title.trim() === "") {
     return { uri, reason: "missing title" };
   }
-  return { uri, name, title };
+  const level = (entry._meta as Record<string, Record<string, unknown>>)[FACETS_EXTENSION_ID]
+    ?.level;
+  return { uri, name, title, level: isFacetLevel(level) ? level : DEFAULT_FACET_LEVEL };
 }
 
 /**

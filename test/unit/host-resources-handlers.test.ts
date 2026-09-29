@@ -15,6 +15,7 @@ import {
   TokenBucketRateLimit,
 } from "../../src/host-resources/index.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { textOf } from "../helpers/resource-contents.ts";
 
 // End-to-end wire test for the inbound host-resources handlers, without
 // spawning a real subprocess. We build a fake "connector" MCP Server inside
@@ -161,7 +162,7 @@ describe("McpSource inbound host-resources handlers", () => {
     expect(parsed.contents).toHaveLength(1);
     expect(parsed.contents[0]?.uri).toBe(uri);
     expect(parsed.contents[0]?.mimeType).toBe("text/csv");
-    expect(parsed.contents[0]?.text).toBe("hello,world");
+    expect(textOf(parsed.contents[0])).toBe("hello,world");
 
     await source.stop();
   });

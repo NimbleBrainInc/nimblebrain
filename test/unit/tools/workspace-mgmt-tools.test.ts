@@ -15,20 +15,9 @@ import {
 } from "../../../src/tools/workspace-mgmt-tools.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
+import { parseResult, resultText } from "../../helpers/tool-result.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-function extractText(result: { content: Array<{ type: string; text: string }> }): string {
-  return result.content[0].text;
-}
-
-function parseResult(result: {
-  content: Array<{ type: string; text: string }>;
-  structuredContent?: Record<string, unknown>;
-}): unknown {
-  if (result.structuredContent) return result.structuredContent;
-  return JSON.parse(extractText(result));
-}
 
 // ── Setup ─────────────────────────────────────────────────────────
 
@@ -125,7 +114,7 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(false);
-      expect(extractText(result)).toContain("You don't have permission to manage workspaces");
+      expect(resultText(result)).toContain("You don't have permission to manage workspaces");
     });
 
     test("null identity gets permission denied", async () => {
@@ -134,7 +123,7 @@ describe("nb__manage_workspaces", () => {
 
       const result = await tool.handler({ action: "list" });
 
-      expect(extractText(result)).toContain("You don't have permission to manage workspaces");
+      expect(resultText(result)).toContain("You don't have permission to manage workspaces");
     });
   });
 
@@ -172,7 +161,10 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspace.id).toBe("ws_custom_slug");
     });
 
-    test("creates workspace with connectors", async () => {
+    test("creates workspace with connectors, reporting them by name", async () => {
+      catalogEntries = [
+        { id: "com.example/echo", name: "Echo", url: "https://echo.example.com/mcp" },
+      ] as ConnectorCatalogEntry[];
       const result = await tool.handler({
         action: "create",
         name: "Connector Workspace",
@@ -181,18 +173,18 @@ describe("nb__manage_workspaces", () => {
 
       expect(result.isError).toBe(false);
       const parsed = parseResult(result) as {
-        workspace: { connectors: Array<{ url: string; serverName?: string }> };
+        workspace: { id: string; connectors: Array<Record<string, unknown>> };
       };
-      expect(parsed.workspace.connectors).toHaveLength(1);
-      expect(parsed.workspace.connectors[0].url).toBe("https://echo.example.com/mcp");
-      expect(parsed.workspace.connectors[0].serverName).toBe("echo");
+      expect(parsed.workspace.connectors).toEqual([{ serverName: "echo", name: "Echo" }]);
+      const stored = await store.get(parsed.workspace.id);
+      expect(stored?.connectors[0]?.url).toBe("https://echo.example.com/mcp");
     });
 
     test("requires name", async () => {
       const result = await tool.handler({ action: "create" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("name is required");
+      expect(resultText(result)).toContain("name is required");
     });
 
     test("returns error for duplicate explicit slug", async () => {
@@ -203,7 +195,7 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "create", name: "Dupe Two", slug: "dupe_slug" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("already exists");
+      expect(resultText(result)).toContain("already exists");
     });
   });
 
@@ -317,10 +309,18 @@ describe("nb__manage_workspaces", () => {
 
       expect(updateResult.isError).toBe(false);
       const updated = parseResult(updateResult) as {
-        workspace: { connectors: Array<{ url: string }> };
+        workspace: { connectors: Array<Record<string, unknown>> };
       };
-      expect(updated.workspace.connectors).toHaveLength(2);
-      expect(updated.workspace.connectors[0]?.url).toBe("https://echo.example.com/mcp");
+      // Uncatalogued, so each is named by its server name; the ref stays in the store.
+      expect(updated.workspace.connectors).toEqual([
+        { serverName: "echo", name: "echo" },
+        { serverName: "bash", name: "bash" },
+      ]);
+      const stored = await store.get(created.workspace.id);
+      expect(stored?.connectors.map((c) => c.url)).toEqual([
+        "https://echo.example.com/mcp",
+        "https://bash.example.com/mcp",
+      ]);
     });
 
     test("refuses a connector row with no reachable url", async () => {
@@ -340,7 +340,7 @@ describe("nb__manage_workspaces", () => {
           connectors: [bad],
         });
         expect(result.isError).toBe(true);
-        expect(extractText(result)).toContain("http(s) URL");
+        expect(resultText(result)).toContain("http(s) URL");
       }
     });
 
@@ -370,15 +370,15 @@ describe("nb__manage_workspaces", () => {
       expect(result.isError).toBe(true);
       // `deleted: false` with a `deleteError` is NOT the store's idempotent
       // not-found, and must not be reported as one: the connectors are gone.
-      expect(extractText(result)).not.toContain("Workspace not found");
-      expect(extractText(result)).toContain("EEXIST");
-      expect(extractText(result)).toContain("Tore down 1 connector.");
-      expect(extractText(result)).toContain("cannot be undone");
+      expect(resultText(result)).not.toContain("Workspace not found");
+      expect(resultText(result)).toContain("EEXIST");
+      expect(resultText(result)).toContain("Tore down 1 connector.");
+      expect(resultText(result)).toContain("cannot be undone");
       // And it claims nothing about where the record ended up. The store
       // throws on both sides of its rename, so either claim is wrong half the
       // time — see `handleDelete`.
-      expect(extractText(result)).not.toContain("still on disk");
-      expect(extractText(result)).not.toContain("is archived");
+      expect(resultText(result)).not.toContain("still on disk");
+      expect(resultText(result)).not.toContain("is archived");
     });
 
     test("requires workspaceId", async () => {
@@ -388,7 +388,7 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("workspaceId is required");
+      expect(resultText(result)).toContain("workspaceId is required");
     });
 
     test("returns error for non-existent workspace", async () => {
@@ -399,7 +399,7 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Workspace not found");
+      expect(resultText(result)).toContain("Workspace not found");
     });
 
     test("requires at least one field to update", async () => {
@@ -415,7 +415,7 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("No fields to update");
+      expect(resultText(result)).toContain("No fields to update");
     });
   });
 
@@ -474,9 +474,9 @@ describe("nb__manage_workspaces", () => {
       expect(result.isError).toBe(false);
       // The record is archived, so this sentence is the last place the connector
       // whose grant may still be live at a vendor is nameable.
-      expect(extractText(result)).toContain("Tore down 2 connectors.");
-      expect(extractText(result)).toContain('"com-example-beta"');
-      expect(extractText(result)).not.toContain('"com-example-alpha"');
+      expect(resultText(result)).toContain("Tore down 2 connectors.");
+      expect(resultText(result)).toContain('"com-example-beta"');
+      expect(resultText(result)).not.toContain('"com-example-alpha"');
 
       const parsed = parseResult(result) as { connectors: Array<{ serverName: string }> };
       expect(parsed.connectors.map((c) => c.serverName)).toEqual([
@@ -489,7 +489,7 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "delete" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("workspaceId is required");
+      expect(resultText(result)).toContain("workspaceId is required");
     });
 
     test("returns error for non-existent workspace", async () => {
@@ -499,7 +499,7 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Workspace not found");
+      expect(resultText(result)).toContain("Workspace not found");
     });
   });
 
@@ -532,7 +532,12 @@ describe("nb__manage_workspaces", () => {
 
     test("names each connector from the catalog and never returns the ref", async () => {
       catalogEntries = [
-        { id: "com.example/echo", name: "Echo", url: "https://echo.example.com/mcp" },
+        {
+          id: "com.example/echo",
+          name: "Echo",
+          url: "https://echo.example.com/mcp",
+          iconUrl: "https://static.example.com/echo.svg",
+        },
         { id: "com.example/mail", name: "Mail", url: "https://catalog.example.com/mail" },
       ] as ConnectorCatalogEntry[];
       await tool.handler({ action: "create", name: "Alpha" });
@@ -562,7 +567,15 @@ describe("nb__manage_workspaces", () => {
       const connectors = parsed.workspaces[0].connectors;
       expect(connectors.map((c) => c.name)).toEqual(["Echo", "Mail", connectors[2].serverName]);
       expect(connectors[2].serverName).toBeTruthy();
-      for (const c of connectors) expect(Object.keys(c).sort()).toEqual(["name", "serverName"]);
+      expect(connectors.map((c) => c.iconUrl)).toEqual([
+        "https://static.example.com/echo.svg",
+        undefined,
+        undefined,
+      ]);
+      expect(Object.keys(connectors[0]).sort()).toEqual(["iconUrl", "name", "serverName"]);
+      for (const c of connectors.slice(1)) {
+        expect(Object.keys(c).sort()).toEqual(["name", "serverName"]);
+      }
       expect(JSON.stringify(parsed)).not.toContain("inline-secret");
     });
 
@@ -670,7 +683,7 @@ describe("nb__manage_workspaces", () => {
       for (const action of ["list_archives", "purge_archive"]) {
         const result = await tool.handler({ action, archive: "ws_anything" });
         expect(result.structuredContent).toBeUndefined();
-        expect(extractText(result)).toContain("You don't have permission to manage workspaces");
+        expect(resultText(result)).toContain("You don't have permission to manage workspaces");
       }
     });
 
@@ -699,7 +712,7 @@ describe("nb__manage_workspaces", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("is not an archive name");
+      expect(resultText(result)).toContain("is not an archive name");
       expect(existsSync(liveDir)).toBe(true);
     });
 
@@ -707,7 +720,7 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "purge_archive" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("archive is required");
+      expect(resultText(result)).toContain("archive is required");
     });
   });
 
@@ -716,7 +729,7 @@ describe("nb__manage_workspaces", () => {
       const result = await tool.handler({ action: "invalid" });
 
       expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain("Unknown action: invalid");
+      expect(resultText(result)).toContain("Unknown action: invalid");
     });
   });
 });

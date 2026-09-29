@@ -13,8 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { ShellData } from "../../web/src/api/client.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 
 const API_KEY = "rest-workspace-path-test-key";
@@ -147,7 +150,7 @@ describe("retired workspace-scoped paths", () => {
         headers: { "X-Workspace-Id": wsA },
       });
       expect(res.status).toBe(404);
-      expect((await res.json()).error).toBe("not_found");
+      expect((await readJson<ApiErrorBody>(res)).error).toBe("not_found");
     });
   }
 });
@@ -184,7 +187,7 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
       headers: { "X-Workspace-Id": wsB },
     });
     expect(res.status).toBe(200);
-    expect((await res.json()).chatEndpoint).toBe(`/v1/workspaces/${wsA}/chat/stream`);
+    expect((await readJson<ShellData>(res)).chatEndpoint).toBe(`/v1/workspaces/${wsA}/chat/stream`);
   });
 
   it("a new conversation is born in the path's workspace", async () => {
@@ -224,7 +227,7 @@ describe("cross-site writes to a workspace route", () => {
       headers: { "Sec-Fetch-Site": "same-site", Origin: "https://tenant-a.example.com" },
     });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toBe("cross_site_request");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("cross_site_request");
   });
 
   it("admits the same write from the same origin", async () => {
@@ -327,7 +330,7 @@ describe("a name that carries a workspace", () => {
         ...(q.body ? { body: q.body() } : {}),
       });
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = await readJson<ApiErrorBody>(res);
       expect(body.error).toBe("bad_request");
       expect(body.message).toContain("uses the retired ws_<id>-");
       expect(body.details.reason).toBe("legacy_namespaced_form");

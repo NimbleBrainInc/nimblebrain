@@ -3,11 +3,20 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
+import type { FileEntry } from "../../src/files/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+
+/** The upload route's body: the stored entries, plus the per-file rejections when some failed. */
+interface UploadResponse {
+  files: FileEntry[];
+  errors?: string[];
+}
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -51,7 +60,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResponse>(res);
     expect(body.files).toHaveLength(1);
     const entry = body.files[0];
     expect(entry.id).toMatch(/^fl_[0-9a-f]{24}$/);
@@ -80,7 +89,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResponse>(res);
     expect(body.files).toHaveLength(2);
     expect(body.files.map((f: { filename: string }) => f.filename).sort()).toEqual([
       "a.txt",
@@ -98,7 +107,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResponse>(res);
     expect(body.files).toHaveLength(12);
   });
 
@@ -112,7 +121,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("payload_too_large");
     expect(body.message).toBe("Too many files: 101 in one upload; the limit is 100.");
     expect(body.details).toEqual({ count: 101, limit: 100 });
@@ -131,9 +140,9 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     // (single file is under the multipart total cap), then the handler
     // catches and replies 400 with file_upload_error.
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("file_upload_error");
-    expect(body.details?.errors?.[0]).toContain("exceeds per-file limit");
+    expect((body.details?.errors as string[] | undefined)?.[0]).toContain("exceeds per-file limit");
   });
 
   it("rejects an upload over the multipart total cap at the middleware (413)", async () => {
@@ -146,7 +155,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("payload_too_large");
     expect(body.details?.contentType).toContain("multipart/form-data");
   });
@@ -160,9 +169,9 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("file_upload_error");
-    expect(body.details?.errors?.[0]).toContain("disallowed type");
+    expect((body.details?.errors as string[] | undefined)?.[0]).toContain("disallowed type");
   });
 
   it("rejects a multipart request with no files", async () => {
@@ -171,7 +180,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: new FormData(),
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -192,7 +201,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResponse>(res);
     const entry = body.files[0];
     expect(entry.tags).toEqual(["report", "q2"]);
     expect(entry.description).toBe("Quarterly numbers");
@@ -210,7 +219,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
     expect(body.message).toContain("tags");
   });
@@ -225,7 +234,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -242,7 +251,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResponse>(res);
     expect(body.files).toHaveLength(1);
     expect(body.files[0].filename).toBe("legit.txt");
   });
@@ -259,7 +268,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<UploadResponse>(res);
     expect(body.files).toHaveLength(1);
     expect(body.files[0].filename).toBe("p.txt");
   });

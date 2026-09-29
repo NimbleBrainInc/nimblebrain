@@ -60,7 +60,7 @@ const PROVIDERS: ProviderSpec[] = [
   {
     name: "google",
     envVar: "GOOGLE_GENERATIVE_AI_API_KEY",
-    modelString: "google:gemini-2.0-flash",
+    modelString: "google:gemini-2.5-flash-lite",
     cacheMode: "passthrough",
   },
 ];

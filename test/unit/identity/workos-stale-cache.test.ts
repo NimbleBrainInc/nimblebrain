@@ -35,9 +35,11 @@ async function generateRSAKeyPair(kid: string): Promise<TestKeyPair> {
     true,
     ["sign", "verify"],
   );
-  const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-  publicJwk.kid = kid;
-  publicJwk.use = "sig";
+  const publicJwk = {
+    ...(await crypto.subtle.exportKey("jwk", keyPair.publicKey)),
+    kid,
+    use: "sig",
+  };
   return { privateKey: keyPair.privateKey, publicJwk, kid };
 }
 

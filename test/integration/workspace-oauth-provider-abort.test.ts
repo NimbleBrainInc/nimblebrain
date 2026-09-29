@@ -37,7 +37,7 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
     // connection open without sending headers.
     const mockServer = Bun.serve({
       port: 0,
-      fetch: () => new Promise(() => {}),
+      fetch: () => new Promise<Response>(() => {}),
     });
 
     try {
@@ -83,7 +83,7 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
     // signal doesn't fail-fast some new code path.
     const mockServer = Bun.serve({
       port: 0,
-      fetch: () => new Promise(() => {}),
+      fetch: () => new Promise<Response>(() => {}),
     });
     try {
       const provider = new WorkspaceOAuthProvider({

@@ -69,19 +69,23 @@ describe("formatAppsSection sanitizes connector-authored names", () => {
 
 describe("hostMetaToUiMeta bounds connector-authored display strings", () => {
   test("name and icon are truncated to the shared bound", () => {
-    const ui = hostMetaToUiMeta({ name: "n".repeat(500), icon: "i".repeat(500) });
+    const ui = hostMetaToUiMeta({
+      host_version: "1.0",
+      name: "n".repeat(500),
+      icon: "i".repeat(500),
+    });
     expect(ui?.name).toHaveLength(128);
     expect(ui?.icon).toHaveLength(128);
   });
 
   test("an ordinary name and icon pass through unchanged", () => {
-    const ui = hostMetaToUiMeta({ name: "People", icon: "users" });
+    const ui = hostMetaToUiMeta({ host_version: "1.0", name: "People", icon: "users" });
     expect(ui?.name).toBe("People");
     expect(ui?.icon).toBe("users");
   });
 
   test("a missing icon stays an empty string, not undefined", () => {
-    expect(hostMetaToUiMeta({ name: "People" })?.icon).toBe("");
+    expect(hostMetaToUiMeta({ host_version: "1.0", name: "People" })?.icon).toBe("");
   });
 
   // `hostMeta` is an unchecked cast over registry JSON, so a truthy non-string
@@ -100,8 +104,12 @@ describe("hostMetaToUiMeta bounds connector-authored display strings", () => {
   });
 
   test("a non-string icon degrades to empty rather than throwing", () => {
-    expect(() => hostMetaToUiMeta({ name: "People", icon: 7 } as never)).not.toThrow();
-    expect(hostMetaToUiMeta({ name: "People", icon: 7 } as never)?.icon).toBe("");
+    expect(() =>
+      hostMetaToUiMeta({ host_version: "1.0", name: "People", icon: 7 } as never),
+    ).not.toThrow();
+    expect(hostMetaToUiMeta({ host_version: "1.0", name: "People", icon: 7 } as never)?.icon).toBe(
+      "",
+    );
   });
 
   test("no name still yields null — the host needs a label to surface anything", () => {
@@ -140,7 +148,11 @@ describe("hostMetaToUiMeta guards placements", () => {
   // `placements && placements.length > 0` admitted it, and `sanitizePlacements`
   // then threw on `for...of` out of catalog projection.
   test("a non-array with a length is not assigned", () => {
-    const ui = hostMetaToUiMeta({ name: "People", placements: { length: 1 } } as never);
+    const ui = hostMetaToUiMeta({
+      host_version: "1.0",
+      name: "People",
+      placements: { length: 1 },
+    } as never);
     expect(ui?.placements).toBeUndefined();
     expect(() => sanitizePlacements(ui?.placements)).not.toThrow();
   });

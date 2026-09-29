@@ -477,6 +477,9 @@ describe("handleList paging", () => {
         createdAt: now,
         updatedAt: now,
         runCount: 0,
+        consecutiveErrors: 0,
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
         ownerId: OWNER,
         workspaceId: WS,
       });
@@ -1474,7 +1477,7 @@ describe("event schedules", () => {
       },
       ctx,
     );
-    expect(created.created).toBe(true);
+    expect(created).toMatchObject({ created: true });
 
     const status = await handleStatus({ name: "Reply triage" }, ctx);
     expect(status.automation.schedule).toEqual({

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
+import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Label } from "../../components/ui/label";
@@ -30,6 +31,7 @@ import {
 interface WorkspaceConnector {
   serverName: string;
   name: string;
+  iconUrl?: string;
 }
 
 interface Workspace {
@@ -338,17 +340,6 @@ export function WorkspaceDetailPage() {
         one. To edit a workspace's instructions, switch into it via the
         header switcher and use Settings → This Workspace → General.
       */}
-      <Section>
-        <div className="rounded-sm border border-dashed p-4">
-          <p className="text-sm text-muted-foreground">
-            To view or edit this workspace's custom instructions, switch into{" "}
-            <span className="font-medium">{workspace?.name}</span> via the header workspace
-            switcher, then go to{" "}
-            <span className="font-medium">Settings → This Workspace → General</span>.
-          </p>
-        </div>
-      </Section>
-
       <Section title="Installed Connectors" icon={<Package className="h-4 w-4" />}>
         <ConnectorsList connectors={workspace?.connectors} />
       </Section>
@@ -506,20 +497,22 @@ function MembersTable({
   );
 }
 
-/** Renders the installed-connector cards, or an empty state when none are present. */
+/**
+ * Renders the installed connectors as one compact list, icon and name per row,
+ * with the same icon and density as the Connectors page. Empty state when none.
+ */
 function ConnectorsList({ connectors }: { connectors?: WorkspaceConnector[] }) {
   if (!connectors || connectors.length === 0) {
     return <EmptyState message="No connectors installed." />;
   }
   return (
-    <div className="space-y-2">
+    <ul className="rounded-md border border-border divide-y divide-border">
       {connectors.map((c) => (
-        <Card key={c.serverName}>
-          <CardContent className="py-3 px-4">
-            <span className="text-sm font-medium">{c.name}</span>
-          </CardContent>
-        </Card>
+        <li key={c.serverName} className="flex items-center gap-3 px-3 py-2">
+          <ConnectorIcon name={c.name} iconUrl={c.iconUrl} className="h-7 w-7 rounded text-xs" />
+          <span className="text-sm font-medium truncate">{c.name}</span>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }

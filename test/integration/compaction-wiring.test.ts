@@ -25,6 +25,8 @@ import { reconstructMessages } from "../../src/conversation/event-reconstructor.
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { ChatResult } from "../../src/runtime/types.ts";
+import { readJson } from "../helpers/http.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -108,7 +110,7 @@ async function sendTurn(message: string, conversationId?: string): Promise<strin
     body: JSON.stringify(conversationId ? { message, conversationId } : { message }),
   });
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = await readJson<ChatResult>(res);
   return body.conversationId as string;
 }
 

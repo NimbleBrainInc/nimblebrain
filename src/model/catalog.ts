@@ -183,7 +183,7 @@ export function isModelAllowed(
  * Get the list of available models for configured providers, respecting
  * allowlists. Deprecated models are excluded — this feeds the settings
  * model picker, and a model the upstream provider has shut down (e.g.
- * `google:gemini-3-pro-preview`, retired 2026-03-09) must not be
+ * `openai:gpt-5.3-chat-latest`, retired 2026-08-10) must not be
  * re-selectable. `listModels` stays honest as "all models for a provider";
  * the "available to pick" filter lives here. Note this does not retroactively
  * fix a slot already pointing at a deprecated model — that override must be
@@ -291,7 +291,9 @@ const ADAPTIVE_ONLY_THINKING_MODELS: ReadonlySet<string> = new Set([
   "claude-opus-4-7",
   "claude-opus-4-8",
   "claude-opus-5",
+  "claude-opus-5-5",
   "claude-sonnet-5",
+  "claude-sonnet-5-5",
 ]);
 
 /**
@@ -326,8 +328,8 @@ export type GoogleThinkingSupport =
 /**
  * Per-model reasoning support for Google, hand-maintained from Google's
  * thinking docs. models.dev doesn't carry it, and — unlike Anthropic's split —
- * it is not even uniform within a generation: `gemini-3-pro-preview` accepts
- * only `low` and `high`, while `gemini-3.6-flash` accepts all four, and
+ * it is not even uniform within a generation: `gemini-3.7-flash` has no
+ * `minimal`, while `gemini-3.6-flash` before it accepts all four, and
  * `gemini-2.5-pro` cannot disable thinking at all where the flash models can.
  *
  * Deriving this from the model id was tried and is wrong twice over: a version
@@ -353,12 +355,13 @@ export type GoogleThinkingSupport =
  * the guesswork this table replaced.
  */
 const GOOGLE_THINKING: Record<string, GoogleThinkingSupport> = {
+  "gemini-3.8-flash": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
+  "gemini-3.7-flash": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
   "gemini-3.6-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.5-flash": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.5-flash-lite": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3-flash-preview": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.1-pro-preview": { dialect: "level", levels: new Set(["low", "medium", "high"]) },
-  "gemini-3-pro-preview": { dialect: "level", levels: new Set(["low", "high"]) },
   "gemini-3.1-flash-lite": { dialect: "level", levels: new Set(GOOGLE_THINKING_LEVELS) },
   "gemini-3.1-flash-lite-image": { dialect: "level", levels: new Set(["minimal", "high"]) },
   // The 2.5 rows are budget-shaped on purpose. Google's thinking page now
@@ -428,7 +431,7 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   // Drop this row once models.dev stops carrying the model (OpenAI shutdown 2026-08-10).
   "gpt-5.2-chat-latest": new Set(["medium"]),
 
-  // Measured and unrestricted — 20 of the 25 reachable models.
+  // Measured and unrestricted — 23 of the 28 reachable models.
   "gpt-5": FULL_PLUS_MINIMAL,
   "gpt-5-mini": FULL_PLUS_MINIMAL,
   "gpt-5-nano": FULL_PLUS_MINIMAL,
@@ -443,6 +446,9 @@ const OPENAI_EFFORT_SUPPORT: Record<string, ReadonlySet<OpenAIWireEffort>> = {
   "gpt-5.6-luna": FULL_LADDER,
   "gpt-5.6-sol": FULL_LADDER,
   "gpt-5.6-terra": FULL_LADDER,
+  "gpt-6-astra": FULL_LADDER,
+  "gpt-6-luna": FULL_LADDER,
+  "gpt-6-sol": FULL_LADDER,
   o1: FULL_LADDER,
   "o1-pro": FULL_LADDER,
   o3: FULL_LADDER,
@@ -550,9 +556,11 @@ export type XAIWireEffort = XAIEffort | "none";
 const XAI_EFFORT_SUPPORT: Record<string, ReadonlySet<XAIWireEffort>> = {
   // Full ladder plus suppression.
   "grok-4.3": new Set([...XAI_EFFORTS, "none"]),
-  // Rejects `none` specifically ("This model does not support `reasoning_effort`
-  // value..."); takes the rest.
+  // Reject `none` specifically ("This model does not support `reasoning_effort`
+  // value..."); take the rest.
   "grok-4.5": new Set(XAI_EFFORTS),
+  "grok-4.6": new Set(XAI_EFFORTS),
+  "grok-4.7": new Set(XAI_EFFORTS),
   // Reasons, no knob — every tier 400s. See the header.
   "grok-4.20-0309-reasoning": new Set(),
   "grok-build-0.1": new Set(),

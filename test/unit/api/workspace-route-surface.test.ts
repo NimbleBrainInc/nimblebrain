@@ -7,6 +7,8 @@ import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { corsMiddleware } from "../../../src/api/middleware/cors.ts";
 import { rejectCrossSiteWrites } from "../../../src/api/middleware/fetch-site.ts";
+import type { ApiErrorBody } from "../../../src/api/types.ts";
+import { readJson } from "../../helpers/http.ts";
 
 const ORIGIN = "https://nb.example.com";
 const PARTNER = "https://partner.example.com";
@@ -57,7 +59,7 @@ describe("rejectCrossSiteWrites", () => {
         "Content-Type": "text/plain",
       });
       expect(res.status).toBe(403);
-      expect((await res.json()).error).toBe("cross_site_request");
+      expect((await readJson<ApiErrorBody>(res)).error).toBe("cross_site_request");
     }
   });
 

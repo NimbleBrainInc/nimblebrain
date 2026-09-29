@@ -72,7 +72,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await runtime?.stop?.();
+  await runtime?.shutdown();
   rmSync(testDir, { recursive: true, force: true });
   _resetConnectorsConfigForTest();
   _resetCredentialProvidersForTest();

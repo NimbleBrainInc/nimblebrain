@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { handleResourceProxy, handleToolCall } from "../../../src/api/handlers.ts";
+import type { ApiErrorBody } from "../../../src/api/types.ts";
 import type { ResolvedFeatures } from "../../../src/config/features.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
+import { readJson } from "../../helpers/http.ts";
 
 // On REST the workspace is the one in the URL path (ADR-0037). A qualified
 // `ws_<id>-<name>` server, app or tool is refused with a 400 — never routed to
@@ -86,7 +88,7 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
       { workspaceId: "ws_user_u1", identity: identityU1 },
     );
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
     expect(body.message).toContain("uses the retired ws_<id>- server-name form");
     expect(body.message).toContain('"synapse-collateral"');
@@ -107,7 +109,7 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
       { workspaceId: "ws_user_u1", identity: identityU1 },
     );
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.message).toContain("uses the retired ws_<id>- tool-name form");
     expect(body.details.reason).toBe("legacy_namespaced_form");
     expect(executed).toEqual([]);
@@ -222,7 +224,7 @@ describe("handleResourceProxy — the workspace is the one in the URL", () => {
       "ws_user_u1",
     );
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.message).toContain("uses the retired ws_<id>- app-name form");
     expect(body.details).toEqual({
       app: "ws_tenant_a-synapse-collateral",

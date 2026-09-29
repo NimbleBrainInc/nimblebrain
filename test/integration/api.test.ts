@@ -4,12 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { ChatResult } from "../../src/runtime/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { readConnected } from "../helpers/sse.ts";
 import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+
+/** The chat route's body: the run's `ChatResult` plus its token totals at the top level. */
+type ChatResponse = ChatResult & { inputTokens: number; outputTokens: number };
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -46,7 +52,7 @@ describe("POST /v1/workspaces/:wsId/chat", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ChatResponse>(res);
     expect(body.response).toBe("Hello there");
     expect(body.conversationId).toMatch(/^conv_/);
     expect(body.stopReason).toBe("complete");
@@ -62,7 +68,7 @@ describe("POST /v1/workspaces/:wsId/chat", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
     expect(body.message).toContain("Invalid JSON");
   });
@@ -75,7 +81,7 @@ describe("POST /v1/workspaces/:wsId/chat", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
     expect(body.message).toContain("message");
   });
@@ -234,7 +240,7 @@ describe("concurrent requests", () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message, workspaceId: TEST_WORKSPACE_ID }),
-        }).then((res) => res.json()),
+        }).then((res) => readJson<ChatResponse>(res)),
       ),
     );
 
@@ -255,7 +261,7 @@ describe("unknown routes", () => {
     const res = await fetch(`${baseUrl}/v1/nonexistent`);
 
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("not_found");
     expect(body.message).toBe("Not found");
   });
@@ -268,7 +274,7 @@ describe("unknown routes", () => {
     });
 
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("not_found");
   });
 });
@@ -368,7 +374,7 @@ describe("Bearer token authentication", () => {
   it("GET /v1/health returns 200 regardless of auth", async () => {
     const res = await fetch(`${authUrl}/v1/health`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<{ status: string }>(res);
     expect(body.status).toBe("ok");
   });
 });
@@ -382,7 +388,7 @@ describe("POST /v1/workspaces/:wsId/tools/call", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -398,7 +404,7 @@ describe("POST /v1/workspaces/:wsId/tools/call", () => {
     });
 
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("tool_not_found");
     expect(body.details.server).toBe("nonexistent");
     expect(body.details.tool).toBe("some_tool");

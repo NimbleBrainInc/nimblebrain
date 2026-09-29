@@ -13,10 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
@@ -32,7 +30,7 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 /** A third-party server declaring each visibility the spec allows. */
 function createVisibilityServer(): Server {
   const server = new Server({ name: "vis", version: "0.1.0" }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       {
         name: "refresh",
@@ -53,7 +51,7 @@ function createVisibilityServer(): Server {
       },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => ({
+  server.setRequestHandler("tools/call", async (request) => ({
     content: [{ type: "text", text: `ran ${request.params.name}` }],
   }));
   return server;
@@ -65,7 +63,7 @@ function createNeighborServer(): Server {
     { name: "neighbor", version: "0.1.0" },
     { capabilities: { tools: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       {
         name: "ping",
@@ -74,7 +72,7 @@ function createNeighborServer(): Server {
       },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "pong" }],
   }));
   return server;

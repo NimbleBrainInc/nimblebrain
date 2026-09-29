@@ -25,6 +25,7 @@ import {
   type InProcessTool,
 } from "../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
+import { textOf } from "../../helpers/resource-contents.ts";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -371,7 +372,7 @@ describe("defineInProcessApp — parametric resources", () => {
     expect(result.contents).toHaveLength(1);
     const first = result.contents[0]!;
     expect(first.uri).toBe("instructions://connectors/ipinfo");
-    expect(first.text).toBe("body for ipinfo");
+    expect(textOf(first)).toBe("body for ipinfo");
     expect(first.mimeType).toBe("text/markdown");
   });
 
@@ -508,11 +509,11 @@ describe("defineInProcessApp — parametric resources", () => {
     await source.start();
 
     const first = await source.getClient()!.readResource({ uri: "prompt://composed/foo" });
-    expect(first.contents[0]?.text).toBe("lazy body 1");
+    expect(textOf(first.contents[0])).toBe("lazy body 1");
 
     // Each read invokes the callback again — body assembled per request.
     const second = await source.getClient()!.readResource({ uri: "prompt://composed/foo" });
-    expect(second.contents[0]?.text).toBe("lazy body 2");
+    expect(textOf(second.contents[0])).toBe("lazy body 2");
     expect(calls).toBe(2);
   });
 
@@ -535,7 +536,7 @@ describe("defineInProcessApp — parametric resources", () => {
     await source.start();
 
     const result = await source.getClient()!.readResource({ uri: "ui://settings/panel" });
-    expect(result.contents[0]?.text).toBe("<p>panel</p>");
+    expect(textOf(result.contents[0])).toBe("<p>panel</p>");
     expect(result.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
 
     const listed = await source.getClient()!.listResources();

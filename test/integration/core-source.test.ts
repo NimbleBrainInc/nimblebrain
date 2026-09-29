@@ -1415,6 +1415,7 @@ describe("Core Source", () => {
           facet: "overdue",
           label: "Follow-ups overdue",
           count: 3,
+          level: "warning",
           route: "@acme/facet-app",
           state: "ok",
         },

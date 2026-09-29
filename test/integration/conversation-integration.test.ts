@@ -1,15 +1,9 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ServerHandle } from "../../src/api/server.ts";
-import { startServer } from "../../src/api/server.ts";
 import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import type { StoredMessage } from "../../src/conversation/types.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 function tempDir(): string {
   const dir = join(tmpdir(), `nb-integration-${crypto.randomUUID()}`);
@@ -202,108 +196,5 @@ describe("Backward compatibility: old-format JSONL → append", () => {
     const reloadedSummary = (await store2.list()).conversations.find((c) => c.id === id);
     expect(reloadedSummary!.totalInputTokens).toBe(350);
     expect(reloadedSummary!.totalOutputTokens).toBe(120);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 3. API full-flow integration
-// ---------------------------------------------------------------------------
-
-describe("API full-flow integration", () => {
-  let runtime: Runtime;
-  let handle: ServerHandle;
-  let baseUrl: string;
-  let runtimeWorkDir: string;
-
-  beforeAll(async () => {
-    runtimeWorkDir = tempDir();
-    runtime = await Runtime.start({
-      identityProvider: devProvider,
-      workDir: runtimeWorkDir,
-      model: { provider: "custom", adapter: createEchoModel() },
-      logging: { disabled: true },
-    });
-
-    handle = startServer({ runtime, port: 0 });
-    baseUrl = `http://localhost:${handle.port}`;
-  });
-
-  afterAll(async () => {
-    handle.stop(true);
-    await runtime.shutdown();
-    rmSync(runtimeWorkDir, { recursive: true, force: true });
-  });
-
-  it.skip("chat → list → rename → search → fork → delete → verify gone", async () => {
-    // --- create via chat ---
-    const chatRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Tell me about integration testing" }),
-    });
-    expect(chatRes.status).toBe(200);
-    const chatBody = await chatRes.json();
-    const convId: string = chatBody.conversationId;
-    expect(convId).toMatch(/^conv_/);
-
-    // --- list and verify it appears ---
-    const listRes = await fetch(`${baseUrl}/v1/conversations`);
-    expect(listRes.status).toBe(200);
-    const listBody = await listRes.json();
-    const found = listBody.conversations.some((c: { id: string }) => c.id === convId);
-    expect(found).toBe(true);
-
-    // --- rename ---
-    const renameRes = await fetch(`${baseUrl}/v1/conversations/${convId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "Integration Testing Guide" }),
-    });
-    expect(renameRes.status).toBe(200);
-    const renameBody = await renameRes.json();
-    expect(renameBody.title).toBe("Integration Testing Guide");
-
-    // --- search by title ---
-    const searchRes = await fetch(`${baseUrl}/v1/conversations?search=Integration`);
-    expect(searchRes.status).toBe(200);
-    const searchBody = await searchRes.json();
-    const searchFound = searchBody.conversations.some((c: { id: string }) => c.id === convId);
-    expect(searchFound).toBe(true);
-
-    // --- fork ---
-    const forkRes = await fetch(`${baseUrl}/v1/conversations/${convId}/fork`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ atMessage: 1 }),
-    });
-    expect(forkRes.status).toBe(200);
-    const forkBody = await forkRes.json();
-    expect(forkBody.id).toBeTruthy();
-    expect(forkBody.id).not.toBe(convId);
-    expect(forkBody.forkedFrom).toBe(convId);
-    expect(forkBody.messageCount).toBe(1);
-
-    // --- delete original ---
-    const deleteRes = await fetch(`${baseUrl}/v1/conversations/${convId}`, { method: "DELETE" });
-    expect(deleteRes.status).toBe(200);
-    const deleteBody = await deleteRes.json();
-    expect(deleteBody.deleted).toBe(true);
-
-    // --- verify original is gone ---
-    const verifyDeleteRes = await fetch(`${baseUrl}/v1/conversations/${convId}`, {
-      method: "DELETE",
-    });
-    expect(verifyDeleteRes.status).toBe(404);
-
-    // --- verify fork still accessible ---
-    const forkHistoryRes = await fetch(`${baseUrl}/v1/conversations/${forkBody.id}/history`);
-    expect(forkHistoryRes.status).toBe(200);
-    const forkHistoryBody = await forkHistoryRes.json();
-    expect(forkHistoryBody.messages).toHaveLength(1);
-
-    // cleanup: delete the fork too
-    await fetch(`${baseUrl}/v1/conversations/${forkBody.id}`, {
-      method: "DELETE",
-    });
   });
 });

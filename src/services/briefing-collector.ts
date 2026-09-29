@@ -21,6 +21,7 @@ import { createFacetCache, type FacetCache, type FacetReading } from "./briefing
 import {
   type DiscoveredFacet,
   FACETS_EXTENSION_ID,
+  facetLevelRank,
   parseFacetCount,
   selectFacets,
 } from "./facets-extension.ts";
@@ -45,7 +46,7 @@ export interface BriefingCollectorDeps {
 export interface BriefingCollector {
   /**
    * One item per discovered facet of each running connector in `instances`,
-   * in the shell's app order then the server's listing order. Items whose count is
+   * ordered by level, then the shell's app order, then the server's listing order. Items whose count is
    * zero are omitted. `force` skips cached listings and counts.
    */
   collect(
@@ -144,6 +145,7 @@ export function createBriefingCollector(deps: BriefingCollectorDeps): BriefingCo
         facet: facet.name,
         label: facet.title,
         count: reading.state === "ok" ? reading.count : 0,
+        level: facet.level,
         route,
         state: reading.state,
       };
@@ -161,7 +163,11 @@ export function createBriefingCollector(deps: BriefingCollectorDeps): BriefingCo
       const perConnector = await Promise.all(
         running.map((inst) => collectConnector(wsId, inst, force)),
       );
-      return perConnector.flat().filter((item) => item.state !== "ok" || item.count > 0);
+      // Most urgent first; within a level, the order above (sort is stable).
+      return perConnector
+        .flat()
+        .filter((item) => item.state !== "ok" || item.count > 0)
+        .sort((a, b) => facetLevelRank(a.level) - facetLevelRank(b.level));
     },
   };
 }

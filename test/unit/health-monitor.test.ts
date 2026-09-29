@@ -6,7 +6,7 @@ import type { McpSource } from "../../src/tools/mcp-source.ts";
 /** Minimal mock of McpSource exposing only what HealthMonitor needs. */
 function makeMockSource(name: string): McpSource & {
   alive: boolean;
-  stopped: boolean;
+  userStopped: boolean;
   restartResult: boolean;
   restartCalls: number;
   setUptime: (ms: number) => void;
@@ -15,14 +15,14 @@ function makeMockSource(name: string): McpSource & {
   const mock = {
     name,
     alive: true,
-    stopped: false,
+    userStopped: false,
     restartResult: true,
     restartCalls: 0,
     isAlive() {
       return mock.alive;
     },
     isStopped() {
-      return mock.stopped;
+      return mock.userStopped;
     },
     uptime() {
       return startedAt !== null ? Date.now() - startedAt : null;
@@ -41,7 +41,7 @@ function makeMockSource(name: string): McpSource & {
     },
   } as unknown as McpSource & {
     alive: boolean;
-    stopped: boolean;
+    userStopped: boolean;
     restartResult: boolean;
     restartCalls: number;
     setUptime: (ms: number) => void;
@@ -189,7 +189,7 @@ describe("HealthMonitor", () => {
     expect(monitor.getStatus()[0]!.state).toBe("cooldown");
 
     // Operator disconnects it mid-cooldown → deliberate teardown is terminal.
-    source.stopped = true;
+    source.userStopped = true;
     await monitor.check();
     expect(monitor.getStatus()[0]!.state).toBe("dead");
 

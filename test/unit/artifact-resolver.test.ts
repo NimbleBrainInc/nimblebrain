@@ -7,6 +7,7 @@ import {
   uriToArtifactId,
 } from "../../src/host-resources/artifacts/index.ts";
 import { ServiceTokenCache, type TenantIdentity } from "../../src/oauth/tenant-key-mint.ts";
+import { blobOf, textOf } from "../helpers/resource-contents.ts";
 
 // ---------------------------------------------------------------------------
 // Behavioral tests for the generic artifact:// host resolver.
@@ -199,8 +200,8 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
     expect(first.uri).toBe("artifact://art_md");
     expect(first.mimeType).toBe("text/markdown");
     // text/* comes back as text, not blob.
-    expect(first.text).toBe("# Title\n\nbody");
-    expect(first.blob).toBeUndefined();
+    expect(textOf(first)).toBe("# Title\n\nbody");
+    expect(blobOf(first)).toBeUndefined();
   });
 
   it("denies a read from a DIFFERENT workspace (RLS) — surfaces not-found", async () => {
@@ -221,7 +222,7 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
     // ...and the legitimate owner CAN read it — proving the denial is about
     // identity, not a broken fixture.
     const owned = await resolver.read("artifact://art_secret", WS_A);
-    expect(owned.contents[0]!.text).toBe("secret");
+    expect(textOf(owned.contents[0]!)).toBe("secret");
   });
 
   it("brokers large bodies via a presigned URL (bytes off the read path)", async () => {
@@ -237,7 +238,7 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
       { art_big: big },
     );
     const result = await resolver.read("artifact://art_big", WS_A);
-    expect(result.contents[0]!.text).toBe("LARGE-BODY-CONTENT");
+    expect(textOf(result.contents[0]!)).toBe("LARGE-BODY-CONTENT");
   });
 
   it("returns binary mime as a base64 blob, not text", async () => {
@@ -249,8 +250,8 @@ describe("ArtifactResolver.read — reads as the viewing user", () => {
     const result = await resolver.read("artifact://art_png", WS_A);
     const first = result.contents[0]!;
     expect(first.mimeType).toBe("image/png");
-    expect(first.blob).toBe(png);
-    expect(first.text).toBeUndefined();
+    expect(blobOf(first)).toBe(png);
+    expect(textOf(first)).toBeUndefined();
   });
 
   it("surfaces not-found for an id that exists in no workspace", async () => {

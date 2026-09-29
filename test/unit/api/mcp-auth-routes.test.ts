@@ -6,13 +6,19 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { securityHeaders } from "../../../src/api/middleware/security-headers.ts";
 import { mcpAuthRoutes } from "../../../src/api/routes/mcp-auth.ts";
-import type { AppContext, AppEnv } from "../../../src/api/types.ts";
+import type { ApiErrorBody, AppContext, AppEnv } from "../../../src/api/types.ts";
 import { ConnectorBusyError } from "../../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../../src/identity/connector-store.ts";
 import { FIRST_PARTY_GRANT } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { log } from "../../../src/observability/log.ts";
 import { _clearAll, register as registerFlow } from "../../../src/tools/oauth-flow-registry.ts";
+import { readJson } from "../../helpers/http.ts";
+
+/** What `POST .../mcp-auth/initiate` answers: `null` when no interactive step is needed. */
+interface InitiateResponse {
+  authorizationUrl: string | null;
+}
 
 /**
  * Unit coverage for `mcpAuthRoutes` — the route is the security boundary
@@ -140,7 +146,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<InitiateResponse>(res);
     expect(body.authorizationUrl).toBe(authUrl);
 
     const setCookie = res.headers.get("Set-Cookie");
@@ -183,7 +189,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<InitiateResponse>(res);
     expect(body.authorizationUrl).toBeNull();
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
@@ -196,7 +202,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     });
 
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("connector_not_found");
     // No cookie should be set when no flow exists.
     expect(res.headers.get("Set-Cookie")).toBeNull();
@@ -210,7 +216,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("bad_request");
   });
 
@@ -248,7 +254,7 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
     });
 
     expect(res.status).toBe(404);
-    expect((await res.json()).error).toBe("workspace_error");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("workspace_error");
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
 
@@ -659,7 +665,7 @@ describe("bouncer mode: state envelope wrap on initiate / unwrap on callback", (
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<InitiateResponse>(res);
 
     // The authorizationUrl returned to the client has the wrapped state
     // in place of the SDK-generated inner state.
@@ -808,7 +814,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     });
 
     expect(res.status).toBe(200);
-    expect((await res.json()).authorizationUrl).toContain("/authorize");
+    expect((await readJson<InitiateResponse>(res)).authorizationUrl).toContain("/authorize");
     const setCookie = res.headers.get("Set-Cookie");
     expect(setCookie).not.toBeNull();
     expect(setCookie!).toContain(`nb_oauth_state=${sha256Hex(state)}`);
@@ -831,7 +837,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<InitiateResponse>(res);
     expect(body.authorizationUrl).toBeNull();
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });
@@ -855,7 +861,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
     });
 
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe("connector_busy");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_busy");
     expect(res.headers.get("Retry-After")).not.toBeNull();
     // Busy is not a flow start — no state cookie set.
     expect(res.headers.get("Set-Cookie")).toBeNull();
@@ -868,7 +874,7 @@ describe("POST /v1/mcp-auth/initiate-identity", () => {
       body: JSON.stringify({ serverName: "not-installed" }),
     });
     expect(res.status).toBe(404);
-    expect((await res.json()).error).toBe("connector_not_found");
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("connector_not_found");
     // No flow started, no cookie set.
     expect(res.headers.get("Set-Cookie")).toBeNull();
   });

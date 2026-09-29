@@ -324,7 +324,8 @@ describe("LLM latency + error metrics", () => {
         // biome-ignore lint/suspicious/noExplicitAny: prom-client value shape.
         (s as any).metricName === "nb_llm_request_duration_seconds_bucket" &&
         s.labels.model === model &&
-        s.labels.le === le
+        // prom-client adds `le` to each bucket sample; the label type omits it.
+        (s.labels as { le?: string | number }).le === le
       ) {
         return s.value;
       }

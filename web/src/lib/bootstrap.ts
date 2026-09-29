@@ -23,8 +23,8 @@ import type { BootstrapResponse } from "../types";
 /**
  * Convert the bootstrap response's per-workspace shape into the
  * `WorkspaceInfo` the `WorkspaceProvider` consumes. Caller is expected to
- * pass `bootstrap.workspaces` directly. `connectors` starts empty and is
- * populated lazily; `userRole` propagates so role gating works.
+ * pass `bootstrap.workspaces` directly. `userRole` propagates so role
+ * gating works.
  */
 export function bootstrapWorkspacesToInfo(
   workspaces: BootstrapResponse["workspaces"],
@@ -33,7 +33,7 @@ export function bootstrapWorkspacesToInfo(
     id: ws.id,
     name: ws.name,
     memberCount: ws.memberCount,
-    connectors: [],
+    connectorCount: ws.connectorCount,
     userRole: ws.role,
     mcpUrl: ws.mcpUrl,
   }));

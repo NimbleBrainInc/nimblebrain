@@ -29,6 +29,12 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
+import { readJson } from "../helpers/http.ts";
+
+/** What `POST …/chat/start` answers: the turn runs on, the id comes back now. */
+interface ChatStartBody {
+  conversationId: string;
+}
 
 const AUTHKIT_DOMAIN = "testapp";
 const AUTHKIT_ISSUER = `https://${AUTHKIT_DOMAIN}.authkit.app`;
@@ -234,7 +240,7 @@ describe("a channels-like token whose client_id is listed", () => {
   it("is admitted on POST /v1/workspaces/<member ws>/chat/start", async () => {
     const res = await chatStart(configured, wsMember, await channelsLike(CHANNELS_CLIENT_ID));
     expect(res.status).toBe(200);
-    expect((await res.json()).conversationId).toMatch(/^conv_/);
+    expect((await readJson<ChatStartBody>(res)).conversationId).toMatch(/^conv_/);
   });
 
   it("is admitted on GET /v1/bootstrap", async () => {

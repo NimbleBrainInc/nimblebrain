@@ -124,7 +124,7 @@ function offer(h: Harness, notification: Notification): { settled: EventWakeSett
     item: notification,
     settle: (r) => settled.push(r),
   });
-  if (!ack.accepted) settled.push(ack);
+  if (ack.accepted === false) settled.push(ack);
   return { settled };
 }
 

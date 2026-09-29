@@ -28,8 +28,8 @@ const { RequireActiveWorkspace } = await import(
   "../pages/settings/components/RequireActiveWorkspace"
 );
 
-const WS_A: WorkspaceInfo = { id: "ws_a", name: "A", memberCount: 1, connectors: [] };
-const WS_B: WorkspaceInfo = { id: "ws_b", name: "B", memberCount: 1, connectors: [] };
+const WS_A: WorkspaceInfo = { id: "ws_a", name: "A", memberCount: 1, connectorCount: 0 };
+const WS_B: WorkspaceInfo = { id: "ws_b", name: "B", memberCount: 1, connectorCount: 0 };
 
 const originalFetch = globalThis.fetch;
 let unmount: (() => void) | null = null;

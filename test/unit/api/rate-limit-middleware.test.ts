@@ -2,7 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { rateLimit, requestRateLimit } from "../../../src/api/middleware/rate-limit.ts";
 import { LoginRateLimiter, RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
-import type { AppEnv } from "../../../src/api/types.ts";
+import type { ApiErrorBody, AppEnv } from "../../../src/api/types.ts";
+import { readJson } from "../../helpers/http.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 
 /**
@@ -75,7 +76,7 @@ describe("rate-limit middleware", () => {
     const res = await app.request("/login", { method: "POST" });
     expect(res.status).toBe(429);
 
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
     expect(body.message).toBe("Too many login attempts");
     expect(res.headers.get("Retry-After")).toBe("60");
@@ -128,7 +129,7 @@ describe("requestRateLimit middleware", () => {
     const res = await app.request(CHAT_PATH, { method: "POST" });
     expect(res.status).toBe(429);
 
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("rate_limited");
     expect(body.message).toBe("Rate limit exceeded");
     expect(res.headers.get("Retry-After")).toBe("60");

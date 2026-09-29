@@ -31,7 +31,7 @@
  */
 
 import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Streamdown } from "streamdown";
 import type {
   ContentBlock,
@@ -132,9 +132,18 @@ function isBlankText(text: string): boolean {
   return text.trim().length === 0;
 }
 
-/** Append a reasoning row for non-empty thought; an empty block renders nothing. */
+/**
+ * Append a reasoning row for non-empty thought; an empty block renders nothing.
+ *
+ * Trimmed, because the row draws the text `pre-wrap` and providers bracket a
+ * thought with newlines — so an untrimmed block renders its trailing blank
+ * line as real height inside the box, which reads as broken padding rather
+ * than as the invisible characters it is. Trimming also settles emptiness: a
+ * whitespace-only thought is nothing to show, not a blank row.
+ */
 function pushReasoning(rows: ActivityRow[], text: string): void {
-  if (text.length > 0) rows.push({ kind: "reasoning", text });
+  const thought = text.trim();
+  if (thought.length > 0) rows.push({ kind: "reasoning", text: thought });
 }
 
 /** Fold a tool block into the trailing tool row when they share a non-empty
@@ -259,13 +268,44 @@ function LiveCursor({
   preparingTool: PreparingTool | null;
 }) {
   const label = liveCursorLabel(streamingState, preparingTool);
+  const elapsed = useElapsedSeconds(label);
   if (label === null) return null;
   return (
     <div className="live-cursor" role="status" aria-live="polite">
       <Loader2 className="live-cursor__spinner" style={{ width: 12, height: 12 }} />
       <span className="live-cursor__label">{label}</span>
+      {elapsed >= ELAPSED_VISIBLE_AFTER_S && (
+        <span className="live-cursor__elapsed">{elapsed}s</span>
+      )}
     </div>
   );
+}
+
+/** Seconds a state must hold before the cursor starts counting out loud. */
+const ELAPSED_VISIBLE_AFTER_S = 3;
+
+/**
+ * Seconds the current cursor state has held, restarting whenever the label
+ * changes and stopping at `null` (turn over).
+ *
+ * The wait itself is the thing a reader can't see: a model that thinks for two
+ * minutes and a model that has hung both render as one still spinner. A number
+ * that keeps moving separates them without the client learning anything about
+ * what the model is doing.
+ */
+function useElapsedSeconds(label: string | null): number {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (label === null) {
+      setElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setElapsed(0);
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [label]);
+  return elapsed;
 }
 
 function liveCursorLabel(

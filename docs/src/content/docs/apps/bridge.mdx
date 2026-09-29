@@ -571,6 +571,28 @@ Open the OS file picker. The host uploads each chosen file to the workspace file
 
 Every param is optional: `accept` takes the same value as an `<input type="file">` accept attribute and defaults to any file, `multiple` defaults to `false`, and `maxSize` defaults to 25 MB. `maxSize` is enforced in the browser as a fast fail; the server remains the source of truth, and an oversize file or a failed upload comes back as a JSON-RPC error rather than an empty list.
 
+**The call succeeds only when every chosen file was stored.** When any file is refused (over `maxSize`, or refused by the server for its type or size), the host answers a JSON-RPC error whose `data` names each refused file and why, and lists the files it stored anyway:
+
+```json
+// Host → App
+{
+  "jsonrpc": "2.0",
+  "id": "syn-7",
+  "error": {
+    "code": -32602,
+    "message": "1 of 2 files refused: File \"setup.exe\" has disallowed type: application/x-msdownload. 1 stored.",
+    "data": {
+      "files": [
+        { "id": "fl_abc123", "filename": "notes.txt", "mimeType": "text/plain", "size": 14 }
+      ],
+      "errors": ["File \"setup.exe\" has disallowed type: application/x-msdownload"]
+    }
+  }
+}
+```
+
+An error does not mean nothing was stored: read `error.data.files`. The browser's `maxSize` check runs before any upload, so it stores nothing; the server stores every file that passes. The refusal is an error rather than an extra result field because the SDK's `pickFiles()` returns the result's `files` alone. With `@nimblebrain/synapse`, the rejection carries the same `data` on the thrown error.
+
 <Aside type="note">
 `ai.nimblebrain/request-file` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/request-file"]`.
 </Aside>

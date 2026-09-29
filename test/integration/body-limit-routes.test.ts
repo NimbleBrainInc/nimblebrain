@@ -3,9 +3,11 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
@@ -61,7 +63,7 @@ describe("per-route body limits", () => {
       body: JSON.stringify({ server: "x", tool: "y", arguments: { blob: oversized } }),
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("payload_too_large");
     expect(body.details?.limit).toBe(1_048_576);
     expect(typeof body.details?.received).toBe("number");
@@ -86,7 +88,7 @@ describe("per-route body limits", () => {
       body: multipartBody(12 * 1024 * 1024),
     });
     expect(res.status).toBe(413);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("payload_too_large");
     expect(body.details?.limit).toBe(MAX_TOTAL_SIZE);
     expect(body.details?.contentType).toContain("multipart/form-data");

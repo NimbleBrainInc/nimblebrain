@@ -22,6 +22,8 @@ import { startServer } from "../../src/api/server.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { ChatResult } from "../../src/runtime/types.ts";
+import { readJson } from "../helpers/http.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -94,7 +96,7 @@ async function sendTurn(baseUrl: string): Promise<string> {
     body: JSON.stringify({ message: "Work through this with your tools." }),
   });
   expect(res.status).toBe(200);
-  return (await res.json()).conversationId as string;
+  return (await readJson<ChatResult>(res)).conversationId as string;
 }
 
 function readEvents(workDir: string, conversationId: string): ConversationEvent[] {

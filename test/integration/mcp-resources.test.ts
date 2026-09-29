@@ -17,6 +17,7 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
+import { textOf } from "../helpers/resource-contents.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -249,12 +250,12 @@ describe("MCP /mcp — resources", () => {
       const mcpEntry = mcpResult.contents[0]!;
       expect(mcpEntry.uri).toBe("ui://fixture/dashboard");
       expect(mcpEntry.mimeType).toBe("text/html");
-      expect(mcpEntry.text).toBe(FIXTURE_HTML);
+      expect(textOf(mcpEntry)).toBe(FIXTURE_HTML);
 
       // A second URI on the same source, different mimeType, same shape.
       const textResult = await client.readResource({ uri: "text://fixture/greeting" });
       expect(textResult.contents).toHaveLength(1);
-      expect(textResult.contents[0]!.text).toBe(FIXTURE_TEXT);
+      expect(textOf(textResult.contents[0]!)).toBe(FIXTURE_TEXT);
       expect(textResult.contents[0]!.mimeType).toBe("text/plain");
     } finally {
       await client.close();
@@ -343,7 +344,7 @@ describe("MCP /mcp — resources", () => {
 
       // The focused workspace's own resource still reads.
       const own = await focused.readResource({ uri: "ui://fixture/dashboard" });
-      expect(own.contents[0]!.text).toBe(FIXTURE_HTML);
+      expect(textOf(own.contents[0]!)).toBe(FIXTURE_HTML);
 
       // The other workspace's resource is out of reach — the read fails,
       // never returns its bytes.
@@ -359,7 +360,7 @@ describe("MCP /mcp — resources", () => {
     const otherFocused = await createMcpClient(OTHER_WORKSPACE_ID);
     try {
       const other = await otherFocused.readResource({ uri: "ui://other/dashboard" });
-      expect(other.contents[0]!.text).toBe("<h1>Other Workspace</h1>");
+      expect(textOf(other.contents[0]!)).toBe("<h1>Other Workspace</h1>");
     } finally {
       await otherFocused.close();
     }
@@ -382,7 +383,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
         uri: "ui://fixture/dashboard",
         _meta: scopedTo("fixture"),
       });
-      expect(own.contents[0]!.text).toBe(FIXTURE_HTML);
+      expect(textOf(own.contents[0]!)).toBe(FIXTURE_HTML);
     } finally {
       await client.close();
     }
@@ -420,7 +421,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
         uri: "ui://neighbor/dashboard",
         _meta: scopedTo("neighbor"),
       });
-      expect(result.contents[0]!.text).toBe("<h1>Neighbor</h1>");
+      expect(textOf(result.contents[0]!)).toBe("<h1>Neighbor</h1>");
     } finally {
       await client.close();
     }
@@ -430,7 +431,7 @@ describe("MCP /mcp — resources/read scoped to one source", () => {
     const client = await createMcpClient();
     try {
       const result = await client.readResource({ uri: "ui://neighbor/dashboard" });
-      expect(result.contents[0]!.text).toBe("<h1>Neighbor</h1>");
+      expect(textOf(result.contents[0]!)).toBe("<h1>Neighbor</h1>");
     } finally {
       await client.close();
     }

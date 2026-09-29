@@ -6,10 +6,16 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import type { ConnectorRef, PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
+import type { ToolResult } from "../../src/engine/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { ShellData } from "../../web/src/api/client.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
+
+/** What `POST …/tools/call` answers: the tool result's wire fields. */
+type ToolCallBody = Pick<ToolResult, "content" | "structuredContent" | "isError">;
 
 // ---------------------------------------------------------------------------
 // Test setup: Runtime + HTTP server + temp directory for connectors
@@ -94,7 +100,7 @@ describe("Install/uninstall → /v1/workspaces/:wsId/shell placement updates", (
       // GET /v1/workspaces/:wsId/shell should now include the tasks placements
       const shellRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
       expect(shellRes.status).toBe(200);
-      const shell = await shellRes.json();
+      const shell = await readJson<ShellData>(shellRes);
 
       const tasksPlacements = shell.placements.filter(
         (p: { serverName: string }) => p.serverName === serverName,
@@ -110,7 +116,7 @@ describe("Install/uninstall → /v1/workspaces/:wsId/shell placement updates", (
 
       // GET /v1/workspaces/:wsId/shell should no longer have tasks placements
       const shellRes2 = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
-      const shell2 = await shellRes2.json();
+      const shell2 = await readJson<ShellData>(shellRes2);
 
       const tasksAfter = shell2.placements.filter(
         (p: { serverName: string }) => p.serverName === serverName,
@@ -145,7 +151,7 @@ describe("Connector with placements → /v1/workspaces/:wsId/shell", () => {
 
     try {
       const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
-      const body = await res.json();
+      const body = await readJson<ShellData>(res);
 
       const entries = body.placements.filter(
         (p: { serverName: string }) => p.serverName === serverName,
@@ -240,7 +246,7 @@ describe("POST /v1/workspaces/:wsId/tools/call — all core tools via Bridge pro
       body: JSON.stringify({ server: "nb", tool: "workspace_info", arguments: {} }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readJson<ToolCallBody>(res);
     expect(body.isError).toBe(false);
     expect(Array.isArray(body.content)).toBe(true);
   });

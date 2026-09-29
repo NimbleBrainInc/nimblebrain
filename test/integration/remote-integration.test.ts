@@ -1,11 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import type { ServerHandle } from "../../src/api/server.ts";
-import { startServer } from "../../src/api/server.ts";
 import { getConnectorRefValidator } from "../../src/config/index.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
@@ -237,132 +235,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. (Removed — POST /v1/apps/install endpoint deleted)
-
-describe.skip("Remote integration: POST /v1/apps/install with url", () => {
-  let mockServer: MockRemoteServer;
-  let runtime: Runtime;
-  let handle: ServerHandle;
-  let baseUrl: string;
-
-  beforeEach(async () => {
-    ensureTestDir();
-    mockServer = startMockRemoteServer(4);
-
-    const configPath = join(testDir, `config-api-${Date.now()}.json`);
-    writeFileSync(configPath, JSON.stringify({ version: "1" }, null, 2));
-
-    runtime = await Runtime.start({
-      identityProvider: devProvider,
-      workDir: testDir,
-      model: { provider: "custom", adapter: createEchoModel() },
-      logging: { disabled: true },
-      configPath,
-    });
-
-    handle = startServer({ runtime, port: 0 });
-    baseUrl = `http://localhost:${handle.port}`;
-  });
-
-  afterEach(async () => {
-    handle?.stop(true);
-    await runtime?.shutdown();
-    mockServer?.close();
-  });
-
-  it("installs a remote connector via API and returns correct response", async () => {
-    const res = await fetch(`${baseUrl}/v1/apps/install`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: mockServer.url,
-        serverName: "api-remote",
-      }),
-    });
-
-    expect(res.status).toBe(200);
-    const body = await res.json();
-
-    expect(body.name).toBe("api-remote");
-    expect(body.connectorName).toBe(mockServer.url);
-    expect(body.status).toBe("running");
-    expect(body.type).toBe("plain");
-    expect(body.toolCount).toBe(4);
-  }, 15_000);
-
-  it("installs a remote connector with transport config via API", async () => {
-    const res = await fetch(`${baseUrl}/v1/apps/install`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: mockServer.url,
-        serverName: "api-remote-transport",
-        transport: { type: "streamable-http" },
-      }),
-    });
-
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.name).toBe("api-remote-transport");
-    expect(body.toolCount).toBe(4);
-  }, 15_000);
-
-  it("installed remote connector appears in GET /v1/apps", async () => {
-    // Install first
-    const installRes = await fetch(`${baseUrl}/v1/apps/install`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: mockServer.url,
-        serverName: "api-listed",
-      }),
-    });
-    expect(installRes.status).toBe(200);
-
-    // List apps
-    const listRes = await fetch(`${baseUrl}/v1/apps`);
-    expect(listRes.status).toBe(200);
-    const body = await listRes.json();
-    const apps = body.apps as Array<{ name: string; status: string; tools: number }>;
-
-    const remote = apps.find((a) => a.name === "api-listed");
-    expect(remote).toBeDefined();
-    expect(remote!.status).toBe("running");
-    expect(remote!.toolCount).toBe(4);
-  }, 15_000);
-
-  it("derives serverName from url when not provided", async () => {
-    const res = await fetch(`${baseUrl}/v1/apps/install`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: mockServer.url }),
-    });
-
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    // The route derives a name from the URL
-    expect(body.name).toBeTruthy();
-    expect(body.name.length).toBeGreaterThan(0);
-    expect(body.toolCount).toBe(4);
-  }, 15_000);
-
-  it("returns error for unreachable remote URL", async () => {
-    const res = await fetch(`${baseUrl}/v1/apps/install`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: "http://127.0.0.1:1/mcp",
-        serverName: "unreachable",
-      }),
-    });
-
-    // Should be a 4xx or 5xx error, not 200
-    expect(res.status).toBeGreaterThanOrEqual(400);
-  }, 20_000);
-});
-
-// ---------------------------------------------------------------------------
-// 3. Mixed config startup: name + path + url via Runtime.start
+// 2. Mixed config startup: name + path + url via Runtime.start
 // ---------------------------------------------------------------------------
 
 describe("Remote integration: registering remote connectors in workspace registry", () => {

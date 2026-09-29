@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { act, fireEvent, render } from "@testing-library/react";
 import { BlockTimeline } from "../src/components/BlockTimeline.tsx";
 import type {
@@ -77,6 +77,26 @@ function liveCursorLabel(container: HTMLElement): string | null {
 	return null;
 }
 
+/** The cursor's elapsed counter, or null when it isn't drawn yet. */
+function liveCursorElapsed(container: HTMLElement): string | null {
+	for (const el of Array.from(container.getElementsByTagName("span"))) {
+		if ((el.getAttribute("class") ?? "").split(/\s+/).includes("live-cursor__elapsed")) {
+			return (el.textContent ?? "").trim();
+		}
+	}
+	return null;
+}
+
+/** The text of the first reasoning row's body, exactly as rendered. */
+function reasoningText(container: HTMLElement): string | null {
+	for (const el of Array.from(container.getElementsByTagName("div"))) {
+		if ((el.getAttribute("class") ?? "").split(/\s+/).includes("turn-pill__reasoning")) {
+			return el.textContent;
+		}
+	}
+	return null;
+}
+
 function timeline(container: HTMLElement): string[] {
 	const out: string[] = [];
 	const walker = container.ownerDocument!.createTreeWalker(
@@ -141,6 +161,26 @@ describe("BlockTimeline order", () => {
 			blocks: [reasoning(""), text("hi")],
 		});
 		expect(pillHeads(container).length).toBe(0);
+	});
+
+	it("skips a thought that is only the newlines a provider bracketed it with", () => {
+		const { container } = renderTimeline({
+			blocks: [reasoning("\n\n"), text("hi")],
+		});
+		expect(pillHeads(container).length).toBe(0);
+	});
+
+	it("drops the blank line a provider leaves on the end of a thought", () => {
+		// `pre-wrap` draws that newline as real height inside the box, which
+		// reads as a spacing bug rather than as the character it is.
+		const { container } = renderTimeline({
+			blocks: [reasoning("weighing the options\n\n")],
+		});
+		// The body only renders once the chip is open.
+		act(() => {
+			fireEvent.click(pillHeads(container)[0]);
+		});
+		expect(reasoningText(container)).toBe("weighing the options");
 	});
 });
 
@@ -281,6 +321,51 @@ describe("LiveCursor", () => {
 			streamingState: "analyzing",
 		});
 		expect(liveCursorLabel(container)).toBe("Analyzing…");
+	});
+
+	it("does not count out loud until a state has held for a few seconds", () => {
+		// A number appearing the instant a state starts reads as noise on the
+		// fast steps, which are most of them; it earns its place only once the
+		// wait is long enough to be worth doubting.
+		const { container } = renderTimeline({
+			blocks: [tool(done("a", "search"))],
+			isCurrentMessage: true,
+			streamingState: "analyzing",
+		});
+		expect(liveCursorElapsed(container)).toBeNull();
+	});
+
+	it("counts once a state has held, and starts over when the state changes", () => {
+		jest.useFakeTimers();
+		try {
+			const blocks = [tool(done("a", "search"))];
+			const { container, rerender } = renderTimeline({
+				blocks,
+				isCurrentMessage: true,
+				streamingState: "analyzing",
+			});
+			act(() => {
+				jest.advanceTimersByTime(3000);
+			});
+			expect(liveCursorElapsed(container)).toBe("3s");
+
+			rerender(
+				<BlockTimeline
+					blocks={blocks}
+					isCurrentMessage
+					streamingState="preparing"
+					preparingTool={{ id: "p1", name: "search" }}
+					displayDetail="balanced"
+				/>,
+			);
+			act(() => {
+				jest.advanceTimersByTime(1000);
+			});
+			expect(liveCursorLabel(container)).toBe("Calling search…");
+			expect(liveCursorElapsed(container)).toBeNull();
+		} finally {
+			jest.useRealTimers();
+		}
 	});
 
 	it("hides during 'streaming' (text/reasoning block is absorbing the state)", () => {

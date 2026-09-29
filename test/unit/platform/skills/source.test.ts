@@ -21,6 +21,7 @@ import {
 } from "../../../../src/platform/skills/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { textOf } from "../../../helpers/resource-contents.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
 //
@@ -180,7 +181,7 @@ describe("skills source — resources", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const data = await client.readResource({ uri: "skill://skills/authoring-guide" });
-    const text = (data.contents?.[0]?.text as string | undefined) ?? "";
+    const text = textOf(data.contents?.[0]) ?? "";
     expect(typeof text).toBe("string");
     expect(text.length).toBeGreaterThan(0);
     // Real Task 005 content begins with frontmatter (`---`); the placeholder

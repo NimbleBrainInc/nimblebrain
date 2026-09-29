@@ -24,11 +24,13 @@ import { join } from "node:path";
 
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
+import type { ApiErrorBody } from "../../../src/api/types.ts";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { readJson } from "../../helpers/http.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
@@ -162,7 +164,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
     expect(res.status).toBe(404);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("not_found");
   });
 
@@ -183,7 +185,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
     expect(res.status).toBe(403);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("conversation_access_denied");
     expect(body.details?.conversationId).toBe(seed.conversationId);
   });
@@ -355,7 +357,7 @@ describe("ownerless conversation file — no 500s", () => {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
     expect(res.status).toBe(422);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("conversation_corrupted");
   });
 
@@ -369,7 +371,7 @@ describe("ownerless conversation file — no 500s", () => {
       body: JSON.stringify({ message: "resume", conversationId: convId }),
     });
     expect(res.status).toBe(422);
-    const body = await res.json();
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("conversation_corrupted");
     expect(body.details?.reason).toBe("missing_owner");
   });

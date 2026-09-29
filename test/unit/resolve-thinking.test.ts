@@ -4,6 +4,11 @@ import { getModelByString } from "../../src/model/catalog.ts";
 import { log } from "../../src/observability/log.ts";
 import { resolveThinking } from "../../src/runtime/resolve-thinking.ts";
 
+/** The effort source, which only the `effort` and `enabled` modes carry. */
+function sourceOf(t: ReturnType<typeof resolveThinking>) {
+  return t && "source" in t ? t.source : undefined;
+}
+
 describe("resolveThinking", () => {
   it("returns undefined when no config and no model is supplied", () => {
     expect(resolveThinking({})).toBeUndefined();
@@ -55,10 +60,10 @@ describe("resolveThinking", () => {
     // reporting when it can't be honored. Collapsing them to one boolean
     // gets one of those two wrong — it did, in both directions at once.
     const m = "anthropic:claude-sonnet-4-6";
-    expect(resolveThinking({ model: m, configEffort: "high" })?.source).toBe("operator");
-    expect(resolveThinking({ model: m, configMode: "enabled" })?.source).toBe("mode");
-    expect(resolveThinking({ model: m, configBudgetTokens: 8000 })?.source).toBe("mode");
-    expect(resolveThinking({ model: m })?.source).toBe("platform");
+    expect(sourceOf(resolveThinking({ model: m, configEffort: "high" }))).toBe("operator");
+    expect(sourceOf(resolveThinking({ model: m, configMode: "enabled" }))).toBe("mode");
+    expect(sourceOf(resolveThinking({ model: m, configBudgetTokens: 8000 }))).toBe("mode");
+    expect(sourceOf(resolveThinking({ model: m }))).toBe("platform");
   });
 
   it("operator off wins over model default", () => {
@@ -182,7 +187,7 @@ describe("resolveThinking", () => {
     // asserted nothing about the flag on either arm.
     for (const model of [
       "openai:gpt-4o",
-      "google:gemini-2.0-flash",
+      "google:gemini-2.5-flash-preview-tts",
       "nebius:Qwen/Qwen3-235B-A22B-Instruct-2507",
     ]) {
       expect(getModelByString(model)?.capabilities.reasoning).toBe(false);

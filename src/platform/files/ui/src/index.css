@@ -427,3 +427,14 @@ body {
   color: var(--nb-color-danger);
   font-size: 13px;
 }
+
+.upload-refusals-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-weight: 600;
+}
+.upload-refusals ul { margin: 6px 0 0; padding-left: 18px; }
+.upload-refusals li { margin: 2px 0; }
+.upload-refusals-dismiss {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: inherit; font: inherit; font-weight: 500; text-decoration: underline;
+}

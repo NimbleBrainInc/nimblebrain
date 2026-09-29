@@ -56,7 +56,7 @@ test("sealed under A, ring [B]: start throws naming both key ids", async () => {
   process.env[KEY_ENV] = KEY_B.toString("base64");
   const err = await boot().then(
     async (runtime) => {
-      await runtime.stop?.();
+      await runtime.shutdown();
       return undefined;
     },
     (e: unknown) => e,
@@ -80,6 +80,6 @@ test("ring [B, A]: boots and re-wraps under B", async () => {
       `.${createCredentialSealer([KEY_B]).sealingKid}.`,
     );
   } finally {
-    await runtime.stop?.();
+    await runtime.shutdown();
   }
 });

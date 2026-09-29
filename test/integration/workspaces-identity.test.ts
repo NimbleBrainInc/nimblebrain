@@ -334,8 +334,8 @@ describe("Auth flow", () => {
       eventSink: new NoopEventSink(),
     });
 
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(401);
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(401);
   });
 });
 
@@ -381,7 +381,7 @@ describe("Dev mode", () => {
     // DevIdentityProvider no longer creates workspaces — the runtime does.
     // Verify we can create a workspace and add the dev user to it.
     const ws = await wsStore.create("Test Workspace", "test");
-    await wsStore.addMember(ws.id, "usr_default", "owner");
+    await wsStore.addMember(ws.id, "usr_default", "admin");
 
     const workspaces = await wsStore.list();
     expect(workspaces.length).toBeGreaterThanOrEqual(1);

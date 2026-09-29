@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { LanguageModelV4, SharedV4ProviderOptions } from "@ai-sdk/provider";
 import { buildModelResolver, buildRegistry, resolveModelString } from "../../src/model/registry.ts";
 
 describe("resolveModelString", () => {
@@ -43,7 +44,7 @@ describe("resolveModelString", () => {
 describe("buildRegistry", () => {
   it("creates a provider that resolves anthropic models with correct spec version", () => {
     const registry = buildRegistry({ providers: { anthropic: {} } });
-    const model = registry.languageModel("anthropic:claude-sonnet-4-6");
+    const model = registry.languageModel("anthropic:claude-sonnet-4-6") as LanguageModelV4;
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v4");
     expect(model.provider).toContain("anthropic");
@@ -52,7 +53,7 @@ describe("buildRegistry", () => {
 
   it("defaults to anthropic when no providers configured", () => {
     const registry = buildRegistry({});
-    const model = registry.languageModel("anthropic:claude-sonnet-4-6");
+    const model = registry.languageModel("anthropic:claude-sonnet-4-6") as LanguageModelV4;
     expect(model).toBeDefined();
     expect(model.provider).toContain("anthropic");
     // Verify it has the same spec version as explicit config
@@ -66,7 +67,7 @@ describe("buildRegistry", () => {
 
   it("resolves nebius models through the OpenAI-compatible Chat Completions API", () => {
     const registry = buildRegistry({ providers: { nebius: { apiKey: "nb-test-key" } } });
-    const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro");
+    const model = registry.languageModel("nebius:deepseek-ai/DeepSeek-V4-Pro") as LanguageModelV4;
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v4");
     // Chat Completions, which this adapter binds natively — Nebius serves no
@@ -92,7 +93,7 @@ describe("buildRegistry", () => {
 
   it("resolves xai models through Chat Completions", () => {
     const registry = buildRegistry({ providers: { xai: { apiKey: "xai-test-key" } } });
-    const model = registry.languageModel("xai:grok-4.5");
+    const model = registry.languageModel("xai:grok-4.5") as LanguageModelV4;
     expect(model).toBeDefined();
     expect(model.specificationVersion).toBe("v4");
     // `.languageModel()` binds Chat Completions on this adapter version; the
@@ -217,7 +218,7 @@ describe("nebius request shape", () => {
 
 describe("anthropic request shape", () => {
   async function captureAnthropicRequest(
-    providerOptions?: Record<string, Record<string, unknown>>,
+    providerOptions?: SharedV4ProviderOptions,
   ): Promise<Record<string, unknown>> {
     const realFetch = globalThis.fetch;
     let body: Record<string, unknown> = {};

@@ -28,6 +28,7 @@ import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { blobOf, textOf } from "../helpers/resource-contents.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // Files are workspace-owned. Chat-multipart uploads land in the workspace in
@@ -169,8 +170,8 @@ describe("workspace files exposed as MCP resources", () => {
       const first = result.contents[0]!;
       expect(first.uri).toBe(`files://${id}`);
       expect(first.mimeType).toBe("image/png");
-      expect(typeof first.blob).toBe("string");
-      expect(Buffer.from(first.blob as string, "base64").equals(PNG_BYTES)).toBe(true);
+      expect(typeof blobOf(first)).toBe("string");
+      expect(Buffer.from(blobOf(first) as string, "base64").equals(PNG_BYTES)).toBe(true);
     } finally {
       await client.close();
     }
@@ -192,7 +193,7 @@ describe("workspace files exposed as MCP resources", () => {
         uri,
         _meta: { [RESOURCE_SOURCE_META_KEY]: "files" },
       });
-      expect(own.contents[0]?.text).toBe("scoped\n");
+      expect(textOf(own.contents[0])).toBe("scoped\n");
 
       for (const source of ["conversations", "db-query"]) {
         await expect(

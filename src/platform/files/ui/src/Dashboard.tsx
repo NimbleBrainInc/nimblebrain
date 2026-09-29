@@ -5,6 +5,8 @@ import { FileGrid } from "./FileGrid";
 import { collectTags, TYPE_FILTERS } from "./format";
 import { Header } from "./Header";
 import type { FileEntry, FilterKey, ListResult } from "./types";
+import { UploadRefusals } from "./UploadRefusals";
+import { readUploadRefusal, type UploadRefusal } from "./upload";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -22,6 +24,7 @@ export function Dashboard() {
   const [detailFile, setDetailFile] = useState<FileEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [refusal, setRefusal] = useState<UploadRefusal | null>(null);
 
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -102,9 +105,24 @@ export function Dashboard() {
     loadFiles();
   }, [loadFiles]);
 
+  const handleUploadFailure = useCallback(
+    async (err: unknown) => {
+      const refused = readUploadRefusal(err);
+      if (!refused) {
+        setError(err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed");
+        return;
+      }
+      setRefusal(refused);
+      // A refusal still stores the files that passed, so list them too.
+      if (refused.stored > 0) await loadFiles();
+    },
+    [loadFiles],
+  );
+
   const handleUpload = useCallback(async () => {
     setUploading(true);
     setError(null);
+    setRefusal(null);
     try {
       const result = await pickFiles({ multiple: true, maxSize: 26214400 });
       // pickFiles returns [] if the user cancelled, or the persisted FileEntry
@@ -112,11 +130,11 @@ export function Dashboard() {
       // already wrote them; we just need to refresh.
       if (result.length > 0) await loadFiles();
     } catch (err) {
-      setError(err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed");
+      await handleUploadFailure(err);
     } finally {
       setUploading(false);
     }
-  }, [pickFiles, loadFiles]);
+  }, [pickFiles, loadFiles, handleUploadFailure]);
 
   const handleDelete = useCallback(async () => {
     if (!detailFile || deleting) return;
@@ -171,6 +189,7 @@ export function Dashboard() {
 
       <div className="content">
         {error && <div className="error-banner">{error}</div>}
+        {refusal && <UploadRefusals refusal={refusal} onDismiss={() => setRefusal(null)} />}
         <FileGrid
           loading={loading}
           files={visibleFiles}
