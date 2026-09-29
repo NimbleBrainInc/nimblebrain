@@ -3,11 +3,11 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
-import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-model-qualification-${Date.now()}`);
 
@@ -146,7 +146,12 @@ describe("model qualification at runtime boundary", () => {
         const sink: EventSink = { emit: (e) => events.push(e) };
 
         await runtime.chat(
-          { identity: DEV_IDENTITY, message: "hello", workspaceId: TEST_WORKSPACE_ID, model: spelling },
+          {
+            identity: DEV_IDENTITY,
+            message: "hello",
+            workspaceId: TEST_WORKSPACE_ID,
+            model: spelling,
+          },
           sink,
         );
 

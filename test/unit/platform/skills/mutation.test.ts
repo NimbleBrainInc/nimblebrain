@@ -7,6 +7,7 @@
  * the read-tool tests' fixture so behavioral parity stays obvious.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -19,18 +20,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isModelVisible } from "../../../../src/engine/types.ts";
-import { surfaceTools } from "../../../../src/tools/surfacing.ts";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
-import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import type { EngineEvent, EventSink } from "../../../../src/engine/types.ts";
+import { isModelVisible } from "../../../../src/engine/types.ts";
+import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import { parseSkillContent } from "../../../../src/skills/loader.ts";
 import { selectLayer3Skills } from "../../../../src/skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
-import { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
@@ -59,12 +58,9 @@ class FakeRuntime {
     { id: string; name: string; members: Array<{ userId: string; role: "admin" | "member" }> }
   >();
 
-  private readonly _store: EventSourcedConversationStore;
-
   constructor(private workDir: string) {
     const convDir = join(workDir, "conversations");
     mkdirSync(convDir, { recursive: true });
-    this._store = new EventSourcedConversationStore({ dir: convDir });
     // The dev user administers the workspace these tests write to.
     this.setMember("ws_demo", DEV_USER.id, "admin");
   }
@@ -398,11 +394,7 @@ describe("skills — workspace-scope write gate", () => {
     runtime.setMember(WS, "u_member", "member");
     const skillPath = join(workDir, "workspaces", WS, "skills", "readable.md");
     mkdirSync(join(workDir, "workspaces", WS, "skills"), { recursive: true });
-    writeFileSync(
-      skillPath,
-      "---\nname: readable\ndescription: test\n---\nbody\n",
-      "utf-8",
-    );
+    writeFileSync(skillPath, "---\nname: readable\ndescription: test\n---\nbody\n", "utf-8");
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({ name: "read", arguments: { id: skillPath } });
@@ -466,7 +458,11 @@ describe("skills__create — loading-strategy", () => {
       name: "create",
       arguments: {
         scope: "org",
-        manifest: { name: "trigger-skill", description: "matches on triggers", triggers: ["deploy", "ship"] },
+        manifest: {
+          name: "trigger-skill",
+          description: "matches on triggers",
+          triggers: ["deploy", "ship"],
+        },
         body: "Deploy guidance.",
       },
     });
@@ -616,7 +612,7 @@ describe("a pasted SKILL.md in the body", () => {
     expect(existsSync(join(workDir, "skills", "broken.md"))).toBe(false);
   });
 
-  test("`frontmatter: \"ignore\"` keeps the block as body text", async () => {
+  test('`frontmatter: "ignore"` keeps the block as body text', async () => {
     // The escape hatch: a skill whose body is genuinely ABOUT frontmatter.
     const src = await buildSource();
     const client = src.getClient()!;
@@ -719,9 +715,9 @@ describe("a pasted SKILL.md in the body", () => {
       },
     });
     expect(ok.isError).toBeFalsy();
-    expect(parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false })?.manifest.priority).toBe(
-      25,
-    );
+    expect(
+      parseSkillContent(readFileSync(id, "utf-8"), id, { cap: false })?.manifest.priority,
+    ).toBe(25);
   });
 
   test("a body-replacing update absorbs it; an append leaves it as prose", async () => {
@@ -909,9 +905,8 @@ describe("skills__update", () => {
       arguments: { id, body: "tampered" },
     });
     expect(result.isError).toBe(true);
-    const sc = (
-      result as { structuredContent?: { code?: string; scope?: string; role?: string } }
-    ).structuredContent;
+    const sc = (result as { structuredContent?: { code?: string; scope?: string; role?: string } })
+      .structuredContent;
     expect(sc?.code).toBe("permission_denied");
     expect(sc?.scope).toBe("org");
     expect(sc?.role).toBe("member");
@@ -1030,7 +1025,10 @@ describe("durable status is set_status only", () => {
     });
     const id = join(workDir, "skills", "togglable.md");
 
-    const off = await client.callTool({ name: "set_status", arguments: { id, status: "disabled" } });
+    const off = await client.callTool({
+      name: "set_status",
+      arguments: { id, status: "disabled" },
+    });
     expect(off.isError).toBeFalsy();
     expect(readManifestField(id, "status")).toBe("disabled");
 
@@ -1120,7 +1118,10 @@ describe("durable status is set_status only", () => {
     });
     const id = join(workDir, "skills", "no-snapshot-on-refusal.md");
     for (let i = 0; i < 3; i++) {
-      await client.callTool({ name: "update", arguments: { id, manifest: { status: "disabled" } } });
+      await client.callTool({
+        name: "update",
+        arguments: { id, manifest: { status: "disabled" } },
+      });
     }
     expect(existsSync(join(workDir, "skills", "_versions"))).toBe(false);
   });

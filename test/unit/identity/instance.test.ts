@@ -1,9 +1,9 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { loadInstanceConfig, saveInstanceConfig } from "../../../src/identity/instance.ts";
 import type { InstanceConfig } from "../../../src/identity/instance.ts";
+import { loadInstanceConfig, saveInstanceConfig } from "../../../src/identity/instance.ts";
 
 let workDir: string;
 
@@ -136,7 +136,9 @@ describe("loadInstanceConfig", () => {
     for (const firstPartyClientIds of ["client_test_channels", [7]]) {
       await writeFile(
         join(workDir, "instance.json"),
-        JSON.stringify({ auth: { adapter: "workos", clientId: "client_123", firstPartyClientIds } }),
+        JSON.stringify({
+          auth: { adapter: "workos", clientId: "client_123", firstPartyClientIds },
+        }),
       );
       await expect(loadInstanceConfig(workDir)).rejects.toThrow(
         "'firstPartyClientIds' must be an array of strings",
@@ -186,7 +188,9 @@ describe("loadInstanceConfig", () => {
       JSON.stringify({ auth: { adapter: "oidc", issuer: "https://x.com" } }),
     );
 
-    await expect(loadInstanceConfig(workDir)).rejects.toThrow("oidc auth requires string 'clientId'");
+    await expect(loadInstanceConfig(workDir)).rejects.toThrow(
+      "oidc auth requires string 'clientId'",
+    );
   });
 });
 

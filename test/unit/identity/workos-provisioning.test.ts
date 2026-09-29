@@ -8,13 +8,13 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { TransientAuthError } from "../../../src/identity/provider.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
-import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
@@ -224,7 +224,9 @@ describe("WorkOS provisioning security", () => {
     // (no value is produced at all) while letting the caller distinguish
     // "could not check" from "definitively no membership": the former answers
     // 503, the latter still denies. Nothing is granted on either path.
-    const resolveOrgRole = (provider as unknown as { resolveOrgRole: (id: string) => Promise<string | null> }).resolveOrgRole.bind(provider);
+    const resolveOrgRole = (
+      provider as unknown as { resolveOrgRole: (id: string) => Promise<string | null> }
+    ).resolveOrgRole.bind(provider);
     const err = await resolveOrgRole("user_any").then(
       (role: string | null) => role,
       (e: unknown) => e,

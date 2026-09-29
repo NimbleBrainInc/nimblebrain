@@ -70,15 +70,12 @@ mock.module("../api/client", () => ({
   installConnector,
 }));
 
-mock.module("../hooks/useScopedRole", () => ({
-  useCanWriteActiveWorkspace: () => true,
-}));
-
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
 
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { ConnectorBrowsePage, INSTALL_MIN_SPINNER_MS } = await import(
   "../pages/settings/ConnectorBrowsePage"
 );
@@ -90,15 +87,28 @@ function LocationProbe() {
   return null;
 }
 
+// The viewer administers the workspace, so Browse offers install. The role
+// comes through the real context: `mock.module` is process-wide in bun, so
+// mocking the role hook here would make every later web test's user an admin.
+const ADMIN_WORKSPACE = {
+  id: "ws_test",
+  name: "Acme",
+  memberCount: 1,
+  connectors: [],
+  userRole: "admin" as const,
+};
+
 function Page() {
   return (
-    <MemoryRouter initialEntries={["/w/acme/settings/connectors/browse"]}>
-      <LocationProbe />
-      <Routes>
-        <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
-        <Route path="*" element={null} />
-      </Routes>
-    </MemoryRouter>
+    <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId={ADMIN_WORKSPACE.id}>
+      <MemoryRouter initialEntries={["/w/acme/settings/connectors/browse"]}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
+          <Route path="*" element={null} />
+        </Routes>
+      </MemoryRouter>
+    </WorkspaceProvider>
   );
 }
 

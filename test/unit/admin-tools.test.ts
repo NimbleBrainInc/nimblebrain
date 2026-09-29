@@ -54,9 +54,7 @@ describe("isAdminToolAllowed", () => {
 
   test("refuses an org admin who is not a member of the workspace", () => {
     expect(isAdminToolAllowed(identity("u_org", "admin"), WS, DECLARED, "configure")).toBe(false);
-    expect(isAdminToolAllowed(identity("u_owner", "owner"), WS, DECLARED, "configure")).toBe(
-      false,
-    );
+    expect(isAdminToolAllowed(identity("u_owner", "owner"), WS, DECLARED, "configure")).toBe(false);
   });
 
   test("refuses when there is no identity", () => {
@@ -92,7 +90,9 @@ describe("parseAdminToolsDeclaration", () => {
 
   test("declares nothing for a host block that is not an object", () => {
     for (const host of ["1.0", 7]) {
-      expect(parseAdminToolsDeclaration(host as unknown as HostManifestMeta, "ai.acme/crm")).toBeUndefined();
+      expect(
+        parseAdminToolsDeclaration(host as unknown as HostManifestMeta, "ai.acme/crm"),
+      ).toBeUndefined();
     }
   });
 
@@ -117,6 +117,8 @@ describe("parseAdminToolsDeclaration", () => {
 });
 
 describe("the catalog projection", () => {
+  // `host` is the raw `_meta` block as a catalog file carries it, including
+  // shapes the projection must reject, so it is wider than the typed block.
   function detail(host: Record<string, unknown>): ServerDetail {
     return {
       name: "ai.acme/crm",
@@ -124,7 +126,7 @@ describe("the catalog projection", () => {
       version: "1.0.0",
       remotes: [{ type: "streamable-http", url: "https://crm.acme.test/mcp" }],
       _meta: { "ai.nimblebrain/host": host },
-    } as ServerDetail;
+    } as unknown as ServerDetail;
   }
 
   test("carries admin_tools onto the catalog entry", () => {
@@ -137,7 +139,9 @@ describe("the catalog projection", () => {
   test("keeps the entry, gating every tool, when admin_tools is malformed", () => {
     // Enforcement reads the live catalog, so dropping the entry would un-gate
     // an installed connector.
-    const entry = serverDetailToCatalogEntry(detail({ host_version: "1.5", admin_tools: "configure" }));
+    const entry = serverDetailToCatalogEntry(
+      detail({ host_version: "1.5", admin_tools: "configure" }),
+    );
     expect(entry?.adminTools?.kind).toBe("all");
   });
 

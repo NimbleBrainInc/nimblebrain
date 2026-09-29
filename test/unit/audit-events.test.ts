@@ -1,28 +1,19 @@
-import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import {
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-  mkdirSync,
-} from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
-import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
-import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
+import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
+import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 
 function makeLogDir(): string {
   return mkdtempSync(join(tmpdir(), "audit-test-"));
 }
 
 function readLogRecords(dir: string, pattern?: RegExp): Record<string, unknown>[] {
-  const files = readdirSync(dir).filter((f) =>
-    pattern ? pattern.test(f) : f.endsWith(".jsonl"),
-  );
+  const files = readdirSync(dir).filter((f) => (pattern ? pattern.test(f) : f.endsWith(".jsonl")));
   if (files.length === 0) return [];
   const content = readFileSync(join(dir, files[0]!), "utf-8");
   return content
@@ -242,7 +233,14 @@ describe("createPrivilegeHook audit emission", () => {
       confirm: async () => false,
     };
 
-    const hook = createPrivilegeHook(denyGate, captureSink, { skillManagement: true, toolDiscovery: true, catalogSearch: true, fileContext: true, userManagement: true, workspaceManagement: true });
+    const hook = createPrivilegeHook(denyGate, captureSink, {
+      skillManagement: true,
+      toolDiscovery: true,
+      catalogSearch: true,
+      fileContext: true,
+      userManagement: true,
+      workspaceManagement: true,
+    });
 
     const result = await hook({
       id: "call_1",

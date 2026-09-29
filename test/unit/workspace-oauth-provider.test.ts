@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/server";
 import { log } from "../../src/observability/log.ts";
 import { requireCredentialStore } from "../../src/tools/credential-store.ts";
@@ -350,11 +350,10 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
     // Nothing persisted either.
     expect(
-      await store().get(
-        { kind: "workspace", wsId: "ws_test" },
-        mcpOAuthKey("hubspot", "client"),
-        { caller: "test", purpose: "assert" },
-      ),
+      await store().get({ kind: "workspace", wsId: "ws_test" }, mcpOAuthKey("hubspot", "client"), {
+        caller: "test",
+        purpose: "assert",
+      }),
     ).toBeNull();
   });
 
@@ -456,15 +455,14 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
   });
 
   it("constructor rejects reserved keys in additionalAuthorizationParams", () => {
-    const make = (extras: Record<string, string>) =>
-      () =>
-        new WorkspaceOAuthProvider({
-          owner: { type: "workspace", wsId: "ws_test" },
-          serverName: "broken",
-          workDir,
-          callbackUrl: CALLBACK,
-          additionalAuthorizationParams: extras,
-        });
+    const make = (extras: Record<string, string>) => () =>
+      new WorkspaceOAuthProvider({
+        owner: { type: "workspace", wsId: "ws_test" },
+        serverName: "broken",
+        workDir,
+        callbackUrl: CALLBACK,
+        additionalAuthorizationParams: extras,
+      });
 
     expect(make({ client_id: "evil" })).toThrow(/reserved keys/);
     expect(make({ state: "no" })).toThrow(/reserved keys/);
@@ -591,7 +589,9 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
   });
 
   it("redirectToAuthorization never joins consent to prompt=none", async () => {
-    const params = await authorizeParams(["mcp.read", "offline_access"], "mcp.read", { prompt: "none" });
+    const params = await authorizeParams(["mcp.read", "offline_access"], "mcp.read", {
+      prompt: "none",
+    });
     expect(params.getAll("prompt")).toEqual(["none"]);
   });
 });
@@ -608,9 +608,10 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
   });
 
   /** Build a fake fetch that records calls + returns programmable responses. */
-  function makeFetcher(
-    responses: Record<string, { status: number; body?: unknown }>,
-  ): { fetch: typeof fetch; calls: Array<{ url: string; init?: RequestInit }> } {
+  function makeFetcher(responses: Record<string, { status: number; body?: unknown }>): {
+    fetch: typeof fetch;
+    calls: Array<{ url: string; init?: RequestInit }>;
+  } {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
       const u = typeof url === "string" ? url : url.toString();
@@ -801,9 +802,8 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     await p.saveTokens({
       access_token: "acc",
       token_type: "Bearer",
-      // biome-ignore lint/suspicious/noExplicitAny: id_token is an OIDC extension on OAuthTokens
       id_token: fakeIdToken,
-    } as any);
+    });
 
     const identity = await p.identity();
     expect(identity).toEqual({
@@ -836,9 +836,8 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     await p.saveTokens({
       access_token: "a",
       token_type: "Bearer",
-      // biome-ignore lint/suspicious/noExplicitAny: id_token extension
       id_token: `${header}.${payload}.s`,
-    } as any);
+    });
     expect(await p.identity()).not.toBeNull();
     await p.invalidateCredentials("tokens");
     expect(await p.identity()).toBeNull();
@@ -855,9 +854,8 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     await p.saveTokens({
       access_token: "a",
       token_type: "Bearer",
-      // biome-ignore lint/suspicious/noExplicitAny: malformed id_token
       id_token: "not.a.jwt.at.all",
-    } as any);
+    });
     expect(await p.identity()).toBeNull();
     expect((await p.tokens())?.access_token).toBe("a");
   });
@@ -1151,9 +1149,9 @@ describe("WorkspaceOAuthProvider — redacted OAuth health logging", () => {
       const p = makeProvider(workDir, "com-dropbox-mcp");
       p.notifyAuthLost();
       const msgs = warn.mock.calls.map((c) => String(c[0]));
-      expect(
-        msgs.some((m) => m.includes("com-dropbox-mcp") && /reauth_required/.test(m)),
-      ).toBe(true);
+      expect(msgs.some((m) => m.includes("com-dropbox-mcp") && /reauth_required/.test(m))).toBe(
+        true,
+      );
     } finally {
       warn.mockRestore();
     }

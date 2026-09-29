@@ -176,6 +176,15 @@ export interface BrokeredStateOptions {
   workDir: string;
 }
 
+/**
+ * The account a connection is signed in as, for display ("Connected as …").
+ * Informational only — never an input to an access decision.
+ */
+export interface ConnectedAccountIdentity {
+  email?: string;
+  name?: string;
+}
+
 /** What `cleanup` managed to tear down. Best-effort by contract — never throws. */
 export interface BrokeredCleanupResult {
   /** The brokered connection (and any upstream grant it held) was deleted at the provider. */
@@ -265,6 +274,15 @@ export interface ManagedConnectorProvider {
    * kernel falls back to the generic static-auth / persisted-token check.
    */
   hasConnection?(opts: BrokeredStateOptions): boolean;
+
+  /**
+   * The account this owner's connection is signed in as, or null when none was
+   * recorded. Local by contract, like `hasConnection`: it reads what the
+   * provider stored when the connection landed and never calls the broker, so a
+   * connectors listing costs no broker round-trip. MUST NOT throw — a missing
+   * or unreadable record is null. Omit when the provider records no identity.
+   */
+  identity?(opts: BrokeredStateOptions): Promise<ConnectedAccountIdentity | null>;
 
   /** A liveness probe for the connection revalidator, wired iff the provider supplies one. */
   probe?(directory: ConnectorCatalog): ConnectionHealthProbe;

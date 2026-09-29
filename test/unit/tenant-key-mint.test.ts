@@ -1,5 +1,5 @@
-import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
 import { describe, expect, it } from "bun:test";
+import { createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   buildMintRequest,
   createMintingFetch,
@@ -10,6 +10,7 @@ import {
   ServiceTokenCache,
   type TenantIdentity,
 } from "../../src/oauth/tenant-key-mint.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 // ---------------------------------------------------------------------------
 // Faithful inline mirror of the authorizer's verifier
@@ -43,7 +44,8 @@ function verifyMintAsAuthorizer(wire: string, master: Buffer, nowSeconds: number
   const payloadRaw = Buffer.from(payloadB64, "base64url");
   const peeked = JSON.parse(payloadRaw.toString("utf8")) as Record<string, unknown>;
   const tid = peeked.tid;
-  if (typeof tid !== "string" || !ALLOWED_TID.test(tid)) return { ok: false, reason: "invalid_tid" };
+  if (typeof tid !== "string" || !ALLOWED_TID.test(tid))
+    return { ok: false, reason: "invalid_tid" };
 
   const tenantKey = deriveTenantKey(master, tid);
   const macExpected = createHmac("sha256", tenantKey).update(`v1.${payloadB64}`).digest();
@@ -173,7 +175,9 @@ describe("readTenantIdentityFromEnv", () => {
       /NB_MCP_AUTHORIZER_TENANT_KEY/,
     );
     expect(() =>
-      readTenantIdentityFromEnv({ NB_MCP_AUTHORIZER_TENANT_KEY: TENANT_KEY.toString("base64") } as NodeJS.ProcessEnv),
+      readTenantIdentityFromEnv({
+        NB_MCP_AUTHORIZER_TENANT_KEY: TENANT_KEY.toString("base64"),
+      } as NodeJS.ProcessEnv),
     ).toThrow(/NB_TENANT_ID/);
   });
 
@@ -190,10 +194,12 @@ describe("readTenantIdentityFromEnv", () => {
 /** A fake authorizer `/token` endpoint: verifies the inbound mint and returns a
  *  token whose value encodes the requested audience, so the test can assert the
  *  right token reached the caller. Counts calls for single-flight assertions. */
-function fakeAuthorizer(opts: { expiresIn?: number; failStatus?: number; now?: () => number } = {}) {
+function fakeAuthorizer(
+  opts: { expiresIn?: number; failStatus?: number; now?: () => number } = {},
+) {
   let calls = 0;
   const now = opts.now ?? (() => Math.floor(Date.now() / 1000));
-  const fetchImpl: typeof fetch = async (input, init) => {
+  const fetchImpl = fakeFetch(async (input, init) => {
     calls++;
     const url = String(input);
     if (!url.endsWith("/token")) return new Response("not found", { status: 404 });
@@ -210,7 +216,7 @@ function fakeAuthorizer(opts: { expiresIn?: number; failStatus?: number; now?: (
       token_type: "Bearer",
       expires_in: opts.expiresIn ?? 300,
     });
-  };
+  });
   return { fetchImpl, calls: () => calls };
 }
 
@@ -246,12 +252,21 @@ describe("mintServiceToken", () => {
 });
 
 describe("ServiceTokenCache", () => {
-  const req = { tokenUrl: "https://authz.test/token", workspace: "ws_smoke", audience: "artifacts", scope: "artifacts:write" };
+  const req = {
+    tokenUrl: "https://authz.test/token",
+    workspace: "ws_smoke",
+    audience: "artifacts",
+    scope: "artifacts:write",
+  };
 
   it("serves a cached token until the renew skew, then re-mints", async () => {
     let clock = 1000;
     const authz = fakeAuthorizer({ expiresIn: 300, now: () => clock });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => clock });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => clock,
+    });
 
     expect(await cache.getToken(req)).toBe("tok-artifacts-1");
     clock = 1100; // well within 300s - 30s skew → cache hit
@@ -265,9 +280,17 @@ describe("ServiceTokenCache", () => {
 
   it("dedupes concurrent mints for the same key (single-flight)", async () => {
     const authz = fakeAuthorizer({ expiresIn: 300, now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
 
-    const [a, b, c] = await Promise.all([cache.getToken(req), cache.getToken(req), cache.getToken(req)]);
+    const [a, b, c] = await Promise.all([
+      cache.getToken(req),
+      cache.getToken(req),
+      cache.getToken(req),
+    ]);
     expect(a).toBe(b);
     expect(b).toBe(c);
     expect(authz.calls()).toBe(1);
@@ -275,7 +298,11 @@ describe("ServiceTokenCache", () => {
 
   it("forceRefresh discards the cached token and re-mints (the 401-retry path)", async () => {
     const authz = fakeAuthorizer({ expiresIn: 300, now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
 
     expect(await cache.getToken(req)).toBe("tok-artifacts-1");
     expect(await cache.getToken(req, { forceRefresh: true })).toBe("tok-artifacts-2");
@@ -285,10 +312,10 @@ describe("ServiceTokenCache", () => {
   it("does not pin callers to a failed mint (in-flight marker cleared on error)", async () => {
     let mode: "fail" | "ok" = "fail";
     const okAuthz = fakeAuthorizer({ now: () => 1000 });
-    const fetchImpl: typeof fetch = async (input, init) => {
+    const fetchImpl = fakeFetch(async (input, init) => {
       if (mode === "fail") return new Response(`{"error":"boom"}`, { status: 500 });
       return okAuthz.fetchImpl(input, init);
-    };
+    });
     const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl, now: () => 1000 });
 
     await expect(cache.getToken(req)).rejects.toThrow(MintError);
@@ -298,16 +325,25 @@ describe("ServiceTokenCache", () => {
 });
 
 describe("createMintingFetch", () => {
-  const req = { tokenUrl: "https://authz.test/token", workspace: "ws_smoke", audience: "artifacts", scope: "artifacts:write" };
+  const req = {
+    tokenUrl: "https://authz.test/token",
+    workspace: "ws_smoke",
+    audience: "artifacts",
+    scope: "artifacts:write",
+  };
 
   it("attaches a freshly-minted bearer to each outbound request", async () => {
     const authz = fakeAuthorizer({ now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
     let seenAuth: string | null = null;
-    const baseFetch: typeof fetch = async (_input, init) => {
+    const baseFetch = fakeFetch(async (_input, init) => {
       seenAuth = new Headers(init?.headers).get("Authorization");
       return new Response("ok", { status: 200 });
-    };
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts", { method: "POST" });
@@ -317,15 +353,21 @@ describe("createMintingFetch", () => {
 
   it("force-re-mints and retries exactly once on a 401", async () => {
     const authz = fakeAuthorizer({ now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
     let serviceCalls = 0;
     const seen: (string | null)[] = [];
-    const baseFetch: typeof fetch = async (_input, init) => {
+    const baseFetch = fakeFetch(async (_input, init) => {
       serviceCalls++;
       seen.push(new Headers(init?.headers).get("Authorization"));
       // Reject the first token, accept the (re-minted) second.
-      return serviceCalls === 1 ? new Response("no", { status: 401 }) : new Response("ok", { status: 200 });
-    };
+      return serviceCalls === 1
+        ? new Response("no", { status: 401 })
+        : new Response("ok", { status: 200 });
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts");
@@ -337,12 +379,16 @@ describe("createMintingFetch", () => {
 
   it("does not retry on a non-auth error (e.g. 500)", async () => {
     const authz = fakeAuthorizer({ now: () => 1000 });
-    const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl: authz.fetchImpl, now: () => 1000 });
+    const cache = new ServiceTokenCache({
+      identity: IDENTITY,
+      fetchImpl: authz.fetchImpl,
+      now: () => 1000,
+    });
     let serviceCalls = 0;
-    const baseFetch: typeof fetch = async () => {
+    const baseFetch = fakeFetch(async () => {
       serviceCalls++;
       return new Response("boom", { status: 500 });
-    };
+    });
     const f = createMintingFetch({ cache, ...req, baseFetch });
 
     const res = await f("https://artifacts.test/v1/artifacts");
@@ -410,8 +456,9 @@ describe("resolveAuthorizerTokenUrl (issuer/endpoint decoupling)", () => {
   });
 
   it("returns undefined when neither is configured", () => {
-    withEnv({ NB_FLEET_AUTHORIZER_TOKEN_URL: undefined, NB_FLEET_AUTHORIZER_ISSUER: undefined }, () =>
-      expect(resolveAuthorizerTokenUrl()).toBeUndefined(),
+    withEnv(
+      { NB_FLEET_AUTHORIZER_TOKEN_URL: undefined, NB_FLEET_AUTHORIZER_ISSUER: undefined },
+      () => expect(resolveAuthorizerTokenUrl()).toBeUndefined(),
     );
   });
 

@@ -1,7 +1,7 @@
-import { describe, expect, it, afterAll, spyOn } from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadConfig } from "../../src/cli/config.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-cli-unit-${Date.now()}`);
@@ -28,7 +28,9 @@ describe("loadConfig", () => {
   });
 
   it("throws when explicit --config path does not exist", () => {
-    expect(() => loadConfig({ config: "/nonexistent/nimblebrain.json" })).toThrow("Config file not found");
+    expect(() => loadConfig({ config: "/nonexistent/nimblebrain.json" })).toThrow(
+      "Config file not found",
+    );
   });
 
   it("loads instance fields from config file", () => {
@@ -314,49 +316,49 @@ describe("config validation", () => {
 });
 
 describe("workdir resolution (§19.4)", () => {
-	it("defaultWorkDir fallback is used when config has no workDir", () => {
-		const cfgPath = writeTestConfig("no-workdir.json", {});
-		// NB_WORK_DIR may be set by Runtime.start() in concurrent tests — clear it
-		const saved = process.env.NB_WORK_DIR;
-		delete process.env.NB_WORK_DIR;
-		try {
-			const config = loadConfig({
-				config: cfgPath,
-				defaultWorkDir: "/tmp/nb-default-workdir",
-			});
-			expect(config.workDir).toBe("/tmp/nb-default-workdir");
-		} finally {
-			if (saved !== undefined) process.env.NB_WORK_DIR = saved;
-		}
-	});
+  it("defaultWorkDir fallback is used when config has no workDir", () => {
+    const cfgPath = writeTestConfig("no-workdir.json", {});
+    // NB_WORK_DIR may be set by Runtime.start() in concurrent tests — clear it
+    const saved = process.env.NB_WORK_DIR;
+    delete process.env.NB_WORK_DIR;
+    try {
+      const config = loadConfig({
+        config: cfgPath,
+        defaultWorkDir: "/tmp/nb-default-workdir",
+      });
+      expect(config.workDir).toBe("/tmp/nb-default-workdir");
+    } finally {
+      if (saved !== undefined) process.env.NB_WORK_DIR = saved;
+    }
+  });
 
-	it("workDir from config file overrides defaultWorkDir", () => {
-		const cfgPath = writeTestConfig("with-workdir.json", { workDir: "/from-config" });
-		const saved = process.env.NB_WORK_DIR;
-		delete process.env.NB_WORK_DIR;
-		try {
-			const config = loadConfig({
-				config: cfgPath,
-				defaultWorkDir: "/tmp/nb-default-workdir",
-			});
-			expect(config.workDir).toBe("/from-config");
-		} finally {
-			if (saved !== undefined) process.env.NB_WORK_DIR = saved;
-		}
-	});
+  it("workDir from config file overrides defaultWorkDir", () => {
+    const cfgPath = writeTestConfig("with-workdir.json", { workDir: "/from-config" });
+    const saved = process.env.NB_WORK_DIR;
+    delete process.env.NB_WORK_DIR;
+    try {
+      const config = loadConfig({
+        config: cfgPath,
+        defaultWorkDir: "/tmp/nb-default-workdir",
+      });
+      expect(config.workDir).toBe("/from-config");
+    } finally {
+      if (saved !== undefined) process.env.NB_WORK_DIR = saved;
+    }
+  });
 });
 
 describe("package.json", () => {
-	it("exposes no bin (the runtime is launched via bun, not an nb binary)", async () => {
-		const pkg = await Bun.file("package.json").json();
-		expect(pkg.bin).toBeUndefined();
-	});
+  it("exposes no bin (the runtime is launched via bun, not an nb binary)", async () => {
+    const pkg = await Bun.file("package.json").json();
+    expect(pkg.bin).toBeUndefined();
+  });
 
-	it("scripts include dev, dev:api, dev:web, start", async () => {
-		const pkg = await Bun.file("package.json").json();
-		expect(pkg.scripts).toHaveProperty("dev");
-		expect(pkg.scripts).toHaveProperty("dev:api");
-		expect(pkg.scripts).toHaveProperty("dev:web");
-		expect(pkg.scripts).toHaveProperty("start");
-	});
+  it("scripts include dev, dev:api, dev:web, start", async () => {
+    const pkg = await Bun.file("package.json").json();
+    expect(pkg.scripts).toHaveProperty("dev");
+    expect(pkg.scripts).toHaveProperty("dev:api");
+    expect(pkg.scripts).toHaveProperty("dev:web");
+    expect(pkg.scripts).toHaveProperty("start");
+  });
 });

@@ -97,11 +97,7 @@ describe("isDeliveryIdAdmissible", () => {
   test("refuses an outgoing id whose rotation stamp is missing or unparseable", () => {
     expect(isDeliveryIdAdmissible(reg({ prevDeliveryId: OLD_ID }), OLD_ID, NOW)).toBe(false);
     expect(
-      isDeliveryIdAdmissible(
-        reg({ prevDeliveryId: OLD_ID, rotatedAt: "not-a-date" }),
-        OLD_ID,
-        NOW,
-      ),
+      isDeliveryIdAdmissible(reg({ prevDeliveryId: OLD_ID, rotatedAt: "not-a-date" }), OLD_ID, NOW),
     ).toBe(false);
   });
 });

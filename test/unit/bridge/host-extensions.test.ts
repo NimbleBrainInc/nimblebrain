@@ -6,10 +6,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  buildHostContext,
-  buildHostExtensions,
-} from "../../../web/src/bridge/host-extensions.ts";
+import { buildHostContext, buildHostExtensions } from "../../../web/src/bridge/host-extensions.ts";
+
 const WORKSPACE = { id: "ws_example00000000", name: "Example" };
 
 /** Keys the host context is allowed to carry. */

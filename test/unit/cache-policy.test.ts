@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  LanguageModelV4FunctionTool,
-  LanguageModelV4Message,
-} from "@ai-sdk/provider";
+import type { LanguageModelV4FunctionTool, LanguageModelV4Message } from "@ai-sdk/provider";
 import { applyCachePolicy } from "../../src/model/cache-policy.ts";
 
 // --- builders mirroring the engine's per-iteration append pattern ----------

@@ -1,9 +1,9 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  LIGHT_TOKENS,
+  buildThemeStyleBlock,
   DARK_TOKENS,
   getThemeTokens,
-  buildThemeStyleBlock,
+  LIGHT_TOKENS,
 } from "../../../web/src/bridge/theme.ts";
 
 /**
@@ -43,7 +43,6 @@ describe("theme token map", () => {
       expect(validPrefixes.some((p) => key.startsWith(p))).toBe(true);
     }
   });
-
 });
 
 describe("buildThemeStyleBlock", () => {

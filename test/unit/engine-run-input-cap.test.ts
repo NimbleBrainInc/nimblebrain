@@ -12,7 +12,9 @@ const baseConfig: EngineConfig = {
   maxOutputTokens: 16_384,
 };
 
-const tools: ToolSchema[] = [{ name: "test__score", description: "Score one item", inputSchema: {} }];
+const tools: ToolSchema[] = [
+  { name: "test__score", description: "Score one item", inputSchema: {} },
+];
 
 /**
  * A run shaped like a long automation: each model call's input grows by
@@ -25,10 +27,16 @@ function growingRun(maxRunInputTokens?: number) {
   const model = createMockModel(() => {
     calls++;
     if (calls === 5) {
-      return { content: [{ type: "text", text: "all items scored" }], inputTokens: 5_000, outputTokens: 10 };
+      return {
+        content: [{ type: "text", text: "all items scored" }],
+        inputTokens: 5_000,
+        outputTokens: 10,
+      };
     }
     return {
-      content: [{ type: "tool-call", toolCallId: `call_${calls}`, toolName: "test__score", input: "{}" }],
+      content: [
+        { type: "tool-call", toolCallId: `call_${calls}`, toolName: "test__score", input: "{}" },
+      ],
       inputTokens: calls * 1_000,
       outputTokens: 10,
     };
@@ -46,7 +54,13 @@ function growingRun(maxRunInputTokens?: number) {
   const config: EngineConfig =
     maxRunInputTokens === undefined ? baseConfig : { ...baseConfig, maxRunInputTokens };
   return {
-    run: () => engine.run(config, "", [{ role: "user", content: [{ type: "text", text: "Score 12 items" }] }], tools),
+    run: () =>
+      engine.run(
+        config,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Score 12 items" }] }],
+        tools,
+      ),
     modelCalls: () => calls,
     toolRuns,
     events,
@@ -69,8 +83,8 @@ describe("AgentEngine run input cap", () => {
     expect(r.toolRuns).toEqual(["call_1", "call_2", "call_3"]);
 
     const done = r.events.find((e) => e.type === "run.done");
-    expect(done?.data["stopReason"]).toBe("max_input_tokens");
-    expect(done?.data["iterations"]).toBe(3);
+    expect(done?.data.stopReason).toBe("max_input_tokens");
+    expect(done?.data.iterations).toBe(3);
   });
 
   it("projects the next call from the prompt about to be sent, not only the previous call", async () => {
@@ -82,7 +96,9 @@ describe("AgentEngine run input cap", () => {
       calls++;
       if (calls === 1) {
         return {
-          content: [{ type: "tool-call", toolCallId: "call_1", toolName: "test__score", input: "{}" }],
+          content: [
+            { type: "tool-call", toolCallId: "call_1", toolName: "test__score", input: "{}" },
+          ],
           inputTokens: 10,
           outputTokens: 5,
         };
@@ -91,7 +107,10 @@ describe("AgentEngine run input cap", () => {
     });
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(tools, (): ToolResult => ({ content: textContent("x".repeat(40_000)), isError: false })),
+      new StaticToolRouter(
+        tools,
+        (): ToolResult => ({ content: textContent("x".repeat(40_000)), isError: false }),
+      ),
       { emit() {} },
     );
     const result = await engine.run(

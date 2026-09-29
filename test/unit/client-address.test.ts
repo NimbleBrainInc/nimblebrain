@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   clientAddressFor,
   DEFAULT_TRUSTED_PROXY_HOPS,
-  trustedProxyHops,
   TRUSTED_PROXY_HOPS_ENV,
+  trustedProxyHops,
 } from "../../src/api/client-address.ts";
 
 function headers(xff?: string): Headers {
@@ -18,9 +18,9 @@ describe("clientAddressFor", () => {
   });
 
   test("counts back from the right for a longer trusted chain", () => {
-    expect(
-      clientAddressFor(headers("9.9.9.9, 203.0.113.7, 198.51.100.4"), "10.0.0.1", 2),
-    ).toBe("203.0.113.7");
+    expect(clientAddressFor(headers("9.9.9.9, 203.0.113.7, 198.51.100.4"), "10.0.0.1", 2)).toBe(
+      "203.0.113.7",
+    );
   });
 
   test("ignores entries a caller prepended", () => {

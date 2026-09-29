@@ -268,6 +268,7 @@ function PersonalConnectorRow({
   const grantLabel =
     grants === 0 ? "Not granted" : `Granted to ${grants} workspace${grants === 1 ? "" : "s"}`;
   const connected = connector.state === "running";
+  const account = connector.identity?.email ?? connector.identity?.name;
   const connectBusy = busyKey === connector.serverName;
   const disconnectBusy = busyKey === `disconnect:${connector.serverName}`;
 
@@ -299,7 +300,13 @@ function PersonalConnectorRow({
           {connected ? (
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
-              Connected
+              {account ? (
+                <span className="max-w-56 truncate">
+                  Connected as <span className="font-medium text-foreground">{account}</span>
+                </span>
+              ) : (
+                "Connected"
+              )}
             </span>
           ) : (
             <Button

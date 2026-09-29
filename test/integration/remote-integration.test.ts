@@ -1,33 +1,24 @@
-import {
-	describe,
-	expect,
-	it,
-	afterAll,
-	afterEach,
-	beforeAll,
-	beforeEach,
-} from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
-import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { startServer } from "../../src/api/server.ts";
-import type { ServerHandle } from "../../src/api/server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { getConnectorRefValidator } from "../../src/config/index.ts";
-import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import type { ServerHandle } from "../../src/api/server.ts";
+import { startServer } from "../../src/api/server.ts";
+import { getConnectorRefValidator } from "../../src/config/index.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
-import { ToolRegistry } from "../../src/tools/registry.ts";
-import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import type { McpSource } from "../../src/tools/mcp-source.ts";
+import { ToolRegistry } from "../../src/tools/registry.ts";
 import {
-	installTestCredentialStore,
-	resetTestCredentialStore,
+  installTestCredentialStore,
+  resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -36,76 +27,76 @@ import { devProvider } from "../helpers/dev-provider.ts";
 const testDir = join(tmpdir(), `nimblebrain-remote-integ-${Date.now()}`);
 
 function ensureTestDir() {
-	if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+  if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
 }
 
 afterAll(() => {
-	if (existsSync(testDir)) rmSync(testDir, { recursive: true });
+  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
 });
 
 interface MockRemoteServer {
-	url: string;
-	port: number;
-	close: () => void;
+  url: string;
+  port: number;
+  close: () => void;
 }
 
 function createMcpServer(toolCount: number): Server {
-	const mcpServer = new Server(
-		{ name: "integ-echo", version: "0.1.0" },
-		{ capabilities: { tools: {} } },
-	);
+  const mcpServer = new Server(
+    { name: "integ-echo", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
 
-	const tools = Array.from({ length: toolCount }, (_, i) => ({
-		name: `integ_tool_${i}`,
-		description: `Integration test tool ${i}`,
-		inputSchema: {
-			type: "object" as const,
-			properties: { input: { type: "string" } },
-		},
-	}));
+  const tools = Array.from({ length: toolCount }, (_, i) => ({
+    name: `integ_tool_${i}`,
+    description: `Integration test tool ${i}`,
+    inputSchema: {
+      type: "object" as const,
+      properties: { input: { type: "string" } },
+    },
+  }));
 
-	mcpServer.setRequestHandler('tools/list', async () => ({ tools }));
-	mcpServer.setRequestHandler('tools/call', async (req) => ({
-		content: [{ type: "text", text: `Executed: ${req.params.name}` }],
-	}));
+  mcpServer.setRequestHandler("tools/list", async () => ({ tools }));
+  mcpServer.setRequestHandler("tools/call", async (req) => ({
+    content: [{ type: "text", text: `Executed: ${req.params.name}` }],
+  }));
 
-	return mcpServer;
+  return mcpServer;
 }
 
 function startMockRemoteServer(toolCount = 2): MockRemoteServer {
-	const transports: WebStandardStreamableHTTPServerTransport[] = [];
-	const servers: Server[] = [];
+  const transports: WebStandardStreamableHTTPServerTransport[] = [];
+  const servers: Server[] = [];
 
-	const httpServer = Bun.serve({
-		port: 0,
-		async fetch(req: Request) {
-			const url = new URL(req.url);
-			if (url.pathname !== "/mcp") {
-				return new Response("Not found", { status: 404 });
-			}
+  const httpServer = Bun.serve({
+    port: 0,
+    async fetch(req: Request) {
+      const url = new URL(req.url);
+      if (url.pathname !== "/mcp") {
+        return new Response("Not found", { status: 404 });
+      }
 
-			const mcpServer = createMcpServer(toolCount);
-			servers.push(mcpServer);
+      const mcpServer = createMcpServer(toolCount);
+      servers.push(mcpServer);
 
-			const transport = new WebStandardStreamableHTTPServerTransport({
-				sessionIdGenerator: undefined,
-			});
-			transports.push(transport);
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      });
+      transports.push(transport);
 
-			await mcpServer.connect(transport);
-			return transport.handleRequest(req);
-		},
-	});
+      await mcpServer.connect(transport);
+      return transport.handleRequest(req);
+    },
+  });
 
-	return {
-		url: `http://localhost:${httpServer.port}/mcp`,
-		port: httpServer.port,
-		close() {
-			httpServer.stop(true);
-			for (const t of transports) t.close().catch(() => {});
-			for (const s of servers) s.close().catch(() => {});
-		},
-	};
+  return {
+    url: `http://localhost:${httpServer.port}/mcp`,
+    port: httpServer.port,
+    close() {
+      httpServer.stop(true);
+      for (const t of transports) t.close().catch(() => {});
+      for (const s of servers) s.close().catch(() => {});
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -113,250 +104,261 @@ function startMockRemoteServer(toolCount = 2): MockRemoteServer {
 // ---------------------------------------------------------------------------
 
 describe("Remote integration: config → validate → load → tools", () => {
-	let mockServer: MockRemoteServer;
+  let mockServer: MockRemoteServer;
 
-	beforeEach(() => {
-		ensureTestDir();
-		// This block drives `startConnectorSource` without a Runtime, so nothing has
-		// installed the store the OAuth provider reads its records through.
-		installTestCredentialStore(testDir);
-		mockServer = startMockRemoteServer(3);
-	});
+  beforeEach(() => {
+    ensureTestDir();
+    // This block drives `startConnectorSource` without a Runtime, so nothing has
+    // installed the store the OAuth provider reads its records through.
+    installTestCredentialStore(testDir);
+    mockServer = startMockRemoteServer(3);
+  });
 
-	afterEach(() => {
-		resetTestCredentialStore();
-		mockServer?.close();
-	});
+  afterEach(() => {
+    resetTestCredentialStore();
+    mockServer?.close();
+  });
 
-	it("config with url entry passes schema validation and starts a working source", async () => {
-		// Step 1: Build a config object with a url connector
-		const entry = {
-			url: mockServer.url,
-			serverName: "validated-remote",
-		};
+  it("config with url entry passes schema validation and starts a working source", async () => {
+    // Step 1: Build a config object with a url connector
+    const entry = {
+      url: mockServer.url,
+      serverName: "validated-remote",
+    };
 
-		// Step 2: Validate against JSON Schema (the published connector-ref shape)
-		const validate = getConnectorRefValidator();
-		expect(validate(entry)).toBe(true);
+    // Step 2: Validate against JSON Schema (the published connector-ref shape)
+    const validate = getConnectorRefValidator();
+    expect(validate(entry)).toBe(true);
 
-		// Step 3: Start connector source from the validated ref
-		const registry = new ToolRegistry();
-		const ref: ConnectorRef = entry as ConnectorRef;
-		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
+    // Step 3: Start connector source from the validated ref
+    const registry = new ToolRegistry();
+    const ref: ConnectorRef = entry as ConnectorRef;
+    const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
+      allowInsecureRemotes: true,
+      wsId: "ws_test",
+    });
 
-		expect(meta).not.toBeNull();
-		expect(meta.meta).not.toBeNull();
-		expect(meta.meta!.version).toBe("remote (3 tools)");
-		expect(registry.hasSource("validated-remote")).toBe(true);
+    expect(meta).not.toBeNull();
+    expect(meta.meta).not.toBeNull();
+    expect(meta.meta!.version).toBe("remote (3 tools)");
+    expect(registry.hasSource("validated-remote")).toBe(true);
 
-		// Step 4: Verify tools are actually callable
-		const tools = await registry.availableTools();
-		expect(tools.length).toBe(3);
-		expect(tools[0]!.name).toContain("integ_tool_");
+    // Step 4: Verify tools are actually callable
+    const tools = await registry.availableTools();
+    expect(tools.length).toBe(3);
+    expect(tools[0]!.name).toContain("integ_tool_");
 
-		await registry.removeSource("validated-remote");
-	}, 15_000);
+    await registry.removeSource("validated-remote");
+  }, 15_000);
 
-	it("config with url + transport + auth validates and source starts", async () => {
-		const entry = {
-			url: mockServer.url,
-			serverName: "authed-remote",
-			transport: {
-				type: "streamable-http",
-				auth: { type: "bearer", token: "test-token-123" },
-				headers: { "X-Custom": "value" },
-			},
-		};
+  it("config with url + transport + auth validates and source starts", async () => {
+    const entry = {
+      url: mockServer.url,
+      serverName: "authed-remote",
+      transport: {
+        type: "streamable-http",
+        auth: { type: "bearer", token: "test-token-123" },
+        headers: { "X-Custom": "value" },
+      },
+    };
 
-		// Schema validation
-		const validate = getConnectorRefValidator();
-		expect(validate(entry)).toBe(true);
+    // Schema validation
+    const validate = getConnectorRefValidator();
+    expect(validate(entry)).toBe(true);
 
-		// Start source (auth headers won't affect our mock server)
-		const registry = new ToolRegistry();
-		const ref: ConnectorRef = entry as ConnectorRef;
-		const meta = await startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
+    // Start source (auth headers won't affect our mock server)
+    const registry = new ToolRegistry();
+    const ref: ConnectorRef = entry as ConnectorRef;
+    const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
+      allowInsecureRemotes: true,
+      wsId: "ws_test",
+    });
 
-		expect(meta).not.toBeNull();
-		expect(registry.hasSource("authed-remote")).toBe(true);
+    expect(meta).not.toBeNull();
+    expect(registry.hasSource("authed-remote")).toBe(true);
 
-		await registry.removeSource("authed-remote");
-	}, 15_000);
+    await registry.removeSource("authed-remote");
+  }, 15_000);
 
-	it("config with url entry that fails connection does not leave orphan in registry", async () => {
-		const entry = {
-			url: "http://127.0.0.1:1/mcp",
-			serverName: "dead-remote",
-		};
+  it("config with url entry that fails connection does not leave orphan in registry", async () => {
+    const entry = {
+      url: "http://127.0.0.1:1/mcp",
+      serverName: "dead-remote",
+    };
 
-		const validate = getConnectorRefValidator();
-		expect(validate(entry)).toBe(true);
+    const validate = getConnectorRefValidator();
+    expect(validate(entry)).toBe(true);
 
-		const registry = new ToolRegistry();
-		const ref: ConnectorRef = entry as ConnectorRef;
+    const registry = new ToolRegistry();
+    const ref: ConnectorRef = entry as ConnectorRef;
 
-		const results = await Promise.allSettled([startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" })]);
-		expect(results[0]!.status).toBe("rejected");
-		expect(registry.hasSource("dead-remote")).toBe(false);
-	}, 20_000);
+    const results = await Promise.allSettled([
+      startConnectorSource(ref, registry, new NoopEventSink(), {
+        allowInsecureRemotes: true,
+        wsId: "ws_test",
+      }),
+    ]);
+    expect(results[0]!.status).toBe("rejected");
+    expect(registry.hasSource("dead-remote")).toBe(false);
+  }, 20_000);
 
-	it("keepRegisteredOnStartFailure leaves an unreachable url connector registered and retryable", async () => {
-		// The boot-loop contract. An installed connector whose endpoint is unreachable
-		// during startup must stay in the registry: an absent source is invisible to
-		// the agent's tool list, `nb__status`, HealthMonitor, and the unhealthy
-		// gauge — and the only path that revives it needs a tool call the model
-		// cannot make against a tool it was never shown.
-		const registry = new ToolRegistry();
-		const ref: ConnectorRef = { url: "http://127.0.0.1:1/mcp", serverName: "boot-down-remote" };
+  it("keepRegisteredOnStartFailure leaves an unreachable url connector registered and retryable", async () => {
+    // The boot-loop contract. An installed connector whose endpoint is unreachable
+    // during startup must stay in the registry: an absent source is invisible to
+    // the agent's tool list, `nb__status`, HealthMonitor, and the unhealthy
+    // gauge — and the only path that revives it needs a tool call the model
+    // cannot make against a tool it was never shown.
+    const registry = new ToolRegistry();
+    const ref: ConnectorRef = { url: "http://127.0.0.1:1/mcp", serverName: "boot-down-remote" };
 
-		const results = await Promise.allSettled([
-			startConnectorSource(ref, registry, new NoopEventSink(), {
-				allowInsecureRemotes: true,
-				wsId: "ws_test",
-				keepRegisteredOnStartFailure: true,
-			}),
-		]);
+    const results = await Promise.allSettled([
+      startConnectorSource(ref, registry, new NoopEventSink(), {
+        allowInsecureRemotes: true,
+        wsId: "ws_test",
+        keepRegisteredOnStartFailure: true,
+      }),
+    ]);
 
-		// The caller still learns the start failed — this changes registry
-		// retention, not the reported outcome.
-		expect(results[0]!.status).toBe("rejected");
-		expect(registry.hasSource("boot-down-remote")).toBe(true);
+    // The caller still learns the start failed — this changes registry
+    // retention, not the reported outcome.
+    expect(results[0]!.status).toBe("rejected");
+    expect(registry.hasSource("boot-down-remote")).toBe(true);
 
-		const source = registry.getSource("boot-down-remote") as McpSource;
-		// Down, but NOT deliberately stopped. `isStopped()` is what HealthMonitor
-		// reads to mark a source terminal, and `removeSource` would have set it via
-		// stop() — so this assertion is the one that proves the source will actually
-		// be reconnected rather than merely being visible.
-		expect(source.isAlive()).toBe(false);
-		expect(source.isStopped()).toBe(false);
+    const source = registry.getSource("boot-down-remote") as McpSource;
+    // Down, but NOT deliberately stopped. `isStopped()` is what HealthMonitor
+    // reads to mark a source terminal, and `removeSource` would have set it via
+    // stop() — so this assertion is the one that proves the source will actually
+    // be reconnected rather than merely being visible.
+    expect(source.isAlive()).toBe(false);
+    expect(source.isStopped()).toBe(false);
 
-		await registry.removeSource("boot-down-remote");
-	}, 20_000);
+    await registry.removeSource("boot-down-remote");
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
 // 2. (Removed — POST /v1/apps/install endpoint deleted)
 
 describe.skip("Remote integration: POST /v1/apps/install with url", () => {
-	let mockServer: MockRemoteServer;
-	let runtime: Runtime;
-	let handle: ServerHandle;
-	let baseUrl: string;
+  let mockServer: MockRemoteServer;
+  let runtime: Runtime;
+  let handle: ServerHandle;
+  let baseUrl: string;
 
-	beforeEach(async () => {
-		ensureTestDir();
-		mockServer = startMockRemoteServer(4);
+  beforeEach(async () => {
+    ensureTestDir();
+    mockServer = startMockRemoteServer(4);
 
-		const configPath = join(testDir, `config-api-${Date.now()}.json`);
-		writeFileSync(configPath, JSON.stringify({ version: "1" }, null, 2));
+    const configPath = join(testDir, `config-api-${Date.now()}.json`);
+    writeFileSync(configPath, JSON.stringify({ version: "1" }, null, 2));
 
-		runtime = await Runtime.start({
-			identityProvider: devProvider,
-			workDir: testDir,
-			model: { provider: "custom", adapter: createEchoModel() },
-			logging: { disabled: true },
-			configPath,
-		});
+    runtime = await Runtime.start({
+      identityProvider: devProvider,
+      workDir: testDir,
+      model: { provider: "custom", adapter: createEchoModel() },
+      logging: { disabled: true },
+      configPath,
+    });
 
-		handle = startServer({ runtime, port: 0 });
-		baseUrl = `http://localhost:${handle.port}`;
-	});
+    handle = startServer({ runtime, port: 0 });
+    baseUrl = `http://localhost:${handle.port}`;
+  });
 
-	afterEach(async () => {
-		handle?.stop(true);
-		await runtime?.shutdown();
-		mockServer?.close();
-	});
+  afterEach(async () => {
+    handle?.stop(true);
+    await runtime?.shutdown();
+    mockServer?.close();
+  });
 
-	it("installs a remote connector via API and returns correct response", async () => {
-		const res = await fetch(`${baseUrl}/v1/apps/install`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				url: mockServer.url,
-				serverName: "api-remote",
-			}),
-		});
+  it("installs a remote connector via API and returns correct response", async () => {
+    const res = await fetch(`${baseUrl}/v1/apps/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: mockServer.url,
+        serverName: "api-remote",
+      }),
+    });
 
-		expect(res.status).toBe(200);
-		const body = await res.json();
+    expect(res.status).toBe(200);
+    const body = await res.json();
 
-		expect(body.name).toBe("api-remote");
-		expect(body.connectorName).toBe(mockServer.url);
-		expect(body.status).toBe("running");
-		expect(body.type).toBe("plain");
-		expect(body.toolCount).toBe(4);
-	}, 15_000);
+    expect(body.name).toBe("api-remote");
+    expect(body.connectorName).toBe(mockServer.url);
+    expect(body.status).toBe("running");
+    expect(body.type).toBe("plain");
+    expect(body.toolCount).toBe(4);
+  }, 15_000);
 
-	it("installs a remote connector with transport config via API", async () => {
-		const res = await fetch(`${baseUrl}/v1/apps/install`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				url: mockServer.url,
-				serverName: "api-remote-transport",
-				transport: { type: "streamable-http" },
-			}),
-		});
+  it("installs a remote connector with transport config via API", async () => {
+    const res = await fetch(`${baseUrl}/v1/apps/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: mockServer.url,
+        serverName: "api-remote-transport",
+        transport: { type: "streamable-http" },
+      }),
+    });
 
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(body.name).toBe("api-remote-transport");
-		expect(body.toolCount).toBe(4);
-	}, 15_000);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.name).toBe("api-remote-transport");
+    expect(body.toolCount).toBe(4);
+  }, 15_000);
 
-	it("installed remote connector appears in GET /v1/apps", async () => {
-		// Install first
-		const installRes = await fetch(`${baseUrl}/v1/apps/install`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				url: mockServer.url,
-				serverName: "api-listed",
-			}),
-		});
-		expect(installRes.status).toBe(200);
+  it("installed remote connector appears in GET /v1/apps", async () => {
+    // Install first
+    const installRes = await fetch(`${baseUrl}/v1/apps/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: mockServer.url,
+        serverName: "api-listed",
+      }),
+    });
+    expect(installRes.status).toBe(200);
 
-		// List apps
-		const listRes = await fetch(`${baseUrl}/v1/apps`);
-		expect(listRes.status).toBe(200);
-		const body = await listRes.json();
-		const apps = body.apps as Array<{ name: string; status: string; tools: number }>;
+    // List apps
+    const listRes = await fetch(`${baseUrl}/v1/apps`);
+    expect(listRes.status).toBe(200);
+    const body = await listRes.json();
+    const apps = body.apps as Array<{ name: string; status: string; tools: number }>;
 
-		const remote = apps.find((a) => a.name === "api-listed");
-		expect(remote).toBeDefined();
-		expect(remote!.status).toBe("running");
-		expect(remote!.toolCount).toBe(4);
-	}, 15_000);
+    const remote = apps.find((a) => a.name === "api-listed");
+    expect(remote).toBeDefined();
+    expect(remote!.status).toBe("running");
+    expect(remote!.toolCount).toBe(4);
+  }, 15_000);
 
-	it("derives serverName from url when not provided", async () => {
-		const res = await fetch(`${baseUrl}/v1/apps/install`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ url: mockServer.url }),
-		});
+  it("derives serverName from url when not provided", async () => {
+    const res = await fetch(`${baseUrl}/v1/apps/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: mockServer.url }),
+    });
 
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		// The route derives a name from the URL
-		expect(body.name).toBeTruthy();
-		expect(body.name.length).toBeGreaterThan(0);
-		expect(body.toolCount).toBe(4);
-	}, 15_000);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // The route derives a name from the URL
+    expect(body.name).toBeTruthy();
+    expect(body.name.length).toBeGreaterThan(0);
+    expect(body.toolCount).toBe(4);
+  }, 15_000);
 
-	it("returns error for unreachable remote URL", async () => {
-		const res = await fetch(`${baseUrl}/v1/apps/install`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				url: "http://127.0.0.1:1/mcp",
-				serverName: "unreachable",
-			}),
-		});
+  it("returns error for unreachable remote URL", async () => {
+    const res = await fetch(`${baseUrl}/v1/apps/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: "http://127.0.0.1:1/mcp",
+        serverName: "unreachable",
+      }),
+    });
 
-		// Should be a 4xx or 5xx error, not 200
-		expect(res.status).toBeGreaterThanOrEqual(400);
-	}, 20_000);
+    // Should be a 4xx or 5xx error, not 200
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -364,69 +366,78 @@ describe.skip("Remote integration: POST /v1/apps/install with url", () => {
 // ---------------------------------------------------------------------------
 
 describe("Remote integration: registering remote connectors in workspace registry", () => {
-	let mockServer: MockRemoteServer;
+  let mockServer: MockRemoteServer;
 
-	beforeEach(() => {
-		ensureTestDir();
-		mockServer = startMockRemoteServer(2);
-	});
+  beforeEach(() => {
+    ensureTestDir();
+    mockServer = startMockRemoteServer(2);
+  });
 
-	afterEach(() => {
-		mockServer?.close();
-	});
+  afterEach(() => {
+    mockServer?.close();
+  });
 
-	it("remote connector can be registered into a workspace registry and provides tools", async () => {
-		const runtime = await Runtime.start({
-			identityProvider: devProvider,
-			workDir: testDir,
-			model: { provider: "custom", adapter: createEchoModel() },
-			logging: { disabled: true },
-			allowInsecureRemotes: true,
-		});
-		await provisionTestWorkspace(runtime);
+  it("remote connector can be registered into a workspace registry and provides tools", async () => {
+    const runtime = await Runtime.start({
+      identityProvider: devProvider,
+      workDir: testDir,
+      model: { provider: "custom", adapter: createEchoModel() },
+      logging: { disabled: true },
+      allowInsecureRemotes: true,
+    });
+    await provisionTestWorkspace(runtime);
 
-		// Register a remote connector into the workspace registry
-		const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-		const ref: ConnectorRef = { url: mockServer.url, serverName: "runtime-remote" };
-		await startConnectorSource(ref, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
+    // Register a remote connector into the workspace registry
+    const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
+    const ref: ConnectorRef = { url: mockServer.url, serverName: "runtime-remote" };
+    await startConnectorSource(ref, registry, new NoopEventSink(), {
+      allowInsecureRemotes: true,
+      wsId: "ws_test",
+    });
 
-		expect(registry.hasSource("runtime-remote")).toBe(true);
+    expect(registry.hasSource("runtime-remote")).toBe(true);
 
-		// Verify tools are available via the registry
-		const tools = await registry.availableTools();
-		const remoteTools = tools.filter((t) => t.name.includes("integ_tool_"));
-		expect(remoteTools.length).toBe(2);
+    // Verify tools are available via the registry
+    const tools = await registry.availableTools();
+    const remoteTools = tools.filter((t) => t.name.includes("integ_tool_"));
+    expect(remoteTools.length).toBe(2);
 
-		await registry.removeSource("runtime-remote");
-		await runtime.shutdown();
-	}, 15_000);
+    await registry.removeSource("runtime-remote");
+    await runtime.shutdown();
+  }, 15_000);
 
-	it("failed remote connector does not pollute registry while successful one registers", async () => {
-		const runtime = await Runtime.start({
-			identityProvider: devProvider,
-			workDir: testDir,
-			model: { provider: "custom", adapter: createEchoModel() },
-			logging: { disabled: true },
-			allowInsecureRemotes: true,
-		});
-		await provisionTestWorkspace(runtime);
+  it("failed remote connector does not pollute registry while successful one registers", async () => {
+    const runtime = await Runtime.start({
+      identityProvider: devProvider,
+      workDir: testDir,
+      model: { provider: "custom", adapter: createEchoModel() },
+      logging: { disabled: true },
+      allowInsecureRemotes: true,
+    });
+    await provisionTestWorkspace(runtime);
 
-		const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
+    const registry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
 
-		// Try to register a bad remote (should fail)
-		const badRef: ConnectorRef = { url: "http://127.0.0.1:1/mcp", serverName: "bad-remote" };
-		const badResult = await Promise.allSettled([
-			startConnectorSource(badRef, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" }),
-		]);
-		expect(badResult[0]!.status).toBe("rejected");
-		expect(registry.hasSource("bad-remote")).toBe(false);
+    // Try to register a bad remote (should fail)
+    const badRef: ConnectorRef = { url: "http://127.0.0.1:1/mcp", serverName: "bad-remote" };
+    const badResult = await Promise.allSettled([
+      startConnectorSource(badRef, registry, new NoopEventSink(), {
+        allowInsecureRemotes: true,
+        wsId: "ws_test",
+      }),
+    ]);
+    expect(badResult[0]!.status).toBe("rejected");
+    expect(registry.hasSource("bad-remote")).toBe(false);
 
-		// Register a good remote (should succeed)
-		const goodRef: ConnectorRef = { url: mockServer.url, serverName: "good-remote" };
-		await startConnectorSource(goodRef, registry, new NoopEventSink(), { allowInsecureRemotes: true, wsId: "ws_test" });
-		expect(registry.hasSource("good-remote")).toBe(true);
+    // Register a good remote (should succeed)
+    const goodRef: ConnectorRef = { url: mockServer.url, serverName: "good-remote" };
+    await startConnectorSource(goodRef, registry, new NoopEventSink(), {
+      allowInsecureRemotes: true,
+      wsId: "ws_test",
+    });
+    expect(registry.hasSource("good-remote")).toBe(true);
 
-		await registry.removeSource("good-remote");
-		await runtime.shutdown();
-	}, 25_000);
+    await registry.removeSource("good-remote");
+    await runtime.shutdown();
+  }, 25_000);
 });

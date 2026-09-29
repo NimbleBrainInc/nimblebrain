@@ -22,12 +22,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorMcpDeps } from "../../src/connectors/runtime/startup.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import {
@@ -42,7 +42,10 @@ import {
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
+import {
+  type FakeConnectorServer,
+  startFakeConnectorServer,
+} from "../helpers/fake-connector-server.ts";
 
 const ENTRY_ID = "com.acme/db-query";
 const SERVER_NAME = "com-acme-db-query";

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { serverDetailToCatalogEntry } from "../../src/connectors/catalog/projection.ts";
+import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
 import { sanitizePlacements } from "../../src/connectors/runtime/defaults.ts";
 import type { PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
-import type { ServerDetail } from "../../src/connectors/catalog/server-detail.ts";
-import { serverDetailToCatalogEntry } from "../../src/connectors/catalog/projection.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
 
 // A fleet connector ServerDetail with a host-placement _meta block, mirroring
@@ -28,17 +28,13 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
         host_version: "1.1",
         name: "People",
         icon: "users",
-        placements: [
-          { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
-        ],
+        placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
       }),
     );
     expect(entry?.ui).toEqual({
       name: "People",
       icon: "users",
-      placements: [
-        { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
-      ],
+      placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
     });
   });
 
@@ -75,7 +71,11 @@ describe("serverDetailToCatalogEntry — interactive badge is derived, not trust
       },
     } as ServerDetail;
   }
-  const withApp = { host_version: "1.1", name: "People", placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }] };
+  const withApp = {
+    host_version: "1.1",
+    name: "People",
+    placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
+  };
 
   test("host placements present, no explicit flag → interactive (the People drift fix)", () => {
     expect(serverDetailToCatalogEntry(detail(withApp))?.interactive).toBe(true);
@@ -100,7 +100,12 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
   // The earlier gap: placements persist RAW on the ConnectorRef, so a spoof dropped
   // at install would re-register verbatim at boot. This pins the shared contract:
   // sanitize → register → read-back never lets a foreign authority through.
-  function registerLikeRuntime(reg: PlacementRegistry, server: string, raw: PlacementDeclaration[], wsId: string) {
+  function registerLikeRuntime(
+    reg: PlacementRegistry,
+    server: string,
+    raw: PlacementDeclaration[],
+    wsId: string,
+  ) {
     const safe = sanitizePlacements(raw);
     if (safe.length > 0) reg.register(server, safe, wsId);
   }
@@ -128,7 +133,10 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
     registerLikeRuntime(
       reg,
       "ai.nimblebrain.people/mcp",
-      [{ slot: "main", resourceUri: "https://evil/x" }, { slot: "main", resourceUri: "ui://" }],
+      [
+        { slot: "main", resourceUri: "https://evil/x" },
+        { slot: "main", resourceUri: "ui://" },
+      ],
       "ws_hq",
     );
     expect(reg.forWorkspace("ws_hq")).toEqual([]);
@@ -146,12 +154,16 @@ describe("sanitizePlacements — server-declared chrome is untrusted", () => {
   });
 
   test("drops non-ui:// schemes (can't point host chrome at http/file)", () => {
-    expect(sanitizePlacements([{ slot: "main", resourceUri: "https://evil.example/x" }])).toEqual([]);
+    expect(sanitizePlacements([{ slot: "main", resourceUri: "https://evil.example/x" }])).toEqual(
+      [],
+    );
     expect(sanitizePlacements([{ slot: "main", resourceUri: "file:///etc/passwd" }])).toEqual([]);
   });
 
   test("drops path traversal and malformed ui:// uris", () => {
-    expect(sanitizePlacements([{ slot: "main", resourceUri: "ui://people/../secret" }])).toEqual([]);
+    expect(sanitizePlacements([{ slot: "main", resourceUri: "ui://people/../secret" }])).toEqual(
+      [],
+    );
     expect(sanitizePlacements([{ slot: "main", resourceUri: "ui://people" }])).toEqual([]); // no path
     expect(sanitizePlacements([{ slot: "main", resourceUri: "ui://" }])).toEqual([]);
   });

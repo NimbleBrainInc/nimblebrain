@@ -2,10 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { authenticateRequest, isAuthError } from "../../../src/api/auth-middleware.ts";
 import {
+  type CreateUserResult,
   FIRST_PARTY_GRANT,
   type IdentityProvider,
   type UserIdentity,
-  type CreateUserResult,
   type VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";

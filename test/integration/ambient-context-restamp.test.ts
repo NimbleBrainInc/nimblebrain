@@ -23,12 +23,12 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
-import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
+import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
 
 const TEST_USER_ID = "usr_amb_ctx_test";
 const TEST_USER_DISPLAY = "Ambient Test";
@@ -59,9 +59,7 @@ function buildContextProbeSource(sourceName: string, toolName: string): ProbeSou
       const observedWorkspaceId = ctx?.workspaceId;
       observations.push({ workspaceId: observedWorkspaceId });
       return {
-        content: textContent(
-          `observed workspaceId=${observedWorkspaceId ?? "(undefined)"}`,
-        ),
+        content: textContent(`observed workspaceId=${observedWorkspaceId ?? "(undefined)"}`),
         isError: false,
       };
     },
@@ -143,7 +141,7 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     // Run the chat IN ws_helix. The per-call wrap must stamp the routed
     // ws_helix at dispatch time, never the user's default workspace.
     await runtime.chat({
-      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       workspaceId: SHARED_WS_ID,
       message: "ambient context check",
     });

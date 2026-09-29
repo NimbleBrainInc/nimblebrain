@@ -21,12 +21,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { ConversationEvent } from "../../../../src/conversation/types.ts";
 import { SKILL_ACTIVATED_META_KEY } from "../../../../src/engine/types.ts";
+import { createUseSkillToolDef } from "../../../../src/platform/skills/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { ActivatableSkill } from "../../../../src/skills/catalog.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
 import { defineInProcessApp } from "../../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createUseSkillToolDef } from "../../../../src/platform/skills/source.ts";
 
 // ── Fake Runtime ─────────────────────────────────────────────────────────
 

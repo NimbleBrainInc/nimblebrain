@@ -22,18 +22,18 @@
  * automation did not fire" passes for a fixture that never armed one.
  */
 
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { appendRun } from "../../src/platform/automations/store.ts";
 import type { Automation } from "../../src/platform/automations/types.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { TaskRequest, TaskResult } from "../../src/runtime/types.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 
 const WS_ID = "ws_quiesce";
 const AUTOMATION_ID = "daily-digest";
@@ -62,6 +62,10 @@ function armedAutomation(): Automation {
     workspaceId: WS_ID,
     ownerId: OWNER,
     source: "user",
+    runCount: 0,
+    consecutiveErrors: 0,
+    cumulativeInputTokens: 0,
+    cumulativeOutputTokens: 0,
     createdAt: now,
     updatedAt: now,
     nextRunAt: new Date(Date.now() - 1000).toISOString(),

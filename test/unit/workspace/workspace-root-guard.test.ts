@@ -17,10 +17,10 @@
  * conversations, files, notifications and automations are meant to behave.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { saveComposioConnection } from "../../../src/connectors/providers/composio/connection.ts";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
@@ -75,6 +75,10 @@ function automation(): Automation {
     workspaceId: WS,
     ownerId: OWNER,
     source: "user",
+    runCount: 0,
+    consecutiveErrors: 0,
+    cumulativeInputTokens: 0,
+    cumulativeOutputTokens: 0,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -201,7 +205,8 @@ const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
   },
   {
     name: "credentials — a workspace-scoped secret",
-    write: () => new FileCredentialStore(workDir).put({ kind: "workspace", wsId: WS }, "api_key", "s3cret"),
+    write: () =>
+      new FileCredentialStore(workDir).put({ kind: "workspace", wsId: WS }, "api_key", "s3cret"),
   },
 ];
 

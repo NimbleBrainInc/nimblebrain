@@ -110,7 +110,8 @@ describe("colourMixes", () => {
   });
 
   test("an author-written fallback does not excuse it — Tailwind's own wins", () => {
-    const css = ".x {\n  background: transparent;\n  background: color-mix(in srgb, var(--a) 10%, transparent);\n}";
+    const css =
+      ".x {\n  background: transparent;\n  background: color-mix(in srgb, var(--a) 10%, transparent);\n}";
     expect(colourMixes(css).map((f) => f.line)).toEqual([3]);
   });
 
@@ -124,7 +125,8 @@ describe("colourMixes", () => {
   });
 
   test("sees a declaration inside a single-line rule", () => {
-    const css = ".x:hover { color: var(--a); background: color-mix(in srgb, var(--b) 10%, transparent); }";
+    const css =
+      ".x:hover { color: var(--a); background: color-mix(in srgb, var(--b) 10%, transparent); }";
     expect(colourMixes(css).map((f) => f.line)).toEqual([1]);
   });
 
@@ -133,6 +135,8 @@ describe("colourMixes", () => {
   });
 
   test("a non-colour property on a single line is still left alone", () => {
-    expect(colourMixes(".x { border-color: color-mix(in oklch, var(--a) 20%, transparent); }")).toEqual([]);
+    expect(
+      colourMixes(".x { border-color: color-mix(in oklch, var(--a) 20%, transparent); }"),
+    ).toEqual([]);
   });
 });

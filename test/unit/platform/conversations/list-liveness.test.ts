@@ -13,10 +13,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
+import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createConversationsSource } from "../../../../src/platform/conversations/source.ts";
 
 const OWNER_ID = "usr_test";
 const OTHER_ID = "usr_other";

@@ -21,12 +21,12 @@ import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import type { ComposeAssembledContextOutput } from "../../src/platform/schemas/compose.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ComposeAssembledContextOutput } from "../../src/platform/schemas/compose.ts";
-import { createMockModel } from "../helpers/mock-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-assembled-${Date.now()}`);
 
@@ -113,7 +113,11 @@ async function runtimeWithRecordedRun(
   );
   await runtime.reloadSkills();
 
-  const result = await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "test message" });
+  const result = await runtime.chat({
+    identity: DEV_IDENTITY,
+    workspaceId: TEST_WORKSPACE_ID,
+    message: "test message",
+  });
   const convId = result.conversationId;
   const runId = await getLatestRunId(runtime, convId);
   if (!runId) throw new Error("no runId recorded");
@@ -123,10 +127,7 @@ async function runtimeWithRecordedRun(
 describe("compose__assembled_context — latest run", () => {
   it("returns the per-source token breakdown and the loaded layer-3 skills", async () => {
     const skillBody = "Always answer in plain English.";
-    const { runtime, convId, runId, skillPath } = await runtimeWithRecordedRun(
-      "latest",
-      skillBody,
-    );
+    const { runtime, convId, runId, skillPath } = await runtimeWithRecordedRun("latest", skillBody);
 
     const res = await callAssembled(runtime, {}, convId);
     expect(res.isError).toBe(false);

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
@@ -41,15 +40,11 @@ describe("engine ↔ supervisor wiring", () => {
     const trace: { toolsOffered: number; sawStuck: boolean }[] = [];
     const model = createMockModel((opts) => {
       const tools = opts.tools ?? [];
-      const sawStuck = tools.some(
-        (t) => (t as { name?: string }).name === "stuck",
-      );
+      const sawStuck = tools.some((t) => (t as { name?: string }).name === "stuck");
       trace.push({ toolsOffered: tools.length, sawStuck });
       if (!sawStuck) {
         return {
-          content: [
-            { type: "text", text: "Stopping — stuck tool is no longer available." },
-          ],
+          content: [{ type: "text", text: "Stopping — stuck tool is no longer available." }],
           inputTokens: 1,
           outputTokens: 1,
         };
@@ -105,8 +100,7 @@ describe("engine ↔ supervisor wiring", () => {
     // Exactly one tool.done event carries supervisorTripped.
     const tripped = events.filter(
       (e) =>
-        e.type === "tool.done" &&
-        (e.data as Record<string, unknown>).supervisorTripped === true,
+        e.type === "tool.done" && (e.data as Record<string, unknown>).supervisorTripped === true,
     );
     expect(tripped.length).toBe(1);
     const trippedData = tripped[0]!.data as Record<string, unknown>;
@@ -175,8 +169,7 @@ describe("engine ↔ supervisor wiring", () => {
     expect(toolIdx).toBe(4);
     const tripped = events.filter(
       (e) =>
-        e.type === "tool.done" &&
-        (e.data as Record<string, unknown>).supervisorTripped === true,
+        e.type === "tool.done" && (e.data as Record<string, unknown>).supervisorTripped === true,
     );
     expect(tripped.length).toBe(0);
   });
@@ -215,7 +208,10 @@ describe("engine ↔ supervisor wiring", () => {
       }
 
       // `stuck` is gone but `other` is still available — call it once.
-      if (names.includes("other") && offered.filter((o) => !o.names.includes("stuck")).length === 1) {
+      if (
+        names.includes("other") &&
+        offered.filter((o) => !o.names.includes("stuck")).length === 1
+      ) {
         return {
           content: [
             {

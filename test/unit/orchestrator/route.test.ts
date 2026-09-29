@@ -13,11 +13,10 @@
  * filesystem.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
@@ -46,7 +45,7 @@ function makeStubSource(name: string): ToolSource {
       return [];
     },
     async execute(): Promise<ToolResult> {
-      return { content: [{ type: "text" as const, text: `[${name}] dispatched` }] };
+      return { content: [{ type: "text" as const, text: `[${name}] dispatched` }], isError: false };
     },
   };
 }
@@ -791,5 +790,4 @@ describe("routeToolCall — a bare name that resolves in the workspace IS the wo
       ).rejects.toBeInstanceOf(UnknownToolSource);
     }
   });
-
 });

@@ -4,10 +4,10 @@ import {
   provisionHooks,
   verifyRegisterTool,
 } from "../../src/hooks/provisioning.ts";
-import { connectorPortForSource } from "../../src/tools/connector-surface.ts";
 import { buildHookUrl } from "../../src/hooks/token.ts";
-import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import type { HookDeclaration, HookRegistration } from "../../src/hooks/types.ts";
+import { connectorPortForSource } from "../../src/tools/connector-surface.ts";
+import type { Tool, ToolResult } from "../../src/tools/types.ts";
 
 const DECL: HookDeclaration = {
   vendor: "acme",

@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -30,7 +30,7 @@ beforeAll(async () => {
     },
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -88,6 +88,36 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     ]);
   });
 
+  it("stores more files than a chat message may carry: an upload is not a message", async () => {
+    const form = new FormData();
+    for (let i = 0; i < 12; i++) {
+      form.append("files", new Blob([`file ${i}`], { type: "text/plain" }), `f${i}.txt`);
+    }
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
+      method: "POST",
+      body: form,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.files).toHaveLength(12);
+  });
+
+  it("refuses an upload past the per-upload file cap, naming the count and the limit", async () => {
+    const form = new FormData();
+    for (let i = 0; i < 101; i++) {
+      form.append("files", new Blob(["x"], { type: "text/plain" }), `f${i}.txt`);
+    }
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
+      method: "POST",
+      body: form,
+    });
+    expect(res.status).toBe(413);
+    const body = await res.json();
+    expect(body.error).toBe("payload_too_large");
+    expect(body.message).toBe("Too many files: 101 in one upload; the limit is 100.");
+    expect(body.details).toEqual({ count: 101, limit: 100 });
+  });
+
   it("rejects an over-per-file-cap upload with structured details", async () => {
     const big = new Blob([new Uint8Array(PER_FILE_LIMIT + 1)], { type: "text/plain" });
     const form = new FormData();
@@ -123,11 +153,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
 
   it("rejects a disallowed MIME type with 400 file_upload_error", async () => {
     const form = new FormData();
-    form.append(
-      "file",
-      new Blob(["MZ\x90\x00"], { type: "application/x-msdownload" }),
-      "evil.exe",
-    );
+    form.append("file", new Blob(["MZ\x90\x00"], { type: "application/x-msdownload" }), "evil.exe");
 
     const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
       method: "POST",
@@ -150,7 +176,8 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
   });
 
   it("persists tags / description / conversationId metadata onto the FileEntry", async () => {
-    const { conversationId } = await runtime.chat({ identity: DEV_IDENTITY,
+    const { conversationId } = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "a conversation to attach to",
       workspaceId: TEST_WORKSPACE_ID,
     });

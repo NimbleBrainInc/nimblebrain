@@ -175,6 +175,7 @@ describe("supervisor — recovery from a trip", () => {
     trip(sup);
     const stalled: ToolResult = {
       content: [{ type: "text", text: "no matches" }],
+      isError: false,
       _meta: { [NON_ADVANCING_META_KEY]: true },
     };
     expect(sup.observe(call("foo"), stalled).type).toBe("synth");
@@ -409,10 +410,7 @@ describe("supervisor — input-aware success fingerprinting", () => {
   it("varied successful inputs and outputs do not trip (baseline)", () => {
     const sup = createRunSupervisor();
     for (let i = 0; i < 5; i++) {
-      const v = sup.observe(
-        call("foo", { i }),
-        textResult(`{"index":${i},"applied":true}`, false),
-      );
+      const v = sup.observe(call("foo", { i }), textResult(`{"index":${i},"applied":true}`, false));
       expect(v.type).toBe("pass");
     }
   });
@@ -601,7 +599,7 @@ describe("supervisor — infrastructure errors are excluded from the strike coun
     for (let i = 0; i < 4; i++) {
       sup.observe(call("svc__write"), infraError("connection closed"));
     }
-    expect(sup.snapshot().callCounts["svc__write"]).toBe(4);
+    expect(sup.snapshot().callCounts.svc__write).toBe(4);
   });
 
   it("does not let an infrastructure error launder a genuine loop", () => {

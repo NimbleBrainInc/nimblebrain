@@ -144,7 +144,7 @@ function makeDataPlaneFetch(
       });
     }
 
-    return new Response("unexpected url: " + url, { status: 500 });
+    return new Response(`unexpected url: ${url}`, { status: 500 });
   }) as typeof fetch;
 }
 
@@ -350,7 +350,11 @@ function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
         scope: string;
       };
       const token = Buffer.from(
-        JSON.stringify({ workspace: payload.workspace, aud: payload.audience, scope: payload.scope }),
+        JSON.stringify({
+          workspace: payload.workspace,
+          aud: payload.audience,
+          scope: payload.scope,
+        }),
       ).toString("base64url");
       return new Response(JSON.stringify({ access_token: token, expires_in: 300 }), {
         status: 200,
@@ -363,7 +367,10 @@ function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
     if (url.startsWith(`${DATA_PLANE}/v1/artifacts`)) {
       const u = new URL(url);
       if (u.pathname !== "/v1/artifacts") return new Response("not list", { status: 500 });
-      const bearer = (new Headers(init?.headers).get("Authorization") ?? "").replace(/^Bearer\s+/, "");
+      const bearer = (new Headers(init?.headers).get("Authorization") ?? "").replace(
+        /^Bearer\s+/,
+        "",
+      );
       const claims = JSON.parse(Buffer.from(bearer, "base64url").toString("utf8")) as {
         workspace: string;
       };
@@ -376,14 +383,18 @@ function makeListFetch(byWorkspace: Record<string, ListRow[]>): typeof fetch {
       });
     }
 
-    return new Response("unexpected url: " + url, { status: 500 });
+    return new Response(`unexpected url: ${url}`, { status: 500 });
   }) as typeof fetch;
 }
 
 function makeListClient(byWorkspace: Record<string, ListRow[]>): ArtifactReadClient {
   const fetchImpl = makeListFetch(byWorkspace);
   const cache = new ServiceTokenCache({ identity: IDENTITY, fetchImpl });
-  return new ArtifactReadClient({ config: { baseUrl: DATA_PLANE, tokenUrl: TOKEN_URL }, cache, fetchImpl });
+  return new ArtifactReadClient({
+    config: { baseUrl: DATA_PLANE, tokenUrl: TOKEN_URL },
+    cache,
+    fetchImpl,
+  });
 }
 
 describe("ArtifactReadClient.list — discovery as the viewing user", () => {

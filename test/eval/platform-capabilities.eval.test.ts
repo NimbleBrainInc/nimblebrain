@@ -11,13 +11,8 @@
  * in `bun run test` or `bun run verify`.
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
-import {
-  runEval,
-  shutdownEvalRuntime,
-  assertSearchedFor,
-  assertToolCalled,
-} from "./helpers.ts";
+import { afterAll, describe, expect, it } from "bun:test";
+import { assertSearchedFor, runEval, shutdownEvalRuntime } from "./helpers.ts";
 
 afterAll(async () => {
   await shutdownEvalRuntime();
@@ -92,7 +87,9 @@ describe("platform capability discovery", () => {
       const searchedFiles = result.toolCalls.some(
         (tc) =>
           tc.name === "nb__search" &&
-          String(tc.input.query ?? "").toLowerCase().includes("files"),
+          String(tc.input.query ?? "")
+            .toLowerCase()
+            .includes("files"),
       );
       expect(searchedFiles).toBe(false);
     }, 30_000);

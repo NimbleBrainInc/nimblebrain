@@ -13,7 +13,14 @@ import type { Skill } from "../../src/skills/types.ts";
 
 function ctx(name: string, priority: number, body: string): Skill {
   return {
-    manifest: { name, description: "", version: "1.0.0", priority },
+    manifest: {
+      loadingStrategy: "always",
+      status: "active",
+      name,
+      description: "",
+      version: "1.0.0",
+      priority,
+    },
     body,
     sourcePath: `/test/${name}.md`,
   };
@@ -21,6 +28,8 @@ function ctx(name: string, priority: number, body: string): Skill {
 
 const matched: Skill = {
   manifest: {
+    loadingStrategy: "dynamic",
+    status: "active",
     name: "matched",
     description: "",
     version: "1.0.0",
@@ -135,6 +144,8 @@ describe("composeSystemSegments", () => {
     };
     const evilMatched: Skill = {
       manifest: {
+        loadingStrategy: "dynamic",
+        status: "active",
         name: "m",
         description: "",
         version: "1.0.0",
@@ -211,7 +222,9 @@ describe("composeSystemSegments — skill catalog layer", () => {
 
   it("sits after the Skills section and before Installed Apps", () => {
     const { stableSystem } = full();
-    expect(stableSystem.indexOf("## Skills")).toBeLessThan(stableSystem.indexOf("## Skill Catalog"));
+    expect(stableSystem.indexOf("## Skills")).toBeLessThan(
+      stableSystem.indexOf("## Skill Catalog"),
+    );
     expect(stableSystem.indexOf("## Skill Catalog")).toBeLessThan(
       stableSystem.indexOf("## Installed Apps"),
     );

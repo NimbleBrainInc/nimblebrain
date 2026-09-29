@@ -50,7 +50,12 @@ function locator(): ConversationLocator {
 
 test("locate resolves a conversation to its workspace + owner", async () => {
   const id = convId();
-  writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), id, "usr_alice", "ws_helix");
+  writeConversation(
+    workspaceConversationsDir(workDir, "ws_helix", "usr_alice"),
+    id,
+    "usr_alice",
+    "ws_helix",
+  );
 
   const loc = await locator().locate(id);
   expect(loc).toBeDefined();
@@ -123,14 +128,24 @@ test("the access gate hides another owner's conversation in the same workspace",
 test("invalidate + JIT rescan picks up a newly written conversation (no fs.watch)", async () => {
   const loc = locator();
   const first = convId();
-  writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), first, "usr_alice", "ws_helix");
+  writeConversation(
+    workspaceConversationsDir(workDir, "ws_helix", "usr_alice"),
+    first,
+    "usr_alice",
+    "ws_helix",
+  );
 
   // Cold read populates.
   expect((await loc.list("ws_helix", {}, { userId: "usr_alice" })).totalCount).toBe(1);
 
   // Write a second file directly (simulating another store), then invalidate.
   const second = convId();
-  writeConversation(workspaceConversationsDir(workDir, "ws_helix", "usr_alice"), second, "usr_alice", "ws_helix");
+  writeConversation(
+    workspaceConversationsDir(workDir, "ws_helix", "usr_alice"),
+    second,
+    "usr_alice",
+    "ws_helix",
+  );
   // Without invalidate the cache is stale...
   expect((await loc.list("ws_helix", {}, { userId: "usr_alice" })).totalCount).toBe(1);
   // ...invalidate forces a rescan on the next read.

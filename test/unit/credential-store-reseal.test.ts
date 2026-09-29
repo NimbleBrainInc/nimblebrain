@@ -23,8 +23,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineEvent } from "../../src/engine/types.ts";
 import {
-  createCredentialSealer,
   type CredentialSealer,
+  createCredentialSealer,
   parseSealedValue,
 } from "../../src/tools/credential-seal.ts";
 import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";

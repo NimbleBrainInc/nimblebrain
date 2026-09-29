@@ -11,11 +11,11 @@
  * admin identity handed to `executeTask` directly gets the call through.
  */
 
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { createDirectExecutor } from "../../../src/platform/automations/executor.ts";
@@ -24,9 +24,9 @@ import type { Automation } from "../../../src/platform/automations/types.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { TaskRequest } from "../../../src/runtime/types.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
 
 const WS = "ws_run_now_tools";
 const ADMIN_ONLY_TOOL = "nb__manage_users";

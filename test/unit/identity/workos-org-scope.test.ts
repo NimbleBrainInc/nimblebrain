@@ -13,13 +13,11 @@
  *     (`org_mismatch`) in the logs instead of vanishing into a bare 401.
  */
 
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
-import { log } from "../../../src/observability/log.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
+import { log } from "../../../src/observability/log.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── Key generation helpers (mirror workos-authkit.test.ts) ──────────
 
@@ -123,7 +121,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
     },
   };
 
-  provider.fetcher = async (input: RequestInfo | URL) => {
+  provider.fetcher = fakeFetch(async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url === `https://api.workos.com/sso/jwks/${config.clientId}`) {
       return new Response(
@@ -143,7 +141,7 @@ function createProvider(configOverrides?: Partial<WorkosAuth>): {
       );
     }
     return new Response("Not Found", { status: 404 });
-  };
+  });
 
   return { provider, refreshCapture };
 }
@@ -203,9 +201,7 @@ describe("WorkosIdentityProvider.verifyRequest org_id gate", () => {
       );
       expect(identity).toBeNull();
       // The previously-silent gate now names itself for operators.
-      const orgMismatchCall = warnSpy.mock.calls.find((c) =>
-        String(c[0]).includes("org_mismatch"),
-      );
+      const orgMismatchCall = warnSpy.mock.calls.find((c) => String(c[0]).includes("org_mismatch"));
       expect(orgMismatchCall).toBeDefined();
       // Token-derived ids are stamped; the raw token never is.
       const fields = orgMismatchCall![1] as Record<string, unknown> | undefined;
@@ -232,7 +228,12 @@ describe("WorkosIdentityProvider.verifyRequest org_id gate", () => {
     const wrongKey = await generateRSAKeyPair("not-in-jwks");
     const nowSec = Math.floor(Date.now() / 1000);
     const forged = await createJwt(
-      { sub: "user_forged", iss: "https://api.workos.com", exp: nowSec + 3600, org_id: CONFIGURED_ORG },
+      {
+        sub: "user_forged",
+        iss: "https://api.workos.com",
+        exp: nowSec + 3600,
+        org_id: CONFIGURED_ORG,
+      },
       wrongKey.privateKey,
       wrongKey.kid,
     );

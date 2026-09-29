@@ -24,10 +24,9 @@ import type { FileStore } from "../../../src/files/store.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider, devWorkspace } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
-import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-file-tool-${Date.now()}`);
 
@@ -103,12 +102,20 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A);
 
     // 1) Born in workspace A (focused on WORKSPACE_A).
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from workspace A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from workspace A",
+      workspaceId: WORKSPACE_A,
+    });
     const convId = born.conversationId;
 
     // 2) Attach a file into workspace A's partition (the conversation's workspace).
     const fileStoreA = runtime.getWorkspaceFileStore(WORKSPACE_A, OWNER);
-    const saved = await fileStoreA.saveFile(Buffer.from("workspace-A bytes"), "attach.txt", "text/plain");
+    const saved = await fileStoreA.saveFile(
+      Buffer.from("workspace-A bytes"),
+      "attach.txt",
+      "text/plain",
+    );
     await fileStoreA.appendRegistry({
       id: saved.id,
       filename: "attach.txt",

@@ -11,10 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
-const ALICE = { id: "usr_alice", email: "alice@example.com" };
+const ALICE = makeIdentity({ id: "usr_alice", email: "alice@example.com" });
 const workDir = join(tmpdir(), `nb-conv-cache-${Date.now()}`);
 
 let runtime: Runtime;

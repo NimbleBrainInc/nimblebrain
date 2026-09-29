@@ -1,8 +1,8 @@
-import { randomBytes } from "node:crypto";
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import {
-  HOOK_TOKEN_KEY_ENV,
   buildHookUrl,
+  HOOK_TOKEN_KEY_ENV,
   newDeliveryId,
   newKid,
   readHookIdentity,
@@ -126,5 +126,4 @@ describe("the key ring is configuration, and is validated at boot", () => {
     const ring = `${KEY.toString("base64")},${randomBytes(16).toString("base64")}`;
     expect(() => readHookTokenKeys({ [HOOK_TOKEN_KEY_ENV]: ring })).toThrow(/32 bytes/);
   });
-
 });

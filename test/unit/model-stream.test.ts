@@ -102,13 +102,15 @@ describe("callModel", () => {
     // verify by asserting only one start and one end event for this tool.
     const startEvents = events.filter((e) => e.startsWith("prep-start:"));
     const endEvents = events.filter((e) => e.startsWith("prep-end:"));
-    expect(startEvents).toEqual([`prep-start:${sampleToolCall.toolCallId}:${sampleToolCall.toolName}`]);
+    expect(startEvents).toEqual([
+      `prep-start:${sampleToolCall.toolCallId}:${sampleToolCall.toolName}`,
+    ]);
     expect(endEvents).toEqual([`prep-end:${sampleToolCall.toolCallId}`]);
 
     // Order: text deltas precede prep-start (text emitted before tool-use
     // block in this fixture); prep-end precedes nothing relevant for this test
     // but must precede the assembled tool-call returned in result.content.
-    const textIdx = events.findIndex((e) => e === "text:preface");
+    const textIdx = events.indexOf("text:preface");
     const startIdx = events.indexOf(startEvents[0]);
     const endIdx = events.indexOf(endEvents[0]);
     expect(textIdx).toBeLessThan(startIdx);
@@ -213,7 +215,11 @@ function textStream(text: string): ReadableStream<LanguageModelV4StreamPart> {
       controller.enqueue({ type: "text-start", id: "t0" });
       controller.enqueue({ type: "text-delta", id: "t0", delta: text });
       controller.enqueue({ type: "text-end", id: "t0" });
-      controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+      controller.enqueue({
+        type: "finish",
+        usage: USAGE,
+        finishReason: { unified: "stop", raw: undefined },
+      });
       controller.close();
     },
   });
@@ -234,7 +240,11 @@ function pacedStream(deltas: number, gapMs: number): ReadableStream<LanguageMode
           setTimeout(tick, gapMs);
         } else {
           controller.enqueue({ type: "text-end", id: "t0" });
-          controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+          controller.enqueue({
+            type: "finish",
+            usage: USAGE,
+            finishReason: { unified: "stop", raw: undefined },
+          });
           controller.close();
         }
       };
@@ -276,8 +286,7 @@ function hangingDoStreamModel(): LanguageModelV4 {
     async doStream(options) {
       const signal = options.abortSignal;
       await new Promise<never>((_, reject) => {
-        const fail = () =>
-          reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
+        const fail = () => reject(signal?.reason ?? new DOMException("aborted", "AbortError"));
         if (signal?.aborted) fail();
         else signal?.addEventListener("abort", fail, { once: true });
       });
@@ -290,15 +299,9 @@ describe("callModel — stream idle watchdog", () => {
   it("throws a RETRYABLE stall when the stream never produces output", async () => {
     const model = scriptedModel([stallingStream]);
     const started = Date.now();
-    const err = await callModel(
-      model,
-      userPrompt("x"),
-      () => {},
-      undefined,
-      undefined,
-      undefined,
-      { firstContentMs: 50 },
-    ).catch((e) => e);
+    const err = await callModel(model, userPrompt("x"), () => {}, undefined, undefined, undefined, {
+      firstContentMs: 50,
+    }).catch((e) => e);
     expect(err).toBeInstanceOf(ModelStreamStallError);
     expect((err as ModelStreamStallError).retryable).toBe(true);
     // Fired on the first-content deadline, not the (absent) run wall clock.
@@ -397,7 +400,11 @@ function noOutputStream(): ReadableStream<LanguageModelV4StreamPart> {
   return new ReadableStream({
     start(controller) {
       controller.enqueue({ type: "stream-start", warnings: [] });
-      controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+      controller.enqueue({
+        type: "finish",
+        usage: USAGE,
+        finishReason: { unified: "stop", raw: undefined },
+      });
       controller.close();
     },
   });
@@ -415,7 +422,11 @@ function fastFirstThenGapStream(gapMs: number): ReadableStream<LanguageModelV4St
       setTimeout(() => {
         controller.enqueue({ type: "text-delta", id: "t0", delta: "b" });
         controller.enqueue({ type: "text-end", id: "t0" });
-        controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+        controller.enqueue({
+          type: "finish",
+          usage: USAGE,
+          finishReason: { unified: "stop", raw: undefined },
+        });
         controller.close();
       }, gapMs);
     },
@@ -434,7 +445,11 @@ function reasoningFirstStream(): ReadableStream<LanguageModelV4StreamPart> {
       controller.enqueue({ type: "text-start", id: "t0" });
       controller.enqueue({ type: "text-delta", id: "t0", delta: "answer" });
       controller.enqueue({ type: "text-end", id: "t0" });
-      controller.enqueue({ type: "finish", usage: USAGE, finishReason: { unified: "stop", raw: undefined } });
+      controller.enqueue({
+        type: "finish",
+        usage: USAGE,
+        finishReason: { unified: "stop", raw: undefined },
+      });
       controller.close();
     },
   });
@@ -442,7 +457,11 @@ function reasoningFirstStream(): ReadableStream<LanguageModelV4StreamPart> {
 
 describe("callModel — time-to-first-token", () => {
   it("sets ttftMs on a text response", async () => {
-    const result = await callModel(scriptedModel([() => textStream("hi")]), userPrompt("x"), () => {});
+    const result = await callModel(
+      scriptedModel([() => textStream("hi")]),
+      userPrompt("x"),
+      () => {},
+    );
     expect(typeof result.ttftMs).toBe("number");
     expect(result.ttftMs as number).toBeGreaterThanOrEqual(0);
   });
@@ -471,7 +490,11 @@ describe("callModel — time-to-first-token", () => {
   });
 
   it("sets ttftMs on a reasoning-first response (first output is a reasoning delta)", async () => {
-    const result = await callModel(scriptedModel([reasoningFirstStream]), userPrompt("x"), () => {});
+    const result = await callModel(
+      scriptedModel([reasoningFirstStream]),
+      userPrompt("x"),
+      () => {},
+    );
     expect(typeof result.ttftMs).toBe("number");
   });
 

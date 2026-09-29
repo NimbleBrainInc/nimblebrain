@@ -1,24 +1,25 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
-import type { CredentialStore } from "../../src/tools/credential-store.ts";
 import {
   createManageConnectorsTool,
   deriveConnectorStatus,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
+import type { CredentialStore } from "../../src/tools/credential-store.ts";
+import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
 
 /** Read metadata every store read now carries; the audit trail is asserted in credential-store.test.ts. */
@@ -136,7 +137,7 @@ interface PermissionWrite {
  * what the production `ManageConnectorsContext` declares without forcing
  * us to satisfy 100+ unrelated methods.
  */
-function buildHarness(opts: { adminId?: string } = {}): Harness {
+function buildHarness(): Harness {
   const permissionWrites: PermissionWrite[] = [];
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-tools-"));
   const wsId = "ws_acme";
@@ -219,11 +220,7 @@ async function provisionWorkspace(
   }
 }
 
-function buildTool(
-  h: Harness,
-  identity: UserIdentity | null,
-  wsIdOverride?: string | null,
-) {
+function buildTool(h: Harness, identity: UserIdentity | null, wsIdOverride?: string | null) {
   const ctx: ManageConnectorsContext = {
     runtime: h.runtime,
     getIdentity: () => identity,
@@ -299,7 +296,11 @@ describe("manage_connectors.setup_operator", () => {
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-public");
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.configuredBy).toBe(ADMIN_USER.id);
 
-    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
+    const wrapped = await h.credStore.get(
+      { kind: "workspace", wsId: h.wsId },
+      DROPBOX_SECRET_KEY,
+      TEST_READ,
+    );
     expect(wrapped?.reveal()).toBe("sec-private");
   });
 
@@ -322,7 +323,11 @@ describe("manage_connectors.setup_operator", () => {
     expect(second.isError).toBe(false);
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]?.clientId).toBe("cid-v2");
-    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
+    const wrapped = await h.credStore.get(
+      { kind: "workspace", wsId: h.wsId },
+      DROPBOX_SECRET_KEY,
+      TEST_READ,
+    );
     expect(wrapped?.reveal()).toBe("sec-v2");
   });
 
@@ -420,7 +425,11 @@ describe("manage_connectors.setup_operator", () => {
     ).rejects.toThrow("simulated workspace.json failure");
     h.workspaceStore.update = original;
 
-    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
+    const wrapped = await h.credStore.get(
+      { kind: "workspace", wsId: h.wsId },
+      DROPBOX_SECRET_KEY,
+      TEST_READ,
+    );
     expect(wrapped).toBeNull();
   });
 
@@ -454,7 +463,11 @@ describe("manage_connectors.setup_operator", () => {
     // Credential store now holds the new secret (the put already
     // landed before the failure) — but it's NOT been deleted, because
     // there was a prior valid secret under the same key.
-    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
+    const wrapped = await h.credStore.get(
+      { kind: "workspace", wsId: h.wsId },
+      DROPBOX_SECRET_KEY,
+      TEST_READ,
+    );
     expect(wrapped?.reveal()).toBe("sec-v2");
   });
 });
@@ -546,7 +559,11 @@ describe("manage_connectors.remove_operator_setup", () => {
 
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.oauthOperatorApps?.[DROPBOX_ID]).toBeUndefined();
-    const wrapped = await h.credStore.get({ kind: "workspace", wsId: h.wsId }, DROPBOX_SECRET_KEY, TEST_READ);
+    const wrapped = await h.credStore.get(
+      { kind: "workspace", wsId: h.wsId },
+      DROPBOX_SECRET_KEY,
+      TEST_READ,
+    );
     expect(wrapped).toBeNull();
   });
 
@@ -1102,6 +1119,36 @@ describe("manage_connectors.get_installed", () => {
     const tool = buildTool(h, ADMIN_USER);
     const result = await tool.handler({ action: "get_installed", serverName: "" });
     expect(result.isError).toBe(true);
+  });
+
+  test("names the signed-in account; the full list does not read it", async () => {
+    // Records first: seeding derives the boot state from the stored tokens.
+    const owner = { type: "workspace", wsId: h.wsId } as const;
+    const records = new McpOAuthRecords({
+      owner,
+      serverName: STUB_SERVER_NAME,
+      workDir: h.workDir,
+    });
+    await records.write("tokens", { access_token: "at", token_type: "Bearer" });
+    await records.write("identity", { sub: "vendor-subject", email: "ops@acme-corp.example" });
+    await seedConnector(h);
+    const tool = buildTool(h, ADMIN_USER);
+
+    const one = await tool.handler({ action: "get_installed", serverName: STUB_SERVER_NAME });
+    const installed = (
+      one.structuredContent as { installed: { state: string; identity?: unknown } }
+    ).installed;
+    expect(installed.state).toBe("running");
+    expect(installed.identity).toEqual({ email: "ops@acme-corp.example" });
+
+    // The full list backs every shell load; each identity read writes an audit
+    // line, so it stays off this path.
+    const all = await tool.handler({ action: "list_installed" });
+    const entry = (
+      all.structuredContent as { installed: Array<{ serverName: string; identity?: unknown }> }
+    ).installed.find((e) => e.serverName === STUB_SERVER_NAME);
+    expect(entry).toBeDefined();
+    expect(entry?.identity).toBeUndefined();
   });
 });
 

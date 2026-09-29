@@ -111,7 +111,11 @@ describe("a conversation's live title goes to its owner", () => {
     const ws = await runtime.getWorkspaceStore().create("Alice's", undefined, {
       members: [{ userId: ALICE.id, role: "admin" }],
     });
-    const res = await runtime.chat({ message: "name this chat", identity: ALICE, workspaceId: ws.id });
+    const res = await runtime.chat({
+      message: "name this chat",
+      identity: ALICE,
+      workspaceId: ws.id,
+    });
 
     const deadline = Date.now() + 3000;
     let title: EngineEvent | undefined;

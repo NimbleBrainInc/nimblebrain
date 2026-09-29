@@ -21,9 +21,9 @@ import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 
 const LIST_CHANGED = "notifications/resources/list_changed";
 
@@ -75,14 +75,18 @@ async function openOwnStream(): Promise<{ frames: Frame[]; release: () => void }
 }
 
 async function createMcpClient(): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`));
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
+  );
   const client = new Client({ name: "app-iframe", version: "1.0.0" });
   await client.connect(transport);
   return client;
 }
 
 function notificationsFor(frames: Frame[], server: string): Record<string, unknown>[] {
-  return frames.filter((f) => f.event === "server.notification" && f.data.server === server).map((f) => f.data);
+  return frames
+    .filter((f) => f.event === "server.notification" && f.data.server === server)
+    .map((f) => f.data);
 }
 
 /** Poll until `predicate` holds or the deadline passes. */
@@ -108,7 +112,7 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -260,7 +264,11 @@ describe("a person's own apps announce their writes to that person", () => {
     // new conversation only through this announcement.
     const own = await openOwnStream();
     try {
-      await runtime.chat({ identity: DEV_IDENTITY, message: "Hello", workspaceId: TEST_WORKSPACE_ID });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        message: "Hello",
+        workspaceId: TEST_WORKSPACE_ID,
+      });
 
       await eventually(() => notificationsFor(own.frames, "conversations").length > 0);
       expect(notificationsFor(own.frames, "conversations")[0]).toEqual({

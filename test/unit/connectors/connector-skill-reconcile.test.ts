@@ -1,11 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import {
   bootReconcileConnectorSkills,
   type ConnectorSkillReconcileDeps,
   reconcileConnectorSkills,
 } from "../../../src/connectors/runtime/connector-skill-reconcile.ts";
-import type { ConnectorRef, ConnectorSkillLockEntry } from "../../../src/connectors/runtime/types.ts";
-import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
+import type {
+  ConnectorRef,
+  ConnectorSkillLockEntry,
+} from "../../../src/connectors/runtime/types.ts";
 
 const PIN = "v0.3.0";
 
@@ -29,7 +32,9 @@ function connector(fields: {
   };
 }
 
-function catalog(entries: Record<string, Partial<ConnectorCatalogEntry>>): Map<string, ConnectorCatalogEntry> {
+function catalog(
+  entries: Record<string, Partial<ConnectorCatalogEntry>>,
+): Map<string, ConnectorCatalogEntry> {
   return new Map(Object.entries(entries)) as unknown as Map<string, ConnectorCatalogEntry>;
 }
 
@@ -70,9 +75,13 @@ function skillsLockOf(ref: ConnectorRef): ConnectorSkillLockEntry[] | undefined 
 
 describe("reconcileConnectorSkills", () => {
   it("refreshes a stale connector, skips one at the pin, passes non-connectors through", async () => {
-    const stale = connector({ serverName: "com-outlook-mcp", skillsLock: [lock("outlook", "v0.2.0")] });
+    const stale = connector({
+      serverName: "com-outlook-mcp",
+      skillsLock: [lock("outlook", "v0.2.0")],
+    });
     const current = connector({ serverName: "com-gmail-mcp", skillsLock: [lock("gmail", PIN)] });
-    const registry = { name: "@nimblebraininc/synapse-crm" } as ConnectorRef;
+    // A pre-URL registry row as it sits on disk; ConnectorRef no longer admits it.
+    const registry = { name: "@nimblebraininc/synapse-crm" } as unknown as ConnectorRef;
     const { deps, cap } = buildDeps(
       [{ id: "ws_a", connectors: [stale, current, registry] }],
       (identity) => [lock(identity, PIN)],
@@ -88,15 +97,21 @@ describe("reconcileConnectorSkills", () => {
     expect(cap.persisted).toHaveLength(1);
 
     const persisted = cap.persisted[0]!.connectors;
-    const updatedStale = persisted.find((b) => "serverName" in b && b.serverName === "com-outlook-mcp");
+    const updatedStale = persisted.find(
+      (b) => "serverName" in b && b.serverName === "com-outlook-mcp",
+    );
     expect(skillsLockOf(updatedStale!)?.[0]?.version).toBe(PIN);
     // Untouched entries survive verbatim.
-    expect(persisted.some((b) => "name" in b && b.name === "@nimblebraininc/synapse-crm")).toBe(true);
+    expect(persisted.some((b) => "name" in b && b.name === "@nimblebraininc/synapse-crm")).toBe(
+      true,
+    );
   });
 
   it("is a no-op (no sync, no persist) when every connector is already at the pin", async () => {
     const current = connector({ serverName: "com-gmail-mcp", skillsLock: [lock("gmail", PIN)] });
-    const { deps, cap } = buildDeps([{ id: "ws_a", connectors: [current] }], () => [lock("gmail", PIN)]);
+    const { deps, cap } = buildDeps([{ id: "ws_a", connectors: [current] }], () => [
+      lock("gmail", PIN),
+    ]);
 
     const result = await reconcileConnectorSkills(deps);
 
@@ -130,7 +145,13 @@ describe("reconcileConnectorSkills", () => {
     const { deps, cap } = buildDeps(
       [{ id: "ws_a", connectors: [composio] }],
       (identity) => (identity === "outlook" ? [lock("outlook", PIN)] : []),
-      { byId: catalog({ "com.microsoft/outlook": { composio: { toolkit: "outlook" } } as Partial<ConnectorCatalogEntry> }) },
+      {
+        byId: catalog({
+          "com.microsoft/outlook": {
+            composio: { toolkit: "outlook" },
+          } as Partial<ConnectorCatalogEntry>,
+        }),
+      },
     );
 
     await reconcileConnectorSkills(deps);

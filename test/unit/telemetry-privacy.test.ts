@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { EngineEvent, EngineEventType } from "../../src/engine/types.ts";
 import type { TelemetryClient } from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
-import type { EngineEvent, EngineEventType } from "../../src/engine/types.ts";
 
 // ---------------------------------------------------------------------------
 // Mock
@@ -19,11 +19,7 @@ class MockTelemetryClient implements TelemetryClient {
   }> = [];
   shutdownCalled = false;
 
-  capture(params: {
-    distinctId: string;
-    event: string;
-    properties: Record<string, unknown>;
-  }) {
+  capture(params: { distinctId: string; event: string; properties: Record<string, unknown> }) {
     this.events.push(params);
   }
 
@@ -61,11 +57,6 @@ function lastCaptured(client: MockTelemetryClient) {
   return client.events[client.events.length - 1];
 }
 
-function propertyKeys(client: MockTelemetryClient, index = -1): Set<string> {
-  const idx = index < 0 ? client.events.length + index : index;
-  return new Set(Object.keys(client.events[idx]?.properties ?? {}));
-}
-
 // ---------------------------------------------------------------------------
 // Saved env state
 // ---------------------------------------------------------------------------
@@ -74,8 +65,8 @@ let savedEnv: Record<string, string | undefined> = {};
 
 function saveEnv() {
   savedEnv = {
-    NB_TELEMETRY_DISABLED: process.env["NB_TELEMETRY_DISABLED"],
-    DO_NOT_TRACK: process.env["DO_NOT_TRACK"],
+    NB_TELEMETRY_DISABLED: process.env.NB_TELEMETRY_DISABLED,
+    DO_NOT_TRACK: process.env.DO_NOT_TRACK,
   };
 }
 
@@ -100,8 +91,8 @@ describe("Telemetry Privacy", () => {
 
   beforeEach(() => {
     saveEnv();
-    delete process.env["NB_TELEMETRY_DISABLED"];
-    delete process.env["DO_NOT_TRACK"];
+    delete process.env.NB_TELEMETRY_DISABLED;
+    delete process.env.DO_NOT_TRACK;
     const setup = createMockSetup();
     client = setup.client;
     sink = setup.sink;
@@ -120,7 +111,15 @@ describe("Telemetry Privacy", () => {
   // -----------------------------------------------------------------------
 
   describe("property allowlist", () => {
-    const allowlists: Record<string, { telemetryEvent: string; allowed: Set<string>; emitData: Record<string, unknown>; engineType: EngineEventType }> = {
+    const allowlists: Record<
+      string,
+      {
+        telemetryEvent: string;
+        allowed: Set<string>;
+        emitData: Record<string, unknown>;
+        engineType: EngineEventType;
+      }
+    > = {
       "agent.chat_started": {
         telemetryEvent: "agent.chat_started",
         allowed: new Set(["has_skill", "tool_count", "is_resume", ...COMMON_KEYS]),
@@ -138,8 +137,14 @@ describe("Telemetry Privacy", () => {
       "agent.chat_completed": {
         telemetryEvent: "agent.chat_completed",
         allowed: new Set([
-          "iterations", "tool_calls", "stop_reason", "llm_latency_ms",
-          "tool_latency_ms", "total_ms", "input_tokens", "output_tokens",
+          "iterations",
+          "tool_calls",
+          "stop_reason",
+          "llm_latency_ms",
+          "tool_latency_ms",
+          "total_ms",
+          "input_tokens",
+          "output_tokens",
           "cache_tokens",
           ...COMMON_KEYS,
         ]),
@@ -327,7 +332,6 @@ describe("Telemetry Privacy", () => {
         expect(String(value)).not.toContain("/Users/john/secret-project/connector");
       }
     });
-
   });
 
   // -----------------------------------------------------------------------
@@ -338,10 +342,9 @@ describe("Telemetry Privacy", () => {
     it("run.error does not leak error message or paths", () => {
       emit(sink, "run.error", {
         runId: "r1",
-        error: Object.assign(
-          new Error("ENOENT: /Users/john/.nimblebrain/config"),
-          { code: "ENOENT" },
-        ),
+        error: Object.assign(new Error("ENOENT: /Users/john/.nimblebrain/config"), {
+          code: "ENOENT",
+        }),
       });
 
       const captured = lastCaptured(client);
@@ -388,7 +391,7 @@ describe("Telemetry Privacy", () => {
       const optOutDir = mkdtempSync(join(tmpdir(), "nb-telemetry-optout-"));
 
       try {
-        process.env["NB_TELEMETRY_DISABLED"] = "1";
+        process.env.NB_TELEMETRY_DISABLED = "1";
 
         const optOutClient = new MockTelemetryClient();
         const optOutManager = TelemetryManager.create({
@@ -400,7 +403,10 @@ describe("Telemetry Privacy", () => {
         // Emit every event type
         const allEvents: Array<{ type: EngineEventType; data: Record<string, unknown> }> = [
           { type: "run.start", data: { runId: "r1", toolNames: ["bash"] } },
-          { type: "run.done", data: { runId: "r1", stopReason: "complete", inputTokens: 100, outputTokens: 50 } },
+          {
+            type: "run.done",
+            data: { runId: "r1", stopReason: "complete", inputTokens: 100, outputTokens: 50 },
+          },
           { type: "run.error", data: { runId: "r2", error: new Error("fail") } },
           { type: "connector.installed", data: { name: "test" } },
           { type: "connector.uninstalled", data: { name: "test" } },

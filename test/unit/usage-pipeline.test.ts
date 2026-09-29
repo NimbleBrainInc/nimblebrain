@@ -5,10 +5,11 @@ import type {
   LanguageModelV4StreamPart,
   LanguageModelV4Usage,
 } from "@ai-sdk/provider";
-import { AgentEngine } from "../../src/engine/engine.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { DEFAULT_MAX_INPUT_TOKENS } from "../../src/limits.ts";
 import { estimateCost } from "../../src/usage/cost.ts";
 
 /**
@@ -30,6 +31,7 @@ import { estimateCost } from "../../src/usage/cost.ts";
 const config: EngineConfig = {
   model: "anthropic:claude-sonnet-4-6",
   maxIterations: 3,
+  maxInputTokens: DEFAULT_MAX_INPUT_TOKENS,
   maxOutputTokens: 100,
   thinking: { mode: "off" },
 };
@@ -160,7 +162,9 @@ describe("usage pipeline — cache writes + reasoning round-trip end-to-end", ()
     expect(result.usage.cacheWriteTokens).toBe(141_000);
     expect(result.usage.cacheWrite1hTokens).toBe(40_000); // the 5m remainder is 101K
     const llmDone = events.find((e) => e.type === "llm.done");
-    const usage = (llmDone!.data as Record<string, unknown>).usage as { cacheWrite1hTokens?: number };
+    const usage = (llmDone!.data as Record<string, unknown>).usage as {
+      cacheWrite1hTokens?: number;
+    };
     expect(usage.cacheWrite1hTokens).toBe(40_000);
   });
 
@@ -196,8 +200,7 @@ describe("usage pipeline — cache writes + reasoning round-trip end-to-end", ()
     //   input $3/M, output $15/M, cacheRead $0.30/M.
     // Cache WRITES bill at the 1-hour TTL rate the engine uses: 2x base input
     // = $6/M (NOT the catalog's 1.25x 5-minute `cacheWrite` of $3.75/M).
-    const expected =
-      (22_000 * 3 + 10_587 * 15 + 524_000 * 0.3 + 141_000 * 6) / 1_000_000;
+    const expected = (22_000 * 3 + 10_587 * 15 + 524_000 * 0.3 + 141_000 * 6) / 1_000_000;
     expect(cost).toBeCloseTo(expected, 6);
 
     // Sanity band: cache writes bill at the 1h rate (2x input), so the figure

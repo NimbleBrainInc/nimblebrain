@@ -14,10 +14,10 @@
  * no FS watcher, no real `WorkspaceStore`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { ToolCall, ToolResult, ToolSchema } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
@@ -32,6 +32,7 @@ import {
 import { isToolAllowedForRun } from "../../../src/tools/tool-pattern.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
 // ── Stubs ─────────────────────────────────────────────────────────
 
@@ -199,7 +200,7 @@ describe("IdentityToolRouter — availableTools", () => {
       {
         // A different workspace sits in AsyncLocalStorage. The router must
         // ignore it and query SHARED_WS, the bound workspace.
-        identity: { id: OTHER_USER, email: "other@x", orgRole: null },
+        identity: makeIdentity({ id: OTHER_USER, email: "other@x" }),
         workspaceId: OTHER_WS,
       },
       async () => {
@@ -248,7 +249,7 @@ describe("IdentityToolRouter — execute (workspace door)", () => {
 
     await runWithRequestContext(
       {
-        identity: { id: USER_ID, email: "u1@x", orgRole: null },
+        identity: makeIdentity({ id: USER_ID, email: "u1@x" }),
         workspaceId: PERSONAL_WS,
       },
       async () => {

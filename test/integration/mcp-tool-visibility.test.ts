@@ -24,10 +24,10 @@ import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { surfaceTools } from "../../src/tools/surfacing.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 
 /** A third-party server declaring each visibility the spec allows. */
 function createVisibilityServer(): Server {
@@ -61,9 +61,18 @@ function createVisibilityServer(): Server {
 
 /** A second server in the same workspace, outside the `vis` app's scope. */
 function createNeighborServer(): Server {
-  const server = new Server({ name: "neighbor", version: "0.1.0" }, { capabilities: { tools: {} } });
+  const server = new Server(
+    { name: "neighbor", version: "0.1.0" },
+    { capabilities: { tools: {} } },
+  );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{ name: "ping", description: "Returns pong", inputSchema: { type: "object", properties: {} } }],
+    tools: [
+      {
+        name: "ping",
+        description: "Returns pong",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
   }));
   server.setRequestHandler(CallToolRequestSchema, async () => ({
     content: [{ type: "text", text: "pong" }],
@@ -110,7 +119,7 @@ beforeAll(async () => {
   await neighborSource.start();
   registry.addSource(neighborSource);
 
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 }, 30_000);
 
@@ -133,7 +142,9 @@ afterAll(async () => {
 }, 30_000);
 
 async function createMcpClient(): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`));
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
+  );
   const client = new Client({ name: "mcp-tool-visibility-test", version: "1.0.0" });
   await client.connect(transport);
   return client;
@@ -144,7 +155,7 @@ function firstText(result: { content?: unknown }): string | undefined {
 }
 
 describe("MCP Apps tool visibility — agent tool lists", () => {
-  it("the /mcp tools/list leaves out a tool without \"model\"", async () => {
+  it('the /mcp tools/list leaves out a tool without "model"', async () => {
     const client = await createMcpClient();
     try {
       const names = (await client.listTools()).tools.map((t) => t.name);
@@ -207,7 +218,7 @@ describe("MCP Apps tool visibility — an app's tools/call", () => {
     }
   });
 
-  it("is refused for a tool without \"app\"", async () => {
+  it('is refused for a tool without "app"', async () => {
     const client = await createMcpClient();
     try {
       await expect(

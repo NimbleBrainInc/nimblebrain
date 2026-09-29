@@ -6,8 +6,9 @@ import {
   hashSkillBody,
 } from "../../../src/runtime/skills-loaded-payload.ts";
 import { synthesizeConnectorSkill } from "../../../src/skills/connector-skills.ts";
-import type { Skill } from "../../../src/skills/types.ts";
+import type { SkillManifest } from "../../../src/skills/schemas/skill-manifest.ts";
 import type { LoadedBy, SelectedSkill } from "../../../src/skills/select.ts";
+import type { Skill } from "../../../src/skills/types.ts";
 
 function makeSkill(
   name: string,
@@ -34,14 +35,19 @@ function makeSkill(
   };
 }
 
-function selected(overrides: Partial<SelectedSkill["skill"]>, loadedBy: LoadedBy = "always"): SelectedSkill {
+function selected(
+  overrides: { manifest?: Partial<SkillManifest>; body?: string; sourcePath?: string },
+  loadedBy: LoadedBy = "always",
+): SelectedSkill {
   return {
     skill: {
       manifest: {
         name: "test-skill",
         description: "A test skill",
         version: "1.0.0",
+        loadingStrategy: loadedBy === "always" ? "always" : "dynamic",
         priority: 50,
+        status: "active",
         ...(overrides.manifest ?? {}),
       },
       body: overrides.body ?? "Default body content.",
@@ -111,9 +117,7 @@ describe("buildSkillsLoadedPayload", () => {
       selected({ body: "short" }),
       selected({ body: "this body is materially longer than the first one for sure" }),
     ]);
-    expect(payload.totalTokens).toBe(
-      payload.skills.reduce((sum, s) => sum + s.tokens, 0),
-    );
+    expect(payload.totalTokens).toBe(payload.skills.reduce((sum, s) => sum + s.tokens, 0));
   });
 
   test("uses the in-memory sentinel id for skills without a sourcePath", () => {
@@ -141,14 +145,21 @@ describe("buildSkillsLoadedPayload", () => {
     const payload = buildSkillsLoadedPayload([
       selected({ body: "a" }, "always"),
       selected({ body: "b" }, "tool_affinity"),
-      { skill: makeSkill("t", { strategy: "dynamic" }), loadedBy: "trigger", reason: 'trigger matched "x"' },
+      {
+        skill: makeSkill("t", { strategy: "dynamic" }),
+        loadedBy: "trigger",
+        reason: 'trigger matched "x"',
+      },
     ]);
     expect(payload.skills.map((s) => s.layer)).toEqual([0, 3, 4]);
   });
 
   test("carries a filesystem skill's manifest name, with no connector", () => {
     const payload = buildSkillsLoadedPayload([
-      selected({ manifest: { name: "release-notes" }, sourcePath: "/work/skills/release-notes.md" }),
+      selected({
+        manifest: { name: "release-notes" },
+        sourcePath: "/work/skills/release-notes.md",
+      }),
     ]);
     expect(payload.skills[0]!.name).toBe("release-notes");
     expect(payload.skills[0]!.connector).toBeUndefined();
@@ -202,7 +213,10 @@ describe("collectLoadedSkills", () => {
           reason: "tool-affinity matched mpak__*",
         },
       ],
-      trigger: { skill: makeSkill("deploy-guide", { strategy: "dynamic", sourcePath: "/s/deploy.md" }), trigger: "deploy" },
+      trigger: {
+        skill: makeSkill("deploy-guide", { strategy: "dynamic", sourcePath: "/s/deploy.md" }),
+        trigger: "deploy",
+      },
       alwaysOn: [makeSkill("house-style", { sourcePath: "/s/house.md" })],
     });
     expect(out.map((s) => [s.skill.manifest.name, s.loadedBy])).toEqual([
@@ -233,7 +247,11 @@ describe("collectLoadedSkills", () => {
     const out = collectLoadedSkills({
       toolAffinity: [
         {
-          skill: makeSkill("automation-authoring", { strategy: "dynamic", vendored: true, sourcePath: "/core/automation-authoring.md" }),
+          skill: makeSkill("automation-authoring", {
+            strategy: "dynamic",
+            vendored: true,
+            sourcePath: "/core/automation-authoring.md",
+          }),
           loadedBy: "tool_affinity",
           reason: "tool-affinity matched automations__*",
         },
@@ -244,7 +262,11 @@ describe("collectLoadedSkills", () => {
         },
       ],
       trigger: {
-        skill: makeSkill("authoring-guide", { strategy: "dynamic", vendored: true, sourcePath: "/builtin/authoring-guide.md" }),
+        skill: makeSkill("authoring-guide", {
+          strategy: "dynamic",
+          vendored: true,
+          sourcePath: "/builtin/authoring-guide.md",
+        }),
         trigger: "create a skill",
       },
       alwaysOn: [makeSkill("house-style", { sourcePath: "/s/house.md" })],
@@ -265,7 +287,9 @@ describe("collectLoadedSkills", () => {
   test("dedupes a skill matched by both tool-affinity and trigger — tool-affinity wins", () => {
     const dual = makeSkill("dual", { strategy: "dynamic", sourcePath: "/s/dual.md" });
     const out = collectLoadedSkills({
-      toolAffinity: [{ skill: dual, loadedBy: "tool_affinity", reason: "tool-affinity matched x__*" }],
+      toolAffinity: [
+        { skill: dual, loadedBy: "tool_affinity", reason: "tool-affinity matched x__*" },
+      ],
       trigger: { skill: dual, trigger: "x" },
       alwaysOn: [],
     });
@@ -276,7 +300,11 @@ describe("collectLoadedSkills", () => {
   test("no trigger and no always-on collapses to just tool-affinity", () => {
     const out = collectLoadedSkills({
       toolAffinity: [
-        { skill: makeSkill("only", { strategy: "dynamic" }), loadedBy: "tool_affinity", reason: "r" },
+        {
+          skill: makeSkill("only", { strategy: "dynamic" }),
+          loadedBy: "tool_affinity",
+          reason: "r",
+        },
       ],
       alwaysOn: [],
     });

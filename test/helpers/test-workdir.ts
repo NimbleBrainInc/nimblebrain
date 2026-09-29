@@ -1,7 +1,6 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { devProvider } from "./dev-provider.ts";
 
 /**
  * Allocate an isolated, ephemeral workDir for an integration test.

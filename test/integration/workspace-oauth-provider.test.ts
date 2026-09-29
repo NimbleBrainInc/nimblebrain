@@ -1,9 +1,9 @@
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { UnauthorizedError } from "@modelcontextprotocol/client";
-import { _clearAll, resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
+import { resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
 import {
   InteractiveOAuthNotSupportedError,
   WorkspaceOAuthProvider,

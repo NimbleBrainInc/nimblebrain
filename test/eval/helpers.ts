@@ -8,12 +8,12 @@
  * They require a real API key and cost real money.
  */
 
-import { mkdirSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ChatResult } from "../../src/runtime/types.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { devProvider, devWorkspace } from "../helpers/dev-provider.ts";
 
 // ---------------------------------------------------------------------------
@@ -111,9 +111,7 @@ export function assertToolCalled(result: ChatResult, toolName: string): void {
   const called = result.toolCalls.some((tc) => tc.name === toolName);
   if (!called) {
     const calledTools = result.toolCalls.map((tc) => tc.name).join(", ") || "(none)";
-    throw new Error(
-      `Expected tool "${toolName}" to be called. Tools called: ${calledTools}`,
-    );
+    throw new Error(`Expected tool "${toolName}" to be called. Tools called: ${calledTools}`);
   }
 }
 
@@ -125,9 +123,7 @@ export function assertToolCalledWith(
   toolName: string,
   inputMatch: (input: Record<string, unknown>) => boolean,
 ): void {
-  const matching = result.toolCalls.filter(
-    (tc) => tc.name === toolName && inputMatch(tc.input),
-  );
+  const matching = result.toolCalls.filter((tc) => tc.name === toolName && inputMatch(tc.input));
   if (matching.length === 0) {
     const calls = result.toolCalls
       .filter((tc) => tc.name === toolName)

@@ -48,7 +48,8 @@ function buildRemoteSource(initial: RawTool[]) {
   };
 }
 
-const getFetchedAt = (s: McpSource) => (s as unknown as { toolsFetchedAt: number | null }).toolsFetchedAt;
+const getFetchedAt = (s: McpSource) =>
+  (s as unknown as { toolsFetchedAt: number | null }).toolsFetchedAt;
 const setFetchedAt = (s: McpSource, v: number) => {
   (s as unknown as { toolsFetchedAt: number }).toolsFetchedAt = v;
 };
@@ -73,7 +74,11 @@ describe("McpSource tool-list freshness", () => {
     // Force a detectably-old stamp so the re-stamp is unambiguous.
     setFetchedAt(source, 1);
     // Upstream redeploys with a broader surface at the same URL.
-    setTools([{ name: "validate_email" }, { name: "domain_search" }, { name: "similar_companies" }]);
+    setTools([
+      { name: "validate_email" },
+      { name: "domain_search" },
+      { name: "similar_companies" },
+    ]);
 
     const refreshed = await source.refreshTools();
 

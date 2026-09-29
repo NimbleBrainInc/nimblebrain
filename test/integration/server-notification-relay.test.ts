@@ -18,16 +18,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from "bu
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -51,13 +51,13 @@ function notesSource(name: string, sink: ReturnType<Runtime["getEventSink"]>): M
           { name, version: "1.0.0" },
           { capabilities: { tools: {}, resources: { listChanged: true } } },
         );
-        server.setRequestHandler('tools/list', async () => ({
+        server.setRequestHandler("tools/list", async () => ({
           tools: [
             { name: "save", inputSchema: { type: "object", properties: {} } },
             { name: "list", inputSchema: { type: "object", properties: {} } },
           ],
         }));
-        server.setRequestHandler('resources/list', async (request) => {
+        server.setRequestHandler("resources/list", async (request) => {
           const page = Number(request.params?.cursor ?? 0);
           return {
             resources: notes
@@ -66,10 +66,10 @@ function notesSource(name: string, sink: ReturnType<Runtime["getEventSink"]>): M
             ...(page + 1 < notes.length ? { nextCursor: String(page + 1) } : {}),
           };
         });
-        server.setRequestHandler('resources/templates/list', async () => ({
+        server.setRequestHandler("resources/templates/list", async () => ({
           resourceTemplates: [{ uriTemplate: `${name}://{index}`, name: "note" }],
         }));
-        server.setRequestHandler('tools/call', async (request) => {
+        server.setRequestHandler("tools/call", async (request) => {
           if (request.params.name === "save") {
             notes.push("note");
             await server.sendResourceListChanged();
@@ -86,7 +86,9 @@ function notesSource(name: string, sink: ReturnType<Runtime["getEventSink"]>): M
 }
 
 async function createMcpClient(): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`));
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`),
+  );
   const client = new Client({ name: "app-iframe", version: "1.0.0" });
   await client.connect(transport);
   return client;
@@ -111,7 +113,7 @@ beforeAll(async () => {
     runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
   }
 
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

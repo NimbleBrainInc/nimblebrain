@@ -14,8 +14,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import { requireAuth } from "../../../src/api/middleware/auth.ts";
 import type { McpSessionContext } from "../../../src/api/mcp-server.ts";
+import { requireAuth } from "../../../src/api/middleware/auth.ts";
 import { RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
 import { mcpRoutes } from "../../../src/api/routes/mcp.ts";
 import type { AppContext } from "../../../src/api/types.ts";
@@ -112,7 +112,9 @@ function makeApp(): Hono {
   const app = new Hono();
   app.route("/", mcpRoutes(ctx));
   // A REST route behind the same middleware every `/v1/*` group uses.
-  app.post(`/v1/workspaces/${WS_A}/tools/call`, requireAuth(ctx.authOptions), (c) => c.json({ ok: true }));
+  app.post(`/v1/workspaces/${WS_A}/tools/call`, requireAuth(ctx.authOptions), (c) =>
+    c.json({ ok: true }),
+  );
   return app;
 }
 

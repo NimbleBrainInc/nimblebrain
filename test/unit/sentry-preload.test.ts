@@ -1,5 +1,5 @@
-import type { Breadcrumb, ErrorEvent } from "@sentry/bun";
 import { describe, expect, it } from "bun:test";
+import type { Breadcrumb, ErrorEvent } from "@sentry/bun";
 import {
   resolveSentryConfig,
   scrubBreadcrumb,
@@ -101,7 +101,10 @@ describe("scrubBreadcrumb", () => {
   });
 
   it("keeps non-console crumbs without a URL untouched", () => {
-    const crumb = { category: "navigation", data: { from: "/a", to: "/b" } } as unknown as Breadcrumb;
+    const crumb = {
+      category: "navigation",
+      data: { from: "/a", to: "/b" },
+    } as unknown as Breadcrumb;
     expect(scrubBreadcrumb(crumb)).toEqual(crumb);
   });
 });

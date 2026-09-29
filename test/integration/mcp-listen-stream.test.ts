@@ -119,7 +119,9 @@ describe("the listen stream on a 2026-07-28 connection", () => {
       expect(listens).toHaveLength(1);
       await sleep(HELD_MS);
       const first = listens[0]!;
-      first.stream.enqueue(sse({ jsonrpc: "2.0", id: first.id, result: { resultType: "complete" } }));
+      first.stream.enqueue(
+        sse({ jsonrpc: "2.0", id: first.id, result: { resultType: "complete" } }),
+      );
       first.stream.close();
       await sleep(400);
       expect(listens).toHaveLength(2);

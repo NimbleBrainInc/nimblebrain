@@ -1,10 +1,13 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { ConnectorLifecycleManager, ConnectorBusyError } from "../../src/connectors/runtime/lifecycle.ts";
-import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import {
+  ConnectorBusyError,
+  ConnectorLifecycleManager,
+} from "../../src/connectors/runtime/lifecycle.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { requireCredentialStore } from "../../src/tools/credential-store.ts";
 import { mcpOAuthKey } from "../../src/tools/mcp-oauth-records.ts";
 import { _clearAll, peekFlowOwner } from "../../src/tools/oauth-flow-registry.ts";
@@ -191,7 +194,10 @@ describe("lifecycle.startIdentityAuth — interactive OAuth for a personal conne
 
   it("rejects a connector the caller has not installed on their identity", async () => {
     await expect(
-      lifecycle.startIdentityAuth("not-installed", USER_ID, { workDir, allowInsecureRemotes: true }),
+      lifecycle.startIdentityAuth("not-installed", USER_ID, {
+        workDir,
+        allowInsecureRemotes: true,
+      }),
     ).rejects.toThrow(/not a personal connector/);
   });
 

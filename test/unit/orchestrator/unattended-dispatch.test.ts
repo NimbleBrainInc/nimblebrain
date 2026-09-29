@@ -13,10 +13,10 @@
  * under test, so a stub that answers them would test itself.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { EngineEvent, EventSink, ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
@@ -108,7 +108,10 @@ function makeStubRuntime(opts: StubOpts): UnattendedDispatchRuntime {
     getIdentitySource(name: string): ToolSource | undefined {
       return opts.identitySources?.get(name);
     },
-    async getIdentityConnectorSource(_userId: string, name: string): Promise<ToolSource | undefined> {
+    async getIdentityConnectorSource(
+      _userId: string,
+      name: string,
+    ): Promise<ToolSource | undefined> {
       return opts.identityConnectors?.get(name);
     },
     getIdentityContext(identityId: string): IdentityContext {
@@ -141,7 +144,11 @@ afterEach(() => {
   }
 });
 
-function call(runtime: UnattendedDispatchRuntime, tool: string, extra: Record<string, unknown> = {}) {
+function call(
+  runtime: UnattendedDispatchRuntime,
+  tool: string,
+  extra: Record<string, unknown> = {},
+) {
   return dispatchUnattended(runtime, {
     principalId: PRINCIPAL,
     workspaceId: WS,

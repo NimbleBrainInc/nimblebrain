@@ -20,19 +20,19 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { MINTED_PROVIDER } from "../../src/oauth/minted-credential-provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
-import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import {
   _resetCredentialProvidersForTest,
   registerCredentialProvider,
@@ -107,7 +107,10 @@ function entry(): CatalogListing {
       url: URL_,
       transportType: "streamable-http",
       auth: "provider",
-      providerAuth: { provider: MINTED_PROVIDER, config: { audience: "mcp-fleet", scope: "mcp:invoke" } },
+      providerAuth: {
+        provider: MINTED_PROVIDER,
+        config: { audience: "mcp-fleet", scope: "mcp:invoke" },
+      },
       secretHeaders: { [HEADER]: { ref: "credential", key: KEY } },
     },
   };
@@ -381,9 +384,9 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     await tool.handler({ action: "set_secret", key: "unrelated.token", value: "keep-me" });
 
     await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
-    expect(structured(await tool.handler({ action: "list_secret_keys" })).keys?.map((k) => k.key)).toEqual([
-      "unrelated.token",
-    ]);
+    expect(
+      structured(await tool.handler({ action: "list_secret_keys" })).keys?.map((k) => k.key),
+    ).toEqual(["unrelated.token"]);
   });
 
   test("uninstalling a connector that declares no secret removes none", async () => {

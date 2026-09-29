@@ -13,7 +13,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   COMPOSIO_CREDENTIAL_PROVIDER,
@@ -25,6 +24,7 @@ import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import type { RemoteTransportConfig } from "../../src/connectors/runtime/types.ts";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
 
 const ENV_KEYS = ["COMPOSIO_API_KEY", "COMPOSIO_API_BASE_URL"] as const;
@@ -49,7 +49,6 @@ afterEach(() => {
 /** The shape a pre-seam install persisted into `workspace.json`. */
 const LEGACY_AUTH: RemoteTransportConfig = {
   type: "streamable-http",
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal legacy placeholder under test
   auth: { type: "header", name: "x-api-key", value: "${COMPOSIO_API_KEY}" },
   headers: { "x-trace": "keep-me" },
 };
@@ -178,8 +177,10 @@ describe("legacy refs map forward on read", () => {
       // Same header name, a different value — someone else's credential.
       { type: "streamable-http", auth: { type: "header", name: "x-api-key", value: "literal" } },
       // A different header carrying the legacy template — not Composio's auth.
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal placeholder under test
-      { type: "streamable-http", auth: { type: "header", name: "x-other", value: "${COMPOSIO_API_KEY}" } },
+      {
+        type: "streamable-http",
+        auth: { type: "header", name: "x-other", value: "${COMPOSIO_API_KEY}" },
+      },
       { type: "streamable-http", auth: { type: "provider", provider: "minted", config: {} } },
     ];
     for (const config of untouched) {

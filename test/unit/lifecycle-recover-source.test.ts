@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
-import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
+import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 
 /**
  * Coverage for `ConnectorLifecycleManager.tryRecoverSource` — the best-effort,
@@ -33,7 +33,7 @@ function stubSource(name: string): ToolSource {
       return [];
     },
     async execute(): Promise<ToolResult> {
-      return { content: [{ type: "text" as const, text: `[${name}] dispatched` }] };
+      return { content: [{ type: "text" as const, text: `[${name}] dispatched` }], isError: false };
     },
   };
 }
@@ -41,7 +41,11 @@ function stubSource(name: string): ToolSource {
 const WS = "ws_test";
 const WORK_DIR = "/tmp/nb-recover-test";
 
-function seedInstance(lifecycle: ConnectorLifecycleManager, serverName: string, ref?: ConnectorRef): void {
+function seedInstance(
+  lifecycle: ConnectorLifecycleManager,
+  serverName: string,
+  ref?: ConnectorRef,
+): void {
   const instance: ConnectorInstance = {
     serverName,
     connectorName: "https://example.test/mcp",

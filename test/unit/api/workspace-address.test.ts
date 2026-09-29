@@ -15,13 +15,14 @@ import {
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import type { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
 
-const ALICE: UserIdentity = {
+const ALICE: UserIdentity = makeIdentity({
   id: "usr_alice",
   email: "alice@example.com",
   displayName: "Alice",
   orgRole: "member",
-};
+});
 
 interface StoredWorkspace {
   id: string;
@@ -54,7 +55,15 @@ describe("isAddressedWorkspaceMember", () => {
 
   it("checks the shape before any lookup", async () => {
     const { store, lookups } = makeStore();
-    for (const wsId of ["", "acme", "ws_", "ws_../etc", "ws_a-b", "ws_a/b", `ws_${"a".repeat(65)}`]) {
+    for (const wsId of [
+      "",
+      "acme",
+      "ws_",
+      "ws_../etc",
+      "ws_a-b",
+      "ws_a/b",
+      `ws_${"a".repeat(65)}`,
+    ]) {
       expect(isWorkspaceIdShape(wsId)).toBe(false);
       expect(await isAddressedWorkspaceMember(store, wsId, ALICE.id)).toBe(false);
     }

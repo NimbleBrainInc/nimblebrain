@@ -1,7 +1,7 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { UserStore } from "../../../src/identity/user.ts";
 import {
   defaultWorkspaceFor,
@@ -45,7 +45,10 @@ describe("ensureUserWorkspace", () => {
       members: [{ userId: "user_alice", role: "member" }],
     });
 
-    const memberships = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" });
+    const memberships = await ensureUserWorkspace(store, {
+      id: "user_alice",
+      displayName: "Alice",
+    });
 
     expect(memberships.map((w) => w.id)).toEqual([team.id]);
     expect(await store.list()).toHaveLength(1);
@@ -88,7 +91,11 @@ describe("ensureUserWorkspace", () => {
       preferences: { timezone: "Pacific/Honolulu" },
     });
 
-    const [ws] = await ensureUserWorkspace(store, { id: "user_alice", displayName: "Alice" }, users);
+    const [ws] = await ensureUserWorkspace(
+      store,
+      { id: "user_alice", displayName: "Alice" },
+      users,
+    );
 
     const profile = await users.get("user_alice");
     expect(profile?.preferences).toEqual({
@@ -138,7 +145,9 @@ describe("defaultWorkspaceFor", () => {
   test("falls back to the first membership when the default is not one of them", async () => {
     const a = await store.create("A");
     const b = await store.create("B");
-    expect(defaultWorkspaceFor([a, b], { defaultWorkspaceId: "ws_gone000000000000" }).id).toBe(a.id);
+    expect(defaultWorkspaceFor([a, b], { defaultWorkspaceId: "ws_gone000000000000" }).id).toBe(
+      a.id,
+    );
   });
 
   test("falls back to the first membership with no preference", async () => {

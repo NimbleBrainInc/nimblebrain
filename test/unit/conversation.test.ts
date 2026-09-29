@@ -1,12 +1,12 @@
-import { describe, expect, it, beforeEach, afterAll } from "bun:test";
-import { rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { InMemoryConversationStore } from "../../src/conversation/memory-store.ts";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
-import { windowMessages } from "../../src/conversation/window.ts";
-import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
+import { join } from "node:path";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
+import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
+import { InMemoryConversationStore } from "../../src/conversation/memory-store.ts";
+import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
+import { windowMessages } from "../../src/conversation/window.ts";
 
 function msg(role: "user" | "assistant", content: string): StoredMessage {
   return { role, content, timestamp: new Date().toISOString() };
@@ -146,10 +146,7 @@ describe("windowMessages", () => {
     const messages: LanguageModelV4Message[] = [];
     for (let i = 0; i < 10; i++) {
       messages.push(
-        wmsg(
-          i % 2 === 0 ? "user" : "assistant",
-          `Message number ${i}: ${"x".repeat(80)}`,
-        ),
+        wmsg(i % 2 === 0 ? "user" : "assistant", `Message number ${i}: ${"x".repeat(80)}`),
       );
     }
 
@@ -198,11 +195,11 @@ describe("windowMessages", () => {
 
   it("drops middle messages when budget is tight", () => {
     const messages = [
-      wmsg("user", "First: " + "a".repeat(40)), // ~12 tokens
-      wmsg("assistant", "Second: " + "b".repeat(400)), // ~100 tokens (big)
-      wmsg("user", "Third: " + "c".repeat(400)), // ~100 tokens (big)
-      wmsg("assistant", "Fourth: " + "d".repeat(40)), // ~12 tokens
-      wmsg("user", "Fifth: " + "e".repeat(40)), // ~12 tokens
+      wmsg("user", `First: ${"a".repeat(40)}`), // ~12 tokens
+      wmsg("assistant", `Second: ${"b".repeat(400)}`), // ~100 tokens (big)
+      wmsg("user", `Third: ${"c".repeat(400)}`), // ~100 tokens (big)
+      wmsg("assistant", `Fourth: ${"d".repeat(40)}`), // ~12 tokens
+      wmsg("user", `Fifth: ${"e".repeat(40)}`), // ~12 tokens
     ];
 
     // Budget: 50 tokens — enough for first (~12) + fourth (~12) + fifth (~12) = 36

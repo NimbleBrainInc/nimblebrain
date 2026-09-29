@@ -8,19 +8,23 @@
  * written to the caller's own grant ledger and is per-granter — no admin gate.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { saveComposioConnection } from "../../src/connectors/providers/composio/connection.ts";
+import { createComposioProvider } from "../../src/connectors/providers/composio/provider.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
+import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
-import type { Runtime } from "../../src/runtime/runtime.ts";
+import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import {
   installTestCredentialStore,
@@ -46,6 +50,8 @@ interface Harness {
 async function buildHarness(opts: {
   identity?: UserIdentity | null;
   personalConnectors?: string[];
+  /** Personal connectors brokered by Composio, keyed by the catalog connector id. */
+  composioConnectors?: string[];
   memberOfShared?: boolean;
   /** Same-pod probe result — `true` makes every listed connector read `running`. */
   connectorRunning?: boolean;
@@ -76,8 +82,21 @@ async function buildHarness(opts: {
     });
   }
 
+  for (const connectorId of opts.composioConnectors ?? []) {
+    await connectorStore.add(ALICE.id, {
+      url: `https://composio.example/${connectorId}`,
+      serverName: slugifyServerName(connectorId),
+      ui: null,
+      brokered: { provider: "composio", connectorId },
+    });
+  }
+  const composio = createComposioProvider();
+
   const runtime = {
     getWorkDir: () => workDir,
+    getManagedConnectorRegistry: () => ({
+      get: (id: string) => (id === "composio" ? composio : undefined),
+    }),
     getPermissionStore: () => store,
     getWorkspaceStore: () => workspaceStore,
     // list_personal_connectors enriches display metadata from the catalog; an
@@ -99,7 +118,12 @@ async function buildHarness(opts: {
 function sc(result: { structuredContent?: unknown }): {
   ok?: boolean;
   error?: string;
-  connectors?: Array<{ serverName: string; grantedWorkspaces: string[]; state?: string }>;
+  connectors?: Array<{
+    serverName: string;
+    grantedWorkspaces: string[];
+    state?: string;
+    identity?: Record<string, unknown>;
+  }>;
 } {
   return (result.structuredContent ?? {}) as never;
 }
@@ -193,6 +217,58 @@ describe("manage_connectors — personal-connector grants", () => {
     const res = await h.tool.handler({ action: "list_personal_connectors" });
     const granola = (sc(res).connectors ?? []).find((c) => c.serverName === "granola");
     expect(granola?.state).toBe("running");
+  });
+
+  test("list_personal_connectors names the signed-in account from the OIDC identity record", async () => {
+    h = await buildHarness({ personalConnectors: ["granola", "notion"] });
+    const owner = { type: "user", userId: ALICE.id } as const;
+    for (const serverName of ["granola", "notion"]) {
+      await new McpOAuthRecords({ owner, serverName, workDir: h.workDir }).write("tokens", {
+        access_token: "at",
+        token_type: "Bearer",
+      });
+    }
+    await new McpOAuthRecords({ owner, serverName: "granola", workDir: h.workDir }).write(
+      "identity",
+      { sub: "vendor-subject", email: "alice@vendor.example", name: "Alice V" },
+    );
+    const res = await h.tool.handler({ action: "list_personal_connectors" });
+    const connectors = sc(res).connectors ?? [];
+    const granola = connectors.find((c) => c.serverName === "granola");
+    const notion = connectors.find((c) => c.serverName === "notion");
+    expect(granola?.state).toBe("running");
+    // Display fields only — the vendor subject never leaves the server.
+    expect(granola?.identity).toEqual({ email: "alice@vendor.example", name: "Alice V" });
+    expect(notion?.state).toBe("running");
+    expect(notion?.identity).toBeUndefined();
+  });
+
+  test("list_personal_connectors names the account a Composio connection recorded", async () => {
+    h = await buildHarness({ composioConnectors: ["com.google/gmail", "com.slack/slack"] });
+    const owner = { type: "user", userId: ALICE.id } as const;
+    const base = {
+      connectedAccountId: "ca_1",
+      toolkit: "gmail",
+      userId: "user:usr_alice",
+      connectedAt: "2026-01-01T00:00:00.000Z",
+      status: "ACTIVE",
+    };
+    await saveComposioConnection(h.workDir, owner, "com.google/gmail", {
+      ...base,
+      displayName: "alice@mail.example",
+    });
+    await saveComposioConnection(h.workDir, owner, "com.slack/slack", {
+      ...base,
+      toolkit: "slack",
+    });
+    const res = await h.tool.handler({ action: "list_personal_connectors" });
+    const connectors = sc(res).connectors ?? [];
+    const gmail = connectors.find((c) => c.serverName === slugifyServerName("com.google/gmail"));
+    const slack = connectors.find((c) => c.serverName === slugifyServerName("com.slack/slack"));
+    expect(gmail?.state).toBe("running");
+    expect(gmail?.identity).toEqual({ name: "alice@mail.example" });
+    expect(slack?.state).toBe("running");
+    expect(slack?.identity).toBeUndefined();
   });
 
   test("all grant actions require authentication", async () => {

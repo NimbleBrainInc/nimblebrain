@@ -15,10 +15,10 @@
  *  - HTTP: the three chat routes answer each of those cases with the same 404.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -33,28 +33,29 @@ import type {
 } from "../../src/identity/provider.ts";
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
 import { ConversationNotFoundError } from "../../src/runtime/errors.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { makeIdentity } from "../helpers/identity.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const ALICE: UserIdentity = {
+const ALICE: UserIdentity = makeIdentity({
   id: "usr_alice",
   email: "alice@example.com",
   displayName: "Alice",
   orgRole: "member",
-};
-const BOB: UserIdentity = {
+});
+const BOB: UserIdentity = makeIdentity({
   id: "usr_bob",
   email: "bob@example.com",
   displayName: "Bob",
   orgRole: "member",
-};
+});
 
 /**
  * Auth adapter that maps multiple bearer tokens to multiple identities.
@@ -101,25 +102,6 @@ class MultiUserAuthAdapter implements IdentityProvider {
   async deleteUser(): Promise<boolean> {
     return false;
   }
-}
-
-interface SSEEvent {
-  event: string;
-  data: string;
-}
-
-function parseSSE(text: string): SSEEvent[] {
-  const events: SSEEvent[] = [];
-  for (const block of text.split("\n\n").filter((b) => b.trim())) {
-    let event = "";
-    let data = "";
-    for (const line of block.split("\n")) {
-      if (line.startsWith("event: ")) event = line.slice(7);
-      else if (line.startsWith("data: ")) data = line.slice(6);
-    }
-    if (event) events.push({ event, data });
-  }
-  return events;
 }
 
 // ---------------------------------------------------------------------------
@@ -299,10 +281,11 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
     workDir = join(tmpdir(), `nb-conv-access-http-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      identityProvider: () => new MultiUserAuthAdapter({
-        [ALICE_TOKEN]: ALICE,
-        [BOB_TOKEN]: BOB,
-      }),
+      identityProvider: () =>
+        new MultiUserAuthAdapter({
+          [ALICE_TOKEN]: ALICE,
+          [BOB_TOKEN]: BOB,
+        }),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,

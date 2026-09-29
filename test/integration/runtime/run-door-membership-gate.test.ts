@@ -30,9 +30,9 @@ import {
   WorkspaceMembershipRevokedError,
 } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-run-door-gate-${Date.now()}`);
 const SHARED_WS = "ws_shared_alpha";
@@ -65,7 +65,11 @@ describe("the run-start door gates workspace membership for every trigger", () =
     await provisionTestWorkspace(runtime, SHARED_WS, "Alpha");
 
     // Both doors work while the owner is a member.
-    const opened = await runtime.chat({ identity: DEV_IDENTITY, message: "first turn", workspaceId: SHARED_WS });
+    const opened = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "first turn",
+      workspaceId: SHARED_WS,
+    });
     const resumed = await runtime.chat({
       identity: DEV_IDENTITY,
       message: "second turn",
@@ -98,7 +102,11 @@ describe("the run-start door gates workspace membership for every trigger", () =
       }),
     );
     const taskRefusal = await refusal(() =>
-      runtime.executeTask({ identity: DEV_IDENTITY, prompt: "do the thing", workspaceId: SHARED_WS }),
+      runtime.executeTask({
+        identity: DEV_IDENTITY,
+        prompt: "do the thing",
+        workspaceId: SHARED_WS,
+      }),
     );
 
     // Each door keeps the outcome its caller's contract needs.

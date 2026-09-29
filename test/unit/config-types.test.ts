@@ -1,118 +1,117 @@
 import { describe, expect, it } from "bun:test";
 import { getValidator } from "../../src/config/index.ts";
 import type { ConnectionState } from "../../src/connectors/runtime/connection.ts";
-import type { HostManifestMeta, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
-import type { RuntimeConfig } from "../../src/runtime/types.ts";
+import type { HostManifestMeta } from "../../src/connectors/runtime/types.ts";
 import type { EngineEventType } from "../../src/engine/types.ts";
 
 describe("JSON Schema validation", () => {
-	const validate = getValidator();
+  const validate = getValidator();
 
-	function isValid(config: Record<string, unknown>): boolean {
-		return validate(config) as boolean;
-	}
+  function isValid(config: Record<string, unknown>): boolean {
+    return validate(config) as boolean;
+  }
 
-	it("accepts config with no new fields (backward compatible)", () => {
-		expect(isValid({})).toBe(true);
-	});
+  it("accepts config with no new fields (backward compatible)", () => {
+    expect(isValid({})).toBe(true);
+  });
 
-	it("rejects workspace-owned fields (skillDirs, etc.)", () => {
-		// These fields are not part of nimblebrain.json schema
-		expect(isValid({ skillDirs: [] })).toBe(false);
-		expect(isValid({ skills: [] })).toBe(false);
-		expect(isValid({ home: { enabled: true } })).toBe(false);
-		expect(isValid({ preferences: { displayName: "Test" } })).toBe(false);
-	});
+  it("rejects workspace-owned fields (skillDirs, etc.)", () => {
+    // These fields are not part of nimblebrain.json schema
+    expect(isValid({ skillDirs: [] })).toBe(false);
+    expect(isValid({ skills: [] })).toBe(false);
+    expect(isValid({ home: { enabled: true } })).toBe(false);
+    expect(isValid({ preferences: { displayName: "Test" } })).toBe(false);
+  });
 
-	it("rejects a workspace's connector array at the top level", () => {
-		// `connectors` here is the instance-level provider/gateway block. A
-		// workspace's connector array shares the name but not the shape, so
-		// putting one in nimblebrain.json is a type error, not a silent strip.
-		expect(isValid({ connectors: [{ url: "https://example.com/mcp" }] })).toBe(false);
-		expect(isValid({ connectors: { providers: {} } })).toBe(true);
-	});
+  it("rejects a workspace's connector array at the top level", () => {
+    // `connectors` here is the instance-level provider/gateway block. A
+    // workspace's connector array shares the name but not the shape, so
+    // putting one in nimblebrain.json is a type error, not a silent strip.
+    expect(isValid({ connectors: [{ url: "https://example.com/mcp" }] })).toBe(false);
+    expect(isValid({ connectors: { providers: {} } })).toBe(true);
+  });
 
-	it("accepts http config with port and host", () => {
-		expect(isValid({ http: { port: 8080, host: "0.0.0.0" } })).toBe(true);
-	});
+  it("accepts http config with port and host", () => {
+    expect(isValid({ http: { port: 8080, host: "0.0.0.0" } })).toBe(true);
+  });
 
-	it("accepts http config with port only", () => {
-		expect(isValid({ http: { port: 3000 } })).toBe(true);
-	});
+  it("accepts http config with port only", () => {
+    expect(isValid({ http: { port: 3000 } })).toBe(true);
+  });
 
-	it("accepts http config with no fields (all optional)", () => {
-		expect(isValid({ http: {} })).toBe(true);
-	});
+  it("accepts http config with no fields (all optional)", () => {
+    expect(isValid({ http: {} })).toBe(true);
+  });
 
-	it("rejects negative port", () => {
-		expect(isValid({ http: { port: -1 } })).toBe(false);
-	});
+  it("rejects negative port", () => {
+    expect(isValid({ http: { port: -1 } })).toBe(false);
+  });
 
-	it("rejects port above 65535", () => {
-		expect(isValid({ http: { port: 70000 } })).toBe(false);
-	});
+  it("rejects port above 65535", () => {
+    expect(isValid({ http: { port: 70000 } })).toBe(false);
+  });
 
-	it("accepts features config", () => {
-		expect(
-			isValid({
-				features: {
-					catalogSearch: false,
-				},
-			}),
-		).toBe(true);
-	});
+  it("accepts features config", () => {
+    expect(
+      isValid({
+        features: {
+          catalogSearch: false,
+        },
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("ConnectionState type", () => {
-	it("covers all 5 states", () => {
-		const states: ConnectionState[] = ["starting", "running", "crashed", "dead", "stopped"];
-		expect(states).toHaveLength(5);
-		// Verify uniqueness
-		expect(new Set(states).size).toBe(5);
-	});
+  it("covers all 5 states", () => {
+    const states: ConnectionState[] = ["starting", "running", "crashed", "dead", "stopped"];
+    expect(states).toHaveLength(5);
+    // Verify uniqueness
+    expect(new Set(states).size).toBe(5);
+  });
 });
 
 describe("EngineEventType", () => {
-	it("includes all new event types", () => {
-		const newEvents: EngineEventType[] = [
-			"connector.installed",
-			"connector.uninstalled",
-			"server.notification",
-			"tool.progress",
-		];
-		// These are compile-time checked — if any is not in the union, TypeScript errors.
-		// At runtime, just verify they are all strings.
-		for (const evt of newEvents) {
-			expect(typeof evt).toBe("string");
-		}
-		expect(newEvents).toHaveLength(4);
-	});
+  it("includes all new event types", () => {
+    const newEvents: EngineEventType[] = [
+      "connector.installed",
+      "connector.uninstalled",
+      "server.notification",
+      "tool.progress",
+    ];
+    // These are compile-time checked — if any is not in the union, TypeScript errors.
+    // At runtime, just verify they are all strings.
+    for (const evt of newEvents) {
+      expect(typeof evt).toBe("string");
+    }
+    expect(newEvents).toHaveLength(4);
+  });
 
-	it("includes all original event types", () => {
-		const origEvents: EngineEventType[] = [
-			"run.start",
-			"text.delta",
-			"tool.start",
-			"tool.done",
-			"llm.done",
-			"run.done",
-			"run.error",
-		];
-		for (const evt of origEvents) {
-			expect(typeof evt).toBe("string");
-		}
-	});
+  it("includes all original event types", () => {
+    const origEvents: EngineEventType[] = [
+      "run.start",
+      "text.delta",
+      "tool.start",
+      "tool.done",
+      "llm.done",
+      "run.done",
+      "run.error",
+    ];
+    for (const evt of origEvents) {
+      expect(typeof evt).toBe("string");
+    }
+  });
 });
 
 describe("HostManifestMeta type", () => {
-	it("matches manifest _meta structure", () => {
-		const meta: HostManifestMeta = {
-			host_version: "1.0",
-			name: "Tasks",
-			icon: "✓",
-			primaryView: { resourceUri: "ui://tasks/board" },
-		};
-		expect(meta.name).toBe("Tasks");
-		expect(meta.primaryView?.resourceUri).toBe("ui://tasks/board");
-	});
+  it("matches manifest _meta structure", () => {
+    const meta: HostManifestMeta = {
+      host_version: "1.0",
+      name: "Tasks",
+      icon: "✓",
+      primaryView: { resourceUri: "ui://tasks/board" },
+    };
+    expect(meta.name).toBe("Tasks");
+    expect(meta.primaryView?.resourceUri).toBe("ui://tasks/board");
+  });
 });

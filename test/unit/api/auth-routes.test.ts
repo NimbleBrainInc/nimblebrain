@@ -27,7 +27,10 @@ function makeCtx(): AppContext {
 function logout(headers: Record<string, string>): Promise<Response> {
   return authRoutes(makeCtx()).request("/v1/auth/logout", {
     method: "POST",
-    headers: { cookie: "nb_session=lapsed-access-token; nb_refresh=live-refresh-token", ...headers },
+    headers: {
+      cookie: "nb_session=lapsed-access-token; nb_refresh=live-refresh-token",
+      ...headers,
+    },
   });
 }
 
@@ -37,14 +40,21 @@ describe("POST /v1/auth/logout", () => {
 
     expect(res.status).toBe(200);
     const cleared = res.headers.getSetCookie();
-    expect(cleared.filter((c) => c.startsWith("nb_session=;") && c.includes("Max-Age=0"))).toHaveLength(2);
+    expect(
+      cleared.filter((c) => c.startsWith("nb_session=;") && c.includes("Max-Age=0")),
+    ).toHaveLength(2);
     expect(cleared).toContain("nb_refresh=; HttpOnly; SameSite=Lax; Path=/v1/auth; Max-Age=0");
   });
 
   // A cross-site HTML form can send these content types without a CORS
   // preflight. Refusing them is what keeps a foreign page from signing the
   // user out.
-  for (const contentType of [undefined, "application/x-www-form-urlencoded", "text/plain", "multipart/form-data"]) {
+  for (const contentType of [
+    undefined,
+    "application/x-www-form-urlencoded",
+    "text/plain",
+    "multipart/form-data",
+  ]) {
     test(`refuses ${contentType ?? "a missing content type"} and clears nothing`, async () => {
       const res = await logout(contentType ? { "content-type": contentType } : {});
 

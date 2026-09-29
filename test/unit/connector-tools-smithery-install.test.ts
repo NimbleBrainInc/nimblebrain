@@ -16,17 +16,17 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { _resetSmitheryConfigForTest } from "../../src/connectors/providers/smithery/config.ts";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -34,6 +34,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const BASSETHOUND_ID = "ai.bassethound/mcp";
 const SERVER = "nimblebrain/bassethound";
@@ -129,11 +130,13 @@ let h: Harness;
 
 /** Stub the Connect API upsert with a ready connection. */
 function stubConnectApi(): void {
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ connectionId: "ignored", status: { state: "connected" } }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    })) as typeof fetch;
+  globalThis.fetch = fakeFetch(
+    async () =>
+      new Response(JSON.stringify({ connectionId: "ignored", status: { state: "connected" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
 }
 
 beforeEach(async () => {
@@ -364,7 +367,9 @@ describe("manage_connectors.install (smithery-auth)", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain('brokered by \\"smithery\\", which is not configured');
+    expect(JSON.stringify(result.content)).toContain(
+      'brokered by \\"smithery\\", which is not configured',
+    );
     const ws = await h.workspaceStore.get(h.wsId);
     expect(ws?.connectors.some((b) => b.brokered !== undefined)).toBe(false);
   });
@@ -379,6 +384,8 @@ describe("manage_connectors.install (smithery-auth)", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain('brokered by \\"smithery\\", which is not configured');
+    expect(JSON.stringify(result.content)).toContain(
+      'brokered by \\"smithery\\", which is not configured',
+    );
   });
 });

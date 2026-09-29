@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import type { ServerHandle } from "../../../src/api/server.ts";
+import { startServer } from "../../../src/api/server.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -12,12 +13,12 @@ import type {
   VerifiedIdentity,
 } from "../../../src/identity/provider.ts";
 import { FIRST_PARTY_GRANT } from "../../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { startServer } from "../../../src/api/server.ts";
-import type { ServerHandle } from "../../../src/api/server.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
+import { makeIdentity } from "../../helpers/identity.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 /**
  * Integration tests for per-identity request rate limiting on the chat,
@@ -35,12 +36,12 @@ import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-wo
  */
 
 const TOKEN = "rate-limit-test-token-abcdef";
-const IDENTITY: UserIdentity = {
+const IDENTITY: UserIdentity = makeIdentity({
   id: DEV_IDENTITY.id,
   email: "ratelimit@example.test",
   displayName: "Rate Limit Tester",
   orgRole: "member",
-};
+});
 
 class TokenAuthAdapter implements IdentityProvider {
   readonly capabilities: ProviderCapabilities = {
@@ -97,7 +98,7 @@ beforeAll(async () => {
   await provisionTestWorkspace(runtime);
 
   // WITH a provider → not dev mode → rate limiting is active.
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 

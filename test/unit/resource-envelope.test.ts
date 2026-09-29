@@ -27,10 +27,7 @@ describe("buildResourceEnvelopeEntry", () => {
     expect(entry.text).toBe("<html>hi</html>");
     expect(entry.mimeType).toBe("text/html");
     const meta = entry._meta as { ui?: { csp?: { connectDomains?: string[] } } };
-    expect(meta.ui?.csp?.connectDomains).toEqual([
-      "http://localhost:9991",
-      "ws://localhost:9991",
-    ]);
+    expect(meta.ui?.csp?.connectDomains).toEqual(["http://localhost:9991", "ws://localhost:9991"]);
   });
 
   it("base64-encodes blob for binary resources and omits text", () => {

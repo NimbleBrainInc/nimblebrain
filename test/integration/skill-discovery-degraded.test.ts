@@ -17,16 +17,18 @@
  * uninstall.
  */
 
-import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import {
@@ -35,9 +37,7 @@ import {
   serveSkills,
   skillEntryFor,
 } from "../helpers/skills-server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const FAILING_NAME = "ai-nimblebrain-failing-mcp";
 const HEALTHY_NAME = "ai-nimblebrain-healthy-mcp";
@@ -60,12 +60,12 @@ HEALTHY-MARKER — this rule must be in context on every turn.`;
 
 /** The two verbs every fixture below answers the same way. */
 function withPingTool(server: Server, toolName = "ping"): Server {
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       { name: toolName, description: "Ping", inputSchema: { type: "object", properties: {} } },
     ],
   }));
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
   return server;
@@ -97,7 +97,7 @@ function createUnreadableServer(): Server {
   handleSkillsList(server, () => ({
     skills: [skillEntryFor("skill://broken/SKILL.md", body)],
   }));
-  server.setRequestHandler('resources/read', async () => {
+  server.setRequestHandler("resources/read", async () => {
     throw new Error("resources/read is unavailable");
   });
   return server;
@@ -174,7 +174,11 @@ describe("degraded skill discovery", () => {
   it("reports a failed enumeration with a machine-readable reason", async () => {
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "hello" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "hello",
+      });
       const calls = degradedCalls(warn);
       const failed = calls.find((f) => f.server === FAILING_NAME);
       expect(failed).toBeDefined();
@@ -190,7 +194,11 @@ describe("degraded skill discovery", () => {
     // leaving the operator one line for an outage that spans hours.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "again" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "again",
+      });
       expect(degradedCalls(warn).some((f) => f.server === FAILING_NAME)).toBe(true);
     } finally {
       warn.mockRestore();
@@ -200,7 +208,11 @@ describe("degraded skill discovery", () => {
   it("says nothing about a server that enumerates cleanly", async () => {
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "third" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "third",
+      });
       expect(degradedCalls(warn).some((f) => f.server === HEALTHY_NAME)).toBe(false);
     } finally {
       warn.mockRestore();
@@ -215,11 +227,19 @@ describe("degraded skill discovery", () => {
     // the TTL. The second turn proves the short set was not cached.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "capped" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "capped",
+      });
       const first = degradedCalls(warn).find((f) => f.server === TRUNCATED_NAME);
       expect(first?.reason).toBe("enumeration_truncated");
       warn.mockClear();
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "capped again" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "capped again",
+      });
       const second = degradedCalls(warn).find((f) => f.server === TRUNCATED_NAME);
       expect(second?.reason).toBe("enumeration_truncated");
     } finally {
@@ -233,12 +253,20 @@ describe("degraded skill discovery", () => {
     // read and says why the skill did not compose.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "unreadable" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "unreadable",
+      });
       const first = degradedCalls(warn).find((f) => f.server === UNREADABLE_NAME);
       expect(first?.reason).toBe("skill_unreadable");
       expect(first?.recovered).toBe(0);
       warn.mockClear();
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "unreadable again" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "unreadable again",
+      });
       expect(degradedCalls(warn).some((f) => f.server === UNREADABLE_NAME)).toBe(true);
     } finally {
       warn.mockRestore();
@@ -252,7 +280,11 @@ describe("degraded skill discovery", () => {
     // deliberately degraded fixtures may appear.
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "fifth" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "fifth",
+      });
       const servers = new Set(degradedCalls(warn).map((f) => f.server as string));
       expect(servers.size).toBeGreaterThan(0);
       for (const server of servers) {
@@ -276,9 +308,7 @@ describe("degraded skill discovery", () => {
     expect(typeof response).toBe("string");
     const pool = await (
       runtime as unknown as {
-        loadConnectorSkills: (
-          wsId: string,
-        ) => Promise<
+        loadConnectorSkills: (wsId: string) => Promise<
           Array<{
             manifest: { name: string };
             loadBody?: () => Promise<{ ok: boolean; body?: string }>;
@@ -317,12 +347,20 @@ describe("degraded skill discovery", () => {
       const seeded = lifecycle.getInstances().find((i) => i.serverName === GHOST_NAME);
       expect(seeded?.state).toBe("not_authenticated");
 
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "ghost quiet" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "ghost quiet",
+      });
       expect(degradedCalls(warn).some((f) => f.server === GHOST_NAME)).toBe(false);
 
       if (seeded) seeded.state = "running";
       warn.mockClear();
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "ghost loud" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "ghost loud",
+      });
       const ghost = degradedCalls(warn).find((f) => f.server === GHOST_NAME);
       expect(ghost?.reason).toBe("source_unavailable");
       expect(ghost?.recovered).toBe(0);

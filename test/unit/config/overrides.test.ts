@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { OVERRIDE_WRITABLE_KEYS, mergeConfigs } from "../../../src/config/overrides.ts";
+import { mergeConfigs } from "../../../src/config/overrides.ts";
 
 describe("mergeConfigs", () => {
   it("lets a writable field override the seed", () => {

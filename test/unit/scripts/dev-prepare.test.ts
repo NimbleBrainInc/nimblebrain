@@ -63,7 +63,11 @@ describe("appUisMissingDist", () => {
     makeApp("usage");
     makeApp("files");
     makeApp("schemas", { ui: false });
-    expect(appUisMissingDist(repoRoot).map((a) => a.name).sort()).toEqual(["files", "usage"]);
+    expect(
+      appUisMissingDist(repoRoot)
+        .map((a) => a.name)
+        .sort(),
+    ).toEqual(["files", "usage"]);
   });
 
   test("returns [] when src/platform does not exist rather than throwing", () => {

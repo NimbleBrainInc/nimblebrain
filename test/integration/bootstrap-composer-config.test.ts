@@ -12,10 +12,12 @@
  * this file.
  */
 
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { ServerHandle } from "../../src/api/server.ts";
+import { startServer } from "../../src/api/server.ts";
 import type {
   CreateUserInput,
   CreateUserResult,
@@ -26,8 +28,6 @@ import type {
 } from "../../src/identity/provider.ts";
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
-import type { ServerHandle } from "../../src/api/server.ts";
-import { startServer } from "../../src/api/server.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";

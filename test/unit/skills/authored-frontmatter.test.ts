@@ -6,9 +6,9 @@
  * overrules the caller.
  */
 
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { absorbFrontmatter } from "../../../src/skills/authored-frontmatter.ts";
 
 const AUTHORING_GUIDE = join(

@@ -7,13 +7,14 @@
  * the soft-delete flow (the data half lives in UserStore tests).
  */
 
+import { beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "bun:test";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import { fakeFetch } from "../../helpers/fake-fetch.ts";
 
 // ── Crypto helpers ──────────────────────────────────────────────────
 
@@ -25,7 +26,12 @@ interface TestKeyPair {
 
 async function generateRSAKeyPair(kid: string): Promise<TestKeyPair> {
   const keyPair = await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
     true,
     ["sign", "verify"],
   );
@@ -36,10 +42,17 @@ async function generateRSAKeyPair(kid: string): Promise<TestKeyPair> {
 }
 
 function base64UrlEncode(data: Uint8Array): string {
-  return btoa(String.fromCharCode(...data)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(String.fromCharCode(...data))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
-async function createJwt(payload: Record<string, unknown>, privateKey: CryptoKey, kid: string): Promise<string> {
+async function createJwt(
+  payload: Record<string, unknown>,
+  privateKey: CryptoKey,
+  kid: string,
+): Promise<string> {
   const header = { alg: "RS256", typ: "JWT", kid };
   const headerB64 = base64UrlEncode(new TextEncoder().encode(JSON.stringify(header)));
   const payloadB64 = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
@@ -99,10 +112,18 @@ function createProvider(): { provider: WorkosIdentityProvider; userStore: UserSt
       updatedAt: new Date().toISOString(),
     }),
     listOrganizationMemberships: async (opts: { userId: string; organizationId: string }) => ({
-      data: [{ id: "om_test", userId: opts.userId, organizationId: opts.organizationId, role: { slug: "member" }, status: "active" }],
+      data: [
+        {
+          id: "om_test",
+          userId: opts.userId,
+          organizationId: opts.organizationId,
+          role: { slug: "member" },
+          status: "active",
+        },
+      ],
     }),
   };
-  provider.fetcher = async () => new Response(jwksResponseBody(), { status: 200 });
+  provider.fetcher = fakeFetch(async () => new Response(jwksResponseBody(), { status: 200 }));
 
   return { provider, userStore };
 }
@@ -116,7 +137,11 @@ function makeRequest(token: string): Request {
 
 async function makeValidToken(sub: string): Promise<string> {
   const nowSec = Math.floor(Date.now() / 1000);
-  return createJwt({ sub, exp: nowSec + 3600, iat: nowSec, org_id: CONFIG.organizationId }, workosKey.privateKey, workosKey.kid);
+  return createJwt(
+    { sub, exp: nowSec + 3600, iat: nowSec, org_id: CONFIG.organizationId },
+    workosKey.privateKey,
+    workosKey.kid,
+  );
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

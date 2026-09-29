@@ -1,11 +1,11 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHash, hkdfSync, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuthorizationServerMetadata } from "@modelcontextprotocol/server";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
 import { signEnvelope, verifyEnvelopeAsTenant } from "../../src/oauth/envelope.ts";
+import { buildTenantAssertion } from "../../src/oauth/fleet-assertion.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import {
   installTestCredentialStore,
@@ -19,14 +19,27 @@ import {
 // side breaks and CI catches it.
 const VECTOR = JSON.parse(
   readFileSync(new URL("./fixtures/authorizer-cross-impl-v1.json", import.meta.url), "utf8"),
-) as { masterKeyB64: string; tid: string; inner: string; iat: number; ttlSeconds: number; wire: string };
+) as {
+  masterKeyB64: string;
+  tid: string;
+  inner: string;
+  iat: number;
+  ttlSeconds: number;
+  wire: string;
+};
 
 describe("cross-impl vector (authorizer parity)", () => {
   it("signEnvelope reproduces the committed wire byte-for-byte", () => {
     const master = Buffer.from(VECTOR.masterKeyB64, "base64");
     // The runtime holds this key pre-derived under the authorizer info string.
     const tenantKey = Buffer.from(
-      hkdfSync("sha256", master, Buffer.from(VECTOR.tid, "utf8"), Buffer.from("mcp-authorizer/v1"), 32),
+      hkdfSync(
+        "sha256",
+        master,
+        Buffer.from(VECTOR.tid, "utf8"),
+        Buffer.from("mcp-authorizer/v1"),
+        32,
+      ),
     );
     const wire = signEnvelope({
       tid: VECTOR.tid,
@@ -104,7 +117,11 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
     });
   }
   function params(verifier = "the-verifier") {
-    return new URLSearchParams({ grant_type: "authorization_code", code: "c", code_verifier: verifier });
+    return new URLSearchParams({
+      grant_type: "authorization_code",
+      code: "c",
+      code_verifier: verifier,
+    });
   }
 
   // The hook fires through the property the SDK actually destructures. Asserting
@@ -129,7 +146,11 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
     await fleetHook(FLEET_ISSUER)(new Headers(), p, `${FLEET_ISSUER}/token`);
     const wire = p.get("tenant_assertion");
     expect(wire).toBeTruthy();
-    const payload = verifyEnvelopeAsTenant({ wire: wire as string, tenantKey: KEY, expectedTid: "tenant-x" });
+    const payload = verifyEnvelopeAsTenant({
+      wire: wire as string,
+      tenantKey: KEY,
+      expectedTid: "tenant-x",
+    });
     expect(payload.inner).toBe(s256("the-verifier"));
   });
 
@@ -164,10 +185,7 @@ describe("fleet hook — SDK client-auth parity (step 1)", () => {
     setEnv(undefined, undefined); // step 1 only; no tenant assertion
   });
 
-  function hookWithStaticClient(staticClient: {
-    clientId: string;
-    clientSecret?: string;
-  }) {
+  function hookWithStaticClient(staticClient: { clientId: string; clientSecret?: string }) {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_test" },
       serverName: "fleet-srv",
@@ -185,7 +203,11 @@ describe("fleet hook — SDK client-auth parity (step 1)", () => {
 
   it("public client (no secret) → client_id in body (method 'none')", async () => {
     const p = tokenParams();
-    await hookWithStaticClient({ clientId: "pub-client" })(new Headers(), p, `${FLEET_ISSUER}/token`);
+    await hookWithStaticClient({ clientId: "pub-client" })(
+      new Headers(),
+      p,
+      `${FLEET_ISSUER}/token`,
+    );
     expect(p.get("client_id")).toBe("pub-client");
     expect(p.get("client_secret")).toBeNull();
   });

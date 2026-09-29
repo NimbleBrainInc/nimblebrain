@@ -13,9 +13,9 @@ import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 
 // Files uploaded with a chat land in the workspace the chat is addressed to
 // (`/v1/workspaces/<wsId>/chat/*`). The test uploads and reads in a workspace
@@ -45,7 +45,7 @@ beforeAll(async () => {
   });
   DEV_WS_ID = devWs.id;
   await runtime.ensureWorkspaceRegistry(DEV_WS_ID);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -98,7 +98,13 @@ function extractStructured(body: unknown): unknown {
 }
 
 async function listFiles(): Promise<
-  { id: string; filename: string; source: string; mimeType: string; conversationId: string | null }[]
+  {
+    id: string;
+    filename: string;
+    source: string;
+    mimeType: string;
+    conversationId: string | null;
+  }[]
 > {
   const res = await callFilesTool("list", { limit: 100 });
   expect(res.status).toBe(200);

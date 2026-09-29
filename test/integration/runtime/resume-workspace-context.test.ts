@@ -19,10 +19,9 @@ import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provid
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ConversationNotFoundError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider, devWorkspace } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
-import { devWorkspace } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-resume-workspace-context-${Date.now()}`);
 
@@ -34,7 +33,6 @@ const WORKSPACE_A = "ws_workspace_a";
 const WORKSPACE_A_NAME = "Alpha Workspace";
 const WORKSPACE_B = "ws_workspace_b";
 const WORKSPACE_B_NAME = "Bravo Workspace";
-const OWNER = DEV_IDENTITY.id;
 // Another workspace the owner belongs to, provisioned before WORKSPACE_A so it
 // is the owner's default: a dev-mode request that names no workspace runs here.
 const HOME = "ws_home";
@@ -130,7 +128,11 @@ describe("a resume runs only in the conversation's own workspace", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
 
     // Born focused on workspace A → the conversation lives in A.
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
 
     // From the owner's default workspace (HOME), where the conversation is not.
     await expect(
@@ -160,7 +162,11 @@ describe("a resume runs only in the conversation's own workspace", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A, WORKSPACE_A_NAME);
     await provisionTestWorkspace(runtime, WORKSPACE_B, WORKSPACE_B_NAME);
 
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
 
     await expect(
       runtime.chat({

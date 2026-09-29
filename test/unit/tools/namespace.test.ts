@@ -20,14 +20,14 @@
 
 import { describe, expect, test } from "bun:test";
 import {
-  InvalidNamespacedToolNameInput,
-  namespacedToolName,
-} from "../../helpers/namespaced-tool-name.ts";
-import {
   parseNamespacedSourceName,
   parseNamespacedToolName,
   UnknownNamespacedToolName,
 } from "../../../src/tools/namespace.ts";
+import {
+  InvalidNamespacedToolNameInput,
+  namespacedToolName,
+} from "../../helpers/namespaced-tool-name.ts";
 
 describe("namespacedToolName — construction", () => {
   test("builds `ws_<id>-<name>` for valid inputs", () => {

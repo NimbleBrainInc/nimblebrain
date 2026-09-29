@@ -59,9 +59,7 @@ export interface EchoModelOptions {
 export function createEchoModel(options?: EchoModelOptions): LanguageModelV4 {
   const queue = [...(options?.responses ?? [])];
 
-  function extractLastUserText(
-    callOptions: LanguageModelV4CallOptions,
-  ): string {
+  function extractLastUserText(callOptions: LanguageModelV4CallOptions): string {
     const messages = callOptions.prompt;
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
@@ -83,7 +81,12 @@ export function createEchoModel(options?: EchoModelOptions): LanguageModelV4 {
   function buildUsage(textLen: number, reasoningTokens?: number): LanguageModelV4Usage {
     const total = textLen + (reasoningTokens ?? 0);
     return {
-      inputTokens: { total: textLen, noCache: textLen, cacheRead: undefined, cacheWrite: undefined },
+      inputTokens: {
+        total: textLen,
+        noCache: textLen,
+        cacheRead: undefined,
+        cacheWrite: undefined,
+      },
       outputTokens: {
         total,
         text: textLen,

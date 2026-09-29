@@ -1,8 +1,8 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/server";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import {
@@ -181,42 +181,39 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     expect(b?.client_id).toBe("first-dcr");
   });
 
-  it(
-    "redirectToAuthorization — only the chain whose PKCE matches the disk verifier captures the URL",
-    async () => {
-      const captured: string[] = [];
-      const p = makeProvider(workDir, (url) => captured.push(url));
-      const state = p.state();
-      // Simulate two SDK auth() chains: each generates its own verifier
-      // and an authorize URL whose code_challenge is SHA256(its verifier).
-      const vA = "verifier-A-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-      const vB = "verifier-B-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-      const urlA = buildAuthUrl({ clientId: "client-X", state, verifier: vA });
-      const urlB = buildAuthUrl({ clientId: "client-X", state, verifier: vB });
+  it("redirectToAuthorization — only the chain whose PKCE matches the disk verifier captures the URL", async () => {
+    const captured: string[] = [];
+    const p = makeProvider(workDir, (url) => captured.push(url));
+    const state = p.state();
+    // Simulate two SDK auth() chains: each generates its own verifier
+    // and an authorize URL whose code_challenge is SHA256(its verifier).
+    const vA = "verifier-A-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const vB = "verifier-B-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const urlA = buildAuthUrl({ clientId: "client-X", state, verifier: vA });
+    const urlB = buildAuthUrl({ clientId: "client-X", state, verifier: vB });
 
-      // Chain A saves its verifier first → claims the verifier slot.
-      await p.saveCodeVerifier(vA);
-      await p.saveCodeVerifier(vB); // coalesced no-op; disk stays vA
+    // Chain A saves its verifier first → claims the verifier slot.
+    await p.saveCodeVerifier(vA);
+    await p.saveCodeVerifier(vB); // coalesced no-op; disk stays vA
 
-      // Both chains call redirectToAuthorization. Each throws (the headless
-      // probe is off + we use the interactive branch's UnauthorizedError
-      // exit). Only the chain whose URL's challenge matches the saved
-      // verifier should reach the onInteractiveAuthRequired callback.
-      await expect(p.redirectToAuthorization(urlB)).rejects.toThrow();
-      await expect(p.redirectToAuthorization(urlA)).rejects.toThrow();
+    // Both chains call redirectToAuthorization. Each throws (the headless
+    // probe is off + we use the interactive branch's UnauthorizedError
+    // exit). Only the chain whose URL's challenge matches the saved
+    // verifier should reach the onInteractiveAuthRequired callback.
+    await expect(p.redirectToAuthorization(urlB)).rejects.toThrow();
+    await expect(p.redirectToAuthorization(urlA)).rejects.toThrow();
 
-      // Exactly one URL captured — the one whose challenge == SHA256(disk verifier).
-      expect(captured.length).toBe(1);
-      const capturedUrl = new URL(captured[0]!);
-      expect(capturedUrl.searchParams.get("code_challenge")).toBe(pkceChallenge(vA));
+    // Exactly one URL captured — the one whose challenge == SHA256(disk verifier).
+    expect(captured.length).toBe(1);
+    const capturedUrl = new URL(captured[0]!);
+    expect(capturedUrl.searchParams.get("code_challenge")).toBe(pkceChallenge(vA));
 
-      // And the disk verifier produces that exact challenge — the tuple is
-      // coherent end-to-end (this is what makes the exchange succeed).
-      expect(pkceChallenge(await p.codeVerifier())).toBe(
-        capturedUrl.searchParams.get("code_challenge"),
-      );
-    },
-  );
+    // And the disk verifier produces that exact challenge — the tuple is
+    // coherent end-to-end (this is what makes the exchange succeed).
+    expect(pkceChallenge(await p.codeVerifier())).toBe(
+      capturedUrl.searchParams.get("code_challenge"),
+    );
+  });
 
   it("end-to-end: N concurrent chains converge to one coherent (state, verifier, client_id, URL) tuple", async () => {
     const captured: string[] = [];
@@ -239,7 +236,9 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
       const verifier = `verifier-${label}-padding-padding-padding-padding`;
       await p.saveCodeVerifier(verifier);
       try {
-        await p.redirectToAuthorization(buildAuthUrl({ clientId: `client-${label}`, state: s, verifier }));
+        await p.redirectToAuthorization(
+          buildAuthUrl({ clientId: `client-${label}`, state: s, verifier }),
+        );
       } catch {
         // Expected — all chains throw UnauthorizedError; the matching one
         // throws after capture, the others throw before.

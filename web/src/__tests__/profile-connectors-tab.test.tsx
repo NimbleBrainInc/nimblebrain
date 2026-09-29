@@ -218,6 +218,35 @@ describe("ProfileConnectorsTab", () => {
     expect(text).not.toContain("not_authenticated");
   });
 
+  test("names the signed-in account on a connected connector, email before name", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        identity: { email: "user@example.com", name: "A User" },
+        grantedWorkspaces: [],
+      },
+      {
+        serverName: "gmail",
+        displayName: "Gmail",
+        description: null,
+        state: "running",
+        auth: "composio",
+        connectorId: "com.google/gmail",
+        identity: { name: "other@example.com" },
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Connected as user@example.com");
+    expect(text).not.toContain("A User");
+    expect(text).toContain("Connected as other@example.com");
+  });
+
   test("pluralizes the grant count for 2+ workspaces", async () => {
     nextConnectors = [
       {

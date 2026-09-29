@@ -1,9 +1,8 @@
-import { describe, expect, it, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { EngineEvent } from "../../src/engine/types.ts";
 import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
 
 function makeDir() {
@@ -207,7 +206,12 @@ describe("EventSourcedConversationStore", () => {
     };
 
     const path = join(dirs.dir, `${id}.jsonl`);
-    writeFileSync(path, [JSON.stringify(meta), JSON.stringify(userMsg), JSON.stringify(assistantMsg)].map((l) => `${l}\n`).join(""));
+    writeFileSync(
+      path,
+      [JSON.stringify(meta), JSON.stringify(userMsg), JSON.stringify(assistantMsg)]
+        .map((l) => `${l}\n`)
+        .join(""),
+    );
 
     const conv = await store.load(id);
     expect(conv).not.toBeNull();
@@ -215,7 +219,9 @@ describe("EventSourcedConversationStore", () => {
     const messages = await store.history(conv!);
     expect(messages.length).toBe(2);
     expect(messages[0].role).toBe("user");
-    expect((messages[0].content as Array<{ type: string; text: string }>)[0].text).toBe("old message");
+    expect((messages[0].content as Array<{ type: string; text: string }>)[0].text).toBe(
+      "old message",
+    );
     expect(messages[1].role).toBe("assistant");
   });
 
@@ -311,9 +317,7 @@ describe("EventSourcedConversationStore", () => {
       data: {
         runId: "r1",
         model: "test-model",
-        content: [
-          { type: "tool-call", toolCallId: "tc1", toolName: "files__read", input: "{}" },
-        ],
+        content: [{ type: "tool-call", toolCallId: "tc1", toolName: "files__read", input: "{}" }],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
       },
@@ -321,7 +325,14 @@ describe("EventSourcedConversationStore", () => {
     store.emit({ type: "tool.start", data: { runId: "r1", name: "files__read", id: "tc1" } });
     store.emit({
       type: "tool.done",
-      data: { runId: "r1", name: "files__read", id: "tc1", ok: true, ms: 10, output: "Hello world file content" },
+      data: {
+        runId: "r1",
+        name: "files__read",
+        id: "tc1",
+        ok: true,
+        ms: 10,
+        output: "Hello world file content",
+      },
     });
     store.emit({
       type: "llm.done",

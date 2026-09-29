@@ -13,17 +13,21 @@
  * it walks every non-safe route the real app serves.
  */
 
-import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
-import type { IdentityStores } from "../../src/runtime/types.ts";
-import type { ProviderCapabilities, TokenResult, VerifiedIdentity } from "../../src/identity/provider.ts";
+import type {
+  ProviderCapabilities,
+  TokenResult,
+  VerifiedIdentity,
+} from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { IdentityStores } from "../../src/runtime/types.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_IDENTITY, TestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 
@@ -360,9 +364,7 @@ describe("every non-safe route in the table", () => {
 
   it("refuses a cookie-carrying write from another origin on the same site", async () => {
     const routes = [
-      ...new Set(
-        handle.app.routes.filter((r) => !SAFE.has(r.method)).map((r) => concrete(r.path)),
-      ),
+      ...new Set(handle.app.routes.filter((r) => !SAFE.has(r.method)).map((r) => concrete(r.path))),
     ];
     // The walk covers the routes that motivated the guard; if the table stops
     // listing them, this is not testing the app it thinks it is.

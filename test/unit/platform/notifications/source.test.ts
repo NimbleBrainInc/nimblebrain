@@ -12,18 +12,15 @@
  * nothing here.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import type { ToolResult } from "../../../../src/engine/types.ts";
 import { parseNotificationEnvelope } from "../../../../src/notifications/envelope.ts";
 import { resolvePollConfig } from "../../../../src/notifications/poll-config.ts";
 import { NotificationStore } from "../../../../src/notifications/store.ts";
-import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
-import type { Runtime } from "../../../../src/runtime/runtime.ts";
-import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { createNotificationsSource } from "../../../../src/platform/notifications/source.ts";
 import {
   NotificationsListInput,
@@ -31,6 +28,9 @@ import {
   NotificationsMarkReadInput,
   type NotificationsMarkReadOutput,
 } from "../../../../src/platform/schemas/notifications.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import type { Runtime } from "../../../../src/runtime/runtime.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../../src/workspace/workspace-store.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";

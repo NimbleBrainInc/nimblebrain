@@ -37,6 +37,26 @@
     }
   },
   "files": {
-    "includes": ["src/**", "web/src/**", "instrument/**", "scripts/**", "!**/dist/**", "!web/src/_generated/**"]
-  }
+    "includes": [
+      "src/**",
+      "web/src/**",
+      "instrument/**",
+      "scripts/**",
+      "test/**/*.ts",
+      "test/**/*.tsx",
+      "!**/dist/**",
+      "!web/src/_generated/**"
+    ]
+  },
+  "overrides": [
+    {
+      "includes": ["test/**"],
+      "linter": {
+        "rules": {
+          "complexity": { "noExcessiveCognitiveComplexity": "off" },
+          "suspicious": { "noTemplateCurlyInString": "off" }
+        }
+      }
+    }
+  ]
 }

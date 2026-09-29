@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { AgentEngine } from "../../src/engine/engine.ts";
-import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
+import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, ToolSchema } from "../../src/engine/types.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
-import { recordingModel, type RecordedCall } from "../helpers/recording-model.ts";
+import { type RecordedCall, recordingModel } from "../helpers/recording-model.ts";
 import { checkInvariants, deriveShape } from "../helpers/token-shape.ts";
 
 // --- fixed scenario inputs (deterministic; the whole point is reproducibility) ---
@@ -48,7 +48,11 @@ function toolLoopResponses(steps: number): EchoModelResponse[] {
   return responses;
 }
 
-async function runToolLoop(model: string, steps: number, maxIterations = 25): Promise<RecordedCall[]> {
+async function runToolLoop(
+  model: string,
+  steps: number,
+  maxIterations = 25,
+): Promise<RecordedCall[]> {
   const echo = createEchoModel({
     provider: "anthropic",
     modelId: "scenario",
@@ -80,7 +84,7 @@ async function runToolLoop(model: string, steps: number, maxIterations = 25): Pr
 async function assertGolden(name: string, shape: unknown): Promise<void> {
   const path = `${import.meta.dir}/__golden__/${name}.json`;
   const serialized = `${JSON.stringify(shape, null, 2)}\n`;
-  if (process.env["TOKEN_SHAPE_UPDATE"]) {
+  if (process.env.TOKEN_SHAPE_UPDATE) {
     await Bun.write(path, serialized);
     return;
   }

@@ -16,11 +16,11 @@
  *   and a digest that failed verification is not re-read every turn.
  */
 
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { CLIENT_CAPABILITIES_META_KEY } from "@modelcontextprotocol/client";
 import {
   createMcpHandler,
@@ -29,15 +29,15 @@ import {
   type ServerCapabilities,
 } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { SKILLS_EXTENSION_ID } from "../../src/skills/skills-extension.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { handleSkillsList, skillEntryFor } from "../helpers/skills-server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 function skillMd(name: string, marker: string, extra = ""): string {
   return `---\nname: ${name}\ndescription: ${name} guidance\n${extra}---\n\n${marker}\n`;
@@ -252,7 +252,11 @@ describe("discovery by era", () => {
 
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "quiet" });
+      await runtime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "quiet",
+      });
       const degraded = warn.mock.calls
         .map((c) => c[1] as Record<string, unknown> | undefined)
         .filter((f) => f?.event === "skills.composition.degraded" && f.server === "legacy-none");
@@ -275,7 +279,11 @@ describe("bodies on need", () => {
     served["modern-declared"].calls.filter((c) => c.startsWith("resources/read")).sort();
 
   it("composes a verified `always` body and drops one that fails verification", async () => {
-    await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "hello" });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "hello",
+    });
     const prompt = lastPromptText();
     expect(prompt).toContain("LISTED_BODY");
     expect(prompt).not.toContain("TAMPERED_BODY");
@@ -288,7 +296,11 @@ describe("bodies on need", () => {
 
   it("serves an unchanged body from the digest cache and does not re-read a failed digest", async () => {
     const before = reads().length;
-    await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "again" });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "again",
+    });
     expect(lastPromptText()).toContain("LISTED_BODY");
     expect(reads().length).toBe(before);
   });

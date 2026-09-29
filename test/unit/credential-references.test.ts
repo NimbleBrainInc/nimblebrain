@@ -63,7 +63,11 @@ describe("transport auth — literal and reference", () => {
   test("a named header's value resolves the same way", async () => {
     await store.put({ kind: "workspace", wsId: WS_ID }, "acme.api_key", "k_stored");
     const config: RemoteTransportConfig = {
-      auth: { type: "header", name: "x-api-key", value: { ref: "credential", key: "acme.api_key" } },
+      auth: {
+        type: "header",
+        name: "x-api-key",
+        value: { ref: "credential", key: "acme.api_key" },
+      },
     };
     const { headers } = await resolveTransportCredential(config, WS_ID);
     expect(headers["x-api-key"]).toBe("k_stored");
@@ -82,7 +86,6 @@ describe("transport auth — literal and reference", () => {
     process.env.NB_CREDREF_PROBE = "from-env";
     try {
       const config: RemoteTransportConfig = {
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal that must NOT expand
         auth: { type: "bearer", token: "${NB_CREDREF_PROBE}" },
       };
       const { headers } = await resolveTransportCredential(config, WS_ID);
@@ -200,7 +203,9 @@ describe("instance config references", () => {
   test("a gateway key under an operator-chosen name resolves without being named in code", async () => {
     await store.put({ kind: "instance" }, "acme.gateway_key", "gw-stored");
     const resolved = await resolveInstanceCredentialRefs({
-      connectors: { gateways: { acme: { apiKey: { ref: "credential", key: "acme.gateway_key" } } } },
+      connectors: {
+        gateways: { acme: { apiKey: { ref: "credential", key: "acme.gateway_key" } } },
+      },
     });
     expect(resolved.connectors.gateways.acme.apiKey).toBe("gw-stored");
   });

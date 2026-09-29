@@ -11,13 +11,13 @@
 import { describe, expect, test } from "bun:test";
 import matter from "gray-matter";
 import {
-  mapFrontmatterToManifest,
-  validateFrontmatter,
-} from "../../../src/skills/schemas/skill-manifest.ts";
-import {
   migrateFrontmatterToManifest,
   migrateSkillContent,
 } from "../../../scripts/lib/migrate-skill-frontmatter.ts";
+import {
+  mapFrontmatterToManifest,
+  validateFrontmatter,
+} from "../../../src/skills/schemas/skill-manifest.ts";
 
 describe("migrateFrontmatterToManifest", () => {
   test("`type: context` becomes loading-strategy always", () => {
@@ -33,12 +33,11 @@ describe("migrateFrontmatterToManifest", () => {
 
   test("`type: skill` (or unset) becomes dynamic", () => {
     expect(
-      migrateFrontmatterToManifest({ name: "a", description: "d", type: "skill" })
-        .loadingStrategy,
+      migrateFrontmatterToManifest({ name: "a", description: "d", type: "skill" }).loadingStrategy,
     ).toBe("dynamic");
-    expect(
-      migrateFrontmatterToManifest({ name: "a", description: "d" }).loadingStrategy,
-    ).toBe("dynamic");
+    expect(migrateFrontmatterToManifest({ name: "a", description: "d" }).loadingStrategy).toBe(
+      "dynamic",
+    );
   });
 
   test("legacy non-always strategies collapse to dynamic", () => {
@@ -91,8 +90,8 @@ describe("migrateFrontmatterToManifest", () => {
     });
     // version is a canonical conventional field — carried across (top-level wins).
     expect(m.version).toBe("1.0.0");
-    expect((m as Record<string, unknown>).type).toBeUndefined();
-    expect((m as Record<string, unknown>)["requires-bundles"]).toBeUndefined();
+    expect(Object.hasOwn(m, "type")).toBe(false);
+    expect(Object.hasOwn(m, "requires-bundles")).toBe(false);
     // scope is stamped from the directory tier at load, never persisted.
     expect(m.scope).toBeUndefined();
     // keywords are NOT dropped — they fold into the description (activation signal).

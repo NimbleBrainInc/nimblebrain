@@ -1,17 +1,17 @@
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { resolveFeatures } from "../../src/config/features.ts";
+import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 import {
   COMPOSIO_PROVIDER_CONFIG_KEYS,
-  GATEWAY_CONFIG_KEYS,
-  SMITHERY_PROVIDER_CONFIG_KEYS,
   CONNECTORS_CONFIG_KEYS,
+  GATEWAY_CONFIG_KEYS,
   MANAGED_PROVIDER_KEYS,
+  SMITHERY_PROVIDER_CONFIG_KEYS,
 } from "../../src/connectors/providers/config.ts";
 import { MODEL_SLOTS } from "../../src/model/slots.ts";
 import { NOTIFICATIONS_POLL_CONFIG_KEYS } from "../../src/notifications/poll-config.ts";
-import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 
 /**
  * Drift guard: the published config schema must stay in lockstep with the

@@ -28,21 +28,21 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { _resetConnectorsConfigForTest } from "../../src/connectors/providers/config.ts";
 import { gatewayCredentialProvider } from "../../src/connectors/gateways/transport-credential.ts";
+import { _resetConnectorsConfigForTest } from "../../src/connectors/providers/config.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import {
   _resetCredentialProvidersForTest,
   getCredentialProvider,
 } from "../../src/tools/credential-provider.ts";
+import { requireCredentialStore } from "../../src/tools/credential-store.ts";
 import {
   _resetCredentialStoreBackendsForTest,
   getCredentialStoreBackend,
 } from "../../src/tools/credential-store-backend.ts";
-import { requireCredentialStore } from "../../src/tools/credential-store.ts";
 import { CREDENTIAL_PROVIDER } from "../../src/tools/credential-transport-credential.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 let runtime: Runtime;
 let testDir: string;

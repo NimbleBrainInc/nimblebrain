@@ -4,9 +4,9 @@ import {
   createDirectExecutor,
   type TaskFnRequest,
 } from "../../../../src/platform/automations/executor.ts";
-import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
-import type { Automation } from "../../../../src/platform/automations/types.ts";
 import { resolveExecutorContext } from "../../../../src/platform/automations/source.ts";
+import type { Automation } from "../../../../src/platform/automations/types.ts";
+import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 
 // The automation under test is owned by, and focused on, workspace A.
 const automation = {
@@ -75,9 +75,7 @@ describe("a manual run builds the scheduled run's context", () => {
       };
     }, resolveExecutorContext);
 
-    await runWithRequestContext(adminElsewhere, () =>
-      executor(automation, undefined, "manual"),
-    );
+    await runWithRequestContext(adminElsewhere, () => executor(automation, undefined, "manual"));
     await executor(automation, undefined, "scheduled");
 
     const [manual, scheduled] = requests;

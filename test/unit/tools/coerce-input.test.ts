@@ -321,10 +321,7 @@ describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
       type: "object" as const,
       properties: {
         edits: {
-          anyOf: [
-            { type: "array", items: { type: "object" } },
-            { type: "null" },
-          ],
+          anyOf: [{ type: "array", items: { type: "object" } }, { type: "null" }],
         },
       },
     };
@@ -338,10 +335,7 @@ describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
       type: "object" as const,
       properties: {
         edits: {
-          anyOf: [
-            { type: "array", items: { type: "object" } },
-            { type: "null" },
-          ],
+          anyOf: [{ type: "array", items: { type: "object" } }, { type: "null" }],
         },
       },
     };
@@ -433,10 +427,7 @@ describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
           type: "object",
           properties: {
             edits: {
-              anyOf: [
-                { type: "array", items: { type: "object" } },
-                { type: "null" },
-              ],
+              anyOf: [{ type: "array", items: { type: "object" } }, { type: "null" }],
             },
           },
         },
@@ -453,10 +444,7 @@ describe("coerceInputForSchema — anyOf / oneOf union resolution", () => {
       type: "object" as const,
       properties: {
         edits: {
-          anyOf: [
-            { type: "array", items: { type: "object" } },
-            { type: "null" },
-          ],
+          anyOf: [{ type: "array", items: { type: "object" } }, { type: "null" }],
         },
       },
     };

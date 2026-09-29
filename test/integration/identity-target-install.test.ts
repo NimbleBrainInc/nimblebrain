@@ -3,11 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -17,9 +19,10 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
-import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
-import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
-import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 /**
  * Integration coverage for `manage_connectors.install` with `scope: "identity"`
@@ -146,7 +149,14 @@ async function buildHarness(): Promise<Harness> {
     getIdentity: () => USER,
     getWorkspaceId: () => sharedWsId,
   };
-  return { workDir, sharedWsId, ownWsId, grants, toolPolicies, tool: createManageConnectorsTool(ctx) };
+  return {
+    workDir,
+    sharedWsId,
+    ownWsId,
+    grants,
+    toolPolicies,
+    tool: createManageConnectorsTool(ctx),
+  };
 }
 
 function resultText(result: { content?: unknown }): string {
@@ -165,7 +175,11 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
   });
 
   test("writes users/<id>/connectors.json and reports scope:identity", async () => {
-    const result = await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    const result = await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+    });
     expect(result.isError).toBe(false);
     const sc = result.structuredContent as { scope?: string; serverName?: string; ok?: boolean };
     expect(sc.ok).toBe(true);
@@ -188,7 +202,11 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     const first = await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
     expect(first.isError).toBe(false);
 
-    const second = await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
+    const second = await h.tool.handler({
+      action: "install",
+      entry: dcrEntry(),
+      scope: "identity",
+    });
     expect(second.isError).toBe(false);
     const sc = second.structuredContent as { ok?: boolean; alreadyInstalled?: boolean };
     expect(sc.ok).toBe(true);
@@ -217,7 +235,14 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     // Simulate a completed OAuth: tokens on disk, but the source is NOT warmed in
     // this process (a fresh pod). Before the persisted-state fix this reported
     // `not_authenticated` and the UI offered a Connect that then fails.
-    const oauthDir = join(h.workDir, "users", USER.id, "credentials", "mcp-oauth", "ai-granola-mcp");
+    const oauthDir = join(
+      h.workDir,
+      "users",
+      USER.id,
+      "credentials",
+      "mcp-oauth",
+      "ai-granola-mcp",
+    );
     mkdirSync(oauthDir, { recursive: true });
     writeFileSync(join(oauthDir, "tokens.json"), JSON.stringify({ access_token: "x" }));
 
@@ -227,7 +252,11 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
   });
 
   test("rejects a non-remote-oauth entry — personal connectors are remote MCP connections", async () => {
-    const result = await h.tool.handler({ action: "install", entry: unsupportedEntry(), scope: "identity" });
+    const result = await h.tool.handler({
+      action: "install",
+      entry: unsupportedEntry(),
+      scope: "identity",
+    });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toMatch(/remote MCP connection/i);
     // Nothing written to the identity plane.
@@ -275,7 +304,9 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
       // It named the missing deploy config instead.
       expect(resultText(result)).toMatch(/COMPOSIO_API_KEY/);
       // A prerequisite failure persists nothing to the identity plane.
-      expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
+      expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(
+        0,
+      );
     } finally {
       if (savedKey === undefined) delete process.env.COMPOSIO_API_KEY;
       else process.env.COMPOSIO_API_KEY = savedKey;
@@ -316,7 +347,9 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
       expect(identity.isError).toBe(true);
       expect(resultText(identity)).toMatch(/already installed as a connector in a workspace/i);
       // The rejected identity install wrote nothing.
-      expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(0);
+      expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(
+        0,
+      );
     });
 
     test("identity install then shared-workspace install of the same connector → rejected", async () => {

@@ -1,9 +1,6 @@
-import { UnauthorizedError, ProtocolError } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "bun:test";
-import {
-  classifyConnectionFailure,
-  type ConnectionFailure,
-} from "../../src/tools/mcp-source.ts";
+import { ProtocolError, UnauthorizedError } from "@modelcontextprotocol/client";
+import { type ConnectionFailure, classifyConnectionFailure } from "../../src/tools/mcp-source.ts";
 
 /**
  * The connection-failure taxonomy (research/SPEC-mcp-source-recovery.md) as pure,
@@ -31,10 +28,12 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     // The SDK throws McpError(-32001, "Request timed out") on a request timeout.
     // It's the tool being slow, not a session loss or a broken transport — so it
     // must surface (policyFor), never restart the source (#581 cascade).
-    expect(classifyConnectionFailure(new ProtocolError(-32001, "Request timed out"))).toBe("timeout");
-    expect(classifyConnectionFailure({ code: -32001, message: "MCP error -32001: Request timed out" })).toBe(
+    expect(classifyConnectionFailure(new ProtocolError(-32001, "Request timed out"))).toBe(
       "timeout",
     );
+    expect(
+      classifyConnectionFailure({ code: -32001, message: "MCP error -32001: Request timed out" }),
+    ).toBe("timeout");
   });
 
   it("classifies the REAL production session-loss shape, status-independent", () => {
@@ -175,7 +174,9 @@ describe("classifyConnectionFailure — op-independent connection classes", () =
     // Not a standard protocol error, not a recognized transport shape — e.g. a
     // server-defined code or a malformed-result parse error. The tool path
     // recovers these; reads surface them. See recover()'s recoverUnknown.
-    expect(classifyConnectionFailure(new ProtocolError(-32050, "custom server error"))).toBe("unknown");
+    expect(classifyConnectionFailure(new ProtocolError(-32050, "custom server error"))).toBe(
+      "unknown",
+    );
     expect(classifyConnectionFailure(new Error("Unexpected token < in JSON"))).toBe("unknown");
   });
 

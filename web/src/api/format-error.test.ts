@@ -48,6 +48,27 @@ describe("formatSendError", () => {
     expect(formatSendError(err)).toBe("Payload too large");
   });
 
+  test("a refused attachment set names each file and the limit it broke", () => {
+    const err = new ApiClientError("file_upload_error", "File upload failed", 400, {
+      errors: ["Too many files: 23 exceeds limit of 10"],
+    });
+    expect(formatSendError(err)).toBe("Too many files: 23 exceeds limit of 10");
+  });
+
+  test("several refusals read as separate reasons", () => {
+    const err = new ApiClientError("file_upload_error", "File upload failed", 400, {
+      errors: ['File "a.exe" has disallowed type', 'File "b.exe" has disallowed type'],
+    });
+    expect(formatSendError(err)).toBe(
+      'File "a.exe" has disallowed type; File "b.exe" has disallowed type',
+    );
+  });
+
+  test("a refused attachment set with no reasons keeps the server message", () => {
+    const err = new ApiClientError("file_upload_error", "File upload failed", 400, {});
+    expect(formatSendError(err)).toBe("File upload failed");
+  });
+
   test("a conversation the URL's workspace does not hold says where to go", () => {
     const err = new ApiClientError("conversation_not_found", "Conversation not found", 404, {
       conversationId: "conv_0123456789abcdef",

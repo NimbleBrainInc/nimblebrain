@@ -4,9 +4,7 @@ import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 
 /** Mock remote source — has isRemote() returning true. */
-function makeMockRemoteSource(
-  name: string,
-): McpSource & {
+function makeMockRemoteSource(name: string): McpSource & {
   alive: boolean;
   stopped: boolean;
   startResult: boolean;
@@ -218,9 +216,7 @@ describe("HealthMonitor — remote sources", () => {
     expect(monitor.getStatus()[0]!.restartCount).toBe(2);
 
     // recovered event has remote: true
-    const recoveredEvents = eventData(sink).filter(
-      (d) => d.event === "connector.recovered",
-    );
+    const recoveredEvents = eventData(sink).filter((d) => d.event === "connector.recovered");
     expect(recoveredEvents).toHaveLength(2);
     for (const ev of recoveredEvents) {
       expect(ev.remote).toBe(true);

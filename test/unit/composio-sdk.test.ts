@@ -15,10 +15,13 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 // production does — type assertions, error shapes, everything.
 
 interface SdkCalls {
-  listImpl: (q: unknown) => Promise<{ items?: Array<{ id?: unknown; status?: unknown }> }>;
+  listImpl: (
+    q: unknown,
+  ) => Promise<{ items?: Array<{ id?: unknown; status?: unknown; state?: unknown }> }>;
   linkImpl: (...args: unknown[]) => Promise<unknown>;
   initiateImpl: (...args: unknown[]) => Promise<unknown>;
   deleteImpl: (id: string) => Promise<void>;
+  getImpl: (id: string) => Promise<unknown>;
   createImpl: (...args: unknown[]) => Promise<unknown>;
   /** Last-seen client construction args — verify baseURL / apiKey wiring. */
   ctorArgs: Array<{ apiKey: string; baseURL?: string }>;
@@ -39,6 +42,7 @@ const sdkCalls: SdkCalls = {
   linkImpl: async () => ({ redirectUrl: "https://composio.test/link", id: "ca_default" }),
   initiateImpl: async () => ({ redirectUrl: "https://composio.test/link", id: "ca_default" }),
   deleteImpl: async () => undefined,
+  getImpl: async () => ({}),
   createImpl: async () => ({
     sessionId: "session_default",
     mcp: { type: "http", url: "https://composio.test/mcp/x", headers: { "x-api-key": "k" } },
@@ -72,6 +76,7 @@ mock.module("@composio/core", () => ({
         return sdkCalls.initiateImpl(...args);
       },
       delete: (id: string) => sdkCalls.deleteImpl(id),
+      get: (id: string) => sdkCalls.getImpl(id),
     };
     constructor(opts: { apiKey: string; baseURL?: string }) {
       sdkCalls.ctorArgs.push(opts);
@@ -97,7 +102,9 @@ const {
 } = sdk;
 // Config resolution lives beside the adapter, not in it — see
 // `test/unit/composio-config.test.ts` for the declared-block/env precedence.
-const { _resetComposioConfigForTest } = await import("../../src/connectors/providers/composio/config.ts");
+const { _resetComposioConfigForTest } = await import(
+  "../../src/connectors/providers/composio/config.ts"
+);
 const { mkdtempSync, rmSync } = await import("node:fs");
 const { tmpdir } = await import("node:os");
 const { join: joinPath } = await import("node:path");
@@ -205,6 +212,24 @@ describe("findActiveComposioConnection", () => {
       authConfigId: "ac_x",
     });
     expect(result).toEqual({ id: "ca_first", status: "ACTIVE" });
+  });
+
+  test("carries the account's display name, and only that, from state.val", async () => {
+    sdkCalls.listImpl = async () => ({
+      items: [
+        {
+          id: "ca_first",
+          status: "ACTIVE",
+          state: { val: { displayName: " user@example.com ", access_token: "secret" } },
+        },
+      ],
+    });
+    const result = await findActiveComposioConnection({
+      apiKey: "k_test",
+      userId: "ws_x",
+      authConfigId: "ac_x",
+    });
+    expect(result).toEqual({ id: "ca_first", status: "ACTIVE", displayName: "user@example.com" });
   });
 
   test("ignores entries with missing id (defensive against SDK shape drift)", async () => {
@@ -365,6 +390,69 @@ describe("initiateComposioConnection", () => {
       fields: { api_key: "secret" },
     });
     expect(sdkCalls.calls).toEqual(["initiate"]);
+  });
+
+  test("API-key arm reads the display name from the account it waited for", async () => {
+    sdkCalls.initiateImpl = async () => ({
+      id: "ca_key",
+      waitForConnection: async () => ({
+        id: "ca_key",
+        status: "ACTIVE",
+        state: { val: { displayName: "workspace-admin", api_key: "secret" } },
+      }),
+    });
+    const result = await connectComposioApiKey({
+      apiKey: "k_test",
+      userId: "ws_x",
+      authConfigId: "ac_x",
+      fields: { api_key: "secret" },
+    });
+    expect(result).toEqual({
+      connectedAccountId: "ca_key",
+      status: "ACTIVE",
+      displayName: "workspace-admin",
+    });
+  });
+});
+
+// ── getComposioAccountDisplayName ───────────────────────────────────
+
+describe("getComposioAccountDisplayName", () => {
+  test("returns the trimmed display name from state.val", async () => {
+    let asked = "";
+    sdkCalls.getImpl = async (id) => {
+      asked = id;
+      return { id, state: { val: { displayName: "user@example.com", access_token: "secret" } } };
+    };
+    const name = await sdk.getComposioAccountDisplayName({
+      apiKey: "k_test",
+      connectedAccountId: "ca_1",
+    });
+    expect(name).toBe("user@example.com");
+    expect(asked).toBe("ca_1");
+  });
+
+  test("returns undefined when the account carries no display name", async () => {
+    sdkCalls.getImpl = async () => ({ state: { val: { access_token: "secret" } } });
+    expect(
+      await sdk.getComposioAccountDisplayName({ apiKey: "k_test", connectedAccountId: "ca_1" }),
+    ).toBeUndefined();
+  });
+
+  test("drops an over-long display name", async () => {
+    sdkCalls.getImpl = async () => ({ state: { val: { displayName: "x".repeat(257) } } });
+    expect(
+      await sdk.getComposioAccountDisplayName({ apiKey: "k_test", connectedAccountId: "ca_1" }),
+    ).toBeUndefined();
+  });
+
+  test("returns undefined instead of throwing when the read fails", async () => {
+    sdkCalls.getImpl = async () => {
+      throw new Error("boom");
+    };
+    expect(
+      await sdk.getComposioAccountDisplayName({ apiKey: "k_test", connectedAccountId: "ca_1" }),
+    ).toBeUndefined();
   });
 });
 
@@ -574,14 +662,25 @@ describe("cleanupComposioConnector", () => {
     };
 
     // Seed a connection.json on disk.
-    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
-      connectedAccountId: "ca_to_revoke",
-      toolkit: "gmail",
-      userId: "ws_test",
-      connectedAt: "2026-05-13T00:00:00.000Z",
-      status: "ACTIVE",
-    });
-    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(true);
+    await saveComposioConnection(
+      workDir,
+      { type: "workspace", wsId: "ws_test" },
+      "com.google/gmail",
+      {
+        connectedAccountId: "ca_to_revoke",
+        toolkit: "gmail",
+        userId: "ws_test",
+        connectedAt: "2026-05-13T00:00:00.000Z",
+        status: "ACTIVE",
+      },
+    );
+    expect(
+      hasPersistedComposioConnection(
+        workDir,
+        { type: "workspace", wsId: "ws_test" },
+        "com.google/gmail",
+      ),
+    ).toBe(true);
 
     const result = await cleanupComposioConnector({
       workDir,
@@ -592,7 +691,13 @@ describe("cleanupComposioConnector", () => {
     expect(result.upstreamDeleted).toBe(true);
     expect(result.localDeleted).toBe(true);
     expect(deletedAccountId).toBe("ca_to_revoke");
-    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(false);
+    expect(
+      hasPersistedComposioConnection(
+        workDir,
+        { type: "workspace", wsId: "ws_test" },
+        "com.google/gmail",
+      ),
+    ).toBe(false);
   });
 
   test("local cleanup still runs when upstream Composio call fails (idempotent)", async () => {
@@ -601,13 +706,18 @@ describe("cleanupComposioConnector", () => {
       throw new Error("composio down");
     };
 
-    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
-      connectedAccountId: "ca_x",
-      toolkit: "gmail",
-      userId: "ws_test",
-      connectedAt: "2026-05-13T00:00:00.000Z",
-      status: "ACTIVE",
-    });
+    await saveComposioConnection(
+      workDir,
+      { type: "workspace", wsId: "ws_test" },
+      "com.google/gmail",
+      {
+        connectedAccountId: "ca_x",
+        toolkit: "gmail",
+        userId: "ws_test",
+        connectedAt: "2026-05-13T00:00:00.000Z",
+        status: "ACTIVE",
+      },
+    );
 
     const result = await cleanupComposioConnector({
       workDir,
@@ -618,7 +728,13 @@ describe("cleanupComposioConnector", () => {
     // SDK call failed → upstreamDeleted: false. Local cleanup still ran.
     expect(result.upstreamDeleted).toBe(false);
     expect(result.localDeleted).toBe(true);
-    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(false);
+    expect(
+      hasPersistedComposioConnection(
+        workDir,
+        { type: "workspace", wsId: "ws_test" },
+        "com.google/gmail",
+      ),
+    ).toBe(false);
   });
 
   test("skips upstream call when COMPOSIO_API_KEY is unset (still cleans local file)", async () => {
@@ -629,13 +745,18 @@ describe("cleanupComposioConnector", () => {
       sdkCalled = true;
     };
 
-    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
-      connectedAccountId: "ca_x",
-      toolkit: "gmail",
-      userId: "ws_test",
-      connectedAt: "2026-05-13T00:00:00.000Z",
-      status: "ACTIVE",
-    });
+    await saveComposioConnection(
+      workDir,
+      { type: "workspace", wsId: "ws_test" },
+      "com.google/gmail",
+      {
+        connectedAccountId: "ca_x",
+        toolkit: "gmail",
+        userId: "ws_test",
+        connectedAt: "2026-05-13T00:00:00.000Z",
+        status: "ACTIVE",
+      },
+    );
 
     const result = await cleanupComposioConnector({
       workDir,
@@ -677,13 +798,18 @@ describe("cleanupComposioConnector", () => {
       throw new Error("composio down");
     };
 
-    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
-      connectedAccountId: "ca_x",
-      toolkit: "gmail",
-      userId: "ws_test",
-      connectedAt: "2026-05-13T00:00:00.000Z",
-      status: "ACTIVE",
-    });
+    await saveComposioConnection(
+      workDir,
+      { type: "workspace", wsId: "ws_test" },
+      "com.google/gmail",
+      {
+        connectedAccountId: "ca_x",
+        toolkit: "gmail",
+        userId: "ws_test",
+        connectedAt: "2026-05-13T00:00:00.000Z",
+        status: "ACTIVE",
+      },
+    );
 
     // Should not throw — contract is best-effort with lastError reporting.
     // (The SDK delete swallows internally; the local delete should still succeed.)

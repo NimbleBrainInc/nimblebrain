@@ -91,10 +91,7 @@ afterEach(() => {
 });
 
 /** Simulate a postMessage from the iframe to the host. */
-function simulatePostMessage(
-  iframe: HTMLIFrameElement,
-  data: unknown,
-) {
+function simulatePostMessage(iframe: HTMLIFrameElement, data: unknown) {
   const listeners = windowListeners.get("message");
   if (!listeners) return;
   const event = { data, source: iframe.contentWindow } as MessageEvent;
@@ -112,7 +109,11 @@ const { postToApp } = await import("../../web/src/bridge/app-channel.ts");
 
 /** The app's side of the handshake's last step; the host posts nothing unsolicited before it. */
 function completeHandshake(iframe: HTMLIFrameElement) {
-  simulatePostMessage(iframe, { jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+  simulatePostMessage(iframe, {
+    jsonrpc: "2.0",
+    method: "ui/notifications/initialized",
+    params: {},
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +175,13 @@ describe("Bridge — ui/message (spec format)", () => {
       method: "ui/message",
       params: {
         role: "user",
-        content: [{ type: "text", text: "with meta", _meta: { "ai.nimblebrain/context": { action: "test" } } }],
+        content: [
+          {
+            type: "text",
+            text: "with meta",
+            _meta: { "ai.nimblebrain/context": { action: "test" } },
+          },
+        ],
       },
     });
 
@@ -309,7 +316,9 @@ describe("Bridge — ext-apps dual protocol", () => {
 
     // Should respond with a proper JSON-RPC result
     const response = posted.find(
-      (m: unknown) => (m as Record<string, unknown>).id === "init-1" && "result" in (m as Record<string, unknown>),
+      (m: unknown) =>
+        (m as Record<string, unknown>).id === "init-1" &&
+        "result" in (m as Record<string, unknown>),
     ) as Record<string, unknown> | undefined;
     expect(response).toBeDefined();
     expect(response!.jsonrpc).toBe("2.0");
@@ -614,7 +623,8 @@ describe("Bridge — ext-apps dual protocol", () => {
     handle.setHostContext({ theme: "dark" });
 
     const msg = posted.find(
-      (m: unknown) => (m as Record<string, unknown>).method === "ui/notifications/host-context-changed",
+      (m: unknown) =>
+        (m as Record<string, unknown>).method === "ui/notifications/host-context-changed",
     ) as Record<string, unknown> | undefined;
     expect(msg).toBeDefined();
     expect((msg!.params as Record<string, unknown>).theme).toBe("dark");
@@ -656,9 +666,7 @@ describe("Bridge — ext-apps dual protocol", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Should have attempted to respond (either result or error)
-    const response = posted.find(
-      (m: unknown) => (m as Record<string, unknown>).id === "tc-1",
-    );
+    const response = posted.find((m: unknown) => (m as Record<string, unknown>).id === "tc-1");
     expect(response).toBeDefined();
 
     handle.destroy();
@@ -776,7 +784,9 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
     const response = findInitResponse(posted);
     const ctx = response?.result.hostContext as Record<string, unknown>;
     expect(ctx.theme).not.toBe("WRONG");
-    expect((ctx.styles as Record<string, unknown>).variables).not.toMatchObject({ "--evil": "true" });
+    expect((ctx.styles as Record<string, unknown>).variables).not.toMatchObject({
+      "--evil": "true",
+    });
     expect(ctx.workspace).toEqual({ id: "ws_a", name: "Alpha" });
     handle.destroy();
   });

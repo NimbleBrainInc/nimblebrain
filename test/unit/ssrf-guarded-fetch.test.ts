@@ -147,7 +147,10 @@ describe("createSsrfGuardedFetch", () => {
 
   test("falls back to global fetch shape when no base fetch is given", () => {
     // Smoke: undefined baseFetch must still yield a callable FetchLike.
-    const guarded = createSsrfGuardedFetch(undefined, { allowInsecure: false, fleetInternal: false });
+    const guarded = createSsrfGuardedFetch(undefined, {
+      allowInsecure: false,
+      fleetInternal: false,
+    });
     expect(typeof guarded).toBe("function");
   });
 });

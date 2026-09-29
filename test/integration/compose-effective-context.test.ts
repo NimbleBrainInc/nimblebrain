@@ -13,19 +13,19 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
+import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { hashSkillBody } from "../../src/runtime/skills-loaded-payload.ts";
-import { extractText } from "../../src/engine/content-helpers.ts";
-import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { createMockModel } from "../helpers/mock-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-compose-${Date.now()}`);
 
@@ -70,10 +70,7 @@ interface ComposeResponse {
  * `runtime.chat()` doesn't return the runId on `ChatResult`, so the test
  * reads it from the conv jsonl after the chat completes.
  */
-async function getLatestRunId(
-  runtime: Runtime,
-  convId: string,
-): Promise<string | null> {
+async function getLatestRunId(runtime: Runtime, convId: string): Promise<string | null> {
   return runWithRequestContext(
     {
       // Match the dev-fallback ownerId minted by `runtime.chat` when
@@ -304,9 +301,7 @@ describe("compose_effective_context — historical mode", () => {
     const sub = l3!.subItems!.find((s) => s.id === skillPath);
     expect(sub).toBeDefined();
     expect((sub!.metadata as { hashStatus: string }).hashStatus).toBe("match");
-    expect((sub!.metadata as { recordedHash: string }).recordedHash).toBe(
-      hashSkillBody(skillBody),
-    );
+    expect((sub!.metadata as { recordedHash: string }).recordedHash).toBe(hashSkillBody(skillBody));
 
     // `totalTokens` answers the same question in both modes — the size of the
     // composed system prompt — so the two are comparable for one conversation.
@@ -405,11 +400,7 @@ describe("compose_effective_context — historical mode", () => {
     );
     await runtime.reloadSkills();
 
-    const res = await callCompose(
-      runtime,
-      { run_id: runId },
-      result.conversationId,
-    );
+    const res = await callCompose(runtime, { run_id: runId }, result.conversationId);
     expect(res.isError).toBe(false);
     const sub = res
       .structured!.layers.find((l) => l.kind === "layer3_skills")!

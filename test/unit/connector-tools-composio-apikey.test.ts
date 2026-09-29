@@ -65,22 +65,25 @@ mock.module("@composio/core", () => ({
     create() {
       return { mcp: { type: "http", url: "https://composio.test/mcp/x", headers: {} } };
     }
-    constructor(_opts: unknown) {}
   },
 }));
 
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   readComposioConnection,
   saveComposioConnection,
 } from "../../src/connectors/providers/composio/connection.ts";
+import { connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
+import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
-import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
-import { connectComposioApiKey } from "../../src/connectors/providers/composio/sdk.ts";
-import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -88,10 +91,6 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import {
-  _resetConnectorsConfigForTest,
-  setConnectorsConfig,
-} from "../../src/connectors/providers/config.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const POSTHOG_ID = "com.posthog/analytics";
@@ -199,10 +198,7 @@ function buildTool(h: Harness) {
   return createManageConnectorsTool(ctx);
 }
 
-const TRACKED_ENV = [
-  "COMPOSIO_API_KEY",
-  "NB_TENANT_ID",
-];
+const TRACKED_ENV = ["COMPOSIO_API_KEY", "NB_TENANT_ID"];
 const SAVED_ENV: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -559,7 +555,9 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     // ensureSourceRegistered runs before the Composio connect, so nothing was
     // created and nothing persisted.
     expect(apiKeyCalls.initiateArgs.length).toBe(0);
-    expect(await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID)).toBeFalsy();
+    expect(
+      await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID),
+    ).toBeFalsy();
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
   });
 
@@ -625,7 +623,9 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
 
     expect(r.isError).toBe(true);
     expect(JSON.stringify(r)).toContain("Could not connect");
-    expect(await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID)).toBeFalsy();
+    expect(
+      await readComposioConnection(workDir, { type: "workspace", wsId: WS }, POSTHOG_ID),
+    ).toBeFalsy();
     expect(ctx.__calls.recordConnectionStateChange.callCount).toBe(0);
     // The SDK helper cleaned up the dangling connected account.
     expect(apiKeyCalls.deletedIds).toContain("ca_bad");
@@ -683,7 +683,13 @@ describe("manage_connectors.connect_api_key — lifecycle tail", () => {
     });
 
     // ...and a non-admin member tries to rotate it.
-    const ctx = stubCtx({ workDir, wsId: WS, entry: POSTHOG_ENTRY, identity: MEMBER, role: "member" });
+    const ctx = stubCtx({
+      workDir,
+      wsId: WS,
+      entry: POSTHOG_ENTRY,
+      identity: MEMBER,
+      role: "member",
+    });
     const r = await createManageConnectorsTool(ctx).handler({
       action: "connect_api_key",
       catalogId: POSTHOG_ID,

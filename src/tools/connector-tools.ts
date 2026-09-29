@@ -11,6 +11,7 @@ import type {
   RemoteOAuthInstall,
 } from "../connectors/catalog/types.ts";
 import type {
+  ConnectedAccountIdentity,
   ManagedConnectorProvider,
   ManagedSession,
 } from "../connectors/providers/managed-provider.ts";
@@ -51,7 +52,7 @@ import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import type { CredentialStore } from "./credential-store.ts";
 import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
 import type { InProcessTool } from "./in-process-app.ts";
-import { hasMcpOAuthTokens } from "./mcp-oauth-records.ts";
+import { hasMcpOAuthTokens, McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
 
@@ -595,7 +596,11 @@ type InstalledEntry = {
   catalogId?: string | null;
   catalog?: ConnectorCatalogEntry;
   authorizationUrl?: string;
-  identity?: { sub?: string; email?: string; name?: string };
+  /**
+   * The account the connection is signed in as. Read only for a single-connector
+   * request (`get_installed`), since each read writes a credential audit line.
+   */
+  identity?: ConnectedAccountIdentity;
   missingOperatorSetup?: boolean;
   /**
    * Last connection error for crashed / dead / reauth_required states.
@@ -766,6 +771,42 @@ async function applyOperatorOAuth(
 }
 
 /**
+ * The account an owner's connection is signed in as, or null. A brokered
+ * connector asks its provider, which reads what it recorded at connect time; a
+ * runtime-native OAuth connector reads the OIDC claims captured from the token
+ * response. Display-only, so any failure reads as no identity.
+ */
+async function readConnectorIdentity(
+  ctx: ManageConnectorsContext,
+  owner: ConnectorOwner,
+  ref: ConnectorRef,
+  serverName: string,
+): Promise<ConnectedAccountIdentity | null> {
+  const workDir = ctx.runtime.getWorkDir();
+  try {
+    const brokered = brokeredRef(ref);
+    if (brokered) {
+      const provider = ctx.runtime.getManagedConnectorRegistry().get(brokered.provider);
+      return (await provider?.identity?.({ owner, brokered, workDir })) ?? null;
+    }
+    const claims = await new McpOAuthRecords({ owner, serverName, workDir }).read<{
+      email?: unknown;
+      name?: unknown;
+    }>("identity", {
+      caller: "connector-tools:identity",
+      purpose: `display the connected account for ${serverName}`,
+    });
+    if (!claims) return null;
+    const out: ConnectedAccountIdentity = {};
+    if (typeof claims.email === "string") out.email = claims.email;
+    if (typeof claims.name === "string") out.name = claims.name;
+    return out.email || out.name ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Enrich an entry with its live OAuth connection state + operator OAuth audit
  * config. Skipped when the instance carries no ref (an instance seeded before
  * its ref was persisted), which leaves the entry with the state the lifecycle
@@ -835,6 +876,18 @@ async function buildInstalledEntry(
   };
 
   await applyConnectionProbes(entry, deps, instance, url, cat);
+
+  // Identity only on the single-connector read that renders it: the full list
+  // backs every shell load, and each identity read writes an audit line.
+  if (deps.onlyServerName && instance.state === "running" && instance.ref) {
+    const identity = await readConnectorIdentity(
+      deps.ctx,
+      { type: "workspace", wsId: deps.wsId },
+      instance.ref,
+      instance.serverName,
+    );
+    if (identity) entry.identity = identity;
+  }
 
   // Derive the generic UI status last so it sees every populated probe
   // (operatorOAuth gate, lastError).
@@ -2904,6 +2957,23 @@ async function handleListPersonalCatalog(
 }
 
 /**
+ * Whether an owner has persisted credentials for a connector: the provider's
+ * record for a brokered one, the stored token record for DCR.
+ */
+async function hasPersistedConnection(
+  ctx: ManageConnectorsContext,
+  owner: ConnectorOwner,
+  ref: ConnectorRef,
+  serverName: string,
+): Promise<boolean> {
+  const workDir = ctx.runtime.getWorkDir();
+  const brokered = brokeredRef(ref);
+  if (!brokered) return hasMcpOAuthTokens(workDir, owner, serverName);
+  const provider = ctx.runtime.getManagedConnectorRegistry().get(brokered.provider);
+  return provider?.hasConnection?.({ owner, brokered, workDir }) ?? false;
+}
+
+/**
  * `list_personal_connectors` — the caller's personal connectors and, for each,
  * the workspaces it's granted to. The read behind the Profile → Connectors page.
  */
@@ -2929,7 +2999,6 @@ async function handleListPersonalConnectors(
   const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
   const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
 
-  const workDir = ctx.runtime.getWorkDir();
   const owner = { type: "user", userId: callerId } as const;
   const lifecycle = ctx.runtime.getLifecycle();
   // Resolve names first, in their own pass: a stored row this build cannot
@@ -2962,12 +3031,10 @@ async function handleListPersonalConnectors(
       // `not_authenticated` and offer a Connect that then fails (it's already
       // authed). The agent lazy-starts the source from these same credentials, so
       // an authed-but-cold connector is genuinely usable.
-      const authed = brokered
-        ? (ctx.runtime
-            .getManagedConnectorRegistry()
-            .get(brokered.provider)
-            ?.hasConnection?.({ owner, brokered, workDir }) ?? false)
-        : await hasMcpOAuthTokens(workDir, owner, serverName);
+      const authed = await hasPersistedConnection(ctx, owner, ref, serverName);
+      // Credential teardown deletes the identity record with the tokens, so an
+      // unconnected connector reads none (and a missing key writes no audit line).
+      const identity = await readConnectorIdentity(ctx, owner, ref, serverName);
       return {
         serverName,
         displayName: cat?.name ?? serverName,
@@ -2990,6 +3057,7 @@ async function handleListPersonalConnectors(
           authed || lifecycle.isIdentityConnectorRunning(callerId, serverName)
             ? ("running" as const)
             : ("not_authenticated" as const),
+        ...(identity ? { identity } : {}),
         grantedWorkspaces: grantsByConnector[serverName] ?? [],
       };
     }),

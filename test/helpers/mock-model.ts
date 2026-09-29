@@ -3,7 +3,6 @@ import type {
   LanguageModelV4CallOptions,
   LanguageModelV4Content,
   LanguageModelV4FinishReason,
-  LanguageModelV4Message,
   LanguageModelV4StreamPart,
   LanguageModelV4ToolCall,
   LanguageModelV4Usage,
@@ -24,7 +23,9 @@ export interface MockModelResponse {
   finishReason?: "stop" | "tool-calls";
 }
 
-export type MockCallFn = (options: LanguageModelV4CallOptions) => MockModelResponse | Promise<MockModelResponse>;
+export type MockCallFn = (
+  options: LanguageModelV4CallOptions,
+) => MockModelResponse | Promise<MockModelResponse>;
 
 /**
  * Extract the `<runtime-context>` head the runtime prepends to the latest user

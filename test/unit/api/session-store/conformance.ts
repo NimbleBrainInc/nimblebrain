@@ -7,7 +7,7 @@
  * `describe(...)` block of their own and pass a factory.
  */
 
-import { describe, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
 import type { SessionMeta, SessionRegistry } from "../../../../src/api/session-store/index.ts";
 
 export interface ConformanceFactoryOptions {

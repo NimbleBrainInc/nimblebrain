@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { CallToolResult, Task } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { TaskStreamMessage as ProductionTaskStreamMessage } from "../../src/tools/mcp-task-client.ts";
@@ -59,9 +59,7 @@ interface StreamDriver {
 
 function streamDriver(): StreamDriver {
   const queue: Array<
-    | { kind: "value"; value: TaskStreamMessage }
-    | { kind: "error"; error: Error }
-    | { kind: "end" }
+    { kind: "value"; value: TaskStreamMessage } | { kind: "error"; error: Error } | { kind: "end" }
   > = [];
   let resolveNext: (() => void) | null = null;
 
@@ -311,9 +309,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
 
     expect(result.isError).toBe(true);
     // A ProtocolError carries the peer's message verbatim; the engine surfaces it.
-    expect((result.content[0] as { text: string }).text).toBe(
-      "Task t-norecover failed",
-    );
+    expect((result.content[0] as { text: string }).text).toBe("Task t-norecover failed");
   });
 
   it("does NOT attempt recovery when error message is connector-specific (not generic SDK shape)", async () => {
@@ -344,9 +340,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
 
     expect(getResultCalled).toBe(false);
     expect(result.isError).toBe(true);
-    expect((result.content[0] as { text: string }).text).toBe(
-      "upstream API returned 503",
-    );
+    expect((result.content[0] as { text: string }).text).toBe("upstream API returned 503");
   });
 
   it("does NOT recover when generic-failed shape names a DIFFERENT task id", async () => {
@@ -450,9 +444,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     const result = await source.execute("do_work", {});
 
     expect(result.isError).toBe(true);
-    expect((result.content[0] as { text: string }).text).toMatch(
-      /stream ended without a terminal/,
-    );
+    expect((result.content[0] as { text: string }).text).toMatch(/stream ended without a terminal/);
   });
 
   it("taskCreated carries the taskId into subsequent progress events", async () => {
@@ -514,9 +506,9 @@ describe("McpSource.startToolAsTask", () => {
       },
     });
 
-    await expect(
-      source.startToolAsTask("do_work", {}, { ownerContext: OWNER }),
-    ).rejects.toThrow(/before yielding taskCreated/);
+    await expect(source.startToolAsTask("do_work", {}, { ownerContext: OWNER })).rejects.toThrow(
+      /before yielding taskCreated/,
+    );
   });
 });
 
@@ -700,9 +692,9 @@ describe("McpSource owner-context enforcement", () => {
   it("wrong identityId → awaitToolTaskResult rejects with TaskNotFoundError", async () => {
     const { source, driver } = await startedSource();
     const bogus: TaskOwnerContext = { workspaceId: "ws_1", identityId: "user_other" };
-    await expect(
-      source.awaitToolTaskResult("t1", { ownerContext: bogus }),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(source.awaitToolTaskResult("t1", { ownerContext: bogus })).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
     driver.emit({ type: "result", result: { content: [], isError: false } });
     await source.awaitToolTaskResult("t1", { ownerContext: OWNER });
   });
@@ -719,9 +711,9 @@ describe("McpSource owner-context enforcement", () => {
 
   it("nonexistent taskId → TaskNotFoundError (does NOT leak existence)", async () => {
     const { source, driver } = await startedSource();
-    await expect(
-      source.getTaskStatus("nope", { ownerContext: OWNER }),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(source.getTaskStatus("nope", { ownerContext: OWNER })).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
     driver.emit({ type: "result", result: { content: [], isError: false } });
     await source.awaitToolTaskResult("t1", { ownerContext: OWNER });
   });
@@ -760,9 +752,9 @@ describe("McpSource TTL sweeper", () => {
     expect(remaining).toBe(0);
 
     // Post-sweep lookups fail as TaskNotFoundError.
-    await expect(
-      source.getTaskStatus("t1", { ownerContext: OWNER }),
-    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(source.getTaskStatus("t1", { ownerContext: OWNER })).rejects.toBeInstanceOf(
+      TaskNotFoundError,
+    );
   });
 });
 

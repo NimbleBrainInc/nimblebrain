@@ -10,24 +10,25 @@ import { existsSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
-  IdentityProvider,
-  UserIdentity,
-  ProviderCapabilities,
   CreateUserInput,
   CreateUserResult,
+  IdentityProvider,
+  ProviderCapabilities,
+  UserIdentity,
   VerifiedIdentity,
 } from "../../src/identity/provider.ts";
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User, UserStore } from "../../src/identity/user.ts";
 import type { IdentityStores } from "../../src/runtime/types.ts";
 import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { makeIdentity } from "./identity.ts";
 
-export const TEST_IDENTITY: UserIdentity = {
+export const TEST_IDENTITY: UserIdentity = makeIdentity({
   id: "usr_test",
   email: "test@example.com",
   displayName: "Test User",
   orgRole: "owner",
-};
+});
 
 export class TestAuthAdapter implements IdentityProvider {
   private initPromise?: Promise<void>;
@@ -107,7 +108,11 @@ export class TestAuthAdapter implements IdentityProvider {
       if (this.workDir) {
         const userDir = join(this.workDir, "users", TEST_IDENTITY.id);
         if (!existsSync(userDir)) mkdirSync(userDir, { recursive: true });
-        await writeFile(join(userDir, "profile.json"), `${JSON.stringify(user, null, 2)}\n`, "utf-8");
+        await writeFile(
+          join(userDir, "profile.json"),
+          `${JSON.stringify(user, null, 2)}\n`,
+          "utf-8",
+        );
       }
     }
 
@@ -131,9 +136,7 @@ export class TestAuthAdapter implements IdentityProvider {
  * `Runtime.start({ identityProvider: testAuthAdapter(key) })`: it provisions
  * into the store instances the runtime reads and listens on.
  */
-export function testAuthAdapter(
-  apiKey: string,
-): (stores: IdentityStores) => TestAuthAdapter {
+export function testAuthAdapter(apiKey: string): (stores: IdentityStores) => TestAuthAdapter {
   return ({ workDir, userStore, workspaceStore }) =>
     new TestAuthAdapter(apiKey, userStore, workspaceStore, workDir);
 }

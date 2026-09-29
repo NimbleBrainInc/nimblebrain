@@ -10,17 +10,17 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { serverDetailToCatalogEntry } from "../../../src/connectors/catalog/projection.ts";
+import type { ServerDetail } from "../../../src/connectors/catalog/server-detail.ts";
 import type { HostManifestMeta } from "../../../src/connectors/runtime/types.ts";
 import {
   isOutboxResource,
   parseNotificationsDeclaration,
 } from "../../../src/notifications/declaration.ts";
-import { serverDetailToCatalogEntry } from "../../../src/connectors/catalog/projection.ts";
 import {
   isReservedResourceScheme,
   RESERVED_RESOURCE_SCHEMES,
 } from "../../../src/tools/resource-schemes.ts";
-import type { ServerDetail } from "../../../src/connectors/catalog/server-detail.ts";
 
 /** A `HostManifestMeta` carrying whatever the caller wants under `notifications`. */
 function metaWith(notifications: unknown): HostManifestMeta {
@@ -41,17 +41,16 @@ describe("parseNotificationsDeclaration", () => {
     });
   });
 
-  test.each([...RESERVED_RESOURCE_SCHEMES])(
-    "refuses an outbox declared under the reserved %s:// scheme",
-    (scheme) => {
-      // One resource cannot mean two things to the same reader: the runtime
-      // would poll it as an outbox and resolve it as a skill / app surface /
-      // overlay, and whichever won would be an accident of ordering.
-      expect(
-        parseNotificationsDeclaration(metaWith({ resource: `${scheme}://acme/notifications` })),
-      ).toBeUndefined();
-    },
-  );
+  test.each([
+    ...RESERVED_RESOURCE_SCHEMES,
+  ])("refuses an outbox declared under the reserved %s:// scheme", (scheme) => {
+    // One resource cannot mean two things to the same reader: the runtime
+    // would poll it as an outbox and resolve it as a skill / app surface /
+    // overlay, and whichever won would be an accident of ordering.
+    expect(
+      parseNotificationsDeclaration(metaWith({ resource: `${scheme}://acme/notifications` })),
+    ).toBeUndefined();
+  });
 
   test("a bare string with no scheme is not a reserved one", () => {
     // `indexOf(":")` is -1 with no colon and `slice(0, -1)` would drop the last
@@ -173,7 +172,10 @@ describe("the schema and the parser state the same rule", () => {
     // Derived, not eyeballed: the schema carries a copy of a set that grows —
     // it went from five to six when `app://` was added — so the copy is pinned
     // to the constant rather than trusted to be re-read.
-    const spelled = resource.not.pattern.replace(/^\^\(\?:/, "").replace(/\):$/, "").split("|");
+    const spelled = resource.not.pattern
+      .replace(/^\^\(\?:/, "")
+      .replace(/\):$/, "")
+      .split("|");
     expect(spelled.sort()).toEqual([...RESERVED_RESOURCE_SCHEMES].sort());
   });
 
