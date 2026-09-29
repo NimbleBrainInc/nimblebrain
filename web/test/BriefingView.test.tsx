@@ -99,6 +99,9 @@ function connector(
   return {
     serverName,
     connectorName: serverName,
+    // What the server resolves: the catalog name when there is one, else the server name.
+    displayName: name ?? serverName,
+    disconnectable: false,
     version: "1.0.0",
     state: "running",
     scope: "workspace",

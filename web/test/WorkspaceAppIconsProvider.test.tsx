@@ -107,6 +107,8 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
     const gmail: InstalledConnector = {
       serverName: "gmail",
       connectorName: "gmail",
+      displayName: "gmail",
+      disconnectable: true,
       version: "1.0.0",
       state: "pending_auth",
       scope: "workspace",

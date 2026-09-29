@@ -193,7 +193,7 @@ export function deriveConnectorStatus(input: StatusInputs): {
     return { status: "starting" };
   }
   // 4. Failures. Reported with the reason; the web client decides the
-  //    affordance (`resolveAction` in ConnectorStatusHero.tsx — Reconnect,
+  //    affordance (`resolveAction` in ConnectorHeader.tsx — Reconnect,
   //    usually). `dead` covers a connector whose boot-start failed, which the
   //    doors revive on next use.
   if (input.state === "crashed" || input.state === "dead" || input.state === "stopped") {
@@ -2375,18 +2375,22 @@ async function handleDisconnect(
   // the same gate cleanly covers both shapes.
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
-  if (!lifecycle.isDisconnectable(lifecycle.getInstance(serverName, wsId)?.ref)) {
-    return errResult(
-      `"${serverName}" has no sign-in to disconnect: its credential is configuration, not ` +
-        "an authorization a person made. Uninstall it to remove it.",
-    );
-  }
   if (!isWorkspaceAdmin(ws, identity)) {
     return {
       content: textContent("Workspace admin role required to disconnect shared connectors."),
       structuredContent: { error: "permission_denied" },
       isError: true,
     };
+  }
+  // An ESTABLISHED connection with no sign-in behind it has nothing to disconnect.
+  // One that never finished connecting is always resettable: that is the header's
+  // Cancel on a connector wedged mid-connect, whatever its credential.
+  const target = lifecycle.getInstance(serverName, wsId);
+  if (target?.state === "running" && !lifecycle.isDisconnectable(target.ref)) {
+    return errResult(
+      `"${serverName}" has no sign-in to disconnect: its credential is configuration, not ` +
+        "an authorization a person made. Uninstall it to remove it.",
+    );
   }
   try {
     const result = await lifecycle.disconnect(serverName, wsId, "_workspace", {

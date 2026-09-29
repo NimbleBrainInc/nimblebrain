@@ -370,12 +370,12 @@ export class ConnectorLifecycleManager {
   /**
    * Whether disconnecting this connector means anything: its connection rests on
    * a credential a person authorized, which Disconnect revokes and Connect
-   * re-establishes. True for a native OAuth connection (no static `transport.auth`)
-   * and for a brokered one whose provider can reconnect. False when the credential
-   * is configuration rather than a sign-in — a platform-minted `provider` token, a
-   * stored bearer or header, or `none` — because there is nothing to revoke and
-   * nothing for a person to redo. The disconnect tool refuses where this is false,
-   * and the web offers Disconnect only where it is true.
+   * re-establishes. True for a native OAuth connection and for a brokered one whose
+   * provider can reconnect. False when the credential is configuration rather than a
+   * sign-in — a platform-minted `provider` token or a stored bearer or header, the set
+   * `connectorHasStaticAuth` names — because there is nothing to revoke and nothing
+   * for a person to redo. The web offers Disconnect only where this is true; the
+   * disconnect tool refuses an established connection where it is false.
    */
   isDisconnectable(ref: ConnectorRef | undefined): boolean {
     if (!ref || !("url" in ref)) return false;
@@ -384,7 +384,7 @@ export class ConnectorLifecycleManager {
       const provider = this.managedConnectors.get(brokered.provider);
       return !!provider && brokerCanReconnect(provider);
     }
-    return ref.transport?.auth === undefined;
+    return !connectorHasStaticAuth(ref);
   }
 
   /** Set the PlacementRegistry (called by Runtime after construction). */

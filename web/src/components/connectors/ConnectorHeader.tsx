@@ -415,10 +415,15 @@ function renderMenuItem(
         </Menu.Item>
       );
     case "details":
+      // A disabled item, not a paragraph: arrow keys reach it and a screen reader reads it.
       return (
-        <p key="details" className="px-3 py-1.5 text-2xs text-muted-foreground">
+        <Menu.Item
+          key="details"
+          disabled
+          className="cursor-default px-3 py-1.5 text-2xs text-muted-foreground outline-none data-[highlighted]:bg-foreground/5"
+        >
           {item.text}
-        </p>
+        </Menu.Item>
       );
   }
 }
