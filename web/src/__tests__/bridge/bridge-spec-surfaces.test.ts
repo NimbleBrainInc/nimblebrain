@@ -689,7 +689,7 @@ describe("ai.nimblebrain/request-file", () => {
     id: string,
     picked: File[],
     upload: typeof uploadStub,
-    maxSize = 1024,
+    maxSize: number | null = 1024,
     limits?: UploadLimits,
   ): Promise<{ result?: unknown; error?: { code: number; message: string; data?: unknown } }> {
     const origUpload = uploadStub;
@@ -712,7 +712,8 @@ describe("ai.nimblebrain/request-file", () => {
         jsonrpc: "2.0",
         id,
         method: REQUEST_FILE_METHOD,
-        params: { multiple: true, maxSize },
+        // `null` sends no `maxSize`, as an app that takes the host's default does.
+        params: { multiple: true, ...(maxSize === null ? {} : { maxSize }) },
       });
       return (await frame.waitFor(isReplyTo(id), 2000)) as {
         result?: unknown;
@@ -815,6 +816,25 @@ describe("ai.nimblebrain/request-file", () => {
 
     expect(uploaded).toBe(false);
     expect((reply.error?.data as { errors: string[] }).errors).toHaveLength(1);
+  });
+
+  test("an app that sends no maxSize is held to the host's per-file limit", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-host-default",
+      [new File(["x".repeat(2048)], "big.bin")],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      null,
+      { maxFileSize: 1024, maxTotalSize: 1_048_576 },
+    );
+
+    expect(uploaded).toBe(false);
+    expect((reply.error?.data as { errors: string[] }).errors).toEqual([
+      'File "big.bin" exceeds maximum size of 1.0 KB',
+    ]);
   });
 
   test("every oversize file is refused before anything is uploaded", async () => {

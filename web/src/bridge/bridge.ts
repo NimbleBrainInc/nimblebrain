@@ -1438,9 +1438,7 @@ async function processPickedFiles(
   const selected = Array.from(files);
   const oversize = selected
     .filter((file) => file.size > maxSize)
-    .map(
-      (file) => `File "${file.name}" exceeds maximum size of ${Math.round(maxSize / 1_048_576)} MB`,
-    );
+    .map((file) => `File "${file.name}" exceeds maximum size of ${humanBytes(maxSize)}`);
   if (oversize.length > 0) {
     throw new FilesRefusedError(selected.length, { files: [], errors: oversize });
   }
