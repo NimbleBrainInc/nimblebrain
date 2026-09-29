@@ -5,7 +5,11 @@ import { join } from "node:path";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/server";
 import { log } from "../../src/observability/log.ts";
 import { requireCredentialStore } from "../../src/tools/credential-store.ts";
-import { mcpOAuthKey } from "../../src/tools/mcp-oauth-records.ts";
+import {
+  clearMcpOAuthAuthLost,
+  hasMcpOAuthAuthLost,
+  mcpOAuthKey,
+} from "../../src/tools/mcp-oauth-records.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import {
@@ -1229,6 +1233,77 @@ describe("WorkspaceOAuthProvider — redacted OAuth health logging", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// ── auth_lost flag ──────────────────────────────────────────────────
+//
+// The flag is what lets a restart tell a connection whose credential was
+// rejected (reauth_required) from one the user disconnected
+// (not_authenticated), after the SDK has deleted the rejected tokens.
+
+describe("WorkspaceOAuthProvider — auth_lost flag", () => {
+  let workDir: string;
+  const WS_OWNER = { type: "workspace", wsId: "ws_test" } as const;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-lost-"));
+    seedWorkspaceRoot(workDir, "ws_test");
+    installTestCredentialStore(workDir);
+  });
+
+  /** Wait for the flag write `notifyAuthLost` starts without awaiting. */
+  const settled = (p: WorkspaceOAuthProvider) =>
+    (p as unknown as { authLostWrite: Promise<void> }).authLostWrite;
+
+  it("test_notifyAuthLost_workspaceOwner_persistsFlag", async () => {
+    const p = makeProvider(workDir);
+    p.notifyAuthLost();
+    await settled(p);
+    expect(await hasMcpOAuthAuthLost(workDir, WS_OWNER, "test-srv")).toBe(true);
+  });
+
+  it("test_saveTokens_afterAuthLost_clearsFlag", async () => {
+    const p = makeProvider(workDir);
+    p.notifyAuthLost();
+    await settled(p);
+    await p.saveTokens({ access_token: "acc", token_type: "Bearer" });
+    expect(await hasMcpOAuthAuthLost(workDir, WS_OWNER, "test-srv")).toBe(false);
+  });
+
+  it("test_saveTokens_freshProvider_clearsFlagLeftByEarlierProcess", async () => {
+    const earlier = makeProvider(workDir);
+    earlier.notifyAuthLost();
+    await settled(earlier);
+
+    // A new process's provider has no memory of the flag; a Reconnect that
+    // lands tokens must still clear it.
+    await makeProvider(workDir).saveTokens({ access_token: "acc", token_type: "Bearer" });
+    expect(await hasMcpOAuthAuthLost(workDir, WS_OWNER, "test-srv")).toBe(false);
+  });
+
+  it("test_clearMcpOAuthAuthLost_removesFlag", async () => {
+    const p = makeProvider(workDir);
+    p.notifyAuthLost();
+    await settled(p);
+    await clearMcpOAuthAuthLost(workDir, WS_OWNER, "test-srv");
+    expect(await hasMcpOAuthAuthLost(workDir, WS_OWNER, "test-srv")).toBe(false);
+  });
+
+  it("test_notifyAuthLost_userOwner_writesNoFlag", async () => {
+    // A personal connector's state is not seeded from the flag, so it is
+    // never written at user scope.
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "user", userId: "user_01" },
+      serverName: "test-srv",
+      workDir,
+      callbackUrl: CALLBACK,
+    });
+    p.notifyAuthLost();
+    await settled(p);
+    expect(
+      await hasMcpOAuthAuthLost(workDir, { type: "user", userId: "user_01" }, "test-srv"),
+    ).toBe(false);
   });
 });
 

@@ -569,7 +569,7 @@ const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/li
 
 /**
  * OAuthClientProvider scoped to an `(owner, serverName)` pair. It owns the
- * OAuth state machine; {@link McpOAuthRecords} owns where the four records it
+ * OAuth state machine; {@link McpOAuthRecords} owns where the records it
  * persists live — the credential store, at the owner's scope, under the keys
  * `mcpOAuthKey` builds:
  *
@@ -583,6 +583,10 @@ const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/li
  *                                       `invalidateCredentials("verifier" |
  *                                       "all")` is called
  *   mcp-oauth.<serverName>.identity   — OIDC claims (id_token or userinfo)
+ *   mcp-oauth.<serverName>.auth_lost  — flag: the credential was rejected and
+ *                                       nobody has reconnected since. Set by
+ *                                       `notifyAuthLost`, cleared by
+ *                                       `saveTokens` and by disconnect
  *
  * A token is a secret of the same class as a client secret, so it lives behind
  * the same door: atomic writes, mode, and audit are the store's, not this
@@ -616,6 +620,15 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   /** De-dupe guard: a flurry of in-flight tool calls can each throw
    *  UnauthorizedError; the connection should flip to reauth_required once. */
   private authLostNotified = false;
+  /**
+   * Whether the persisted `auth_lost` flag may be set: `undefined` until this
+   * provider has written or cleared it (a previous process may have left it),
+   * then known. Lets `saveTokens` skip the store delete on every refresh.
+   */
+  private authLostFlagged: boolean | undefined;
+  /** The in-flight write of the `auth_lost` flag, so a caller that must not
+   *  return before it lands (the boot-start guard) can await it. */
+  private authLostWrite: Promise<void> = Promise.resolve();
   /**
    * True while `exchangeAuthorizationCode` runs, so `saveTokens` can tell a
    * fresh sign-in from a refresh — the SDK calls it for both with no grant
@@ -1128,6 +1141,11 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // re-signal (the guard stays latched for the provider's lifetime).
     this.authLostNotified = false;
     await this.records.write("tokens", tokens);
+    // A credential that works again is no longer lost.
+    if (this.owner.type === "workspace" && this.authLostFlagged !== false) {
+      this.authLostFlagged = false;
+      await this.records.delete("auth_lost");
+    }
 
     // Connector OAuth health — redacted (booleans + lifetime only, never token
     // values). A token response carrying no refresh_token means the connection
@@ -1311,6 +1329,20 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     log.warn(
       `[oauth] ${this.serverName} authorization lost — connection flipping to reauth_required`,
     );
+    // Persist the loss so it survives a restart. The SDK deletes the rejected
+    // tokens on `invalid_grant`, after which the boot seed could no longer tell
+    // this connection from one the user disconnected. Only a workspace
+    // connection is seeded from it; a personal one derives its state elsewhere.
+    if (this.owner.type === "workspace") {
+      this.authLostFlagged = true;
+      this.authLostWrite = this.records
+        .write("auth_lost", { at: new Date().toISOString() })
+        .catch((err) => {
+          log.warn(
+            `[oauth] ${this.serverName} could not persist auth_lost: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
     try {
       this.onAuthLost?.();
     } catch (err) {
@@ -1489,6 +1521,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         `[oauth] ${this.serverName} interactive auth required but no user-initiated flow active — surfacing reauth_required (no headless block)`,
       );
       this.notifyAuthLost();
+      // Boot-start lands here, and the seed reads the flag as soon as start()
+      // throws, so the write must land first.
+      await this.authLostWrite;
       const err = new BackgroundReauthRequiredError(this.serverName);
       // Settle the pending flow so any concurrently-coalesced auth() chain
       // awaiting `awaitPendingFlow()` rejects too instead of hanging. The extra

@@ -160,8 +160,8 @@ function ConnectorRow({
  * + chevron). Action verbs lead the user to the right next step:
  *
  *   needs_setup + missingOperatorSetup → "Set up"
- *   needs_auth + state=not_authenticated → "Connect"
- *   needs_auth + state=reauth_required → "Reconnect"
+ *   not_connected → "Not connected" (neutral — at rest, nothing is broken)
+ *   needs_auth → "Reconnect" (a working connection broke)
  *   failed → "Failed" (no verb — admin investigates on the detail page)
  *   connecting / starting → "Connecting…" (no verb, no chevron action)
  *
@@ -182,10 +182,15 @@ function listSummary(installed: InstalledConnector): {
       const verb = installed.missingOperatorSetup ? "Set up" : "Configure";
       return { label: verb, tone: "text-amber-600", dot: true, dotColor: "bg-amber-500" };
     }
-    case "needs_auth": {
-      const verb = installed.state === "reauth_required" ? "Reconnect" : "Connect";
-      return { label: verb, tone: "text-amber-600", dot: true, dotColor: "bg-amber-500" };
-    }
+    case "not_connected":
+      return {
+        label: "Not connected",
+        tone: "text-muted-foreground",
+        dot: true,
+        dotColor: "bg-muted-foreground/50",
+      };
+    case "needs_auth":
+      return { label: "Reconnect", tone: "text-amber-600", dot: true, dotColor: "bg-amber-500" };
     case "connecting":
     case "starting":
       return {

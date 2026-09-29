@@ -25,6 +25,7 @@ import {
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
+import type { ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import {
   installTestCredentialStore,
@@ -59,6 +60,14 @@ async function buildHarness(opts: {
   wsId?: string;
   /** Connectors installed as workspace connectors, keyed `serverName` → wsIds. */
   workspaceInstalls?: Record<string, string[]>;
+  /** Tool names each running workspace source lists, keyed `serverName`. */
+  workspaceTools?: Record<string, string[]>;
+  /**
+   * Tool names each personal connector's source lists once started, keyed
+   * `serverName`; `"fails"` makes its start throw, `"unstarted"` returns a source
+   * whose tools/list throws. Absent → no such source.
+   */
+  identityTools?: Record<string, string[] | "fails" | "unstarted">;
 }): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-grants-"));
   // `list_personal_connectors` derives `authed` from the OAuth token record,
@@ -113,9 +122,24 @@ async function buildHarness(opts: {
       getInstance: (serverName: string, wsId: string) =>
         opts.workspaceInstalls?.[serverName]?.includes(wsId) ? { serverName } : undefined,
     }),
-    // No workspace source is running, so tool listings take the
-    // installed-but-not-running path and return the policy alone.
-    getRegistryForWorkspace: () => ({ getSource: () => undefined }),
+    // A workspace source runs only where `workspaceTools` names one; otherwise
+    // tool listings take the installed-but-not-running path.
+    getRegistryForWorkspace: () => ({
+      getSource: (serverName: string) => fakeSource(serverName, opts.workspaceTools?.[serverName]),
+    }),
+    getIdentityConnectorSource: async (userId: string, serverName: string) => {
+      const tools = opts.identityTools?.[serverName];
+      if (tools === "fails") throw new Error("not authenticated");
+      if (tools === "unstarted") {
+        return {
+          name: serverName,
+          tools: async () => {
+            throw new Error(`McpSource "${serverName}" not started`);
+          },
+        } as unknown as ToolSource;
+      }
+      return userId === ALICE.id ? fakeSource(serverName, tools) : undefined;
+    },
   } as unknown as Runtime;
 
   const ctx: ManageConnectorsContext = {
@@ -124,6 +148,20 @@ async function buildHarness(opts: {
     getWorkspaceId: () => opts.wsId ?? null,
   };
   return { workDir, store, tool: createManageConnectorsTool(ctx) };
+}
+
+/** A running source that lists `tools` under the registry's `<server>__` prefix. */
+function fakeSource(serverName: string, tools: string[] | undefined): ToolSource | undefined {
+  if (!tools) return undefined;
+  return {
+    name: serverName,
+    tools: async () =>
+      tools.map((t) => ({
+        name: `${serverName}__${t}`,
+        description: t,
+        inputSchema: { type: "object" },
+      })),
+  } as unknown as ToolSource;
 }
 
 function sc(result: { structuredContent?: unknown }): {
@@ -323,6 +361,112 @@ describe("manage_connectors — personal-connector permissions (identity scope)"
     expect((res.structuredContent as { tools?: Record<string, string> })?.tools).toEqual({
       delete_notes: "disallow",
     });
+  });
+});
+
+describe("manage_connectors — list_tools_with_permissions on a personal connector", () => {
+  let h: Harness;
+  afterEach(() => {
+    resetTestCredentialStore();
+    if (h) rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const USER_OWNER = { scope: "user", userId: ALICE.id } as const;
+  const listed = (res: { structuredContent?: unknown }) =>
+    res.structuredContent as {
+      scope?: string;
+      tools?: Array<{ name: string }>;
+      permissions?: Record<string, string>;
+    };
+
+  test("scope 'identity' lists a personal-only connector's tools and policy with no workspace", async () => {
+    h = await buildHarness({
+      personalConnectors: ["granola"],
+      identityTools: { granola: ["list_notes", "delete_notes"] },
+    });
+    await h.store.setConnector(USER_OWNER, "granola", { delete_notes: "disallow" });
+    const res = await h.tool.handler({
+      action: "list_tools_with_permissions",
+      serverName: "granola",
+      scope: "identity",
+    });
+    expect(res.isError).toBeFalsy();
+    expect(listed(res).scope).toBe("user");
+    expect(listed(res).tools?.map((t) => t.name)).toEqual(["list_notes", "delete_notes"]);
+    expect(listed(res).permissions).toEqual({ delete_notes: "disallow" });
+  });
+
+  for (const [state, how] of [
+    ["fails", "fails to start"],
+    ["unstarted", "is registered but not started"],
+  ] as const) {
+    test(`a personal connector whose source ${how} returns its policy with no tools`, async () => {
+      h = await buildHarness({
+        personalConnectors: ["granola"],
+        identityTools: { granola: state },
+      });
+      await h.store.setConnector(USER_OWNER, "granola", { delete_notes: "disallow" });
+      const res = await h.tool.handler({
+        action: "list_tools_with_permissions",
+        serverName: "granola",
+        scope: "identity",
+      });
+      expect(res.isError).toBeFalsy();
+      expect(listed(res).tools).toEqual([]);
+      expect(listed(res).permissions).toEqual({ delete_notes: "disallow" });
+    });
+  }
+
+  test("scope 'identity' reads the personal source, not a same-named workspace install", async () => {
+    h = await buildHarness({
+      personalConnectors: ["granola"],
+      wsId: personalWs,
+      workspaceInstalls: { granola: [personalWs] },
+      workspaceTools: { granola: ["workspace_only"] },
+      identityTools: { granola: ["list_notes"] },
+    });
+    await h.store.setConnector({ scope: "workspace", wsId: personalWs }, "granola", {
+      workspace_only: "disallow",
+    });
+    const res = await h.tool.handler({
+      action: "list_tools_with_permissions",
+      serverName: "granola",
+      scope: "identity",
+    });
+    expect(listed(res).scope).toBe("user");
+    expect(listed(res).tools?.map((t) => t.name)).toEqual(["list_notes"]);
+    expect(listed(res).permissions).toEqual({});
+
+    // The unscoped read in that workspace still addresses the workspace install.
+    const ws = await h.tool.handler({
+      action: "list_tools_with_permissions",
+      serverName: "granola",
+    });
+    expect(listed(ws).scope).toBe("workspace");
+    expect(listed(ws).tools?.map((t) => t.name)).toEqual(["workspace_only"]);
+    expect(listed(ws).permissions).toEqual({ workspace_only: "disallow" });
+  });
+
+  test("set_permissions with scope 'identity' on a personal-only connector writes {scope:'user'}", async () => {
+    h = await buildHarness({ personalConnectors: ["granola"] });
+    const res = await h.tool.handler({
+      action: "set_permissions",
+      serverName: "granola",
+      scope: "identity",
+      tools: { delete_notes: "disallow" },
+    });
+    expect(res.isError).toBeFalsy();
+    expect(await h.store.getConnector(USER_OWNER, "granola")).toEqual({ delete_notes: "disallow" });
+  });
+
+  test("scope 'identity' for a connector the caller has no personal copy of is refused", async () => {
+    h = await buildHarness({ personalConnectors: [] });
+    const res = await h.tool.handler({
+      action: "list_tools_with_permissions",
+      serverName: "granola",
+      scope: "identity",
+    });
+    expect(res.isError).toBe(true);
   });
 });
 

@@ -88,7 +88,10 @@ function writeTokens(root: string): void {
  * instance, so reading state back would test the instance registry rather than
  * the probe. Capturing the call tests the decision, which is the unit here.
  */
-async function seededState(mgr: ConnectorLifecycleManager): Promise<string | undefined> {
+async function seededState(
+  mgr: ConnectorLifecycleManager,
+  startError?: string,
+): Promise<string | undefined> {
   let seen: string | undefined;
   (mgr as unknown as { recordConnectionStateChange: unknown }).recordConnectionStateChange = (
     _server: string,
@@ -100,9 +103,14 @@ async function seededState(mgr: ConnectorLifecycleManager): Promise<string | und
   };
   await (
     mgr as unknown as {
-      seedUrlConnectionState: (s: string, w: string, r: ConnectorRef) => Promise<void>;
+      seedUrlConnectionState: (
+        s: string,
+        w: string,
+        r: ConnectorRef,
+        startError?: string,
+      ) => Promise<void>;
     }
-  ).seedUrlConnectionState(SERVER, WS, urlConnector());
+  ).seedUrlConnectionState(SERVER, WS, urlConnector(), startError);
   return seen;
 }
 
@@ -146,4 +154,55 @@ test("tokens already in the credential store seed running with no legacy file", 
   }).write("tokens", { access_token: "t" });
 
   expect(await seededState(mgr)).toBe("running");
+});
+
+// ── auth_lost: a broken connection survives a restart ──────────────────
+//
+// The SDK deletes the rejected tokens on `invalid_grant`, so without the flag a
+// connection whose credential was revoked boots exactly like one the user
+// disconnected. The flag is what keeps amber "Reconnect" apart from a neutral
+// "Not connected" across a deploy.
+
+function records(): McpOAuthRecords {
+  return new McpOAuthRecords({
+    owner: { type: "workspace", wsId: WS },
+    serverName: SERVER,
+    workDir: configuredWorkDir,
+  });
+}
+
+test("test_seed_authLostWithoutTokens_seedsReauthRequired", async () => {
+  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
+  mgr.setWorkDir(configuredWorkDir);
+  await records().write("auth_lost", { at: "2026-01-01T00:00:00.000Z" });
+
+  expect(await seededState(mgr)).toBe("reauth_required");
+});
+
+test("test_seed_authLostOnFailedBoot_seedsReauthRequiredNotDead", async () => {
+  // The boot that discovers the rejection fails with it; that must still read
+  // as reauth, not as an unreachable endpoint.
+  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
+  mgr.setWorkDir(configuredWorkDir);
+  await records().write("auth_lost", { at: "2026-01-01T00:00:00.000Z" });
+
+  expect(await seededState(mgr, "reauthorization required")).toBe("reauth_required");
+});
+
+test("test_seed_authLostWithWorkingTokens_seedsRunning", async () => {
+  // A refresh that failed with a server error leaves the tokens in place, and
+  // a boot that starts with them is connected.
+  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
+  mgr.setWorkDir(configuredWorkDir);
+  await records().write("auth_lost", { at: "2026-01-01T00:00:00.000Z" });
+  await records().write("tokens", { access_token: "t" });
+
+  expect(await seededState(mgr)).toBe("running");
+});
+
+test("test_seed_failedBootWithoutAuthLost_seedsDead", async () => {
+  const mgr = new ConnectorLifecycleManager(new NoopEventSink());
+  mgr.setWorkDir(configuredWorkDir);
+
+  expect(await seededState(mgr, "ECONNREFUSED")).toBe("dead");
 });

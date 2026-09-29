@@ -32,7 +32,9 @@ Installing or connecting a service requires the **admin** role in the workspace.
 
 On a connector's **Configure** page, the header shows the connector's name and status ("Connected as …" when there is a sign-in), and its **⋯** menu holds **Documentation**, **Disconnect**, **Uninstall** and the connector's version and tool count. Under the header come its connection settings, then the connector's own **Settings** section when it has one, then **Tool permissions**, collapsed to a summary until you choose **Show tools**.
 
-**Disconnect** appears only for a connection someone signed in to: the **dcr** and **static** kinds, and a brokered connector whose broker can reconnect it. Disconnecting is reversible — reconnecting re-runs that sign-in. A **provider** connector (one of the platform's own services) or one with a stored credential has no sign-in, so there is nothing to disconnect and the menu does not offer it; remove it with **Uninstall**.
+**Disconnect** appears only for a connection someone signed in to: the **dcr** and **static** kinds, and a brokered connector whose broker can reconnect it, such as an OAuth **composio** toolkit. Disconnecting is reversible — reconnecting re-runs that sign-in. A **provider** connector (one of the platform's own services) or one with a stored credential has no sign-in, so there is nothing to disconnect and the menu does not offer it; remove it with **Uninstall**.
+
+Disconnect is shared: it disconnects the connector for everyone in the workspace, and asks you to confirm first. The connector stays installed with its tool permissions and settings, and reads **Not connected** with a **Connect** action — a resting state, not an error. To remove it entirely, use **Uninstall**. A connection that stops working without anyone disconnecting it (the vendor revoked or expired its access) reads **Reconnect** in amber instead, because someone needs to act on it. **provider** and **smithery** connectors have no interactive sign-in: their credential is held by the platform or the broker, so they reconnect without prompting you.
 
 ## The auth kinds
 

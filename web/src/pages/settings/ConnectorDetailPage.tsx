@@ -131,7 +131,12 @@ export function ConnectorDetailPage() {
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
         <WorkspaceSecretsSection installed={installed} canManage={canManage} />
         <ConnectorSettingsSection serverName={installed.serverName} canManage={canManage} />
-        <ToolPermissionsTable serverName={installed.serverName} canManage={canManage} />
+        <ToolPermissionsTable
+          serverName={installed.serverName}
+          scope="workspace"
+          canManage={canManage}
+          collapsible
+        />
       </div>
 
       {canManage && (

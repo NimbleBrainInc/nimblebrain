@@ -393,7 +393,7 @@ describe("IdentityToolRouter — a run's allowedTools", () => {
     inputSchema: { type: "object", properties: {} },
   });
 
-  test("lists only allowed tools, keeping nb__* system tools", async () => {
+  test("lists only allowed tools, keeping only the nb__ discovery tools", async () => {
     const router = new IdentityToolRouter({
       identityId: USER_ID,
       workspaceId: SHARED_WS,
@@ -409,6 +409,9 @@ describe("IdentityToolRouter — a run's allowedTools", () => {
               schema("mail__send"),
               schema("files__read"),
               schema("nb__search"),
+              schema("nb__manage_tools"),
+              schema("nb__read_resource"),
+              schema("nb__status"),
             ],
           ],
         ]),
@@ -417,7 +420,7 @@ describe("IdentityToolRouter — a run's allowedTools", () => {
 
     const names = (await router.availableTools()).map((t) => t.name);
 
-    expect(names).toEqual(["crm__search", "nb__search"]);
+    expect(names).toEqual(["crm__search", "nb__search", "nb__manage_tools"]);
   });
 
   test("refuses a call to a tool outside the list without dispatching it", async () => {

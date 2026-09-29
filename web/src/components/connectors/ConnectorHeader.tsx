@@ -8,6 +8,7 @@ import {
   initiateMcpOAuth,
 } from "../../api/client";
 import { Button } from "../ui/button";
+import { ConfirmDialog } from "../ui/confirm-dialog";
 import { ComposioApiKeyModal } from "./ComposioApiKeyModal";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupModal";
@@ -20,22 +21,24 @@ import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupMod
  *   [ status banner + primary action — only when something needs doing ]
  *
  * - **Identity and state on one line.** The status badge says what is true now
- *   ("Connected", "Connected as <account>", "Sign-in required"), so a connection
+ *   ("Connected", "Connected as <account>", "Not connected"), so a connection
  *   needs no row of its own.
  * - **Secondary and destructive actions behind ⋯.** Documentation, Disconnect and
  *   Uninstall are rare and, for the last two, costly to click by accident, so they
- *   do not sit on the page. Uninstall still confirms in its own dialog.
+ *   do not sit on the page. Each of those two confirms in its own dialog.
  * - **Technical detail in the menu's footer**, not under the name: the version,
  *   the tool count and whether the connector has an interface.
  *
  * The status banner is an absorbing element — when a connector is `ready` it
  * hides and the page reads as a quiet settings surface. When attention is
  * required (`needs_setup`, `needs_auth`, `failed`), it appears as the page's
- * first actionable concern.
+ * first actionable concern. `not_connected` shows the same banner in a neutral
+ * tone: nothing is wrong, but Connect is still the one thing to do here.
  *
  * Owns the primary CTA dispatch:
  *   - needs_setup + missing operator OAuth → OperatorSetupModal
- *   - needs_auth (any cause)                → initiateMcpOAuth
+ *   - not_connected                         → initiateMcpOAuth (Connect)
+ *   - needs_auth                            → initiateMcpOAuth (Reconnect)
  *   - failed                                → initiateMcpOAuth (same as Reconnect)
  *   - connecting/starting                   → Cancel (reset a wedged OAuth)
  *
@@ -60,6 +63,7 @@ export function ConnectorHeader({
   const [error, setError] = useState<string | null>(null);
   const [operatorModalOpen, setOperatorModalOpen] = useState(false);
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
   const cat = installed.catalog;
   const name = installed.displayName;
@@ -141,24 +145,6 @@ export function ConnectorHeader({
     }
   };
 
-  /**
-   * Disconnect an established connection. No confirm: it is reversible —
-   * Connect re-runs the flow and re-establishes the session. Uninstall keeps
-   * its confirm, because it drops credentials and permissions.
-   */
-  const disconnect = async () => {
-    setActing(true);
-    setError(null);
-    try {
-      await disconnectConnector(installed.serverName, installed.scope);
-      onChanged();
-    } catch (err) {
-      reportError(err);
-    } finally {
-      setActing(false);
-    }
-  };
-
   const onPrimary = async () => {
     if (!action) return;
     setError(null);
@@ -192,7 +178,7 @@ export function ConnectorHeader({
             installed={installed}
             canManage={canManage}
             acting={acting}
-            onDisconnect={() => void disconnect()}
+            onDisconnect={() => setConfirmingDisconnect(true)}
             onUninstall={onUninstall}
           />
         }
@@ -208,6 +194,14 @@ export function ConnectorHeader({
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
+      {canManage && (
+        <DisconnectDialog
+          installed={installed}
+          open={confirmingDisconnect}
+          onOpenChange={setConfirmingDisconnect}
+          onDisconnected={onChanged}
+        />
+      )}
       {operatorModalOpen && operatorTarget && (
         <OperatorSetupModal
           entry={operatorTarget}
@@ -289,6 +283,46 @@ function StatusBadge({ installed }: { installed: InstalledConnector }) {
       <StatusDot status={installed.status} className="" />
       {label}
     </span>
+  );
+}
+
+/**
+ * Disconnect asks first, and says what it leaves: the connection is shared, so it
+ * goes for everyone, while the install, its tool permissions and its settings stay,
+ * and Uninstall is what removes them. Without that, a disconnected connector reads
+ * as something to clean up rather than a connector at rest. A failure stays in the
+ * dialog with its error.
+ */
+export function DisconnectDialog({
+  installed,
+  open,
+  onOpenChange,
+  onDisconnected,
+}: {
+  installed: InstalledConnector;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDisconnected: () => void;
+}) {
+  const name = installed.displayName;
+  return (
+    <ConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Disconnect ${name}?`}
+      description="Disconnects it for everyone in this workspace. Its tools stop working in chats and automations until someone connects it again."
+      confirmLabel="Disconnect"
+      pendingLabel="Disconnecting…"
+      onConfirm={async () => {
+        await disconnectConnector(installed.serverName, installed.scope);
+        onOpenChange(false);
+        onDisconnected();
+      }}
+    >
+      <p className="text-muted-foreground">
+        {name} stays installed, with its tool permissions and settings. To remove it, use Uninstall.
+      </p>
+    </ConfirmDialog>
   );
 }
 
@@ -534,6 +568,8 @@ function StatusDot({
   const cls: Record<InstalledConnector["status"], string> = {
     ready: "bg-emerald-500",
     needs_setup: "bg-amber-500",
+    // At rest, not a warning: never connected, or disconnected on purpose.
+    not_connected: "bg-muted-foreground/50",
     needs_auth: "bg-amber-500",
     // Pulse on connecting/starting is the one motion exception — it
     // signals "in-flight, do not retry yet" and disappears as soon
@@ -555,8 +591,10 @@ export function statusLabel(status: InstalledConnector["status"]): string {
       return "Ready";
     case "needs_setup":
       return "Configuration required";
+    case "not_connected":
+      return "Not connected";
     case "needs_auth":
-      return "Sign-in required";
+      return "Reconnection needed";
     case "connecting":
       return "Connecting…";
     case "starting":
@@ -640,12 +678,13 @@ function resolveAction(
       return null;
     }
 
-    case "needs_auth": {
-      // First-time auth vs re-auth: same flow, different verb. The
-      // user has stronger context if we tell them which.
-      const verb = installed.state === "reauth_required" ? "Reconnect" : "Connect";
-      return { kind: "oauth", label: verb, adminOnly: authRotatesSharedCredential };
-    }
+    // First-time auth vs re-auth: same flow, different verb. The user has
+    // stronger context if we tell them which.
+    case "not_connected":
+      return { kind: "oauth", label: "Connect", adminOnly: authRotatesSharedCredential };
+
+    case "needs_auth":
+      return { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential };
 
     case "failed":
       // Reconnect is usually the fix (token upstream rejected, transport

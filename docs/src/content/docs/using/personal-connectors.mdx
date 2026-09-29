@@ -53,6 +53,12 @@ You can also grant from **chat**: ask the agent to "grant Granola to this worksp
 
 Once a personal connector is **granted into the workspace you're chatting in**, its tools are available to the agent there, namespaced to that workspace. Ask the agent to use the service ("summarize my last three Granola meetings") and it will call the connector's tools. In a workspace where you haven't granted it, those tools simply aren't present.
 
+## Tool permissions
+
+A connected personal connector has a **Tool permissions** link on its row. It opens a table of the connector's tools, each set to **Allow** or **Disallow**, with **Allow all** and **Disallow all** for the whole set. A tool with no setting is allowed.
+
+The policy is yours, like the connector: it applies in every workspace you grant the connector into, and no admin role is needed to change it. It is separate from a workspace connector of the same name, whose policy the workspace's admins set under Settings → Connectors. From chat, ask the agent to set it; the agent addresses your personal connector with `scope: "identity"`.
+
 ## In a notification route
 
 A [notification route](/using/notifications#routes) may deliver through one of

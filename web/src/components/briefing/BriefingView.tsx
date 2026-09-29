@@ -212,10 +212,14 @@ export function BriefingView({
     saveBriefingPrefs(workspaceId, next);
   };
 
-  // Every status but `ready`: an OAuth abandoned mid-flow stays `connecting`,
-  // and its page is where it is cancelled.
+  // Every status but `ready` and `not_connected`: a connector never connected,
+  // or disconnected on purpose, is at rest and asks nothing of anyone. One still
+  // `connecting` stays in, because an OAuth abandoned mid-flow stays there and
+  // its page is where it is cancelled.
   const all: PanelRow[] = [
-    ...connectors.filter((c) => c.status !== "ready").map((c) => connectorRow(c, onOpenConnector)),
+    ...connectors
+      .filter((c) => c.status !== "ready" && c.status !== "not_connected")
+      .map((c) => connectorRow(c, onOpenConnector)),
     ...(briefing?.items ?? []).map((item) => facetRow(item, onOpen)),
   ];
   // Most urgent first; within a level, connector rows lead and facet items keep

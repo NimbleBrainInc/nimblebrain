@@ -196,7 +196,7 @@ describe("BriefingView", () => {
     expect(mounted.container.textContent ?? "").toContain("<b>bold</b>");
   });
 
-  test("a connector needing sign-in gets a row that opens its page", async () => {
+  test("a connector needing reconnection gets a row that opens its page", async () => {
     const opened: string[] = [];
     mounted = await mount(
       view({
@@ -207,14 +207,26 @@ describe("BriefingView", () => {
     );
     const rows = findAllByTestId(mounted.container, "briefing-connector-status");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.textContent).toBe("Critical: Sign-in required · Gmail");
+    expect(rows[0]?.textContent).toBe("Critical: Reconnection needed · Gmail");
     await act(async () => {
       rows[0]?.getElementsByTagName("button")[0]?.click();
     });
     expect(opened).toEqual(["gmail"]);
   });
 
-  test("every status but ready gets a row, with the connector page's label", async () => {
+  test("a connector at rest (never connected, or disconnected) gets no row", async () => {
+    mounted = await mount(
+      view({
+        briefing: makeBriefing({ items: [] }),
+        connectors: [connector("gmail", "not_connected", "Gmail"), connector("crm", "ready")],
+      }),
+    );
+    // Nothing else needs anyone either, so there is no panel at all.
+    expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
+    expect(mounted.container.innerHTML).toBe("");
+  });
+
+  test("every status but ready and not_connected gets a row, with the connector page's label", async () => {
     mounted = await mount(
       view({
         briefing: makeBriefing({ items: [] }),
@@ -253,7 +265,7 @@ describe("BriefingView", () => {
     );
     const rows = Array.from(mounted.container.getElementsByTagName("li"));
     expect(rows.map((li) => [li.getAttribute("data-level"), li.textContent])).toEqual([
-      ["critical", "Critical: Sign-in required · Notion"],
+      ["critical", "Critical: Reconnection needed · Notion"],
       ["critical", "Critical: 1 Tasks blocked · Tasks"],
       ["warning", "Warning: 4 Drafts · Out"],
       ["info", "Info: Connecting… · Slack"],

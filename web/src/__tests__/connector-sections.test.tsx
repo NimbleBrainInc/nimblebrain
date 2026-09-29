@@ -37,6 +37,17 @@ import type * as ApiClient from "../api/client";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// happy-dom builds its selector errors from `window.SyntaxError`, which it
+// does not define; the ConfirmDialog behind Disconnect runs selectors that
+// reach that path. Same shim as uninstall-connector-dialog.test.tsx.
+{
+  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
+  if (win) {
+    win.SyntaxError ??= SyntaxError;
+    win.TypeError ??= TypeError;
+  }
+}
+
 // ── api/client mocks ────────────────────────────────────────────────
 // Every section calls into one or two helpers from api/client. We
 // override those helpers but spread the real-module snapshot (see the
@@ -129,6 +140,31 @@ async function mount(element: React.ReactElement): Promise<Mounted> {
 function findButton(container: HTMLElement, prefix: string): HTMLButtonElement | null {
   const buttons = Array.from(container.getElementsByTagName("button"));
   return buttons.find((b) => (b.textContent ?? "").trim().startsWith(prefix)) ?? null;
+}
+
+/** The open ConfirmDialog, which renders in a portal outside the container. */
+function dialog(): HTMLElement | null {
+  return document.body.querySelector('[role="dialog"]');
+}
+
+function dialogButton(text: string): HTMLButtonElement | null {
+  const el = dialog();
+  if (!el) return null;
+  return (
+    Array.from(el.querySelectorAll("button")).find((b) => b.textContent?.includes(text)) ?? null
+  );
+}
+
+async function click(el: Element | null): Promise<void> {
+  const MouseEventCtor = (globalThis as unknown as { window: { MouseEvent: typeof MouseEvent } })
+    .window.MouseEvent;
+  await act(async () => {
+    el?.dispatchEvent(new MouseEventCtor("click", { bubbles: true }));
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 /** Reset all api/client mock invocations between tests. */
@@ -324,6 +360,70 @@ describe("connectorDetails", () => {
   });
 });
 
+describe("DisconnectDialog", () => {
+  test("Disconnect asks first, saying what stays and that Uninstall removes it", async () => {
+    mounted = await mount(
+      <DisconnectDialog
+        installed={dcrConnector({ state: "running" })}
+        open={true}
+        onOpenChange={() => {}}
+        onDisconnected={() => {}}
+      />,
+    );
+    const text = dialog()?.textContent ?? "";
+    expect(text).toContain("for everyone in this workspace");
+    expect(text).toContain("stays installed, with its tool permissions");
+    expect(text).toContain("Uninstall");
+    expect(disconnectConnector).not.toHaveBeenCalled();
+  });
+
+  test("confirming Disconnect disconnects and refreshes", async () => {
+    const onChanged = mock(() => {});
+    mounted = await mount(
+      <DisconnectDialog
+        installed={dcrConnector({ state: "running" })}
+        open={true}
+        onOpenChange={() => {}}
+        onDisconnected={onChanged}
+      />,
+    );
+    await click(dialogButton("Disconnect"));
+    expect(disconnectConnector).toHaveBeenCalledTimes(1);
+    expect(onChanged).toHaveBeenCalledTimes(1);
+  });
+
+  test("cancelling Disconnect leaves the connection alone", async () => {
+    const onOpenChange = mock((_open: boolean) => {});
+    mounted = await mount(
+      <DisconnectDialog
+        installed={dcrConnector({ state: "running" })}
+        open={true}
+        onOpenChange={onOpenChange}
+        onDisconnected={() => {}}
+      />,
+    );
+    await click(dialogButton("Cancel"));
+    expect(disconnectConnector).not.toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  test("a failed Disconnect stays in the dialog with the error", async () => {
+    disconnectConnector.mockImplementationOnce(async () => {
+      throw new Error("Workspace admin role required");
+    });
+    mounted = await mount(
+      <DisconnectDialog
+        installed={dcrConnector({ state: "running" })}
+        open={true}
+        onOpenChange={() => {}}
+        onDisconnected={() => {}}
+      />,
+    );
+    await click(dialogButton("Disconnect"));
+    expect(dialog()?.textContent).toContain("Workspace admin role required");
+  });
+});
+
 // ── OperatorOAuthSection ────────────────────────────────────────────
 
 describe("OperatorOAuthSection", () => {
@@ -401,7 +501,7 @@ describe("OperatorOAuthSection", () => {
 // copy, and admin gating are pinned here so future regressions can't
 // strand a user with no recovery path.
 
-const { ConnectorHeader, connectorDetails, connectorMenuItems } = await import(
+const { ConnectorHeader, DisconnectDialog, connectorDetails, connectorMenuItems } = await import(
   "../components/connectors/ConnectorHeader"
 );
 
@@ -418,7 +518,7 @@ describe("ConnectorHeader — banner and primary action", () => {
     // Title still present; status block hidden.
     expect(mounted.container.textContent).toContain("Granola");
     expect(mounted.container.textContent).not.toContain("Configuration required");
-    expect(mounted.container.textContent).not.toContain("Sign-in required");
+    expect(mounted.container.textContent).not.toContain("Reconnection needed");
     // No status-block buttons (uninstall etc. live elsewhere).
     expect(findButton(mounted.container, "Configure")).toBeNull();
     expect(findButton(mounted.container, "Connect")).toBeNull();
@@ -442,18 +542,35 @@ describe("ConnectorHeader — banner and primary action", () => {
     expect(findButton(mounted.container, "Set up OAuth")).not.toBeNull();
   });
 
-  test("status=needs_auth + state=not_authenticated → 'Connect'", async () => {
+  test("status=not_connected → neutral 'Not connected' + 'Connect', no Reconnect", async () => {
+    // Disconnect leaves the connector here on purpose. It must read as a
+    // connector at rest, not as a broken connection to fix.
     mounted = await mount(
       <ConnectorHeader
         onUninstall={() => {}}
-        installed={dcrConnector({ status: "needs_auth", state: "not_authenticated" })}
+        installed={dcrConnector({ status: "not_connected", state: "not_authenticated" })}
         canManage={true}
         onChanged={() => {}}
       />,
     );
-    expect(mounted.container.textContent).toContain("Sign-in required");
+    expect(mounted.container.textContent).toContain("Not connected");
+    expect(mounted.container.querySelector(".bg-amber-500")).toBeNull();
     expect(findButton(mounted.container, "Connect")).not.toBeNull();
     expect(findButton(mounted.container, "Reconnect")).toBeNull();
+  });
+
+  test("status=needs_auth → amber 'Reconnection needed' + 'Reconnect'", async () => {
+    mounted = await mount(
+      <ConnectorHeader
+        onUninstall={() => {}}
+        installed={dcrConnector({ status: "needs_auth", state: "reauth_required" })}
+        canManage={true}
+        onChanged={() => {}}
+      />,
+    );
+    expect(mounted.container.textContent).toContain("Reconnection needed");
+    expect(mounted.container.querySelector(".bg-amber-500")).not.toBeNull();
+    expect(findButton(mounted.container, "Reconnect")).not.toBeNull();
   });
 
   // ── version, in the menu's details ──────────────────────────────
@@ -586,7 +703,7 @@ describe("ConnectorHeader — banner and primary action", () => {
     mounted = await mount(
       <ConnectorHeader
         onUninstall={() => {}}
-        installed={dcrConnector({ status: "needs_auth", state: "not_authenticated" })}
+        installed={dcrConnector({ status: "not_connected", state: "not_authenticated" })}
         canManage={false}
         onChanged={() => {}}
       />,
@@ -737,7 +854,7 @@ describe("ConnectorHeader — banner and primary action", () => {
     mounted = await mount(
       <ConnectorHeader
         onUninstall={() => {}}
-        installed={composioApiKeyConnector({ status: "needs_auth", state: "not_authenticated" })}
+        installed={composioApiKeyConnector({ status: "not_connected", state: "not_authenticated" })}
         canManage={false}
         onChanged={() => {}}
       />,

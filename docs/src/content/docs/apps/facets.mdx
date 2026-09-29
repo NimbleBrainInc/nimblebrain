@@ -146,7 +146,7 @@ quick: a `count(*)`, not a page of rows you count afterwards.
 | The count is zero | Nothing. |
 | The read fails, returns an invalid count, or takes longer than 5 seconds | The title, marked unavailable. Your other facets, and every other server's, render normally. |
 | Your server did not advertise the extension | Nothing is listed or read. |
-| Your connector is not connected in the workspace | Its facets are not read. Until it is ready (signed in, configured, connected), the overview shows its status in their place, opening the connector's page. Sign-in required, configuration required and failed show as `critical`; connecting and starting show as `info`. |
+| Your connector is not connected in the workspace | Its facets are not read. Until it is ready (signed in, configured, connected), the overview shows its status in their place, opening the connector's page. Reconnection needed, configuration required and failed show as `critical`; connecting and starting show as `info`. A connector that was never connected, or was disconnected on purpose, is at rest and shows nothing. |
 | No facet anywhere in the workspace has a count, and every connector is ready | No panel at all. |
 
 A member can hide a row until it changes and collapse the panel. Both are
