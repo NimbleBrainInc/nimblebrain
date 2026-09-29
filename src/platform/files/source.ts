@@ -37,14 +37,20 @@ import {
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
   FilesCreateInput,
+  type FilesCreateOutput,
   FilesDeleteInput,
+  type FilesDeleteOutput,
   FilesInfoInput,
+  type FilesInfoOutput,
   FilesListInput,
+  type FilesListOutput,
   FilesReadInput,
   FilesReadPdfPagesInput,
   type FilesReadPdfPagesOutput,
   FilesSearchInput,
+  type FilesSearchOutput,
   FilesTagInput,
+  type FilesTagOutput,
 } from "../schemas/files.ts";
 import { loadFilesUi } from "./ui-resource.ts";
 
@@ -75,7 +81,7 @@ function filterEntries(
   return out;
 }
 
-async function handleList(store: FileStore, args: ListInput): Promise<object> {
+async function handleList(store: FileStore, args: ListInput): Promise<FilesListOutput> {
   const limit = args.limit ?? 20;
   const offset = args.offset ?? 0;
   const sort = args.sort ?? "createdAt";
@@ -101,7 +107,7 @@ interface SearchInput {
   limit?: number;
 }
 
-async function handleSearch(store: FileStore, args: SearchInput): Promise<object> {
+async function handleSearch(store: FileStore, args: SearchInput): Promise<FilesSearchOutput> {
   const limit = args.limit ?? 20;
   const query = args.query.toLowerCase();
 
@@ -376,7 +382,7 @@ function decodeCreateBody(body: string, encoding: "base64" | "text"): Buffer {
   return Buffer.from(compact, "base64");
 }
 
-async function handleCreate(store: FileStore, args: CreateInput): Promise<object> {
+async function handleCreate(store: FileStore, args: CreateInput): Promise<FilesCreateOutput> {
   // TODO: apply the same MIME allowlist as chat-multipart ingest
   // (`ALLOWED_MIMES` in `src/files/ingest.ts`). The tool currently accepts
   // any `mimeType` the LLM supplies; the chat path rejects anything
@@ -407,7 +413,7 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<object
   return { id: saved.id, filename: manifest.filename, size: saved.size };
 }
 
-async function handleInfo(store: FileStore, args: { id: string }): Promise<object> {
+async function handleInfo(store: FileStore, args: { id: string }): Promise<FilesInfoOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);
@@ -421,7 +427,7 @@ interface TagInput {
   remove?: string[];
 }
 
-async function handleTag(store: FileStore, args: TagInput): Promise<object> {
+async function handleTag(store: FileStore, args: TagInput): Promise<FilesTagOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);
@@ -438,7 +444,7 @@ async function handleTag(store: FileStore, args: TagInput): Promise<object> {
   return { id: args.id, tags: newTags };
 }
 
-async function handleDelete(store: FileStore, args: { id: string }): Promise<object> {
+async function handleDelete(store: FileStore, args: { id: string }): Promise<FilesDeleteOutput> {
   const entry = await store.findEntry(args.id);
   if (!entry) {
     throw new Error(`File not found: ${args.id}`);

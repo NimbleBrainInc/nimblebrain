@@ -342,20 +342,37 @@ describe("handleList paging", () => {
     truncated?: string;
   };
 
-  /** Seed n automations through the real create path. */
+  /**
+   * Seed n automations as one map through a single save. Paging needs only
+   * records on disk; the create path has its own tests. Seeding through
+   * `handleCreate` costs O(n²) disk work, because each create reads every
+   * definition and `save` rewrites every one, so 105 records take ~2s.
+   * Names are `Seeded NNN` and ids their kebab form, as create would produce.
+   */
   function seed(ctx: ToolContext, n: number): void {
+    const now = new Date().toISOString();
+    const map = new Map<string, Automation>();
     for (let i = 0; i < n; i++) {
-      handleCreate(
-        {
-          manifest: {
-            name: `Seeded ${String(i).padStart(3, "0")}`,
-            schedule: { type: "interval", intervalMs: 1_800_000 },
-          },
-          body: "noop",
-        },
-        ctx,
-      );
+      const name = `Seeded ${String(i).padStart(3, "0")}`;
+      const id = toKebabCase(name);
+      map.set(id, {
+        id,
+        name,
+        prompt: "noop",
+        schedule: { type: "interval", intervalMs: 1_800_000 },
+        enabled: true,
+        source: "agent",
+        createdAt: now,
+        updatedAt: now,
+        runCount: 0,
+        consecutiveErrors: 0,
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
+        ownerId: OWNER,
+        workspaceId: WS,
+      });
     }
+    ctx.save(map);
   }
 
   test("caps at the default limit and reports the unpaged total", () => {
@@ -460,31 +477,9 @@ describe("handleList paging", () => {
 
   test("clamps a limit above the ceiling to 500", () => {
     // Needs more than 500 records or the assertion holds with or without the
-    // clamp. Built as one map through a single save: seeding 501 through
-    // handleCreate re-saves the whole store per create and takes ~30s.
+    // clamp.
     const ctx = makeCtx();
-    const now = new Date().toISOString();
-    const map = new Map<string, Automation>();
-    for (let i = 0; i < 501; i++) {
-      const id = `bulk-${String(i).padStart(4, "0")}`;
-      map.set(id, {
-        id,
-        name: id,
-        prompt: "noop",
-        schedule: { type: "interval", intervalMs: 1_800_000 },
-        enabled: true,
-        source: "agent",
-        createdAt: now,
-        updatedAt: now,
-        runCount: 0,
-        consecutiveErrors: 0,
-        cumulativeInputTokens: 0,
-        cumulativeOutputTokens: 0,
-        ownerId: OWNER,
-        workspaceId: WS,
-      });
-    }
-    ctx.save(map);
+    seed(ctx, 501);
 
     const r = handleList({ limit: 10_000 }, ctx) as ListResult;
     expect(r.total).toBe(501);
