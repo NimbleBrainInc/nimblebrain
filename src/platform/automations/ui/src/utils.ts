@@ -54,7 +54,7 @@ export function formatDuration(startedAt?: string, completedAt?: string): string
 }
 
 export function statusDotClass(
-  status: string | null,
+  status: string | null | undefined,
   enabled: boolean,
   consecutiveErrors?: number,
 ): string {

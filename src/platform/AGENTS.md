@@ -35,8 +35,12 @@ and the generated tree under `web/src/_generated/platform-schemas/` mirrors
 its shape.
 
 Register a new app in `index.ts`. Its UI, if it has one, is picked up by
-`build:platform-apps` and the image build from the `src/platform/*/ui` glob —
-there is no list to add it to.
+`build:platform-apps`, `check:platform-apps`, and the image build from the
+`src/platform/*/ui` glob — there is no list to add it to. The typecheck needs
+two configs in the UI package: `tsconfig.json` for the shipped source (browser
+libs, no Bun types, tests excluded) and `tsconfig.test.json` extending it with
+`types: ["vite/client", "bun"]` so `bun:test` resolves. Copy both from an
+existing app; `scripts/check-platform-apps.ts` says why each exists.
 
 An app's placements are the `placements:` array passed to `defineInProcessApp`,
 and that is the only copy the runtime reads. Two apps also carry a
