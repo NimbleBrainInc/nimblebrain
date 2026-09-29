@@ -4,11 +4,12 @@ import { join, resolve } from "node:path";
 
 /**
  * Drift guard: every `ai.nimblebrain/*` key the runtime declares is documented
- * in the MCP section of the docs (`docs/src/content/docs/mcp/`).
+ * in the Extensions or MCP section of the docs (`docs/src/content/docs/extensions/`,
+ * `docs/src/content/docs/mcp/`).
  *
  * A key on the wire is a contract whether or not it is written down: a server
  * author sees it in a trace, and a key nobody documented is one they guess at.
- * The MCP section is where each key says who may send it and why it exists, so
+ * Those sections are where each key says who may send it and why it exists, so
  * a key declared here and missing there fails the build in the PR that adds it.
  *
  * A key is "declared" when a source file assigns the literal to a const — the
@@ -18,7 +19,7 @@ import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../..");
 const SOURCE_DIRS = ["src", "web/src"];
-const DOCS_DIR = join(ROOT, "docs/src/content/docs/mcp");
+const DOCS_DIRS = ["extensions", "mcp"].map((dir) => join(ROOT, "docs/src/content/docs", dir));
 const DECLARATION = /const\s+[A-Z0-9_]+\s*(?::[^=]+)?=\s*"(ai\.nimblebrain\/[^"]+)"/g;
 
 function sourceFiles(dir: string): string[] {
@@ -54,10 +55,11 @@ function declaredKeys(): Map<string, string> {
   return keys;
 }
 
-const docs = readdirSync(DOCS_DIR)
-  .filter((name) => name.endsWith(".mdx"))
-  .map((name) => readFileSync(join(DOCS_DIR, name), "utf8"))
-  .join("\n");
+const docs = DOCS_DIRS.flatMap((dir) =>
+  readdirSync(dir)
+    .filter((name) => name.endsWith(".mdx"))
+    .map((name) => readFileSync(join(dir, name), "utf8")),
+).join("\n");
 
 describe("MCP extension docs", () => {
   const keys = declaredKeys();
@@ -68,7 +70,7 @@ describe("MCP extension docs", () => {
     expect(keys.has("ai.nimblebrain/action")).toBe(true);
   });
 
-  test("every declared ai.nimblebrain/* key is documented in docs/…/mcp/", () => {
+  test("every declared ai.nimblebrain/* key is documented in docs/…/{extensions,mcp}/", () => {
     const undocumented = [...keys]
       .filter(([key]) => !docs.includes(`\`${key}\``))
       .map(([key, file]) => `${key} (declared in ${file})`);
