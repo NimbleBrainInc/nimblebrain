@@ -10,6 +10,7 @@
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
+import type * as ApiClient from "../api/client";
 import type { CatalogListing, PersonalConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
@@ -32,7 +33,7 @@ const installPersonalConnector = mock(async () => ({
   serverName: "granola",
   scope: "identity" as const,
 }));
-const initiateIdentityConnect = mock(async () => ({
+const initiateIdentityConnect = mock<typeof ApiClient.initiateIdentityConnect>(async () => ({
   authorizationUrl: "https://vendor.test/auth",
 }));
 const initiateComposioIdentityConnect = mock(async () => ({
@@ -115,11 +116,10 @@ async function mountWithWorkspaces(workspaces: WorkspaceInfo[]): Promise<Mounted
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        WorkspaceProvider,
-        { initialWorkspaces: workspaces },
-        React.createElement(ProfileConnectorsTab),
-      ),
+      React.createElement(WorkspaceProvider, {
+        initialWorkspaces: workspaces,
+        children: React.createElement(ProfileConnectorsTab),
+      }),
     );
   });
   await act(async () => {

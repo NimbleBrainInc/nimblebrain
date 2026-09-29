@@ -1,14 +1,16 @@
 import { describe, expect, it, mock, beforeEach } from "bun:test";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
+import type { ShellData } from "../src/api/client";
 import { useShell } from "../src/hooks/useShell";
+import type { PlacementEntry } from "../src/types";
 import { realClient } from "./setup";
 
 // ---------------------------------------------------------------------------
 // Mock getShell
 // ---------------------------------------------------------------------------
 
-const mockGetShell = mock(() =>
-  Promise.resolve({ placements: [], chatEndpoint: "", eventsEndpoint: "" }),
+const mockGetShell = mock(
+  (): Promise<ShellData> => Promise.resolve({ placements: [], chatEndpoint: "", eventsEndpoint: "" }),
 );
 
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
@@ -18,15 +20,22 @@ const mockGetShell = mock(() =>
 // with "Export named 'getActiveWorkspaceId' not found".
 mock.module("../src/api/client", () => ({
   ...realClient,
-  getShell: (...args: unknown[]) => mockGetShell(...args),
+  getShell: () => mockGetShell(),
 }));
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeShell(placements: Array<{ slot: string; route?: string; priority: number }>) {
-  return { placements, chatEndpoint: "/v1/chat", eventsEndpoint: "/v1/events" };
+/** `useShell` reads only slot, route, priority and label; the rest is filler. */
+function makeShell(
+  placements: Array<Omit<PlacementEntry, "serverName" | "resourceUri">>,
+): ShellData {
+  return {
+    placements: placements.map((p) => ({ serverName: "app", resourceUri: "ui://app/panel", ...p })),
+    chatEndpoint: "/v1/chat",
+    eventsEndpoint: "/v1/events",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +135,7 @@ describe("useShell", () => {
     const staleShell = makeShell([{ slot: "sidebar", route: "/stale", priority: 0 }]);
     const freshShell = makeShell([{ slot: "sidebar", route: "/fresh", priority: 0 }]);
 
-    let resolveFirst!: (v: unknown) => void;
+    let resolveFirst!: (v: ShellData) => void;
     mockGetShell.mockImplementationOnce(
       () => new Promise((r) => { resolveFirst = r; }),
     );
@@ -201,15 +210,11 @@ describe("useShell", () => {
   });
 
   it("forSlot sorts equal-priority placements alphabetically by label", () => {
-    const shell = {
-      placements: [
-        { slot: "sidebar.apps", route: "/todo", priority: 100, label: "To-Do Board" },
-        { slot: "sidebar.apps", route: "/crm", priority: 100, label: "CRM" },
-        { slot: "sidebar.apps", route: "/collateral", priority: 100, label: "Collateral" },
-      ],
-      chatEndpoint: "/v1/chat",
-      eventsEndpoint: "/v1/events",
-    };
+    const shell = makeShell([
+      { slot: "sidebar.apps", route: "/todo", priority: 100, label: "To-Do Board" },
+      { slot: "sidebar.apps", route: "/crm", priority: 100, label: "CRM" },
+      { slot: "sidebar.apps", route: "/collateral", priority: 100, label: "Collateral" },
+    ]);
 
     const { result } = renderHook(() => useShell("tok", "ws-1", shell));
 

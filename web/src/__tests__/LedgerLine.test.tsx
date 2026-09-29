@@ -62,11 +62,15 @@ async function mount(skills: SkillsLoadedContext | undefined): Promise<Mounted> 
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        WorkspaceProvider,
-        { initialWorkspaces: BOOTSTRAP_WS, initialActiveId: WS_ID },
-        React.createElement(MemoryRouter, null, React.createElement(LedgerLine, { skills })),
-      ),
+      React.createElement(WorkspaceProvider, {
+        initialWorkspaces: BOOTSTRAP_WS,
+        initialActiveId: WS_ID,
+        children: React.createElement(
+          MemoryRouter,
+          null,
+          React.createElement(LedgerLine, { skills }),
+        ),
+      }),
     );
   });
   return {

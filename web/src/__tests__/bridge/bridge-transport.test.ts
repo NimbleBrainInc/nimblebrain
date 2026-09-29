@@ -69,8 +69,9 @@ let mcpBehavior: McpBehavior = {
   }),
 };
 
-const mcpCallTool = mock((p: { name: string; arguments?: Record<string, unknown> }) =>
-  mcpBehavior.callTool(p),
+const mcpCallTool = mock(
+  (p: { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> }) =>
+    mcpBehavior.callTool(p),
 );
 const mcpReadResource = mock((p: { uri: string; _meta?: Record<string, unknown> }) =>
   mcpBehavior.readResource(p),

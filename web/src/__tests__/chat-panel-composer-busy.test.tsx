@@ -87,27 +87,28 @@ async function render(isStreaming: boolean): Promise<void> {
       React.createElement(
         MemoryRouter,
         { initialEntries: ["/w/a/overview"] },
-        React.createElement(
-          WorkspaceProvider,
-          { initialWorkspaces: [WS_A], initialActiveId: "ws_a" },
-          React.createElement(
-            ChatProvider,
-            {
-              currentUserId: "u1",
-              initialConfig: { configuredProviders: ["anthropic"] },
-            },
-            React.createElement(ChatProbe),
-            React.createElement(ChatPanel, {
-              messages: [],
-              isStreaming,
-              error: null,
-              sendMessage: async (text: string) => {
-                sent.push({ text });
-              },
-              newConversation: () => {},
-            }),
-          ),
-        ),
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS_A],
+          initialActiveId: "ws_a",
+          children: React.createElement(ChatProvider, {
+            currentUserId: "u1",
+            initialConfig: { configuredProviders: ["anthropic"] },
+            children: React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(ChatProbe),
+              React.createElement(ChatPanel, {
+                messages: [],
+                isStreaming,
+                error: null,
+                sendMessage: async (text: string) => {
+                  sent.push({ text });
+                },
+                newConversation: () => {},
+              }),
+            ),
+          }),
+        }),
       ),
     );
   });

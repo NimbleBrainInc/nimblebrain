@@ -77,11 +77,11 @@ async function mount(): Promise<HTMLDivElement> {
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        WorkspaceProvider,
-        { initialWorkspaces: [WS], initialActiveId: WS.id },
-        React.createElement(WorkspaceWebhooksTab),
-      ),
+      React.createElement(WorkspaceProvider, {
+        initialWorkspaces: [WS],
+        initialActiveId: WS.id,
+        children: React.createElement(WorkspaceWebhooksTab),
+      }),
     );
   });
   unmount = () => {

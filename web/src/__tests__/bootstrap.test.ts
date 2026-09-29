@@ -22,6 +22,7 @@ function bootstrapWs(
     name: "Test",
     memberCount: 1,
     connectorCount: 0,
+    mcpUrl: "https://nb.example.test/mcp/ws_test",
     ...partial,
   };
 }

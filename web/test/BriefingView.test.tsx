@@ -10,7 +10,6 @@ import type { InstalledConnector } from "../src/api/client";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { BriefingView } = await import("../src/components/briefing/BriefingView");

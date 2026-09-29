@@ -51,6 +51,7 @@ const LOADED_WITH_SKILLS: ChatMessage[] = [
       skills: [
         {
           id: "skills/docs-guide.md",
+          name: "docs-guide",
           scope: "workspace",
           tokens: 1200,
           loadedBy: "tool_affinity",

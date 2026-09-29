@@ -175,16 +175,13 @@ const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
 
 /** Wrap an element in a session so `useScopedRole` resolves a real org role. */
 function withOrgRole(element: React.ReactElement, orgRole: string): React.ReactElement {
-  return React.createElement(
-    SessionProvider,
-    {
-      session: {
-        authenticated: true,
-        user: { id: "u1", email: "a@b.co", displayName: "A", orgRole },
-      },
+  return React.createElement(SessionProvider, {
+    session: {
+      authenticated: true,
+      user: { id: "u1", email: "a@b.co", displayName: "A", orgRole },
     },
-    element,
-  );
+    children: element,
+  });
 }
 
 interface Mounted {
@@ -208,31 +205,25 @@ function withWorkspaceRole(
   userRole: "admin" | "member" | undefined,
   orgRole = "member",
 ): React.ReactElement {
-  return React.createElement(
-    SessionProvider,
-    {
-      session: {
-        authenticated: true,
-        user: { id: "u1", email: "a@b.co", displayName: "A", orgRole },
-      },
+  return React.createElement(SessionProvider, {
+    session: {
+      authenticated: true,
+      user: { id: "u1", email: "a@b.co", displayName: "A", orgRole },
     },
-    React.createElement(
-      WorkspaceProvider,
-      {
-        initialWorkspaces: [
-          {
-            id: "ws_test",
-            name: "Test",
-            memberCount: 2,
-            connectors: [],
-            ...(userRole ? { userRole } : {}),
-          },
-        ],
-        initialActiveId: "ws_test",
-      },
-      element,
-    ),
-  );
+    children: React.createElement(WorkspaceProvider, {
+      initialWorkspaces: [
+        {
+          id: "ws_test",
+          name: "Test",
+          memberCount: 2,
+          connectorCount: 0,
+          ...(userRole ? { userRole } : {}),
+        },
+      ],
+      initialActiveId: "ws_test",
+      children: element,
+    }),
+  });
 }
 
 /** Mount the workspace vantage as a workspace admin — the one role that may write it. */
