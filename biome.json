@@ -51,7 +51,12 @@
   "overrides": [
     {
       "includes": ["test/**"],
-      "linter": { "enabled": false }
+      "linter": {
+        "rules": {
+          "complexity": { "noExcessiveCognitiveComplexity": "off" },
+          "suspicious": { "noTemplateCurlyInString": "off" }
+        }
+      }
     }
   ]
 }
