@@ -399,8 +399,6 @@ describe("IdentityToolRouter — a run's allowedTools", () => {
       isToolAllowed,
       runtime: makeStubRuntime({
         registries: new Map(),
-        memberships: new Map(),
-        existingWorkspaces: new Set(),
         workDir,
         toolsByWorkspace: new Map([
           [
@@ -430,8 +428,6 @@ describe("IdentityToolRouter — a run's allowedTools", () => {
       isToolAllowed,
       runtime: makeStubRuntime({
         registries: new Map([[SHARED_WS, [crm, mail]]]),
-        memberships: new Map([[USER_ID, [SHARED_WS]]]),
-        existingWorkspaces: new Set([SHARED_WS]),
         workDir,
       }),
     });
