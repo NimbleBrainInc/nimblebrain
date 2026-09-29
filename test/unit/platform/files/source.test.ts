@@ -12,14 +12,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
+import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
 import { workspaceFilesDir } from "../../../../src/files/paths.ts";
 import { createFileStore } from "../../../../src/files/store.ts";
 import { createFilesSource } from "../../../../src/platform/files/source.ts";
-import type { ContentBlock, ToolResult } from "../../../../src/engine/types.ts";
+import type { FilesReadPdfPagesOutput } from "../../../../src/platform/schemas/files.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
-import type { FilesReadPdfPagesOutput } from "../../../../src/platform/schemas/files.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 /** The owner and focused workspace every handler call in this file runs as. */
@@ -81,9 +81,8 @@ function makeRuntime(workDir: string): Runtime {
  * workspace-owned store has no workspace in scope and `getStore()` throws.
  */
 function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return runWithRequestContext(
-    { identity: null, workspaceId: WS_ID },
-    () => source.execute(tool, args),
+  return runWithRequestContext({ identity: null, workspaceId: WS_ID }, () =>
+    source.execute(tool, args),
   );
 }
 
@@ -105,7 +104,8 @@ function makeTextPdf(pageTexts: string[]): Buffer {
     const content = `BT /F1 24 Tf 72 720 Td (${pdfString(pageTexts[index]!)}) Tj ET`;
     objects[pageId] =
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`;
-    objects[contentId] = `<< /Length ${Buffer.byteLength(content, "utf-8")} >>\nstream\n${content}\nendstream`;
+    objects[contentId] =
+      `<< /Length ${Buffer.byteLength(content, "utf-8")} >>\nstream\n${content}\nendstream`;
   }
 
   let body = "%PDF-1.4\n";

@@ -18,10 +18,10 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
 import { ConversationIndex } from "../../../../src/platform/conversations/index-cache.ts";
 import { handleFork } from "../../../../src/platform/conversations/tools/fork.ts";
 import { handleUpdate } from "../../../../src/platform/conversations/tools/update.ts";
-import { workspaceConversationsDir } from "../../../../src/conversation/paths.ts";
 
 let workDir: string;
 const WS = "ws_helix";

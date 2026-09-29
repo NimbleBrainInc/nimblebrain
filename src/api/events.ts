@@ -37,13 +37,6 @@ interface SseClient {
   workspaceMemberships?: Set<string>;
 }
 
-/** A buffered event retained in the in-memory event buffer. */
-export interface BufferedEvent {
-  event: string;
-  data: Record<string, unknown>;
-  timestamp: string;
-}
-
 const encoder = new TextEncoder();
 
 /**
@@ -167,9 +160,6 @@ function clientReceives(client: SseClient, audience: SseAudience): boolean {
  * Tracks connected SSE clients, broadcasts events per the `SSE_ROUTES`
  * table, and sends heartbeats at a configurable interval (default 30s).
  *
- * Maintains a bounded in-memory event buffer so that in-process code can
- * query recent events (`getEventsSince`) without being an SSE client.
- *
  * **Identity-scoped clients.** The `/v1/events` route uses
  * `addIdentityClient`, which binds a connection to an identity and caches
  * the set of workspaces the identity is a member of. The cache is
@@ -182,8 +172,6 @@ export class SseEventManager implements EventSink {
   private clients = new Map<string, SseClient>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatIntervalMs: number;
-  private eventBuffer: BufferedEvent[] = [];
-  private readonly MAX_BUFFER_SIZE = 500;
   private localListeners = new Set<(event: string, data: Record<string, unknown>) => void>();
   private workspaceStore?: WorkspaceStore;
   private unsubscribeMembership: (() => void) | null = null;
@@ -359,7 +347,6 @@ export class SseEventManager implements EventSink {
    */
   broadcast(eventType: string, data: Record<string, unknown>, wsId?: string): void {
     this.fanOut(frameSseEvent(eventType, data), { wsId });
-    this.bufferEvent(eventType, data);
     this.notifyLocal(eventType, data);
   }
 
@@ -372,7 +359,6 @@ export class SseEventManager implements EventSink {
    */
   broadcastToIdentity(eventType: string, data: Record<string, unknown>, identityId: string): void {
     this.fanOut(frameSseEvent(eventType, data), { identityId });
-    this.bufferEvent(eventType, data);
     this.notifyLocal(eventType, data);
   }
 
@@ -402,31 +388,11 @@ export class SseEventManager implements EventSink {
     }
   }
 
-  /** Append an event to the bounded buffer, evicting the oldest at capacity. */
-  private bufferEvent(eventType: string, data: Record<string, unknown>): void {
-    if (this.eventBuffer.length >= this.MAX_BUFFER_SIZE) {
-      this.eventBuffer.shift();
-    }
-    this.eventBuffer.push({
-      event: eventType,
-      data,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
   /** Notify in-process listeners registered via `onEvent`. */
   private notifyLocal(eventType: string, data: Record<string, unknown>): void {
     for (const cb of this.localListeners) {
       cb(eventType, data);
     }
-  }
-
-  /**
-   * Return buffered events with timestamp >= the given ISO string.
-   * Uses lexicographic comparison on ISO-8601 timestamps.
-   */
-  getEventsSince(since: string): BufferedEvent[] {
-    return this.eventBuffer.filter((e) => e.timestamp >= since);
   }
 
   /**

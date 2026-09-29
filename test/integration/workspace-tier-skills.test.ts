@@ -22,11 +22,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { asDevUser, devProvider, devWorkspace } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { devWorkspace } from "../helpers/dev-provider.ts";
-import { asDevUser } from "../helpers/dev-provider.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const SHARED_SKILL_NAME = "shared-voice-rules";
 const SHARED_SKILL_BODY =
@@ -132,7 +130,9 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
       `---\nname: ${ctxName}\ndescription: Team voice\nmetadata:\n  nimblebrain:\n    loading-strategy: always\n    priority: 30\n---\n\nMatch the user's voice.\n`,
     );
 
-    const { context, layer3 } = await asDevUser(() => runtime.describeRequestSkills(TEST_WORKSPACE_ID));
+    const { context, layer3 } = await asDevUser(() =>
+      runtime.describeRequestSkills(TEST_WORKSPACE_ID),
+    );
     expect(context.some((s) => s.manifest.name === ctxName)).toBe(true);
     expect(context.find((s) => s.manifest.name === ctxName)?.manifest.scope).toBe("workspace");
     expect(layer3.some((s) => s.skill.manifest.name === ctxName)).toBe(false);

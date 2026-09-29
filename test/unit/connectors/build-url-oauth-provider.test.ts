@@ -25,10 +25,9 @@ afterEach(() => {
 
 const noop = (): void => {};
 
-function urlRef(extra: Partial<Extract<ConnectorRef, { url: string }>> = {}): Extract<
-  ConnectorRef,
-  { url: string }
-> {
+function urlRef(
+  extra: Partial<Extract<ConnectorRef, { url: string }>> = {},
+): Extract<ConnectorRef, { url: string }> {
   return { url: "https://mcp.example.com/granola", serverName: "granola", ui: null, ...extra };
 }
 

@@ -24,18 +24,18 @@
  * body phrase makes "did it load?" an unambiguous substring check.
  */
 
-import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createMockModel } from "../helpers/mock-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createMockModel } from "../helpers/mock-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const DERIVED_SKILL_NAME = "user-orbital-protocol";
 const DERIVED_BODY = "Follow the orbital docking protocol precisely.";
@@ -110,7 +110,11 @@ describe("created strategy-less skill is catalog-only (not auto-loaded)", () => 
 
     // No triggers, no tool-affinity → catalog-only (#4): it loads only via the
     // catalog (P3), never auto-injected. The handler does NOT bump it to `always`.
-    await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "what is 2 + 2?",
+    });
     expect(getSystem()).not.toContain(DERIVED_BODY);
   });
 
@@ -173,12 +177,21 @@ describe("disabled org context rule stops injecting", () => {
   it("injects an active org `type: context` rule into an unrelated chat", async () => {
     const create = await callToolAsDev("skills__create", {
       scope: "org",
-      manifest: { name: RULE_NAME, description: "House rule", loadingStrategy: "always", priority: 50 },
+      manifest: {
+        name: RULE_NAME,
+        description: "House rule",
+        loadingStrategy: "always",
+        priority: 50,
+      },
       body: RULE_BODY,
     });
     expect(create.isError).toBe(false);
 
-    await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "what is 2 + 2?",
+    });
     expect(getSystem()).toContain(RULE_BODY);
     // The status reporter agrees: an active rule is listed.
     const status = await callToolAsDev("nb__status", { scope: "skills" });
@@ -193,7 +206,11 @@ describe("disabled org context rule stops injecting", () => {
     const off = await callToolAsDev("skills__set_status", { id: rulePath, status: "disabled" });
     expect(off.isError).toBe(false);
 
-    await runtime.chat({ identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, message: "what is 2 + 2?" });
+    await runtime.chat({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      message: "what is 2 + 2?",
+    });
     expect(getSystem()).not.toContain(RULE_BODY);
 
     // nb__status must match composition — a rule toggled Off must not still

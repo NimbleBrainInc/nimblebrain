@@ -10,22 +10,24 @@
  * - DevIdentityProvider: workspace gets config connectors populated
  */
 
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
-
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef, ConnectorUiMeta } from "../../src/connectors/runtime/types.ts";
+import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { UserStore } from "../../src/identity/user.ts";
 import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
-import { ToolRegistry, SharedSourceRef } from "../../src/tools/registry.ts";
+import { SharedSourceRef, ToolRegistry } from "../../src/tools/registry.ts";
+import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import type { Workspace } from "../../src/workspace/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import type { ToolSource, Tool } from "../../src/tools/types.ts";
-import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,11 +37,7 @@ function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "nb-sec-integ-"));
 }
 
-function makeWorkspace(
-  id: string,
-  name: string,
-  connectors: Workspace["connectors"],
-): Workspace {
+function makeWorkspace(id: string, name: string, connectors: Workspace["connectors"]): Workspace {
   return {
     id,
     name,
@@ -118,16 +116,8 @@ function buildRegistry(): PlacementRegistry {
   for (const src of protectedSources) {
     reg.register(src.name, [{ slot: "sidebar", resourceUri: `ui://${src.name}/main` }]);
   }
-  reg.register(
-    "crm",
-    [{ slot: "sidebar.apps", resourceUri: "ui://crm/main" }],
-    "ws_eng",
-  );
-  reg.register(
-    "dropbox",
-    [{ slot: "sidebar.apps", resourceUri: "ui://dropbox/main" }],
-    "ws_mkt",
-  );
+  reg.register("crm", [{ slot: "sidebar.apps", resourceUri: "ui://crm/main" }], "ws_eng");
+  reg.register("dropbox", [{ slot: "sidebar.apps", resourceUri: "ui://dropbox/main" }], "ws_mkt");
   return reg;
 }
 
@@ -217,9 +207,7 @@ describe("Workspace security: PlacementRegistry.forWorkspace", () => {
   test("workspace with no installed connectors only gets ambient placements", () => {
     const result = buildRegistry().forWorkspace("ws_empty");
     const names = result.map((p) => p.serverName);
-    expect(names).toEqual(
-      expect.arrayContaining(["conversations", "home", "files", "settings"]),
-    );
+    expect(names).toEqual(expect.arrayContaining(["conversations", "home", "files", "settings"]));
     expect(names).not.toContain("crm");
     expect(names).not.toContain("dropbox");
     expect(result).toHaveLength(4);
@@ -308,30 +296,30 @@ describe("Workspace security: same connector installed in two workspaces", () =>
     const workDir = makeTmpDir();
     installTestCredentialStore(workDir);
     try {
-    const events: EngineEvent[] = [];
-    const sink: EventSink = { emit: (e) => events.push(e) };
-    const lifecycle = new ConnectorLifecycleManager(sink);
+      const events: EngineEvent[] = [];
+      const sink: EventSink = { emit: (e) => events.push(e) };
+      const lifecycle = new ConnectorLifecycleManager(sink);
 
-    const ref: ConnectorRef = { url: "https://crm.example.com/mcp", serverName: "crm" };
-    const meta = {
-      manifestName: "ai.nimblebrain/crm",
-      version: "1.0.0",
-      ui: { name: "CRM", icon: "cards" } as ConnectorUiMeta,
-    };
+      const ref: ConnectorRef = { url: "https://crm.example.com/mcp", serverName: "crm" };
+      const meta = {
+        manifestName: "ai.nimblebrain/crm",
+        version: "1.0.0",
+        ui: { name: "CRM", icon: "cards" } as ConnectorUiMeta,
+      };
 
-    await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_eng");
-    await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_mkt");
+      await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_eng");
+      await lifecycle.seedInstance("crm", ref.url, ref, meta, "ws_mkt");
 
-    const eng = lifecycle.getInstance("crm", "ws_eng");
-    const mkt = lifecycle.getInstance("crm", "ws_mkt");
+      const eng = lifecycle.getInstance("crm", "ws_eng");
+      const mkt = lifecycle.getInstance("crm", "ws_mkt");
 
-    expect(eng?.wsId).toBe("ws_eng");
-    expect(mkt?.wsId).toBe("ws_mkt");
-    // Distinct objects — one workspace's instance must not be the other's.
-    expect(eng).not.toBe(mkt);
-    // The unscoped snapshot exposes both — the bug was that a serverName-only
-    // filter would return both when asked for one workspace's instances.
-    expect(lifecycle.getInstances()).toHaveLength(2);
+      expect(eng?.wsId).toBe("ws_eng");
+      expect(mkt?.wsId).toBe("ws_mkt");
+      // Distinct objects — one workspace's instance must not be the other's.
+      expect(eng).not.toBe(mkt);
+      // The unscoped snapshot exposes both — the bug was that a serverName-only
+      // filter would return both when asked for one workspace's instances.
+      expect(lifecycle.getInstances()).toHaveLength(2);
     } finally {
       resetTestCredentialStore();
       rmSync(workDir, { recursive: true, force: true });

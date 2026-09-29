@@ -1,5 +1,5 @@
-import { ProtocolError } from "@modelcontextprotocol/server";
 import { describe, expect, it, spyOn } from "bun:test";
+import { ProtocolError } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { isMcpResourceMiss, McpSource } from "../../src/tools/mcp-source.ts";
 
@@ -210,9 +210,9 @@ describe("McpSource.readResource — remote session self-heal (issue #571)", () 
       expect(restart).toHaveBeenCalledTimes(3);
       // Escalated to HealthMonitor: emitSourceCrashed flipped `dead`, so a stale
       // session that never closed the transport is now sweepable.
-      expect(
-        (source as unknown as { _isDeadForTesting: () => boolean })._isDeadForTesting(),
-      ).toBe(true);
+      expect((source as unknown as { _isDeadForTesting: () => boolean })._isDeadForTesting()).toBe(
+        true,
+      );
     } finally {
       spy.mockRestore();
       restart.mockRestore();

@@ -1,8 +1,8 @@
-import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { describe, expect, it, mock } from "bun:test";
+import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { McpTransportMode } from "../../src/tools/mcp-source.ts";
+import { McpSource } from "../../src/tools/mcp-source.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 
 // Detect-on-use: a remote tool call that throws UnauthorizedError means the

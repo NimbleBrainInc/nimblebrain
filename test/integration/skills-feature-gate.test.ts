@@ -17,11 +17,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { asDevUser, devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { asDevUser } from "../helpers/dev-provider.ts";
 
 /** The mutation surface `skillManagement` exists to switch off. */
 const GATED = [
@@ -37,10 +36,7 @@ const GATED = [
 /** Reads, which the flag deliberately leaves alone. */
 const UNGATED = ["skills__list", "skills__read", "skills__loading_log"];
 
-async function startRuntime(
-  workDir: string,
-  skillManagement: boolean,
-): Promise<Runtime> {
+async function startRuntime(workDir: string, skillManagement: boolean): Promise<Runtime> {
   const runtime = await Runtime.start({
     identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
@@ -148,13 +144,13 @@ describe("skillManagement: true (the default)", () => {
     const result = await asDevUser(
       () =>
         router.execute({
-      id: "t1",
-      name: "skills__create",
-      input: {
-        scope: "workspace",
-        manifest: { name: "allowed-skill", description: "creatable with the flag on" },
-        body: "# allowed",
-      },
+          id: "t1",
+          name: "skills__create",
+          input: {
+            scope: "workspace",
+            manifest: { name: "allowed-skill", description: "creatable with the flag on" },
+            body: "# allowed",
+          },
         }),
       TEST_WORKSPACE_ID,
     );

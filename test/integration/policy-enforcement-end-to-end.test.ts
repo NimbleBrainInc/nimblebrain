@@ -8,7 +8,6 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
-import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
@@ -18,6 +17,7 @@ import { FileCredentialStore } from "../../src/tools/credential-store.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { installTestCredentialStore } from "../helpers/credential-store.ts";
 
 /**
  * End-to-end coverage for the boundary the unit tests don't quite

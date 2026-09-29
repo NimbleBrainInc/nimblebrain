@@ -104,7 +104,10 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
       // a short delay; if the call rejected synchronously / immediately
       // for some reason that'd be a regression.
       const settled = await Promise.race([
-        provider.redirectToAuthorization(authUrl).then(() => "resolved" as const, () => "rejected" as const),
+        provider.redirectToAuthorization(authUrl).then(
+          () => "resolved" as const,
+          () => "rejected" as const,
+        ),
         new Promise<"hung">((r) => setTimeout(() => r("hung"), 200)),
       ]);
       expect(settled).toBe("hung");

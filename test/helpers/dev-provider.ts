@@ -1,8 +1,8 @@
 import { DEV_IDENTITY, DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
-import { defaultWorkspaceFor, ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 import type { IdentityStores } from "../../src/runtime/types.ts";
+import { defaultWorkspaceFor, ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 
 /**
  * The dev identity provider over the runtime's stores, for

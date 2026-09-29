@@ -1,6 +1,6 @@
+import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, test } from "bun:test";
 
 /**
  * Drift guard: every `ai.nimblebrain/*` key the runtime declares is documented
@@ -26,7 +26,11 @@ function sourceFiles(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name === "__tests__" || entry.name === "_generated") {
+      if (
+        entry.name === "node_modules" ||
+        entry.name === "__tests__" ||
+        entry.name === "_generated"
+      ) {
         continue;
       }
       out.push(...sourceFiles(path));

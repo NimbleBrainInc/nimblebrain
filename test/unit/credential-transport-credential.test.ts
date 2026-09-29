@@ -92,9 +92,9 @@ describe("credentialFor", () => {
   });
 
   test("a config with no key is refused at source start, not at the vendor", () => {
-    expect(() =>
-      credentialTransportCredentialProvider.credentialFor("ws_acme01", {}),
-    ).toThrow(/string `key`/);
+    expect(() => credentialTransportCredentialProvider.credentialFor("ws_acme01", {})).toThrow(
+      /string `key`/,
+    );
   });
 });
 

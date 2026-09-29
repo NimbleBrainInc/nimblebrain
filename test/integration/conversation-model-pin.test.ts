@@ -28,13 +28,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
+import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const MODEL_A = "anthropic:claude-sonnet-5";
 const MODEL_B = "nebius:moonshotai/Kimi-K2.6";
@@ -64,7 +64,7 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     identityProvider: devProvider,
     model: { provider: "custom", adapter: createEchoModel() },
-    models: { default: MODEL_A, fast: FAST_MODEL, reasoning: MODEL_A },
+    models: { default: MODEL_A, fast: FAST_MODEL },
     logging: { disabled: true },
     workDir,
   });
@@ -200,9 +200,10 @@ describe("what the pin stores", () => {
   // A slot can be named either way (`parseModelSlotRef`); both must collapse to
   // the concrete model before it is stored, or moving the slot would retarget
   // the conversation — the bug the binding prevents.
-  test.each(["alias:fast", "fast"])("a slot reference (%s) is resolved before it is stored", async (
-    slotRef,
-  ) => {
+  test.each([
+    "alias:fast",
+    "fast",
+  ])("a slot reference (%s) is resolved before it is stored", async (slotRef) => {
     runtime.updateConfig({ models: { default: MODEL_A, fast: FAST_MODEL } });
     const conv = await runtime.chat({
       message: "via slot",
@@ -442,7 +443,12 @@ describe("how a client learns the binding", () => {
 
     const { sink, events } = recorder();
     await runtime.chat(
-      { message: "resumed", conversationId: legacy.id, workspaceId: TEST_WORKSPACE_ID, identity: USER },
+      {
+        message: "resumed",
+        conversationId: legacy.id,
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+      },
       sink,
     );
 

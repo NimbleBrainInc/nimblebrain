@@ -1,25 +1,19 @@
-import { appendFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { createMiddleware } from "hono/factory";
 import type { EventSink } from "../../engine/types.ts";
-import type { Runtime } from "../../runtime/runtime.ts";
 import type { AppEnv } from "../types.ts";
 
 interface ErrorLogDeps {
-  runtime: Runtime;
   eventSink: EventSink;
 }
 
 /**
  * HTTP error logging middleware for workspace-scoped routes.
  *
- * Runs after the handler completes. For any 4xx/5xx response, writes a
- * structured JSONL record to the workspace's log directory.
- *
- * Also emits an `http.error` event to the global EventSink for PostHog
- * and any other sinks in the pipeline.
+ * Runs after the handler completes. For any 4xx/5xx response, emits an
+ * `http.error` event to the EventSink, where the workspace log sink records it
+ * under its retention and every other sink in the pipeline sees it too.
  */
-export function errorLog({ runtime, eventSink }: ErrorLogDeps) {
+export function errorLog({ eventSink }: ErrorLogDeps) {
   return createMiddleware<AppEnv>(async (c, next) => {
     await next();
 
@@ -53,18 +47,6 @@ export function errorLog({ runtime, eventSink }: ErrorLogDeps) {
       workspaceId: workspaceId ?? null,
     };
 
-    // Write to the workspace-scoped log
-    try {
-      const wsDir = runtime.getWorkspaceScopedDir(workspaceId);
-      const logDir = join(wsDir, "logs");
-      mkdirSync(logDir, { recursive: true });
-      const today = new Date().toISOString().slice(0, 10);
-      appendFileSync(join(logDir, `nimblebrain-${today}.jsonl`), `${JSON.stringify(record)}\n`);
-    } catch {
-      // Best-effort — don't let logging failures affect the response
-    }
-
-    // Emit to global EventSink (PostHog, future sinks)
     eventSink.emit({
       type: "http.error",
       data: record,

@@ -1,14 +1,17 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
 import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
-import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 
 /**
  * End-to-end coverage of the retry-once path in `McpSource.start()`:
@@ -49,7 +52,7 @@ function startMockOAuthMcpServer(): MockOAuthMcpServer {
       { name: "oauth-test-mcp", version: "0.1.0" },
       { capabilities: { tools: {} } },
     );
-    mcpServer.setRequestHandler('tools/list', async () => ({
+    mcpServer.setRequestHandler("tools/list", async () => ({
       tools: [
         {
           name: "noop",

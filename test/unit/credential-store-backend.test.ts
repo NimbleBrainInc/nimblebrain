@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EngineEvent } from "../../src/engine/types.ts";
 import { DEFAULT_CREDENTIAL_STORE_BACKEND } from "../../src/config/secrets.ts";
+import type { EngineEvent } from "../../src/engine/types.ts";
+import type { CredentialStore } from "../../src/tools/credential-store.ts";
 import {
   _resetCredentialStoreBackendsForTest,
   type CredentialStoreBackend,
@@ -13,11 +14,7 @@ import {
   registerCredentialStoreBackend,
   registeredCredentialStoreBackends,
 } from "../../src/tools/credential-store-backend.ts";
-import type { CredentialStore } from "../../src/tools/credential-store.ts";
-import {
-  describeCredentialStoreConformance,
-  WS,
-} from "../helpers/credential-store-conformance.ts";
+import { describeCredentialStoreConformance, WS } from "../helpers/credential-store-conformance.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 // The default path is what a deployment with no `secrets` block gets, so the

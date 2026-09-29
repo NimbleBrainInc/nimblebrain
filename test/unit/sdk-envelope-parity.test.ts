@@ -44,10 +44,16 @@ beforeEach(() => {
         captured.push(msg);
       },
     },
-    addEventListener: (type: string, fn: (e: { data: unknown; source: unknown; origin: string }) => void) => {
+    addEventListener: (
+      type: string,
+      fn: (e: { data: unknown; source: unknown; origin: string }) => void,
+    ) => {
       if (type === "message") messageListeners.add(fn);
     },
-    removeEventListener: (type: string, fn: (e: { data: unknown; source: unknown; origin: string }) => void) => {
+    removeEventListener: (
+      type: string,
+      fn: (e: { data: unknown; source: unknown; origin: string }) => void,
+    ) => {
       if (type === "message") messageListeners.delete(fn);
     },
     location: { origin: "http://localhost", href: "http://localhost/" },
@@ -131,9 +137,7 @@ function lastEnvelopeWithMethod(method: string): Record<string, unknown> | undef
 
 /** Answer `ui/initialize` so the `connect()` promise can resolve. */
 function completeHandshake(): void {
-  const init = lastEnvelopeWithMethod("ui/initialize") as
-    | { id: string | number }
-    | undefined;
+  const init = lastEnvelopeWithMethod("ui/initialize") as { id: string | number } | undefined;
   if (!init) {
     throw new Error("SDK did not emit ui/initialize on instantiation");
   }

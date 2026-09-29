@@ -3,14 +3,15 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ModelNotAllowedError } from "../../../src/runtime/errors.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
+import type { ModelSlots } from "../../../src/runtime/types.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-user-model-pref-${Date.now()}`);
 
@@ -118,11 +119,58 @@ describe("a stored choice is re-checked, not trusted", () => {
   });
 });
 
+/** Read the slots inside a workspace whose record carries `models`. */
+function slotsInWorkspace(runtime: Runtime, models: Partial<ModelSlots> | null) {
+  return runWithRequestContext(
+    { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, workspaceModelOverride: models },
+    () => runtime.getModelSlots(),
+  );
+}
+
+describe("a workspace's model overrides", () => {
+  const WS_FAST = "anthropic:claude-haiku-4-5-20251001";
+  const WS_DEFAULT = "anthropic:claude-opus-4-6";
+
+  it("replace only the slots they name", async () => {
+    const runtime = await start("ws-partial");
+    try {
+      const slots = slotsInWorkspace(runtime, { fast: WS_FAST });
+      expect(slots.fast).toBe(WS_FAST);
+      expect(slots.default).toBe(CONFIGURED_DEFAULT);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("replace every slot they name", async () => {
+    const runtime = await start("ws-full");
+    try {
+      expect(slotsInWorkspace(runtime, { default: WS_DEFAULT, fast: WS_FAST })).toEqual({
+        default: WS_DEFAULT,
+        fast: WS_FAST,
+      });
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("leave the configured slots when absent or empty", async () => {
+    const runtime = await start("ws-none");
+    try {
+      const configured = { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT };
+      expect(slotsInWorkspace(runtime, null)).toEqual(configured);
+      expect(slotsInWorkspace(runtime, {})).toEqual(configured);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});
+
 /** Invoke `set_preferences` through the real core tool, as the given user. */
 async function setPreference(runtime: Runtime, userId: string, model: string | null) {
-    const identity = (await runtime.getUserStore().get(userId)) as unknown as UserIdentity;
-    const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
-    if (!tool) throw new Error("set_preferences tool not found");
+  const identity = (await runtime.getUserStore().get(userId)) as unknown as UserIdentity;
+  const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
+  if (!tool) throw new Error("set_preferences tool not found");
   return runWithRequestContext({ identity, workspaceId: null } as never, () =>
     tool.handler({ model }),
   );

@@ -1,6 +1,7 @@
-import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
+import { RequestRateLimiter } from "../../src/api/rate-limiter.ts";
 import {
   HOOK_ANON_BUCKET_MAX,
   HOOK_BUCKET_WINDOW_MS,
@@ -9,12 +10,8 @@ import {
 } from "../../src/api/routes/hooks.ts";
 import type { AppContext } from "../../src/api/types.ts";
 import { listRegistrations, registrationKey } from "../../src/hooks/registrations.ts";
-import {
-  type HookIdentity,
-  newDeliveryId,
-} from "../../src/hooks/token.ts";
+import { type HookIdentity, newDeliveryId } from "../../src/hooks/token.ts";
 import { HOOK_ROTATION_GRACE_MS, type HookRegistration } from "../../src/hooks/types.ts";
-import { RequestRateLimiter } from "../../src/api/rate-limiter.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 
@@ -146,18 +143,17 @@ function makeApp(identity: HookIdentity = IDENTITY): Hono {
   return new Hono().route("/", routes);
 }
 
-function deliver(
-  app: Hono,
-  path: string,
-  init: RequestInit = {},
-): Promise<Response> {
+function deliver(app: Hono, path: string, init: RequestInit = {}): Promise<Response> {
   return app.fetch(
     new Request(`https://runtime.example${path}`, {
       method: "POST",
       body: "{}",
       // A fresh source per request so the pre-token bucket, which is per
       // source, never has one test's traffic count against another's.
-      headers: { "x-forwarded-for": `198.51.100.${Math.floor(Math.random() * 250) + 1}`, ...(init.headers as Record<string, string>) },
+      headers: {
+        "x-forwarded-for": `198.51.100.${Math.floor(Math.random() * 250) + 1}`,
+        ...(init.headers as Record<string, string>),
+      },
       ...init,
     }),
   );
@@ -257,29 +253,29 @@ describe("a legitimate delivery", () => {
   });
 });
 
-  test("another workspace's id does not reach this workspace's connector", async () => {
-    // The isolation the sealed `wid` used to carry. Resolution is now a lookup,
-    // so the property has to be asserted against the lookup: an id minted for
-    // one workspace forwards for THAT workspace, and nothing about the door's
-    // scan may let it land on a neighbour's registration.
-    const other = await store.create({ name: "other", ownerId: "usr_other" });
-    const otherId = newDeliveryId();
-    await seedWorkspace({
-      id: other.id,
-      hooks: {
-        [registrationKey(CONNECTOR, VENDOR)]: registration({
-          deliveryId: otherId,
-          route: "/ingest/other",
-        }),
-      },
-    });
-
-    const res = await deliver(makeApp(), hookUrl(otherId));
-    expect(res.status).toBe(202);
-    // Forwarded on the OTHER workspace's route, never this one's.
-    expect(forwarded).toHaveLength(1);
-    expect(forwarded[0]?.url).toContain("/ingest/other");
+test("another workspace's id does not reach this workspace's connector", async () => {
+  // The isolation the sealed `wid` used to carry. Resolution is now a lookup,
+  // so the property has to be asserted against the lookup: an id minted for
+  // one workspace forwards for THAT workspace, and nothing about the door's
+  // scan may let it land on a neighbour's registration.
+  const other = await store.create({ name: "other", ownerId: "usr_other" });
+  const otherId = newDeliveryId();
+  await seedWorkspace({
+    id: other.id,
+    hooks: {
+      [registrationKey(CONNECTOR, VENDOR)]: registration({
+        deliveryId: otherId,
+        route: "/ingest/other",
+      }),
+    },
   });
+
+  const res = await deliver(makeApp(), hookUrl(otherId));
+  expect(res.status).toBe(202);
+  // Forwarded on the OTHER workspace's route, never this one's.
+  expect(forwarded).toHaveLength(1);
+  expect(forwarded[0]?.url).toContain("/ingest/other");
+});
 
 describe("a registration written before delivery ids existed", () => {
   test("is inadmissible, and does not 500 a valid delivery to another workspace", async () => {
@@ -392,9 +388,7 @@ describe("every way a delivery is refused looks the same", () => {
     // the id, so this differs from it by one trailing character. A comparison
     // that stopped at the shorter length would admit it; the length check in
     // `equalsConstantTime` is what refuses it.
-    await expectIndistinguishable404(
-      await deliver(makeApp(), hookUrl(DELIVERY_ID.slice(0, -1))),
-    );
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl(DELIVERY_ID.slice(0, -1))));
   });
 
   test("an id whose workspace is gone", async () => {
@@ -414,9 +408,7 @@ describe("every way a delivery is refused looks the same", () => {
 
   test("a registration that was never minted", async () => {
     await seedWorkspace({ hooks: {} });
-    await expectIndistinguishable404(
-      await deliver(makeApp(), hookUrl()),
-    );
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl()));
   });
 
   test("a registration whose id rotated away, past its grace window", async () => {
@@ -427,7 +419,7 @@ describe("every way a delivery is refused looks the same", () => {
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
           deliveryId: newDeliveryId(),
-          prevDeliveryId: (DELIVERY_ID),
+          prevDeliveryId: DELIVERY_ID,
           rotatedAt: new Date(Date.now() - HOOK_ROTATION_GRACE_MS - 1_000).toISOString(),
         }),
       },
@@ -439,14 +431,17 @@ describe("every way a delivery is refused looks the same", () => {
     // The registration is deliberately left in place here: this asserts the
     // door's own check, independent of uninstall's cleanup.
     await seedWorkspace({ installed: false });
-    await expectIndistinguishable404(
-      await deliver(makeApp(), hookUrl()),
-    );
+    await expectIndistinguishable404(await deliver(makeApp(), hookUrl()));
   });
 });
 
 describe("shape and size", () => {
-  test.each(["GET", "PUT", "DELETE", "PATCH"])("%s is refused with 405, not 404", async (method) => {
+  test.each([
+    "GET",
+    "PUT",
+    "DELETE",
+    "PATCH",
+  ])("%s is refused with 405, not 404", async (method) => {
     // 405 for a single-segment path under the prefix whatever the segment is,
     // so the difference between "405 here" and "404 there" cannot map out which
     // ids exist. A path of another shape 404s at the router, which reveals only
@@ -664,7 +659,10 @@ describe("the two rate-limit buckets", () => {
 
     const anon = appWithout({
       hookAnonLimiter: new RequestRateLimiter(1, HOOK_BUCKET_WINDOW_MS),
-      hookWorkspaceLimiter: new RequestRateLimiter(HOOK_WORKSPACE_BUCKET_MAX, HOOK_BUCKET_WINDOW_MS),
+      hookWorkspaceLimiter: new RequestRateLimiter(
+        HOOK_WORKSPACE_BUCKET_MAX,
+        HOOK_BUCKET_WINDOW_MS,
+      ),
     });
     expect((await deliverFrom(anon, SOURCE_A, goodPath())).status).toBe(202);
     await expectRateLimited(await deliverFrom(anon, SOURCE_A, goodPath()));
@@ -755,7 +753,7 @@ describe("the rotation overlap, at the door", () => {
     await seedWorkspace({
       hooks: {
         [registrationKey(CONNECTOR, VENDOR)]: registration({
-          prevDeliveryId: (OUTGOING_ID),
+          prevDeliveryId: OUTGOING_ID,
           rotatedAt,
         }),
       },
@@ -778,9 +776,7 @@ describe("the rotation overlap, at the door", () => {
     // that traffic still rides the outgoing URL. Retiring it blind is the
     // silent 404 the grace exists to prevent, so deleting this line must fail
     // a test rather than pass one.
-    const superseded = logLines.filter((l) =>
-      l.includes("delivery on a superseded delivery id"),
-    );
+    const superseded = logLines.filter((l) => l.includes("delivery on a superseded delivery id"));
     expect(superseded).toHaveLength(1);
   });
 

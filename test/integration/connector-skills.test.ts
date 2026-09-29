@@ -18,22 +18,22 @@
  * `loadedBy: "tool_affinity"`.
  */
 
-import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
-import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
+import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** The synthesized name for the fixture connector's skill. */
 const CONNECTOR_SKILL_NAME = "connector:ai-nimblebrain-test-mcp:test";
@@ -53,17 +53,21 @@ function createSkillFixtureServer(): Server {
     { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "doit",
+        description: "Do the thing",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
 
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
 
-  server.setRequestHandler('resources/list', async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: "skill://test/SKILL.md", name: "test", mimeType: "text/markdown" },
       { uri: "skill://test/reference", name: "test-reference", mimeType: "text/markdown" },
@@ -75,7 +79,7 @@ function createSkillFixtureServer(): Server {
     "skill://test/reference": "# Reference. Detailed tool catalog and error recovery.",
   };
   serveSkills(server, () => bodies);
-  server.setRequestHandler('resources/read', async (request) => {
+  server.setRequestHandler("resources/read", async (request) => {
     const text = bodies[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
@@ -94,15 +98,19 @@ function createSkilllessFixtureServer(): Server {
     { name: "test", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } },
   );
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "doit",
+        description: "Do the thing",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
-  server.setRequestHandler('resources/list', async () => ({ resources: [] }));
+  server.setRequestHandler("resources/list", async () => ({ resources: [] }));
   return server;
 }
 
@@ -198,9 +206,7 @@ describe("connector-skill adapter — end-to-end", () => {
     };
     expect(payload.skills.length).toBeGreaterThan(0);
 
-    const connectorEntry = payload.skills.find(
-      (s) => s.id === "skill://test/SKILL.md",
-    );
+    const connectorEntry = payload.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(connectorEntry).toBeDefined();
     expect(connectorEntry?.scope).toBe("provided");
     expect(connectorEntry?.loadedBy).toBe("tool_affinity");
@@ -271,9 +277,7 @@ describe("connector-skill adapter — end-to-end", () => {
     const payload = skillsLoaded as unknown as {
       skills: Array<{ id: string }>;
     };
-    const connectorEntry = payload.skills.find(
-      (s) => s.id === "skill://test/SKILL.md",
-    );
+    const connectorEntry = payload.skills.find((s) => s.id === "skill://test/SKILL.md");
     expect(connectorEntry).toBeUndefined();
   });
 
@@ -512,17 +516,21 @@ function createMultiSkillFixtureServer(): Server {
     { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
 
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "doit", description: "Do the thing", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "doit",
+        description: "Do the thing",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
 
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "done" }],
   }));
 
-  server.setRequestHandler('resources/list', async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [
       { uri: "skill://always-guide/SKILL.md", name: "always-guide", mimeType: "text/markdown" },
       { uri: "skill://dynamic-usage/SKILL.md", name: "dynamic-usage", mimeType: "text/markdown" },
@@ -534,7 +542,7 @@ function createMultiSkillFixtureServer(): Server {
     "skill://dynamic-usage/SKILL.md": DYNAMIC_SKILL_BODY,
   };
   serveSkills(server, () => bodies);
-  server.setRequestHandler('resources/read', async (request) => {
+  server.setRequestHandler("resources/read", async (request) => {
     const text = bodies[request.params.uri];
     if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
     return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };

@@ -12,13 +12,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 interface SSEEvent {
   event: string;
@@ -86,11 +86,12 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0});
+    handle = startServer({ runtime, port: 0 });
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation (first doGenerate call returns immediately).
-    const seed = await runtime.chat({ identity: DEV_IDENTITY,
+    const seed = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "seed",
       workspaceId: TEST_WORKSPACE_ID,
     });
@@ -99,7 +100,8 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
     // Start a second runtime.chat() but don't await — the lock is acquired
     // synchronously before the first internal await, and doGenerate will
     // block on the gate, so the lock is held while we make the HTTP call.
-    const inFlight = runtime.chat({ identity: DEV_IDENTITY,
+    const inFlight = runtime.chat({
+      identity: DEV_IDENTITY,
       message: "holding the lock",
       conversationId: convId,
       workspaceId: TEST_WORKSPACE_ID,
@@ -133,11 +135,12 @@ describe("POST /v1/workspaces/:wsId/chat/stream — concurrency protection", () 
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);
-    handle = startServer({ runtime, port: 0});
+    handle = startServer({ runtime, port: 0 });
     const baseUrl = `http://localhost:${handle.port}`;
 
     // Seed a conversation we can contend on.
-    const seed = await runtime.chat({ identity: DEV_IDENTITY,
+    const seed = await runtime.chat({
+      identity: DEV_IDENTITY,
       message: "seed",
       workspaceId: TEST_WORKSPACE_ID,
     });

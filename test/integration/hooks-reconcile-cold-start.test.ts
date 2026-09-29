@@ -1,18 +1,18 @@
-import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import {
   ensureHooks,
   ensureHooksOnRunning,
   type HookReconcileDeps,
 } from "../../src/hooks/reconcile.ts";
+import { listRegistrations } from "../../src/hooks/registrations.ts";
+import type { HookIdentity } from "../../src/hooks/token.ts";
+import type { HookDeclaration } from "../../src/hooks/types.ts";
 import {
   connectorPortForSource,
   stopAllToolSurfaceWatches,
   stopWatchingToolSurface,
 } from "../../src/tools/connector-surface.ts";
-import { listRegistrations } from "../../src/hooks/registrations.ts";
-import type { HookIdentity } from "../../src/hooks/token.ts";
-import type { HookDeclaration } from "../../src/hooks/types.ts";
 import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";

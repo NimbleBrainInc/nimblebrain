@@ -19,9 +19,9 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import type { ConnectionState } from "../../../src/connectors/runtime/connection.ts";
 import { WORKSPACE_PRINCIPAL_ID } from "../../../src/connectors/runtime/connection.ts";
 import { ConnectorLifecycleManager } from "../../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectionState } from "../../../src/connectors/runtime/connection.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
 import { collectPollTargets } from "../../../src/notifications/targets.ts";
 import type { NotificationsDeclaration } from "../../../src/notifications/types.ts";

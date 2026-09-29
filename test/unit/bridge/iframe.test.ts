@@ -1,9 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import {
-  injectThemeStyles,
-  injectCSP,
-  buildCSP,
-} from "../../../web/src/bridge/iframe.ts";
+import { describe, expect, test } from "bun:test";
+import { buildCSP, injectCSP, injectThemeStyles } from "../../../web/src/bridge/iframe.ts";
 
 const FULL_HTML = `<!DOCTYPE html>
 <html>

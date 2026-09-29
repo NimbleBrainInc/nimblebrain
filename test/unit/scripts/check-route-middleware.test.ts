@@ -56,7 +56,7 @@ describe("scan", () => {
   const root = mkdtempSync(join(tmpdir(), "nb-check-route-middleware-"));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-  test("fails on a .use(\"*\") planted in a route file, and allows app.ts's global middleware", () => {
+  test('fails on a .use("*") planted in a route file, and allows app.ts\'s global middleware', () => {
     mkdirSync(join(root, "src", "api", "routes"), { recursive: true });
     writeFileSync(join(root, "src", "api", "routes", "planted.ts"), WILDCARD_ROUTER);
     writeFileSync(

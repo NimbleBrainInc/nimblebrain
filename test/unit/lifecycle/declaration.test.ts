@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { HostManifestMeta } from "../../../src/connectors/runtime/types.ts";
 import { serverDetailToCatalogEntry } from "../../../src/connectors/catalog/projection.ts";
 import type { ServerDetail } from "../../../src/connectors/catalog/server-detail.ts";
+import type { HostManifestMeta } from "../../../src/connectors/runtime/types.ts";
 import {
   LifecycleContractError,
   parseLifecycleDeclaration,
@@ -79,8 +79,9 @@ describe("the block reaches the catalog entry", () => {
   }
 
   test("a declared block is carried; an absent one leaves the field off", () => {
-    expect(serverDetailToCatalogEntry(detail({ host_version: "1.4", lifecycle: GOOD }))?.lifecycle)
-      .toEqual(GOOD);
+    expect(
+      serverDetailToCatalogEntry(detail({ host_version: "1.4", lifecycle: GOOD }))?.lifecycle,
+    ).toEqual(GOOD);
     expect(serverDetailToCatalogEntry(detail({ host_version: "1.0" }))?.lifecycle).toBeUndefined();
   });
 
@@ -139,44 +140,44 @@ describe("verifyLifecycleTools", () => {
     ).toThrow(LifecycleContractError);
   });
 
-  test.each([["required"], ["optional"]])(
-    "refuses a handler advertising execution.taskSupport %s",
-    (taskSupport) => {
-      // Both values route through `McpSource.execute`'s task path, whose await
-      // settles only when the task terminates or the source is torn down. On
-      // the uninstall path the teardown is what waits behind the call, so a
-      // task-augmented handler turns "never fails the uninstall" into "hangs
-      // it". An inline call is bounded by the MCP client's request deadline.
-      const augmented = [
-        handler("workspace_removing", {
-          execution: { taskSupport: taskSupport as "required" | "optional" },
-        }),
-      ];
-      expect(() =>
-        verifyLifecycleTools(augmented, { on_removing: "workspace_removing" }, "acme-mcp"),
-      ).toThrow(LifecycleContractError);
-      // Naming the branch: a pass that threw for some other reason (a missing
-      // tool, a required property) would satisfy the line above and prove
-      // nothing about the check this test exists for.
-      expect(() =>
-        verifyLifecycleTools(augmented, { on_removing: "workspace_removing" }, "acme-mcp"),
-      ).toThrow(/taskSupport/);
-    },
-  );
+  test.each([
+    ["required"],
+    ["optional"],
+  ])("refuses a handler advertising execution.taskSupport %s", (taskSupport) => {
+    // Both values route through `McpSource.execute`'s task path, whose await
+    // settles only when the task terminates or the source is torn down. On
+    // the uninstall path the teardown is what waits behind the call, so a
+    // task-augmented handler turns "never fails the uninstall" into "hangs
+    // it". An inline call is bounded by the MCP client's request deadline.
+    const augmented = [
+      handler("workspace_removing", {
+        execution: { taskSupport: taskSupport as "required" | "optional" },
+      }),
+    ];
+    expect(() =>
+      verifyLifecycleTools(augmented, { on_removing: "workspace_removing" }, "acme-mcp"),
+    ).toThrow(LifecycleContractError);
+    // Naming the branch: a pass that threw for some other reason (a missing
+    // tool, a required property) would satisfy the line above and prove
+    // nothing about the check this test exists for.
+    expect(() =>
+      verifyLifecycleTools(augmented, { on_removing: "workspace_removing" }, "acme-mcp"),
+    ).toThrow(/taskSupport/);
+  });
 
-  test.each([["forbidden"], [undefined]])(
-    "admits a handler whose taskSupport is %s — that is the inline path",
-    (taskSupport) => {
-      const inline = [
-        handler("workspace_removing", {
-          ...(taskSupport ? { execution: { taskSupport: taskSupport as "forbidden" } } : {}),
-        }),
-      ];
-      expect(() =>
-        verifyLifecycleTools(inline, { on_removing: "workspace_removing" }, "acme-mcp"),
-      ).not.toThrow();
-    },
-  );
+  test.each([
+    ["forbidden"],
+    [undefined],
+  ])("admits a handler whose taskSupport is %s — that is the inline path", (taskSupport) => {
+    const inline = [
+      handler("workspace_removing", {
+        ...(taskSupport ? { execution: { taskSupport: taskSupport as "forbidden" } } : {}),
+      }),
+    ];
+    expect(() =>
+      verifyLifecycleTools(inline, { on_removing: "workspace_removing" }, "acme-mcp"),
+    ).not.toThrow();
+  });
 
   test("checks `on_removing` too, at the moment somebody is still watching", () => {
     // An `on_removing` typo would otherwise surface at uninstall — the one

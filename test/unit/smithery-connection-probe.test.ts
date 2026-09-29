@@ -9,9 +9,9 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import { SmitheryConnectionProbe } from "../../src/connectors/providers/smithery/connection-probe.ts";
 import type { ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
-import { SmitheryConnectionProbe } from "../../src/connectors/providers/smithery/connection-probe.ts";
 
 const OPTIONS = { apiKey: "sk_test", baseUrl: "https://api.smithery.ai", namespace: "test-ns" };
 const realFetch = globalThis.fetch;
@@ -66,12 +66,17 @@ function stubFetch(status: number, body: unknown): void {
 
 async function verdictFor(status: number, body: unknown) {
   stubFetch(status, body);
-  return new SmitheryConnectionProbe(OPTIONS).probe(targetOf(refWithMarker()), new AbortController().signal);
+  return new SmitheryConnectionProbe(OPTIONS).probe(
+    targetOf(refWithMarker()),
+    new AbortController().signal,
+  );
 }
 
 describe("SmitheryConnectionProbe — liveness mapping", () => {
   it("reports live for a connected connection", async () => {
-    expect(await verdictFor(200, { connectionId: "nb-x", status: { state: "connected" } })).toBe("live");
+    expect(await verdictFor(200, { connectionId: "nb-x", status: { state: "connected" } })).toBe(
+      "live",
+    );
   });
 
   it("reports live for a disconnected connection — the broker reconnects on demand", async () => {
@@ -110,7 +115,10 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     // Smithery reports transient upstream failures here too — flipping a
     // working connector to reauth_required on this would be a false positive.
     expect(
-      await verdictFor(200, { connectionId: "nb-x", status: { state: "error", message: "timeout" } }),
+      await verdictFor(200, {
+        connectionId: "nb-x",
+        status: { state: "error", message: "timeout" },
+      }),
     ).toBe("indeterminate");
   });
 
@@ -136,10 +144,13 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     let requested = "";
     globalThis.fetch = (async (input: string | URL | Request) => {
       requested = String(input);
-      return new Response(JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }) as typeof fetch;
 
     const probe = new SmitheryConnectionProbe({ ...OPTIONS, namespace: "repointed-ns" });
@@ -154,10 +165,13 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     let requested = "";
     globalThis.fetch = (async (input: string | URL | Request) => {
       requested = String(input);
-      return new Response(JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }) as typeof fetch;
 
     const probe = new SmitheryConnectionProbe({ ...OPTIONS, baseUrl: "https://repointed.example" });
@@ -180,10 +194,13 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     let requested = "";
     globalThis.fetch = (async (input: string | URL | Request) => {
       requested = String(input);
-      return new Response(JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }) as typeof fetch;
 
     const probe = new SmitheryConnectionProbe(OPTIONS);

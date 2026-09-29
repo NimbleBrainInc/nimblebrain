@@ -133,52 +133,44 @@ afterAll(async () => {
 });
 
 describe("mid-turn compaction — wired path", () => {
-  test(
-    "a single turn folds mid-loop, bills the summarizer, and persists no compaction event",
-    async () => {
-      const convId = await sendTurn(on.baseUrl);
-      const events = readEvents(onDir, convId);
+  test("a single turn folds mid-loop, bills the summarizer, and persists no compaction event", async () => {
+    const convId = await sendTurn(on.baseUrl);
+    const events = readEvents(onDir, convId);
 
-      // The fold ran inside the turn. This is a FIRST turn — it opened on one
-      // message — so turn-setup compaction had nothing to fold and cannot be
-      // what produced this.
-      expect(events.filter(isCompactionUsage).length).toBeGreaterThan(0);
+    // The fold ran inside the turn. This is a FIRST turn — it opened on one
+    // message — so turn-setup compaction had nothing to fold and cannot be
+    // what produced this.
+    expect(events.filter(isCompactionUsage).length).toBeGreaterThan(0);
 
-      // Its cost is visible: the summarizer runs outside the agentic loop and
-      // emits no llm.response, so the aux.usage append is the only record.
-      const usage = events.find(isCompactionUsage) as { usage?: { inputTokens?: number } };
-      expect(usage.usage?.inputTokens).toBeDefined();
+    // Its cost is visible: the summarizer runs outside the agentic loop and
+    // emits no llm.response, so the aux.usage append is the only record.
+    const usage = events.find(isCompactionUsage) as { usage?: { inputTokens?: number } };
+    expect(usage.usage?.inputTokens).toBeDefined();
 
-      // And it left the conversation's record alone: a mid-turn fold is
-      // in-memory for the turn, so nothing rewrites the stored projection.
-      expect(events.some((e) => e.type === "history.compacted")).toBe(false);
+    // And it left the conversation's record alone: a mid-turn fold is
+    // in-memory for the turn, so nothing rewrites the stored projection.
+    expect(events.some((e) => e.type === "history.compacted")).toBe(false);
 
-      // Both folds attribute to the conversation, so `source="compaction"` has
-      // one origin rather than depending on which one fired. This fold gets it
-      // from `engine.run`'s own wrap (`engine.applyHistoryRewrite` awaits the
-      // `rewriteHistory` hook inside it); the between-turns fold gets it from
-      // the turn scope `chat()` opens, asserted in `compaction-wiring.test.ts`.
-      // Pinning both is what keeps a future move of either one from quietly
-      // reverting half the attribution.
-      const metricsBody = await (await fetch(`${on.baseUrl}/metrics`)).text();
-      expect(metricsBody).toMatch(
-        /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
-      );
-    },
-    30_000,
-  );
+    // Both folds attribute to the conversation, so `source="compaction"` has
+    // one origin rather than depending on which one fired. This fold gets it
+    // from `engine.run`'s own wrap (`engine.applyHistoryRewrite` awaits the
+    // `rewriteHistory` hook inside it); the between-turns fold gets it from
+    // the turn scope `chat()` opens, asserted in `compaction-wiring.test.ts`.
+    // Pinning both is what keeps a future move of either one from quietly
+    // reverting half the attribution.
+    const metricsBody = await (await fetch(`${on.baseUrl}/metrics`)).text();
+    expect(metricsBody).toMatch(
+      /nb_llm_tokens_total\{(?=[^}]*source="compaction")(?=[^}]*origin="chat")[^}]*\}\s+[1-9]/,
+    );
+  }, 30_000);
 
-  test(
-    "features.compaction off makes no summarizer call on the same turn",
-    async () => {
-      const convId = await sendTurn(off.baseUrl);
-      const events = readEvents(offDir, convId);
+  test("features.compaction off makes no summarizer call on the same turn", async () => {
+    const convId = await sendTurn(off.baseUrl);
+    const events = readEvents(offDir, convId);
 
-      // Same growth, same budget, gate closed: the hook is never installed, so
-      // an operator who turned compaction off is not billed for folds.
-      expect(events.filter(isCompactionUsage)).toEqual([]);
-      expect(events.some((e) => e.type === "history.compacted")).toBe(false);
-    },
-    30_000,
-  );
+    // Same growth, same budget, gate closed: the hook is never installed, so
+    // an operator who turned compaction off is not billed for folds.
+    expect(events.filter(isCompactionUsage)).toEqual([]);
+    expect(events.some((e) => e.type === "history.compacted")).toBe(false);
+  }, 30_000);
 });

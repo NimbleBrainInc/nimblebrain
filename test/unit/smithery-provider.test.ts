@@ -14,15 +14,21 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
-import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
-import { smitheryConnectionId, smitheryMcpUrl } from "../../src/connectors/providers/smithery/client.ts";
-import { _resetSmitheryConfigForTest } from "../../src/connectors/providers/smithery/config.ts";
-import { createSmitheryProvider, smitheryUserId } from "../../src/connectors/providers/smithery/provider.ts";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
 } from "../../src/connectors/providers/config.ts";
+import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
+import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
+import {
+  smitheryConnectionId,
+  smitheryMcpUrl,
+} from "../../src/connectors/providers/smithery/client.ts";
+import { _resetSmitheryConfigForTest } from "../../src/connectors/providers/smithery/config.ts";
+import {
+  createSmitheryProvider,
+  smitheryUserId,
+} from "../../src/connectors/providers/smithery/provider.ts";
 
 const ENV_KEYS = [
   "SMITHERY_API_KEY",
@@ -58,7 +64,10 @@ function configure(): void {
 }
 
 /** Stub `fetch` with a single JSON response, capturing the request for assertions. */
-function stubFetch(status: number, body: unknown): { calls: Array<{ url: string; init?: RequestInit }> } {
+function stubFetch(
+  status: number,
+  body: unknown,
+): { calls: Array<{ url: string; init?: RequestInit }> } {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(input), init });
@@ -106,13 +115,21 @@ describe("SmitheryProvider — the interface subset (what validates the seam)", 
       id: "composio",
       userId: () => "u",
       createSession: async () => ({ type: "http", url: "https://composio.test/mcp" }),
-      initiate: async () => ({ redirectUrl: "https://composio.test/auth", connectedAccountId: "ca_1" }),
+      initiate: async () => ({
+        redirectUrl: "https://composio.test/auth",
+        connectedAccountId: "ca_1",
+      }),
     };
     const registry = managedConnectorRegistryOf([composioFake, createSmitheryProvider()]);
 
     expect(registry.get("composio")?.id).toBe("composio");
     expect(registry.get("smithery")?.id).toBe("smithery");
-    expect(registry.list().map((p) => p.id).sort()).toEqual(["composio", "smithery"]);
+    expect(
+      registry
+        .list()
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual(["composio", "smithery"]);
 
     // Dispatch is by kind — the registry never branches on vendor.
     expect(registry.get("smithery")?.initiate).toBeUndefined();

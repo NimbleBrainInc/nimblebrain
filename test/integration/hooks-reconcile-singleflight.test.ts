@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { ensureHooks, type HookReconcileDeps } from "../../src/hooks/reconcile.ts";
 import { listRegistrations } from "../../src/hooks/registrations.ts";
 import type { HookIdentity } from "../../src/hooks/token.ts";

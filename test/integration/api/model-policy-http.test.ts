@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -31,7 +31,7 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -52,7 +52,10 @@ const post = (route: string, body: Record<string, unknown>) =>
 // Both chat doors reach the same gate, so both must report it the same way —
 // `chat/start` is the route the web client uses, and a private copy of the
 // error mapping there would answer 500 for this class.
-describe.each([["chat"], ["chat/start"]])("/v1/workspaces/:wsId/%s refuses a disallowed model", (route) => {
+describe.each([
+  ["chat"],
+  ["chat/start"],
+])("/v1/workspaces/:wsId/%s refuses a disallowed model", (route) => {
   it("answers 400 model_not_allowed, naming the model and the configured providers", async () => {
     const res = await post(route, { message: "hi", model: REFUSED });
     expect(res.status).toBe(400);
@@ -76,26 +79,26 @@ describe.each([["chat"], ["chat/start"]])("/v1/workspaces/:wsId/%s refuses a dis
 // discarded. Both doors build their create options lazily to get that, and
 // both need holding: `chat` and `chat/start` reach it through different
 // methods, so a test on one leaves the other free to regress.
-describe.each([["chat"], ["chat/start"]])(
-  "/v1/workspaces/:wsId/%s resumes a pinned conversation without gating the request model",
-  (route) => {
-    it("does not answer model_not_allowed", async () => {
-      const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_OWNER);
-      const { id } = await store.create({
-        ownerId: DEV_OWNER,
-        workspaceId: TEST_WORKSPACE_ID,
-        model: ALLOWED,
-      });
-
-      const res = await post(route, { message: "again", conversationId: id, model: REFUSED });
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-
-      expect(body.error).not.toBe("model_not_allowed");
-      // Not a vacuous pass: the resume has to actually reach the turn, so an
-      // ownership or lookup refusal would be a different bug wearing the same
-      // green.
-      expect(res.status).not.toBe(403);
-      expect(res.status).not.toBe(404);
+describe.each([
+  ["chat"],
+  ["chat/start"],
+])("/v1/workspaces/:wsId/%s resumes a pinned conversation without gating the request model", (route) => {
+  it("does not answer model_not_allowed", async () => {
+    const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_OWNER);
+    const { id } = await store.create({
+      ownerId: DEV_OWNER,
+      workspaceId: TEST_WORKSPACE_ID,
+      model: ALLOWED,
     });
-  },
-);
+
+    const res = await post(route, { message: "again", conversationId: id, model: REFUSED });
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+
+    expect(body.error).not.toBe("model_not_allowed");
+    // Not a vacuous pass: the resume has to actually reach the turn, so an
+    // ownership or lookup refusal would be a different bug wearing the same
+    // green.
+    expect(res.status).not.toBe(403);
+    expect(res.status).not.toBe(404);
+  });
+});

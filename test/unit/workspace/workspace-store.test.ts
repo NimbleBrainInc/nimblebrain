@@ -1,11 +1,11 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, statSync } from "node:fs";
-import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { Workspace } from "../../../src/workspace/types.ts";
 import { parseNamespacedToolName } from "../../../src/tools/namespace.ts";
+import type { Workspace } from "../../../src/workspace/types.ts";
+import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
 import {
   generateWorkspaceId,
   MemberConflictError,
@@ -13,7 +13,7 @@ import {
   WorkspaceConflictError,
   WorkspaceStore,
 } from "../../../src/workspace/workspace-store.ts";
-import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
+import { namespacedToolName } from "../../helpers/namespaced-tool-name.ts";
 
 let workDir: string;
 let store: WorkspaceStore;
@@ -181,9 +181,7 @@ describe("WorkspaceStore CRUD", () => {
     // Opaque ids never collide on name, so the conflict path is exercised
     // via the explicit-slug override (two creates targeting the same id).
     await store.create("First", "duplicate_slug");
-    await expect(store.create("Second", "duplicate_slug")).rejects.toThrow(
-      WorkspaceConflictError,
-    );
+    await expect(store.create("Second", "duplicate_slug")).rejects.toThrow(WorkspaceConflictError);
   });
 });
 
@@ -200,9 +198,7 @@ describe("WorkspaceStore member management", () => {
   test("addMember throws on duplicate user", async () => {
     const ws = await store.create("Team");
     await store.addMember(ws.id, "usr_abc", "member");
-    await expect(store.addMember(ws.id, "usr_abc", "admin")).rejects.toThrow(
-      MemberConflictError,
-    );
+    await expect(store.addMember(ws.id, "usr_abc", "admin")).rejects.toThrow(MemberConflictError);
   });
 
   test("removeMember removes user from workspace members", async () => {
@@ -303,7 +299,9 @@ describe("WorkspaceStore file permissions", () => {
 describe("WorkspaceStore.create", () => {
   test("writes no legacy personal fields", async () => {
     const ws = await store.create("Shared");
-    const raw = JSON.parse(await readFile(join(workDir, "workspaces", ws.id, "workspace.json"), "utf-8"));
+    const raw = JSON.parse(
+      await readFile(join(workDir, "workspaces", ws.id, "workspace.json"), "utf-8"),
+    );
     expect("isPersonal" in raw).toBe(false);
     expect("ownerUserId" in raw).toBe(false);
     expect(ws.about).toBeNull();
@@ -351,7 +349,11 @@ describe("WorkspaceStore.update", () => {
       members: [{ userId: "user_alice", role: "admin" }],
     });
     const file = join(workDir, "workspaces", ws.id, "workspace.json");
-    const legacy = { ...JSON.parse(await readFile(file, "utf-8")), isPersonal: true, ownerUserId: "user_alice" };
+    const legacy = {
+      ...JSON.parse(await readFile(file, "utf-8")),
+      isPersonal: true,
+      ownerUserId: "user_alice",
+    };
     await writeFile(file, JSON.stringify(legacy));
 
     const updated = await store.update(ws.id, { about: "hi" });

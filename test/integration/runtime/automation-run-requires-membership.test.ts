@@ -17,9 +17,9 @@ import { join } from "node:path";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { WorkspaceMembershipRevokedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-automation-membership-${Date.now()}`);
 const WORKSPACE_A = "ws_workspace_a";
@@ -46,7 +46,11 @@ describe("executeTask requires current membership of the automation's provenance
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");
 
     // Runs while a member.
-    const ok = await runtime.executeTask({ identity: DEV_IDENTITY, prompt: "do the thing", workspaceId: WORKSPACE_A });
+    const ok = await runtime.executeTask({
+      identity: DEV_IDENTITY,
+      prompt: "do the thing",
+      workspaceId: WORKSPACE_A,
+    });
     expect(ok.output).toBeDefined();
 
     // Owner is offboarded from A.
@@ -54,7 +58,11 @@ describe("executeTask requires current membership of the automation's provenance
 
     let thrown: unknown;
     try {
-      await runtime.executeTask({ identity: DEV_IDENTITY, prompt: "do the thing", workspaceId: WORKSPACE_A });
+      await runtime.executeTask({
+        identity: DEV_IDENTITY,
+        prompt: "do the thing",
+        workspaceId: WORKSPACE_A,
+      });
     } catch (e) {
       thrown = e;
     }
@@ -70,7 +78,11 @@ describe("executeTask requires current membership of the automation's provenance
     const own = await runtime.getWorkspaceStore().create("Own", undefined, {
       members: [{ userId: OWNER, role: "admin" }],
     });
-    const ownRun = await runtime.executeTask({ identity: DEV_IDENTITY, prompt: "own task", workspaceId: own.id });
+    const ownRun = await runtime.executeTask({
+      identity: DEV_IDENTITY,
+      prompt: "own task",
+      workspaceId: own.id,
+    });
     expect(ownRun.output).toBeDefined();
 
     await expect(

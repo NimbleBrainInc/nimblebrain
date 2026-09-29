@@ -8,8 +8,9 @@
  * The tests below exercise representative payloads so future drift in
  * the schemas (or the producer interfaces they mirror) surfaces here.
  */
-import { Value } from "@sinclair/typebox/value";
+
 import { describe, expect, test } from "bun:test";
+import { Value } from "@sinclair/typebox/value";
 import {
   ConnectorSkillInjectedPayload,
   ContextAssembledPayload,
@@ -245,9 +246,7 @@ describe("event schemas — accept what the emitters produce", () => {
   test("context.assembled — the recorded source rows", () => {
     const payload = buildContextAssembledPayload({
       systemPrompt: "You are helpful.",
-      activeTools: [
-        { name: "nb__search", description: "Search", inputSchema: { type: "object" } },
-      ],
+      activeTools: [{ name: "nb__search", description: "Search", inputSchema: { type: "object" } }],
       messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
       skillsLoaded: buildSkillsLoadedPayload([
         { skill: skill("always-on"), loadedBy: "always", reason: "always-on" },

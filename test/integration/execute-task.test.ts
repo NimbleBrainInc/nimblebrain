@@ -29,8 +29,8 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 const TEST_USER_ID = "usr_exec_task_test";
 const TEST_USER_DISPLAY = "Task Test User";
@@ -417,7 +417,9 @@ describe("runtime.executeTask", () => {
       runtime = await bootRuntime({
         responses: [
           {
-            toolCalls: [{ toolCallId: `call_${tool}`, toolName: tool, input: JSON.stringify(input) }],
+            toolCalls: [
+              { toolCallId: `call_${tool}`, toolName: tool, input: JSON.stringify(input) },
+            ],
           },
           { text: "done" },
         ],

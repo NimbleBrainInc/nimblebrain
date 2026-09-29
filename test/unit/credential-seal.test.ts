@@ -8,8 +8,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  createCredentialSealer,
   CredentialSealError,
+  createCredentialSealer,
   isSealedValue,
   parseSealedValue,
   readCredentialKeyRing,
@@ -152,9 +152,7 @@ describe("tampering", () => {
       .find(
         (c) =>
           c !== last &&
-          Buffer.from(salt.slice(0, -1) + c, "base64url").equals(
-            Buffer.from(salt, "base64url"),
-          ),
+          Buffer.from(salt.slice(0, -1) + c, "base64url").equals(Buffer.from(salt, "base64url")),
       );
     expect(alt).toBeDefined();
     parts[2] = salt.slice(0, -1) + alt;
@@ -345,9 +343,7 @@ describe("the ring — the first seals, every one opens", () => {
       // a ring entry without disclosing the key behind it, and an operator can
       // tell "the outgoing key was dropped too early" from "this file came from
       // somewhere else" without touching the ciphertext.
-      expect((err as CredentialSealError).message).toContain(
-        sealerFor(KEY_A).sealingKid,
-      );
+      expect((err as CredentialSealError).message).toContain(sealerFor(KEY_A).sealingKid);
       expect((err as CredentialSealError).message).toContain(sealerFor(KEY_B).sealingKid);
     }
   });

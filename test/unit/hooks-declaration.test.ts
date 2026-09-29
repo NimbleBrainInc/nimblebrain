@@ -80,11 +80,7 @@ describe("parseHookDeclarations", () => {
 });
 
 describe("isForwardablePath", () => {
-  test.each([
-    "/ingest/acme",
-    "/ingest/acme?v=2",
-    "/a",
-  ])("accepts %s", (route) => {
+  test.each(["/ingest/acme", "/ingest/acme?v=2", "/a"])("accepts %s", (route) => {
     expect(isForwardablePath(route)).toBe(true);
   });
 
@@ -142,14 +138,15 @@ describe("the stripped header class", () => {
     }
   });
 
-  test.each(["x-nb-hook-kid", "x-nb-something-nobody-has-invented-yet", "x-nb-"])(
-    "strips %s by namespace rule, not by name",
-    (name) => {
-      // The point of the rule: the NEXT member inherits the property instead of
-      // a hole. A name list admits every header nobody remembered to add.
-      expect(isStrippedRequestHeader(name)).toBe(true);
-    },
-  );
+  test.each([
+    "x-nb-hook-kid",
+    "x-nb-something-nobody-has-invented-yet",
+    "x-nb-",
+  ])("strips %s by namespace rule, not by name", (name) => {
+    // The point of the rule: the NEXT member inherits the property instead of
+    // a hole. A name list admits every header nobody remembered to add.
+    expect(isStrippedRequestHeader(name)).toBe(true);
+  });
 
   test("leaves the general path a denylist so vendor signatures pass", () => {
     // The runtime cannot enumerate the headers a vendor signs, and those must

@@ -1,11 +1,17 @@
-import { describe, expect, it, beforeEach, afterAll, spyOn } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { parseSkillContent, loadSkillDir, loadBuiltinSkills, loadCoreSkills, partitionSkills } from "../../src/skills/loader.ts";
+import { join } from "node:path";
+import {
+  loadBuiltinSkills,
+  loadCoreSkills,
+  loadSkillDir,
+  parseSkillContent,
+  partitionSkills,
+} from "../../src/skills/loader.ts";
 import { SkillMatcher } from "../../src/skills/matcher.ts";
-import { validateSkill } from "../../src/skills/validator.ts";
 import type { Skill } from "../../src/skills/types.ts";
+import { validateSkill } from "../../src/skills/validator.ts";
 
 const VALID_SKILL = `---
 name: lead-finder
@@ -224,15 +230,21 @@ describe("SkillMatcher", () => {
 
   it("matches on trigger phrase (substring)", () => {
     const matcher = new SkillMatcher();
-    matcher.load([makeSkill({ name: "lead-finder", triggers: ["find leads", "search prospects"] })]);
+    matcher.load([
+      makeSkill({ name: "lead-finder", triggers: ["find leads", "search prospects"] }),
+    ]);
 
     expect(matcher.match("can you find leads for me?")?.skill.manifest.name).toBe("lead-finder");
-    expect(matcher.match("search prospects in the pipeline")?.skill.manifest.name).toBe("lead-finder");
+    expect(matcher.match("search prospects in the pipeline")?.skill.manifest.name).toBe(
+      "lead-finder",
+    );
   });
 
   it("returns the trigger phrase that fired (for load telemetry)", () => {
     const matcher = new SkillMatcher();
-    matcher.load([makeSkill({ name: "lead-finder", triggers: ["find leads", "search prospects"] })]);
+    matcher.load([
+      makeSkill({ name: "lead-finder", triggers: ["find leads", "search prospects"] }),
+    ]);
 
     expect(matcher.match("please search prospects now")?.trigger).toBe("search prospects");
   });

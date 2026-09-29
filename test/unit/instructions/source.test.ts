@@ -12,15 +12,15 @@
  *     the runtime reads it. Verified at integration tier.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { InstructionsStore } from "../../../src/instructions/index.ts";
+import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
-import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
@@ -154,16 +154,12 @@ describe("instructions source — resources", () => {
     runtime.wsId = "ws_demo";
     const client = src.getClient()!;
 
-    await runtime
-      .getInstructionsStore()
-      .write({ wsId: "ws_demo", text: "v1", updatedBy: "ui" });
+    await runtime.getInstructionsStore().write({ wsId: "ws_demo", text: "v1", updatedBy: "ui" });
     expect(
       (await client.readResource({ uri: "instructions://workspace" })).contents?.[0]?.text,
     ).toBe("v1");
 
-    await runtime
-      .getInstructionsStore()
-      .write({ wsId: "ws_demo", text: "v2", updatedBy: "agent" });
+    await runtime.getInstructionsStore().write({ wsId: "ws_demo", text: "v2", updatedBy: "agent" });
     expect(
       (await client.readResource({ uri: "instructions://workspace" })).contents?.[0]?.text,
     ).toBe("v2");
@@ -179,7 +175,7 @@ describe("instructions source — write_instructions", () => {
 
     const updates: Array<{ uri: string }> = [];
     const client = src.getClient()!;
-    client.setNotificationHandler('notifications/resources/updated', (n) => {
+    client.setNotificationHandler("notifications/resources/updated", (n) => {
       updates.push({ uri: n.params.uri as string });
     });
 
@@ -218,9 +214,7 @@ describe("instructions source — write_instructions", () => {
   test("empty text clears the overlay", async () => {
     const src = await buildSource();
     runtime.wsId = "ws_demo";
-    await runtime
-      .getInstructionsStore()
-      .write({ wsId: "ws_demo", text: "first", updatedBy: "ui" });
+    await runtime.getInstructionsStore().write({ wsId: "ws_demo", text: "first", updatedBy: "ui" });
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -228,9 +222,7 @@ describe("instructions source — write_instructions", () => {
       arguments: { body: "" },
     });
     expect(result.isError).toBeFalsy();
-    expect(
-      await runtime.getInstructionsStore().read({ wsId: "ws_demo" }),
-    ).toBe("");
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("");
   });
 
   test("8KB cap rejection surfaces as isError, never throws", async () => {
@@ -332,9 +324,7 @@ describe("instructions source — role gates", () => {
       arguments: { body: "x" },
     });
     expect(result.isError).toBe(true);
-    const parsed = parseStructured(
-      result as { content?: Array<{ type: string; text?: string }> },
-    );
+    const parsed = parseStructured(result as { content?: Array<{ type: string; text?: string }> });
     // Denied for membership, not for org role.
     expect(JSON.stringify(parsed)).toContain("member");
   });
@@ -378,7 +368,6 @@ describe("instructions source — role gates", () => {
     });
     expect(result.isError).toBeFalsy();
   });
-
 });
 
 // ── Unattended-run wall ─────────────────────────────────────────────────
@@ -408,9 +397,7 @@ describe("instructions source — unattended runs", () => {
     expect(error).toContain("unattended automation run");
 
     // Nothing landed — the refusal is before the store, not after it.
-    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe(
-      "",
-    );
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("");
   });
 
   test("the wall outranks a workspace admin's write", async () => {
@@ -434,9 +421,7 @@ describe("instructions source — unattended runs", () => {
     );
 
     expect(result.isError).toBeFalsy();
-    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe(
-      "ws body",
-    );
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("ws body");
   });
 });
 
@@ -460,7 +445,9 @@ describe("instructions source — tool list", () => {
     const client = src.getClient()!;
     const tools = await client.listTools();
     const writeTool = tools.tools.find((t) => t.name === "write_instructions");
-    expect((writeTool?._meta as { ui?: { visibility?: unknown } })?.ui?.visibility).toEqual(["app"]);
+    expect((writeTool?._meta as { ui?: { visibility?: unknown } })?.ui?.visibility).toEqual([
+      "app",
+    ]);
     expect(writeTool?.description).toContain("Empty text clears");
   });
 
@@ -481,7 +468,7 @@ describe("instructions source — connector lifecycle", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const seen: string[] = [];
-    client.setNotificationHandler('notifications/resources/list_changed', () => {
+    client.setNotificationHandler("notifications/resources/list_changed", () => {
       seen.push("list_changed");
     });
     await new Promise((r) => setTimeout(r, 5));

@@ -43,13 +43,19 @@ function raw(overrides: Partial<RawNebiusModel> = {}): RawNebiusModel {
 describe("buildNebiusCatalog", () => {
   it("converts per-token pricing to USD per 1M without float noise", () => {
     // 0.13/M is the case that surfaces float noise (0.13 * 1e6 -> 0.1299999…).
-    const models = buildNebiusCatalog([raw({ pricing: { prompt: "0.00000013", completion: "0.0000004" } })], curated);
+    const models = buildNebiusCatalog(
+      [raw({ pricing: { prompt: "0.00000013", completion: "0.0000004" } })],
+      curated,
+    );
     expect(models["org/Model-A"]!.cost).toEqual({ input: 0.13, output: 0.4 });
   });
 
   it("derives toolCall and reasoning from supported_features", () => {
     const toolsOnly = buildNebiusCatalog([raw({ supported_features: ["tools"] })], curated);
-    expect(toolsOnly["org/Model-A"]!.capabilities).toMatchObject({ toolCall: true, reasoning: false });
+    expect(toolsOnly["org/Model-A"]!.capabilities).toMatchObject({
+      toolCall: true,
+      reasoning: false,
+    });
 
     const both = buildNebiusCatalog([raw({ supported_features: ["tools", "reasoning"] })], curated);
     expect(both["org/Model-A"]!.capabilities).toMatchObject({ toolCall: true, reasoning: true });
@@ -88,7 +94,9 @@ describe("buildNebiusCatalog", () => {
 
 describe("probeModel", () => {
   const KEY = "test-key";
-  const okBody = { choices: [{ message: { tool_calls: [{ id: "1", function: { name: "get_weather" } }] } }] };
+  const okBody = {
+    choices: [{ message: { tool_calls: [{ id: "1", function: { name: "get_weather" } }] } }],
+  };
 
   function fetchReturning(body: unknown, init: { ok?: boolean; status?: number } = {}) {
     return (async () =>
@@ -108,10 +116,19 @@ describe("probeModel", () => {
     // The fake fetch used to ignore its arguments, so a dropped header, a
     // malformed tool, or a shrunken budget all stayed green — and the budget is
     // exactly what produced this file's false negatives.
-    let seen: { url?: string; headers?: Record<string, string>; body?: Record<string, unknown> } = {};
-    const capturing = (async (url: string, init: { headers: Record<string, string>; body: string }) => {
+    let seen: { url?: string; headers?: Record<string, string>; body?: Record<string, unknown> } =
+      {};
+    const capturing = (async (
+      url: string,
+      init: { headers: Record<string, string>; body: string },
+    ) => {
       seen = { url, headers: init.headers, body: JSON.parse(init.body) };
-      return { ok: true, status: 200, statusText: "", json: async () => okBody } as unknown as Response;
+      return {
+        ok: true,
+        status: 200,
+        statusText: "",
+        json: async () => okBody,
+      } as unknown as Response;
     }) as unknown as typeof fetch;
 
     await probeModel("org/Model-A", KEY, capturing);
@@ -138,7 +155,12 @@ describe("probeModel", () => {
       let sent: Record<string, unknown> = {};
       const capturing = (async (_url: string, init: { body: string }) => {
         sent = JSON.parse(init.body);
-        return { ok: true, status: 200, statusText: "", json: async () => okBody } as unknown as Response;
+        return {
+          ok: true,
+          status: 200,
+          statusText: "",
+          json: async () => okBody,
+        } as unknown as Response;
       }) as unknown as typeof fetch;
       await probeModel("org/Model-A", KEY, capturing, 30_000, reasoning);
       return sent;
@@ -158,7 +180,9 @@ describe("probeModel", () => {
 
   it("rejects a model that answers in prose instead of calling the tool", async () => {
     // `supported_features: ["tools"]` is a claim; this is the check.
-    const prose = { choices: [{ finish_reason: "stop", message: { content: "It is sunny in Paris." } }] };
+    const prose = {
+      choices: [{ finish_reason: "stop", message: { content: "It is sunny in Paris." } }],
+    };
     expect(await probeModel("org/Prose", KEY, fetchReturning(prose))).toEqual({
       ok: false,
       reason: "no_tool_calls",
@@ -184,7 +208,11 @@ describe("probeModel", () => {
   });
 
   it("rejects on a non-2xx and carries the status", async () => {
-    const outcome = await probeModel("org/Gone", KEY, fetchReturning({}, { ok: false, status: 404 }));
+    const outcome = await probeModel(
+      "org/Gone",
+      KEY,
+      fetchReturning({}, { ok: false, status: 404 }),
+    );
     expect(outcome.ok).toBe(false);
     expect((outcome as { reason: string }).reason).toBe("http_error");
   });

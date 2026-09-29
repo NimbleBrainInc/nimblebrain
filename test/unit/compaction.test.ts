@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import {
   compactConversationMessages,
   compactionSummaryMessages,
@@ -13,6 +12,7 @@ import {
   selectRetainedOperatorMessages,
   summarizeMessages,
 } from "../../src/conversation/compaction.ts";
+import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import type {
   ConversationEvent,
   HistoryCompactedEvent,
@@ -123,7 +123,10 @@ describe("summarizeMessages + runCompaction", () => {
       }),
     } as unknown as LanguageModelV4;
     let seen:
-      | { usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }; ms: number }
+      | {
+          usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number };
+          ms: number;
+        }
       | undefined;
     const out = await summarizeMessages(model, conversation(2, 40), {
       onUsage: (usage, ms) => {
@@ -158,7 +161,12 @@ describe("summarizeMessages + runCompaction", () => {
       {
         role: "assistant",
         content: [
-          { type: "tool-call", toolCallId: "tc1", toolName: "get_weather", input: { city: "Honolulu" } },
+          {
+            type: "tool-call",
+            toolCallId: "tc1",
+            toolName: "get_weather",
+            input: { city: "Honolulu" },
+          },
         ],
         timestamp: ts(1),
       },
@@ -184,7 +192,9 @@ describe("summarizeMessages + runCompaction", () => {
 
   test("runCompaction returns null below threshold (model never called)", async () => {
     let called = false;
-    const model = { doGenerate: async () => ((called = true), { content: [] }) } as unknown as LanguageModelV4;
+    const model = {
+      doGenerate: async () => ((called = true), { content: [] }),
+    } as unknown as LanguageModelV4;
     const out = await runCompaction(model, conversation(2, 40), { budget: 100_000 });
     expect(out).toBeNull();
     expect(called).toBe(false);
@@ -488,7 +498,9 @@ describe("selectRetainedOperatorMessages", () => {
     ];
     const sel = selectRetainedOperatorMessages(turns, ts(10), RETAINED_OPERATOR_MAX_TOKENS);
     expect(sel.kept).toHaveLength(1); // kept, not dropped
-    expect(Math.ceil(sel.kept[0]!.text.length / 4)).toBeLessThanOrEqual(RETAINED_OPERATOR_MAX_TOKENS);
+    expect(Math.ceil(sel.kept[0]!.text.length / 4)).toBeLessThanOrEqual(
+      RETAINED_OPERATOR_MAX_TOKENS,
+    );
   });
 
   test("counts the RENDERED (escaped) length so markup-heavy text can't blow the cap", () => {
@@ -617,7 +629,8 @@ describe("reconstructMessages — operator corrections survive REPEATED compacti
       expect(JSON.stringify(projected)).toContain(correction);
     }
     // And it lives in the operator block of the seed, not merely the summary.
-    const finalSeed = (reconstructMessages(events)[0]!.content as { text?: string }[])[0]?.text ?? "";
+    const finalSeed =
+      (reconstructMessages(events)[0]!.content as { text?: string }[])[0]?.text ?? "";
     expect(finalSeed).toContain("<operator-messages>");
     expect(finalSeed).toContain(correction);
   });

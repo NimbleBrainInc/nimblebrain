@@ -12,28 +12,28 @@
  * bound would take five minutes.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
+import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
+import {
+  RETRY_TICK_MS,
+  RouteDispatcher,
+  type RouteDispatcherDeps,
+} from "../../../src/notifications/routes.ts";
+import { NotificationStore } from "../../../src/notifications/store.ts";
+import { clampLevel, type Notification } from "../../../src/notifications/types.ts";
 import type {
   UnattendedDispatchOptions,
   UnattendedDispatchResult,
 } from "../../../src/orchestrator/unattended-dispatch.ts";
-import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
 import type {
   EventWakeAck,
   EventWakeRequest,
 } from "../../../src/platform/automations/event-trigger.ts";
-import {
-  RouteDispatcher,
-  type RouteDispatcherDeps,
-  RETRY_TICK_MS,
-} from "../../../src/notifications/routes.ts";
-import { NotificationStore } from "../../../src/notifications/store.ts";
-import { clampLevel, type Notification } from "../../../src/notifications/types.ts";
 import type {
   DeliveryRecord,
   NotificationLevel,
@@ -142,11 +142,15 @@ function seed(
  * to `level` — the poller's job, done here so a ledger assertion reads against
  * the same number the poller would have stamped.
  */
-async function seedClamped(level: NotificationLevel, name = "domain.active"): Promise<Notification> {
+async function seedClamped(
+  level: NotificationLevel,
+  name = "domain.active",
+): Promise<Notification> {
   const ws = await workspaceStore.get(wsId);
   const ceiling =
-    ((ws?.notifications as { sources?: Record<string, { maxLevel: NotificationLevel }> } | undefined)
-      ?.sources?.[SOURCE]?.maxLevel as NotificationLevel | undefined) ?? "info";
+    ((
+      ws?.notifications as { sources?: Record<string, { maxLevel: NotificationLevel }> } | undefined
+    )?.sources?.[SOURCE]?.maxLevel as NotificationLevel | undefined) ?? "info";
   const envelope = parseNotificationEnvelope({
     eventId: `evt_${name}_${level}`,
     name,
@@ -337,7 +341,11 @@ describe("each dispatch outcome maps to a ledger row and an event", () => {
       classification: "owner_not_member",
       error: "not a member",
     });
-    expect(row).toMatchObject({ outcome: "skipped", attempts: 1, classification: "owner_not_member" });
+    expect(row).toMatchObject({
+      outcome: "skipped",
+      attempts: 1,
+      classification: "owner_not_member",
+    });
     expect(row.nextAttemptAt).toBeUndefined();
   });
 
@@ -373,7 +381,10 @@ describe("each dispatch outcome maps to a ledger row and an event", () => {
     await dispatcher().onItem(wsId, item);
 
     expect(calls[0]?.tool).toBe("automations__create");
-    expect(ledger(item)[0]).toMatchObject({ outcome: "denied", classification: "tool_not_allowed" });
+    expect(ledger(item)[0]).toMatchObject({
+      outcome: "denied",
+      classification: "tool_not_allowed",
+    });
   });
 });
 
@@ -383,10 +394,7 @@ describe("targets are independent", () => {
   test("a failing target does not stop the ones after it", async () => {
     answers = [{ outcome: "denied", classification: "tool_not_allowed" }, { outcome: "ok" }];
     await configure({
-      routes: [
-        toolRoute({}, { text: "first" }, "rt_a"),
-        toolRoute({}, { text: "second" }, "rt_b"),
-      ],
+      routes: [toolRoute({}, { text: "first" }, "rt_a"), toolRoute({}, { text: "second" }, "rt_b")],
     });
     const item = seed();
     await dispatcher().onItem(wsId, item);

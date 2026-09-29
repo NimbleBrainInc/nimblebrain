@@ -18,13 +18,13 @@ import { afterEach, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createEchoModel } from "../helpers/echo-model.ts";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 const TEST_USER_ID = "usr_cfg";
 const SHARED_WS_ID = "ws_cfgshared00000";
@@ -33,7 +33,10 @@ interface Observation {
   fastModel: string | undefined;
 }
 
-function buildProbe(): { observations: Observation[]; source: ReturnType<typeof defineInProcessApp> } {
+function buildProbe(): {
+  observations: Observation[];
+  source: ReturnType<typeof defineInProcessApp>;
+} {
   const observations: Observation[] = [];
   const tool: InProcessTool = {
     name: "observe",
@@ -47,7 +50,10 @@ function buildProbe(): { observations: Observation[]; source: ReturnType<typeof 
   };
   return {
     observations,
-    source: defineInProcessApp({ name: "probe", version: "1.0.0", tools: [tool] }, new NoopEventSink()),
+    source: defineInProcessApp(
+      { name: "probe", version: "1.0.0", tools: [tool] },
+      new NoopEventSink(),
+    ),
   };
 }
 

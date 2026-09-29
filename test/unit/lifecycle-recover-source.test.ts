@@ -4,6 +4,7 @@ import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runti
 import type { EngineEvent, EventSink, ToolResult } from "../../src/engine/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
+import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 
 /**
  * Coverage for `ConnectorLifecycleManager.tryRecoverSource` — the best-effort,
@@ -40,14 +41,17 @@ function stubSource(name: string): ToolSource {
 const WS = "ws_test";
 const WORK_DIR = "/tmp/nb-recover-test";
 
-function seedInstance(lifecycle: ConnectorLifecycleManager, serverName: string, ref?: ConnectorRef): void {
+function seedInstance(
+  lifecycle: ConnectorLifecycleManager,
+  serverName: string,
+  ref?: ConnectorRef,
+): void {
   const instance: ConnectorInstance = {
     serverName,
     connectorName: "https://example.test/mcp",
     version: "remote",
     state: "starting",
     ui: null,
-    type: "plain",
     wsId: WS,
     oauthScope: "workspace",
     ...(ref ? { ref } : {}),
@@ -101,7 +105,7 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
   });
 
   test("returns false for a non-URL (named/stdio) ref without attempting a re-spawn", async () => {
-    seedInstance(lifecycle, "stdio", { name: "@scope/stdio" });
+    seedInstance(lifecycle, "stdio", legacyConnectorRef({ name: "@scope/stdio" }));
     const callCount = spyEnsure(lifecycle, async () => {});
     expect(await lifecycle.tryRecoverSource("stdio", WS, WORK_DIR)).toBe(false);
     expect(callCount()).toBe(0);

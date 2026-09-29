@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { connectorHasStaticAuth } from "../../src/connectors/runtime/connector-auth.ts";
-import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
-import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
-import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { ManagedConnectorProvider } from "../../src/connectors/providers/managed-provider.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
+import { WORKSPACE_PRINCIPAL_ID } from "../../src/connectors/runtime/connection.ts";
+import { connectorHasStaticAuth } from "../../src/connectors/runtime/connector-auth.ts";
+import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
 
 class NoopSink implements EventSink {
   emit(_event: EngineEvent): void {}
@@ -17,7 +18,11 @@ function providerRef(): ConnectorRef {
     serverName: "web",
     transport: {
       type: "streamable-http",
-      auth: { type: "provider", provider: "minted", config: { audience: "mcp-fleet", scope: "mcp:invoke" } },
+      auth: {
+        type: "provider",
+        provider: "minted",
+        config: { audience: "mcp-fleet", scope: "mcp:invoke" },
+      },
     },
   };
 }
@@ -45,8 +50,8 @@ describe("connectorHasStaticAuth", () => {
   });
 
   test("named and local-path connectors are not static-auth url sources", () => {
-    expect(connectorHasStaticAuth({ name: "n" })).toBe(false);
-    expect(connectorHasStaticAuth({ path: "/p" })).toBe(false);
+    expect(connectorHasStaticAuth(legacyConnectorRef({ name: "n" }))).toBe(false);
+    expect(connectorHasStaticAuth(legacyConnectorRef({ path: "/p" }))).toBe(false);
   });
 });
 

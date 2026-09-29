@@ -26,7 +26,11 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-function workspaceStore(wsId: string, ownerId: string, onMutate?: () => void): EventSourcedConversationStore {
+function workspaceStore(
+  wsId: string,
+  ownerId: string,
+  onMutate?: () => void,
+): EventSourcedConversationStore {
   // The store creates its own `conversations/<ownerId>/` dir, but only inside a
   // live workspace root — so the fixture stands one up, as `create` would.
   seedWorkspaceRoot(workDir, wsId);

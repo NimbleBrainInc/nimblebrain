@@ -20,13 +20,13 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import {
   classifyPromptKey,
   readValueFromStream,
   runSecrets,
   type SecretsCommandIo,
 } from "../../src/cli/secrets.ts";
+import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import { createCredentialSealer } from "../../src/tools/credential-seal.ts";
 import { type CredentialStore, FileCredentialStore } from "../../src/tools/credential-store.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
@@ -66,9 +66,9 @@ describe("set", () => {
     seedWorkspaceRoot(h.dir, "ws_test");
     try {
       expect(await h.run(["set", "acme.key"])).toBe(0);
-      expect(await h.run(["set", "acme.key", "--scope", "workspace", "--workspace", "ws_test"])).toBe(
-        0,
-      );
+      expect(
+        await h.run(["set", "acme.key", "--scope", "workspace", "--workspace", "ws_test"]),
+      ).toBe(0);
       expect(await h.run(["set", "acme.key", "--scope", "user", "--user", "usr_alex01"])).toBe(0);
 
       expect((await h.store.get({ kind: "instance" }, "acme.key", READ))?.reveal()).toBe(
@@ -149,7 +149,9 @@ describe("it writes through the installed backend, holding no format knowledge",
       const raw = readFileSync(join(dir, "credentials", "secrets", "acme.key"), "utf-8");
       expect(raw.startsWith("NBS1.")).toBe(true);
       expect(raw).not.toContain("sk-secret");
-      expect((await sealed.get({ kind: "instance" }, "acme.key", READ))?.reveal()).toBe("sk-secret");
+      expect((await sealed.get({ kind: "instance" }, "acme.key", READ))?.reveal()).toBe(
+        "sk-secret",
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
       h.cleanup();
@@ -248,7 +250,11 @@ describe("scope selection", () => {
 
   test("an unknown command is reported before any config is opened", async () => {
     const err: string[] = [];
-    const io = { stdout: () => {}, stderr: (line: string) => err.push(line), readValue: async () => "" };
+    const io = {
+      stdout: () => {},
+      stderr: (line: string) => err.push(line),
+      readValue: async () => "",
+    };
     const code = await runSecrets(["frobnicate"], io, () => {
       throw new Error("the store was opened");
     });
@@ -436,7 +442,9 @@ describe("where the command decides to write — the real openStore", () => {
     try {
       const workDir = join(s.dir, "data");
       writeFileSync(join(s.dir, "nimblebrain.json"), SEALED_CONFIG(workDir));
-      expect(await runSecrets(["set", "acme.key", "--config", join(s.dir, "nimblebrain.json")], s.io)).toBe(0);
+      expect(
+        await runSecrets(["set", "acme.key", "--config", join(s.dir, "nimblebrain.json")], s.io),
+      ).toBe(0);
       const raw = readFileSync(join(workDir, "credentials", "secrets", "acme.key"), "utf-8");
       expect(raw.startsWith("NBS1.")).toBe(true);
       expect(existsSync(join(process.cwd(), "credentials"))).toBe(false);
@@ -506,7 +514,10 @@ describe("where the command decides to write — the real openStore", () => {
 
       // Naming one resolves it, and the write lands there.
       expect(
-        await runSecrets(["set", "acme.key", "--config", join(deployment, "nimblebrain.json")], s.io),
+        await runSecrets(
+          ["set", "acme.key", "--config", join(deployment, "nimblebrain.json")],
+          s.io,
+        ),
       ).toBe(0);
       expect(existsSync(join(deployment, "credentials", "secrets", "acme.key"))).toBe(true);
       expect(existsSync(join(local, "credentials"))).toBe(false);

@@ -10,18 +10,18 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { parseNotificationEnvelope } from "../../../../src/notifications/envelope.ts";
+import type { Notification } from "../../../../src/notifications/types.ts";
 import {
   AutomationEventTrigger,
   type AutomationEventTriggerDeps,
   type EventWakeSettlement,
   MAX_EVENT_BATCH_ITEMS,
-  renderEventBlock,
   type RunOutcome,
+  renderEventBlock,
 } from "../../../../src/platform/automations/event-trigger.ts";
 import type { RunInput } from "../../../../src/platform/automations/scheduler.ts";
 import type { Automation, ScheduleSpec } from "../../../../src/platform/automations/types.ts";
-import { parseNotificationEnvelope } from "../../../../src/notifications/envelope.ts";
-import type { Notification } from "../../../../src/notifications/types.ts";
 
 const WS = "ws_1";
 const OWNER = "usr_admin";
@@ -31,7 +31,10 @@ const SOURCE = "precision-outbound";
 /** A short window, so a batching test finishes in milliseconds rather than 30s. */
 const DEBOUNCE = 20;
 
-function automation(schedule: Partial<ScheduleSpec> = {}, over: Partial<Automation> = {}): Automation {
+function automation(
+  schedule: Partial<ScheduleSpec> = {},
+  over: Partial<Automation> = {},
+): Automation {
   return {
     id: ID,
     name: "Reply triage",
@@ -70,7 +73,14 @@ function item(
     _meta: { "ai.nimblebrain/notification": meta },
   });
   if (!envelope) throw new Error("fixture did not parse");
-  return { envelope, source, workspaceId: WS, receivedAt: envelope.timestamp, seq: 1, deliveries: [] };
+  return {
+    envelope,
+    source,
+    workspaceId: WS,
+    receivedAt: envelope.timestamp,
+    seq: 1,
+    deliveries: [],
+  };
 }
 
 interface Harness {

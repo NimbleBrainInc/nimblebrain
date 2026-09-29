@@ -17,19 +17,19 @@
  * the test picks it up automatically via `tools/list`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import type { McpSource } from "../../../src/tools/mcp-source.ts";
+import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
+import { createAutomationsSource } from "../../../src/platform/automations/source.ts";
 import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
-import { createAutomationsSource } from "../../../src/platform/automations/source.ts";
 import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
-import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
+import type { McpSource } from "../../../src/tools/mcp-source.ts";
 
 // ── Minimal Runtime stub ─────────────────────────────────────────────────
 //

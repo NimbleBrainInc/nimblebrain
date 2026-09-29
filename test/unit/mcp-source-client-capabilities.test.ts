@@ -73,6 +73,8 @@ describe("McpSource client capabilities", () => {
   // requests nobody answers.
   test("does NOT claim host-resources from a source that serves no handlers", async () => {
     source = await makeInProcessSource("caps-host-resources", []);
-    expect(declaredCapabilities(source)?.extensions?.[HOST_RESOURCES_CAPABILITY_KEY]).toBeUndefined();
+    expect(
+      declaredCapabilities(source)?.extensions?.[HOST_RESOURCES_CAPABILITY_KEY],
+    ).toBeUndefined();
   });
 });

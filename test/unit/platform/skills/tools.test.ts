@@ -13,10 +13,10 @@
  * in a tmpdir so the conversation-event paths are exercised end-to-end.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
 import { EventSourcedConversationStore } from "../../../../src/conversation/event-sourced-store.ts";
 import { ConversationLocator } from "../../../../src/conversation/locator.ts";
@@ -26,10 +26,10 @@ import type {
   ConversationListResult,
   ListOptions,
 } from "../../../../src/conversation/types.ts";
+import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
 import { parseSkillFile } from "../../../../src/skills/loader.ts";
 import type { Skill } from "../../../../src/skills/types.ts";
 import { McpSource } from "../../../../src/tools/mcp-source.ts";
-import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
 
 // SHA-256 hex placeholder. Tests in this file exercise event projection /
 // filtering / dispatch — none verify hash math, so the actual value just
@@ -684,8 +684,8 @@ describe("skills__read", () => {
       name: "list",
       arguments: { scope: "org", layer: 3 },
     });
-    const listed = (listResult as { structuredContent?: { skills?: unknown[] } })
-      .structuredContent?.skills as Array<{ id: string; name: string }>;
+    const listed = (listResult as { structuredContent?: { skills?: unknown[] } }).structuredContent
+      ?.skills as Array<{ id: string; name: string }>;
     const target = listed.find((s) => s.name === "voice")!;
     expect(target.id).toBe(path);
 

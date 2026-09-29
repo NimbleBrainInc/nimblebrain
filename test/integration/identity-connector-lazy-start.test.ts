@@ -1,13 +1,16 @@
-import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
-import { installTestCredentialStore, resetTestCredentialStore } from "../helpers/credential-store.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 
 /**
  * Integration: `getIdentityConnectorSource` lazy-starts a user's personal
@@ -23,12 +26,16 @@ function createMcpServer(): Server {
     { name: "fake-granola", version: "0.1.0" },
     { capabilities: { tools: {} } },
   );
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
-      { name: "read_notes", description: "read notes", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "read_notes",
+        description: "read notes",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   }));
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "ok" }],
   }));
   return server;

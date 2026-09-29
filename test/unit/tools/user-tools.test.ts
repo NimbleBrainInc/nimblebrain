@@ -1,13 +1,18 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { IdentityProvider, UserIdentity, CreateUserResult, ProviderCapabilities } from "../../../src/identity/provider.ts";
-import { UserStore } from "../../../src/identity/user.ts";
+import type {
+  CreateUserResult,
+  IdentityProvider,
+  ProviderCapabilities,
+  UserIdentity,
+} from "../../../src/identity/provider.ts";
 import type { User } from "../../../src/identity/user.ts";
+import { UserStore } from "../../../src/identity/user.ts";
+import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import type { ManageUsersContext } from "../../../src/tools/user-tools.ts";
 import { createManageUsersTool } from "../../../src/tools/user-tools.ts";
-import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -15,7 +20,10 @@ function extractText(result: { content: Array<{ type: string; text: string }> })
   return result.content[0].text;
 }
 
-function parseResult(result: { content: Array<{ type: string; text: string }>; structuredContent?: Record<string, unknown> }): unknown {
+function parseResult(result: {
+  content: Array<{ type: string; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}): unknown {
   if (result.structuredContent) return result.structuredContent;
   return JSON.parse(extractText(result));
 }

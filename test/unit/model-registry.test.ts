@@ -1,15 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import {
-  resolveModelString,
-  buildRegistry,
-  buildModelResolver,
-} from "../../src/model/registry.ts";
+import { buildModelResolver, buildRegistry, resolveModelString } from "../../src/model/registry.ts";
 
 describe("resolveModelString", () => {
   it("looks up bare anthropic model id in the catalog", () => {
-    expect(resolveModelString("claude-sonnet-4-6")).toBe(
-      "anthropic:claude-sonnet-4-6",
-    );
+    expect(resolveModelString("claude-sonnet-4-6")).toBe("anthropic:claude-sonnet-4-6");
   });
 
   it("looks up bare google model id in the catalog (fixes UI sending bare gemini ids to anthropic)", () => {
@@ -17,9 +11,7 @@ describe("resolveModelString", () => {
     // as the saved value (no `google:` prefix). Without the catalog
     // fallback, that id defaulted to `anthropic:` and 404'd against
     // the Anthropic API.
-    expect(resolveModelString("gemini-3.1-pro-preview")).toBe(
-      "google:gemini-3.1-pro-preview",
-    );
+    expect(resolveModelString("gemini-3.1-pro-preview")).toBe("google:gemini-3.1-pro-preview");
   });
 
   it("looks up bare openai model id in the catalog", () => {
@@ -40,15 +32,11 @@ describe("resolveModelString", () => {
   });
 
   it("leaves already-qualified google string unchanged", () => {
-    expect(resolveModelString("google:gemini-2.5-flash")).toBe(
-      "google:gemini-2.5-flash",
-    );
+    expect(resolveModelString("google:gemini-2.5-flash")).toBe("google:gemini-2.5-flash");
   });
 
   it("keeps strings with multiple colons unchanged", () => {
-    expect(resolveModelString("openai:ft:gpt-4o:my-org")).toBe(
-      "openai:ft:gpt-4o:my-org",
-    );
+    expect(resolveModelString("openai:ft:gpt-4o:my-org")).toBe("openai:ft:gpt-4o:my-org");
   });
 });
 
@@ -235,10 +223,10 @@ describe("anthropic request shape", () => {
     let body: Record<string, unknown> = {};
     globalThis.fetch = (async (_url: unknown, init: { body?: string }) => {
       body = JSON.parse(String(init?.body));
-      return new Response(
-        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
-        { status: 200, headers: { "content-type": "text/event-stream" } },
-      );
+      return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
     }) as unknown as typeof fetch;
     try {
       await buildModelResolver({ providers: { anthropic: { apiKey: "sk-test" } } })(
@@ -276,6 +264,8 @@ describe("anthropic request shape", () => {
       anthropic: { thinking: { type: "enabled", budgetTokens: 2048 } },
     });
     expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 2048 });
-    expect((body.tools as Array<Record<string, unknown>>)[0]?.eager_input_streaming).toBeUndefined();
+    expect(
+      (body.tools as Array<Record<string, unknown>>)[0]?.eager_input_streaming,
+    ).toBeUndefined();
   });
 });

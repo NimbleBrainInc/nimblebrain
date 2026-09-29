@@ -65,10 +65,7 @@ function createDef(handler: InProcessTool["handler"]): InProcessTool {
 }
 
 async function buildSource(name: string, tools: InProcessTool[]): Promise<McpSource> {
-  const source = defineInProcessApp(
-    { name, version: "1.0.0", tools },
-    new NoopEventSink(),
-  );
+  const source = defineInProcessApp({ name, version: "1.0.0", tools }, new NoopEventSink());
   await source.start();
   return source;
 }
@@ -126,7 +123,9 @@ describe("defineInProcessApp — schema validation", () => {
     });
 
     expect(result.isError).toBe(false);
-    expect(calls).toEqual([{ filename: "x.txt", base64_data: "aGVsbG8=", mime_type: "text/plain" }]);
+    expect(calls).toEqual([
+      { filename: "x.txt", base64_data: "aGVsbG8=", mime_type: "text/plain" },
+    ]);
   });
 
   test("skips validation for tools with no declared constraints", async () => {
@@ -218,7 +217,7 @@ describe("McpSource — resource notifications", () => {
     expect(client).not.toBeNull();
 
     const received: Array<unknown> = [];
-    client!.setNotificationHandler('notifications/resources/list_changed', async (n) => {
+    client!.setNotificationHandler("notifications/resources/list_changed", async (n) => {
       received.push(n);
     });
 
@@ -239,7 +238,7 @@ describe("McpSource — resource notifications", () => {
     expect(client).not.toBeNull();
 
     const received: Array<{ method: string; params?: { uri?: string } }> = [];
-    client!.setNotificationHandler('notifications/resources/updated', async (n) => {
+    client!.setNotificationHandler("notifications/resources/updated", async (n) => {
       received.push(n as { method: string; params?: { uri?: string } });
     });
 
@@ -272,9 +271,10 @@ describe("McpSource — resource notifications", () => {
     // Issued raw, bypassing the client's own capability assertion, to show
     // the server end really has no handler.
     await expect(
-      client!.request(
-        { method: "resources/subscribe", params: { uri: "instructions://workspace" } }
-      ),
+      client!.request({
+        method: "resources/subscribe",
+        params: { uri: "instructions://workspace" },
+      }),
     ).rejects.toThrow(/Method not found/i);
   });
 
@@ -398,7 +398,9 @@ describe("defineInProcessApp — parametric resources", () => {
     expect(e).toBeDefined();
     // ErrorCode.InvalidParams === -32602
     expect(e?.code).toBe(-32602);
-    expect(String(e?.message ?? "")).toContain("Resource not found: instructions://connectors/missing");
+    expect(String(e?.message ?? "")).toContain(
+      "Resource not found: instructions://connectors/missing",
+    );
   });
 
   test("static map miss with no resourceHandler still raises InvalidParams (regression)", async () => {
@@ -526,9 +528,7 @@ describe("defineInProcessApp — parametric resources", () => {
         name: "html-string",
         version: "1.0.0",
         tools: [],
-        resources: new Map<string, InProcessResource>([
-          ["ui://settings/panel", "<p>panel</p>"],
-        ]),
+        resources: new Map<string, InProcessResource>([["ui://settings/panel", "<p>panel</p>"]]),
       },
       new NoopEventSink(),
     );

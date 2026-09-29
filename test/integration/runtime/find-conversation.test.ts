@@ -19,18 +19,18 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
-import { TEST_IDENTITY, testAuthAdapter } from "../../helpers/test-auth-adapter.ts";
-import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
-import { devProvider } from "../../helpers/dev-provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { Runtime } from "../../../src/runtime/runtime.ts";
+import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../../helpers/test-auth-adapter.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const ALICE = { id: "usr_alice", email: "alice@example.com" };
 const BOB = { id: "usr_bob", email: "bob@example.com" };

@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../../src/connectors/runtime/lifecycle.ts";
 import { defaultWorkDir } from "../../../src/connectors/runtime/paths.ts";
-import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { CONNECTOR_SKILLS_SUBDIR } from "../../../src/skills/connector-skill-store.ts";
+import type { ToolRegistry } from "../../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
@@ -44,7 +44,9 @@ function workDir(): string {
   return d;
 }
 
-function manager(routes: Record<string, { status: number; body?: string }>): ConnectorLifecycleManager {
+function manager(
+  routes: Record<string, { status: number; body?: string }>,
+): ConnectorLifecycleManager {
   const m = new ConnectorLifecycleManager(new NoopEventSink());
   m.setConnectorSkillFetch((async (url: string | URL | Request) => {
     const u = typeof url === "string" ? url : url.toString();
@@ -54,7 +56,8 @@ function manager(routes: Record<string, { status: number; body?: string }>): Con
   return m;
 }
 
-const gmailUrl = "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.3.0/gmail/SKILL.md";
+const gmailUrl =
+  "https://raw.githubusercontent.com/NimbleBrainInc/connector-skills/v0.3.0/gmail/SKILL.md";
 
 function connectorSkillsDir(wd: string): string {
   return new WorkspaceContext({ wsId: WS_ID, workDir: wd }).getDataPath(CONNECTOR_SKILLS_SUBDIR);
@@ -120,7 +123,10 @@ describe("ConnectorLifecycleManager.syncBoundSkills (P4)", () => {
 
     // Real uninstall path (no instance/config/registry source needed — step 4d
     // runs regardless and uses the wired workDir).
-    const registry = { hasSource: () => false, hasEstablishedSource: () => false } as unknown as ToolRegistry;
+    const registry = {
+      hasSource: () => false,
+      hasEstablishedSource: () => false,
+    } as unknown as ToolRegistry;
     await m.uninstall("gmail", registry, WS_ID);
 
     expect(existsSync(join(connectorSkillsDir(wd), "gmail"))).toBe(false);

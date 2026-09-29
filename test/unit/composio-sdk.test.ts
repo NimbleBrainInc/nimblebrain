@@ -102,7 +102,9 @@ const {
 } = sdk;
 // Config resolution lives beside the adapter, not in it — see
 // `test/unit/composio-config.test.ts` for the declared-block/env precedence.
-const { _resetComposioConfigForTest } = await import("../../src/connectors/providers/composio/config.ts");
+const { _resetComposioConfigForTest } = await import(
+  "../../src/connectors/providers/composio/config.ts"
+);
 const { mkdtempSync, rmSync } = await import("node:fs");
 const { tmpdir } = await import("node:os");
 const { join: joinPath } = await import("node:path");
@@ -660,14 +662,25 @@ describe("cleanupComposioConnector", () => {
     };
 
     // Seed a connection.json on disk.
-    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
-      connectedAccountId: "ca_to_revoke",
-      toolkit: "gmail",
-      userId: "ws_test",
-      connectedAt: "2026-05-13T00:00:00.000Z",
-      status: "ACTIVE",
-    });
-    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(true);
+    await saveComposioConnection(
+      workDir,
+      { type: "workspace", wsId: "ws_test" },
+      "com.google/gmail",
+      {
+        connectedAccountId: "ca_to_revoke",
+        toolkit: "gmail",
+        userId: "ws_test",
+        connectedAt: "2026-05-13T00:00:00.000Z",
+        status: "ACTIVE",
+      },
+    );
+    expect(
+      hasPersistedComposioConnection(
+        workDir,
+        { type: "workspace", wsId: "ws_test" },
+        "com.google/gmail",
+      ),
+    ).toBe(true);
 
     const result = await cleanupComposioConnector({
       workDir,
@@ -678,7 +691,13 @@ describe("cleanupComposioConnector", () => {
     expect(result.upstreamDeleted).toBe(true);
     expect(result.localDeleted).toBe(true);
     expect(deletedAccountId).toBe("ca_to_revoke");
-    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(false);
+    expect(
+      hasPersistedComposioConnection(
+        workDir,
+        { type: "workspace", wsId: "ws_test" },
+        "com.google/gmail",
+      ),
+    ).toBe(false);
   });
 
   test("local cleanup still runs when upstream Composio call fails (idempotent)", async () => {
@@ -687,13 +706,18 @@ describe("cleanupComposioConnector", () => {
       throw new Error("composio down");
     };
 
-    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
-      connectedAccountId: "ca_x",
-      toolkit: "gmail",
-      userId: "ws_test",
-      connectedAt: "2026-05-13T00:00:00.000Z",
-      status: "ACTIVE",
-    });
+    await saveComposioConnection(
+      workDir,
+      { type: "workspace", wsId: "ws_test" },
+      "com.google/gmail",
+      {
+        connectedAccountId: "ca_x",
+        toolkit: "gmail",
+        userId: "ws_test",
+        connectedAt: "2026-05-13T00:00:00.000Z",
+        status: "ACTIVE",
+      },
+    );
 
     const result = await cleanupComposioConnector({
       workDir,
@@ -704,7 +728,13 @@ describe("cleanupComposioConnector", () => {
     // SDK call failed → upstreamDeleted: false. Local cleanup still ran.
     expect(result.upstreamDeleted).toBe(false);
     expect(result.localDeleted).toBe(true);
-    expect(hasPersistedComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail")).toBe(false);
+    expect(
+      hasPersistedComposioConnection(
+        workDir,
+        { type: "workspace", wsId: "ws_test" },
+        "com.google/gmail",
+      ),
+    ).toBe(false);
   });
 
   test("skips upstream call when COMPOSIO_API_KEY is unset (still cleans local file)", async () => {
@@ -715,13 +745,18 @@ describe("cleanupComposioConnector", () => {
       sdkCalled = true;
     };
 
-    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
-      connectedAccountId: "ca_x",
-      toolkit: "gmail",
-      userId: "ws_test",
-      connectedAt: "2026-05-13T00:00:00.000Z",
-      status: "ACTIVE",
-    });
+    await saveComposioConnection(
+      workDir,
+      { type: "workspace", wsId: "ws_test" },
+      "com.google/gmail",
+      {
+        connectedAccountId: "ca_x",
+        toolkit: "gmail",
+        userId: "ws_test",
+        connectedAt: "2026-05-13T00:00:00.000Z",
+        status: "ACTIVE",
+      },
+    );
 
     const result = await cleanupComposioConnector({
       workDir,
@@ -763,13 +798,18 @@ describe("cleanupComposioConnector", () => {
       throw new Error("composio down");
     };
 
-    await saveComposioConnection(workDir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail", {
-      connectedAccountId: "ca_x",
-      toolkit: "gmail",
-      userId: "ws_test",
-      connectedAt: "2026-05-13T00:00:00.000Z",
-      status: "ACTIVE",
-    });
+    await saveComposioConnection(
+      workDir,
+      { type: "workspace", wsId: "ws_test" },
+      "com.google/gmail",
+      {
+        connectedAccountId: "ca_x",
+        toolkit: "gmail",
+        userId: "ws_test",
+        connectedAt: "2026-05-13T00:00:00.000Z",
+        status: "ACTIVE",
+      },
+    );
 
     // Should not throw — contract is best-effort with lastError reporting.
     // (The SDK delete swallows internally; the local delete should still succeed.)

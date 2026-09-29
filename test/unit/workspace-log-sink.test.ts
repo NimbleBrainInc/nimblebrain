@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { log } from "../../src/observability/log.ts";
+import { join } from "node:path";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
+import { log } from "../../src/observability/log.ts";
 
 function makeEvent(type: string, data: Record<string, unknown> = {}): EngineEvent {
   return { type: type as EngineEvent["type"], data };
@@ -29,7 +29,9 @@ describe("WorkspaceLogSink", () => {
     expect(files).toHaveLength(1);
     expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}\.jsonl$/);
 
-    const lines = readFileSync(join(dir, "workspace", files[0]), "utf-8").trim().split("\n");
+    const lines = readFileSync(join(dir, "workspace", files[0]), "utf-8")
+      .trim()
+      .split("\n");
     expect(lines).toHaveLength(1);
 
     const record = JSON.parse(lines[0]);
@@ -62,7 +64,9 @@ describe("WorkspaceLogSink", () => {
     const files = readdirSync(join(dir, "workspace"));
     expect(files).toHaveLength(1);
 
-    const lines = readFileSync(join(dir, "workspace", files[0]), "utf-8").trim().split("\n");
+    const lines = readFileSync(join(dir, "workspace", files[0]), "utf-8")
+      .trim()
+      .split("\n");
     expect(lines).toHaveLength(5);
 
     const events = lines.map((l) => JSON.parse(l).event);
@@ -107,7 +111,9 @@ describe("WorkspaceLogSink", () => {
     }
 
     const files = readdirSync(join(dir, "workspace"));
-    const lines = readFileSync(join(dir, "workspace", files[0]), "utf-8").trim().split("\n");
+    const lines = readFileSync(join(dir, "workspace", files[0]), "utf-8")
+      .trim()
+      .split("\n");
     expect(lines).toHaveLength(workspaceTypes.length);
   });
 

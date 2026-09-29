@@ -73,9 +73,9 @@ describe("assertNoBinaryPayloads", () => {
   });
 
   it("detects typed-array subclasses other than Uint8Array", () => {
-    expect(() =>
-      assertNoBinaryPayloads({ samples: new Int16Array([1, 2, 3]) }, "audio"),
-    ).toThrow(/audio\.samples \(Int16Array\)/);
+    expect(() => assertNoBinaryPayloads({ samples: new Int16Array([1, 2, 3]) }, "audio")).toThrow(
+      /audio\.samples \(Int16Array\)/,
+    );
   });
 
   it("does not loop forever on a cyclic object", () => {

@@ -6,9 +6,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent } from "../../../src/conversation/types.ts";
 
@@ -73,7 +73,15 @@ describe("conversation store corruption resilience", () => {
       makeEvent({ type: "user.message", content: [{ type: "text", text: "Hello" }] } as any),
       "TRUNCATED LINE",
       '{"ts":"2026-04-14T00:02:00Z","type":"llm.done","model":"test","content":[{"type":"text","text":"Reply"}],"usage":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0},"llmMs":100}',
-      makeEvent({ type: "run.done", runId: "r1", toolCalls: 0, iterations: 1, inputTokens: 10, outputTokens: 5, totalMs: 200 } as any),
+      makeEvent({
+        type: "run.done",
+        runId: "r1",
+        toolCalls: 0,
+        iterations: 1,
+        inputTokens: 10,
+        outputTokens: 5,
+        totalMs: 200,
+      } as any),
     ];
 
     writeFileSync(join(dirs.dir, `${id}.jsonl`), lines.join("\n") + "\n");
@@ -126,12 +134,7 @@ describe("conversation store corruption resilience", () => {
     const store = new EventSourcedConversationStore(dirs);
     const id = "conv_c0aa0e1000000005";
 
-    const lines = [
-      makeMetadataLine(id),
-      "GARBAGE LINE 1",
-      "GARBAGE LINE 2",
-      "{incomplete json",
-    ];
+    const lines = [makeMetadataLine(id), "GARBAGE LINE 1", "GARBAGE LINE 2", "{incomplete json"];
 
     writeFileSync(join(dirs.dir, `${id}.jsonl`), lines.join("\n") + "\n");
 

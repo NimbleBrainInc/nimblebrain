@@ -36,7 +36,9 @@ describe("check-internal-hosts — company-subdomain", () => {
   });
 
   test("does not flag public sites, the bare domain, or fictional hosts", () => {
-    expect(rules(`https://static.${COMPANY_DOMAIN}/icons/x.png DOCS.${COMPANY_DOMAIN}`)).toEqual([]);
+    expect(rules(`https://static.${COMPANY_DOMAIN}/icons/x.png DOCS.${COMPANY_DOMAIN}`)).toEqual(
+      [],
+    );
     expect(rules(`mail someone@${COMPANY_DOMAIN} or visit ${COMPANY_DOMAIN}`)).toEqual([]);
     expect(rules("acme.nb.example.com nb.example.com")).toEqual([]);
   });

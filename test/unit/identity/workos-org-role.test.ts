@@ -14,11 +14,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
-import { log } from "../../../src/observability/log.ts";
-import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
+import { WorkosIdentityProvider } from "../../../src/identity/providers/workos.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import { log } from "../../../src/observability/log.ts";
 
 let workDir: string;
 let userStore: UserStore;
@@ -45,10 +45,7 @@ afterEach(() => {
  * `memberships` maps userId → role slug; absence means "no membership".
  */
 function makeProvider(memberships: Map<string, string>, configOverride?: Partial<WorkosAuth>) {
-  const provider = new WorkosIdentityProvider(
-    { ...BASE_CONFIG, ...configOverride },
-    userStore,
-  );
+  const provider = new WorkosIdentityProvider({ ...BASE_CONFIG, ...configOverride }, userStore);
   const workos = (provider as unknown as { workos: Record<string, unknown> }).workos;
   workos.userManagement = {
     getUser: async (userId: string) => ({
@@ -124,11 +121,18 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
     }
     // The silent-downgrade trap must be observable: log names the actual slug
     // and points at the config knob.
-    expect(warnings.some((w) => w.includes("org-admin") && w.includes("adminRoleSlugs"))).toBe(true);
+    expect(warnings.some((w) => w.includes("org-admin") && w.includes("adminRoleSlugs"))).toBe(
+      true,
+    );
   });
 
   it("warns at most once per unmatched slug per process", async () => {
-    const p = makeProvider(new Map([["a", "viewer"], ["b", "viewer"]]));
+    const p = makeProvider(
+      new Map([
+        ["a", "viewer"],
+        ["b", "viewer"],
+      ]),
+    );
     let warnCount = 0;
     const warnSpy = spyOn(log, "warn").mockImplementation(() => {
       warnCount++;

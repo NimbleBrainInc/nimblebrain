@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   extractToolContracts,
-  validateCoreSkill,
   type ToolContract,
+  validateCoreSkill,
 } from "../../../scripts/check-core-skill-tool-refs.ts";
 
 const CONTRACTS: ToolContract[] = [
@@ -55,7 +55,7 @@ describe("check-core-skill-tool-refs — prompt validation", () => {
       "src/skills/core/bootstrap.md",
       [
         '- **nb__search** — use `scope: "tools"` or `scope: "catalog"`.',
-        '| `automations__create` | Create one |',
+        "| `automations__create` | Create one |",
       ].join("\n"),
       CONTRACTS,
     );

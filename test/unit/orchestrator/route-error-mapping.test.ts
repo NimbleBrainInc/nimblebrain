@@ -61,11 +61,23 @@ describe("the retired ws_<id>- form — the rollout hot path", () => {
 describe("every live routing class reaches the caller on both doors", () => {
   const cases: [string, unknown, string][] = [
     ["UnknownNamespacedToolName", legacy(), "invalid_tool_name"],
-    ["UnknownToolSource", new UnknownToolSource("ws_helix", "crm__search", "crm"), "unknown_tool_source"],
-    ["UnknownIdentitySource", new UnknownIdentitySource("nope__x", "nope"), "unknown_identity_source"],
+    [
+      "UnknownToolSource",
+      new UnknownToolSource("ws_helix", "crm__search", "crm"),
+      "unknown_tool_source",
+    ],
+    [
+      "UnknownIdentitySource",
+      new UnknownIdentitySource("nope__x", "nope"),
+      "unknown_identity_source",
+    ],
     // The wall's only remaining denial, and the one class whose payload this
     // branch changed in a way the PR body flags as potentially breaking.
-    ["WorkspaceToolUnavailable", new WorkspaceToolUnavailable("u1", "crm"), "workspace_access_denied"],
+    [
+      "WorkspaceToolUnavailable",
+      new WorkspaceToolUnavailable("u1", "crm"),
+      "workspace_access_denied",
+    ],
     [
       "ConnectorGrantDenied",
       new ConnectorGrantDenied("u1", "gmail", "ws_helix"),

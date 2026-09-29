@@ -3,14 +3,17 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
-import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { type FakeConnectorServer, startFakeConnectorServer } from "../helpers/fake-connector-server.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import {
+  type FakeConnectorServer,
+  startFakeConnectorServer,
+} from "../helpers/fake-connector-server.ts";
 
 /**
  * Integration: a personal connector is an IDENTITY-owned source, resolved by
@@ -82,7 +85,7 @@ beforeAll(async () => {
     delete_notes: "disallow",
   });
 
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -129,7 +132,11 @@ describe("personal-connector reachability — a personal workspace is just a wor
       workspaceId: personalWs,
       runtime,
     });
-    const result = await homeRouter.execute({ id: "h1", name: "my_granola__read_notes", input: {} });
+    const result = await homeRouter.execute({
+      id: "h1",
+      name: "my_granola__read_notes",
+      input: {},
+    });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({ reason: "connector_grant_denied" });
   });

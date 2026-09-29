@@ -13,20 +13,20 @@
  * refusal without standing up a server to then not answer.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
-import type { ToolRegistry } from "../../src/tools/registry.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { startWorkspaceConnectors } from "../../src/runtime/workspace-runtime.ts";
+import type { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
 
 const UNREACHABLE = "http://127.0.0.1:1/mcp";
 
@@ -74,13 +74,10 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     const ws = await store.create("Fleet");
     await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
-    const { entries } = await startWorkspaceConnectors(
-      store,
-      [],
-      null,
-      new NoopEventSink(),
-      { workDir, allowInsecureRemotes: true },
-    );
+    const { entries } = await startWorkspaceConnectors(store, [], null, new NoopEventSink(), {
+      workDir,
+      allowInsecureRemotes: true,
+    });
 
     const entry = entries.find((e) => e.serverName === "unreachable");
     expect(entry).toBeDefined();
@@ -89,7 +86,9 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     // keep the app in the shell. `bootToSeededConnection_recordsDeadEndToEnd`
     // asserts they actually reach the placement registry; this only pins that
     // the entry still holds the ref they come from.
-    expect(entry?.connector && "ui" in entry.connector && entry.connector.ui?.placements?.[0]).toBeTruthy();
+    expect(
+      entry?.connector && "ui" in entry.connector && entry.connector.ui?.placements?.[0],
+    ).toBeTruthy();
   }, 30_000);
 
   test("bootToSeededConnection_recordsDeadEndToEnd", async () => {
@@ -222,13 +221,10 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     const ws = await store.create("Fleet");
     await store.update(ws.id, { connectors: [unreachableConnector("unreachable")] });
 
-    const { registries } = await startWorkspaceConnectors(
-      store,
-      [],
-      null,
-      new NoopEventSink(),
-      { workDir, allowInsecureRemotes: true },
-    );
+    const { registries } = await startWorkspaceConnectors(store, [], null, new NoopEventSink(), {
+      workDir,
+      allowInsecureRemotes: true,
+    });
 
     const registry = registries.get(ws.id);
     // Present — that is the whole point of the change.
@@ -249,13 +245,10 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     const ws = await store.create("Fleet");
     await store.update(ws.id, { connectors: [unreachableConnector("still-down")] });
 
-    const { registries } = await startWorkspaceConnectors(
-      store,
-      [],
-      null,
-      new NoopEventSink(),
-      { workDir, allowInsecureRemotes: true },
-    );
+    const { registries } = await startWorkspaceConnectors(store, [], null, new NoopEventSink(), {
+      workDir,
+      allowInsecureRemotes: true,
+    });
     const registry = registries.get(ws.id);
     const retained = registry?.getSource("still-down");
     expect(retained).toBeDefined();

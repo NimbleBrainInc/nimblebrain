@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type { ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
 import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { ProbeTarget } from "../../src/connectors/runtime/connection-probe.ts";
+
 // Drive the probe through the `@composio/core` vendor seam — the same seam the
 // sibling composio suites mock — never the internal `sdk.ts`. `mock.module` is
 // process-global and is never torn down at file boundaries; mocking `sdk.ts`
@@ -35,8 +36,12 @@ mock.module("@composio/core", () => ({
   },
 }));
 
-const { ComposioConnectionProbe } = await import("../../src/connectors/providers/composio/connection-probe.ts");
-const { _resetComposioConfigForTest } = await import("../../src/connectors/providers/composio/config.ts");
+const { ComposioConnectionProbe } = await import(
+  "../../src/connectors/providers/composio/connection-probe.ts"
+);
+const { _resetComposioConfigForTest } = await import(
+  "../../src/connectors/providers/composio/config.ts"
+);
 const { _resetConnectorsConfigForTest, setConnectorsConfig } = await import(
   "../../src/connectors/providers/config.ts"
 );
@@ -56,7 +61,9 @@ function target(connectorId: string | undefined): ProbeTarget {
     serverName: "teams",
     wsId: "ws_1",
     principalId: "_workspace",
-    ref: (connectorId ? { url: "u", composio: { connectorId } } : { url: "u" }) as ProbeTarget["ref"],
+    ref: (connectorId
+      ? { url: "u", composio: { connectorId } }
+      : { url: "u" }) as ProbeTarget["ref"],
   };
 }
 

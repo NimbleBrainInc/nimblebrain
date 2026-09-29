@@ -9,21 +9,18 @@
  * `skills-tools.test.ts`.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../../src/adapters/noop-events.ts";
-import { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { type ResolvedFeatures, resolveFeatures } from "../../../../src/config/features.ts";
 import {
   createSkillsSource,
   isTaskForbiddenSkillTool,
 } from "../../../../src/platform/skills/source.ts";
-import {
-  resolveFeatures,
-  type ResolvedFeatures,
-} from "../../../../src/config/features.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
+import { McpSource } from "../../../../src/tools/mcp-source.ts";
 
 // ── Fake Runtime ────────────────────────────────────────────────────────
 //

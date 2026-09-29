@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { log } from "../../src/observability/log.ts";
+import { join } from "node:path";
 import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
+import { log } from "../../src/observability/log.ts";
 
 function makeLogDir(): string {
   return mkdtempSync(join(tmpdir(), "log-sink-test-"));
@@ -72,7 +72,12 @@ describe("StructuredLogSink", () => {
       data: {
         runId: "r1",
         model: "claude-sonnet-4-5-20250929",
-        usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 500, cacheWriteTokens: 100 },
+        usage: {
+          inputTokens: 1000,
+          outputTokens: 200,
+          cacheReadTokens: 500,
+          cacheWriteTokens: 100,
+        },
         llmMs: 80,
       },
     });
@@ -107,7 +112,12 @@ describe("StructuredLogSink", () => {
     sink.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
     sink.emit({
       type: "llm.done",
-      data: { runId: "r1", model: "test-model", usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 50 },
+      data: {
+        runId: "r1",
+        model: "test-model",
+        usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 50,
+      },
     });
     sink.emit({
       type: "run.done",
@@ -135,7 +145,12 @@ describe("StructuredLogSink", () => {
     sink.emit({ type: "run.start", data: { runId: "r1" } });
     sink.emit({
       type: "llm.done",
-      data: { runId: "r1", model: "m", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 1 },
+      data: {
+        runId: "r1",
+        model: "m",
+        usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 1,
+      },
     });
     sink.close();
 
@@ -152,7 +167,12 @@ describe("StructuredLogSink", () => {
     sink.setConversationId("conv_xyz");
     sink.emit({
       type: "llm.done",
-      data: { runId: "r1", model: "m", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 1 },
+      data: {
+        runId: "r1",
+        model: "m",
+        usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 1,
+      },
     });
     sink.close();
 
@@ -204,14 +224,30 @@ describe("StructuredLogSink", () => {
     sink.emit({ type: "run.start", data: { runId: "b" } });
     sink.emit({
       type: "llm.done",
-      data: { runId: "a", model: "model-a", usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 10 },
+      data: {
+        runId: "a",
+        model: "model-a",
+        usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 10,
+      },
     });
     sink.emit({
       type: "llm.done",
-      data: { runId: "b", model: "model-b", usage: { inputTokens: 200, outputTokens: 80, cacheReadTokens: 0, cacheWriteTokens: 0 }, llmMs: 20 },
+      data: {
+        runId: "b",
+        model: "model-b",
+        usage: { inputTokens: 200, outputTokens: 80, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        llmMs: 20,
+      },
     });
-    sink.emit({ type: "run.done", data: { runId: "a", stopReason: "complete", iterations: 1, totalMs: 100 } });
-    sink.emit({ type: "run.done", data: { runId: "b", stopReason: "complete", iterations: 1, totalMs: 200 } });
+    sink.emit({
+      type: "run.done",
+      data: { runId: "a", stopReason: "complete", iterations: 1, totalMs: 100 },
+    });
+    sink.emit({
+      type: "run.done",
+      data: { runId: "b", stopReason: "complete", iterations: 1, totalMs: 200 },
+    });
     sink.close();
 
     const records = readLogRecords(logDir);

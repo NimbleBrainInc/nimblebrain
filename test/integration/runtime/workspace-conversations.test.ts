@@ -22,8 +22,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
 
 const testDir = join(tmpdir(), `nb-ws-conv-${Date.now()}`);
 
@@ -36,7 +36,9 @@ async function defaultWorkspaceId(runtime: Runtime, ownerId: string): Promise<st
   const store = runtime.getWorkspaceStore();
   const [ws] = await store.getWorkspacesForUser(ownerId);
   if (ws) return ws.id;
-  const created = await store.create("Home", undefined, { members: [{ userId: ownerId, role: "admin" }] });
+  const created = await store.create("Home", undefined, {
+    members: [{ userId: ownerId, role: "admin" }],
+  });
   await runtime.ensureWorkspaceRegistry(created.id);
   return created.id;
 }
@@ -77,13 +79,19 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const result = await runtime.chat({ message: "hello", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
+    const result = await runtime.chat({
+      message: "hello",
+      identity,
+      workspaceId: await defaultWorkspaceId(runtime, identity.id),
+    });
     expect(result.conversationId).toMatch(/^conv_/);
 
     // File lives under the default workspace's owner partition.
-    expect(existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId))).toBe(
-      true,
-    );
+    expect(
+      existsSync(
+        await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId),
+      ),
+    ).toBe(true);
 
     // Not at the old flat top-level path.
     expect(existsSync(flatConvPath(workDir, result.conversationId))).toBe(false);
@@ -109,11 +117,23 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const r1 = await runtime.chat({ message: "hello 1", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
-    const r2 = await runtime.chat({ message: "hello 2", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
+    const r1 = await runtime.chat({
+      message: "hello 1",
+      identity,
+      workspaceId: await defaultWorkspaceId(runtime, identity.id),
+    });
+    const r2 = await runtime.chat({
+      message: "hello 2",
+      identity,
+      workspaceId: await defaultWorkspaceId(runtime, identity.id),
+    });
 
-    expect(existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, r1.conversationId))).toBe(true);
-    expect(existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, r2.conversationId))).toBe(true);
+    expect(
+      existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, r1.conversationId)),
+    ).toBe(true);
+    expect(
+      existsSync(await defaultWorkspaceConvPath(runtime, workDir, identity.id, r2.conversationId)),
+    ).toBe(true);
 
     await runtime.shutdown();
   });
@@ -136,9 +156,18 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const result = await runtime.chat({ message: "hello metadata", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
+    const result = await runtime.chat({
+      message: "hello metadata",
+      identity,
+      workspaceId: await defaultWorkspaceId(runtime, identity.id),
+    });
 
-    const convFile = await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId);
+    const convFile = await defaultWorkspaceConvPath(
+      runtime,
+      workDir,
+      identity.id,
+      result.conversationId,
+    );
     const content = readFileSync(convFile, "utf-8");
     const metadataLine = JSON.parse(content.split("\n")[0]!);
 
@@ -170,9 +199,18 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const result = await runtime.chat({ message: "hello userId", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
+    const result = await runtime.chat({
+      message: "hello userId",
+      identity,
+      workspaceId: await defaultWorkspaceId(runtime, identity.id),
+    });
 
-    const convFile = await defaultWorkspaceConvPath(runtime, workDir, identity.id, result.conversationId);
+    const convFile = await defaultWorkspaceConvPath(
+      runtime,
+      workDir,
+      identity.id,
+      result.conversationId,
+    );
     const content = readFileSync(convFile, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     const userEvent = lines
@@ -204,7 +242,11 @@ describe("conversation persistence — workspace layout", () => {
       preferences: {},
     };
 
-    const result1 = await runtime.chat({ message: "first message", identity, workspaceId: await defaultWorkspaceId(runtime, identity.id) });
+    const result1 = await runtime.chat({
+      message: "first message",
+      identity,
+      workspaceId: await defaultWorkspaceId(runtime, identity.id),
+    });
 
     // Wait briefly for fire-and-forget title generation to settle.
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -218,7 +260,12 @@ describe("conversation persistence — workspace layout", () => {
 
     expect(result2.conversationId).toBe(result1.conversationId);
 
-    const convFile = await defaultWorkspaceConvPath(runtime, workDir, identity.id, result1.conversationId);
+    const convFile = await defaultWorkspaceConvPath(
+      runtime,
+      workDir,
+      identity.id,
+      result1.conversationId,
+    );
     expect(existsSync(convFile)).toBe(true);
 
     // Wait for any pending writes (title generation + metadata cache).

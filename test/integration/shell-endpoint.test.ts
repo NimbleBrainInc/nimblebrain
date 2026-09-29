@@ -1,14 +1,14 @@
-import { describe, expect, it, afterAll, beforeAll } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ServerHandle } from "../../src/api/server.ts";
+import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
-import { startServer } from "../../src/api/server.ts";
-import type { ServerHandle } from "../../src/api/server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // --- Unauthenticated server (dev mode) ---
 
@@ -18,102 +18,102 @@ let baseUrl: string;
 const testDir = join(tmpdir(), `nimblebrain-shell-${Date.now()}`);
 
 beforeAll(async () => {
-	mkdirSync(testDir, { recursive: true });
-	runtime = await Runtime.start({
-		identityProvider: devProvider,
-		model: { provider: "custom", adapter: createEchoModel() },
-		logging: { disabled: true },
-		workDir: testDir,
-	});
+  mkdirSync(testDir, { recursive: true });
+  runtime = await Runtime.start({
+    identityProvider: devProvider,
+    model: { provider: "custom", adapter: createEchoModel() },
+    logging: { disabled: true },
+    workDir: testDir,
+  });
 
-	await provisionTestWorkspace(runtime);
+  await provisionTestWorkspace(runtime);
 
-	handle = startServer({ runtime, port: 0});
-	baseUrl = `http://localhost:${handle.port}`;
+  handle = startServer({ runtime, port: 0 });
+  baseUrl = `http://localhost:${handle.port}`;
 });
 
 afterAll(async () => {
-	handle.stop(true);
-	await runtime.shutdown();
-	rmSync(testDir, { recursive: true, force: true });
+  handle.stop(true);
+  await runtime.shutdown();
+  rmSync(testDir, { recursive: true, force: true });
 });
 
 describe("GET /v1/workspaces/:wsId/shell", () => {
-	const shellUrl = () => `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`;
+  const shellUrl = () => `${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`;
 
-	it("returns 200 with placements array", async () => {
-		const res = await fetch(shellUrl());
+  it("returns 200 with placements array", async () => {
+    const res = await fetch(shellUrl());
 
-		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toContain("application/json");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
 
-		const body = await res.json();
-		expect(Array.isArray(body.placements)).toBe(true);
-	});
+    const body = await res.json();
+    expect(Array.isArray(body.placements)).toBe(true);
+  });
 
-	it("placements include core entries", async () => {
-		const res = await fetch(shellUrl());
-		const body = await res.json();
+  it("placements include core entries", async () => {
+    const res = await fetch(shellUrl());
+    const body = await res.json();
 
-		// With no installed connectors, the placement registry
-		// is empty (core "nb" source does not register placements itself).
-		// Verify the response shape is valid — an empty array is expected here.
-		expect(Array.isArray(body.placements)).toBe(true);
-	});
+    // With no installed connectors, the placement registry
+    // is empty (core "nb" source does not register placements itself).
+    // Verify the response shape is valid — an empty array is expected here.
+    expect(Array.isArray(body.placements)).toBe(true);
+  });
 
-	it("response includes chatEndpoint and eventsEndpoint", async () => {
-		const res = await fetch(shellUrl());
-		const body = await res.json();
+  it("response includes chatEndpoint and eventsEndpoint", async () => {
+    const res = await fetch(shellUrl());
+    const body = await res.json();
 
-		expect(body.chatEndpoint).toBe(`/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`);
-		expect(body.eventsEndpoint).toBe("/v1/events");
-	});
+    expect(body.chatEndpoint).toBe(`/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`);
+    expect(body.eventsEndpoint).toBe("/v1/events");
+  });
 });
 
 describe("GET /v1/workspaces/:wsId/shell auth", () => {
-	let authHandle: ServerHandle;
-	let authRuntime: Runtime;
-	let authUrl: string;
-	const TEST_API_KEY = "shell-test-api-key-12345";
-	const shellAuthDir = join(tmpdir(), `nimblebrain-shell-auth-${Date.now()}`);
+  let authHandle: ServerHandle;
+  let authRuntime: Runtime;
+  let authUrl: string;
+  const TEST_API_KEY = "shell-test-api-key-12345";
+  const shellAuthDir = join(tmpdir(), `nimblebrain-shell-auth-${Date.now()}`);
 
-	beforeAll(async () => {
-		mkdirSync(shellAuthDir, { recursive: true });
-		authRuntime = await Runtime.start({
-			identityProvider: testAuthAdapter(TEST_API_KEY),
-			model: { provider: "custom", adapter: createEchoModel() },
-			logging: { disabled: true },
-			workDir: shellAuthDir,
-		});
+  beforeAll(async () => {
+    mkdirSync(shellAuthDir, { recursive: true });
+    authRuntime = await Runtime.start({
+      identityProvider: testAuthAdapter(TEST_API_KEY),
+      model: { provider: "custom", adapter: createEchoModel() },
+      logging: { disabled: true },
+      workDir: shellAuthDir,
+    });
 
-		await provisionTestWorkspace(authRuntime);
+    await provisionTestWorkspace(authRuntime);
 
-		authHandle = startServer({
-			runtime: authRuntime,
-			port: 0,
-		});
-		authUrl = `http://localhost:${authHandle.port}`;
-	});
+    authHandle = startServer({
+      runtime: authRuntime,
+      port: 0,
+    });
+    authUrl = `http://localhost:${authHandle.port}`;
+  });
 
-	afterAll(async () => {
-		authHandle.stop(true);
-		await authRuntime.shutdown();
-		rmSync(shellAuthDir, { recursive: true, force: true });
-	});
+  afterAll(async () => {
+    authHandle.stop(true);
+    await authRuntime.shutdown();
+    rmSync(shellAuthDir, { recursive: true, force: true });
+  });
 
-	it("returns 401 without auth", async () => {
-		const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
-		expect(res.status).toBe(401);
-	});
+  it("returns 401 without auth", async () => {
+    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`);
+    expect(res.status).toBe(401);
+  });
 
-	it("returns 200 with valid Bearer token", async () => {
-		const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`, {
-			headers: {
-				Authorization: `Bearer ${TEST_API_KEY}`,
-			},
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		expect(Array.isArray(body.placements)).toBe(true);
-	});
+  it("returns 200 with valid Bearer token", async () => {
+    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/shell`, {
+      headers: {
+        Authorization: `Bearer ${TEST_API_KEY}`,
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.placements)).toBe(true);
+  });
 });

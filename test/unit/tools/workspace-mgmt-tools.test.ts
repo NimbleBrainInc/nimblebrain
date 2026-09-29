@@ -1,13 +1,13 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
-import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import {
   createManageWorkspacesTool,
@@ -21,7 +21,10 @@ function extractText(result: { content: Array<{ type: string; text: string }> })
   return result.content[0].text;
 }
 
-function parseResult(result: { content: Array<{ type: string; text: string }>; structuredContent?: Record<string, unknown> }): unknown {
+function parseResult(result: {
+  content: Array<{ type: string; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}): unknown {
   if (result.structuredContent) return result.structuredContent;
   return JSON.parse(extractText(result));
 }
@@ -325,9 +328,9 @@ describe("nb__manage_workspaces", () => {
       // and every reader downstream would have to defend against it — so it is
       // refused at the boundary that creates it. Covers the empty string and
       // the legacy by-name shape.
-      const created = parseResult(
-        await tool.handler({ action: "create", name: "Bad Rows" }),
-      ) as { workspace: { id: string } };
+      const created = parseResult(await tool.handler({ action: "create", name: "Bad Rows" })) as {
+        workspace: { id: string };
+      };
 
       for (const bad of [{ url: "" }, { name: "@nimblebraininc/echo" }, { url: "ftp://x/mcp" }]) {
         const result = await tool.handler({
@@ -341,9 +344,9 @@ describe("nb__manage_workspaces", () => {
     });
 
     test("an archive failure names the teardown that already ran, not a no-op", async () => {
-      const created = parseResult(
-        await tool.handler({ action: "create", name: "Stuck" }),
-      ) as { workspace: { id: string } };
+      const created = parseResult(await tool.handler({ action: "create", name: "Stuck" })) as {
+        workspace: { id: string };
+      };
 
       tool = createManageWorkspacesTool({
         ...makeCtx(),
@@ -440,9 +443,9 @@ describe("nb__manage_workspaces", () => {
     });
 
     test("reports what the delete tore down, and names what did not", async () => {
-      const created = parseResult(
-        await tool.handler({ action: "create", name: "Wired" }),
-      ) as { workspace: { id: string } };
+      const created = parseResult(await tool.handler({ action: "create", name: "Wired" })) as {
+        workspace: { id: string };
+      };
 
       tool = createManageWorkspacesTool({
         ...makeCtx(),

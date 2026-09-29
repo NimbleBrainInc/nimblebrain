@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { _resetBouncerModeForTest } from "../../../src/oauth/bouncer-config.ts";
 import { mcpAuthCallbackUrl } from "../../../src/oauth/mcp-callback-url.ts";
 

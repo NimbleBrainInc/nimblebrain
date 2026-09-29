@@ -18,10 +18,10 @@
  *   2. handleOidcRefresh maps that verdict to an HTTP status (provider-agnostic).
  */
 
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
 import { handleOidcRefresh } from "../../../src/api/handlers.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import {

@@ -21,9 +21,9 @@ import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
 
 const testDir = join(tmpdir(), `nb-upload-conversation-workspace-${Date.now()}`);
 
@@ -48,7 +48,7 @@ beforeAll(async () => {
   });
   await provisionTestWorkspace(runtime, WORKSPACE_A);
   await provisionTestWorkspace(runtime, OTHER);
-  handle = startServer({ runtime, port: 0});
+  handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 });
 
@@ -87,7 +87,11 @@ describe("an upload attached to a conversation writes only to the workspace in t
 
   for (const route of UPLOAD_ROUTES) {
     it(`${route.name}: a conversation in another workspace is refused like an unknown one, and nothing is stored`, async () => {
-      const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+      const born = await runtime.chat({
+        identity: DEV_IDENTITY,
+        message: "hello from A",
+        workspaceId: WORKSPACE_A,
+      });
       const unknownId = "conv_0000000000000003";
       const before = await registrySizes();
 
@@ -104,16 +108,18 @@ describe("an upload attached to a conversation writes only to the workspace in t
       expect(unknown.status).toBe(404);
       const inABody = await inA.json();
       expect(inABody.error).toBe("conversation_not_found");
-      expect(shape(inABody, born.conversationId)).toEqual(
-        shape(await unknown.json(), unknownId),
-      );
+      expect(shape(inABody, born.conversationId)).toEqual(shape(await unknown.json(), unknownId));
       // Neither the path's partition nor the conversation's gained a file.
       expect(await registrySizes()).toEqual(before);
     });
   }
 
   it("resources: a conversation in the path's workspace takes the file there", async () => {
-    const born = await runtime.chat({ identity: DEV_IDENTITY, message: "hello from A", workspaceId: WORKSPACE_A });
+    const born = await runtime.chat({
+      identity: DEV_IDENTITY,
+      message: "hello from A",
+      workspaceId: WORKSPACE_A,
+    });
     const res = await fetch(`${baseUrl}/v1/workspaces/${WORKSPACE_A}/resources`, {
       method: "POST",
       body: attachmentForm(born.conversationId),
@@ -124,7 +130,9 @@ describe("an upload attached to a conversation writes only to the workspace in t
     const fileId: string = body.files[0].id;
     expect(body.files[0].workspaceId).toBe(WORKSPACE_A);
     expect(body.files[0].conversationId).toBe(born.conversationId);
-    expect(await runtime.getWorkspaceFileStore(WORKSPACE_A, OWNER).findEntry(fileId)).not.toBeNull();
+    expect(
+      await runtime.getWorkspaceFileStore(WORKSPACE_A, OWNER).findEntry(fileId),
+    ).not.toBeNull();
     expect(await runtime.getWorkspaceFileStore(OTHER, OWNER).findEntry(fileId)).toBeNull();
   });
 });

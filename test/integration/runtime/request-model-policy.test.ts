@@ -2,12 +2,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { ModelNotAllowedError } from "../../../src/runtime/errors.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
-import { createEchoModel } from "../../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
-import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
+import { createEchoModel } from "../../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nimblebrain-request-model-policy-${Date.now()}`);
 
@@ -82,7 +82,6 @@ describe("a caller-supplied model is checked against the allowlist", () => {
       await runtime.shutdown();
     }
   });
-
 });
 
 describe("operator config is not the caller's input and is not gated", () => {

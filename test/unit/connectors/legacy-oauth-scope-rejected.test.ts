@@ -4,6 +4,7 @@ import {
   LegacyOAuthScopeError,
 } from "../../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
+import { legacyConnectorRef } from "../../helpers/connector-fixtures.ts";
 
 /**
  * Disk-read boundary contract: Stage 2 cut the legacy
@@ -64,10 +65,10 @@ describe("assertConnectorRefIsPostStage2", () => {
   });
 
   test("accepts non-URL refs unchanged (named, local-path) — oauthScope only applies to URL connectors", () => {
-    const named: ConnectorRef = { name: "@scope/some-connector" };
+    const named = legacyConnectorRef({ name: "@scope/some-connector" });
     expect(() => assertConnectorRefIsPostStage2(named)).not.toThrow();
 
-    const local: ConnectorRef = { path: "/tmp/some/path" };
+    const local = legacyConnectorRef({ path: "/tmp/some/path" });
     expect(() => assertConnectorRefIsPostStage2(local)).not.toThrow();
   });
 

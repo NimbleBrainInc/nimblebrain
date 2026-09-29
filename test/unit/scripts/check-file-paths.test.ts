@@ -85,9 +85,7 @@ describe("check-file-paths — isIdentityFilesDataPath", () => {
   });
 
   test("matches `new IdentityContext({...}).getDataPath('files')`", () => {
-    const src = parse(
-      `const p = new IdentityContext({ userId, workDir }).getDataPath("files");`,
-    );
+    const src = parse(`const p = new IdentityContext({ userId, workDir }).getDataPath("files");`);
     const call = findFirst(
       src,
       (n): n is ts.CallExpression =>

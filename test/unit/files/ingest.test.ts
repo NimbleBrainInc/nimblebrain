@@ -1,9 +1,9 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createFileStore } from "../../../src/files/store.ts";
+import { join } from "node:path";
 import { ingestFiles, type UploadedFile } from "../../../src/files/ingest.ts";
+import { createFileStore } from "../../../src/files/store.ts";
 import type { FileConfig } from "../../../src/files/types.ts";
 
 const DEFAULT_CONFIG: FileConfig = {
@@ -23,11 +23,7 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
-function makeFile(
-  content: string | Buffer,
-  filename: string,
-  mimeType: string,
-): UploadedFile {
+function makeFile(content: string | Buffer, filename: string, mimeType: string): UploadedFile {
   return {
     data: typeof content === "string" ? Buffer.from(content) : content,
     filename,
@@ -73,9 +69,7 @@ describe("ingestFiles", () => {
 
   test("image file produces a resource_link content part pointing to the file store", async () => {
     const store = createFileStore(join(workDir, "files"));
-    const pngHeader = Buffer.from([
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    ]);
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const files = [makeFile(pngHeader, "photo.png", "image/png")];
     const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
 
@@ -107,10 +101,7 @@ describe("ingestFiles", () => {
     expect(result.fileRefs[0].extracted).toBe(false);
 
     const noticePart = result.contentParts.find(
-      (p) =>
-        p.type === "text" &&
-        p.text.includes("binary file") &&
-        p.text.includes("files__read"),
+      (p) => p.type === "text" && p.text.includes("binary file") && p.text.includes("files__read"),
     );
     expect(noticePart).toBeDefined();
   });
@@ -206,15 +197,11 @@ describe("ingestFiles", () => {
 
   test("JSON file is extractable", async () => {
     const store = createFileStore(join(workDir, "files"));
-    const files = [
-      makeFile('{"key": "value"}', "config.json", "application/json"),
-    ];
+    const files = [makeFile('{"key": "value"}', "config.json", "application/json")];
     const result = await ingestFiles(files, "conv_1", store, DEFAULT_CONFIG);
 
     expect(result.fileRefs[0].extracted).toBe(true);
-    const textPart = result.contentParts.find(
-      (p) => p.type === "text" && p.text.includes('"key"'),
-    );
+    const textPart = result.contentParts.find((p) => p.type === "text" && p.text.includes('"key"'));
     expect(textPart).toBeDefined();
   });
 });

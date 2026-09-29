@@ -1,20 +1,20 @@
-import { Server } from "@modelcontextprotocol/server";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { Server } from "@modelcontextprotocol/server";
+import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { extractText } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { devProvider } from "../helpers/dev-provider.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { type RemoteMcpFixture, startRemoteMcpServer } from "../helpers/remote-mcp-fixture.ts";
 import { SKILLS_EXTENSION_CAPABILITY, serveSkills } from "../helpers/skills-server.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
-import { devProvider } from "../helpers/dev-provider.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const SKILL_NAME = "house-voice";
 const GUIDE_SERVER = "ai-nimblebrain-guide-mcp";
@@ -31,17 +31,17 @@ function createGuideServer(): Server {
     { name: "guide", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
   );
-  server.setRequestHandler('tools/list', async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [{ name: "go", description: "Go", inputSchema: { type: "object", properties: {} } }],
   }));
-  server.setRequestHandler('tools/call', async () => ({
+  server.setRequestHandler("tools/call", async () => ({
     content: [{ type: "text", text: "ok" }],
   }));
-  server.setRequestHandler('resources/list', async () => ({
+  server.setRequestHandler("resources/list", async () => ({
     resources: [{ uri: "skill://guide/SKILL.md", name: "guide", mimeType: "text/markdown" }],
   }));
   serveSkills(server, () => ({ "skill://guide/SKILL.md": body }));
-  server.setRequestHandler('resources/read', async (req) => ({
+  server.setRequestHandler("resources/read", async (req) => ({
     contents: [{ uri: req.params.uri, mimeType: "text/markdown", text: body }],
   }));
 

@@ -1,8 +1,8 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   ARCHIVE_MARKER_FILENAME,
   type ArchiveMarker,
@@ -94,9 +94,9 @@ describe("WorkspaceStore.delete — archive-then-cascade", () => {
     // suffix rather than clobbering it.
     expect(existsSync(archiveDirPath(first.id))).toBe(true);
     expect(existsSync(join(workDir, "archived", `${first.id}-1`))).toBe(true);
-    expect(
-      existsSync(join(workDir, "archived", `${first.id}-1`, ARCHIVE_MARKER_FILENAME)),
-    ).toBe(true);
+    expect(existsSync(join(workDir, "archived", `${first.id}-1`, ARCHIVE_MARKER_FILENAME))).toBe(
+      true,
+    );
   });
 
   test("honors a caller-supplied archiveSuffix on collision", async () => {
@@ -109,10 +109,7 @@ describe("WorkspaceStore.delete — archive-then-cascade", () => {
 
     expect(existsSync(join(workDir, "archived", `${first.id}-v2`))).toBe(true);
     const marker = JSON.parse(
-      await readFile(
-        join(workDir, "archived", `${first.id}-v2`, ARCHIVE_MARKER_FILENAME),
-        "utf-8",
-      ),
+      await readFile(join(workDir, "archived", `${first.id}-v2`, ARCHIVE_MARKER_FILENAME), "utf-8"),
     ) as ArchiveMarker;
     expect(marker.wsId).toBe(first.id);
   });

@@ -17,8 +17,8 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -33,11 +33,11 @@ import type {
 } from "../../src/identity/provider.ts";
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
-import { Runtime } from "../../src/runtime/runtime.ts";
 import { ConversationNotFoundError } from "../../src/runtime/errors.ts";
-import { createEchoModel } from "../helpers/echo-model.ts";
-import { TEST_WORKSPACE_ID, provisionTestWorkspace } from "../helpers/test-workspace.ts";
+import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
+import { createEchoModel } from "../helpers/echo-model.ts";
+import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -299,10 +299,11 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
     workDir = join(tmpdir(), `nb-conv-access-http-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
-      identityProvider: () => new MultiUserAuthAdapter({
-        [ALICE_TOKEN]: ALICE,
-        [BOB_TOKEN]: BOB,
-      }),
+      identityProvider: () =>
+        new MultiUserAuthAdapter({
+          [ALICE_TOKEN]: ALICE,
+          [BOB_TOKEN]: BOB,
+        }),
       model: { provider: "custom", adapter: createEchoModel() },
       logging: { disabled: true },
       workDir,

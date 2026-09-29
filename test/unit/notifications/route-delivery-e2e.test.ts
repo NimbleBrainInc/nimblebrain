@@ -13,28 +13,28 @@
  * unit test's arrangement, a level clamped in one place and matched in another.
  */
 
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink, ToolResult } from "../../../src/engine/types.ts";
 import { IdentityContext } from "../../../src/identity/context.ts";
+import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
+import { NotificationPoller, type PollTarget } from "../../../src/notifications/poller.ts";
+import { RouteDispatcher } from "../../../src/notifications/routes.ts";
+import { NotificationStore } from "../../../src/notifications/store.ts";
+import type { Notification } from "../../../src/notifications/types.ts";
 import {
   dispatchUnattended,
   type UnattendedDispatchRuntime,
 } from "../../../src/orchestrator/unattended-dispatch.ts";
-import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
-import { NotificationPoller, type PollTarget } from "../../../src/notifications/poller.ts";
-import { RouteDispatcher } from "../../../src/notifications/routes.ts";
 import {
   AutomationEventTrigger,
   type AutomationEventTriggerDeps,
 } from "../../../src/platform/automations/event-trigger.ts";
-import type { Automation, ScheduleSpec } from "../../../src/platform/automations/types.ts";
 import type { RunInput } from "../../../src/platform/automations/scheduler.ts";
-import { NotificationStore } from "../../../src/notifications/store.ts";
-import type { Notification } from "../../../src/notifications/types.ts";
+import type { Automation, ScheduleSpec } from "../../../src/platform/automations/types.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
@@ -313,9 +313,7 @@ describe("a connector's fact reaching a Slack channel", () => {
             id: "rt_outbound_slack",
             createdBy: AUTHOR,
             match: { name: "domain.*", level: "attention" },
-            deliver: [
-              { kind: "tool", tool: "slack__send_message", input: { text: "{{title}}" } },
-            ],
+            deliver: [{ kind: "tool", tool: "slack__send_message", input: { text: "{{title}}" } }],
           },
         ],
       },
@@ -346,9 +344,7 @@ describe("a connector's fact reaching a Slack channel", () => {
             id: "rt_outbound_slack",
             createdBy: AUTHOR,
             match: {},
-            deliver: [
-              { kind: "tool", tool: "slack__send_message", input: { text: "{{title}}" } },
-            ],
+            deliver: [{ kind: "tool", tool: "slack__send_message", input: { text: "{{title}}" } }],
           },
         ],
       },
@@ -382,9 +378,7 @@ describe("a connector's fact reaching a Slack channel", () => {
             id: "rt_outbound_slack",
             createdBy: AUTHOR,
             match: {},
-            deliver: [
-              { kind: "tool", tool: "slack__send_message", input: { text: "{{title}}" } },
-            ],
+            deliver: [{ kind: "tool", tool: "slack__send_message", input: { text: "{{title}}" } }],
           },
         ],
       },

@@ -13,8 +13,8 @@
  * authenticated.
  */
 
-import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,8 +22,8 @@ import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import type { VerifiedIdentity } from "../../src/identity/provider.ts";
-import type { IdentityStores } from "../../src/runtime/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { IdentityStores } from "../../src/runtime/types.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_IDENTITY, TestAuthAdapter } from "../helpers/test-auth-adapter.ts";
 
