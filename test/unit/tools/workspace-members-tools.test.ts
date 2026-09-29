@@ -126,10 +126,9 @@ describe("nb__manage_members", () => {
       expect(parsed.workspace.memberCount).toBe(2); // wsadmin + member
     });
 
-    test("org admin who is NOT a member is denied (no org-admin bypass)", async () => {
-      // STRICT authz: org role grants no bypass. The default identity is an
-      // org admin but not a member of this workspace, so member management is
-      // denied even though they could create/manage workspaces org-wide.
+    test("org admin who is NOT a member can add a member", async () => {
+      // Membership is governed at org scope: the default identity is an org
+      // admin with no seat in this workspace, and may still manage its roster.
       const ws = await wsStore.create("Team Beta");
 
       const result = await tool.handler({
@@ -138,7 +137,12 @@ describe("nb__manage_members", () => {
         userId: memberUser.id,
       });
 
-      expect(extractText(result)).toContain("don't have permission");
+      expect(result.isError).toBe(false);
+      const parsed = parseResult(result) as { added: { userId: string; role: string } };
+      expect(parsed.added).toEqual({ userId: memberUser.id, role: "member" });
+      // Managing the roster does not seat the org admin.
+      const after = await wsStore.get(ws.id);
+      expect(after!.members.map((m) => m.userId)).toEqual([memberUser.id]);
     });
 
     test("add with explicit admin role", async () => {
@@ -534,10 +538,7 @@ describe("nb__manage_members", () => {
       expect(extractText(result)).toContain("don't have permission");
     });
 
-    test("org owner who is NOT a member is denied (no org-owner bypass)", async () => {
-      // Behavior change under STRICT authz: org owner no longer bypasses
-      // workspace membership. An org owner who is not a workspace admin member
-      // cannot manage that workspace's members.
+    test("org owner who is NOT a member can manage members", async () => {
       const ws = await wsStore.create("Team Owner");
 
       currentIdentity = { ...currentIdentity!, orgRole: "owner" };
@@ -549,12 +550,61 @@ describe("nb__manage_members", () => {
         userId: memberUser.id,
       });
 
-      expect(extractText(result)).toContain("don't have permission");
+      expect(result.isError).toBe(false);
+    });
+
+    test("org admin who is NOT a member can list, promote, and remove members", async () => {
+      const ws = await wsStore.create("Team Governed");
+      await wsStore.addMember(ws.id, memberUser.id, "admin");
+      await wsStore.addMember(ws.id, anotherUser.id, "member");
+
+      const listed = await tool.handler({ action: "list", workspaceId: ws.id });
+      expect(listed.isError).toBe(false);
+      const parsed = parseResult(listed) as { members: Array<{ userId: string }> };
+      expect(parsed.members.map((m) => m.userId).sort()).toEqual(
+        [memberUser.id, anotherUser.id].sort(),
+      );
+
+      const promoted = await tool.handler({
+        action: "update",
+        workspaceId: ws.id,
+        userId: anotherUser.id,
+        role: "admin",
+      });
+      expect(promoted.isError).toBe(false);
+
+      const removed = await tool.handler({
+        action: "remove",
+        workspaceId: ws.id,
+        userId: memberUser.id,
+      });
+      expect(removed.isError).toBe(false);
+      const after = await wsStore.get(ws.id);
+      expect(after!.members).toEqual([expect.objectContaining({ userId: anotherUser.id, role: "admin" })]);
+    });
+
+    test("org admin cannot remove or demote a workspace's last admin", async () => {
+      // The last-active-admin guards bind an org admin like anyone else.
+      const ws = await wsStore.create("Team LastAdmin");
+      await wsStore.addMember(ws.id, memberUser.id, "admin");
+
+      const removed = await tool.handler({
+        action: "remove",
+        workspaceId: ws.id,
+        userId: memberUser.id,
+      });
+      expect(extractText(removed)).toContain("Cannot remove the last workspace admin");
+
+      const demoted = await tool.handler({
+        action: "update",
+        workspaceId: ws.id,
+        userId: memberUser.id,
+        role: "member",
+      });
+      expect(extractText(demoted)).toContain("Cannot demote the last workspace admin");
     });
 
     test("org owner who IS a workspace admin member can manage members", async () => {
-      // The escape hatch: an org owner gains access by being added as a
-      // workspace admin member, not via org role.
       currentIdentity = { ...currentIdentity!, orgRole: "owner" };
       const ws = await createWsAsAdmin("Team OwnerMember");
       tool = createManageMembersTool(makeCtx());

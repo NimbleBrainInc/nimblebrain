@@ -14,7 +14,12 @@ import { describe, expect, test } from "bun:test";
 
 import type { SessionInfo } from "../context/SessionContext";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
-import { canWriteWorkspace, resolveScopedRole, roleAtLeast } from "../hooks/useScopedRole";
+import {
+  canManageWorkspaceMembers,
+  canWriteWorkspace,
+  resolveScopedRole,
+  roleAtLeast,
+} from "../hooks/useScopedRole";
 
 function session(orgRole?: string, authenticated = true): SessionInfo {
   return {
@@ -127,5 +132,24 @@ describe("canWriteWorkspace", () => {
       true,
     );
     expect(canWriteWorkspace("member")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canManageWorkspaceMembers — membership is governed at org scope. Mirrors the
+// server's `canManageWorkspaceMembers`: an org admin/owner, or an admin member.
+// ---------------------------------------------------------------------------
+
+describe("canManageWorkspaceMembers", () => {
+  test("an org admin or owner may manage members without a membership", () => {
+    expect(canManageWorkspaceMembers("admin", undefined)).toBe(true);
+    expect(canManageWorkspaceMembers("owner", undefined)).toBe(true);
+  });
+
+  test("otherwise it is the write rule: admin members only", () => {
+    expect(canManageWorkspaceMembers("member", "admin")).toBe(true);
+    expect(canManageWorkspaceMembers("member", "member")).toBe(false);
+    expect(canManageWorkspaceMembers("member", undefined)).toBe(false);
+    expect(canManageWorkspaceMembers(undefined, undefined)).toBe(false);
   });
 });

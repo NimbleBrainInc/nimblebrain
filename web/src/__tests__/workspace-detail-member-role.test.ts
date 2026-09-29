@@ -1,14 +1,14 @@
 // ---------------------------------------------------------------------------
 // memberRoleFor — the argument to WorkspaceDetailPage's write gate.
 //
-// The rule itself (`canWriteWorkspace`) is pinned in useScopedRole.test.ts.
+// The rule itself (`canManageWorkspaceMembers`) is pinned in useScopedRole.test.ts.
 // Pinning the rule does not pin the call: this page is the one site where the
 // bug was found written longhand (an `isOrgAdmin ||` bypass), and it reaches
 // the rule through a lookup no test covered. These pin the lookup.
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import { canWriteWorkspace } from "../hooks/useScopedRole";
+import { canManageWorkspaceMembers } from "../hooks/useScopedRole";
 import { memberRoleFor } from "../pages/settings/WorkspaceDetailPage";
 
 const MEMBERS = [
@@ -45,13 +45,18 @@ describe("memberRoleFor", () => {
   });
 });
 
-describe("memberRoleFor → canWriteWorkspace — the composed gate", () => {
+describe("memberRoleFor → canManageWorkspaceMembers — the composed gate", () => {
   // What the page actually evaluates. Both directions, so neither a
   // permanently-true nor a permanently-false gate passes.
-  test("only a workspace admin may manage members", () => {
-    expect(canWriteWorkspace(memberRoleFor(MEMBERS, "u_admin"))).toBe(true);
-    expect(canWriteWorkspace(memberRoleFor(MEMBERS, "u_member"))).toBe(false);
-    expect(canWriteWorkspace(memberRoleFor(MEMBERS, "u_outsider"))).toBe(false);
-    expect(canWriteWorkspace(memberRoleFor(MEMBERS, undefined))).toBe(false);
+  test("a workspace admin may manage members; a plain member or outsider may not", () => {
+    expect(canManageWorkspaceMembers("member", memberRoleFor(MEMBERS, "u_admin"))).toBe(true);
+    expect(canManageWorkspaceMembers("member", memberRoleFor(MEMBERS, "u_member"))).toBe(false);
+    expect(canManageWorkspaceMembers("member", memberRoleFor(MEMBERS, "u_outsider"))).toBe(false);
+    expect(canManageWorkspaceMembers(undefined, memberRoleFor(MEMBERS, undefined))).toBe(false);
+  });
+
+  test("an org admin or owner may manage members of a workspace they are not in", () => {
+    expect(canManageWorkspaceMembers("admin", memberRoleFor(MEMBERS, "u_org_admin"))).toBe(true);
+    expect(canManageWorkspaceMembers("owner", memberRoleFor(MEMBERS, "u_org_owner"))).toBe(true);
   });
 });

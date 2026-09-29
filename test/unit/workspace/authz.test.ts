@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
-import { canWriteWorkspaceScoped } from "../../../src/workspace/authz.ts";
+import { canManageWorkspaceMembers, canWriteWorkspaceScoped } from "../../../src/workspace/authz.ts";
 import type { Workspace, WorkspaceRole } from "../../../src/workspace/types.ts";
 
 function identity(id: string, orgRole: OrgRole = "member"): UserIdentity {
@@ -95,5 +95,34 @@ describe("canWriteWorkspaceScoped", () => {
     expect(decision.allowed).toBe(false);
     if (decision.allowed) throw new Error("expected denial");
     expect(decision.reason).toContain("Not a member");
+  });
+});
+
+describe("canManageWorkspaceMembers", () => {
+  test("allows an org admin or owner who is not a member", () => {
+    const ws = workspace([{ userId: "u1", role: "admin" }]);
+    expect(canManageWorkspaceMembers(identity("org", "admin"), ws)).toEqual({ allowed: true });
+    expect(canManageWorkspaceMembers(identity("org", "owner"), ws)).toEqual({ allowed: true });
+  });
+
+  test("allows a workspace admin member with no org role", () => {
+    const ws = workspace([{ userId: "u1", role: "admin" }]);
+    expect(canManageWorkspaceMembers(identity("u1"), ws)).toEqual({ allowed: true });
+  });
+
+  test("denies a plain member and a non-member without an org admin role", () => {
+    const ws = workspace([{ userId: "u1", role: "member" }]);
+    expect(canManageWorkspaceMembers(identity("u1"), ws).allowed).toBe(false);
+    expect(canManageWorkspaceMembers(identity("u2"), ws).allowed).toBe(false);
+  });
+
+  test("denies an org admin when the workspace does not exist, and a missing identity", () => {
+    expect(canManageWorkspaceMembers(identity("org", "admin"), null).allowed).toBe(false);
+    expect(canManageWorkspaceMembers(null, workspace([])).allowed).toBe(false);
+  });
+
+  test("leaves content writes strict: the same org admin is refused by canWriteWorkspaceScoped", () => {
+    const ws = workspace([{ userId: "u1", role: "admin" }]);
+    expect(canWriteWorkspaceScoped(identity("org", "admin"), ws).allowed).toBe(false);
   });
 });

@@ -92,6 +92,23 @@ export function canWriteWorkspace(membershipRole: WorkspaceInfo["userRole"]): bo
 }
 
 /**
+ * "May this user manage this workspace's members" — list, add, remove, change
+ * roles.
+ *
+ * Mirrors the server's `canManageWorkspaceMembers`: an org admin/owner may
+ * manage any workspace's members, and otherwise the rule is
+ * `canWriteWorkspace`'s. Membership is access governance, decided at org
+ * scope, so this is the one workspace gate that reads `orgRole`; content
+ * writes stay on `canWriteWorkspace`.
+ */
+export function canManageWorkspaceMembers(
+  orgRole: string | undefined,
+  membershipRole: WorkspaceInfo["userRole"],
+): boolean {
+  return orgRole === "admin" || orgRole === "owner" || canWriteWorkspace(membershipRole);
+}
+
+/**
  * Whether the signed-in user may write **the active workspace**.
  *
  * Use this on a surface scoped to the active workspace — anything under

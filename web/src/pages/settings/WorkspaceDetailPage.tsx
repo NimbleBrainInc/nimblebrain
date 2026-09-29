@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { useSession } from "../../context/SessionContext";
-import { canWriteWorkspace } from "../../hooks/useScopedRole";
+import { canManageWorkspaceMembers } from "../../hooks/useScopedRole";
 import {
   CopyableWorkspaceId,
   EmptyState,
@@ -45,7 +45,7 @@ interface Member {
  * or `undefined` when they aren't a member of it.
  *
  * Exported so the gate's *argument* is testable, not just the rule it feeds.
- * The rule (`canWriteWorkspace`) is pinned in `useScopedRole.test.ts`; pinning
+ * The rule (`canManageWorkspaceMembers`) is pinned in `useScopedRole.test.ts`; pinning
  * it doesn't pin this lookup, which is where this page could go wrong.
  *
  * The `userId` guard is load-bearing: `currentUserId` is `session?.user?.id`
@@ -201,17 +201,17 @@ export function WorkspaceDetailPage() {
   const memberUserIds = new Set(members.map((m) => m.userId));
   const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id));
 
-  // Member management is a workspace-scoped write: `canManageMembers` routes
-  // through `canWriteWorkspaceScoped`, which grants an org admin no bypass —
-  // "an org admin/owner who is not a workspace admin member cannot manage
-  // members". Membership is therefore the only thing this may read; an org-role
-  // check here would render controls the server refuses, and `handleAdd`
-  // doesn't inspect the result, so the refusal would be silent (#749).
-  // Same rule as every other workspace write, reached differently: this page
-  // addresses a workspace by id, so it passes that workspace's membership role
-  // rather than using the active-workspace hook (which would answer for the
-  // viewer's focused workspace, not this one).
-  const canManageMembers = canWriteWorkspace(memberRoleFor(members, currentUserId));
+  // Same rule as the server's `canManageWorkspaceMembers`: an org admin/owner,
+  // or an admin member of this workspace. A gate that disagrees with the server
+  // renders controls it refuses, and `handleAdd` doesn't inspect the result,
+  // so the refusal would be silent (#749). This page addresses a workspace by
+  // id, so it passes that workspace's membership role rather than using the
+  // active-workspace hook (which would answer for the viewer's focused
+  // workspace, not this one).
+  const canManageMembers = canManageWorkspaceMembers(
+    session?.user?.orgRole,
+    memberRoleFor(members, currentUserId),
+  );
 
   // The org-scoped Workspaces list lives at /org/workspaces.
   const backTo = "/org/workspaces";

@@ -8,12 +8,17 @@
  * content. This mirrors the existing skills behavior and the HTTP
  * `requireWorkspace` middleware, which already requires membership.
  *
+ * Membership management is the exception, decided by
+ * `canManageWorkspaceMembers` below: who may reach a workspace is an org
+ * concern, so an org admin governs it without being a member.
+ *
  * Pure (no I/O): callers fetch the `Workspace` and pass it in. The
  * structured `WorkspaceWriteDecision` lets each call site adapt to its own
  * return convention (`PermissionDecision`, `ToolResult`, or `boolean`).
  */
 
 import type { UserIdentity } from "../identity/provider.ts";
+import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { Workspace } from "./types.ts";
 
 /** Outcome of a workspace-scoped write authorization check. */
@@ -56,4 +61,25 @@ export function canWriteWorkspaceScoped(
   }
 
   return { allowed: true };
+}
+
+/**
+ * Decide whether `identity` may manage `ws`'s membership: list, add, remove,
+ * and change the role of its members.
+ *
+ * Membership is access governance, not workspace content, so it is decided at
+ * org scope as well as workspace scope: an org admin/owner may manage the
+ * members of any workspace, as they may create or delete it, and a workspace
+ * admin member may manage their own. Content writes stay with
+ * `canWriteWorkspaceScoped`; an org admin who wants to write content seats
+ * themselves as a member first, which leaves them visible in the roster.
+ */
+export function canManageWorkspaceMembers(
+  identity: Pick<UserIdentity, "id" | "orgRole"> | null | undefined,
+  ws: Workspace | null | undefined,
+): WorkspaceWriteDecision {
+  if (identity && ws && ORG_ADMIN_ROLES.has(identity.orgRole)) {
+    return { allowed: true };
+  }
+  return canWriteWorkspaceScoped(identity, ws);
 }
