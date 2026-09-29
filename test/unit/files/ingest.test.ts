@@ -153,6 +153,49 @@ describe("ingestFiles", () => {
     expect(result.fileRefs).toHaveLength(0);
   });
 
+  test("a set with one disallowed file is refused and stores none of the set", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const files = [
+      makeFile("first", "first.txt", "text/plain"),
+      makeFile("#!/bin/bash", "evil.sh", "application/x-executable"),
+      makeFile("last", "last.txt", "text/plain"),
+    ];
+    const result = await ingestFiles(files, "pending", store, DEFAULT_CONFIG);
+
+    expect(result.errors).toEqual(['File "evil.sh" has disallowed type: application/x-executable']);
+    expect(result.fileRefs).toHaveLength(0);
+    expect(result.contentParts).toHaveLength(0);
+    expect(await store.readRegistry()).toHaveLength(0);
+  });
+
+  test("a set with one oversized file is refused and stores none of the set", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const config: FileConfig = { ...DEFAULT_CONFIG, maxFileSize: 10 };
+    const files = [
+      makeFile("small", "small.txt", "text/plain"),
+      makeFile("this is longer than 10 bytes", "big.txt", "text/plain"),
+    ];
+    const result = await ingestFiles(files, "pending", store, config);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('File "big.txt"');
+    expect(await store.readRegistry()).toHaveLength(0);
+  });
+
+  test("a fully valid set stores every file and returns its content parts", async () => {
+    const store = createFileStore(join(workDir, "files"));
+    const files = [
+      makeFile("first", "first.txt", "text/plain"),
+      makeFile("last", "last.txt", "text/plain"),
+    ];
+    const result = await ingestFiles(files, "pending", store, DEFAULT_CONFIG);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.fileRefs).toHaveLength(2);
+    expect(result.contentParts).toHaveLength(2);
+    expect(await store.readRegistry()).toHaveLength(2);
+  });
+
   test("multiple files produce correctly ordered content parts", async () => {
     const store = createFileStore(join(workDir, "files"));
     const files = [

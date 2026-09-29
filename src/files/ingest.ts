@@ -109,11 +109,21 @@ export function humanSize(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
-/** Per-file ingest outcome: content parts, an optional registry reference, and an optional validation error. */
+/** Per-file ingest outcome: content parts and an optional registry reference. */
 interface FileIngest {
   parts: ContentPart[];
   ref?: FileReference;
-  error?: string;
+}
+
+/** The per-file checks (size, MIME type); returns the refusal message, or undefined when the file passes. */
+function validateFile(file: UploadedFile, config: FileConfig): string | undefined {
+  if (file.data.length > config.maxFileSize) {
+    return `File "${file.filename}" (${humanSize(file.data.length)}) exceeds limit of ${humanSize(config.maxFileSize)}`;
+  }
+  if (!isAllowedMime(file.mimeType)) {
+    return `File "${file.filename}" has disallowed type: ${file.mimeType}`;
+  }
+  return undefined;
 }
 
 /** Extract a text content part for extractable files, or persist a PDF's text sidecar; returns whether a text part was produced. */
@@ -154,7 +164,7 @@ async function extractInto(
   return false;
 }
 
-/** Validate, store, register, extract, and assemble the content parts + reference for a single uploaded file. */
+/** Store, register, extract, and assemble the content parts + reference for a single validated file. */
 async function ingestOneFile(
   file: UploadedFile,
   conversationId: string,
@@ -164,19 +174,6 @@ async function ingestOneFile(
   ownerId: string | undefined,
 ): Promise<FileIngest> {
   const parts: ContentPart[] = [];
-
-  // Validate individual file size
-  if (file.data.length > config.maxFileSize) {
-    return {
-      parts,
-      error: `File "${file.filename}" (${humanSize(file.data.length)}) exceeds limit of ${humanSize(config.maxFileSize)}`,
-    };
-  }
-
-  // Validate MIME type
-  if (!isAllowedMime(file.mimeType)) {
-    return { parts, error: `File "${file.filename}" has disallowed type: ${file.mimeType}` };
-  }
 
   // Store the file
   const saved = await store.saveFile(file.data, file.filename, file.mimeType);
@@ -239,8 +236,10 @@ async function ingestOneFile(
 /**
  * Validate and ingest uploaded files into the workspace file store.
  *
- * For each valid file: stores it, registers metadata, extracts text when
- * applicable, and builds content parts for the LLM message.
+ * Every check (count, total size, then each file's size and type) runs before
+ * any file is stored, so a refused set leaves nothing in the store. For an
+ * accepted set, each file is stored, registered, text-extracted when
+ * applicable, and turned into content parts for the LLM message.
  */
 export async function ingestFiles(
   files: UploadedFile[],
@@ -272,16 +271,16 @@ export async function ingestFiles(
     return { contentParts, fileRefs, errors };
   }
 
+  // Validate every file before storing any: the caller refuses the whole turn
+  // on any error, so a partly stored set would leave files nothing references.
   for (const file of files) {
-    const { parts, ref, error } = await ingestOneFile(
-      file,
-      conversationId,
-      store,
-      config,
-      wsId,
-      ownerId,
-    );
+    const error = validateFile(file, config);
     if (error) errors.push(error);
+  }
+  if (errors.length > 0) return { contentParts, fileRefs, errors };
+
+  for (const file of files) {
+    const { parts, ref } = await ingestOneFile(file, conversationId, store, config, wsId, ownerId);
     contentParts.push(...parts);
     if (ref) fileRefs.push(ref);
   }
