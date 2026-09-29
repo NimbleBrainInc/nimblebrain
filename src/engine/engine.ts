@@ -235,6 +235,13 @@ function pickTier<T extends string>(
  * 5-series reject `thinking.type=enabled` and take `thinking.type=adaptive`
  * plus `output_config.effort`; everything earlier takes `thinking.type=enabled`
  * with a token budget.
+ *
+ * `display: "summarized"` asks for the thinking text itself. The adaptive
+ * dialect omits it by default, so without this the response carries thinking
+ * blocks whose text is empty: the reasoning tokens are spent and billed, the
+ * turn stalls for as long as they take, and the client has nothing to show for
+ * the wait. It applies only to the adaptive dialect; the budget dialect returns
+ * thinking text unasked.
  */
 function buildAnthropicThinkingOptions(
   model: string,
@@ -252,13 +259,18 @@ function buildAnthropicThinkingOptions(
       // `off` work on the models where it works.
       return {};
     case "adaptive":
-      return { anthropic: { thinking: { type: "adaptive" } } };
+      return { anthropic: { thinking: { type: "adaptive", display: "summarized" } } };
     case "effort":
     case "enabled": {
       // Effort-shaped models take the tier either way: a token budget can't be
       // metered there, but the depth chosen alongside it can.
       if (effortShaped) {
-        return { anthropic: { thinking: { type: "adaptive" }, effort: thinking.effort } };
+        return {
+          anthropic: {
+            thinking: { type: "adaptive", display: "summarized" },
+            effort: thinking.effort,
+          },
+        };
       }
       const budgetTokens =
         thinking.mode === "enabled"

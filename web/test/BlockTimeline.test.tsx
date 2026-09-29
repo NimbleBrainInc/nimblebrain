@@ -77,6 +77,16 @@ function liveCursorLabel(container: HTMLElement): string | null {
 	return null;
 }
 
+/** The cursor's elapsed counter, or null when it isn't drawn yet. */
+function liveCursorElapsed(container: HTMLElement): string | null {
+	for (const el of Array.from(container.getElementsByTagName("span"))) {
+		if ((el.getAttribute("class") ?? "").split(/\s+/).includes("live-cursor__elapsed")) {
+			return (el.textContent ?? "").trim();
+		}
+	}
+	return null;
+}
+
 function timeline(container: HTMLElement): string[] {
 	const out: string[] = [];
 	const walker = container.ownerDocument!.createTreeWalker(
@@ -281,6 +291,18 @@ describe("LiveCursor", () => {
 			streamingState: "analyzing",
 		});
 		expect(liveCursorLabel(container)).toBe("Analyzing…");
+	});
+
+	it("does not count out loud until a state has held for a few seconds", () => {
+		// A number appearing the instant a state starts reads as noise on the
+		// fast steps, which are most of them; it earns its place only once the
+		// wait is long enough to be worth doubting.
+		const { container } = renderTimeline({
+			blocks: [tool(done("a", "search"))],
+			isCurrentMessage: true,
+			streamingState: "analyzing",
+		});
+		expect(liveCursorElapsed(container)).toBeNull();
 	});
 
 	it("hides during 'streaming' (text/reasoning block is absorbing the state)", () => {

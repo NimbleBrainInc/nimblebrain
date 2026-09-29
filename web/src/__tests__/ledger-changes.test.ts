@@ -8,21 +8,34 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import type { SkillsLoadedContext } from "../hooks/chat-store";
+import type { LedgerSkill, SkillsLoadedContext } from "../hooks/chat-store";
 import type { ChatMessage } from "../hooks/useChat";
 import { ledgerChanges } from "../lib/ledger-changes";
 
+function skill(name: string, loadedBy: LedgerSkill["loadedBy"]): LedgerSkill {
+  return {
+    id: `skills/${name}.md`,
+    name,
+    scope: "workspace" as const,
+    tokens: 100,
+    loadedBy,
+    reason: loadedBy === "always" ? "always-on" : `trigger matched "${name}"`,
+  };
+}
+
+/** A turn's equipment: skills that loaded for a reason this turn. */
 function ctx(...names: string[]): SkillsLoadedContext {
   return {
-    skills: names.map((name) => ({
-      id: `skills/${name}.md`,
-      name,
-      scope: "workspace" as const,
-      tokens: 100,
-      loadedBy: "always" as const,
-      reason: "always-on",
-    })),
+    skills: names.map((name) => skill(name, "trigger")),
     totalTokens: names.length * 100,
+  };
+}
+
+/** The same, with a standing always-on skill riding along in the payload. */
+function withAlwaysOn(base: SkillsLoadedContext, name: string): SkillsLoadedContext {
+  return {
+    skills: [...base.skills, skill(name, "always")],
+    totalTokens: base.totalTokens + 100,
   };
 }
 
@@ -94,12 +107,33 @@ describe("ledgerChanges", () => {
     expect(announced(turns(forward, shuffled))).toEqual([["a", "b", "c"], undefined]);
   });
 
+  test("a turn equipped only by always-on skills is silent", () => {
+    // An always-on skill is standing workspace configuration: equipped before
+    // the turn had a subject, so it reports nothing about this one.
+    const standing = withAlwaysOn({ skills: [], totalTokens: 0 }, "operating-model");
+    expect(announced(turns(standing, standing))).toEqual([undefined, undefined]);
+  });
+
+  test("an always-on skill riding along is not the change", () => {
+    // The shape that made the line repeat: a triggered skill comes and goes
+    // while the always-on one stays. Only the arrival and the next real change
+    // speak; the turn carrying the standing skill alone stays quiet.
+    const standing = withAlwaysOn({ skills: [], totalTokens: 0 }, "operating-model");
+    const researching = withAlwaysOn(ctx("signal-research"), "operating-model");
+    expect(announced(turns(standing, researching, researching, standing))).toEqual([
+      undefined,
+      ["signal-research", "operating-model"],
+      undefined,
+      undefined,
+    ]);
+  });
+
   test("same skills with a different reason is a change", () => {
     // The drawer prints `reason` verbatim, so a skill that loaded for a new
     // reason renders differently and has something to say.
     const affinity = ctx("docs-guide");
     const triggered: SkillsLoadedContext = {
-      skills: [{ ...affinity.skills[0]!, loadedBy: "trigger", reason: 'trigger matched "docs"' }],
+      skills: [{ ...affinity.skills[0]!, loadedBy: "tool_affinity", reason: "tool docs__search" }],
       totalTokens: affinity.totalTokens,
     };
     expect(announced(turns(affinity, triggered))).toEqual([["docs-guide"], ["docs-guide"]]);

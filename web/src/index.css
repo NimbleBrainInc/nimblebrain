@@ -801,6 +801,11 @@
   color: var(--primary);
   font-weight: 500;
 }
+/* Quieter than the label: the wait is context for it, not a second message. */
+.live-cursor__elapsed {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
 
 /* Workspace selector dropdown entrance */
 .ws-dropdown-enter {

@@ -17,6 +17,16 @@ import type { ChatMessage } from "../hooks/useChat";
  * the turn before it; in between, silence means "still the same", and the
  * "In context" popover remains the answer to "what is equipping this right now".
  *
+ * An `always` skill is never that change. It is standing workspace
+ * configuration, equipped before the turn had a subject, so it cannot report
+ * anything about this one — yet it rides along in every payload, and a turn
+ * where a triggered skill comes or goes therefore differs from its neighbour by
+ * the triggered skill alone. Reading `always` skills into the comparison makes
+ * that pair of turns both draw a line naming the same permanent skill. So the
+ * comparison is over the skills that loaded for a reason; when none did, the
+ * turn is silent whatever else sits in the prompt. The line, once drawn, still
+ * lists the whole set — the reader wants the full equipment beside the change.
+ *
  * Returns an array parallel to `messages`: the payload to render at that index,
  * or `undefined` for a row that draws no line (a user turn, a turn that loaded
  * nothing, or a turn whose equipment is unchanged).
@@ -41,21 +51,26 @@ export function ledgerChanges(
 }
 
 /**
- * Identity of a turn's equipment — the fields the ledger actually draws,
- * combined order-independently. Two turns with the same key would render the
- * same head and the same drawer, so the second one has nothing to say.
+ * Identity of a turn's equipment — the fields the ledger actually draws, over
+ * the skills a turn earned, combined order-independently. Two turns with the
+ * same key would render the same head and the same drawer, so the second one
+ * has nothing to say.
+ *
+ * `always` skills are excluded, per the rule above: they equip every turn
+ * equally, so they can only report a change they had no part in.
  *
  * Sorted because composition order is an implementation detail of how the pool
  * was assembled, not something the reader sees; a reorder alone is not a change
- * worth announcing. `""` for a turn that loaded nothing.
+ * worth announcing. `""` for a turn that earned nothing.
  *
  * JSON-encoded per entry rather than joined on a separator: `reason` is free
  * text, so any separator character could also occur inside a field and let two
  * different sets encode identically.
  */
 function equipmentKey(skills: SkillsLoadedContext | undefined): string {
-  if (!skills || skills.skills.length === 0) return "";
+  if (!skills) return "";
   return skills.skills
+    .filter((s) => s.loadedBy !== "always")
     .map((s) =>
       JSON.stringify([s.id, s.name, s.connector ?? "", s.scope, s.tokens, s.loadedBy, s.reason]),
     )

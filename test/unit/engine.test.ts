@@ -1727,7 +1727,7 @@ describe("AgentEngine", () => {
         // derived from the output ceiling, so `xhigh` is reachable — under the
         // old budget→effort bands no budget ever produced it.
         const po = await providerOptionsFor("anthropic:claude-opus-5", { mode: "effort", effort: "xhigh", source: "operator" });
-        expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
+        expect(po.anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
         expect(po.anthropic?.effort).toBe("xhigh");
       });
 
@@ -2065,7 +2065,7 @@ describe("AgentEngine", () => {
           budgetTokens: 8000,
           effort: "max",
         });
-        expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
+        expect(po.anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
         expect(po.anthropic?.effort).toBe("max");
       });
 
@@ -2115,9 +2115,9 @@ describe("AgentEngine", () => {
       );
 
       const po = captured[0]!.providerOptions as
-        | { anthropic?: { thinking?: { type: string } } }
+        | { anthropic?: { thinking?: { type: string; display?: string } } }
         | undefined;
-      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive" });
+      expect(po?.anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
     });
 
     it("does NOT set providerOptions when thinking is undefined", async () => {

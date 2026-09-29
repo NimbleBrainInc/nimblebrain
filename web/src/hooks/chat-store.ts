@@ -1006,6 +1006,10 @@ export function createChatStore(): ChatStore {
 
   function handleReasoningDelta(slice: ConversationSlice, data: unknown): void {
     const evt = data as ReasoningDeltaEvent;
+    // A reasoning block's cryptographic signature arrives as a delta carrying
+    // no text. Taking it as "streaming" hides the live cursor behind a block
+    // that renders nothing, leaving the turn with no indicator at all.
+    if (evt.text === "") return;
     slice.streamingState = "streaming";
     slice.preparingTool = null;
     const last = slice.blocks[slice.blocks.length - 1];
