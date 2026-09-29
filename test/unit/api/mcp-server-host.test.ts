@@ -1,3 +1,5 @@
+import type { JsonRpcErrorBody } from "../../../src/api/schemas/responses.ts";
+import { readJson } from "../../helpers/http.ts";
 /**
  * Unit tests for `McpServerHost.handle`'s session-miss classification path.
  *
@@ -56,9 +58,7 @@ describe("McpServerHost — session-miss classification", () => {
   it("returns reason=not_found when the registry has no entry", async () => {
     const res = await host.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, SESSION_CTX);
     expect(res.status).toBe(404);
-    const body = (await res.json()) as {
-      error: { data: { reason: string } };
-    };
+    const body = await readJson<JsonRpcErrorBody>(res);
     expect(body.error.data.reason).toBe("not_found");
   });
 
@@ -78,9 +78,7 @@ describe("McpServerHost — session-miss classification", () => {
 
     const res = await host.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, SESSION_CTX);
     expect(res.status).toBe(404);
-    const body = (await res.json()) as {
-      error: { data: { reason: string } };
-    };
+    const body = await readJson<JsonRpcErrorBody>(res);
     expect(body.error.data.reason).toBe("unavailable");
   });
 
@@ -102,9 +100,7 @@ describe("McpServerHost — session-miss classification", () => {
 
     const res = await flakyHost.handle(postRequest(SAMPLE_SID), FAKE_FEATURES, SESSION_CTX);
     expect(res.status).toBe(404);
-    const body = (await res.json()) as {
-      error: { data: { reason: string } };
-    };
+    const body = await readJson<JsonRpcErrorBody>(res);
     expect(body.error.data.reason).toBe("not_found");
     await flakyHost.shutdown();
   });

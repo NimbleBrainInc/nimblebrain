@@ -1,3 +1,5 @@
+import type { ApiErrorBody, ChatResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * E2E — conversation access after the owner is removed from its workspace.
  *
@@ -158,7 +160,7 @@ describe("conversation access after the owner is removed from its workspace", ()
       body: JSON.stringify({ message: "hello from workspace A" }),
     });
     expect(createRes.status).toBe(200);
-    const createBody = (await createRes.json()) as { conversationId: string };
+    const createBody = await readJson<ChatResponse>(createRes);
     const convId = createBody.conversationId;
     expect(convId).toMatch(/^conv_[a-f0-9]{16}$/);
 
@@ -241,7 +243,7 @@ describe("conversation access after the owner is removed from its workspace", ()
       }),
     });
     expect(continueRes.status).toBe(404);
-    const continueBody = (await continueRes.json()) as { error: string };
+    const continueBody = await readJson<ApiErrorBody>(continueRes);
     expect(continueBody.error).toBe("conversation_not_found");
 
     // 7. The denied resume left the conversation untouched: still one turn,

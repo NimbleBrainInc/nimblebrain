@@ -1,3 +1,5 @@
+import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * Connector `admin_tools`: a tool the catalog names there is listed for and
  * callable by a workspace admin only, on every door.
@@ -198,10 +200,7 @@ async function restCall(wsId: string, tool: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: SERVER, tool, arguments: {} }),
   });
-  return (await res.json()) as {
-    isError?: boolean;
-    structuredContent?: Record<string, unknown>;
-  };
+  return await readJson<ToolCallResponse>(res);
 }
 
 describe("the chat engine door (IdentityToolRouter)", () => {

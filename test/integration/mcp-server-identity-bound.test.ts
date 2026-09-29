@@ -1,3 +1,5 @@
+import type { JsonRpcErrorBody } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * Integration tests for the `/mcp/<wsId>` workspace wall.
  *
@@ -402,7 +404,7 @@ describe("/mcp/<wsId> for a member (walled to that workspace)", () => {
         }),
       });
       expect(res.status).toBe(404);
-      const body = (await res.json()) as { error: { data: { reason: string } } };
+      const body = await readJson<JsonRpcErrorBody>(res);
       expect(body.error.data.reason).toBe("not_found");
       expect(personalSource.callCount()).toBe(0);
 

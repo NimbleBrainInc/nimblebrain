@@ -1,3 +1,5 @@
+import type { JsonRpcErrorBody } from "../../../src/api/schemas/responses.ts";
+import { readJson } from "../../helpers/http.ts";
 /**
  * `/mcp/<wsId>`: which credentials reach a workspace's MCP endpoint.
  *
@@ -147,7 +149,7 @@ describe("bare /mcp", () => {
       const res = await post(app, path, "alice-first-party");
       expect(res.status).toBe(404);
       expect(res.headers.get("WWW-Authenticate")).toBeNull();
-      const body = (await res.json()) as { error: { message: string } };
+      const body = await readJson<JsonRpcErrorBody>(res);
       expect(body.error.message).toContain(`${ORIGIN}/mcp/<workspaceId>`);
     }
     // No credential at all gets the same answer: no default workspace, and no

@@ -1,3 +1,5 @@
+import type { ApiErrorBody } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * End-to-end regression test for the bug where chat-multipart uploads were
  * written to a tenant-global `/data/files/` directory and therefore invisible
@@ -185,14 +187,14 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     for (const id of [newShape, legacyShape]) {
       const res = await fetch(`${baseUrl}/v1/files/${id}`);
       expect(res.status).toBe(404);
-      const body = (await res.json()) as { error: string };
+      const body = await readJson<ApiErrorBody>(res);
       expect(body.error).toBe("not_found");
     }
 
     // Negative control: malformed id gets rejected at the regex, 400.
     const bad = await fetch(`${baseUrl}/v1/files/not-a-valid-id`);
     expect(bad.status).toBe(400);
-    const badBody = (await bad.json()) as { error: string };
+    const badBody = await readJson<ApiErrorBody>(bad);
     expect(badBody.error).toBe("bad_request");
   });
 
