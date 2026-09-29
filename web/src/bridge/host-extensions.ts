@@ -15,6 +15,7 @@
 // non-spec keys.
 // ---------------------------------------------------------------------------
 
+import type { FileLimits } from "../types";
 import { getHostFontFaceCss } from "./fonts";
 import { getThemeTokens, type ThemeTokens } from "./theme";
 
@@ -36,6 +37,13 @@ export type WorkspaceForHostContext = {
 export type ConnectorForHostContext = { canManage: boolean } | undefined;
 
 /**
+ * The limits a picker upload is held to: the instance's `files` config, which
+ * the host's picker enforces before it uploads anything. Published as the
+ * `uploads` extension so an app can state them before the user picks.
+ */
+export type UploadLimits = Pick<FileLimits, "maxFileSize" | "maxTotalSize">;
+
+/**
  * Non-spec extension keys to merge into the `ui/initialize` hostContext
  * response. Bridge merges these alongside theme/styles; spec fields win
  * on key collisions.
@@ -43,6 +51,7 @@ export type ConnectorForHostContext = { canManage: boolean } | undefined;
 export function buildHostExtensions(
   workspace: WorkspaceForHostContext,
   connector?: ConnectorForHostContext,
+  uploads?: UploadLimits,
 ): Record<string, unknown> {
   const ext: Record<string, unknown> = workspace
     ? {
@@ -53,6 +62,9 @@ export function buildHostExtensions(
       }
     : {};
   if (connector) ext.connector = { canManage: connector.canManage };
+  if (uploads) {
+    ext.uploads = { maxFileSize: uploads.maxFileSize, maxTotalSize: uploads.maxTotalSize };
+  }
   return ext;
 }
 
@@ -83,10 +95,11 @@ export function buildHostContext(
   mode: "light" | "dark",
   workspace: WorkspaceForHostContext,
   connector?: ConnectorForHostContext,
+  uploads?: UploadLimits,
 ): Record<string, unknown> {
   const tokens = getThemeTokens(mode);
   return {
-    ...buildHostExtensions(workspace, connector),
+    ...buildHostExtensions(workspace, connector, uploads),
     theme: mode,
     styles: buildHostStyles(tokens),
   };

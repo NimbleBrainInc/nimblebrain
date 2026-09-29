@@ -18,8 +18,8 @@ import type { Redacted } from "./redacted.ts";
  *   - `verifier` — the PKCE verifier for the flow in progress.
  *   - `client`   — the DCR registration. For a confidential client this
  *                  carries a `client_secret`.
- *   - `identity` — OIDC claims lifted from an `id_token` (`sub` / `email` /
- *                  `name`), so the UI can say "Connected as …".
+ *   - `identity` — OIDC claims (`sub` / `email` / `name`) from an `id_token`
+ *                  or the userinfo endpoint, so the UI can say "Connected as …".
  *
  * Three of the four are secrets of the same class as the `client_secret` the
  * credential store was built for, and the fourth is bound 1:1 to them, so all

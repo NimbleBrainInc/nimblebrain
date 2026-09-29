@@ -365,6 +365,15 @@ export function useChatConfigContext(): ChatConfigContextValue {
   return ctx;
 }
 
+/**
+ * The instance's attachment limits, or `undefined` outside a ChatProvider.
+ * For code that can render without one (app mounts, their tests), which
+ * treats unknown limits as none known rather than an error.
+ */
+export function useFileLimits(): FileLimits | undefined {
+  return useContext(ChatConfigContext)?.fileLimits;
+}
+
 /** Consume streaming/conversation state (messages, streaming, tools). */
 export function useChatContext(): ChatContextValue {
   const ctx = useContext(ChatContext);

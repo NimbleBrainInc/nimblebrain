@@ -11,6 +11,8 @@
 // crosses a trust boundary.
 // ---------------------------------------------------------------------------
 
+import type { UploadLimits } from "./host-extensions";
+
 export type {
   // App → Host envelopes
   AppToHostMessage,
@@ -67,4 +69,11 @@ export interface BridgeCallbacks {
    * the bridge and override any same-named keys returned here.
    */
   getHostExtensions?: () => Record<string, unknown>;
+  /**
+   * The instance's upload limits, which the `ai.nimblebrain/request-file`
+   * picker enforces before it uploads. Unset, the picker holds files to the
+   * `maxSize` the app asks for (25 MB by default) and leaves the total to the
+   * server.
+   */
+  getUploadLimits?: () => UploadLimits | undefined;
 }
