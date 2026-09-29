@@ -2133,7 +2133,13 @@ export class ConnectorLifecycleManager {
     // `resolvedWorkDir`.
     const workDir = this.resolvedWorkDir ?? defaultWorkDir();
     const owner = { type: "workspace", wsId } as const;
+    // A brokered connector's readiness is its provider's to answer; see below.
+    const brokered = brokeredConnectionPresent(this.managedConnectors, ref, wsId, workDir);
+    // Only a connection held in our OAuth records can carry `auth_lost`: a
+    // brokered or static-auth one keeps its credential elsewhere.
+    const oauthRecordAuth = brokered === undefined && !connectorHasStaticAuth(ref);
     if (
+      oauthRecordAuth &&
       (await hasMcpOAuthAuthLost(workDir, owner, serverName)) &&
       (startError !== undefined || !(await hasMcpOAuthTokens(workDir, owner, serverName)))
     ) {
@@ -2154,7 +2160,7 @@ export class ConnectorLifecycleManager {
     }
 
     // A brokered connector's readiness is its provider's to answer, and it is
-    // asked FIRST: a brokered connector carries static transport auth but may still
+    // asked FIRST (`brokered`, above): a brokered connector carries static transport auth but may still
     // need a per-owner connect, so the generic static-auth check below would
     // seed `running` for an unconnected one and lose its Connect button. A
     // provider with no `hasConnection` has nothing to connect per-owner and
@@ -2165,7 +2171,7 @@ export class ConnectorLifecycleManager {
     // boot-start either succeeded or was never attempted — a failure returned
     // above on `startError` — so `running` is accurate.
     const hasAuth =
-      brokeredConnectionPresent(this.managedConnectors, ref, wsId, workDir) ??
+      brokered ??
       (connectorHasStaticAuth(ref) || (await hasMcpOAuthTokens(workDir, owner, serverName)));
     if (!hasAuth) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
