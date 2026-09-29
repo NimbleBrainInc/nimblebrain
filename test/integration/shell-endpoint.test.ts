@@ -2,10 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ShellResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ShellData } from "../../web/src/api/client.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
@@ -49,13 +49,13 @@ describe("GET /v1/workspaces/:wsId/shell", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/json");
 
-    const body = await readJson<ShellData>(res);
+    const body = await readJson<ShellResponse>(res);
     expect(Array.isArray(body.placements)).toBe(true);
   });
 
   it("placements include core entries", async () => {
     const res = await fetch(shellUrl());
-    const body = await readJson<ShellData>(res);
+    const body = await readJson<ShellResponse>(res);
 
     // With no installed connectors, the placement registry
     // is empty (core "nb" source does not register placements itself).
@@ -65,7 +65,7 @@ describe("GET /v1/workspaces/:wsId/shell", () => {
 
   it("response includes chatEndpoint and eventsEndpoint", async () => {
     const res = await fetch(shellUrl());
-    const body = await readJson<ShellData>(res);
+    const body = await readJson<ShellResponse>(res);
 
     expect(body.chatEndpoint).toBe(`/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`);
     expect(body.eventsEndpoint).toBe("/v1/events");
@@ -115,7 +115,7 @@ describe("GET /v1/workspaces/:wsId/shell auth", () => {
       },
     });
     expect(res.status).toBe(200);
-    const body = await readJson<ShellData>(res);
+    const body = await readJson<ShellResponse>(res);
     expect(Array.isArray(body.placements)).toBe(true);
   });
 });

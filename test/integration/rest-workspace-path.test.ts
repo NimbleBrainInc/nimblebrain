@@ -11,11 +11,10 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, ShellResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ShellData } from "../../web/src/api/client.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -187,7 +186,9 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
       headers: { "X-Workspace-Id": wsB },
     });
     expect(res.status).toBe(200);
-    expect((await readJson<ShellData>(res)).chatEndpoint).toBe(`/v1/workspaces/${wsA}/chat/stream`);
+    expect((await readJson<ShellResponse>(res)).chatEndpoint).toBe(
+      `/v1/workspaces/${wsA}/chat/stream`,
+    );
   });
 
   it("a new conversation is born in the path's workspace", async () => {

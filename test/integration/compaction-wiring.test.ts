@@ -19,13 +19,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChatResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ChatResult } from "../../src/runtime/types.ts";
 import { readJson } from "../helpers/http.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -110,7 +110,7 @@ async function sendTurn(message: string, conversationId?: string): Promise<strin
     body: JSON.stringify(conversationId ? { message, conversationId } : { message }),
   });
   expect(res.status).toBe(200);
-  const body = await readJson<ChatResult>(res);
+  const body = await readJson<ChatResponse>(res);
   return body.conversationId as string;
 }
 

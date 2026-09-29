@@ -1,4 +1,4 @@
-import type { ToolCallResult } from "../types";
+import type { ToolCallResponse } from "../types";
 
 /**
  * Decode a `tools/call` response into typed structured data.
@@ -14,7 +14,7 @@ import type { ToolCallResult } from "../types";
  * Callers that want soft-fail semantics (e.g. OrgAboutTab degrading to "no
  * updates" if the registry check fails) should catch and handle.
  */
-export function parseToolResult<T>(res: ToolCallResult): T {
+export function parseToolResult<T>(res: ToolCallResponse): T {
   if (res.isError) {
     throw new Error(res.content?.[0]?.text ?? "Operation failed");
   }

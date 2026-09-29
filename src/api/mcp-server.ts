@@ -138,7 +138,9 @@ import {
   type TaskAwareSource,
   type TaskScope,
 } from "./mcp-task-store.ts";
+import type { JsonRpcErrorBody } from "./schemas/responses.ts";
 import type { SessionRegistry } from "./session-store/index.ts";
+import { json } from "./types.ts";
 
 /**
  * JSON-RPC error code for "resource not found".
@@ -539,13 +541,13 @@ export class McpServerHost {
 
   /** Build the JSON-RPC 404 body shared by every `/mcp` session-miss path. */
   private sessionMissResponse(reason: "not_found" | "unavailable"): Response {
-    return new Response(
-      JSON.stringify({
+    return json<JsonRpcErrorBody>(
+      {
         jsonrpc: "2.0",
         error: { code: -32000, message: "Session not found", data: { reason } },
         id: null,
-      }),
-      { status: 404, headers: { "Content-Type": "application/json" } },
+      },
+      404,
     );
   }
 
@@ -1728,14 +1730,7 @@ async function readResourceFromWorkspace(
 
 /** JSON-RPC error response with the proper headers. */
 function jsonRpcError(status: number, code: number, message: string): Response {
-  return new Response(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      error: { code, message },
-      id: null,
-    }),
-    { status, headers: { "Content-Type": "application/json" } },
-  );
+  return json<JsonRpcErrorBody>({ jsonrpc: "2.0", error: { code, message }, id: null }, status);
 }
 
 /** Cap on a client-supplied string written to a log line. */

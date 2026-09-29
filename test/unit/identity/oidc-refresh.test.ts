@@ -20,7 +20,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { handleOidcRefresh } from "../../../src/api/handlers.ts";
-import type { ApiErrorBody } from "../../../src/api/types.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import type { WorkosAuth } from "../../../src/identity/instance.ts";
 import {
   type IdentityProvider,

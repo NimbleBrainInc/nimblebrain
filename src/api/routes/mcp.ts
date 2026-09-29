@@ -6,7 +6,8 @@ import { MCP_PATH_PREFIX, mcpResourceMetadataUrl, mcpResourceUrl } from "../mcp-
 import type { McpSessionContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
-import { type AppContext, type AuthEnv, apiError } from "../types.ts";
+import type { JsonRpcErrorBody } from "../schemas/responses.ts";
+import { type AppContext, type AuthEnv, apiError, json } from "../types.ts";
 import { isAddressedWorkspaceMember, isWorkspaceIdShape } from "../workspace-address.ts";
 
 /**
@@ -35,9 +36,9 @@ function hasMcpOAuth(ctx: AppContext): boolean {
 
 /** A JSON-RPC error envelope, the shape an MCP client reports to its user. */
 function mcpError(status: number, message: string): Response {
-  return new Response(
-    JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message }, id: null }),
-    { status, headers: { "Content-Type": "application/json" } },
+  return json<JsonRpcErrorBody>(
+    { jsonrpc: "2.0", error: { code: -32000, message }, id: null },
+    status,
   );
 }
 

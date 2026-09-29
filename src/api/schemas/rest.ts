@@ -1,23 +1,17 @@
 // ---------------------------------------------------------------------------
-// REST request/response schemas for /v1/* endpoints.
+// REST request schemas for /v1/* endpoints.
 //
 // Single source of truth for both runtime validation (TypeBox `Value.Check`
-// at the route entry point) and TypeScript types (Static<>) that the
-// handlers and the web client consume.
+// at the route entry point) and the TypeScript types (Static<>) the handlers
+// consume. REST is first-party, but a type-only request contract can still
+// drift from what a client sends, so request shapes are checked at runtime.
 //
-// Trust boundary policy: REST is first-party only — same team controls
-// both ends. We still validate request shapes at runtime because the
-// SkillsTab incident showed type-only contracts can drift silently.
-// Response shapes are type-only (no runtime check) — we generate them,
-// we trust them.
+// Response bodies are type-only and live in `responses.ts`, which imports
+// nothing so the web codegen can emit it alone.
 //
-// Migration scope: this module covers `/v1/workspaces/:wsId/tools/call` and `/v1/workspaces/:wsId/chat`
-// only — the highest-traffic endpoints. The remaining REST routes
-// (`/v1/auth/*`, `/v1/bootstrap`, `/v1/events`, `/v1/resources/*`,
-// `/v1/workspaces/:wsId/shell`, `/v1/files/*`, `/v1/workspaces/:wsId/apps/*`, well-known, mcp internals)
-// are tracked in #163 for a follow-up PR. Until then they continue to
-// use hand-rolled shape checks; do not add new routes that follow that
-// pattern — add them here.
+// This module covers `/v1/workspaces/:wsId/tools/call` and
+// `/v1/workspaces/:wsId/chat`. The other routes parse their small bodies by
+// hand; a new route with a JSON body declares its schema here.
 // ---------------------------------------------------------------------------
 
 import { type Static, Type } from "@sinclair/typebox";

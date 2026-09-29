@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ShellData } from "../api/client";
 import { getShell } from "../api/client";
-import type { PlacementEntry } from "../types";
+import type { PlacementEntry, ShellResponse } from "../types";
 
-export function useShell(_token: string, workspaceId?: string, initialShell?: ShellData) {
-  const [shell, setShell] = useState<ShellData | null>(initialShell ?? null);
+export function useShell(_token: string, workspaceId?: string, initialShell?: ShellResponse) {
+  const [shell, setShell] = useState<ShellResponse | null>(initialShell ?? null);
   const [loading, setLoading] = useState(!initialShell);
   const [error, setError] = useState<string | null>(null);
   // Which workspace the current `shell` placements reflect. Seeded from the

@@ -1,8 +1,7 @@
 import { describe, expect, it, mock, beforeEach } from "bun:test";
 import { renderHook, waitFor } from "@testing-library/react";
-import type { ShellData } from "../src/api/client";
 import { useShell } from "../src/hooks/useShell";
-import type { PlacementEntry } from "../src/types";
+import type { PlacementEntry, ShellResponse } from "../src/types";
 import { realClient } from "./setup";
 
 // ---------------------------------------------------------------------------
@@ -10,7 +9,7 @@ import { realClient } from "./setup";
 // ---------------------------------------------------------------------------
 
 const mockGetShell = mock(
-  (): Promise<ShellData> => Promise.resolve({ placements: [], chatEndpoint: "", eventsEndpoint: "" }),
+  (): Promise<ShellResponse> => Promise.resolve({ placements: [], chatEndpoint: "", eventsEndpoint: "" }),
 );
 
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
@@ -30,7 +29,7 @@ mock.module("../src/api/client", () => ({
 /** `useShell` reads only slot, route, priority and label; the rest is filler. */
 function makeShell(
   placements: Array<Omit<PlacementEntry, "serverName" | "resourceUri">>,
-): ShellData {
+): ShellResponse {
   return {
     placements: placements.map((p) => ({ serverName: "app", resourceUri: "ui://app/panel", ...p })),
     chatEndpoint: "/v1/chat",
@@ -135,7 +134,7 @@ describe("useShell", () => {
     const staleShell = makeShell([{ slot: "sidebar", route: "/stale", priority: 0 }]);
     const freshShell = makeShell([{ slot: "sidebar", route: "/fresh", priority: 0 }]);
 
-    let resolveFirst!: (v: ShellData) => void;
+    let resolveFirst!: (v: ShellResponse) => void;
     mockGetShell.mockImplementationOnce(
       () => new Promise((r) => { resolveFirst = r; }),
     );

@@ -356,7 +356,6 @@ interface ChatRequest {
 interface ChatResult {
   response: string;
   conversationId: string;
-  workspaceId?: string;
   skillName: string | null;
   toolCalls: Array<{
     id: string;
@@ -365,9 +364,8 @@ interface ChatResult {
     output: string;
     ok: boolean;
     ms: number;
+    errorReason?: string;
   }>;
-  inputTokens: number;
-  outputTokens: number;
   stopReason: string;
   usage: TurnUsage;
 }

@@ -1,0 +1,348 @@
+// ---------------------------------------------------------------------------
+// REST response bodies for every JSON route the HTTP API serves.
+//
+// Each route builds its body as the named type below through `json<T>()`
+// (`src/api/types.ts`), which does not compile without one, and
+// `check:rest-responses` refuses any other way to write a JSON response. The web
+// shell and the tests import these names, so a changed body fails the build at
+// each consumer instead of drifting from a hand-written copy.
+//
+// This module imports nothing. `bun run codegen` emits it alone into
+// `web/src/_generated/api/`, and an import would drag its module graph into the
+// web tree. A type mirrored from a domain module (`FileEntry`, `PlacementEntry`,
+// `TurnUsage`, …) is held to its source by `responses-drift-guard.ts`.
+//
+// Types only: responses are not validated at runtime. Request bodies are in
+// `rest.ts`.
+// ---------------------------------------------------------------------------
+
+// ── Errors ──────────────────────────────────────────────────────────────────
+
+/** The body of every `apiError` response. */
+export interface ApiErrorBody {
+  /** Machine-readable error code (snake_case). */
+  error: string;
+  /** Human-readable description. */
+  message: string;
+  /** Optional structured context. */
+  details?: Record<string, unknown>;
+}
+
+// ── Shared shapes ───────────────────────────────────────────────────────────
+
+/** Mirrors `OrgRole` (`src/identity/types.ts`). */
+export type OrgRole = "owner" | "admin" | "member";
+
+/** Mirrors `WorkspaceRole` (`src/workspace/types.ts`). */
+export type WorkspaceRole = "admin" | "member";
+
+/** Mirrors `UserPreferences` (`src/identity/user.ts`). */
+export interface UserPreferences {
+  timezone?: string;
+  locale?: string;
+  theme?: string;
+  /** The person's own model choice for conversations they start. */
+  models?: { default?: string };
+  /** The workspace this person lands in when nothing names one. */
+  defaultWorkspaceId?: string;
+}
+
+/** Mirrors `ModelSlots` (`src/runtime/types.ts`). */
+export interface ModelSlots {
+  default: string;
+  fast: string;
+}
+
+/** Mirrors `ModelCost` (`src/model/catalog.ts`). USD per 1M tokens. */
+export interface ModelCost {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+}
+
+/** Mirrors `ModelLimits` (`src/model/catalog.ts`). */
+export interface ModelLimits {
+  context: number;
+  output: number;
+}
+
+/** Mirrors `ModelCapabilities` (`src/model/catalog.ts`). */
+export interface ModelCapabilities {
+  toolCall: boolean;
+  reasoning: boolean;
+  attachment: boolean;
+}
+
+/** Mirrors `CatalogModel` (`src/model/catalog.ts`). */
+export interface CatalogModel {
+  id: string;
+  provider: string;
+  name: string;
+  cost: ModelCost;
+  limits: ModelLimits;
+  capabilities: ModelCapabilities;
+  modalities: { input: string[]; output: string[] };
+  family?: string;
+  knowledgeCutoff?: string;
+  releaseDate?: string;
+  deprecated?: boolean;
+}
+
+/** Mirrors `PlacementEntry` (`src/connectors/runtime/types.ts`). */
+export interface PlacementEntry {
+  serverName: string;
+  /** Which slot this UI fills (e.g. "sidebar", "main", "settings"). */
+  slot: string;
+  /** ui:// resource URI served by the server. */
+  resourceUri: string;
+  /** Display priority within the slot (lower = higher). */
+  priority: number;
+  label?: string;
+  icon?: string;
+  /** Route path. Registers as /app/<path>. */
+  route?: string;
+  size?: "compact" | "full" | "auto";
+  /** Workspace this placement belongs to (absent = global). */
+  wsId?: string;
+}
+
+/** Mirrors `FileEntry` (`src/files/types.ts`). */
+export interface FileEntry {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  tags: string[];
+  source: "chat" | "agent" | "app" | "manual";
+  conversationId: string | null;
+  createdAt: string;
+  description: string | null;
+  ownerId?: string;
+  workspaceId?: string;
+  visibility?: "private" | "shared";
+  deleted?: true;
+  deletedAt?: string;
+}
+
+/** The limits a chat message's attachments are held to. */
+export interface FileLimits {
+  maxFileSize: number;
+  maxTotalSize: number;
+  maxFilesPerMessage: number;
+}
+
+/** Mirrors `TokenUsage` (`src/usage/types.ts`). */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  /** The portion of `cacheWriteTokens` written with a 1-hour TTL. */
+  cacheWrite1hTokens?: number;
+}
+
+/** Mirrors `TurnUsage` (`src/runtime/types.ts`). */
+export interface TurnUsage extends TokenUsage {
+  model: string;
+  llmMs: number;
+  iterations: number;
+}
+
+/** A turn's usage as a response carries it: `costUsd` is derived at the API boundary. */
+export interface ChatUsage extends TurnUsage {
+  costUsd: number;
+}
+
+/** Mirrors an entry of `ChatResult.toolCalls` (`src/runtime/types.ts`). */
+export interface ChatToolCall {
+  id: string;
+  /** The wire form the model called: bare `<source>__<tool>`. */
+  name: string;
+  input: Record<string, unknown>;
+  output: string;
+  ok: boolean;
+  ms: number;
+  /** Structured failure reason when `ok === false`. */
+  errorReason?: string;
+}
+
+// ── GET /v1/health ──────────────────────────────────────────────────────────
+
+export interface HealthResponse {
+  status: "ok";
+}
+
+// ── GET /v1/workspaces/:wsId/shell ──────────────────────────────────────────
+
+export interface ShellResponse {
+  placements: PlacementEntry[];
+  chatEndpoint: string;
+  eventsEndpoint: string;
+}
+
+// ── GET /v1/bootstrap ───────────────────────────────────────────────────────
+
+export interface BootstrapWorkspace {
+  id: string;
+  name: string;
+  /** The caller's role in this workspace. */
+  role: WorkspaceRole;
+  memberCount: number;
+  connectorCount: number;
+  /** The workspace's MCP endpoint, canonical form: `<publicOrigin>/mcp/<wsId>`. */
+  mcpUrl: string;
+}
+
+export interface BootstrapResponse {
+  user: {
+    id: string;
+    email: string;
+    displayName: string;
+    orgRole: OrgRole;
+    preferences: UserPreferences;
+  };
+  /** Every workspace the caller is a member of; never empty. */
+  workspaces: BootstrapWorkspace[];
+  /** The caller's default workspace, for routes that name none. */
+  activeWorkspace: string;
+  /** The shell for `activeWorkspace`. */
+  shell: ShellResponse;
+  config: {
+    models: ModelSlots;
+    configuredProviders: string[];
+    /** What the caller's next conversation will be created with. */
+    newConversationModel: string;
+    /** The models this deployment offers, by provider, already filtered by policy. */
+    availableModels: Record<string, CatalogModel[]>;
+    maxIterations: number;
+    maxInputTokens: number;
+    maxOutputTokens: number;
+    /** Attachment limits; absent when file context is off. */
+    files?: FileLimits;
+  };
+  version: string;
+  buildSha: string | null;
+}
+
+// ── POST /v1/workspaces/:wsId/chat ──────────────────────────────────────────
+
+/** The synchronous chat result; also the `done` frame of `…/chat/stream`. */
+export interface ChatResponse {
+  response: string;
+  conversationId: string;
+  skillName: string | null;
+  toolCalls: ChatToolCall[];
+  stopReason: string;
+  /** Same as `usage.inputTokens`. */
+  inputTokens: number;
+  /** Same as `usage.outputTokens`. */
+  outputTokens: number;
+  usage: ChatUsage;
+}
+
+// ── POST /v1/workspaces/:wsId/chat/start ────────────────────────────────────
+
+export interface ChatStartResponse {
+  conversationId: string;
+}
+
+// ── POST /v1/conversations/:id/cancel ───────────────────────────────────────
+
+export interface ChatCancelResponse {
+  /** False when no turn was in flight. */
+  cancelled: boolean;
+}
+
+// ── POST /v1/workspaces/:wsId/tools/call ────────────────────────────────────
+
+/** An MCP content block, typed as loosely as the MCP union allows. */
+export interface ToolContentBlock {
+  type: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
+export interface ToolCallResponse {
+  content: ToolContentBlock[];
+  structuredContent?: Record<string, unknown>;
+  isError: boolean;
+}
+
+// ── POST /v1/workspaces/:wsId/resources/read
+//    GET  /v1/workspaces/:wsId/apps/:name/resources/* ─────────────────────────
+
+/** An MCP `ReadResourceResult` entry. Exactly one of `text` or `blob` (base64) is set. */
+export interface ResourceContents {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
+  _meta?: Record<string, unknown>;
+}
+
+/** The MCP `ReadResourceResult` shape. */
+export interface ReadResourceResponse {
+  contents: ResourceContents[];
+  _meta?: Record<string, unknown>;
+}
+
+// ── POST /v1/workspaces/:wsId/resources ─────────────────────────────────────
+
+export interface UploadResourceResponse {
+  files: FileEntry[];
+  /** One message per file that was refused; absent when none was. */
+  errors?: string[];
+}
+
+// ── POST /v1/workspaces/:wsId/mcp-auth/initiate
+//    POST /v1/mcp-auth/initiate-identity ────────────────────────────────────
+
+export interface OAuthInitiateResponse {
+  /** Where to send the browser; null when the connector connected without a flow. */
+  authorizationUrl: string | null;
+}
+
+// ── POST /v1/workspaces/:wsId/composio-auth/initiate
+//    POST /v1/composio-auth/initiate-identity ────────────────────────────────
+
+export interface ComposioInitiateResponse {
+  /** Where to send the browser. */
+  authorizationUrl: string;
+  /** Set when an existing account was adopted; the URL is then the connectors page. */
+  alreadyConnected?: true;
+}
+
+// ── POST /v1/auth/refresh, POST /v1/auth/logout ─────────────────────────────
+
+export interface AuthOkResponse {
+  ok: true;
+}
+
+// ── /.well-known/* (external MCP clients) ───────────────────────────────────
+
+/** RFC 9728 Protected Resource Metadata for one workspace's `/mcp/<wsId>`. */
+export interface ProtectedResourceMetadata {
+  resource: string;
+  authorization_servers: string[];
+  bearer_methods_supported: string[];
+}
+
+/** RFC 8414 Authorization Server Metadata, passed through from the issuer unread. */
+export type AuthorizationServerMetadata = Record<string, unknown>;
+
+/** A well-known route's error body. These routes answer OAuth clients, not the shell. */
+export interface WellKnownErrorBody {
+  error: string;
+  message?: string;
+}
+
+// ── /mcp (JSON-RPC answers sent before the MCP server runs) ─────────────────
+
+export interface JsonRpcErrorBody {
+  jsonrpc: "2.0";
+  error: { code: number; message: string; data?: Record<string, unknown> };
+  id: null;
+}

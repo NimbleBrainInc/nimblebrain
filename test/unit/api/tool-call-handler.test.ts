@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { handleResourceProxy, handleToolCall } from "../../../src/api/handlers.ts";
-import type { ApiErrorBody } from "../../../src/api/types.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import type { ResolvedFeatures } from "../../../src/config/features.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";

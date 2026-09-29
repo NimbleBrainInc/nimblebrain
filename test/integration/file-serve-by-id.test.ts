@@ -17,8 +17,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { UploadResourceResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import type { FileEntry } from "../../src/files/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -27,10 +27,6 @@ import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** What `POST …/resources` answers: the stored entries, plus per-file errors. */
-interface UploadBody {
-  files: FileEntry[];
-  errors?: string[];
-}
 
 const testDir = join(tmpdir(), `nb-file-serve-by-id-${Date.now()}`);
 
@@ -79,7 +75,7 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
       body: form,
     });
     expect(upload.status).toBe(200);
-    const uploadBody = await readJson<UploadBody>(upload);
+    const uploadBody = await readJson<UploadResourceResponse>(upload);
     const fileId: string = uploadBody.files[0].id;
     expect(uploadBody.files[0].workspaceId).toBe(WORKSPACE_A);
 
@@ -112,7 +108,7 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
       method: "POST",
       body: form,
     });
-    const fileId: string = (await readJson<UploadBody>(upload)).files[0].id;
+    const fileId: string = (await readJson<UploadResourceResponse>(upload)).files[0].id;
 
     // Poison the cache: claim the file lives somewhere it doesn't.
     runtime.getFileLocator().remember(OWNER, fileId, "ws_does_not_exist");

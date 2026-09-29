@@ -18,9 +18,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, UploadResourceResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
-import type { FileEntry } from "../../src/files/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -29,10 +28,6 @@ import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 /** What `POST …/resources` answers: the stored entries, plus per-file errors. */
-interface UploadBody {
-  files: FileEntry[];
-  errors?: string[];
-}
 
 const testDir = join(tmpdir(), `nb-upload-conversation-workspace-${Date.now()}`);
 
@@ -134,7 +129,7 @@ describe("an upload attached to a conversation writes only to the workspace in t
       body: attachmentForm(born.conversationId),
     });
     expect(res.status).toBe(200);
-    const body = await readJson<UploadBody>(res);
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(1);
     const fileId: string = body.files[0].id;
     expect(body.files[0].workspaceId).toBe(WORKSPACE_A);

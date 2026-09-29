@@ -17,11 +17,12 @@
 import { Check, Copy, Download, FileText, Loader2, X } from "lucide-react";
 import { type Ref, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
-import { ApiClientError, type ReadResourceContent, readResource } from "../api/client";
+import { ApiClientError, readResource } from "../api/client";
 import { useArtifactPanel } from "../context/ArtifactPanelContext";
 import { isMarkdownMime, normalizeMime } from "../lib/artifact-kind";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
+import type { ResourceContents } from "../types";
 
 const TRANSITION = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const PANEL_WIDTH = 720; // px — comfortable reading measure on desktop.
@@ -50,7 +51,7 @@ function downloadFilename(
 }
 
 /** Readable text of a resource content item: inline text, or a base64 blob decoded to text; null if neither. */
-function readableBody(first: ReadResourceContent): string | null {
+function readableBody(first: ResourceContents): string | null {
   if (first.text !== undefined) return first.text;
   if (first.blob !== undefined) return decodeBlobText(first.blob);
   return null;
@@ -87,7 +88,7 @@ async function loadArtifactText(
   try {
     const result = await readResource(appName, uri);
     if (isCancelled()) return;
-    const first: ReadResourceContent | undefined = result.contents[0];
+    const first: ResourceContents | undefined = result.contents[0];
     if (!first) throw new Error("No content returned");
     const body = readableBody(first);
     if (body === null) throw new Error("Resource has no readable text content");
