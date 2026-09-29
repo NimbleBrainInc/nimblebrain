@@ -18,6 +18,11 @@ function errorMessage(err: unknown): string {
  * all" sit in the section header for the I-just-want-everything-on /
  * everything-off cases.
  *
+ * **Collapsed by default to one summary line** ("27 tools · all allowed").
+ * A connector can expose dozens of tools, and listed in full they bury
+ * everything after them on the page; the summary says what matters at a
+ * glance, and the list opens on demand. The bulk controls appear with it.
+ *
  * Defaults: tools without a recorded policy are treated as Allow.
  * The runtime gate at `ToolRegistry.execute` honors the same default,
  * so an empty permissions.json means "everything works." Trust-by-
@@ -44,6 +49,7 @@ export function ToolPermissionsTable({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingTool, setSavingTool] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +122,7 @@ export function ToolPermissionsTable({
             : "Which tools the agent can call. Workspace admins choose."}
         </p>
       </div>
-      {tools.length > 0 && canManage && (
+      {tools.length > 0 && canManage && expanded && (
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <button
             type="button"
@@ -164,23 +170,45 @@ export function ToolPermissionsTable({
     );
   }
 
+  const blocked = tools.filter((t) => policyFor(t.name) === "disallow").length;
   return (
     <section className="space-y-3">
       {header}
-      <ul className="border-t border-border/60">
-        {tools.map((tool) => (
-          <ToolPermissionRow
-            key={tool.name}
-            tool={tool}
-            policy={policyFor(tool.name)}
-            saving={savingTool === tool.name}
-            canManage={canManage}
-            onSetPolicy={updatePolicy}
-          />
-        ))}
-      </ul>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm">{permissionSummary(tools.length, blocked)}</p>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-4"
+        >
+          {expanded ? "Hide tools" : "Show tools"}
+        </button>
+      </div>
+      {expanded && (
+        <ul className="border-t border-border/60">
+          {tools.map((tool) => (
+            <ToolPermissionRow
+              key={tool.name}
+              tool={tool}
+              policy={policyFor(tool.name)}
+              saving={savingTool === tool.name}
+              canManage={canManage}
+              onSetPolicy={updatePolicy}
+            />
+          ))}
+        </ul>
+      )}
     </section>
   );
+}
+
+/** "27 tools · all allowed", "27 tools · 3 disallowed", "1 tool · none allowed". */
+export function permissionSummary(total: number, blocked: number): string {
+  const count = `${total} ${total === 1 ? "tool" : "tools"}`;
+  if (blocked === 0) return `${count} · all allowed`;
+  if (blocked === total) return `${count} · none allowed`;
+  return `${count} · ${blocked} disallowed`;
 }
 
 /**

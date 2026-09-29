@@ -150,17 +150,16 @@ export function ConnectorDetailPage() {
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {/* Settings surfaces. Each renders only when its content is present. */}
-      <div className="space-y-6">
+      {/* Settings surfaces. Each renders only when its content is present, and one rule
+          separates each from the next. Order runs from how the connector is reached, to
+          how it behaves (its own settings), to what the agent may call — the tool list is
+          the longest and least often changed, so it comes last and starts collapsed. */}
+      <div className="divide-y divide-border/60 [&>*]:py-6 [&>*:first-child]:pt-0">
         <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
         <WorkspaceSecretsSection installed={installed} canManage={canManage} />
+        <ConnectorSettingsSection serverName={installed.serverName} canManage={canManage} />
         <ToolPermissionsTable serverName={installed.serverName} canManage={canManage} />
-        <ConnectorSettingsSection
-          serverName={installed.serverName}
-          name={cat?.name ?? installed.serverName}
-          canManage={canManage}
-        />
       </div>
 
       {canManage && (

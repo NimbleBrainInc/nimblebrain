@@ -33,7 +33,9 @@ mock.module("../api/client", () => ({
 
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
-const { ToolPermissionsTable } = await import("../components/connectors/ToolPermissionsTable");
+const { ToolPermissionsTable, permissionSummary } = await import(
+  "../components/connectors/ToolPermissionsTable"
+);
 
 interface Mounted {
   container: HTMLDivElement;
@@ -46,7 +48,8 @@ afterEach(() => {
   mounted = null;
 });
 
-async function mount(canManage: boolean): Promise<Mounted> {
+/** Mounted with the tool list opened, unless `open` is false. */
+async function mount(canManage: boolean, open = true): Promise<Mounted> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
@@ -56,6 +59,11 @@ async function mount(canManage: boolean): Promise<Mounted> {
   await act(async () => {
     await Promise.resolve();
   });
+  if (open) {
+    await act(async () => {
+      buttonsNamed(container, "Show tools")[0]?.click();
+    });
+  }
   return {
     container,
     unmount() {
@@ -119,5 +127,36 @@ describe("ToolPermissionsTable — a workspace admin", () => {
     mounted = await mount(true);
     expect(buttonsNamed(mounted.container, "Allow all")).toHaveLength(1);
     expect(buttonsNamed(mounted.container, "Disallow all")).toHaveLength(1);
+  });
+});
+
+describe("ToolPermissionsTable — collapsed until asked", () => {
+  // A connector can expose dozens of tools; listed in full they bury the rest of the page.
+  test("starts as one summary line, with no rows and no bulk actions", async () => {
+    mounted = await mount(true, false);
+    expect(mounted.container.textContent).toContain("2 tools · 1 disallowed");
+    expect(policyButtons(mounted.container)).toHaveLength(0);
+    expect(buttonsNamed(mounted.container, "Allow all")).toHaveLength(0);
+    expect(buttonsNamed(mounted.container, "Show tools")).toHaveLength(1);
+  });
+
+  test("opens to the full list, and closes again", async () => {
+    mounted = await mount(true, false);
+    await act(async () => {
+      buttonsNamed(mounted!.container, "Show tools")[0]?.click();
+    });
+    expect(policyButtons(mounted.container)).toHaveLength(4);
+    await act(async () => {
+      buttonsNamed(mounted!.container, "Hide tools")[0]?.click();
+    });
+    expect(policyButtons(mounted.container)).toHaveLength(0);
+  });
+});
+
+describe("permissionSummary", () => {
+  test("says how many tools and how many the agent may not call", () => {
+    expect(permissionSummary(27, 0)).toBe("27 tools · all allowed");
+    expect(permissionSummary(27, 3)).toBe("27 tools · 3 disallowed");
+    expect(permissionSummary(1, 1)).toBe("1 tool · none allowed");
   });
 });

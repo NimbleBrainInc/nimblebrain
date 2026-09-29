@@ -62,7 +62,7 @@ mock.module("../api/client", () => ({
   listConnectorToolsWithPermissions: async () => ({
     scope: "workspace",
     serverName: SERVER,
-    tools: [],
+    tools: [{ name: "search", description: "Search the CRM." }],
     permissions: {},
   }),
   listWorkspaceSecretKeys: async () => ({ keys: [] }),
@@ -253,27 +253,33 @@ function lastHostContextChange(app: AppSide): Record<string, unknown> | undefine
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe("ConnectorDetailPage — the connector's settings section", () => {
-  test("renders the connector's settings placement, headed by its name and nothing else", async () => {
+  test("renders the connector's settings placement under a plain Settings heading", async () => {
     const { container } = await mountPage(workspace("admin"), [placement({})]);
 
     expect(getResources).toHaveBeenCalledWith(SERVER, `${SERVER}/settings`);
     expect(container.getElementsByTagName("iframe").length).toBe(1);
     const headings = Array.from(container.getElementsByTagName("h2")).map((h) => h.textContent);
-    expect(headings).toContain("Acme CRM");
-    // No attribution line: the section sits on this connector's own page,
-    // under its name, so naming the server again says nothing.
+    // "Settings", not the connector's name: the page is already headed by it.
+    expect(headings).toContain("Settings");
+    expect(headings).not.toContain("Acme CRM");
+    // No attribution line, for the same reason.
     expect(container.textContent).not.toContain("Provided by");
   });
 
-  test("renders after the host's sections", async () => {
+  test("renders before the tool permissions, which come last", async () => {
+    // How the connector behaves is read more often than which tools the agent may call,
+    // and the tool list is the longest thing on the page.
     const { container } = await mountPage(workspace("admin"), [placement({})]);
 
     // happy-dom's selector parser rejects `closest("section")`; walk up instead.
     let section: HTMLElement | null = container.getElementsByTagName("iframe")[0] ?? null;
     while (section && section.tagName !== "SECTION") section = section.parentElement;
     const sections = Array.from(container.getElementsByTagName("section"));
+    const tools = sections.find((s) => s.textContent?.includes("Tool permissions"));
     expect(section).toBeTruthy();
-    expect(sections.at(-1)).toBe(section as HTMLElement);
+    expect(tools).toBeTruthy();
+    expect(sections.indexOf(section as HTMLElement)).toBe(sections.length - 2);
+    expect(sections.at(-1)).toBe(tools as HTMLElement);
   });
 
   test("renders nothing when the connector declares no settings placement", async () => {
