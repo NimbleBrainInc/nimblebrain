@@ -1228,16 +1228,18 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
   }
 
   /**
-   * `fetch` for the identity reads: SSRF-guarded like a connector's own
-   * requests, since the URLs come from remote metadata, and bounded so a slow
-   * server holds up a sign-in by at most `IDENTITY_FETCH_TIMEOUT_MS` a read.
+   * `fetch` for one identity read (a metadata discovery, or a userinfo call):
+   * SSRF-guarded like a connector's own requests, since the URLs come from
+   * remote metadata. One deadline covers every request of the read, across
+   * discovery URLs and redirect hops, so a slow server holds up a sign-in by
+   * at most `IDENTITY_FETCH_TIMEOUT_MS` a read.
    */
   private identityFetch(): FetchLike {
-    return createSsrfGuardedFetch(
-      (input, init) =>
-        fetch(input, { ...init, signal: AbortSignal.timeout(IDENTITY_FETCH_TIMEOUT_MS) }),
-      { allowInsecure: this.allowInsecureRemotes, fleetInternal: false },
-    );
+    const signal = AbortSignal.timeout(IDENTITY_FETCH_TIMEOUT_MS);
+    return createSsrfGuardedFetch((input, init) => fetch(input, { ...init, signal }), {
+      allowInsecure: this.allowInsecureRemotes,
+      fleetInternal: false,
+    });
   }
 
   /**

@@ -1352,6 +1352,15 @@ describe("WorkspaceOAuthProvider — identity from an OIDC server's userinfo", (
     expect(await p.identity()).toBeNull();
   });
 
+  it("never sends the token to a userinfo endpoint on a private address", async () => {
+    const internal = "https://169.254.169.254/latest/meta-data";
+    metadata = { issuer: ISSUER, scopes_supported: ["openid"], userinfo_endpoint: internal };
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer" });
+    expect(await p.identity()).toBeNull();
+    expect(calls.some((c) => c.url.startsWith("https://169.254.169.254"))).toBe(false);
+  });
+
   it("skips userinfo when the granted scope lacks openid", async () => {
     accounts.a1 = { sub: "user-a", email: "a@example.com" };
     const p = await providerFor();
