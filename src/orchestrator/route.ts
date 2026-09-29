@@ -35,6 +35,7 @@
 
 import type { ToolResult, ToolSchema } from "../engine/types.ts";
 import type { IdentityContext } from "../identity/context.ts";
+import type { AdminToolCall } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, PermissionStore } from "../permissions/permission-store.ts";
 import {
   isIdentitySource,
@@ -253,6 +254,7 @@ export interface OrchestratorRuntime {
     principal: { id: string } | null | undefined,
     serverName: string,
     toolName: string,
+    call: AdminToolCall,
   ): Promise<ToolResult | null>;
 
   /**

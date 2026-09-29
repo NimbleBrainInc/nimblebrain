@@ -108,13 +108,75 @@ export function isAdminToolAllowed(
   adminTools: AdminToolsDeclaration | undefined,
   toolName: string,
 ): boolean {
-  if (!gates(adminTools, toolName)) return true;
+  if (!isDeclaredAdminTool(adminTools, toolName)) return true;
   return canWriteWorkspaceScoped(identity, ws).allowed;
 }
 
-function gates(adminTools: AdminToolsDeclaration | undefined, toolName: string): boolean {
+/** Whether `adminTools` gates `toolName`, whoever is calling. */
+export function isDeclaredAdminTool(
+  adminTools: AdminToolsDeclaration | undefined,
+  toolName: string,
+): boolean {
   if (adminTools === undefined) return false;
   return adminTools.kind === "all" || adminTools.names.includes(toolName);
+}
+
+/**
+ * The door a call to a declared admin tool came through, as the audit line
+ * records it. The door knows; nothing downstream of it can tell a person's
+ * click from their agent's call, because both reach the same source.
+ *
+ * - `chat`: the agent, in a conversation a person is taking part in.
+ * - `automation`: the agent, in a run nobody is watching.
+ * - `dispatch`: an unattended dispatch from stored configuration.
+ * - `app`: a connector's own view, over `/mcp`.
+ * - `mcp`: any other `/mcp` client.
+ * - `api`: REST `tools/call`.
+ */
+export type AdminToolCaller = "chat" | "automation" | "dispatch" | "app" | "mcp" | "api";
+
+/** What a door knows about one call, beyond who made it and what it names. */
+export interface AdminToolCall {
+  input: Record<string, unknown>;
+  caller: AdminToolCaller;
+}
+
+/** What an argument the tool's schema marks `writeOnly` is recorded as. */
+export const REDACTED_ARGUMENT = "[redacted]";
+
+/**
+ * A call's arguments as the audit line records them: every argument, with the
+ * value of each top-level property the tool's input schema marks `writeOnly`
+ * replaced. `writeOnly` is JSON Schema's own word for a value that is sent and
+ * never read back, which is what a secret is; a tool that takes one and does
+ * not mark it has its value written to the workspace log.
+ *
+ * With no schema to read (the source is down, or no longer lists the tool),
+ * every value is replaced and only the names are kept: a secret the schema
+ * would have marked must not reach the log because the schema was unavailable.
+ */
+export function auditArguments(
+  input: Record<string, unknown>,
+  inputSchema: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const properties = inputSchema?.properties;
+  const described =
+    typeof properties === "object" && properties !== null
+      ? (properties as Record<string, unknown>)
+      : undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    out[key] = described === undefined || isWriteOnly(described[key]) ? REDACTED_ARGUMENT : value;
+  }
+  return out;
+}
+
+function isWriteOnly(prop: unknown): boolean {
+  return (
+    typeof prop === "object" &&
+    prop !== null &&
+    (prop as { writeOnly?: unknown }).writeOnly === true
+  );
 }
 
 /**

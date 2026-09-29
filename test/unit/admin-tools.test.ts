@@ -9,9 +9,11 @@ import {
   ADMIT_ALL,
   adminToolDenial,
   adminToolsContractWarnings,
+  auditArguments,
   filterAdmittedTools,
   isAdminToolAllowed,
   parseAdminToolsDeclaration,
+  REDACTED_ARGUMENT,
 } from "../../src/permissions/admin-tools.ts";
 import type { Tool } from "../../src/tools/types.ts";
 import type { Workspace, WorkspaceRole } from "../../src/workspace/types.ts";
@@ -234,5 +236,46 @@ describe("adminToolsContractWarnings", () => {
     expect(warnings[0]).toContain('"acme"');
     expect(warnings[0]).toContain("admin_tools is not a list");
     expect(warnings[0]).toContain("every tool");
+  });
+});
+
+describe("auditArguments", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      api_key: { type: "string", writeOnly: true },
+      enabled: { type: "boolean" },
+      nested: { type: "object", properties: { token: { type: "string", writeOnly: true } } },
+    },
+  };
+
+  test("redacts a writeOnly property and keeps the rest", () => {
+    expect(auditArguments({ api_key: "sk-live-1", enabled: true }, schema)).toEqual({
+      api_key: REDACTED_ARGUMENT,
+      enabled: true,
+    });
+  });
+
+  test("keeps an argument the schema does not describe", () => {
+    expect(auditArguments({ extra: 3 }, schema)).toEqual({ extra: 3 });
+  });
+
+  test("marks only top-level properties: a nested writeOnly is recorded", () => {
+    expect(auditArguments({ nested: { token: "t" } }, schema)).toEqual({ nested: { token: "t" } });
+  });
+
+  test("keeps only the names when there is no schema to read", () => {
+    expect(auditArguments({ api_key: "sk", enabled: true }, undefined)).toEqual({
+      api_key: REDACTED_ARGUMENT,
+      enabled: REDACTED_ARGUMENT,
+    });
+    expect(auditArguments({ api_key: "sk" }, { type: "object" })).toEqual({
+      api_key: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("does not alias the caller's input", () => {
+    const input = { enabled: true };
+    expect(auditArguments(input, schema)).not.toBe(input);
   });
 });

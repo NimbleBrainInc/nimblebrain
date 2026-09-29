@@ -71,6 +71,7 @@ import {
 } from "../conversation/types.ts";
 import { applyReasoningReplayPolicy, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
+import type { AdminToolCallPayload } from "../engine/schemas/events.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
   ConnectorSkillCandidate,
@@ -129,11 +130,14 @@ import {
 } from "../orchestrator/index.ts";
 import {
   ADMIT_ALL,
+  type AdminToolCall,
   adminToolDenial,
   adminToolsContractWarnings,
+  auditArguments,
   type ConnectorAdmission,
   filterAdmittedTools,
   isAdminToolAllowed,
+  isDeclaredAdminTool,
 } from "../permissions/admin-tools.ts";
 import {
   isDisallowed,
@@ -2504,6 +2508,7 @@ export class Runtime {
       identityId,
       workspaceId,
       runtime: this,
+      caller: attended ? "chat" : "automation",
       ...(allowedTools
         ? { isToolAllowed: (name: string) => isToolAllowedForRun(name, allowedTools) }
         : {}),
@@ -3576,8 +3581,14 @@ export class Runtime {
     );
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
-    wsRegistry.setPermissionContext(wsId, this.getPermissionStore(), (serverName, toolName) =>
-      this.connectorAdminDenial(wsId, getRequestContext()?.identity, serverName, toolName),
+    wsRegistry.setPermissionContext(
+      wsId,
+      this.getPermissionStore(),
+      (serverName, toolName, input) =>
+        this.connectorAdminDenial(wsId, getRequestContext()?.identity, serverName, toolName, {
+          input,
+          caller: "api",
+        }),
     );
     this._workspaceRegistries.set(wsId, wsRegistry);
     return wsRegistry;
@@ -4040,16 +4051,78 @@ export class Runtime {
   /**
    * The `workspace_admin_required` refusal for one call, or `null` when
    * `principal` may make it. Every dispatch door runs this beside
-   * `assertToolAllowed` for a workspace connector tool.
+   * `assertToolAllowed` for a workspace connector tool, once per call.
+   *
+   * It is also where a call to a declared admin tool is audited, admitted or
+   * refused: every door already passes through here, so the line cannot be
+   * forgotten by a door or a connector.
    */
   async connectorAdminDenial(
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
     serverName: string,
     toolName: string,
+    call: AdminToolCall,
   ): Promise<ToolResult | null> {
     const admission = await this.connectorAdmission(wsId, principal);
-    return admission.admits(serverName, toolName) ? null : adminToolDenial(serverName, toolName);
+    const admitted = admission.admits(serverName, toolName);
+    await this.auditAdminToolCall(wsId, principal, serverName, toolName, call, admitted);
+    return admitted ? null : adminToolDenial(serverName, toolName);
+  }
+
+  /**
+   * Write `audit.admin_tool_call` when the catalog declares `toolName` an admin
+   * tool, whoever called. An admin's admission skips the catalog, so the
+   * declaration is read here; it is the same cached read a member's every call
+   * already makes.
+   */
+  private async auditAdminToolCall(
+    wsId: string,
+    principal: Pick<UserIdentity, "id"> | null | undefined,
+    serverName: string,
+    toolName: string,
+    call: AdminToolCall,
+    admitted: boolean,
+  ): Promise<void> {
+    const declared = await this.adminToolsByServer();
+    if (!isDeclaredAdminTool(declared.get(serverName), toolName)) return;
+    const ctx = getRequestContext();
+    this.defaultEvents.emit({
+      type: "audit.admin_tool_call",
+      data: {
+        workspaceId: wsId,
+        userId: principal?.id ?? null,
+        connector: serverName,
+        tool: toolName,
+        caller: call.caller,
+        outcome: admitted ? "admitted" : "refused",
+        arguments: auditArguments(
+          call.input,
+          await this.inputSchemaFor(wsId, serverName, toolName),
+        ),
+        ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
+        ...(ctx?.runId ? { runId: ctx.runId } : {}),
+      } satisfies AdminToolCallPayload,
+    });
+  }
+
+  /**
+   * The input schema a workspace connector advertises for one tool, if it can
+   * say. A source lists its tools under their `<source>__<tool>` names.
+   */
+  private async inputSchemaFor(
+    wsId: string,
+    serverName: string,
+    toolName: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    const source = this._workspaceRegistries.get(wsId)?.getSource(serverName);
+    const listed = `${serverName}__${toolName}`;
+    try {
+      const tools = (await source?.tools()) ?? [];
+      return tools.find((t) => t.name === listed)?.inputSchema;
+    } catch {
+      return undefined;
+    }
   }
 
   /**

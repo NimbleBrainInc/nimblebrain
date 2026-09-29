@@ -123,6 +123,12 @@ Only workspace-level events are written to this log; conversation streaming even
 {"ts":"2026-03-25T14:30:07.000Z","event":"audit.credential_read","scope":"workspace:ws_a1b2c3d4e5f60718","key":"acme.db_url","caller":"transport:provider:credential","purpose":"authenticate remote MCP request as workspace ws_a1b2c3d4e5f60718","workspaceId":"ws_a1b2c3d4e5f60718"}
 ```
 
+**`audit.admin_tool_call`** — A call to a tool a connector names in [`admin_tools`](/apps/manifest/#admin_tools-tools-only-a-workspace-admin-may-call), written whether the call was admitted or refused. Carries the `workspaceId`, the `userId` the call ran as, the `connector` and `tool`, the `caller` (`chat`, `automation`, `dispatch`, `app`, `mcp` or `api`), the `outcome` (`admitted` or `refused`), the `arguments`, and the `conversationId` or `runId` when there is one. `admitted` means the role check passed, not that the connector accepted the call. An argument the tool's input schema marks `writeOnly` is recorded as `"[redacted]"`, and when the schema cannot be read every value is.
+
+```json
+{"ts":"2026-03-25T14:30:08.000Z","event":"audit.admin_tool_call","workspaceId":"ws_a1b2c3d4e5f60718","userId":"user_01","connector":"com-example-crm","tool":"configure_endpoint","caller":"app","outcome":"admitted","arguments":{"url":"https://hooks.example.com/in","secret":"[redacted]"}}
+```
+
 ## Querying logs
 
 Log files are plain JSONL, so you can use standard command-line tools:
@@ -135,6 +141,10 @@ cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \
 # Audit events only
 cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \
   | jq 'select(.event | startswith("audit."))'
+
+# Who called an admin-only tool, and from where
+cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \
+  | jq 'select(.event == "audit.admin_tool_call") | {ts, userId, tool, caller, outcome, arguments}'
 
 # Count events by type
 cat ~/.nimblebrain/logs/workspace/2026-03-25.jsonl \

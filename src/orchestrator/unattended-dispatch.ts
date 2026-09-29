@@ -249,6 +249,7 @@ export async function dispatchUnattended(
       identityId: opts.principalId,
       workspaceId: opts.workspaceId,
       runtime,
+      caller: "dispatch",
     });
     const dispatched = runWithRequestContext(
       {

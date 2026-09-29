@@ -313,6 +313,13 @@ It returns an error result whose `structuredContent` is
   here is a warning on install.
 - **Personal connectors are not gated.** A connector a user connects for
   themselves acts on their own account.
+- **Every call is audited.** The host writes an
+  [`audit.admin_tool_call`](/config/logging/#event-types) line to the workspace
+  log for each call to one of these tools, admitted or refused. It names the
+  person and whether the call came from chat, an automation, your app's UI or
+  another client, and records the arguments. Mark a secret argument
+  `"writeOnly": true` in the tool's input schema and its value is recorded as
+  `"[redacted]"`.
 
 :::caution
 `admin_tools` controls **who** can call a tool, not whether a person is
