@@ -10,6 +10,7 @@ import type {
   ConnectorCatalogEntry,
   RemoteOAuthInstall,
 } from "../connectors/catalog/types.ts";
+import { declaredWorkspaceDefaults } from "../connectors/providers/config.ts";
 import type {
   ManagedConnectorProvider,
   ManagedSession,
@@ -1032,6 +1033,67 @@ async function handleInstall(
     case "direct-url":
       return errResult("direct-url install is not yet supported.");
   }
+}
+
+/**
+ * Install the operator's `connectors.workspaceDefaults` into a workspace that
+ * was just created, as its creator, through the ordinary install path — the
+ * same admission, dedup, wiring and start a Browse install gets. A connector
+ * that needs sign-in lands unconnected, ready to connect.
+ *
+ * Called by each creation path once the workspace is final (`manage_workspaces
+ * create`, bootstrap provisioning) and awaited, so the caller's next read of
+ * the workspace sees them. Best-effort per connector: an id the catalog does
+ * not list, or an install the path refuses (the creator already holds it as a
+ * personal connector), is logged and skipped. Never throws.
+ */
+export async function installWorkspaceDefaults(
+  runtime: Runtime,
+  wsId: string,
+  identity: UserIdentity | null,
+): Promise<void> {
+  const ids = declaredWorkspaceDefaults();
+  if (ids.length === 0) return;
+  if (!identity) {
+    log.warn(`[connectors] workspace defaults skipped for ${wsId}: no creator identity`);
+    return;
+  }
+  const ctx: ManageConnectorsContext = {
+    runtime,
+    getIdentity: () => identity,
+    getWorkspaceId: () => wsId,
+  };
+  let byId: Map<string, CatalogListing>;
+  try {
+    // A workspace this new has no tool registry yet (a request makes one on
+    // first touch), and starting a source needs it.
+    await runtime.ensureWorkspaceRegistry(wsId);
+    const { entries } = await runtime.getConnectorCatalog().list({});
+    byId = new Map(entries.map((e) => [e.id, e]));
+  } catch (err) {
+    log.warn(`[connectors] workspace defaults skipped for ${wsId}: ${errMessage(err)}`);
+    return;
+  }
+  for (const id of ids) {
+    const entry = byId.get(id);
+    if (!entry) {
+      log.warn(`[connectors] workspace default "${id}" is not in the catalog; skipped for ${wsId}`);
+      continue;
+    }
+    try {
+      const result = await handleInstall(ctx, identity, entry, wsId, undefined);
+      if (result.isError) {
+        const reason = result.content.map((c) => (c.type === "text" ? c.text : "")).join(" ");
+        log.warn(`[connectors] workspace default "${id}" not installed in ${wsId}: ${reason}`);
+      }
+    } catch (err) {
+      log.warn(`[connectors] workspace default "${id}" failed in ${wsId}: ${errMessage(err)}`);
+    }
+  }
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**

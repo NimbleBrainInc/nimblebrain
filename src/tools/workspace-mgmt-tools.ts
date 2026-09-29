@@ -13,6 +13,7 @@ import { isArchiveName, listArchives, purgeArchive } from "../workspace/archives
 import { canManageWorkspaceMembers } from "../workspace/authz.ts";
 import type { WorkspaceMember } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { installWorkspaceDefaults } from "./connector-tools.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 
 /**
@@ -286,6 +287,12 @@ async function handleCreate(
       });
       if (updated) workspace = updated;
     }
+
+    // After any explicit `connectors` input, which replaces the whole list and
+    // would drop defaults installed ahead of it. The installs write the
+    // workspace record themselves, so re-read it for the response.
+    await installWorkspaceDefaults(ctx.runtime, workspace.id, identity);
+    workspace = (await ctx.workspaceStore.get(workspace.id)) ?? workspace;
 
     const data = {
       workspace: {

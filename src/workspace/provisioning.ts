@@ -34,6 +34,7 @@ export function ensureUserWorkspace(
   store: WorkspaceStore,
   identity: ProvisioningIdentity,
   users?: UserStore,
+  onCreated?: (workspace: Workspace) => Promise<void>,
 ): Promise<Workspace[]> {
   let byUser = inflight.get(store);
   if (!byUser) {
@@ -43,7 +44,9 @@ export function ensureUserWorkspace(
   const running = byUser.get(identity.id);
   if (running) return running;
 
-  const run = provision(store, identity, users).finally(() => byUser.delete(identity.id));
+  const run = provision(store, identity, users, onCreated).finally(() =>
+    byUser.delete(identity.id),
+  );
   byUser.set(identity.id, run);
   return run;
 }
@@ -52,6 +55,7 @@ async function provision(
   store: WorkspaceStore,
   identity: ProvisioningIdentity,
   users: UserStore | undefined,
+  onCreated: ((workspace: Workspace) => Promise<void>) | undefined,
 ): Promise<Workspace[]> {
   const memberships = await store.getWorkspacesForUser(identity.id);
   if (memberships.length > 0) return memberships;
@@ -66,6 +70,12 @@ async function provision(
         preferences: { ...user.preferences, defaultWorkspaceId: workspace.id },
       });
     }
+  }
+  // Inside the in-flight guard, so a concurrent call for the same user waits
+  // for the workspace to be complete. Re-read: the hook may have written it.
+  if (onCreated) {
+    await onCreated(workspace);
+    return [(await store.get(workspace.id)) ?? workspace];
   }
   return [workspace];
 }

@@ -115,7 +115,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `logging` | `object` | — | Structured logging config. See [logging](#logging). |
 | `http` | `object` | `{ "port": 27247, "host": "127.0.0.1" }` | HTTP server config. Omit for programmatic-only use. |
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
-| `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
+| `connectors` | `object` | — | Managed-connector provider settings, and the connectors every new workspace starts with. See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
@@ -549,6 +549,23 @@ It is declarable because nothing persisted points at where it lives. A connector
 Settings resolve from this block only — there is no environment fallback for them. The **broker credential** is the exception: `apiKey` also reads `COMPOSIO_API_KEY` / `SMITHERY_API_KEY`, because a secret has a legitimate home in the environment. One value, one source, with that single documented exception.
 
 `NB_TENANT_ID` is likewise not part of this block. It is a deployment identity, stays env-only, and is still required when the OAuth bouncer is configured.
+
+### connectors.workspaceDefaults
+
+Catalog connector ids installed into every new workspace as it is created. Default: none.
+
+```json
+{
+  "connectors": {
+    "workspaceDefaults": ["com.notion/mcp", "app.linear/mcp"]
+  }
+}
+```
+
+- **Installed as the creator.** Each connector goes through the same install as **Browse → Install**, in list order, run as the workspace's creator (who is its admin). That covers a workspace created from **Workspaces → New workspace** and the first workspace a new user is given.
+- **Sign-in comes later.** A connector that needs sign-in installs unconnected and shows **Connect** on the workspace's Connectors page.
+- **Skips are logged, never fatal.** An id the catalog does not list is skipped with a warning, and so is a connector the creator already holds as a [personal connector](/using/personal-connectors/), since one connector cannot be both. A skipped default never stops the workspace from being created.
+- **New workspaces only.** Existing workspaces are unchanged, and removing a default from one workspace does not bring it back.
 
 ## notifications
 

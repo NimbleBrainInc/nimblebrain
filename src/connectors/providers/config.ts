@@ -119,6 +119,11 @@ export type GatewayConfigs = Record<string, GatewayConfig>;
 export interface ConnectorsConfig {
   providers?: ManagedProviderConfigs;
   gateways?: GatewayConfigs;
+  /**
+   * Catalog connector ids (e.g. `com.notion/mcp`) installed into every new
+   * workspace as it is created. One that needs sign-in installs unconnected.
+   */
+  workspaceDefaults?: string[];
 }
 
 // ── Schema drift guard ───────────────────────────────────────────────
@@ -132,6 +137,7 @@ export interface ConnectorsConfig {
 const CONNECTORS_FIELDS: Record<keyof Required<ConnectorsConfig>, true> = {
   providers: true,
   gateways: true,
+  workspaceDefaults: true,
 };
 
 const GATEWAY_FIELDS: Record<keyof Required<GatewayConfig>, true> = {
@@ -189,6 +195,11 @@ export function declaredProviderConfig<K extends keyof ManagedProviderConfigs>(
   id: K,
 ): ManagedProviderConfigs[K] | undefined {
   return _declared?.providers?.[id];
+}
+
+/** Catalog connector ids every new workspace starts with; empty when none are declared. */
+export function declaredWorkspaceDefaults(): string[] {
+  return _declared?.workspaceDefaults ?? [];
 }
 
 /** The declared gateways, or undefined when the operator declared none. */

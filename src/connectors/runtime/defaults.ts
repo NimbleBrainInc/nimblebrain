@@ -1,29 +1,7 @@
-import type {
-  ConnectorRef,
-  ConnectorUiMeta,
-  HostManifestMeta,
-  PlacementDeclaration,
-} from "./types.ts";
+import type { ConnectorUiMeta, HostManifestMeta, PlacementDeclaration } from "./types.ts";
 
 /** Max length for a connector-authored display string (host `name`/`icon`, placement `label`/`icon`). */
 const DISPLAY_STRING_MAX = 128;
-
-/**
- * Connectors included by default. Empty: platform capabilities
- * (conversations, files, home, settings, usage, automations) are in-process
- * MCP servers — see src/platform/.
- */
-export const DEFAULT_CONNECTORS: ConnectorRef[] = [];
-
-/** Merge default connectors with user-configured ones, deduplicating by URL. */
-export function mergeConnectors(
-  userConnectors: ConnectorRef[],
-  noDefaults?: boolean,
-): ConnectorRef[] {
-  const defaults = noDefaults ? [] : DEFAULT_CONNECTORS;
-  const userUrls = new Set(userConnectors.map((b) => b.url));
-  return [...defaults.filter((b) => !userUrls.has(b.url)), ...userConnectors];
-}
 
 /**
  * Map a host `_meta["ai.nimblebrain/host"]` block to the runtime's `ConnectorUiMeta`.

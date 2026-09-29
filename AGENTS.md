@@ -170,7 +170,7 @@ web/               Vite + React + TypeScript SPA (separate package.json)
 | Max iterations | 25 (hard cap: 50) |
 | Max input tokens | 500,000 |
 | Max output tokens | the model's catalog output limit (16,384 for a model the catalog lacks) |
-| Default connectors | none (platform capabilities are built in) |
+| Default connectors | none; `connectors.workspaceDefaults` installs catalog ids into each new workspace (platform capabilities are built in) |
 | Work directory | `~/.nimblebrain` |
 | API port | 27247 |
 | Web port | 27246 |

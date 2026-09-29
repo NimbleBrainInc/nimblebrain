@@ -30,6 +30,7 @@ import { type RequestContext, runWithRequestContext } from "../runtime/request-c
 import type { Runtime } from "../runtime/runtime.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
+import { installWorkspaceDefaults } from "../tools/connector-tools.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
@@ -1346,6 +1347,7 @@ export async function handleBootstrap(
       ...(identity.displayName ? { displayName: identity.displayName } : {}),
     },
     runtime.getUserStore(),
+    (workspace) => installWorkspaceDefaults(runtime, workspace.id, identity),
   );
 
   // 2-3. The default focus. The client's URL (`/w/:slug`) says which workspace

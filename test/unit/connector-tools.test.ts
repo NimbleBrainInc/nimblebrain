@@ -5,13 +5,19 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
+import {
+  _resetConnectorsConfigForTest,
+  setConnectorsConfig,
+} from "../../src/connectors/providers/config.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import {
   createManageConnectorsTool,
   deriveConnectorStatus,
+  installWorkspaceDefaults,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
 import type { CredentialStore } from "../../src/tools/credential-store.ts";
@@ -156,6 +162,7 @@ function buildHarness(opts: { adminId?: string } = {}): Harness {
     getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
+    ensureWorkspaceRegistry: async (_id: string) => workspaceRegistry,
     // Minimal stubs for the runtime services list_installed touches
     // beyond the workspace store. Real instances aren't necessary —
     // the production-shaped behavior is exercised by integration
@@ -636,6 +643,64 @@ describe("manage_connectors.list_directory", () => {
 // ─────────────────────────────────────────────────────────────────────
 // install — static-auth path
 // ─────────────────────────────────────────────────────────────────────
+
+describe("installWorkspaceDefaults", () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    _resetConnectorsConfigForTest();
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const installedIds = async () => {
+    const ws = await h.workspaceStore.get(h.wsId);
+    return (ws?.connectors ?? []).map((c) => ("url" in c ? c.serverName : undefined));
+  };
+
+  test("installs each listed connector unconnected, skipping an unknown id and a refused install", async () => {
+    // Dropbox is static-auth with no operator setup, so install refuses it; the
+    // unknown id is not in the catalog. Neither stops Notion after them.
+    setConnectorsConfig({ workspaceDefaults: ["com.example/missing", DROPBOX_ID, NOTION_ID] });
+
+    await installWorkspaceDefaults(h.runtime, h.wsId, ADMIN_USER);
+
+    expect(await installedIds()).toEqual(["com-notion-mcp"]);
+    const list = await buildTool(h, ADMIN_USER).handler({ action: "list_installed" });
+    const notion = (
+      list.structuredContent as { installed: Array<{ serverName: string; status: string }> }
+    ).installed.find((e) => e.serverName === "com-notion-mcp");
+    expect(notion?.status).toBe("needs_auth");
+  });
+
+  test("skips a default the creator already holds as a personal connector", async () => {
+    await new IdentityConnectorStore({ workDir: h.workDir }).add(ADMIN_USER.id, {
+      url: "https://mcp.notion.com/mcp",
+      serverName: "com-notion-mcp",
+      ui: null,
+    });
+    setConnectorsConfig({ workspaceDefaults: [NOTION_ID] });
+
+    await installWorkspaceDefaults(h.runtime, h.wsId, ADMIN_USER);
+
+    expect(await installedIds()).toEqual([]);
+  });
+
+  test("does nothing when no defaults are declared", async () => {
+    await installWorkspaceDefaults(h.runtime, h.wsId, ADMIN_USER);
+    expect(await installedIds()).toEqual([]);
+  });
+
+  test("installs nothing without a creator to install as", async () => {
+    setConnectorsConfig({ workspaceDefaults: [NOTION_ID] });
+    await installWorkspaceDefaults(h.runtime, h.wsId, null);
+    expect(await installedIds()).toEqual([]);
+  });
+});
 
 describe("manage_connectors.install (static-auth)", () => {
   let h: Harness;

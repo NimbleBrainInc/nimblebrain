@@ -442,6 +442,12 @@
             },
             "additionalProperties": false
           }
+        },
+        "workspaceDefaults": {
+          "description": "Catalog connector ids (e.g. \"com.notion/mcp\") installed into every new workspace as it is created, in order, as the workspace's creator. A connector that needs sign-in installs unconnected, ready to connect. An id the catalog does not list, or one the creator already holds as a personal connector, is skipped and logged. Existing workspaces are not changed. Default: none.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
         }
       },
       "additionalProperties": false
