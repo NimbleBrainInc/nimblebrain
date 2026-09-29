@@ -62,7 +62,7 @@ export function statusLevel(status: InstalledConnector["status"]): BriefingLevel
 
 /** A level the web does not know reads as `warning`, as the extension requires. */
 function levelOf(level: string): BriefingLevel {
-  return level in LEVELS ? (level as BriefingLevel) : "warning";
+  return Object.hasOwn(LEVELS, level) ? (level as BriefingLevel) : "warning";
 }
 
 function Row({

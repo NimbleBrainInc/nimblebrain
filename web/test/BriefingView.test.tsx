@@ -258,18 +258,22 @@ describe("BriefingView", () => {
     expect(tone(rows[3]!)).toContain("text-muted-foreground");
   });
 
-  test("reads a level it does not know as action", async () => {
+  test("reads a level it does not know as warning, including an inherited key", async () => {
     const odd = { app: "X", facet: "x", label: "Odd", count: 1, route: null, state: "ok" as const };
     mounted = await mount(
       view({
         briefing: makeBriefing({
-          items: [{ ...odd, level: "urgent" as unknown as "warning" }],
+          items: [
+            { ...odd, level: "urgent" as unknown as "warning" },
+            { ...odd, facet: "y", level: "constructor" as unknown as "warning" },
+          ],
         }),
       }),
     );
-    expect(mounted.container.getElementsByTagName("li")[0]?.getAttribute("data-level")).toBe(
-      "warning",
+    const levels = Array.from(mounted.container.getElementsByTagName("li")).map((li) =>
+      li.getAttribute("data-level"),
     );
+    expect(levels).toEqual(["warning", "warning"]);
   });
 
   describe("empty state", () => {
