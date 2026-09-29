@@ -8,7 +8,11 @@ import type {
   OAuthClientProvider,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
-import { selectClientAuthMethod, UnauthorizedError } from "@modelcontextprotocol/client";
+import {
+  type FetchLike,
+  selectClientAuthMethod,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import { validateConnectorUrl } from "../connectors/runtime/url-validator.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { buildTenantAssertion } from "../oauth/fleet-assertion.ts";
@@ -17,6 +21,17 @@ import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
 import { McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { type FlowOwner, register as registerInteractiveFlow } from "./oauth-flow-registry.ts";
+import {
+  discoverIdentityMetadata,
+  fetchUserinfo,
+  IDENTITY_FETCH_TIMEOUT_MS,
+  type IdentityClaims,
+  type IdentityMetadata,
+  identityScopesToAdd,
+  namesAccount,
+  pickIdentityClaims,
+} from "./oauth-identity.ts";
+import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
 /**
  * Sentinel kept for callers that import the symbol. The original
@@ -258,8 +273,9 @@ function canonicalEndpoint(u: URL): string {
  * The SDK also pairs `offline_access` with `prompt=consent` (OIDC Core §11),
  * keyed to its own resolved scope. The pairing is kept for the configured set,
  * joining any `prompt` already present rather than replacing it — except
- * `none`, which admits no other value (OIDC Core §3.1.2.1). No scopes
- * configured leaves the URL as the SDK built it.
+ * `none`, which admits no other value (OIDC Core §3.1.2.1). With no scopes
+ * configured the SDK's scope stands, and `redirectToAuthorization` adds only
+ * the OIDC identity scopes (`addIdentityScopes`).
  */
 function applyConfiguredScopes(url: URL, scopes: string[] | undefined): void {
   if (!scopes || scopes.length === 0) return;
@@ -463,9 +479,7 @@ async function postRevoke(
  */
 const ID_TOKEN_MAX_LENGTH = 16 * 1024;
 
-function parseIdTokenClaims(
-  idToken: string,
-): { sub?: string; email?: string; name?: string } | null {
+function parseIdTokenClaims(idToken: string): IdentityClaims | null {
   if (idToken.length > ID_TOKEN_MAX_LENGTH) return null;
   // JWT shape: header.payload.signature — three base64url segments
   // separated by dots. We only need the payload (segment index 1).
@@ -494,11 +508,7 @@ function parseIdTokenClaims(
   } catch {
     return null;
   }
-  const out: { sub?: string; email?: string; name?: string } = {};
-  if (typeof claims.sub === "string") out.sub = claims.sub;
-  if (typeof claims.email === "string") out.email = claims.email;
-  if (typeof claims.name === "string") out.name = claims.name;
-  return Object.keys(out).length > 0 ? out : null;
+  return pickIdentityClaims(claims);
 }
 
 /**
@@ -572,7 +582,7 @@ const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/li
  *                                       explicitly removed only when
  *                                       `invalidateCredentials("verifier" |
  *                                       "all")` is called
- *   mcp-oauth.<serverName>.identity   — OIDC claims from an `id_token`
+ *   mcp-oauth.<serverName>.identity   — OIDC claims (id_token or userinfo)
  *   mcp-oauth.<serverName>.auth_lost  — flag: the credential was rejected and
  *                                       nobody has reconnected since. Set by
  *                                       `notifyAuthLost`, cleared by
@@ -625,6 +635,22 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
    * signal.
    */
   private exchangingCode = false;
+  /**
+   * The authorization server the SDK is talking to, from the `issuer` it
+   * passes to `clientInformation` on every `auth()`, ahead of both the
+   * authorize redirect and the code exchange.
+   */
+  private issuer?: string;
+  /**
+   * The identity fields of that server's metadata, fetched once per issuer on
+   * first need: adding the OIDC scopes to an authorize request, or finding the
+   * userinfo endpoint at a code exchange. Never on a refresh. Resolves to
+   * undefined on any failure.
+   */
+  private identityMetadataCache?: {
+    issuer: string;
+    metadata: Promise<IdentityMetadata | undefined>;
+  };
   /**
    * Whether this provider may drive an INTERACTIVE (browser) OAuth flow on the
    * current start attempt — a per-attempt signal, not construction-time.
@@ -868,7 +894,10 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     return this.owner;
   }
 
-  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+  async clientInformation(
+    ctx?: OAuthClientInformationContext,
+  ): Promise<OAuthClientInformationMixed | undefined> {
+    if (ctx?.issuer) this.issuer = ctx.issuer;
     // Track A: pre-registered (static) client takes precedence over
     // any persisted DCR registration. Returning the static info each
     // call (rather than caching it) is fine — the values come from
@@ -1158,15 +1187,18 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // for access decisions). Failures here are silent — auth still
     // succeeds; the UI just doesn't get a display name.
     //
+    // At a sign-in whose id_token names no account (absent, or `sub` only,
+    // which OIDC permits when an access token is issued), the userinfo
+    // endpoint is asked. Its `sub` must match the id_token's (OIDC Core
+    // §5.3.2), or its claims are dropped.
+    //
     // A code exchange is a new sign-in, possibly as a different account, so
     // its claims replace the record — and with no claims the record goes, or
     // the UI would name the previous account. A refresh keeps the record:
     // refresh responses commonly omit the id_token, and the account is
     // unchanged.
-    const idToken = (tokens as { id_token?: unknown }).id_token;
     try {
-      const claims =
-        typeof idToken === "string" && idToken.length > 0 ? parseIdTokenClaims(idToken) : null;
+      const claims = await this.signedInAs(tokens);
       if (claims) {
         await this.records.write("identity", claims);
       } else if (this.exchangingCode) {
@@ -1177,6 +1209,90 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
         "mcp",
         `[oauth] ${this.serverName} identity capture failed: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+  }
+
+  /**
+   * The account a token response names: the id_token's claims, completed from
+   * the userinfo endpoint at a sign-in whose id_token names no account.
+   */
+  private async signedInAs(tokens: OAuthTokens): Promise<IdentityClaims | null> {
+    const idToken = (tokens as { id_token?: unknown }).id_token;
+    const claims =
+      typeof idToken === "string" && idToken.length > 0 ? parseIdTokenClaims(idToken) : null;
+    if (!this.exchangingCode || namesAccount(claims)) return claims;
+    const userinfo = await this.readUserinfo(tokens);
+    if (!userinfo || (claims?.sub !== undefined && claims.sub !== userinfo.sub)) return claims;
+    return { ...claims, ...userinfo };
+  }
+
+  /** The current issuer's identity metadata, read once per issuer. */
+  private identityMetadata(): Promise<IdentityMetadata | undefined> {
+    const issuer = this.issuer;
+    if (!issuer) return Promise.resolve(undefined);
+    if (this.identityMetadataCache?.issuer !== issuer) {
+      const metadata = discoverIdentityMetadata(issuer, this.identityFetch()).catch(
+        (err: unknown) => {
+          log.debug(
+            "mcp",
+            `[oauth] ${this.serverName} identity metadata unavailable: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return undefined;
+        },
+      );
+      this.identityMetadataCache = { issuer, metadata };
+    }
+    return this.identityMetadataCache.metadata;
+  }
+
+  /**
+   * `fetch` for one identity read (a metadata discovery, or a userinfo call):
+   * SSRF-guarded like a connector's own requests, since the URLs come from
+   * remote metadata. One deadline covers every request of the read, across
+   * discovery URLs and redirect hops, so a slow server holds up a sign-in by
+   * at most `IDENTITY_FETCH_TIMEOUT_MS` a read.
+   */
+  private identityFetch(): FetchLike {
+    const signal = AbortSignal.timeout(IDENTITY_FETCH_TIMEOUT_MS);
+    return createSsrfGuardedFetch((input, init) => fetch(input, { ...init, signal }), {
+      allowInsecure: this.allowInsecureRemotes,
+      fleetInternal: false,
+    });
+  }
+
+  /**
+   * Add `openid` (and `email`) to the authorize URL's scope when
+   * the server advertises them and the SDK's scope left them out. The SDK
+   * takes the scope from the resource's challenge or metadata, which name the
+   * resource's scopes and not OIDC's, so an OIDC server would otherwise never
+   * return an id_token.
+   */
+  private async addIdentityScopes(url: URL): Promise<void> {
+    const metadata = await this.identityMetadata();
+    const scope = url.searchParams.get("scope");
+    const add = identityScopesToAdd(scope, metadata);
+    if (add.length > 0) url.searchParams.set("scope", [scope, ...add].join(" "));
+  }
+
+  /**
+   * The account from the server's userinfo endpoint, when the token response
+   * did not name one. Only where the server publishes the endpoint, and not
+   * when the granted scope is known to lack `openid`, which the endpoint
+   * requires (OIDC Core §5.3).
+   */
+  private async readUserinfo(tokens: OAuthTokens): Promise<IdentityClaims | null> {
+    if (tokens.scope !== undefined && !tokens.scope.split(" ").includes("openid")) return null;
+    const endpoint = (await this.identityMetadata())?.userinfoEndpoint;
+    if (!endpoint || !tokens.access_token) return null;
+    try {
+      return await fetchUserinfo(endpoint, tokens.access_token, this.identityFetch());
+    } catch (err) {
+      // A failed read names no account; it must not skip replacing the record.
+      log.debug(
+        "mcp",
+        `[oauth] ${this.serverName} userinfo unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
     }
   }
 
@@ -1239,12 +1355,12 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
 
   /**
    * Read the captured OIDC identity claims for this principal. Returns
-   * `null` when no identity record exists (no id_token was issued, or
-   * the connector predates id_token capture). Used by the Connections
+   * `null` when no identity record exists (the server named no account at
+   * sign-in, or the connector predates identity capture). Used by the Connections
    * page to show "Connected as <email>".
    */
-  async identity(): Promise<{ sub?: string; email?: string; name?: string } | null> {
-    return await this.records.read<{ sub?: string; email?: string; name?: string }>("identity", {
+  async identity(): Promise<IdentityClaims | null> {
+    return await this.records.read<IdentityClaims>("identity", {
       caller: "oauth:identity",
       purpose: `display the connected account for ${this.serverName}`,
     });
@@ -1377,6 +1493,9 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // without this claim two concurrent calls could both reach the
     // capture phase and the second would clobber the first's state.
     this.pendingFlow.urlCaptured = true;
+    // Configured scopes are the whole grant the operator chose; otherwise ask
+    // an OIDC server for the account too, so "Connected as" can name it.
+    if (!this.scopes || this.scopes.length === 0) await this.addIdentityScopes(url);
     // Local deferred for the headless branch. The interactive branch
     // doesn't use this — it swaps `pendingFlow.promise` for the flow
     // registry's promise instead.

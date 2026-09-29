@@ -196,6 +196,28 @@ export function setNextRunAt(automation: Automation, nextRun: number | null): vo
 }
 
 /**
+ * The next run of a stored automation, or null when its schedule cannot be
+ * placed in time. Create and update refuse a schedule that throws here (an
+ * unknown timezone), so a stored one reaches it only by a hand edit or a
+ * default timezone that stopped resolving. Null clears `nextRunAt` like a
+ * schedule with no next run: keeping a past value would leave it due, so it
+ * would re-run on every tick. A later reconcile re-seeds it once the schedule
+ * resolves again.
+ */
+function nextRunOrNone(auto: Automation, now: number, defaultTimezone?: string): number | null {
+  try {
+    return computeNextRunAt(auto, now, defaultTimezone);
+  } catch (err) {
+    log.warn("[automations] could not compute next run", {
+      automationId: auto.id,
+      workspaceId: auto.workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
  * Whether an automation with no `nextRunAt` is due now. Only an interval
  * schedule that has not been given one yet is (its first run fires
  * immediately); a cron schedule without one has no next run, and an event
@@ -348,7 +370,7 @@ function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: numbe
 
 /** Compute and set nextRunAt, pushing it out by backoff during an error streak. */
 function applyNextRunAt(auto: Automation, now: number, defaultTimezone?: string): void {
-  const nextRun = computeNextRunAt(auto, now, defaultTimezone);
+  const nextRun = nextRunOrNone(auto, now, defaultTimezone);
   if (nextRun === null) {
     setNextRunAt(auto, null);
     return;
@@ -508,19 +530,7 @@ export class Scheduler {
   private reconcileNextRunAt(auto: Automation, now: number): boolean {
     if (isEventSchedule(auto.schedule)) return false;
     if (!auto.enabled || !auto.ownerId || !auto.workspaceId) return false;
-    let next: number | null;
-    try {
-      next = computeNextRunAt(auto, now, this.config.defaultTimezone);
-    } catch (err) {
-      // One unreadable schedule must not stop the scheduler starting for
-      // every workspace; it keeps its stored nextRunAt.
-      log.warn("[automations] could not compute next run", {
-        automationId: auto.id,
-        workspaceId: auto.workspaceId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return false;
-    }
+    const next = nextRunOrNone(auto, now, this.config.defaultTimezone);
     const changed = next === null ? Boolean(auto.nextRunAt) : !auto.nextRunAt;
     if (changed) setNextRunAt(auto, next);
     return changed;
@@ -955,7 +965,7 @@ export class Scheduler {
       // composite key stays consistent with what `loadAll` keyed under.
       fresh.workspaceId = wsId;
       fresh.ownerId = ownerId;
-      const nextRun = computeNextRunAt(fresh, now, this.config.defaultTimezone);
+      const nextRun = nextRunOrNone(fresh, now, this.config.defaultTimezone);
       if (nextRun !== null) {
         // Ensure nextRunAt is in the future — if the computed time is past
         // (e.g., interval based on old lastRunAt), advance by intervalMs from now

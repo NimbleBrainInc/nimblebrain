@@ -23,6 +23,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../../test/setup";
 import { REQUEST_FILE_METHOD } from "../../bridge/extensions";
+import type { UploadLimits } from "../../bridge/host-extensions";
 
 /**
  * A module namespace is readonly, so the upload is swapped here rather than on
@@ -688,7 +689,8 @@ describe("ai.nimblebrain/request-file", () => {
     id: string,
     picked: File[],
     upload: typeof uploadStub,
-    maxSize = 1024,
+    maxSize: number | null = 1024,
+    limits?: UploadLimits,
   ): Promise<{ result?: unknown; error?: { code: number; message: string; data?: unknown } }> {
     const origUpload = uploadStub;
     uploadStub = upload;
@@ -704,13 +706,14 @@ describe("ai.nimblebrain/request-file", () => {
     }) as typeof document.createElement;
 
     try {
-      const frame = mount();
+      const frame = mount("db-query", limits ? { getUploadLimits: () => limits } : undefined);
       await handshake(frame);
       frame.send({
         jsonrpc: "2.0",
         id,
         method: REQUEST_FILE_METHOD,
-        params: { multiple: true, maxSize },
+        // `null` sends no `maxSize`, as an app that takes the host's default does.
+        params: { multiple: true, ...(maxSize === null ? {} : { maxSize }) },
       });
       return (await frame.waitFor(isReplyTo(id), 2000)) as {
         result?: unknown;
@@ -776,6 +779,82 @@ describe("ai.nimblebrain/request-file", () => {
       code: -32602,
       message: "Upload is 30 MB; the limit is 25 MB per upload.",
     });
+  });
+
+  test("a set over the host's total limit is refused before upload, naming the limit", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-over-total",
+      [new File(["x".repeat(1536)], "a.bin"), new File(["x".repeat(1536)], "b.bin")],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      4096,
+      { maxFileSize: 4096, maxTotalSize: 2048 },
+    );
+
+    expect(uploaded).toBe(false);
+    expect(reply.error).toEqual({
+      code: -32602,
+      message: "The selected files total 3.0 KB; an upload can be up to 2.0 KB.",
+    });
+  });
+
+  test("an app's maxSize above the host's per-file limit is held to the host's", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-host-cap",
+      [new File(["x".repeat(2048)], "big.bin")],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      1_048_576,
+      { maxFileSize: 1024, maxTotalSize: 1_048_576 },
+    );
+
+    expect(uploaded).toBe(false);
+    expect((reply.error?.data as { errors: string[] }).errors).toHaveLength(1);
+  });
+
+  test("an app that sends no maxSize is held to the host's per-file limit", async () => {
+    let uploaded = false;
+    const reply = await pickWith(
+      "pick-host-default",
+      [new File(["x".repeat(2048)], "big.bin")],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      null,
+      { maxFileSize: 1024, maxTotalSize: 1_048_576 },
+    );
+
+    expect(uploaded).toBe(false);
+    expect((reply.error?.data as { errors: string[] }).errors).toEqual([
+      'File "big.bin" exceeds maximum size of 1.0 KB',
+    ]);
+  });
+
+  test("an app that sends no maxSize may pick up to a host limit above 25 MB", async () => {
+    // Only a host limit above the 25 MB fallback shows the default is the
+    // host's: below it, the host cap alone gives the same answer.
+    const big = new File(["x"], "big.bin");
+    Object.defineProperty(big, "size", { value: 30 * 1_048_576 });
+    let uploaded = false;
+    await pickWith(
+      "pick-host-default-high",
+      [big],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      null,
+      { maxFileSize: 50 * 1_048_576, maxTotalSize: 100 * 1_048_576 },
+    );
+
+    expect(uploaded).toBe(true);
   });
 
   test("every oversize file is refused before anything is uploaded", async () => {

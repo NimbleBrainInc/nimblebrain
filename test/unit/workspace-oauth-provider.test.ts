@@ -1306,3 +1306,198 @@ describe("WorkspaceOAuthProvider — auth_lost flag", () => {
     ).toBe(false);
   });
 });
+
+// A server that does OIDC without putting the account in a token response: the
+// account comes from its userinfo endpoint, and the authorize request has to ask
+// for `openid` because the SDK's scope names only the resource's scopes.
+describe("WorkspaceOAuthProvider — identity from an OIDC server's userinfo", () => {
+  const ISSUER = "https://auth.example.test";
+  const USERINFO = `${ISSUER}/userinfo`;
+  let workDir: string;
+  let realFetch: typeof fetch;
+  let calls: Array<{ url: string; authorization: string | null }>;
+  let metadata: Record<string, unknown> | null;
+  /** Userinfo response per bearer token; a token missing here gets a 401. */
+  let accounts: Record<string, Record<string, unknown>>;
+
+  beforeEach(() => {
+    workDir = mkdtempSync(join(tmpdir(), "nb-oauth-identity-"));
+    seedWorkspaceRoot(workDir, "ws_test");
+    installTestCredentialStore(workDir);
+    calls = [];
+    metadata = {
+      issuer: ISSUER,
+      scopes_supported: ["mcp", "openid", "email", "profile"],
+      userinfo_endpoint: USERINFO,
+    };
+    accounts = {};
+    realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const authorization = new Headers(init?.headers).get("authorization");
+      calls.push({ url, authorization });
+      if (url === `${ISSUER}/.well-known/openid-configuration` && metadata) {
+        return Response.json(metadata);
+      }
+      if (url === USERINFO) {
+        const account = accounts[authorization?.replace(/^Bearer /, "") ?? ""];
+        return account ? Response.json(account) : new Response(null, { status: 401 });
+      }
+      // The headless authorize probe: a 200 with no Location falls through.
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** A provider that has been told its issuer, as the SDK does on every auth(). */
+  async function providerFor(opts: { scopes?: string[] } = {}): Promise<WorkspaceOAuthProvider> {
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_test" },
+      serverName: "oidc-no-id-token",
+      workDir,
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+      headlessAuthProbe: true,
+      ...opts,
+    });
+    await p.saveClientInformation({ client_id: "c1", redirect_uris: [CALLBACK] });
+    await p.clientInformation({ issuer: ISSUER });
+    return p;
+  }
+
+  const signIn = (p: WorkspaceOAuthProvider, tokens: OAuthTokens) =>
+    p.exchangeAuthorizationCode(() => p.saveTokens(tokens));
+
+  /** The scope of the authorize URL the provider hands onward. */
+  async function authorizeScope(
+    p: WorkspaceOAuthProvider,
+    sdkScope: string | null,
+  ): Promise<string | null> {
+    const authUrl = new URL("http://localhost:39991/oauth/authorize");
+    authUrl.searchParams.set("state", p.state());
+    if (sdkScope !== null) authUrl.searchParams.set("scope", sdkScope);
+    try {
+      await p.redirectToAuthorization(authUrl);
+    } catch {
+      // expected: no user-initiated flow is armed.
+    }
+    const probed = calls.find((c) => c.url.startsWith("http://localhost:39991/oauth/authorize"));
+    return new URL(probed?.url ?? "http://missing.invalid/").searchParams.get("scope");
+  }
+
+  it("names the account from userinfo when the token response carries no id_token", async () => {
+    accounts.a1 = { sub: "user-a", email: "a@example.com", name: "User A" };
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer", scope: "mcp openid email" });
+    expect(await p.identity()).toEqual({ sub: "user-a", email: "a@example.com", name: "User A" });
+    expect(calls.find((c) => c.url === USERINFO)?.authorization).toBe("Bearer a1");
+  });
+
+  it("completes an id_token that carries only sub from userinfo", async () => {
+    accounts.a1 = { sub: "user-a", email: "a@example.com" };
+    const payload = btoa(JSON.stringify({ sub: "user-a" })).replace(/=/g, "");
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer", id_token: `h.${payload}.s` });
+    expect(await p.identity()).toEqual({ sub: "user-a", email: "a@example.com" });
+  });
+
+  it("drops userinfo claims whose sub differs from the id_token's", async () => {
+    accounts.a1 = { sub: "someone-else", email: "x@example.com" };
+    const payload = btoa(JSON.stringify({ sub: "user-a" })).replace(/=/g, "");
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer", id_token: `h.${payload}.s` });
+    expect(await p.identity()).toEqual({ sub: "user-a" });
+  });
+
+  it("records no identity when the server publishes no userinfo endpoint", async () => {
+    metadata = { issuer: ISSUER, scopes_supported: ["mcp"] };
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer" });
+    expect(await p.identity()).toBeNull();
+    expect(calls.some((c) => c.url === USERINFO)).toBe(false);
+  });
+
+  it("records no identity when the server has no metadata at all", async () => {
+    metadata = null;
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer" });
+    expect(await p.identity()).toBeNull();
+  });
+
+  it("never sends the token to a userinfo endpoint on a private address", async () => {
+    const internal = "https://169.254.169.254/latest/meta-data";
+    metadata = { issuer: ISSUER, scopes_supported: ["openid"], userinfo_endpoint: internal };
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer" });
+    expect(await p.identity()).toBeNull();
+    expect(calls.some((c) => c.url.startsWith("https://169.254.169.254"))).toBe(false);
+  });
+
+  it("skips userinfo when the granted scope lacks openid", async () => {
+    accounts.a1 = { sub: "user-a", email: "a@example.com" };
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer", scope: "mcp" });
+    expect(await p.identity()).toBeNull();
+    expect(calls.some((c) => c.url === USERINFO)).toBe(false);
+  });
+
+  it("a reconnect as another account replaces the identity", async () => {
+    accounts.a1 = { sub: "user-a", email: "a@example.com" };
+    accounts.b1 = { sub: "user-b", email: "b@example.com" };
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer" });
+    expect(await p.identity()).toEqual({ sub: "user-a", email: "a@example.com" });
+    await signIn(p, { access_token: "b1", token_type: "Bearer" });
+    expect(await p.identity()).toEqual({ sub: "user-b", email: "b@example.com" });
+  });
+
+  it("a reconnect whose userinfo read fails clears the previous account", async () => {
+    accounts.a1 = { sub: "user-a", email: "a@example.com" };
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer" });
+    expect(await p.identity()).not.toBeNull();
+    // `b1` has no account: the userinfo endpoint answers 401.
+    await signIn(p, { access_token: "b1", token_type: "Bearer" });
+    expect(await p.identity()).toBeNull();
+  });
+
+  it("a refresh keeps the identity and does not call userinfo", async () => {
+    accounts.a1 = { sub: "user-a", email: "a@example.com" };
+    const p = await providerFor();
+    await signIn(p, { access_token: "a1", token_type: "Bearer" });
+    const before = calls.filter((c) => c.url === USERINFO).length;
+    await p.saveTokens({ access_token: "a2", token_type: "Bearer" });
+    expect(await p.identity()).toEqual({ sub: "user-a", email: "a@example.com" });
+    expect(calls.filter((c) => c.url === USERINFO).length).toBe(before);
+  });
+
+  it("adds openid and email to the authorize scope when the server advertises them", async () => {
+    const p = await providerFor();
+    expect(await authorizeScope(p, "mcp offline_access")).toBe("mcp offline_access openid email");
+  });
+
+  it("leaves the authorize scope alone when the server does no OIDC", async () => {
+    metadata = { issuer: ISSUER, scopes_supported: ["mcp", "email"] };
+    const p = await providerFor();
+    expect(await authorizeScope(p, "mcp")).toBe("mcp");
+  });
+
+  it("leaves an authorize URL without a scope alone", async () => {
+    const p = await providerFor();
+    expect(await authorizeScope(p, null)).toBeNull();
+  });
+
+  it("leaves the authorize scope alone when its metadata cannot be read", async () => {
+    metadata = null;
+    const p = await providerFor();
+    expect(await authorizeScope(p, "mcp")).toBe("mcp");
+  });
+
+  it("never adds identity scopes to operator-configured scopes", async () => {
+    const p = await providerFor({ scopes: ["mcp"] });
+    expect(await authorizeScope(p, "mcp openid")).toBe("mcp");
+  });
+});

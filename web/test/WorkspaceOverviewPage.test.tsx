@@ -223,7 +223,7 @@ describe("WorkspaceOverviewPage — briefing", () => {
     );
   });
 
-  test("holds the skeleton until the connectors list names this workspace", async () => {
+  test("renders nothing until the connectors list names this workspace", async () => {
     callToolImpl = () =>
       Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } });
     mounted = await mount(
@@ -239,7 +239,6 @@ describe("WorkspaceOverviewPage — briefing", () => {
         </MemoryRouter>
       </WorkspaceAppIconsContext.Provider>,
     );
-    expect(findByTestId(mounted.container, "workspace-briefing-loading")).not.toBeNull();
-    expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+    expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
   });
 });

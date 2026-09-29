@@ -7,7 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 Your server holds work that needs someone: drafts awaiting review, tasks
 blocked, invoices unpaid. A **facet** is one of those, as a number. The
-workspace overview shows each facet whose count is above zero as one line,
+workspace overview shows each facet whose count is above zero as one row,
 `<count> <title>`, and clicking it opens your app.
 
 Facets are an [MCP extension](https://modelcontextprotocol.io/extensions/overview),
@@ -138,14 +138,20 @@ quick: a `count(*)`, not a page of rows you count afterwards.
 
 ## What the host does
 
+![The workspace overview's Needs attention panel: a sign-in-required connector and two task counts as critical, drafts awaiting review as a warning, and replies received as info](../../../assets/guide/workspace-summary.png)
+
 | Situation | Result |
 |---|---|
-| The count is above zero | One line: `<count> <title>` with your facet's level, opening your app's first placement route. An app with no placement route shows the line without an action. Lines are ordered by level, then by the shell's app order. |
+| The count is above zero | One row in the overview's "Needs attention" panel: `<count> <title>` with your facet's level, opening your app's first placement route. An app with no placement route shows the row without an action. Rows are ordered by level, then by the shell's app order. |
 | The count is zero | Nothing. |
 | The read fails, returns an invalid count, or takes longer than 5 seconds | The title, marked unavailable. Your other facets, and every other server's, render normally. |
 | Your server did not advertise the extension | Nothing is listed or read. |
 | Your connector is not connected in the workspace | Its facets are not read. Until it is ready (signed in, configured, connected), the overview shows its status in their place, opening the connector's page. Reconnection needed, configuration required and failed show as `critical`; connecting and starting show as `info`. A connector that was never connected, or was disconnected on purpose, is at rest and shows nothing. |
-| No facet anywhere in the workspace has a count, and every connector is ready | One line: "Nothing needs you in this workspace." |
+| No facet anywhere in the workspace has a count, and every connector is ready | No panel at all. |
+
+A member can hide a row until it changes and collapse the panel. Both are
+remembered in their own browser only, never on the server: a hidden row
+returns when its count rises or its connector's status changes.
 
 Counts are cached per workspace, server, and facet: a count is reused for 60
 seconds, then served for up to 10 minutes while one fresh read runs in the

@@ -10,6 +10,8 @@ interface Props {
   activeTag: string | null;
   searchQuery: string;
   uploading: boolean;
+  /** The upload limits, stated beside the button; `null` when the host gave none. */
+  uploadHint: string | null;
   tags: TagCount[];
   onSelectFilter: (key: FilterKey) => void;
   onToggleTag: (tag: string) => void;
@@ -26,6 +28,7 @@ export function Header({
   activeTag,
   searchQuery,
   uploading,
+  uploadHint,
   tags,
   onSelectFilter,
   onToggleTag,
@@ -51,16 +54,19 @@ export function Header({
               </div>
             )}
           </div>
-          <button
-            type="button"
-            className="upload-btn"
-            disabled={uploading}
-            onClick={onUpload}
-            title="Upload files"
-          >
-            <UploadIcon />
-            {uploading ? "Uploading…" : "Upload"}
-          </button>
+          <div className="upload-action">
+            <button
+              type="button"
+              className="upload-btn"
+              disabled={uploading}
+              onClick={onUpload}
+              title={uploadHint ? `Upload files (${uploadHint.toLowerCase()})` : "Upload files"}
+            >
+              <UploadIcon />
+              {uploading ? "Uploading…" : "Upload"}
+            </button>
+            {uploadHint && <div className="upload-hint">{uploadHint}</div>}
+          </div>
         </div>
 
         <div className="header-controls">
