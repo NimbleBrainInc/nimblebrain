@@ -141,7 +141,7 @@ export function ToolPermissionsTable({
   // Don't render the section when there are no tools to show. A
   // connector in `not_authenticated` (or any state without an
   // active source) returns empty tools — the hero already conveys
-  // the "Sign-in required / Configure" prompt; an empty Tool
+  // the "Not connected / Configure" prompt; an empty Tool
   // permissions section adds noise. Same for genuine zero-tool
   // connectors (rare). After load, only render with content.
   if (!loading && !error && tools.length === 0) return null;
