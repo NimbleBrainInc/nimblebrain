@@ -24,7 +24,7 @@ import {
   type Task,
 } from "@modelcontextprotocol/server";
 import { TASKS_EXTENSION_ID } from "../tools/mcp-task-client.ts";
-import { TaskAlreadyTerminalError } from "../tools/types.ts";
+import { TaskAlreadyTerminalError, TaskNotFoundError } from "../tools/types.ts";
 import type { TaskAwareSource, TaskScope } from "./mcp-task-store.ts";
 
 export { TASKS_EXTENSION_ID };
@@ -212,6 +212,8 @@ async function terminalDetail(
     const result = (await source.awaitToolTaskResult(taskId, { ownerContext })) as CallToolResult;
     return { status: "completed", result };
   } catch (err) {
+    // Swept between the status read and this one: gone, not failed.
+    if (err instanceof TaskNotFoundError) throw err;
     return {
       status: "failed",
       error: { code: INTERNAL_ERROR, message: err instanceof Error ? err.message : String(err) },
@@ -233,7 +235,10 @@ function headerMismatch(
   const pairs: Array<[string, unknown]> = [
     ["MCP-Protocol-Version", version],
     ["Mcp-Method", method],
-    ["Mcp-Name", params.taskId],
+    // A body with no string task id has no name to match; it is answered not found.
+    ...(typeof params.taskId === "string"
+      ? [["Mcp-Name", params.taskId] as [string, unknown]]
+      : []),
   ];
   for (const [header, expected] of pairs) {
     const value = request.headers.get(header);

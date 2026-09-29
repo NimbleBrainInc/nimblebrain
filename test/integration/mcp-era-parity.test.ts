@@ -121,10 +121,19 @@ class JobsSource implements ToolSource {
     return { content: textContent(`${tool}:${String(input.text ?? "")}`), isError: false };
   }
 
-  /** Complete the one task still working, with `text`. */
-  settleWorking(text: string): void {
+  /** Complete every task still working with `result`. */
+  settleWorking(result: CallToolResult): void {
     for (const held of this.held.values()) {
-      if (held.task.status === "working") held.settle({ content: [{ type: "text", text }] });
+      if (held.task.status === "working") held.settle(result);
+    }
+  }
+
+  /** End every task still working with no result, as a connector that errored would. */
+  failWorking(message: string): void {
+    for (const [taskId, held] of this.held) {
+      if (held.task.status !== "working") continue;
+      held.task = { ...held.task, status: "failed", lastUpdatedAt: new Date().toISOString() };
+      this.fail.get(taskId)?.(new Error(message));
     }
   }
 
@@ -153,7 +162,8 @@ class JobsSource implements ToolSource {
       task,
       result,
       settle: (r) => {
-        held.task = { ...held.task, status: "completed", lastUpdatedAt: new Date().toISOString() };
+        const status = r.isError ? "failed" : "completed";
+        held.task = { ...held.task, status, lastUpdatedAt: new Date().toISOString() };
         settle(r);
       },
     };
@@ -205,8 +215,11 @@ let handle: ServerHandle;
 let workDir: string;
 let jobs: JobsSource;
 
-function mcpUrl(): URL {
-  return new URL(`http://localhost:${handle.port}/mcp/${TEST_WORKSPACE_ID}`);
+/** A second workspace the dev identity belongs to, with a source of the same name. */
+const OTHER_WORKSPACE_ID = "ws_parity_other";
+
+function mcpUrl(wsId: string = TEST_WORKSPACE_ID): URL {
+  return new URL(`http://localhost:${handle.port}/mcp/${wsId}`);
 }
 
 beforeAll(async () => {
@@ -228,6 +241,8 @@ beforeAll(async () => {
   );
   await app.start();
   registry.addSource(app);
+  await provisionTestWorkspace(runtime, OTHER_WORKSPACE_ID, "Other");
+  runtime.getRegistryForWorkspace(OTHER_WORKSPACE_ID).addSource(new JobsSource());
   handle = startServer({ runtime, port: 0 });
 });
 
@@ -332,13 +347,13 @@ const MODERN_VERSION = "2026-07-28";
 async function modernPost(
   method: string,
   params: Record<string, unknown>,
-  opts: { as?: "owner" | "other"; optIn?: boolean; name?: string } = {},
+  opts: { as?: "owner" | "other"; optIn?: boolean; name?: string; wsId?: string } = {},
 ): Promise<{
   status: number;
   body: { result?: Record<string, unknown>; error?: { code: number } };
 }> {
   const name = opts.name ?? ((params.name ?? params.taskId ?? params.uri) as string | undefined);
-  const res = await fetch(mcpUrl(), {
+  const res = await fetch(mcpUrl(opts.wsId), {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -453,7 +468,7 @@ describe.each([
   it("runs a task to completion", async () => {
     const taskId = await d.startTask(`${SOURCE}__research`);
     expect(await d.status(taskId)).toBe("working");
-    jobs.settleWorking("researched");
+    jobs.settleWorking({ content: [{ type: "text", text: "researched" }] });
     expect(await d.status(taskId)).toBe("completed");
     expect(await d.result(taskId)).toEqual({ content: [{ type: "text", text: "researched" }] });
   });
@@ -540,6 +555,50 @@ describe("/mcp/<wsId> tasks on 2026-07-28", () => {
   it("does not serve tasks/update: a task that asks for input is not supported", async () => {
     const { body } = await modernPost("tasks/update", { taskId: "t", inputResponses: {} });
     expect(body.error?.code).toBe(-32601);
+  });
+
+  it("refuses a poll at another workspace's URL, where the same source name runs", async () => {
+    const created = await modernResult(
+      "tools/call",
+      { name: `${SOURCE}__research`, arguments: {} },
+      { optIn: true },
+    );
+    const taskId = String(created.taskId);
+    try {
+      const elsewhere = modernResult("tasks/get", { taskId }, { wsId: OTHER_WORKSPACE_ID });
+      expect(await errorCode(elsewhere)).toBe(-32602);
+    } finally {
+      await modernResult("tasks/cancel", { taskId });
+    }
+  });
+
+  it("inlines a tool's isError result as completed: the tool answered", async () => {
+    const created = await modernResult(
+      "tools/call",
+      { name: `${SOURCE}__research`, arguments: {} },
+      { optIn: true },
+    );
+    const error: CallToolResult = {
+      content: [{ type: "text", text: "no such topic" }],
+      isError: true,
+    };
+    jobs.settleWorking(error);
+    const got = await modernResult("tasks/get", { taskId: String(created.taskId) });
+    expect(got.status).toBe("completed");
+    expect(got.result).toEqual(error);
+  });
+
+  it("inlines a JSON-RPC error for a task that ended with no result", async () => {
+    const created = await modernResult(
+      "tools/call",
+      { name: `${SOURCE}__research`, arguments: {} },
+      { optIn: true },
+    );
+    jobs.failWorking("connector went away");
+    const got = await modernResult("tasks/get", { taskId: String(created.taskId) });
+    expect(got.status).toBe("failed");
+    expect(got.result).toBeUndefined();
+    expect(got.error).toEqual({ code: -32603, message: "connector went away" });
   });
 
   it("refuses a poll whose Mcp-Name header does not name the task", async () => {
