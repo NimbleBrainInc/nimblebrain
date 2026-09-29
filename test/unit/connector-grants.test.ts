@@ -13,6 +13,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { saveComposioConnection } from "../../src/connectors/providers/composio/connection.ts";
+import { createComposioProvider } from "../../src/connectors/providers/composio/provider.ts";
+import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { PermissionStore } from "../../src/permissions/permission-store.ts";
@@ -47,6 +50,8 @@ interface Harness {
 async function buildHarness(opts: {
   identity?: UserIdentity | null;
   personalConnectors?: string[];
+  /** Personal connectors brokered by Composio, keyed by the catalog connector id. */
+  composioConnectors?: string[];
   memberOfShared?: boolean;
   /** Same-pod probe result — `true` makes every listed connector read `running`. */
   connectorRunning?: boolean;
@@ -77,8 +82,21 @@ async function buildHarness(opts: {
     });
   }
 
+  for (const connectorId of opts.composioConnectors ?? []) {
+    await connectorStore.add(ALICE.id, {
+      url: `https://composio.example/${connectorId}`,
+      serverName: slugifyServerName(connectorId),
+      ui: null,
+      brokered: { provider: "composio", connectorId },
+    });
+  }
+  const composio = createComposioProvider();
+
   const runtime = {
     getWorkDir: () => workDir,
+    getManagedConnectorRegistry: () => ({
+      get: (id: string) => (id === "composio" ? composio : undefined),
+    }),
     getPermissionStore: () => store,
     getWorkspaceStore: () => workspaceStore,
     // list_personal_connectors enriches display metadata from the catalog; an
@@ -223,6 +241,31 @@ describe("manage_connectors — personal-connector grants", () => {
     expect(granola?.identity).toEqual({ email: "alice@vendor.example", name: "Alice V" });
     expect(notion?.state).toBe("running");
     expect(notion?.identity).toBeUndefined();
+  });
+
+  test("list_personal_connectors names the account a Composio connection recorded", async () => {
+    h = await buildHarness({ composioConnectors: ["com.google/gmail", "com.slack/slack"] });
+    const owner = { type: "user", userId: ALICE.id } as const;
+    const base = {
+      connectedAccountId: "ca_1",
+      toolkit: "gmail",
+      userId: "user:usr_alice",
+      connectedAt: "2026-01-01T00:00:00.000Z",
+      status: "ACTIVE",
+    };
+    await saveComposioConnection(h.workDir, owner, "com.google/gmail", {
+      ...base,
+      displayName: "alice@mail.example",
+    });
+    await saveComposioConnection(h.workDir, owner, "com.slack/slack", { ...base, toolkit: "slack" });
+    const res = await h.tool.handler({ action: "list_personal_connectors" });
+    const connectors = sc(res).connectors ?? [];
+    const gmail = connectors.find((c) => c.serverName === slugifyServerName("com.google/gmail"));
+    const slack = connectors.find((c) => c.serverName === slugifyServerName("com.slack/slack"));
+    expect(gmail?.state).toBe("running");
+    expect(gmail?.identity).toEqual({ name: "alice@mail.example" });
+    expect(slack?.state).toBe("running");
+    expect(slack?.identity).toBeUndefined();
   });
 
   test("all grant actions require authentication", async () => {
