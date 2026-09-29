@@ -113,6 +113,9 @@ async function buildHarness(opts: {
       getInstance: (serverName: string, wsId: string) =>
         opts.workspaceInstalls?.[serverName]?.includes(wsId) ? { serverName } : undefined,
     }),
+    // No workspace source is running, so tool listings take the
+    // installed-but-not-running path and return the policy alone.
+    getRegistryForWorkspace: () => ({ getSource: () => undefined }),
   } as unknown as Runtime;
 
   const ctx: ManageConnectorsContext = {
@@ -364,6 +367,21 @@ describe("manage_connectors — permissions when a personal connector and a work
       { delete_notes: "disallow" },
     );
     expect(await h.store.getConnector(USER_OWNER, "granola")).toEqual({});
+  });
+
+  test("list_tools_with_permissions with scope 'identity' reads the personal policy", async () => {
+    h = await buildHarness(both(personalWs));
+    await h.store.setConnector(USER_OWNER, "granola", { delete_notes: "disallow" });
+    const res = await h.tool.handler({
+      action: "list_tools_with_permissions",
+      serverName: "granola",
+      scope: "identity",
+    });
+    expect(res.isError).toBeFalsy();
+    expect(res.structuredContent).toMatchObject({
+      scope: "user",
+      permissions: { delete_notes: "disallow" },
+    });
   });
 
   test("scope 'identity' addresses the personal connector", async () => {

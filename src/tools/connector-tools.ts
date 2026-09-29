@@ -276,7 +276,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           type: "string",
           enum: ["workspace", "identity"],
           description:
-            'For `install`: `scope: "identity"` installs the entry as a PERSONAL connector on the caller\'s own identity (no workspace) instead of into a workspace — the Profile → Connectors action. Otherwise a workspace-vs-user scope hint for `list_installed` / `list_tools` / `uninstall` / `disconnect`. For the permission actions (`get_permissions` / `set_permissions` / `list_tools_with_permissions`) it names whose policy to address: `"identity"` is the caller\'s personal connector, `"workspace"` is the connector installed in this workspace. Omitted, the workspace install wins when this workspace has one, else the caller\'s personal connector — so when both exist under one name, pass `scope: "identity"` to reach the personal one.',
+            'For `install`: `scope: "identity"` installs the entry as a PERSONAL connector on the caller\'s own identity (no workspace) instead of into a workspace — the Profile → Connectors action. Otherwise a workspace-vs-user scope hint for `list_installed` / `list_tools` / `uninstall` / `disconnect`. For the permission actions (`get_permissions` / `set_permissions` / `list_tools_with_permissions`) it names whose policy to address: `"identity"` is the caller\'s personal connector, `"workspace"` is the connector installed in this workspace. Omitted, the workspace install wins when this workspace has one, else the caller\'s personal connector — so when both exist under one name, pass `scope: "identity"` to reach the personal one. `list_tools_with_permissions` lists tools of the connector installed in this workspace, so it needs that install whatever the scope.',
         },
         tools: {
           type: "object",
@@ -2767,17 +2767,10 @@ async function resolvePermissionOwner(
   scope: string | undefined,
 ): Promise<PermissionOwner | { error: string }> {
   const noOwner = { error: "Could not resolve permission owner — sign in or pick a workspace." };
-  const hasPersonal = async (): Promise<boolean> =>
-    callerId !== null &&
-    serverName !== "" &&
-    (await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
-      callerId,
-      serverName,
-    )) !== null;
 
   if (scope === "identity") {
     if (!callerId) return noOwner;
-    if (!(await hasPersonal())) {
+    if (!(await hasPersonalConnector(ctx, callerId, serverName))) {
       return { error: `"${serverName}" is not one of your personal connectors.` };
     }
     return { scope: "user", userId: callerId };
@@ -2787,8 +2780,24 @@ async function resolvePermissionOwner(
   if (wsId && ctx.runtime.getLifecycle().getInstance(serverName, wsId) != null) {
     return { scope: "workspace", wsId };
   }
-  if (callerId && (await hasPersonal())) return { scope: "user", userId: callerId };
+  if (callerId && (await hasPersonalConnector(ctx, callerId, serverName))) {
+    return { scope: "user", userId: callerId };
+  }
   return wsId ? { scope: "workspace", wsId } : noOwner;
+}
+
+/** Whether `serverName` is one of the caller's personal connectors. */
+async function hasPersonalConnector(
+  ctx: ManageConnectorsContext,
+  callerId: string,
+  serverName: string,
+): Promise<boolean> {
+  if (serverName === "") return false;
+  const ref = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
+    callerId,
+    serverName,
+  );
+  return ref !== null;
 }
 
 async function handleGetPermissions(
@@ -2872,10 +2881,7 @@ async function handleSetPermissions(
         (refused.structuredContent as { error?: string } | undefined)?.error ===
           "permission_denied" &&
         callerId !== null &&
-        (await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).get(
-          callerId,
-          serverName,
-        )) !== null;
+        (await hasPersonalConnector(ctx, callerId, serverName));
       if (!personal) return refused;
       return {
         ...refused,
