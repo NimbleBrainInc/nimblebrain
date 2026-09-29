@@ -737,8 +737,9 @@ export async function handleRun(
   }
 
   // Run now runs a disabled automation (see `Scheduler.runNow`); say so, since
-  // its schedule and events will not fire it again.
-  const enabled = automation.enabled;
+  // its schedule and events will not fire it again. Read after the run settles:
+  // the run itself can disable it (failure auto-disable, token budget).
+  const enabled = findByName(ctx.definitions(), name)?.enabled ?? automation.enabled;
   const disabledNote = enabled
     ? ""
     : ` "${name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;

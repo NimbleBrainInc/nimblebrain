@@ -860,6 +860,30 @@ describe("handleRun", () => {
 		expect(result.message).toBeUndefined();
 	});
 
+	test("reports enabled as it stands after the run, when the run disabled it", async () => {
+		// A run that trips the failure auto-disable or the token budget leaves
+		// the automation disabled; the response must say so.
+		const base = makeCtx();
+		const ctx = makeCtx({
+			runNow: async (id) => {
+				const run = await base.runNow(id);
+				const defs = loadDefs();
+				defs.get(id)!.enabled = false;
+				saveDefs(defs);
+				return run;
+			},
+		});
+		handleCreate(createArgs("Trips", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+
+		const result = await handleRun({ name: "Trips" }, ctx);
+
+		if (!("run" in result)) {
+			throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
+		}
+		expect(result.enabled).toBe(false);
+		expect(result.message).toContain("is disabled");
+	});
+
 	test("a disabled automation's dispatched envelope says it is disabled", async () => {
 		let resolveRun: ((value: AutomationRun | null) => void) | undefined;
 		const runPromise = new Promise<AutomationRun | null>((resolve) => {
