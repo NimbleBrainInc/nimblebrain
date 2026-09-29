@@ -73,7 +73,7 @@ function appendLoadError(container: HTMLElement, entry: PlacementEntry, err: unk
 function appendLoading(container: HTMLElement, entry: PlacementEntry): HTMLElement {
   const box = document.createElement("div");
   box.setAttribute("role", "status");
-  box.className = "flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground";
+  box.className = "flex items-center justify-center h-full gap-2 p-6 text-sm text-muted-foreground";
   const spinner = document.createElement("span");
   spinner.className =
     "inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent";
