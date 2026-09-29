@@ -97,6 +97,7 @@ and disables the editor when it is `false`:
 ```js
 // ui://settings. `ctx` is the hostContext from the ui/initialize result,
 // or the params of a ui/notifications/host-context-changed notification.
+// `callTool` stands for your SDK's tool call (the bridge's `tools/call`).
 function applyHostContext(ctx) {
   if (!ctx.connector) return; // a change that did not touch the flag
   const canManage = ctx.connector.canManage === true;
