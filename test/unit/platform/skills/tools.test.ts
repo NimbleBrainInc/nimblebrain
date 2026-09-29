@@ -29,7 +29,7 @@ import type {
 import { createSkillsSource } from "../../../../src/platform/skills/source.ts";
 import { parseSkillFile } from "../../../../src/skills/loader.ts";
 import type { Skill } from "../../../../src/skills/types.ts";
-import { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 
 // SHA-256 hex placeholder. Tests in this file exercise event projection /
 // filtering / dispatch — none verify hash math, so the actual value just

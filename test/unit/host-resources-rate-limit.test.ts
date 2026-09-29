@@ -27,7 +27,7 @@ describe("TokenBucketRateLimit.check", () => {
   });
 
   it("admits up to `burst` calls back-to-back", () => {
-    let now = 1000;
+    const now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 5, ratePerSec: 1, now: () => now });
     for (let i = 0; i < 5; i++) {
       expect(() => rl.check("ws_a", "connector_x")).not.toThrow();
@@ -35,7 +35,7 @@ describe("TokenBucketRateLimit.check", () => {
   });
 
   it("rejects the (burst+1)th call within the same instant", () => {
-    let now = 1000;
+    const now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 3, ratePerSec: 1, now: () => now });
     rl.check("ws_a", "connector_x");
     rl.check("ws_a", "connector_x");
@@ -44,7 +44,7 @@ describe("TokenBucketRateLimit.check", () => {
   });
 
   it("rejected calls throw McpError with -32004 and retryAfterMs", () => {
-    let now = 1000;
+    const now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 1, ratePerSec: 10, now: () => now });
     rl.check("ws_a", "connector_x");
     let caught: ProtocolError | null = null;
@@ -76,7 +76,7 @@ describe("TokenBucketRateLimit.check", () => {
   });
 
   it("isolates buckets per (workspaceId, connectorId)", () => {
-    let now = 1000;
+    const now = 1000;
     const rl = new TokenBucketRateLimit({ burst: 1, ratePerSec: 1, now: () => now });
     rl.check("ws_a", "connector_x");
     // Different workspace — independent bucket, admits immediately.

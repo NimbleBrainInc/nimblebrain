@@ -20,7 +20,7 @@ import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { InstructionsStore } from "../../../src/instructions/index.ts";
 import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
-import { McpSource } from "../../../src/tools/mcp-source.ts";
+import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 

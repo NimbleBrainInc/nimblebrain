@@ -11,7 +11,7 @@ import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import { McpSource } from "../../src/tools/mcp-source.ts";
+import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import {
   installTestCredentialStore,

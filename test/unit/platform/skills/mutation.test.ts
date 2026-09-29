@@ -29,7 +29,7 @@ import { runWithRequestContext } from "../../../../src/runtime/request-context.t
 import { parseSkillContent } from "../../../../src/skills/loader.ts";
 import { selectLayer3Skills } from "../../../../src/skills/select.ts";
 import { MAX_SKILL_BODY_CHARS } from "../../../../src/skills/truncate.ts";
-import { McpSource } from "../../../../src/tools/mcp-source.ts";
+import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import { surfaceTools } from "../../../../src/tools/surfacing.ts";
 import { WorkspaceContext } from "../../../../src/workspace/context.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
