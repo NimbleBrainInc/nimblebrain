@@ -29,7 +29,6 @@ import type {
   BrokeredRef,
   ConnectorInstance,
   ConnectorRef,
-  ConnectorUiMeta,
   RemoteTransportConfig,
 } from "../connectors/runtime/types.ts";
 import { uninstallWorkspaceConnector } from "../connectors/runtime/uninstall.ts";
@@ -1643,15 +1642,7 @@ async function handleInstallRemoteOAuth(
 
   // Dedup (which self-heals an orphaned workspace.json entry) short-circuits
   // before any expensive wiring so a re-click doesn't burn a brokered session.
-  const dupResult = await handleDuplicateInstall(
-    ctx,
-    wsId,
-    ws,
-    entry,
-    action,
-    serverName,
-    trustedUi,
-  );
+  const dupResult = await handleDuplicateInstall(ctx, wsId, ws, entry, action, serverName, trusted);
   if (dupResult) return dupResult;
 
   // Fresh-install: resolve the wiring now that we know we're going to commit.
@@ -2222,7 +2213,7 @@ async function handleDuplicateInstall(
   entry: CatalogListing,
   action: RemoteOAuthInstall,
   serverName: string,
-  trustedUi: ConnectorUiMeta | undefined,
+  trusted: ConnectorCatalogEntry | null,
 ): Promise<ToolResult | null> {
   const lifecycle = ctx.runtime.getLifecycle();
   const dup = ws.connectors.find((b) => {
@@ -2236,12 +2227,13 @@ async function handleDuplicateInstall(
   // uninstall that didn't clean workspace.json). Re-seed instead of reporting
   // alreadyInstalled — the latter would skip seedInstance and fail the next
   // OAuth initiate. The host UI comes from the catalog, as it does at boot
-  // (`catalog-ui.ts`), not from the copy the original install stored.
+  // (`catalog-ui.ts`), not from the copy the original install stored; with no
+  // catalog entry, the stored copy is all there is.
   if (!lifecycle.getInstance(dupServerName, wsId)) {
     await lifecycle.seedInstance(
       dupServerName,
       action.url,
-      { ...dup, ui: trustedUi ?? null },
+      trusted ? { ...dup, ui: trusted.ui ?? null } : dup,
       undefined,
       wsId,
     );
