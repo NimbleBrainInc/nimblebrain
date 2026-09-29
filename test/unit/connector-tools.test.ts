@@ -1247,6 +1247,21 @@ describe("manage_connectors — disconnect applies only to a sign-in", () => {
     );
   });
 
+  test("a connection that never finished connecting is still resettable, whatever its credential", async () => {
+    // The header's Cancel on a connector wedged mid-connect calls disconnect. Only an
+    // ESTABLISHED connection with no sign-in is refused.
+    await seedWith({ type: "streamable-http", auth: { type: "provider", provider: "minted" } });
+    const instance = h.lifecycle.getInstance(STUB_SERVER_NAME, h.wsId) as { state: string };
+    instance.state = "starting";
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "disconnect",
+      serverName: STUB_SERVER_NAME,
+    });
+    expect((result.content?.[0] as { text?: string } | undefined)?.text ?? "").not.toContain(
+      "no sign-in to disconnect",
+    );
+  });
+
   test("a stored static credential is not", async () => {
     await seedWith({ type: "streamable-http", auth: { type: "bearer", token: "t" } });
     expect(await entryFlag()).toBe(false);
