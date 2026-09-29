@@ -211,7 +211,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
     conversationMeta,
     conversationKey,
   } = useChatContext();
-  const { availableModels, newConversationModel } = useChatConfigContext();
+  const { availableModels, newConversationModel, fileLimits } = useChatConfigContext();
   const models = useMemo(() => toPickerModels(availableModels), [availableModels]);
 
   const displayTitle = deriveDisplayTitle(title, messages);
@@ -337,6 +337,7 @@ export const ChatPanel = forwardRef<ChatPanelRef, ChatPanelProps>(function ChatP
           pendingModel={pendingModel}
           onPendingModelChange={setPendingModel}
           onNewConversationWithModel={handleNewChatWithModel}
+          fileLimits={fileLimits}
         />
       </div>
 

@@ -14,7 +14,7 @@ import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
 import { toSlug, toWsId } from "../lib/workspace-slug";
-import type { AppContext, ConfigInfo, ToolCallResult } from "../types";
+import type { AppContext, ConfigInfo, FileLimits, ToolCallResult } from "../types";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,8 @@ export interface ChatConfigContextValue {
   availableModels?: ConfigInfo["availableModels"];
   refreshConfig: () => void;
   preferences: ConfigInfo["preferences"];
+  /** Attachment limits from the bootstrap; instance config, fixed at startup. */
+  fileLimits?: FileLimits;
   currentUserId?: string;
 }
 
@@ -105,6 +107,7 @@ export interface ChatProviderProps {
     newConversationModel?: string;
     availableModels?: ConfigInfo["availableModels"];
     preferences?: ConfigInfo["preferences"];
+    fileLimits?: FileLimits;
   };
   /** Current user's ID (from bootstrap). */
   currentUserId?: string;
@@ -269,6 +272,10 @@ export function ChatProvider({
     initialConfig?.preferences,
   );
 
+  // Not refreshed by `fetchConfig`: `get_config` does not carry it, and the
+  // limits are instance config that does not change while the shell is open.
+  const fileLimits = initialConfig?.fileLimits;
+
   const fetchConfig = useCallback(() => {
     callTool("nb", "get_config")
       .then((result) => {
@@ -315,6 +322,7 @@ export function ChatProvider({
       refreshConfig: fetchConfig,
       preferences,
       currentUserId,
+      fileLimits,
     }),
     [
       configuredProviders,
@@ -323,6 +331,7 @@ export function ChatProvider({
       fetchConfig,
       preferences,
       currentUserId,
+      fileLimits,
     ],
   );
 

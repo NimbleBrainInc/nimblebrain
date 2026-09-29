@@ -88,6 +88,36 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     ]);
   });
 
+  it("stores more files than a chat message may carry: an upload is not a message", async () => {
+    const form = new FormData();
+    for (let i = 0; i < 12; i++) {
+      form.append("files", new Blob([`file ${i}`], { type: "text/plain" }), `f${i}.txt`);
+    }
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
+      method: "POST",
+      body: form,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.files).toHaveLength(12);
+  });
+
+  it("refuses an upload past the per-upload file cap, naming the count and the limit", async () => {
+    const form = new FormData();
+    for (let i = 0; i < 101; i++) {
+      form.append("files", new Blob(["x"], { type: "text/plain" }), `f${i}.txt`);
+    }
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/resources`, {
+      method: "POST",
+      body: form,
+    });
+    expect(res.status).toBe(413);
+    const body = await res.json();
+    expect(body.error).toBe("payload_too_large");
+    expect(body.message).toBe("Too many files: 101 in one upload; the limit is 100.");
+    expect(body.details).toEqual({ count: 101, limit: 100 });
+  });
+
   it("rejects an over-per-file-cap upload with structured details", async () => {
     const big = new Blob([new Uint8Array(PER_FILE_LIMIT + 1)], { type: "text/plain" });
     const form = new FormData();

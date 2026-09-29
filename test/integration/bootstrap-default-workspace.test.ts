@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { handleBootstrap } from "../../src/api/handlers.ts";
+import { resolveFeatures } from "../../src/config/features.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -189,5 +190,28 @@ describe("bootstrap — default focus", () => {
       expect(ws.isPersonal).toBe(ws.id === body.activeWorkspace);
     }
     expect(body.workspaces.filter((w) => w.isPersonal)).toHaveLength(1);
+  });
+});
+
+describe("bootstrap — attachment limits", () => {
+  const identity = {
+    id: "user_limits",
+    email: "user_limits@example.test",
+    displayName: "Limits",
+    orgRole: "member" as const,
+    preferences: {},
+  };
+
+  test("carries the files config when file context is on", async () => {
+    const res = await handleBootstrap(runtime, identity, resolveFeatures({ fileContext: true }));
+    const body = (await res.json()) as { config: { files?: unknown } };
+    const { maxFileSize, maxTotalSize, maxFilesPerMessage } = runtime.getFilesConfig();
+    expect(body.config.files).toEqual({ maxFileSize, maxTotalSize, maxFilesPerMessage });
+  });
+
+  test("omits it when file context is off", async () => {
+    const res = await handleBootstrap(runtime, identity, resolveFeatures({ fileContext: false }));
+    const body = (await res.json()) as { config: { files?: unknown } };
+    expect(body.config.files).toBeUndefined();
   });
 });
