@@ -576,8 +576,8 @@ export interface AutomationsCancelOutput {
 
 /**
  * A stored automation, as `automations__create` and `automations__update`
- * return it. Mirror of `Automation` (`src/platform/automations/types.ts`); the
- * handlers' return annotations check the domain type against it.
+ * return it. Mirror of `Automation` (`src/platform/automations/types.ts`),
+ * held to it by `src/platform/automations/output-types-drift-guard.ts`.
  */
 export interface AutomationRecord {
   id: string;

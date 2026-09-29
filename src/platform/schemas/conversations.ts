@@ -104,6 +104,11 @@ export const ConversationsExportInput = Type.Object(
 );
 export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
 
+// ── Output types ────────────────────────────────────────────────────────
+//
+// The display shapes are declared here, where the handlers' outputs name
+// them; `jsonl-reader.ts` builds them and re-exports them for its callers.
+
 /** What `conversations__fork` returns: a summary of the new conversation. */
 export interface ConversationsForkOutput {
   id: string;
@@ -116,11 +121,6 @@ export interface ConversationsForkOutput {
   lastModel: string | null;
   preview: string;
 }
-
-// ── Output types ────────────────────────────────────────────────────────
-//
-// The display shapes are declared here, where the handlers' outputs name
-// them; `jsonl-reader.ts` builds them and re-exports them for its callers.
 
 /**
  * A single chat turn as it should be rendered. One per `user.message` event
