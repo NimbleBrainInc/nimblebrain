@@ -260,17 +260,17 @@ describe("getAvailableModels", () => {
   });
 
   it("excludes deprecated models from the picker", () => {
-    // gemini-3-pro-preview was retired by Google 2026-03-09. It stays in the
+    // gpt-5.3-chat-latest was retired by OpenAI 2026-08-10. It stays in the
     // catalog (so existing references still resolve for cost/display) but
     // must never be offered as a selectable model.
-    const deprecated = getModelByString("google:gemini-3-pro-preview");
+    const deprecated = getModelByString("openai:gpt-5.3-chat-latest");
     expect(deprecated?.deprecated).toBe(true);
 
-    const result = getAvailableModels({ google: {} });
-    expect(result.google.length).toBeGreaterThan(0);
-    expect(result.google.some((m) => m.id === "gemini-3-pro-preview")).toBe(false);
+    const result = getAvailableModels({ openai: {} });
+    expect(result.openai.length).toBeGreaterThan(0);
+    expect(result.openai.some((m) => m.id === "gpt-5.3-chat-latest")).toBe(false);
     // The live successor is still offered.
-    expect(result.google.some((m) => m.id === "gemini-3.1-pro-preview")).toBe(true);
+    expect(result.openai.some((m) => m.id === "gpt-5.6-sol")).toBe(true);
   });
 });
 
@@ -434,13 +434,14 @@ describe("Google thinking support", () => {
     // other. These rows are transcribed from Google's tables; changing one
     // should require changing this list and citing the source.
     const expected: Record<string, string[]> = {
+      "gemini-3.8-flash": ["low", "medium", "high"],
+      "gemini-3.7-flash": ["low", "medium", "high"],
       "gemini-3.6-flash": ["minimal", "low", "medium", "high"],
       "gemini-3.5-flash": ["minimal", "low", "medium", "high"],
       "gemini-3.5-flash-lite": ["minimal", "low", "medium", "high"],
       "gemini-3-flash-preview": ["minimal", "low", "medium", "high"],
       "gemini-3.1-flash-lite": ["minimal", "low", "medium", "high"],
       "gemini-3.1-pro-preview": ["low", "medium", "high"],
-      "gemini-3-pro-preview": ["low", "high"],
       "gemini-3.1-flash-lite-image": ["minimal", "high"],
     };
     for (const [id, levels] of Object.entries(expected)) {

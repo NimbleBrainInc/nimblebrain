@@ -2060,17 +2060,18 @@ describe("AgentEngine", () => {
       });
 
       it("picks a level the specific Gemini 3 model accepts", async () => {
-        // gemini-3-pro-preview supports only low and high — and `medium` is the
-        // platform default, so an ungated mapping 400s on a stock install.
+        // gemini-3.1-flash-lite-image supports only minimal and high — and
+        // `medium` is the platform default, so an ungated mapping 400s on a
+        // stock install.
         expect(
           (
-            await providerOptionsFor("google:gemini-3-pro-preview", {
+            await providerOptionsFor("google:gemini-3.1-flash-lite-image", {
               mode: "effort",
               effort: "medium",
               source: "operator",
             })
           ).google?.thinkingConfig,
-        ).toEqual({ thinkingLevel: "low" });
+        ).toEqual({ thinkingLevel: "minimal" });
         // A model that does offer medium keeps it.
         expect(
           (
@@ -2106,54 +2107,53 @@ describe("AgentEngine", () => {
       });
 
       it("lets the provider default stand when the fallback tier isn't offered", async () => {
-        // gemini-3-pro-preview offers only {low, high}; the platform fallback
-        // is medium. Stepping down to `low` would make a tier nobody chose
-        // override Google's own default (high) — and it inverted against
-        // `off`, which finds no `minimal`, sends nothing, and gets high. The
-        // default path asking for less reasoning than `off` is plainly wrong.
-        const dflt = await providerOptionsFor("google:gemini-3-pro-preview", {
+        // gemini-3.1-flash-lite-image offers only {minimal, high}; the platform
+        // fallback is medium. Stepping down would make a tier nobody chose
+        // override Google's own default, so the default path sends nothing.
+        const dflt = await providerOptionsFor("google:gemini-3.1-flash-lite-image", {
           mode: "effort",
           effort: "medium",
           source: "platform",
         });
-        const off = await providerOptionsFor("google:gemini-3-pro-preview", { mode: "off" });
         expect(dflt).toEqual({});
+        // Likewise `off` on a model with no `minimal` (gemini-3.1-pro-preview)
+        // finds nothing to send, so the default path never asks for less
+        // reasoning than `off` does.
+        const off = await providerOptionsFor("google:gemini-3.1-pro-preview", { mode: "off" });
         expect(off).toEqual({});
 
         // An operator who names a tier still gets the nearest one offered —
         // they asked, so stepping is honoring the request, not inventing it.
-        const chosen = await providerOptionsFor("google:gemini-3-pro-preview", {
+        const chosen = await providerOptionsFor("google:gemini-3.1-flash-lite-image", {
           mode: "effort",
           effort: "medium",
           source: "operator",
         });
-        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "low" });
+        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "minimal" });
       });
 
       it("does not let a bare budget pick a Gemini 3 level", async () => {
         // A token budget says nothing about depth, so the tier riding along
         // with it is the platform's. Letting it choose a level made
-        // `thinkingBudgetTokens: 8000` downgrade gemini-3-pro-preview to `low`
-        // (Google's default is high), and on flash-lite-image pick `minimal` —
+        // `thinkingBudgetTokens: 8000` on flash-lite-image pick `minimal` —
         // byte-identical to `off`, so setting a thinking budget turned thinking
         // off. Reachable from the panel: the budget field renders on Default.
-        for (const model of ["google:gemini-3-pro-preview", "google:gemini-3.1-flash-lite-image"]) {
-          const po = await providerOptionsFor(model, {
-            mode: "enabled",
-            budgetTokens: 8000,
-            effort: DEFAULT_THINKING_EFFORT,
-            source: "mode",
-          });
-          expect(`${model}: ${JSON.stringify(po)}`).toBe(`${model}: {}`);
-        }
+        const model = "google:gemini-3.1-flash-lite-image";
+        const po = await providerOptionsFor(model, {
+          mode: "enabled",
+          budgetTokens: 8000,
+          effort: DEFAULT_THINKING_EFFORT,
+          source: "mode",
+        });
+        expect(po).toEqual({});
         // An operator who names the tier still gets the nearest offered.
-        const chosen = await providerOptionsFor("google:gemini-3-pro-preview", {
+        const chosen = await providerOptionsFor(model, {
           mode: "enabled",
           budgetTokens: 8000,
           effort: "medium",
           source: "operator",
         });
-        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "low" });
+        expect(chosen.google?.thinkingConfig).toEqual({ thinkingLevel: "minimal" });
       });
 
       it("warns once, then stays silent, for an unmapped Google model", async () => {
@@ -2174,12 +2174,12 @@ describe("AgentEngine", () => {
           expect(warnings.filter((w) => w.includes("gemini-flash-latest"))).toHaveLength(1);
           // A configured mode with no named depth is still operator intent,
           // and it reports — the tier is the platform's, the instruction isn't.
-          await providerOptionsFor("google:gemini-robotics-er-1.6-preview", {
+          await providerOptionsFor("google:deep-research-preview-04-2026", {
             mode: "effort",
             effort: DEFAULT_THINKING_EFFORT,
             source: "mode",
           });
-          expect(warnings.filter((w) => w.includes("gemini-robotics"))).toHaveLength(1);
+          expect(warnings.filter((w) => w.includes("deep-research-preview"))).toHaveLength(1);
 
           // The platform's own fallback isn't an instruction, so it stays quiet.
           await providerOptionsFor("google:gemini-omni-flash-preview", {
@@ -2205,9 +2205,9 @@ describe("AgentEngine", () => {
       });
 
       it("stays silent on off when a Gemini 3 model has no minimal level", async () => {
-        // gemini-3-pro-preview offers only low and high. Stepping up to `low`
+        // gemini-3.1-pro-preview offers no minimal. Stepping up to `low`
         // would answer "don't reason" with an instruction to reason.
-        expect(await providerOptionsFor("google:gemini-3-pro-preview", { mode: "off" })).toEqual(
+        expect(await providerOptionsFor("google:gemini-3.1-pro-preview", { mode: "off" })).toEqual(
           {},
         );
         // A model that does offer minimal still gets it.

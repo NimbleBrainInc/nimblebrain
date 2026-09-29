@@ -22,6 +22,13 @@ const OUTPUT_PATH = join(dirname(new URL(import.meta.url).pathname), "catalog-da
 const MANUAL_EXCLUSIONS = new Set<string>([
   // Anthropic's premium research tier ($10/$50 per 1M) — not offered on the platform.
   "anthropic:claude-fable-5",
+  "anthropic:claude-fable-5-1",
+  // OpenAI's Daybreak tier is gated per organization and not enabled for the
+  // platform's account: blue returns "The requested Daybreak tier is not enabled
+  // for this organization or project", red "does not exist or you do not have
+  // access to it". Listing them would only offer models that fail on every call.
+  "openai:gpt-daybreak-blue-latest",
+  "openai:gpt-daybreak-red-latest",
   // Priced and listed upstream, but the Chat Completions endpoint refuses it
   // outright: `400 "Multi Agent requests are not allowed on chat completions"`,
   // returned ahead of even the billing gate. The runtime speaks Chat Completions
@@ -50,20 +57,7 @@ const MANUAL_LIMIT_OVERRIDES: Record<string, { context?: number; output?: number
 // down. The second case is easy to miss and leaves a permanently dead entry:
 // `buildProviderModels` iterates only models still present upstream, so an id
 // that no longer exists there can never match again.
-const MANUAL_DEPRECATIONS = new Set<string>([
-  // Google shutdown 2026-03-09 (successor: gemini-3.1-pro-preview)
-  "google:gemini-3-pro-preview",
-  // OpenAI shutdown 2026-08-10 (successor: gpt-5.6-sol)
-  "openai:gpt-5.2-chat-latest",
-  "openai:gpt-5.3-chat-latest",
-  // OpenAI shutdown 2026-10-23
-  "openai:gpt-4-turbo",
-  "openai:gpt-4.1-nano",
-  "openai:gpt-4o-2024-05-13",
-  "openai:o1-pro",
-  "openai:o3-mini",
-  "openai:o4-mini",
-]);
+const MANUAL_DEPRECATIONS = new Set<string>([]);
 
 export interface RawModel {
   id: string;

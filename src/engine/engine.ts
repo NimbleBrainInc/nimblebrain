@@ -180,7 +180,7 @@ function toXaiEffort(effort: ThinkingEffort): XAIEffort {
  * The deepest level at or below the one requested that this model accepts.
  *
  * Support is per-model, not per-generation, so an operator's tier may simply
- * not exist here — `gemini-3-pro-preview` has no `medium`. Only steps down:
+ * not exist here — `gemini-3.1-flash-lite-image` has no `medium`. Only steps down:
  * stepping up would think harder than the operator asked for, which is a worse
  * surprise than not honoring the tier, and no current row would ever reach it
  * anyway (every level set contains `minimal` or `low`).
