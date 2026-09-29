@@ -3456,10 +3456,9 @@ export class Runtime {
       ...identityTools.map(toToolSchema),
       // Personal connectors carry the reserved marker. With workspace tools now
       // bare, a workspace `gmail` and the caller's personal `gmail` would other-
-      // wise be the same string — a collision install-time checks cannot prevent,
-      // since the guard only sees the *caller's* connectors and says nothing
-      // about another member's. Marking the rare side keeps both reachable and
-      // tells the model whose credentials it is about to spend.
+      // wise be the same string, and both are allowed to exist. Marking the rare
+      // side keeps both reachable and tells the model whose credentials it is
+      // about to spend.
       ...personalTools.map((t) => ({
         ...t,
         name: personalConnectorWireName(t.name),
