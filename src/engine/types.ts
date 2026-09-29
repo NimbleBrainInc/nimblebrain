@@ -546,13 +546,14 @@ export interface EngineConfig {
   maxOutputTokens: number;
   /**
    * Cap on the input tokens the whole run may spend, summed over every model
-   * call. `maxInputTokens` bounds one call's context; this bounds the run.
-   * Before each call after the first, the engine ends the run with stopReason
-   * `max_input_tokens` when the tokens already spent plus the previous call's
-   * input would pass the cap. History grows between calls, so the previous
-   * call is a floor on the next and the run never starts a call it cannot
-   * afford; a mid-turn compaction can shrink it, which at worst ends the run
-   * one call early. Absent means no cap.
+   * call, as the provider reports them (cache reads and writes included, so
+   * it is a token cap, not a cost cap). `maxInputTokens` bounds one call's
+   * context; this bounds the run. Before each call the engine projects that
+   * call's input as the larger of its estimate of the prompt about to be sent
+   * and the previous call's reported input, and ends the run with stopReason
+   * `max_input_tokens` when the tokens already spent plus the projection would
+   * pass the cap. The run ends within the cap unless the estimate undercounts
+   * the prompt. Absent means no cap.
    */
   maxRunInputTokens?: number;
   /**

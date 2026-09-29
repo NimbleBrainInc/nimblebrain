@@ -145,6 +145,24 @@ describe("runtime.executeTask", () => {
     expect(seen[0]?.conversationId).toBeUndefined();
   });
 
+  it("carries maxRunInputTokens to the engine, which stops the run at the cap", async () => {
+    // A 1-token cap is below any prompt, so the engine stops before the first
+    // model call. Dropping the field anywhere between the task request and the
+    // engine config lets the run complete instead.
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
+      prompt: "score the items",
+      identity: { id: TEST_USER_ID, displayName: TEST_USER_DISPLAY },
+      maxRunInputTokens: 1,
+    });
+
+    expect(result.stopReason).toBe("max_input_tokens");
+    expect(result.usage.inputTokens).toBe(0);
+  });
+
   it("returns a deliverable and a runId on the happy path", async () => {
     // Echo model: no scripted responses → falls back to echoing the
     // last user message. The task prompt is the user message, so the

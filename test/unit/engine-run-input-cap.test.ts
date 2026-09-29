@@ -58,8 +58,8 @@ describe("AgentEngine run input cap", () => {
     const r = growingRun(6_500);
     const result = await r.run();
 
-    // Calls 1–3 spend 6,000. Call 4 would be at least 3,000 more (the previous
-    // call's size), which passes 6,500, so it never starts.
+    // Calls 1–3 spend 6,000. Call 4 is projected at 3,000 (the previous call's
+    // size outweighs the tiny prompt estimate), which passes 6,500, so it never starts.
     expect(result.stopReason).toBe("max_input_tokens");
     expect(r.modelCalls()).toBe(3);
     expect(result.usage.inputTokens).toBe(6_000);
@@ -71,6 +71,39 @@ describe("AgentEngine run input cap", () => {
     const done = r.events.find((e) => e.type === "run.done");
     expect(done?.data["stopReason"]).toBe("max_input_tokens");
     expect(done?.data["iterations"]).toBe(3);
+  });
+
+  it("projects the next call from the prompt about to be sent, not only the previous call", async () => {
+    // The provider reports a tiny input for call 1, but the tool result it
+    // triggers is ~10K tokens, so call 2's prompt alone passes a 5,000 cap.
+    // The previous call's 10 tokens would have let it through.
+    let calls = 0;
+    const model = createMockModel(() => {
+      calls++;
+      if (calls === 1) {
+        return {
+          content: [{ type: "tool-call", toolCallId: "call_1", toolName: "test__score", input: "{}" }],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "done" }], inputTokens: 10, outputTokens: 5 };
+    });
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(tools, (): ToolResult => ({ content: textContent("x".repeat(40_000)), isError: false })),
+      { emit() {} },
+    );
+    const result = await engine.run(
+      { ...baseConfig, maxRunInputTokens: 5_000 },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Score 12 items" }] }],
+      tools,
+    );
+
+    expect(result.stopReason).toBe("max_input_tokens");
+    expect(calls).toBe(1);
+    expect(result.usage.inputTokens).toBe(10);
   });
 
   it("runs to completion when no cap is set", async () => {

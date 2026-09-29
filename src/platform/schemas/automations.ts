@@ -114,8 +114,9 @@ const ManifestFields = {
     Type.Number({
       description:
         "Input tokens one run may spend in total, summed over every model call (1000 to " +
-        "1000000). The run stops with stopReason max_input_tokens rather than start a call " +
-        "that would pass it. Omit for no per-run cap.",
+        "1000000), counting cache reads. Before each model call the run stops with stopReason " +
+        "max_input_tokens if that call's projected input would pass the cap. Omit for no " +
+        "per-run cap.",
     }),
   ),
   maxRunDurationMs: Type.Optional(

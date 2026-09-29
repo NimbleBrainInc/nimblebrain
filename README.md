@@ -483,7 +483,7 @@ This section contains detailed internal architecture documentation for contribut
 
 ### Token Budget Behavior
 
-When cumulative input tokens exceed `maxInputTokens`, the engine returns immediately with `stopReason: "token_budget"`. Tool calls from the current LLM response are dropped (not executed) to avoid running tools whose results can't be processed.
+`maxInputTokens` bounds the context of one model call; the runtime windows or compacts history to fit it. A run-wide cap (an automation's **Max Input Tokens**) bounds the run: before each call the engine projects that call's input, and ends the run with `stopReason: "max_input_tokens"` if the projection would take the run past the cap. Every tool call from earlier steps has already run.
 
 ### Tiered Tool Surfacing
 

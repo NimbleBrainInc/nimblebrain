@@ -459,10 +459,11 @@ function unrecognizedStopError(
 
 /** The error for a run the engine stopped at its input-token cap. */
 function runInputCapError(spent: number, cap: number | undefined): string {
-  const limit = cap != null ? ` of its ${cap.toLocaleString("en-US")}-token cap` : "";
+  const limit = cap != null ? ` of ${cap.toLocaleString("en-US")}` : "";
   return (
-    `Stopped at its input-token cap: the run spent ${spent.toLocaleString("en-US")} input tokens${limit}, ` +
-    "and the next step would have passed it. Raise Max Input Tokens or narrow the task."
+    `Stopped at its input-token cap${limit}: the run had spent ${spent.toLocaleString("en-US")} ` +
+    "input tokens, and its next step was projected to pass the cap. Raise Max Input Tokens or " +
+    "narrow the task."
   );
 }
 

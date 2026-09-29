@@ -643,6 +643,19 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 /** Apply the transformPrompt hook when present; otherwise the system prompt verbatim. */
+/** Estimated input tokens of one model call: system prompt, messages, and tool definitions. */
+function estimatePromptTokens(
+  systemPrompt: string,
+  messages: LanguageModelV4Message[],
+  tools: LanguageModelV4FunctionTool[],
+): number {
+  return (
+    estimateMessageTokens({ role: "system", content: systemPrompt }) +
+    messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0) +
+    tools.reduce((sum, t) => sum + estimateToolDescriptionTokens(t), 0)
+  );
+}
+
 function resolveCallPrompt(config: EngineConfig, systemPrompt: string): string {
   return config.hooks?.transformPrompt ? config.hooks.transformPrompt(systemPrompt) : systemPrompt;
 }
@@ -1137,8 +1150,8 @@ export class AgentEngine {
     let lastFinishReason: FinishReason | undefined;
     // The same call's provider-native stop reason (see `EngineResult.finishReasonRaw`).
     let lastFinishReasonRaw: string | undefined;
-    // Input tokens the most recent model call reported: the floor for the next
-    // call's size, which is what the run cap is checked against.
+    // Input tokens the most recent model call reported. One half of the next
+    // call's projected size for the run cap (see `EngineConfig.maxRunInputTokens`).
     let lastCallInputTokens = 0;
     let runInputCapReached = false;
 
@@ -1166,18 +1179,6 @@ export class AgentEngine {
         // run with `run.done` stopReason "cancelled" and rethrows.
         throwIfAborted(config.signal);
 
-        // The run-wide input cap. Checked before the call rather than after,
-        // so the run never starts a call it cannot afford; the previous call's
-        // size stands in for this one's (see `EngineConfig.maxRunInputTokens`).
-        if (
-          config.maxRunInputTokens !== undefined &&
-          lastCallInputTokens > 0 &&
-          cumulativeUsage.inputTokens + lastCallInputTokens > config.maxRunInputTokens
-        ) {
-          runInputCapReached = true;
-          break;
-        }
-
         // Offer the history this loop has grown back to the caller, which may
         // return a smaller one to run with from here on (the runtime folds an
         // over-budget history into a summary — see `runtime/mid-turn-compaction`).
@@ -1201,6 +1202,19 @@ export class AgentEngine {
         const callPrompt = resolveCallPrompt(config, systemPrompt);
 
         callMessages = appendFinalStepReminder(callMessages, iteration, maxIter);
+
+        // The run-wide input cap, checked against the prompt about to be sent,
+        // before it is sent (see `EngineConfig.maxRunInputTokens`).
+        if (config.maxRunInputTokens !== undefined) {
+          const projected = Math.max(
+            lastCallInputTokens,
+            estimatePromptTokens(callPrompt, callMessages, modelTools),
+          );
+          if (cumulativeUsage.inputTokens + projected > config.maxRunInputTokens) {
+            runInputCapReached = true;
+            break;
+          }
+        }
 
         const callProviderOptions = buildThinkingProviderOptions(
           config.model,
@@ -1507,8 +1521,8 @@ export class AgentEngine {
       : iteration >= maxIter
         ? "max_iterations"
         : deriveStopReason(lastFinishReason);
-    // A cap stop breaks at the top of an iteration, before its model call, so
-    // every counted iteration is complete.
+    // A cap stop breaks before its iteration's model call, so every counted
+    // iteration is complete.
     const reportedIterations = runInputCapReached
       ? iteration
       : reportedIterationCount(iteration, maxIter);

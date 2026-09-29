@@ -38,9 +38,10 @@ export interface Automation {
   maxIterations?: number;
 
   /**
-   * Input tokens one run may spend, summed over every model call. The engine
-   * ends the run with stopReason `max_input_tokens` rather than start a call
-   * that would pass it. Unset = no per-run cap.
+   * Input tokens one run may spend, summed over every model call. Before each
+   * call the engine ends the run with stopReason `max_input_tokens` if that
+   * call's projected input would pass it (see `EngineConfig.maxRunInputTokens`).
+   * Unset = no per-run cap.
    */
   maxInputTokens?: number;
 

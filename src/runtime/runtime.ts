@@ -1515,7 +1515,7 @@ export class Runtime {
     // default. See `src/runtime/resolve-message-budget.ts`.
     const messageBudget = resolveMessageBudget({
       model: spec.model,
-      configMaxInputTokens: spec.budget.maxInputTokens ?? this.getMaxInputTokens(),
+      configMaxInputTokens: this.getMaxInputTokens(),
       systemPrompt,
       tools,
       maxOutputTokens: resolvedMaxOutputTokens,

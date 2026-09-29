@@ -114,8 +114,6 @@ export interface RunInput {
 export interface RunBudget {
   /** Per-request iteration cap; falls back to the configured default. */
   maxIterations?: number;
-  /** Per-request input-token cap, treated as a CAP; falls back to config. */
-  maxInputTokens?: number;
   /** Input tokens the whole run may spend across every model call. Absent = no cap. */
   maxRunInputTokens?: number;
 }
