@@ -153,8 +153,9 @@ const ManifestFields = {
       description:
         "Tools this automation's runs may use, as names or globs: `gmail__*` for a workspace " +
         "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
-        "run cannot activate or call a tool outside the list; the `nb__*` system tools stay " +
-        "available. Prefer a `<connector>__*` " +
+        "run cannot activate or call a tool outside the list; only nb__search and " +
+        "nb__manage_tools pass without being listed, so name any other nb__ tool a run needs " +
+        "(nb__use_skill for skills, nb__read_resource for resources). Prefer a `<connector>__*` " +
         "glob, since a connector can rename its tools. Omit or leave empty to allow every tool in the " +
         "workspace. May not name automations__create, automations__update, or automations__delete.",
     }),

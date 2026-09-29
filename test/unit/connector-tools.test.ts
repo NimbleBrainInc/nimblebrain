@@ -1263,8 +1263,8 @@ describe("deriveConnectorStatus", () => {
     ).toBe("refresh token revoked");
   });
 
-  test("not_authenticated → needs_auth", () => {
-    expect(deriveConnectorStatus({ state: "not_authenticated" }).status).toBe("needs_auth");
+  test("not_authenticated → not_connected, a resting state apart from a broken connection", () => {
+    expect(deriveConnectorStatus({ state: "not_authenticated" }).status).toBe("not_connected");
   });
 
   test("pending_auth → connecting (no statusReason — wait state, no actionable copy)", () => {

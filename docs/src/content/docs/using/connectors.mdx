@@ -30,7 +30,9 @@ A connected service is **shared by everyone in the workspace** — its tools are
 
 Installing or connecting a service requires the **admin** role in the workspace.
 
-On a connector's **Configure** page you can see who you're connected as, **Disconnect**, and review or adjust which of the connector's tools are allowed. For the kinds with a sign-in flow (**dcr**, **static**, and OAuth **composio** toolkits) disconnecting is reversible — reconnecting re-runs that flow. **provider** and **smithery** connectors have no interactive sign-in: their credential is held by the platform or the broker, so they reconnect without prompting you.
+On a connector's **Configure** page you can see who you're connected as, **Disconnect**, and review or adjust which of the connector's tools are allowed. For the kinds with a sign-in flow (**dcr**, **static**, and OAuth **composio** toolkits) disconnecting is reversible — reconnecting re-runs that flow.
+
+Disconnect is shared: it disconnects the connector for everyone in the workspace, and asks you to confirm first. The connector stays installed with its tool permissions and settings, and reads **Not connected** with a **Connect** action — a resting state, not an error. To remove it entirely, use **Uninstall**. A connection that stops working without anyone disconnecting it (the vendor revoked or expired its access) reads **Reconnect** in amber instead, because someone needs to act on it. **provider** and **smithery** connectors have no interactive sign-in: their credential is held by the platform or the broker, so they reconnect without prompting you.
 
 ## The auth kinds
 

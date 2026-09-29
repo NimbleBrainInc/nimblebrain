@@ -42,7 +42,7 @@ import type { UserIdentity } from "../identity/provider.ts";
 import { LifecycleContractError } from "../lifecycle/declaration.ts";
 import { notifyReady } from "../lifecycle/notify.ts";
 import { log } from "../observability/log.ts";
-import type { PermissionOwner } from "../permissions/permission-store.ts";
+import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
@@ -145,14 +145,28 @@ export interface StatusInputs {
   lastError?: string;
 }
 
+/** The status {@link deriveConnectorStatus} returns. */
+export type ConnectorStatus =
+  | "ready"
+  | "needs_setup"
+  | "not_connected"
+  | "needs_auth"
+  | "connecting"
+  | "failed"
+  | "starting";
+
 /**
  * Collapse a connector's underlying flags into a generic, type-agnostic
- * status for the UI. Six values:
+ * status for the UI:
  *
  *   ready          — works
  *   needs_setup    — admin must configure the operator OAuth client before
  *                     this is usable
- *   needs_auth     — workspace member must (re)authenticate (Connect / Reconnect)
+ *   not_connected  — installed with no connection: never connected, or
+ *                     disconnected on purpose. A resting state, not an error
+ *                     (Connect)
+ *   needs_auth     — a connection that worked broke without anyone asking:
+ *                     its credential was revoked or expired (Reconnect)
  *   connecting     — OAuth flow in flight
  *   failed         — connection dead with no actionable next step
  *   starting       — connection being established
@@ -167,15 +181,15 @@ export interface StatusInputs {
  * reason string for tooltips / banners.
  */
 export function deriveConnectorStatus(input: StatusInputs): {
-  status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+  status: ConnectorStatus;
   statusReason?: string;
 } {
   // 1. Setup gates everything. Operator OAuth missing → admin acts first.
   if (input.missingOperatorSetup) {
     return { status: "needs_setup", statusReason: "OAuth app not configured for this workspace." };
   }
-  // 2. Auth lifecycle. Reconnect outranks first-time connect (a token
-  //    that just expired is more disruptive than one never used).
+  // 2. Auth lifecycle. A broken connection needs someone to act; one that
+  //    was never connected, or was disconnected, is at rest.
   if (input.state === "reauth_required") {
     return {
       status: "needs_auth",
@@ -183,7 +197,7 @@ export function deriveConnectorStatus(input: StatusInputs): {
     };
   }
   if (input.state === "not_authenticated") {
-    return { status: "needs_auth", statusReason: "Connect to use this connector." };
+    return { status: "not_connected", statusReason: "Connect to use this connector." };
   }
   // 3. Transient flows.
   if (input.state === "pending_auth") {
@@ -276,7 +290,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           type: "string",
           enum: ["workspace", "identity"],
           description:
-            'For `install`: `scope: "identity"` installs the entry as a PERSONAL connector on the caller\'s own identity (no workspace) instead of into a workspace — the Profile → Connectors action. Otherwise a workspace-vs-user scope hint for `list_installed` / `list_tools` / `uninstall` / `disconnect`. For the permission actions (`get_permissions` / `set_permissions` / `list_tools_with_permissions`) it names whose policy to address: `"identity"` is the caller\'s personal connector, `"workspace"` is the connector installed in this workspace. Omitted, the workspace install wins when this workspace has one, else the caller\'s personal connector — so when both exist under one name, pass `scope: "identity"` to reach the personal one. `list_tools_with_permissions` lists tools of the connector installed in this workspace, so it needs that install whatever the scope.',
+            'For `install`: `scope: "identity"` installs the entry as a PERSONAL connector on the caller\'s own identity (no workspace) instead of into a workspace — the Profile → Connectors action. Otherwise a workspace-vs-user scope hint for `list_installed` / `list_tools` / `uninstall` / `disconnect`. For the permission actions (`get_permissions` / `set_permissions` / `list_tools_with_permissions`) it names whose policy to address: `"identity"` is the caller\'s personal connector, `"workspace"` is the connector installed in this workspace. Omitted, the workspace install wins when this workspace has one, else the caller\'s personal connector — so when both exist under one name, pass `scope: "identity"` to reach the personal one. `list_tools_with_permissions` lists the tools of whichever connector that resolves to; the personal one needs no workspace.',
         },
         tools: {
           type: "object",
@@ -638,16 +652,13 @@ type InstalledEntry = {
   };
   /**
    * Generic, type-agnostic status the UI renders without re-deriving
-   * from the underlying ConnectionState + credential probes. Six values
-   * collapse what would otherwise be ~10 specific failure modes —
+   * from the underlying ConnectionState + credential probes. A handful of
+   * values collapse what would otherwise be ~10 specific failure modes —
    * the connector-type detail (which credentials missing, which
-   * action label) is derived in the UI from the other fields.
-   *
-   * Priority when multiple flags apply: setup blocks auth blocks
-   * usage. needs_setup > needs_auth > failed > connecting/starting >
-   * ready.
+   * action label) is derived in the UI from the other fields. See
+   * {@link deriveConnectorStatus} for the values and their priority.
    */
-  status: "ready" | "needs_setup" | "needs_auth" | "connecting" | "failed" | "starting";
+  status: ConnectorStatus;
   /** Human-readable detail for status. Surfaces in tooltips / banners. */
   statusReason?: string;
 };
@@ -2681,8 +2692,10 @@ async function handleListTools(
  * resolution, instance lookup, and ownership checks. Merging them
  * into one server-side action halves the round-trips.
  *
- * The two reads themselves run in parallel (`Promise.all`); a slow
- * `tools/list` can't gate the permission read.
+ * The owner decides where the tools come from: a workspace install reads the
+ * workspace registry, a personal connector (`{scope:"user"}`) the caller's
+ * identity source, which needs no workspace. The two reads themselves run in
+ * parallel (`Promise.all`); a slow `tools/list` can't gate the permission read.
  */
 async function handleListToolsWithPermissions(
   ctx: ManageConnectorsContext,
@@ -2693,39 +2706,57 @@ async function handleListToolsWithPermissions(
 ): Promise<ToolResult> {
   if (!serverName) return errResult("serverName is required.");
 
-  const lifecycle = ctx.runtime.getLifecycle();
-  if (!wsId) return errResult("Workspace context required.");
-  if (!lifecycle.getInstance(serverName, wsId)) {
-    return errResult(`Connector "${serverName}" not installed in workspace.`);
-  }
-
   const owner = await resolvePermissionOwner(ctx, wsId, callerId, serverName, scope);
   if ("error" in owner) return errResult(owner.error);
 
-  const registry = ctx.runtime.getRegistryForWorkspace(wsId);
-  const source = registry.getSource(serverName);
-  if (!source) {
-    // Connector installed but not running. Permissions still readable
-    // (they're persisted independently of the source); return them
-    // alongside an empty tools list so the UI can render the
-    // permissions surface as "no tools currently available" without
-    // a hard error.
-    const permissions = await ctx.runtime.getPermissionStore().getConnector(owner, serverName);
-    return {
-      content: textContent("Tools: 0 (connector not running)."),
-      structuredContent: { scope: owner.scope, serverName, tools: [], permissions },
-      isError: false,
-    };
+  let source: ToolSource | undefined;
+  if (owner.scope === "user") {
+    source = await identityToolSource(ctx, owner.userId, serverName);
+  } else {
+    if (!ctx.runtime.getLifecycle().getInstance(serverName, owner.wsId)) {
+      return errResult(`Connector "${serverName}" not installed in workspace.`);
+    }
+    source = ctx.runtime.getRegistryForWorkspace(owner.wsId).getSource(serverName);
   }
+  // Connector installed but not running. Permissions still readable
+  // (they're persisted independently of the source); return them
+  // alongside an empty tools list so the UI can render the
+  // permissions surface as "no tools currently available" without
+  // a hard error.
+  const notRunning = (permissions: Record<string, ToolPolicy>): ToolResult => ({
+    content: textContent("Tools: 0 (connector not running)."),
+    structuredContent: { scope: owner.scope, serverName, tools: [], permissions },
+    isError: false,
+  });
+  if (!source) {
+    return notRunning(await ctx.runtime.getPermissionStore().getConnector(owner, serverName));
+  }
+
+  // A personal source can be registered yet unstarted (a start that stopped to
+  // wait for re-authorization), so its tools/list throws; that is the same
+  // "not running" state, not a failed request. Only the tools read is excused:
+  // a failed policy read is still an error.
+  const listTools = async (running: ToolSource): Promise<Tool[] | null> => {
+    try {
+      return await readConnectorTools(running);
+    } catch (err) {
+      if (owner.scope !== "user") throw err;
+      log.warn(
+        `[connectors] personal connector "${serverName}" could not list tools: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  };
 
   try {
     // Run the two reads in parallel — they don't depend on each
     // other and the permission store hits disk while tools/list may
     // round-trip to the connector subprocess.
     const [tools, permissions] = await Promise.all([
-      readConnectorTools(source),
+      listTools(source),
       ctx.runtime.getPermissionStore().getConnector(owner, serverName),
     ]);
+    if (tools === null) return notRunning(permissions);
     const prefix = `${serverName}__`;
     return {
       content: textContent(`Tools: ${tools.length}, ${Object.keys(permissions).length} overrides.`),
@@ -2743,6 +2774,28 @@ async function handleListToolsWithPermissions(
     };
   } catch (err) {
     return errResult(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * The caller's personal connector as a started source, or undefined when it
+ * cannot run. Starts it when cold, through the same door dispatch uses, because
+ * an identity source is warm only on a pod that has already dispatched to it or
+ * connected it. A start that fails (no credentials yet, an unreachable remote)
+ * reads as "not running", which the caller answers with the policy alone.
+ */
+async function identityToolSource(
+  ctx: ManageConnectorsContext,
+  userId: string,
+  serverName: string,
+): Promise<ToolSource | undefined> {
+  try {
+    return await ctx.runtime.getIdentityConnectorSource(userId, serverName);
+  } catch (err) {
+    log.warn(
+      `[connectors] personal connector "${serverName}" did not start for a tool listing: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return undefined;
   }
 }
 

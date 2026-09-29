@@ -129,17 +129,16 @@ export function WorkspaceOverviewPage() {
 
         {/* What needs a member here: each app's open counts, and each
             connector that needs attention. */}
-        <div className="mb-10">
-          <BriefingView
-            briefing={briefing}
-            connectors={connectorsReady ? connectors.installed : []}
-            loading={briefingLoading || !connectorsReady}
-            error={briefingError}
-            onRetry={refreshBriefing}
-            onOpen={handleBriefingOpen}
-            onOpenConnector={handleConnectorOpen}
-          />
-        </div>
+        <BriefingView
+          workspaceId={workspace.id}
+          briefing={briefing}
+          connectors={connectorsReady ? connectors.installed : []}
+          loading={briefingLoading || !connectorsReady}
+          error={briefingError}
+          onRetry={refreshBriefing}
+          onOpen={handleBriefingOpen}
+          onOpenConnector={handleConnectorOpen}
+        />
 
         <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
           Available apps

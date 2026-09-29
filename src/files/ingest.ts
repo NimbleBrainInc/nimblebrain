@@ -1,4 +1,5 @@
 import { extractText, REHYDRATE_TRUNCATED_SUFFIX } from "./extract.ts";
+import { humanSize } from "./human-size.ts";
 import type { FileStore, SaveFileResult } from "./store.ts";
 import type { ContentPart, FileConfig, FileEntry, FileReference, IngestResult } from "./types.ts";
 import { fileIdToUri } from "./uri.ts";
@@ -101,12 +102,6 @@ function isImage(mimeType: string): boolean {
 
 function isPdf(mimeType: string): boolean {
   return PDF_TYPES.has(normalizeMime(mimeType));
-}
-
-export function humanSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
 /** Per-file ingest outcome: content parts and an optional registry reference. */

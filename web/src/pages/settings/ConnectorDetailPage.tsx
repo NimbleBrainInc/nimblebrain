@@ -155,7 +155,11 @@ export function ConnectorDetailPage() {
         <OAuthConnectionSection installed={installed} canManage={canManage} onChanged={refresh} />
         <OperatorOAuthSection installed={installed} canManage={canManage} onChanged={refresh} />
         <WorkspaceSecretsSection installed={installed} canManage={canManage} />
-        <ToolPermissionsTable serverName={installed.serverName} canManage={canManage} />
+        <ToolPermissionsTable
+          serverName={installed.serverName}
+          scope="workspace"
+          canManage={canManage}
+        />
         <ConnectorSettingsSection
           serverName={installed.serverName}
           name={cat?.name ?? installed.serverName}

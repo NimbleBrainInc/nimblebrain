@@ -1,4 +1,4 @@
-import { useApp, useDataSync, useFileUpload } from "@nimblebrain/synapse/react";
+import { useApp, useDataSync, useFileUpload, useHostContext } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DetailOverlay } from "./DetailOverlay";
 import { FileGrid } from "./FileGrid";
@@ -6,13 +6,20 @@ import { collectTags, TYPE_FILTERS } from "./format";
 import { Header } from "./Header";
 import type { FileEntry, FilterKey, ListResult } from "./types";
 import { UploadRefusals } from "./UploadRefusals";
-import { readUploadRefusal, type UploadRefusal } from "./upload";
+import {
+  readUploadRefusal,
+  type UploadLimits,
+  type UploadRefusal,
+  uploadLimitHint,
+} from "./upload";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
 export function Dashboard() {
   const app = useApp();
   const { pickFiles } = useFileUpload();
+  // The host's picker enforces these; the app only states them.
+  const { uploads } = useHostContext<{ uploads?: UploadLimits }>();
 
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -124,7 +131,7 @@ export function Dashboard() {
     setError(null);
     setRefusal(null);
     try {
-      const result = await pickFiles({ multiple: true, maxSize: 26214400 });
+      const result = await pickFiles({ multiple: true });
       // pickFiles returns [] if the user cancelled, or the persisted FileEntry
       // records if upload succeeded. The host's POST /v1/workspaces/:wsId/resources path
       // already wrote them; we just need to refresh.
@@ -179,6 +186,7 @@ export function Dashboard() {
         activeTag={activeTag}
         searchQuery={searchQuery}
         uploading={uploading}
+        uploadHint={uploadLimitHint(uploads)}
         tags={tags}
         onSelectFilter={setActiveFilter}
         onToggleTag={(tag) => setActiveTag((current) => (current === tag ? null : tag))}

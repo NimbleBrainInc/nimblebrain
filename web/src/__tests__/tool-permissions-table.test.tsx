@@ -20,15 +20,28 @@ import { realClient } from "../../test/setup";
   }
 }
 
+const TOOLS = [
+  { name: "search", description: "Search things." },
+  { name: "write", description: "Write things." },
+];
+let listedTools = TOOLS;
+const listCalls: Array<[string, string | undefined]> = [];
+const setCalls: Array<[string, string, Record<string, string>]> = [];
+
 mock.module("../api/client", () => ({
   ...realClient,
-  listConnectorToolsWithPermissions: async () => ({
-    tools: [
-      { name: "search", description: "Search things." },
-      { name: "write", description: "Write things." },
-    ],
-    permissions: { search: "allow", write: "disallow" },
-  }),
+  listConnectorToolsWithPermissions: async (serverName: string, scope?: string) => {
+    listCalls.push([serverName, scope]);
+    return { tools: listedTools, permissions: { search: "allow", write: "disallow" } };
+  },
+  setConnectorPermissions: async (
+    serverName: string,
+    scope: string,
+    tools: Record<string, string>,
+  ) => {
+    setCalls.push([serverName, scope, tools]);
+    return { ok: true, scope: scope === "identity" ? "user" : "workspace", serverName };
+  },
 }));
 
 const ReactDOMClient = await import("react-dom/client");
@@ -44,14 +57,20 @@ let mounted: Mounted | null = null;
 afterEach(() => {
   mounted?.unmount();
   mounted = null;
+  listedTools = TOOLS;
+  listCalls.length = 0;
+  setCalls.length = 0;
 });
 
-async function mount(canManage: boolean): Promise<Mounted> {
+async function mount(
+  canManage: boolean,
+  scope: "workspace" | "identity" = "workspace",
+): Promise<Mounted> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(<ToolPermissionsTable serverName="acme" canManage={canManage} />);
+    root.render(<ToolPermissionsTable serverName="acme" scope={scope} canManage={canManage} />);
   });
   await act(async () => {
     await Promise.resolve();
@@ -119,5 +138,23 @@ describe("ToolPermissionsTable — a workspace admin", () => {
     mounted = await mount(true);
     expect(buttonsNamed(mounted.container, "Allow all")).toHaveLength(1);
     expect(buttonsNamed(mounted.container, "Disallow all")).toHaveLength(1);
+  });
+});
+
+describe("ToolPermissionsTable — a personal connector", () => {
+  test("reads and writes the viewer's own policy", async () => {
+    mounted = await mount(true, "identity");
+    expect(listCalls).toEqual([["acme", "identity"]]);
+    const allowAll = buttonsNamed(mounted.container, "Allow all")[0];
+    await act(async () => {
+      allowAll?.click();
+    });
+    expect(setCalls).toEqual([["acme", "identity", { search: "allow", write: "allow" }]]);
+  });
+
+  test("says why the section is empty when no tools could be listed", async () => {
+    listedTools = [];
+    mounted = await mount(true, "identity");
+    expect(mounted.container.textContent).toContain("No tools to show right now");
   });
 });

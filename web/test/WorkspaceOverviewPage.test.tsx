@@ -183,14 +183,14 @@ describe("WorkspaceOverviewPage — briefing", () => {
     return <div data-testid="location">{useLocation().pathname}</div>;
   }
 
-  test("a connector needing sign-in opens its connector page", async () => {
+  test("a connector needing reconnection opens its connector page", async () => {
     callToolImpl = () =>
       Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } });
     const gmail: InstalledConnector = {
       serverName: "gmail",
       connectorName: "gmail",
       version: "1.0.0",
-      state: "pending_auth",
+      state: "reauth_required",
       scope: "workspace",
       interactive: false,
       toolCount: 0,
@@ -213,7 +213,7 @@ describe("WorkspaceOverviewPage — briefing", () => {
     );
 
     const row = findByTestId(mounted.container, "briefing-connector-status");
-    expect(row?.textContent).toBe("Critical: Sign-in required · gmail");
+    expect(row?.textContent).toBe("Critical: Reconnection needed · gmail");
     expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
     await act(async () => {
       row?.getElementsByTagName("button")[0]?.click();
@@ -223,7 +223,7 @@ describe("WorkspaceOverviewPage — briefing", () => {
     );
   });
 
-  test("holds the skeleton until the connectors list names this workspace", async () => {
+  test("renders nothing until the connectors list names this workspace", async () => {
     callToolImpl = () =>
       Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } });
     mounted = await mount(
@@ -239,7 +239,6 @@ describe("WorkspaceOverviewPage — briefing", () => {
         </MemoryRouter>
       </WorkspaceAppIconsContext.Provider>,
     );
-    expect(findByTestId(mounted.container, "workspace-briefing-loading")).not.toBeNull();
-    expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+    expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
   });
 });

@@ -326,7 +326,8 @@ export function CreateAutomationForm({
           <div style={hintStyle}>
             Comma-separated names or globs, e.g. <code>gmail__*</code>, <code>files__read</code> (a
             personal connection is <code>my_gmail__*</code>). Runs can't use anything else, apart
-            from system tools. Leave empty to allow every tool.
+            from <code>nb__search</code> and <code>nb__manage_tools</code>. Leave empty to allow
+            every tool.
           </div>
         </div>
 

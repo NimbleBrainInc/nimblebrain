@@ -639,7 +639,7 @@ async function recoverCallbackSource(
 ): Promise<void> {
   // Transition the lifecycle state from `not_authenticated` (set
   // at boot when connection.json was absent) to `running`. Without
-  // this the UI would keep showing "Sign-in required" until the
+  // this the UI would keep showing "Not connected" until the
   // next platform restart, even though tools were already callable.
   //
   // After a Disconnect → Connect cycle, `teardownConnectionSource`

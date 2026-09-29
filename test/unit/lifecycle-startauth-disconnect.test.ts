@@ -8,6 +8,7 @@ import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycl
 import type { ConnectorInstance, ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { log } from "../../src/observability/log.ts";
+import { hasMcpOAuthAuthLost, McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { legacyConnectorRef } from "../helpers/connector-fixtures.ts";
@@ -15,6 +16,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 /**
  * Coverage for the unified `lifecycle.startAuth` and `lifecycle.disconnect`
@@ -200,6 +202,26 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
     expect(stateEvents.length).toBeGreaterThanOrEqual(1);
     const lastEvent = stateEvents[stateEvents.length - 1]!.data as Record<string, unknown>;
     expect(lastEvent.state).toBe("not_authenticated");
+  });
+
+  test("test_disconnect_afterAuthLost_clearsFlag_soRestartReadsNotConnected", async () => {
+    // Disconnecting a connection whose credential broke is still a deliberate
+    // disconnect. The flag must go with it, or the next boot would seed it
+    // `reauth_required` again and show an amber Reconnect for a connector the
+    // user chose to leave unconnected.
+    const owner = { type: "workspace", wsId: "ws_test" } as const;
+    seedWorkspaceRoot(workDir, "ws_test");
+    seedInstance(lifecycle, "granola", "ws_test", "workspace", {
+      url: "https://example.test/mcp",
+    });
+    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "reauth_required");
+    await new McpOAuthRecords({ owner, serverName: "granola", workDir }).write("auth_lost", {
+      at: "2026-01-01T00:00:00.000Z",
+    });
+
+    await lifecycle.disconnect("granola", "ws_test", "_workspace", { workDir });
+
+    expect(await hasMcpOAuthAuthLost(workDir, owner, "granola")).toBe(false);
   });
 
   test("test_disconnect_urlConnector_logsOutcomeAndTransition", async () => {

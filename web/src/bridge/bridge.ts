@@ -41,13 +41,14 @@ import {
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource } from "../api/client";
+import { humanBytes } from "../api/format-error";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import type { FileEntry } from "../types";
 import { openAppChannel } from "./app-channel";
 import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
 import { buildHostCapabilities } from "./host-capabilities";
-import { buildHostStyles } from "./host-extensions";
+import { buildHostStyles, type UploadLimits } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
 import { getHostThemeMode, getSpecThemeTokens } from "./theme";
 import type {
@@ -393,7 +394,7 @@ export function createBridge(
       // Extension: ai.nimblebrain/request-file — native file picker
       // -----------------------------------------------------------------
       case REQUEST_FILE_METHOD:
-        handleRequestFile(msg.params, msg.id, postToIframe);
+        handleRequestFile(msg.params, msg.id, postToIframe, readUploadLimits(callbacks));
         break;
 
       // -----------------------------------------------------------------
@@ -974,6 +975,23 @@ function handleSynapseAction(
   }
 }
 
+/** The picker's per-file cap when the host supplies no upload limits. */
+const DEFAULT_PICKER_MAX_SIZE = 26_214_400; // 25 MB
+
+/**
+ * The host's upload limits, or `undefined` when it supplies none. Wrapped for
+ * the same reason as `readHostExtensions`: a throwing callback must not leave
+ * the app's picker call unanswered.
+ */
+function readUploadLimits(callbacks: BridgeCallbacks | undefined): UploadLimits | undefined {
+  try {
+    return callbacks?.getUploadLimits?.();
+  } catch (err) {
+    console.error("getUploadLimits threw — the picker applies no host limits:", err);
+    return undefined;
+  }
+}
+
 /**
  * Handle an ai.nimblebrain/request-file: open the native file picker and forward the
  * uploaded entries — or a JSON-RPC `-32602` error — back to the iframe. A refusal
@@ -984,12 +1002,15 @@ function handleRequestFile(
   params: SynapseRequestFileMessage["params"] | undefined,
   id: string,
   postToIframe: PostToIframe,
+  limits: UploadLimits | undefined,
 ): void {
   const accept = params?.accept ?? "";
-  const maxSize = params?.maxSize ?? 26_214_400; // 25 MB
+  // An app may ask for less than the instance allows, never more.
+  const requested = params?.maxSize ?? limits?.maxFileSize ?? DEFAULT_PICKER_MAX_SIZE;
+  const maxSize = limits ? Math.min(requested, limits.maxFileSize) : requested;
   const multiple = params?.multiple ?? false;
 
-  pickFiles(accept, maxSize, multiple)
+  pickFiles(accept, maxSize, multiple, limits?.maxTotalSize)
     .then((result) => {
       postToIframe({ jsonrpc: "2.0", id, result });
     })
@@ -1296,13 +1317,14 @@ function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, 
  * `maxFileSize` allows work without base64 inflation or hitting the
  * 1 MB tool-call JSON cap.
  *
- * `maxSize` is enforced client-side as a fast-fail; the server is
- * still the source of truth (`getFilesConfig().maxFileSize`).
+ * `maxSize` and `maxTotalSize` are enforced client-side as a fast-fail; the
+ * server is still the source of truth (`getFilesConfig()`).
  */
 async function pickFiles(
   accept: string,
   maxSize: number,
   multiple: boolean,
+  maxTotalSize: number | undefined,
 ): Promise<RequestFileResult> {
   return new Promise((resolve, reject) => {
     const input = document.createElement("input");
@@ -1340,7 +1362,7 @@ async function pickFiles(
       document.body.removeChild(input);
       // Validate + upload off-thread; settle the picker Promise with the
       // result (or the size/upload error) exactly as the change fires.
-      processPickedFiles(input.files, maxSize).then(resolve, reject);
+      processPickedFiles(input.files, maxSize, maxTotalSize).then(resolve, reject);
     });
 
     input.click();
@@ -1400,25 +1422,34 @@ function refusedFileErrors(err: unknown): string[] | undefined {
 }
 
 /**
- * Validate picked files against `maxSize`, upload them via `POST /v1/workspaces/:wsId/resources`,
- * and resolve to the persisted entries — an empty list when nothing was chosen.
- * Throws `FilesRefusedError` when any file was refused: every oversize file,
- * before anything is uploaded, or the files the server refused, after it stored
- * the rest. Any other upload failure is rethrown as is.
+ * Validate picked files against `maxSize` and `maxTotalSize`, upload them via
+ * `POST /v1/workspaces/:wsId/resources`, and resolve to the persisted entries —
+ * an empty list when nothing was chosen. Throws `FilesRefusedError` when any
+ * file was refused: every oversize file, before anything is uploaded, or the
+ * files the server refused, after it stored the rest. A set over the total is
+ * refused before upload with an error naming the limit. Any other upload
+ * failure is rethrown as is.
  */
 async function processPickedFiles(
   files: FileList | null,
   maxSize: number,
+  maxTotalSize: number | undefined,
 ): Promise<RequestFileResult> {
   if (!files || files.length === 0) return { files: [] };
   const selected = Array.from(files);
   const oversize = selected
     .filter((file) => file.size > maxSize)
-    .map(
-      (file) => `File "${file.name}" exceeds maximum size of ${Math.round(maxSize / 1_048_576)} MB`,
-    );
+    .map((file) => `File "${file.name}" exceeds maximum size of ${humanBytes(maxSize)}`);
   if (oversize.length > 0) {
     throw new FilesRefusedError(selected.length, { files: [], errors: oversize });
+  }
+  // Over the total, the server refuses the whole request before reading it, so
+  // no file is at fault and nothing is stored: a plain error, not a refusal.
+  const total = selected.reduce((sum, file) => sum + file.size, 0);
+  if (maxTotalSize !== undefined && total > maxTotalSize) {
+    throw new Error(
+      `The selected files total ${humanBytes(total)}; an upload can be up to ${humanBytes(maxTotalSize)}.`,
+    );
   }
   let result: Awaited<ReturnType<typeof uploadResource>>;
   try {
