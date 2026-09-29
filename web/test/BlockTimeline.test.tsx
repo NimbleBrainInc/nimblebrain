@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { act, fireEvent, render } from "@testing-library/react";
 import { BlockTimeline } from "../src/components/BlockTimeline.tsx";
 import type {
@@ -333,6 +333,39 @@ describe("LiveCursor", () => {
 			streamingState: "analyzing",
 		});
 		expect(liveCursorElapsed(container)).toBeNull();
+	});
+
+	it("counts once a state has held, and starts over when the state changes", () => {
+		jest.useFakeTimers();
+		try {
+			const blocks = [tool(done("a", "search"))];
+			const { container, rerender } = renderTimeline({
+				blocks,
+				isCurrentMessage: true,
+				streamingState: "analyzing",
+			});
+			act(() => {
+				jest.advanceTimersByTime(3000);
+			});
+			expect(liveCursorElapsed(container)).toBe("3s");
+
+			rerender(
+				<BlockTimeline
+					blocks={blocks}
+					isCurrentMessage
+					streamingState="preparing"
+					preparingTool={{ id: "p1", name: "search" }}
+					displayDetail="balanced"
+				/>,
+			);
+			act(() => {
+				jest.advanceTimersByTime(1000);
+			});
+			expect(liveCursorLabel(container)).toBe("Calling search…");
+			expect(liveCursorElapsed(container)).toBeNull();
+		} finally {
+			jest.useRealTimers();
+		}
 	});
 
 	it("hides during 'streaming' (text/reasoning block is absorbing the state)", () => {
