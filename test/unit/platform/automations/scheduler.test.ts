@@ -2098,3 +2098,93 @@ describe("Scheduler — degraded runs", () => {
     expect(await runsCounted("failure")).toBe(before.failure + 1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: Scheduler — a cron schedule whose next run cannot be computed
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — cron schedule whose next run cannot be computed", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Create and update refuse an unknown timezone, so a stored row reaches this
+  // only by a hand edit or a default timezone that stops resolving.
+  const BAD_TZ = { type: "cron" as const, expression: "* * * * *", timezone: "Not/AZone" };
+
+  it("never runs a stored row with a past nextRunAt, and clears it", async () => {
+    const auto = makeAutomation({
+      schedule: BAD_TZ,
+      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+    const executor = createMockExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+    for (let tick = 0; tick < 5; tick++) await scheduler.onTimer();
+    scheduler.stop();
+
+    expect(executor).not.toHaveBeenCalled();
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+    expect(loadDefs(tmpDir).get(auto.id)?.nextRunAt).toBeUndefined();
+  });
+
+  it("records the run and clears nextRunAt when the next run fails to compute after it", async () => {
+    const auto = makeAutomation({
+      schedule: { type: "cron", expression: "* * * * *" },
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+    const executor = createMockExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+
+    // The stored row's timezone stops resolving while the timer still holds
+    // a due run.
+    const stored = loadDefs(tmpDir).get(auto.id)!;
+    saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
+    defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+
+    for (let tick = 0; tick < 5; tick++) await scheduler.onTimer();
+    scheduler.stop();
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+    expect(loadDefs(tmpDir).get(auto.id)?.runCount).toBe(1);
+  });
+
+  it("clears nextRunAt on a skipped run whose next run fails to compute", async () => {
+    const auto = makeAutomation({
+      schedule: { type: "cron", expression: "* * * * *" },
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+    const { executor, resolve } = createBlockingExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+    scheduler.onTimer();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // While the first run is still active, the timezone stops resolving and
+    // the timer still holds a due run, so the next tick skips it.
+    const stored = loadDefs(tmpDir).get(auto.id)!;
+    saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
+    defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.onTimer();
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+
+    resolve(makeSuccessRun(auto.id));
+    scheduler.stop();
+  });
+});
