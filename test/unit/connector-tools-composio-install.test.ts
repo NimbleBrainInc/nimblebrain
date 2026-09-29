@@ -616,6 +616,39 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(instance?.ui?.placements?.map((p) => p.resourceUri)).toEqual(["ui://gmail/settings"]);
   });
 
+  test("(f-3) self-heal keeps the orphan's stored host UI when no catalog entry names it", async () => {
+    const url = "https://uncatalogued.test/mcp";
+    const orphanRef: Extract<ConnectorRef, { url: string }> = {
+      url,
+      serverName: "com-example-uncatalogued",
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+      ui: {
+        name: "Uncatalogued",
+        icon: "",
+        placements: [{ slot: "settings", resourceUri: "ui://uncatalogued/settings" }],
+      },
+    };
+    await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
+
+    const result = await buildTool(h).handler({
+      action: "install",
+      entry: {
+        id: "com.example/uncatalogued",
+        name: "Uncatalogued",
+        description: "Not in the catalog",
+        install: { kind: "remote-oauth", url, auth: "dcr" },
+      },
+      wsId: h.wsId,
+    });
+
+    expect(result.isError).toBe(false);
+    const instance = h.runtime.getLifecycle().getInstance("com-example-uncatalogued", h.wsId);
+    expect(instance?.ui?.placements?.map((p) => p.resourceUri)).toEqual([
+      "ui://uncatalogued/settings",
+    ]);
+  });
+
   test("install surfaces createComposioSession failures as errResult", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     composioCalls.createImpl = async () => {
