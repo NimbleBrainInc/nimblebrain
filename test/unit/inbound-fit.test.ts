@@ -141,7 +141,9 @@ describe("normalizeForReplay", () => {
       },
     ];
     const once = normalizeForReplay(input);
-    const twice = normalizeForReplay(once);
+    // The output type admits a stored-file part the input type does not; this
+    // input has none, so feeding the output back in is the idempotence check.
+    const twice = normalizeForReplay(once as LanguageModelV4Content[]);
     expect(twice).toEqual(once);
   });
 

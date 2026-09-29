@@ -71,7 +71,7 @@ describe("ToolRegistry.execute permission gate", () => {
   test("without permission context configured, calls pass through", async () => {
     const { registry, source, cleanup } = freshRegistry();
     try {
-      const result = await registry.execute({ name: "mock__readonly", input: {} });
+      const result = await registry.execute({ id: "call-74", name: "mock__readonly", input: {} });
       expect(result.isError).toBe(false);
       expect(source.callCount).toBe(1);
     } finally {
@@ -83,7 +83,7 @@ describe("ToolRegistry.execute permission gate", () => {
     const { registry, source, permStore, cleanup } = freshRegistry();
     try {
       registry.setPermissionContext("ws_test", permStore);
-      const result = await registry.execute({ name: "mock__readonly", input: {} });
+      const result = await registry.execute({ id: "call-86", name: "mock__readonly", input: {} });
       expect(result.isError).toBe(false);
       expect(source.callCount).toBe(1);
     } finally {
@@ -98,7 +98,11 @@ describe("ToolRegistry.execute permission gate", () => {
       await permStore.setConnector({ scope: "workspace", wsId: "ws_test" }, "mock", {
         destructive: "disallow",
       });
-      const result = await registry.execute({ name: "mock__destructive", input: {} });
+      const result = await registry.execute({
+        id: "call-101",
+        name: "mock__destructive",
+        input: {},
+      });
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({
         error: "tool_permission_denied",
@@ -119,7 +123,7 @@ describe("ToolRegistry.execute permission gate", () => {
       await permStore.setConnector({ scope: "workspace", wsId: "ws_test" }, "mock", {
         readonly: "allow",
       });
-      const result = await registry.execute({ name: "mock__readonly", input: {} });
+      const result = await registry.execute({ id: "call-122", name: "mock__readonly", input: {} });
       expect(result.isError).toBe(false);
       expect(source.callCount).toBe(1);
     } finally {
@@ -137,7 +141,7 @@ describe("ToolRegistry.execute permission gate", () => {
         readonly: "disallow",
       });
       // Same tool name on different connector — should not be blocked.
-      const result = await registry.execute({ name: "other__readonly", input: {} });
+      const result = await registry.execute({ id: "call-140", name: "other__readonly", input: {} });
       expect(result.isError).toBe(false);
       expect(sourceB.callCount).toBe(1);
       expect(source.callCount).toBe(0);

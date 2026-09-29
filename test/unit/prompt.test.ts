@@ -1012,7 +1012,7 @@ describe("composeSystemPromptTraced", () => {
 
     // Every optional input above lands in its own layer, so the integrity
     // checks below cover those kinds rather than only the always-on ones.
-    const emitted = new Set(traced.layers.map((l) => l.kind));
+    const emitted = new Set<string>(traced.layers.map((l) => l.kind));
     for (const kind of ["workspace_context", "workspace_overlay", "layer3_skills", "apps"]) {
       expect(emitted.has(kind)).toBe(true);
     }

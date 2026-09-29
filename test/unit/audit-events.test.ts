@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
+import { resolveFeatures } from "../../src/config/features.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
@@ -233,14 +234,7 @@ describe("createPrivilegeHook audit emission", () => {
       confirm: async () => false,
     };
 
-    const hook = createPrivilegeHook(denyGate, captureSink, {
-      skillManagement: true,
-      toolDiscovery: true,
-      catalogSearch: true,
-      fileContext: true,
-      userManagement: true,
-      workspaceManagement: true,
-    });
+    const hook = createPrivilegeHook(denyGate, captureSink, resolveFeatures());
 
     const result = await hook({
       id: "call_1",

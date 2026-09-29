@@ -9,20 +9,21 @@ describe("estimateCost", () => {
     { label: "gemini", modelString: "google:gemini-2.5-flash" },
   ] as const;
 
-  test.each(modelCases)("calculates cost correctly for $label model", ({ modelString }) => {
-    const model = getModelByString(modelString);
-    expect(model).toBeDefined();
-    expect(model!.cost.input).toBeGreaterThan(0);
-    expect(model!.cost.output).toBeGreaterThan(0);
+  for (const { label, modelString } of modelCases)
+    test(`calculates cost correctly for ${label} model`, () => {
+      const model = getModelByString(modelString);
+      expect(model).toBeDefined();
+      expect(model!.cost.input).toBeGreaterThan(0);
+      expect(model!.cost.output).toBeGreaterThan(0);
 
-    const cost = estimateCost(modelString, {
-      inputTokens: 1000,
-      outputTokens: 500,
+      const cost = estimateCost(modelString, {
+        inputTokens: 1000,
+        outputTokens: 500,
+      });
+      const expected = (1000 * model!.cost.input + 500 * model!.cost.output) / 1_000_000;
+      expect(cost).toBeCloseTo(expected, 8);
+      expect(cost).toBeGreaterThan(0);
     });
-    const expected = (1000 * model!.cost.input + 500 * model!.cost.output) / 1_000_000;
-    expect(cost).toBeCloseTo(expected, 8);
-    expect(cost).toBeGreaterThan(0);
-  });
 
   it("bare model string defaults to anthropic provider", () => {
     const withPrefix = estimateCost("anthropic:claude-sonnet-4-6", {

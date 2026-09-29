@@ -477,6 +477,9 @@ describe("handleList paging", () => {
         createdAt: now,
         updatedAt: now,
         runCount: 0,
+        consecutiveErrors: 0,
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
         ownerId: OWNER,
         workspaceId: WS,
       });

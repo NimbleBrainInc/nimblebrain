@@ -1867,7 +1867,11 @@ describe("AgentEngine", () => {
       });
 
       it("maps effort to reasoningEffort for OpenAI", async () => {
-        const po = await providerOptionsFor("openai:gpt-5.1", { mode: "effort", effort: "high" });
+        const po = await providerOptionsFor("openai:gpt-5.1", {
+          mode: "effort",
+          effort: "high",
+          source: "operator",
+        });
         expect(po.openai?.reasoningEffort).toBe("high");
       });
 
@@ -1919,7 +1923,11 @@ describe("AgentEngine", () => {
         // only, erroring elsewhere, and does no per-model gating. `high` is
         // accepted by every OpenAI reasoning model.
         for (const effort of ["xhigh", "max"] as const) {
-          const po = await providerOptionsFor("openai:gpt-5.1", { mode: "effort", effort });
+          const po = await providerOptionsFor("openai:gpt-5.1", {
+            mode: "effort",
+            effort,
+            source: "operator",
+          });
           expect(po.openai?.reasoningEffort).toBe("high");
         }
       });
@@ -2077,6 +2085,7 @@ describe("AgentEngine", () => {
             await providerOptionsFor("google:gemini-3.6-flash", {
               mode: "effort",
               effort: "medium",
+              source: "operator",
             })
           ).google?.thinkingConfig,
         ).toEqual({ thinkingLevel: "medium" });
@@ -2090,7 +2099,7 @@ describe("AgentEngine", () => {
         for (const maxOutputTokens of [3000, 4096]) {
           const on = await providerOptionsFor(
             "google:gemini-2.5-flash",
-            { mode: "effort", effort: "max" },
+            { mode: "effort", effort: "max", source: "operator" },
             maxOutputTokens,
           );
           const off = await providerOptionsFor(
@@ -2198,7 +2207,7 @@ describe("AgentEngine", () => {
         // budget would be 61440 — accepted by the adapter, rejected by Google.
         const po = await providerOptionsFor(
           "google:gemini-2.5-pro",
-          { mode: "enabled", budgetTokens: 60_000, effort: "max" },
+          { mode: "enabled", budgetTokens: 60_000, effort: "max", source: "operator" },
           65_536,
         );
         expect(po.google?.thinkingConfig).toEqual({ thinkingBudget: 32_768 });
@@ -2224,6 +2233,7 @@ describe("AgentEngine", () => {
           await providerOptionsFor("google:gemini-flash-latest", {
             mode: "effort",
             effort: "high",
+            source: "operator",
           }),
         ).toEqual({});
       });
@@ -2242,6 +2252,7 @@ describe("AgentEngine", () => {
           mode: "enabled",
           budgetTokens: 8000,
           effort: "max",
+          source: "operator",
         });
         expect(po.anthropic?.thinking).toEqual({ type: "adaptive" });
         expect(po.anthropic?.effort).toBe("max");
@@ -2257,6 +2268,7 @@ describe("AgentEngine", () => {
             mode: "enabled",
             budgetTokens: 50_000,
             effort: "medium",
+            source: "operator",
           });
           const budget =
             (po.anthropic?.thinking as { budgetTokens?: number } | undefined)?.budgetTokens ??
@@ -2267,7 +2279,11 @@ describe("AgentEngine", () => {
 
       it("says nothing to a provider it doesn't know", async () => {
         expect(
-          await providerOptionsFor("mystery:some-model", { mode: "effort", effort: "max" }),
+          await providerOptionsFor("mystery:some-model", {
+            mode: "effort",
+            effort: "max",
+            source: "operator",
+          }),
         ).toEqual({});
       });
     });

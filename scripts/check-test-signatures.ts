@@ -57,6 +57,11 @@
  *   overlap, which hides a stub or a mock that no longer matches what it stands
  *   in for. Narrow instead, or, for a shape deliberately off-type, cast through
  *   `unknown` with a comment naming why.
+ * - **TS2345** "Argument is not assignable to parameter" — a call handing a
+ *   function a shape it no longer takes: a stub missing a field the callee now
+ *   reads, a helper typed narrower than the value it is given, or a fake built
+ *   on a retired SDK. Type shared helpers on the real types
+ *   (`test/helpers/tool-result.ts`) so one signature serves every caller.
  *
  * - **TS2304 / TS2552** "Cannot find name" — the same degradation one step
  *   further along, a name with no import at all. TS2552 is the variant that
@@ -133,10 +138,10 @@ const TEST_EXTENSIONS = ["ts", "tsx"];
  * TS2724, TS2459, TS2614: one defect TypeScript reports four ways), an object
  * literal naming a property its type does not have (TS2353), a stub missing one
  * it requires (TS2741, TS2739), a cast between non-overlapping types (TS2352),
- * and a name that resolves to nothing (TS2304, TS2552). See the header before
- * adding another.
+ * a name that resolves to nothing (TS2304, TS2552), and an argument its
+ * parameter does not accept (TS2345). See the header before adding another.
  */
-const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353, 2741, 2739, 2352, 2304, 2552];
+const GATED_CODES = [2554, 2305, 2724, 2459, 2614, 2353, 2741, 2739, 2352, 2304, 2552, 2345];
 const GATED = new RegExp(`error TS(${GATED_CODES.join("|")}):`);
 
 async function main(): Promise<void> {

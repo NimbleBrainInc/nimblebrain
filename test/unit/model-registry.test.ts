@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import { buildModelResolver, buildRegistry, resolveModelString } from "../../src/model/registry.ts";
 
 describe("resolveModelString", () => {
@@ -217,7 +218,7 @@ describe("nebius request shape", () => {
 
 describe("anthropic request shape", () => {
   async function captureAnthropicRequest(
-    providerOptions?: Record<string, Record<string, unknown>>,
+    providerOptions?: SharedV4ProviderOptions,
   ): Promise<Record<string, unknown>> {
     const realFetch = globalThis.fetch;
     let body: Record<string, unknown> = {};

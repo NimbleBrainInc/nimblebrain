@@ -49,7 +49,7 @@ const schema = JSON.parse(
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
-          properties: { composio: SchemaObject };
+          properties: { composio: SchemaObject; smithery: SchemaObject };
         };
         // Gateway names are operator-chosen, so the map itself is open and the
         // per-gateway object under `additionalProperties` is what is closed.
