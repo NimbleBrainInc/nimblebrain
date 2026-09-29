@@ -8,10 +8,10 @@
 
 /**
  * How urgent an item is, most urgent first: something has stopped, someone
- * should act, worth knowing. A facet's is declared by its server (`action`
+ * should act, worth knowing. A facet's is declared by its server (`warning`
  * when it declares none); a connector-status row's is the host's.
  */
-export type BriefingLevel = "blocked" | "action" | "info";
+export type BriefingLevel = "critical" | "warning" | "info";
 
 /**
  * One facet of one app: `<count> <label>`, opening the app. Built from a count

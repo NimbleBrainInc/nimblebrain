@@ -78,7 +78,7 @@ describe("discovery", () => {
         facet: "drafts",
         label: "Drafts awaiting review",
         count: 3,
-        level: "action",
+        level: "warning",
         route: "@acme/app",
         state: "ok",
       },
@@ -87,7 +87,7 @@ describe("discovery", () => {
         facet: "blocked",
         label: "Tasks blocked",
         count: 2,
-        level: "action",
+        level: "warning",
         route: "@acme/app",
         state: "ok",
       },
@@ -169,13 +169,13 @@ describe("reads", () => {
     const first = await serve("first", {
       resources: () => [
         facetEntry("drafts", "Drafts", "info"),
-        facetEntry("blocked", "Blocked", "action"),
+        facetEntry("blocked", "Blocked", "warning"),
       ],
       read: (uri) => counts[uri] ?? "{}",
     });
     const second = await serve("second", {
       resources: () => [
-        facetEntry("drafts", "Stopped", "blocked"),
+        facetEntry("drafts", "Stopped", "critical"),
         facetEntry("x", "Odd", "urgent"),
       ],
       read: () => '{"count": 1}',
@@ -187,9 +187,9 @@ describe("reads", () => {
     ]);
 
     expect(items.map((i) => [i.label, i.level])).toEqual([
-      ["Stopped", "blocked"],
-      ["Blocked", "action"],
-      ["Odd", "action"],
+      ["Stopped", "critical"],
+      ["Blocked", "warning"],
+      ["Odd", "warning"],
       ["Drafts", "info"],
     ]);
   });
@@ -226,7 +226,7 @@ describe("reads", () => {
         facet: "drafts",
         label: "Drafts awaiting review",
         count: 0,
-        level: "action",
+        level: "warning",
         route: "@acme/app",
         state: "unavailable",
       },

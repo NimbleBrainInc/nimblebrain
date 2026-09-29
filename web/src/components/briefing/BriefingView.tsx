@@ -12,7 +12,7 @@
 //   - A connector that is not ready: the status the connector page shows,
 //     opening that page. Its facets are never read, so it has no count.
 // Every row has a level, shown by icon and colour, and the list is ordered by
-// it: `blocked` (something has stopped), then `action` (someone should act),
+// it: `critical` (something has stopped), then `warning` (someone should act),
 // then `info` (worth knowing). A facet's level is its server's; a connector
 // row's is the host's (`statusLevel`).
 // With neither kind of row, the list is one line saying nothing needs the member.
@@ -46,23 +46,23 @@ const LEVELS: Record<
   BriefingLevel,
   { rank: number; icon: LucideIcon; tone: string; name: string }
 > = {
-  blocked: { rank: 0, icon: OctagonAlert, tone: "text-destructive", name: "Blocked" },
-  action: { rank: 1, icon: CircleAlert, tone: "text-warning", name: "Needs action" },
-  info: { rank: 2, icon: Info, tone: "text-muted-foreground", name: "For information" },
+  critical: { rank: 0, icon: OctagonAlert, tone: "text-destructive", name: "Critical" },
+  warning: { rank: 1, icon: CircleAlert, tone: "text-warning", name: "Warning" },
+  info: { rank: 2, icon: Info, tone: "text-muted-foreground", name: "Info" },
 };
 
 /**
  * The host's level for a connector that is not ready. One it cannot work
- * without someone acting on is `blocked`; one still coming up resolves on its
+ * without someone acting on is `critical`; one still coming up resolves on its
  * own and is `info`.
  */
 export function statusLevel(status: InstalledConnector["status"]): BriefingLevel {
-  return status === "connecting" || status === "starting" ? "info" : "blocked";
+  return status === "connecting" || status === "starting" ? "info" : "critical";
 }
 
-/** A level the web does not know reads as `action`, as the extension requires. */
+/** A level the web does not know reads as `warning`, as the extension requires. */
 function levelOf(level: string): BriefingLevel {
-  return level in LEVELS ? (level as BriefingLevel) : "action";
+  return level in LEVELS ? (level as BriefingLevel) : "warning";
 }
 
 function Row({

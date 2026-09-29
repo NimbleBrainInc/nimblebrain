@@ -74,7 +74,7 @@ function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
         facet: "overdue",
         label: "Follow-ups overdue",
         count: 2,
-        level: "action",
+        level: "warning",
         route: "@acme/crm",
         state: "ok",
       },
@@ -83,7 +83,7 @@ function makeBriefing(overrides: Partial<BriefingOutput> = {}): BriefingOutput {
         facet: "blocked",
         label: "Tasks blocked",
         count: 0,
-        level: "blocked",
+        level: "critical",
         route: "@acme/tasks",
         state: "unavailable",
       },
@@ -139,23 +139,23 @@ describe("BriefingView", () => {
     mounted = await mount(view());
     const rows = findAllByTestId(mounted.container, "briefing-item");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.textContent).toBe("Needs action: 2 Follow-ups overdue · CRM");
+    expect(rows[0]?.textContent).toBe("Warning: 2 Follow-ups overdue · CRM");
   });
 
   test("hides nothing the server sent, in the order it sent it", async () => {
     const briefing = makeBriefing({
       items: [
-        { app: "B", facet: "b", label: "Second app", count: 1, level: "action", route: null, state: "ok" },
-        { app: "A", facet: "a", label: "Down", count: 0, level: "action", route: null, state: "unavailable" },
-        { app: "A", facet: "c", label: "Third", count: 7, level: "action", route: null, state: "ok" },
+        { app: "B", facet: "b", label: "Second app", count: 1, level: "warning", route: null, state: "ok" },
+        { app: "A", facet: "a", label: "Down", count: 0, level: "warning", route: null, state: "unavailable" },
+        { app: "A", facet: "c", label: "Third", count: 7, level: "warning", route: null, state: "ok" },
       ],
     });
     mounted = await mount(view({ briefing }));
     const rows = Array.from(mounted.container.getElementsByTagName("li")).map((li) => li.textContent);
     expect(rows).toEqual([
-      "Needs action: 1 Second app · B",
-      "Needs action: Down — unavailable · A",
-      "Needs action: 7 Third · A",
+      "Warning: 1 Second app · B",
+      "Warning: Down — unavailable · A",
+      "Warning: 7 Third · A",
     ]);
   });
 
@@ -163,7 +163,7 @@ describe("BriefingView", () => {
     const opened: string[] = [];
     mounted = await mount(view({ onOpen: (r) => opened.push(r) }));
     const row = findByTestId(mounted.container, "briefing-item-unavailable");
-    expect(row?.textContent).toBe("Blocked: Tasks blocked — unavailable · Tasks");
+    expect(row?.textContent).toBe("Critical: Tasks blocked — unavailable · Tasks");
     const button = row?.getElementsByTagName("button")[0];
     expect(button?.className).toContain("text-muted-foreground");
     await act(async () => {
@@ -174,7 +174,7 @@ describe("BriefingView", () => {
 
   test("an item with no route has no action", async () => {
     const briefing = makeBriefing({
-      items: [{ app: "A", facet: "a", label: "Things", count: 3, level: "action", route: null, state: "ok" }],
+      items: [{ app: "A", facet: "a", label: "Things", count: 3, level: "warning", route: null, state: "ok" }],
     });
     mounted = await mount(view({ briefing }));
     expect(mounted.container.getElementsByTagName("button")).toHaveLength(0);
@@ -182,7 +182,7 @@ describe("BriefingView", () => {
 
   test("renders a label as text, never as markup", async () => {
     const briefing = makeBriefing({
-      items: [{ app: "CRM", facet: "x", label: "<b>bold</b>", count: 1, level: "action", route: null, state: "ok" }],
+      items: [{ app: "CRM", facet: "x", label: "<b>bold</b>", count: 1, level: "warning", route: null, state: "ok" }],
     });
     mounted = await mount(view({ briefing }));
     expect(mounted.container.getElementsByTagName("b")).toHaveLength(0);
@@ -200,7 +200,7 @@ describe("BriefingView", () => {
     );
     const rows = findAllByTestId(mounted.container, "briefing-connector-status");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.textContent).toBe("Blocked: Sign-in required · Gmail");
+    expect(rows[0]?.textContent).toBe("Critical: Sign-in required · Gmail");
     await act(async () => {
       rows[0]?.getElementsByTagName("button")[0]?.click();
     });
@@ -223,10 +223,10 @@ describe("BriefingView", () => {
       (r) => r.textContent,
     );
     expect(text).toEqual([
-      "Blocked: Configuration required · a",
-      "Blocked: Failed · b",
-      "For information: Connecting… · c",
-      "For information: Starting… · d",
+      "Critical: Configuration required · a",
+      "Critical: Failed · b",
+      "Info: Connecting… · c",
+      "Info: Starting… · d",
     ]);
     expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
   });
@@ -236,9 +236,9 @@ describe("BriefingView", () => {
       view({
         briefing: makeBriefing({
           items: [
-            { app: "Out", facet: "d", label: "Drafts", count: 4, level: "action", route: null, state: "ok" },
+            { app: "Out", facet: "d", label: "Drafts", count: 4, level: "warning", route: null, state: "ok" },
             { app: "Out", facet: "r", label: "Replies", count: 2, level: "info", route: null, state: "ok" },
-            { app: "Tasks", facet: "b", label: "Tasks blocked", count: 1, level: "blocked", route: null, state: "ok" },
+            { app: "Tasks", facet: "b", label: "Tasks blocked", count: 1, level: "critical", route: null, state: "ok" },
           ],
         }),
         connectors: [connector("c", "connecting", "Slack"), connector("n", "needs_auth", "Notion")],
@@ -246,11 +246,11 @@ describe("BriefingView", () => {
     );
     const rows = Array.from(mounted.container.getElementsByTagName("li"));
     expect(rows.map((li) => [li.getAttribute("data-level"), li.textContent])).toEqual([
-      ["blocked", "Blocked: Sign-in required · Notion"],
-      ["blocked", "Blocked: 1 Tasks blocked · Tasks"],
-      ["action", "Needs action: 4 Drafts · Out"],
-      ["info", "For information: Connecting… · Slack"],
-      ["info", "For information: 2 Replies · Out"],
+      ["critical", "Critical: Sign-in required · Notion"],
+      ["critical", "Critical: 1 Tasks blocked · Tasks"],
+      ["warning", "Warning: 4 Drafts · Out"],
+      ["info", "Info: Connecting… · Slack"],
+      ["info", "Info: 2 Replies · Out"],
     ]);
     const tone = (li: Element) => li.getElementsByTagName("svg")[0]?.getAttribute("class") ?? "";
     expect(tone(rows[0]!)).toContain("text-destructive");
@@ -263,12 +263,12 @@ describe("BriefingView", () => {
     mounted = await mount(
       view({
         briefing: makeBriefing({
-          items: [{ ...odd, level: "urgent" as unknown as "action" }],
+          items: [{ ...odd, level: "urgent" as unknown as "warning" }],
         }),
       }),
     );
     expect(mounted.container.getElementsByTagName("li")[0]?.getAttribute("data-level")).toBe(
-      "action",
+      "warning",
     );
   });
 

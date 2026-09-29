@@ -26,14 +26,14 @@ export function facetsClientExtension(): Record<string, Record<string, never>> {
  * stopped, someone should act, worth knowing. The server declares it in the
  * facet's marker; the host orders and colours by it.
  */
-export const FACET_LEVELS = ["blocked", "action", "info"] as const;
+export const FACET_LEVELS = ["critical", "warning", "info"] as const;
 export type FacetLevel = (typeof FACET_LEVELS)[number];
 
 /**
  * A level absent from the marker, or one this host does not know, reads as
- * `action`: a level added later never hides a facet or promotes it.
+ * `warning`: a level added later never hides a facet or promotes it.
  */
-export const DEFAULT_FACET_LEVEL: FacetLevel = "action";
+export const DEFAULT_FACET_LEVEL: FacetLevel = "warning";
 
 /** Position in {@link FACET_LEVELS}, for ordering: lower is more urgent. */
 export function facetLevelRank(level: FacetLevel): number {
