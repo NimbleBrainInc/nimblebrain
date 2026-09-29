@@ -837,6 +837,26 @@ describe("ai.nimblebrain/request-file", () => {
     ]);
   });
 
+  test("an app that sends no maxSize may pick up to a host limit above 25 MB", async () => {
+    // Only a host limit above the 25 MB fallback shows the default is the
+    // host's: below it, the host cap alone gives the same answer.
+    const big = new File(["x"], "big.bin");
+    Object.defineProperty(big, "size", { value: 30 * 1_048_576 });
+    let uploaded = false;
+    await pickWith(
+      "pick-host-default-high",
+      [big],
+      async () => {
+        uploaded = true;
+        return { files: [] };
+      },
+      null,
+      { maxFileSize: 50 * 1_048_576, maxTotalSize: 100 * 1_048_576 },
+    );
+
+    expect(uploaded).toBe(true);
+  });
+
   test("every oversize file is refused before anything is uploaded", async () => {
     let uploaded = false;
     const reply = await pickWith(
