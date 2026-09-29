@@ -11,6 +11,7 @@ import {
 import type { CreateIframeOptions } from "../bridge/iframe";
 import { createAppIframe } from "../bridge/iframe";
 import type { BridgeCallbacks } from "../bridge/types";
+import { useFileLimits } from "../context/ChatContext";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
@@ -160,6 +161,11 @@ export function SlotRenderer({
   const connector: ConnectorForHostContext = canManage === undefined ? undefined : { canManage };
   const connectorRef = useRef(connector);
   connectorRef.current = connector;
+  // Instance config, fixed at startup; a ref only so the callbacks built once
+  // in the mount effect read it without joining that effect's dependencies.
+  const uploadLimits = useFileLimits();
+  const uploadLimitsRef = useRef(uploadLimits);
+  uploadLimitsRef.current = uploadLimits;
 
   // Keep callbacks in refs so the iframe-mounting effect doesn't re-run
   // when callback identity changes (e.g. during chat streaming).
@@ -183,7 +189,9 @@ export function SlotRenderer({
     // so none of them close over the entry. Built once outside the loop.
     const bridgeCallbacks: BridgeCallbacks = {
       onChat: (...args) => onChatRef.current?.(...args),
-      getHostExtensions: () => buildHostExtensions(workspaceRef.current, connectorRef.current),
+      getHostExtensions: () =>
+        buildHostExtensions(workspaceRef.current, connectorRef.current, uploadLimitsRef.current),
+      getUploadLimits: () => uploadLimitsRef.current,
     };
 
     // Fetch + mount one placement. A failure is contained here: it renders its
@@ -248,11 +256,12 @@ export function SlotRenderer({
       mode,
       activeWorkspace,
       canManage === undefined ? undefined : { canManage },
+      uploadLimits,
     );
     for (const bridge of bridgesRef.current) {
       bridge.setHostContext(ctx);
     }
-  }, [mode, activeWorkspace, canManage]);
+  }, [mode, activeWorkspace, canManage, uploadLimits]);
 
   if (filtered.length === 0) return null;
 

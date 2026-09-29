@@ -10,18 +10,28 @@ import { buildHostContext, buildHostExtensions } from "../../../web/src/bridge/h
 
 const WORKSPACE = { id: "ws_example00000000", name: "Example" };
 
-/** Keys the host context is allowed to carry. */
-const ALLOWED = new Set(["workspace", "theme", "styles"]);
+const UPLOADS = { maxFileSize: 26_214_400, maxTotalSize: 104_857_600 };
+
+/**
+ * Keys the host context is allowed to carry. `uploads` is the instance's
+ * picker limits, which the host enforces for every app that picks a file.
+ */
+const ALLOWED = new Set(["workspace", "uploads", "theme", "styles"]);
 
 describe("host context", () => {
   test("handshake extensions carry no app-specific key", () => {
-    const keys = Object.keys(buildHostExtensions(WORKSPACE));
+    const keys = Object.keys(buildHostExtensions(WORKSPACE, undefined, UPLOADS));
     expect(keys.filter((k) => !ALLOWED.has(k))).toEqual([]);
   });
 
   test("a host-context-changed payload carries no app-specific key", () => {
-    const keys = Object.keys(buildHostContext("dark", WORKSPACE));
+    const keys = Object.keys(buildHostContext("dark", WORKSPACE, undefined, UPLOADS));
     expect(keys.filter((k) => !ALLOWED.has(k))).toEqual([]);
     expect(keys).not.toContain("streamingConversationIds");
+  });
+
+  test("the picker's upload limits reach the app as `uploads`", () => {
+    expect(buildHostExtensions(WORKSPACE, undefined, UPLOADS).uploads).toEqual(UPLOADS);
+    expect(buildHostExtensions(WORKSPACE)).not.toHaveProperty("uploads");
   });
 });

@@ -1,3 +1,5 @@
+import { formatSize } from "./format";
+
 /**
  * What an `ai.nimblebrain/request-file` refusal says. The host answers a pick
  * with a JSON-RPC error when it refused any file, and puts
@@ -19,4 +21,19 @@ export function readUploadRefusal(err: unknown): UploadRefusal | null {
   if (!Array.isArray(errors) || errors.length === 0) return null;
   if (!errors.every((e) => typeof e === "string")) return null;
   return { errors, stored: Array.isArray(data?.files) ? data.files.length : 0 };
+}
+
+/**
+ * The limits the host's picker holds an upload to, published in hostContext as
+ * `uploads`. Absent when the host states none.
+ */
+export interface UploadLimits {
+  maxFileSize: number;
+  maxTotalSize: number;
+}
+
+/** The limits stated before anyone picks a file, or `null` when the host gave none. */
+export function uploadLimitHint(limits: UploadLimits | undefined): string | null {
+  if (!limits) return null;
+  return `Up to ${formatSize(limits.maxFileSize)} each, ${formatSize(limits.maxTotalSize)} per upload`;
 }

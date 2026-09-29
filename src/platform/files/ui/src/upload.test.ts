@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { UploadRefusals } from "./UploadRefusals";
-import { readUploadRefusal } from "./upload";
+import { readUploadRefusal, uploadLimitHint } from "./upload";
 
 /** The shape the SDK rejects with: an `McpError` carrying the host's `data`. */
 function refusalError(data: unknown): Error {
@@ -68,5 +68,17 @@ describe("UploadRefusals", () => {
     );
     expect(html).toContain("1 file wasn&#x27;t uploaded");
     expect(html).not.toContain("uploaded)");
+  });
+});
+
+describe("uploadLimitHint", () => {
+  test("states the per-file and per-upload limits the host publishes", () => {
+    expect(uploadLimitHint({ maxFileSize: 26_214_400, maxTotalSize: 104_857_600 })).toBe(
+      "Up to 25.0 MB each, 100.0 MB per upload",
+    );
+  });
+
+  test("states nothing when the host gives no limits", () => {
+    expect(uploadLimitHint(undefined)).toBeNull();
   });
 });

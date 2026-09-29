@@ -73,6 +73,14 @@ body {
 }
 .upload-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .upload-btn svg { width: 14px; height: 14px; }
+.upload-action {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+}
+.upload-hint {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
 
 /* ===== Controls ===== */
 .header-controls {
