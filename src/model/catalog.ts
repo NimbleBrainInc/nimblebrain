@@ -556,9 +556,11 @@ export type XAIWireEffort = XAIEffort | "none";
 const XAI_EFFORT_SUPPORT: Record<string, ReadonlySet<XAIWireEffort>> = {
   // Full ladder plus suppression.
   "grok-4.3": new Set([...XAI_EFFORTS, "none"]),
-  // Rejects `none` specifically ("This model does not support `reasoning_effort`
-  // value..."); takes the rest.
+  // Reject `none` specifically ("This model does not support `reasoning_effort`
+  // value..."); take the rest.
   "grok-4.5": new Set(XAI_EFFORTS),
+  "grok-4.6": new Set(XAI_EFFORTS),
+  "grok-4.7": new Set(XAI_EFFORTS),
   // Reasons, no knob — every tier 400s. See the header.
   "grok-4.20-0309-reasoning": new Set(),
   "grok-build-0.1": new Set(),

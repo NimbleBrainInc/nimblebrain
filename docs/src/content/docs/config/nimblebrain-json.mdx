@@ -338,13 +338,15 @@ The exact model lineup is account- and tier-specific and changes over time. The 
 }
 ```
 
-The key falls back to `XAI_API_KEY`, and `baseURL` overrides the endpoint (default `https://api.x.ai/v1`). Five models ship in the catalog: `grok-4.5`, `grok-4.3`, `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, and `grok-build-0.1`. All five support tool calling.
+The key falls back to `XAI_API_KEY`, and `baseURL` overrides the endpoint (default `https://api.x.ai/v1`). Seven models ship in the catalog: `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-4.3`, `grok-4.20-0309-reasoning`, `grok-4.20-0309-non-reasoning`, and `grok-build-0.1`. All seven support tool calling.
 
 Reasoning support is uneven in a way worth knowing before you point a slot at one:
 
 | Model | Effort tiers accepted |
 |---|---|
 | `grok-4.3` | `low`, `medium`, `high`, plus `none` to suppress reasoning entirely |
+| `grok-4.7` | `low`, `medium`, `high` |
+| `grok-4.6` | `low`, `medium`, `high` |
 | `grok-4.5` | `low`, `medium`, `high` |
 | `grok-4.20-0309-reasoning` | none — it reasons, but rejects the effort parameter |
 | `grok-build-0.1` | none — same |
@@ -352,7 +354,7 @@ Reasoning support is uneven in a way worth knowing before you point a slot at on
 
 Where a model takes no effort parameter, the runtime sends no reasoning options and the model applies its own default; asking for a tier would fail the call outright. `grok-4.3` is the only model in an effort dialect where `thinking: "off"` sends a suppressing value rather than nothing — `none` genuinely zeroes the reasoning trace. (Gemini 2.5 models that can disable thinking also honor `off`, via a zero `thinkingBudget`; that is the budget dialect, not a tier.)
 
-Two other notes. xAI publishes no per-model max-output cap and accepts `max_tokens` up to the full context window, so `grok-4.5` and `grok-build-0.1` are pinned to a 16,384-token output ceiling in the catalog — without it the message budget resolves to zero and every turn fails. And `grok-4.20-multi-agent-0309` is deliberately absent: the Chat Completions endpoint refuses it (`Multi Agent requests are not allowed on chat completions`).
+Two other notes. xAI publishes no per-model max-output cap and accepts `max_tokens` up to the full context window, so `grok-4.7`, `grok-4.6`, `grok-4.5` and `grok-build-0.1` are pinned to a 16,384-token output ceiling in the catalog — without it the message budget resolves to zero and every turn fails. And `grok-4.20-multi-agent-0309` is deliberately absent: the Chat Completions endpoint refuses it (`Multi Agent requests are not allowed on chat completions`).
 
 ## Conversation storage
 
