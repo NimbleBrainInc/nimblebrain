@@ -10,7 +10,8 @@ export interface WorkspaceInfo {
   id: string;
   name: string;
   memberCount: number;
-  connectors: Array<{ name?: string; path?: string }>;
+  /** Connectors installed in the workspace, as of the bootstrap that loaded it. */
+  connectorCount: number;
   /** The signed-in user's role within this workspace, when they're a member. */
   userRole?: "admin" | "member";
   /**

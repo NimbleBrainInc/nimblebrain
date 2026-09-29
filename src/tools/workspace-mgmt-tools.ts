@@ -303,7 +303,7 @@ async function handleCreate(
       workspace: {
         id: workspace.id,
         name: workspace.name,
-        connectors: workspace.connectors,
+        connectors: workspace.connectors.map(await connectorDescriber(ctx)),
         memberCount: workspace.members.length,
         createdAt: workspace.createdAt,
       },
@@ -432,7 +432,7 @@ async function handleUpdate(
       workspace: {
         id: updated.id,
         name: updated.name,
-        connectors: updated.connectors,
+        connectors: updated.connectors.map(await connectorDescriber(ctx)),
         memberCount: updated.members.length,
         updatedAt: updated.updatedAt,
       },
@@ -543,20 +543,35 @@ function describeConnectorTeardown(total: number, failed: Array<{ serverName: st
   return `${torn} ${names} did not tear down cleanly — check the workspace's grants at the vendor.`;
 }
 
+/** One installed connector as this tool reports it. */
+interface ConnectorSummary {
+  serverName: string;
+  name: string;
+}
+
+/**
+ * How every action of this tool reports a workspace's connectors: by name, never
+ * by ref. A ref carries transport auth, headers and OAuth client config, any of
+ * which may hold an inline secret. The name comes from the catalog, as on the
+ * Connectors page. Resolves the catalog once, so a caller maps many refs cheaply.
+ */
+async function connectorDescriber(
+  ctx: ManageWorkspacesContext,
+): Promise<(ref: ConnectorRef) => ConnectorSummary> {
+  const catalog = ctx.runtime.getConnectorCatalog();
+  const [byUrl, byId] = await Promise.all([catalog.catalogByUrl(), catalog.catalogByIdMap()]);
+  return (ref) => {
+    const serverName = serverNameFromRef(ref) ?? ref.url;
+    const name = catalogEntryForRef(ref, byUrl, byId)?.name ?? ref.ui?.name ?? serverName;
+    return { serverName, name };
+  };
+}
+
 async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
   try {
     const workspaces = await ctx.workspaceStore.list();
     const identity = ctx.getIdentity();
-    const catalog = ctx.runtime.getConnectorCatalog();
-    const [byUrl, byId] = await Promise.all([catalog.catalogByUrl(), catalog.catalogByIdMap()]);
-    // A listing names each connector; it does not hand out the ref. The ref
-    // carries transport auth, headers and OAuth client config, which may hold
-    // inline secrets. The name comes from the catalog, as on the Connectors page.
-    const describe = (ref: ConnectorRef) => {
-      const serverName = serverNameFromRef(ref) ?? ref.url;
-      const name = catalogEntryForRef(ref, byUrl, byId)?.name ?? ref.ui?.name ?? serverName;
-      return { serverName, name };
-    };
+    const describe = await connectorDescriber(ctx);
     const result = workspaces.map((ws) => {
       const userRole = identity
         ? ws.members.find((m) => m.userId === identity.id)?.role

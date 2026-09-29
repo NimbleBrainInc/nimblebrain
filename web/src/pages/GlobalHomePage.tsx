@@ -61,13 +61,6 @@ export function GlobalHomePage() {
 
 function WorkspaceTile({ workspace }: { workspace: WorkspaceInfo }) {
   const avatar = getWorkspaceAvatar(workspace);
-  // App count intentionally omitted from this tile: the underlying
-  // `WorkspaceInfo.connectors[]` arrives empty for some workspaces post-
-  // Stage-2 even when apps exist (data-path bug, separate fix), and
-  // showing a stale "0 apps" line on a workspace that has apps is
-  // worse than showing nothing. The workspace overview page reads
-  // from the placement registry (single source of truth) and shows
-  // the correct count, so the user sees accurate data one click in.
   return (
     <Link
       to={`/w/${toSlug(workspace.id)}/`}

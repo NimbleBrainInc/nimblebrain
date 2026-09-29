@@ -97,7 +97,7 @@ const ADMIN_WORKSPACE = {
   id: "ws_acme",
   name: "Acme",
   memberCount: 1,
-  connectors: [],
+  connectorCount: 0,
   userRole: "admin" as const,
 };
 

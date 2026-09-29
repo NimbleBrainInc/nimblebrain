@@ -277,8 +277,8 @@ describe("ProfileConnectorsTab", () => {
       },
     ];
     mounted = await mountWithWorkspaces([
-      { id: "ws_helix", name: "Helix", memberCount: 1, connectors: [] },
-      { id: "ws_mine", name: "Mat's workspace", memberCount: 1, connectors: [] },
+      { id: "ws_helix", name: "Helix", memberCount: 1, connectorCount: 0 },
+      { id: "ws_mine", name: "Mat's workspace", memberCount: 1, connectorCount: 0 },
     ]);
     const container = mounted.container;
     const buttons = () => [...container.getElementsByTagName("button")];

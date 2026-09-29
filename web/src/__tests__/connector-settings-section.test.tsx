@@ -88,7 +88,7 @@ function workspace(userRole?: "admin" | "member"): WorkspaceInfo {
     id: "ws_team",
     name: "Team",
     memberCount: 3,
-    connectors: [],
+    connectorCount: 0,
     ...(userRole ? { userRole } : {}),
   };
 }

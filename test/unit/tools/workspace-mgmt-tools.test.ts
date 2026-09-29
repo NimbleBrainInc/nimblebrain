@@ -168,7 +168,10 @@ describe("nb__manage_workspaces", () => {
       expect(parsed.workspace.id).toBe("ws_custom_slug");
     });
 
-    test("creates workspace with connectors", async () => {
+    test("creates workspace with connectors, reporting them by name", async () => {
+      catalogEntries = [
+        { id: "com.example/echo", name: "Echo", url: "https://echo.example.com/mcp" },
+      ] as ConnectorCatalogEntry[];
       const result = await tool.handler({
         action: "create",
         name: "Connector Workspace",
@@ -177,11 +180,11 @@ describe("nb__manage_workspaces", () => {
 
       expect(result.isError).toBe(false);
       const parsed = parseResult(result) as {
-        workspace: { connectors: Array<{ url: string; serverName?: string }> };
+        workspace: { id: string; connectors: Array<Record<string, unknown>> };
       };
-      expect(parsed.workspace.connectors).toHaveLength(1);
-      expect(parsed.workspace.connectors[0].url).toBe("https://echo.example.com/mcp");
-      expect(parsed.workspace.connectors[0].serverName).toBe("echo");
+      expect(parsed.workspace.connectors).toEqual([{ serverName: "echo", name: "Echo" }]);
+      const stored = await store.get(parsed.workspace.id);
+      expect(stored?.connectors[0]?.url).toBe("https://echo.example.com/mcp");
     });
 
     test("requires name", async () => {
@@ -313,10 +316,18 @@ describe("nb__manage_workspaces", () => {
 
       expect(updateResult.isError).toBe(false);
       const updated = parseResult(updateResult) as {
-        workspace: { connectors: Array<{ url: string }> };
+        workspace: { connectors: Array<Record<string, unknown>> };
       };
-      expect(updated.workspace.connectors).toHaveLength(2);
-      expect(updated.workspace.connectors[0]?.url).toBe("https://echo.example.com/mcp");
+      // Uncatalogued, so each is named by its server name; the ref stays in the store.
+      expect(updated.workspace.connectors).toEqual([
+        { serverName: "echo", name: "echo" },
+        { serverName: "bash", name: "bash" },
+      ]);
+      const stored = await store.get(created.workspace.id);
+      expect(stored?.connectors.map((c) => c.url)).toEqual([
+        "https://echo.example.com/mcp",
+        "https://bash.example.com/mcp",
+      ]);
     });
 
     test("refuses a connector row with no reachable url", async () => {
