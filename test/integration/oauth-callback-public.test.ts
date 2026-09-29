@@ -8,7 +8,8 @@
  *
  * - the callbacks answer without credentials (400 for missing params, never 401);
  * - an authenticated route (bootstrap) still refuses unauthenticated callers;
- * - an unregistered path answers 404.
+ * - a protected-resource metadata path that names no resource answers 404,
+ *   not 401.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -47,8 +48,8 @@ beforeAll(async () => {
 	});
 	await provisionTestWorkspace(runtime);
 
-	// Adapter (auth-enabled) mode — this is the only mode where the leak
-	// manifests; dev mode passes every request through.
+	// Adapter (auth-enabled) mode — this is the only mode where a misplaced
+	// `requireAuth` would 401 a public route; dev mode passes every request through.
 	handle = startServer({ runtime, port: 0});
 	baseUrl = `http://localhost:${handle.port}`;
 });
