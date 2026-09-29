@@ -184,8 +184,9 @@ export function auditArguments(
 /**
  * Whether `writeOnly: true` appears anywhere in `node`, following local `$ref`s
  * against `root`. Every nested object and array is walked, whatever keyword
- * holds it, so a combinator this does not name is still covered. `seen` stops a
- * recursive `$ref`.
+ * holds it, so a combinator this does not name is still covered. A `$ref` that
+ * does not resolve counts as `writeOnly`: what it names cannot be read, so it
+ * is treated like an unreadable schema. `seen` stops a recursive `$ref`.
  */
 function containsWriteOnly(node: unknown, root: unknown, seen: Set<unknown>): boolean {
   if (typeof node !== "object" || node === null || seen.has(node)) return false;
@@ -193,21 +194,25 @@ function containsWriteOnly(node: unknown, root: unknown, seen: Set<unknown>): bo
   if (Array.isArray(node)) return node.some((item) => containsWriteOnly(item, root, seen));
   const obj = node as Record<string, unknown>;
   if (obj.writeOnly === true) return true;
-  if (
-    typeof obj.$ref === "string" &&
-    containsWriteOnly(resolveLocalRef(root, obj.$ref), root, seen)
-  ) {
-    return true;
+  if (typeof obj.$ref === "string") {
+    const target = resolveLocalRef(root, obj.$ref);
+    if (target === undefined || containsWriteOnly(target, root, seen)) return true;
   }
   return Object.values(obj).some((value) => containsWriteOnly(value, root, seen));
 }
 
-/** The node a `#/…` JSON Pointer names in `root`, or undefined. */
+/** The node a `#` or `#/…` JSON Pointer names in `root`, or undefined. */
 function resolveLocalRef(root: unknown, ref: string): unknown {
+  if (ref === "#") return root;
   if (!ref.startsWith("#/")) return undefined;
   let node: unknown = root;
   for (const raw of ref.slice(2).split("/")) {
-    const segment = decodeURIComponent(raw).replace(/~1/g, "/").replace(/~0/g, "~");
+    let segment: string;
+    try {
+      segment = decodeURIComponent(raw).replace(/~1/g, "/").replace(/~0/g, "~");
+    } catch {
+      return undefined;
+    }
     if (typeof node !== "object" || node === null) return undefined;
     node = (node as Record<string, unknown>)[segment];
   }

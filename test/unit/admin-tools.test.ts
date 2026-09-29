@@ -308,6 +308,38 @@ describe("auditArguments", () => {
     expect(auditArguments({ tree: { next: null } }, recursive)).toEqual({ tree: { next: null } });
   });
 
+  test("follows a root $ref: a secret reached through `#` is redacted", () => {
+    const rooted = {
+      type: "object",
+      properties: { token: { type: "string", writeOnly: true }, child: { $ref: "#" } },
+    };
+    expect(auditArguments({ token: "s1", child: { token: "s2" } }, rooted)).toEqual({
+      token: REDACTED_ARGUMENT,
+      child: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("redacts an argument whose $ref does not resolve", () => {
+    const unresolved = {
+      type: "object",
+      $defs: { "100%": { type: "string" } },
+      properties: {
+        anchor: { $ref: "#Auth" },
+        remote: { $ref: "other.json#/$defs/Auth" },
+        missing: { $ref: "#/$defs/Nope" },
+        malformed: { $ref: "#/$defs/100%" },
+      },
+    };
+    expect(
+      auditArguments({ anchor: "a", remote: "r", missing: "m", malformed: "x" }, unresolved),
+    ).toEqual({
+      anchor: REDACTED_ARGUMENT,
+      remote: REDACTED_ARGUMENT,
+      missing: REDACTED_ARGUMENT,
+      malformed: REDACTED_ARGUMENT,
+    });
+  });
+
   test("keeps only the names when there is no schema to read", () => {
     expect(auditArguments({ api_key: "sk", enabled: true }, undefined)).toEqual({
       api_key: REDACTED_ARGUMENT,
