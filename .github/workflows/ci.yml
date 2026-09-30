@@ -54,8 +54,57 @@ env:
 # `test-unit-bare-deps` — its isolation is about which packages get LINKED, and
 # widening `path:` to cover a `node_modules` tree would be what breaks it.
 jobs:
+  # On a push to main, the four check jobs below usually re-test a tree they have
+  # already passed: main requires a PR to be up to date before it merges, so its
+  # last pull_request run tested exactly the tree the merge produced. They skip
+  # when all three of these hold. Anything short of that, including an API error,
+  # runs them:
+  #   - the PR merged as this commit has a head whose tree IS this commit's tree
+  #   - main before this push is an ancestor of that head, so the PR run's test
+  #     merge (the head onto a base no newer than that) was this same tree
+  #   - the latest pull_request run of this workflow on that head succeeded
+  # On a pull_request this job is skipped, and the checks always run.
+  verified-on-pr:
+    name: Already verified on its PR?
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      verified: ${{ steps.prior.outputs.verified }}
+    steps:
+      - name: Match this tree to a passed PR run
+        id: prior
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          verified=false
+          tree=$(gh api "repos/$REPO/commits/$SHA" --jq .commit.tree.sha) || tree=""
+          head=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+            --jq "[.[] | select(.merge_commit_sha == \"$SHA\")][0].head.sha // empty") || head=""
+          if [ -n "$tree" ] && [ -n "$head" ]; then
+            head_tree=$(gh api "repos/$REPO/commits/$head" --jq .commit.tree.sha) || head_tree=""
+            behind=$(gh api "repos/$REPO/compare/$BEFORE...$head" --jq .behind_by) || behind=""
+            result=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$head&event=pull_request&per_page=1" \
+              --jq '.workflow_runs[0].conclusion // empty') || result=""
+            echo "PR head $head: tree $([ "$head_tree" = "$tree" ] && echo matches || echo differs), behind pre-push main by ${behind:-?}, last PR run ${result:-none}"
+            if [ "$head_tree" = "$tree" ] && [ "$behind" = "0" ] && [ "$result" = "success" ]; then
+              verified=true
+            fi
+          else
+            echo "no PR merged as $SHA (or its tree was unreadable)"
+          fi
+          echo "verified=$verified" | tee -a "$GITHUB_OUTPUT"
+
   lint-and-check:
     name: Lint & Typecheck
+    needs: verified-on-pr
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -85,6 +134,8 @@ jobs:
 
   test-unit:
     name: Unit Tests
+    needs: verified-on-pr
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -113,8 +164,11 @@ jobs:
       # the unit job, so the install must be explicit.
       - name: Install platform app UI dependencies
         run: bun run install:platform-apps
-      - name: Verify (unit + web tests)
-        run: bun run verify:test-unit
+      # The root unit suite (`test:unit`, the other half of `verify:test-unit`)
+      # runs once, in test-unit-bare-deps below: root deps alone are the stricter
+      # environment for it, and the web/app-UI installs here only serve `test:ui`.
+      - name: Web and platform app UI tests
+        run: bun run test:ui
 
   # The root unit suite must run on a fresh checkout with ONLY root deps — no
   # `web/` or `src/platform/*/ui` install. `test-unit` above installs both, so it
@@ -126,6 +180,8 @@ jobs:
   # install` here; that is exactly the coverage gap it exists to close.
   test-unit-bare-deps:
     name: Unit Tests (root deps only)
+    needs: verified-on-pr
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -149,6 +205,8 @@ jobs:
 
   test-integration:
     name: Integration Tests
+    needs: verified-on-pr
+    if: ${{ !cancelled() && needs.verified-on-pr.outputs.verified != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -246,8 +304,14 @@ jobs:
   # This is the everyday counterpart to release.yml (which builds on `v*`
   # tags): same ECR repos, same `:<short-sha>` tag — a `v*` release just adds
   # the version tag and GHCR/`:latest` on top. Gating on every check above
-  # means an image only exists in ECR if it built green, which closes the
-  # "deployed a tag that was never pushed" hole.
+  # means an image only exists in ECR if its tree passed them (here, or on the
+  # PR run verified-on-pr matched), which closes the "deployed a tag that was
+  # never pushed" hole.
+  #
+  # The ECR repos are immutable: a `<sha>` tag is written once. Both steps pass
+  # `skip-existing`, so a tag already pushed for this commit skips its build.
+  # A second push run of the same commit, or "Re-run failed jobs" after a
+  # partial push, then completes instead of failing on the immutable tag.
   #
   # `if` restricts this to direct pushes to main (post-merge), never PRs — so
   # the OIDC/ECR credentials are never exposed to fork PRs, and only verified
@@ -255,7 +319,12 @@ jobs:
   build-and-push:
     name: Build & Push Images
     needs: [lint-and-check, test-unit, test-unit-bare-deps, test-integration]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # `!failure() && !cancelled()` rather than the default success(): the checks
+    # are skipped, not failed, when verified-on-pr found this tree already passed,
+    # and a skipped need would otherwise skip this job too.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && !failure() && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -284,6 +353,7 @@ jobs:
           context: .
           file: Dockerfile
           cache-scope: platform
+          skip-existing: "true"
           build-args: BUILD_SHA=${{ steps.tag.outputs.sha }}
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-runtime:${{ steps.tag.outputs.sha }}
       - name: Build and push web image
@@ -292,6 +362,7 @@ jobs:
           context: web
           file: web/Dockerfile
           cache-scope: web
+          skip-existing: "true"
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-web:${{ steps.tag.outputs.sha }}
 
   # Roll the staging "edge" channel onto this build. Fires a single

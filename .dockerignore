@@ -9,6 +9,9 @@
 .nimblebrain
 .DS_Store
 **/node_modules
+# Each platform app UI's dist/ is built inside the image, before src/ is copied
+# over it; a local build's dist/ would otherwise replace the fresh one.
+src/platform/*/ui/dist
 web/
 test/
 docs/
