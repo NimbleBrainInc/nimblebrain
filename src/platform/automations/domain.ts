@@ -324,6 +324,7 @@ export function updateAutomation(
   // Snapshot before the loop overwrites it — the window reset is gated on a real
   // budget change, not merely a write (see `tokenBudgetsEqual`).
   const prevTokenBudget = automation.tokenBudget;
+  const wasEnabled = automation.enabled;
 
   let changed = false;
   for (const field of UPDATABLE_FIELDS) {
@@ -338,6 +339,14 @@ export function updateAutomation(
     automation.consecutiveErrors = 0;
     automation.disabledAt = undefined;
     automation.disabledReason = undefined;
+    // A past `nextRunAt` the schedule really fires at reads as a run still owed
+    // (the scheduler keeps one deferred at its concurrency limit). One kept
+    // through a pause is not owed: a one-off paused before its date and resumed
+    // after it would fire the stale action at once. A recurring schedule keeps
+    // its past value and catches up once, as it always has.
+    if (!wasEnabled && computeNextRunAt(automation, Date.now(), ctx.defaultTimezone) === null) {
+      setNextRunAt(automation, null);
+    }
   }
 
   if (changed) {
