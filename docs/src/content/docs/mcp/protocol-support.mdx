@@ -22,7 +22,7 @@ The revisions fall into two eras. `2026-07-28` has no `initialize` handshake: a 
 | `2024-11-05` | Yes |
 | `2024-10-07` | Yes |
 
-As a client, the host negotiates each connection on its own. It sends `server/discover` first. A server that answers it with a `2026-07-28` result is spoken to on that revision. Any other answer, such as a method-not-found error, leads to the 2025 `initialize` handshake, which offers `2025-11-25` and accepts any older revision above that the server answers with. A probe that meets an HTTP 5xx is retried once on the 2025 era, because some 2025 servers answer every method they do not know with a 500. Nothing is pinned, so a server that moves to `2026-07-28` is spoken to on it at its next connection. As a server, the host serves whichever era each request arrives on; see [As a server to external clients](#as-a-server-to-external-clients).
+As a client, the host negotiates each connection on its own. It sends `server/discover` first. A server that answers it with a `2026-07-28` result is spoken to on that revision. Any other answer, such as a method-not-found error, leads to the 2025 `initialize` handshake, which offers `2025-11-25` and accepts any older revision above that the server answers with. A probe that meets an HTTP 5xx is retried once on the 2025 era, because some 2025 servers answer every method they do not know with a 500. Nothing is pinned, so a server that moves to `2026-07-28` is spoken to on it at its next connection. As a server, the host serves whichever era each request arrives on, and the two are equivalent; see [As a server to external clients](#as-a-server-to-external-clients).
 
 MCP Apps (the `ui://` extension) is implemented from `@modelcontextprotocol/ext-apps`. See the [MCP App Bridge](/apps/bridge/) for the exact messages the host serves.
 
@@ -118,13 +118,13 @@ The host implements the MCP Apps specification: `ui/initialize`, tool input and 
 
 ## As a server to external clients
 
-Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It serves both eras on the same URL. A request carrying the `2026-07-28` `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. Anything else is 2025 traffic, served in a session opened by `initialize`. Both eras list the same tools and resources and return the same errors. It advertises:
+Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It serves both eras on the same URL, and they are equivalent: a client on `2026-07-28` can do everything a client on 2025 can. A request carrying the `2026-07-28` `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. Anything else is 2025 traffic, served in a session opened by `initialize`. Both eras list the same tools and resources, run the same tools as tasks, and return the same errors. It advertises:
 
 | Capability | 2025 | `2026-07-28` | Notes |
 |---|---|---|---|
 | `tools` | Yes | Yes | The workspace's tools and the caller's identity tools, with the same filtering the agent gets |
 | `resources` | Yes | Yes | Resources from the workspace's servers |
-| `tasks` | Yes | No | `tasks/cancel` and task-augmented `tools/call`, so long-running tools stay long-running through the endpoint. The `2026-07-28` side does not serve the tasks extension, so a tool there runs to completion inside the request. |
+| `tasks` | Yes | Yes, as the `io.modelcontextprotocol/tasks` extension | Long-running tools stay long-running through the endpoint. On 2025: `tasks` in `initialize`, task-augmented `tools/call` (`params.task`), `tasks/get`, `tasks/result`, `tasks/cancel`. On `2026-07-28`: the extension in `server/discover`'s `capabilities.extensions`; a `tools/call` whose request names the extension in its client capabilities is answered with a task when the tool can run as one, `tasks/get` inlines the result once the task ends, and `tasks/cancel` acknowledges. A call that does not opt in runs to completion inside the request. |
 
 Neither era advertises `listChanged` or `resources.subscribe`. The endpoint does not serve the optional `GET` server-to-client stream, so progress and task updates arrive on the `POST` that started them. The [MCP endpoint reference](/connect/mcp-endpoint/) covers authentication, sessions, and the audience rule.
 

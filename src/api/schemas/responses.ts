@@ -346,3 +346,11 @@ export interface JsonRpcErrorBody {
   error: { code: number; message: string; data?: Record<string, unknown> };
   id: null;
 }
+
+/** The 2026-07-28 leg's answer to `tasks/get` or `tasks/cancel`, which the SDK does not route. */
+export type McpTaskAnswer = { id: string | number } & (
+  | { result: Record<string, unknown> }
+  | { error: { code: number; message: string } }
+);
+
+export type McpTaskAnswerBody = { jsonrpc: "2.0" } & McpTaskAnswer;
