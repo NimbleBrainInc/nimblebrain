@@ -5,6 +5,7 @@ import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { INFRA_ERROR_META_KEY, SKILL_ACTIVATED_META_KEY } from "../../src/engine/types.ts";
 import { McpSource, type McpTransportMode, policyFor } from "../../src/tools/mcp-source.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
 
 /**
  * Phase 2 of the recovery redesign (research/SPEC-mcp-source-recovery.md): the
@@ -156,7 +157,7 @@ describe("execute (tools/call) — unified recovery", () => {
       expect(result.isError).toBe(true);
       expect(restart).not.toHaveBeenCalled();
       expect(
-        events.filter((e) => (e.data as { event?: string }).event === "source.crashed"),
+        payloadsOf(events, "connector.health").filter((d) => d.event === "source.crashed"),
       ).toHaveLength(0);
       // The `dead` flag is what would hand this source to HealthMonitor's restart
       // burst. (`isAlive()` also reads `transport`, which this harness never wires,
@@ -462,7 +463,7 @@ describe("execute (tools/call) — unified recovery", () => {
       expect(result.isError).toBe(true);
       expect(restart).not.toHaveBeenCalled(); // timeout → surface, never restart
       expect(
-        events.filter((e) => (e.data as { event?: string }).event === "source.crashed"),
+        payloadsOf(events, "connector.health").filter((d) => d.event === "source.crashed"),
       ).toHaveLength(0);
     } finally {
       restart.mockRestore();
@@ -592,8 +593,8 @@ describe("readResource — unified recovery (new behaviors)", () => {
       try {
         expect(await source.readResource("ui://svc/main", { logFailures: true })).toBeNull();
         expect(restart).not.toHaveBeenCalled();
-        const crashed = events.filter(
-          (e) => (e.data as { event?: string }).event === "source.crashed",
+        const crashed = payloadsOf(events, "connector.health").filter(
+          (d) => d.event === "source.crashed",
         );
         expect(crashed).toHaveLength(0);
       } finally {

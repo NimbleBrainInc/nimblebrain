@@ -14,6 +14,7 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { engineEvent, runStartPayload } from "../helpers/engine-events.ts";
 import { readJson } from "../helpers/http.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { readConnected } from "../helpers/sse.ts";
@@ -670,10 +671,7 @@ describe("E2E: SSE event filtering — only routed events pass through", () => {
     await readConnected(reader);
 
     // Emit events: one that should be forwarded, one that should not
-    manager.emit({
-      type: "run.start",
-      data: { runId: "test" },
-    });
+    manager.emit(engineEvent("run.start", runStartPayload({ runId: "test" })));
 
     manager.emit({
       type: "connector.installed",
@@ -683,6 +681,7 @@ describe("E2E: SSE event filtering — only routed events pass through", () => {
         connectorName: "https://tasks.example.com/mcp",
         version: "1.0.0",
         ui: null,
+        placements: null,
       },
     });
 

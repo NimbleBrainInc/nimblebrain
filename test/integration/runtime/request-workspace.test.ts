@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SseEventManager } from "../../../src/api/events.ts";
-import type { EngineEvent } from "../../../src/engine/types.ts";
+import type { EngineEvent, EngineEventOf } from "../../../src/engine/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
@@ -118,16 +118,17 @@ describe("a conversation's live title goes to its owner", () => {
     });
 
     const deadline = Date.now() + 3000;
-    let title: EngineEvent | undefined;
+    let title: EngineEventOf<"conversation.title"> | undefined;
     while (!title && Date.now() < deadline) {
       title = events.find(
-        (e) => e.type === "conversation.title" && e.data.conversationId === res.conversationId,
+        (e): e is EngineEventOf<"conversation.title"> =>
+          e.type === "conversation.title" && e.data.conversationId === res.conversationId,
       );
       if (!title) await new Promise((r) => setTimeout(r, 25));
     }
     expect(title).toBeDefined();
     expect(title!.data.ownerId).toBe(ALICE.id);
-    expect(title!.data.wsId).toBeUndefined();
+    expect("wsId" in title!.data).toBe(false);
 
     await runtime.shutdown();
   });

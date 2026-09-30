@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { SseEventManager } from "../../src/api/events.ts";
+import { engineEvent } from "../helpers/engine-events.ts";
 
 /**
  * Drain an SSE ReadableStream into the list of `event: <type>` lines it has
@@ -10,6 +11,18 @@ import { SseEventManager } from "../../src/api/events.ts";
  * interval in these tests; it should never appear unless one of the cases
  * sleeps past 1s, which they don't.
  */
+/** A complete `connector.installed` for one workspace. */
+function installed(wsId: string, serverName: string, connectorName: string) {
+  return engineEvent("connector.installed", {
+    wsId,
+    serverName,
+    connectorName,
+    version: "1.0.0",
+    ui: null,
+    placements: null,
+  });
+}
+
 function collect(stream: ReadableStream<Uint8Array>): {
   events: string[];
   release: () => void;
@@ -103,10 +116,7 @@ describe("SseEventManager — routing table", () => {
     const wsB = collect(mgr.addClient("ws_b"));
     released.push(wsA.release, wsB.release);
 
-    mgr.emit({
-      type: "connector.installed",
-      data: { wsId: "ws_a", serverName: "ipinfo", connectorName: "@nb/ipinfo" },
-    });
+    mgr.emit(installed("ws_a", "ipinfo", "@nb/ipinfo"));
     mgr.emit({
       type: "connector.uninstalled",
       data: { wsId: "ws_b", serverName: "granola", connectorName: "https://x" },
@@ -117,18 +127,15 @@ describe("SseEventManager — routing table", () => {
     expect(wsB.events).toEqual(["connector.uninstalled"]);
   });
 
-  test("workspace-scoped event with missing wsId is dropped (no global fan-out)", async () => {
+  test("workspace-scoped event with an empty wsId is dropped (no global fan-out)", async () => {
     const wsA = collect(mgr.addClient("ws_a"));
     const wsB = collect(mgr.addClient("ws_b"));
     released.push(wsA.release, wsB.release);
 
-    // wsId field absent on a workspace-scoped event — emitter bug. The
+    // An empty wsId on a workspace-scoped event — emitter bug. The
     // alternative (broadcast to all) leaks one workspace's signals to its
     // neighbors, so the manager refuses.
-    mgr.emit({
-      type: "connector.installed",
-      data: { serverName: "x", connectorName: "y" } as Record<string, unknown>,
-    });
+    mgr.emit(installed("", "x", "y"));
     await flush();
 
     expect(wsA.events).toEqual([]);
@@ -159,7 +166,7 @@ describe("SseEventManager — routing table", () => {
     expect(wsB.events).toEqual([]);
   });
 
-  test("notification.* without workspaceId is dropped, not fanned out", async () => {
+  test("notification.* with an empty workspaceId is dropped, not fanned out", async () => {
     const wsA = collect(mgr.addClient("ws_a"));
     const wsB = collect(mgr.addClient("ws_b"));
     released.push(wsA.release, wsB.release);
@@ -167,14 +174,29 @@ describe("SseEventManager — routing table", () => {
     // The inbox is per workspace and a notification carries a connector's own
     // words, so an unscoped one would put one workspace's business in front of
     // its neighbours. The router refuses rather than guessing.
-    mgr.emit({
-      type: "notification.created",
-      data: { id: "acme:evt_01", seq: 1, source: "acme" } as Record<string, unknown>,
-    });
-    mgr.emit({
-      type: "notification.delivery_failed",
-      data: { id: "acme:evt_01", routeId: "rt_1" } as Record<string, unknown>,
-    });
+    mgr.emit(
+      engineEvent("notification.created", {
+        workspaceId: "",
+        id: "acme:evt_01",
+        seq: 1,
+        source: "acme",
+        name: "domain.active",
+        level: "info",
+        title: "t",
+        receivedAt: "2026-09-01T18:42:11.000Z",
+      }),
+    );
+    mgr.emit(
+      engineEvent("notification.delivery_failed", {
+        workspaceId: "",
+        id: "acme:evt_01",
+        seq: 1,
+        routeId: "rt_1",
+        target: "slack",
+        attempts: 1,
+        outcome: "failed",
+      }),
+    );
     await flush();
 
     expect(wsA.events).toEqual([]);
@@ -187,11 +209,8 @@ describe("SseEventManager — routing table", () => {
     const noWs = collect(mgr.addClient(undefined));
     released.push(wsA.release, wsB.release, noWs.release);
 
-    mgr.emit({ type: "config.changed", data: { key: "models.default" } });
-    mgr.emit({
-      type: "skill.created",
-      data: { id: "/skills/x", name: "x", scope: "user", type: "skill" },
-    });
+    mgr.emit(engineEvent("config.changed", { fields: ["models.default"] }));
+    mgr.emit(engineEvent("skill.created", { id: "/skills/x", name: "x", scope: "user" }));
     await flush();
 
     expect(wsA.events).toEqual(["config.changed", "skill.created"]);
@@ -199,18 +218,23 @@ describe("SseEventManager — routing table", () => {
     expect(noWs.events).toEqual(["config.changed", "skill.created"]);
   });
 
-  test("unrouted event types (tool.progress, run.error) are dropped", async () => {
+  test("unrouted event types (tool.progress, tool.task_status, connector.health) are dropped", async () => {
     const ws = collect(mgr.addClient("ws_a"));
     released.push(ws.release);
 
-    mgr.emit({
-      type: "tool.progress",
-      data: { source: "x", tool: "y", status: "working" },
-    });
-    mgr.emit({
-      type: "run.error",
-      data: { source: "x", event: "source.crashed", error: "boom" },
-    });
+    mgr.emit(engineEvent("tool.progress", { runId: "r1", id: "c1", message: "working" }));
+    mgr.emit(
+      engineEvent("tool.task_status", {
+        source: "x",
+        tool: "y",
+        taskId: "t1",
+        status: "working",
+        message: undefined,
+      }),
+    );
+    mgr.emit(
+      engineEvent("connector.health", { source: "x", event: "source.crashed", error: "boom" }),
+    );
     await flush();
 
     expect(ws.events).toEqual([]);
@@ -294,7 +318,13 @@ describe("SseEventManager — server.notification follows its one owner", () => 
     const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
     released.push(alice.release);
 
-    mgr.emit({ type: "server.notification", data: { server: "notes", method: LIST_CHANGED } });
+    mgr.emit(
+      engineEvent("server.notification", {
+        server: "notes",
+        workspaceId: "",
+        method: LIST_CHANGED,
+      }),
+    );
     mgr.emit({
       type: "server.notification",
       data: { server: "notes", workspaceId: "ws_a", userId: "usr_alice", method: LIST_CHANGED },
@@ -362,14 +392,8 @@ describe("SseEventManager — identity-scoped clients", () => {
     const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
     released.push(alice.release, bob.release);
 
-    mgr.emit({
-      type: "connector.installed",
-      data: { wsId: "ws_a", serverName: "ipinfo", connectorName: "@nb/ipinfo" },
-    });
-    mgr.emit({
-      type: "connector.installed",
-      data: { wsId: "ws_b", serverName: "granola", connectorName: "@nb/granola" },
-    });
+    mgr.emit(installed("ws_a", "ipinfo", "@nb/ipinfo"));
+    mgr.emit(installed("ws_b", "granola", "@nb/granola"));
     await flush();
 
     expect(alice.events).toEqual(["connector.installed"]);
@@ -382,10 +406,7 @@ describe("SseEventManager — identity-scoped clients", () => {
     const both = collect(mgr.addIdentityClient("usr_op", new Set(["ws_a", "ws_b"])));
     released.push(both.release);
 
-    mgr.emit({
-      type: "connector.installed",
-      data: { wsId: "ws_a", serverName: "ipinfo", connectorName: "@nb/ipinfo" },
-    });
+    mgr.emit(installed("ws_a", "ipinfo", "@nb/ipinfo"));
     mgr.emit({
       type: "connection.state_changed",
       data: {
@@ -435,7 +456,7 @@ describe("SseEventManager — identity-scoped clients", () => {
     const empty = collect(mgr.addIdentityClient("usr_x", new Set()));
     released.push(empty.release);
 
-    mgr.emit({ type: "config.changed", data: { key: "models.default" } });
+    mgr.emit(engineEvent("config.changed", { fields: ["models.default"] }));
     await flush();
 
     expect(empty.events).toEqual(["config.changed"]);
@@ -449,10 +470,7 @@ describe("SseEventManager — identity-scoped clients", () => {
     const alice = collect(mgr.addIdentityClient("usr_alice", new Set()));
     released.push(alice.release);
 
-    mgr.emit({
-      type: "connector.installed",
-      data: { wsId: "ws_a", serverName: "x", connectorName: "y" },
-    });
+    mgr.emit(installed("ws_a", "x", "y"));
     await flush();
     expect(alice.events).toEqual([]); // not yet a member
 
@@ -463,10 +481,7 @@ describe("SseEventManager — identity-scoped clients", () => {
     await flush();
     await flush();
 
-    mgr.emit({
-      type: "connector.installed",
-      data: { wsId: "ws_a", serverName: "x", connectorName: "z" },
-    });
+    mgr.emit(installed("ws_a", "x", "z"));
     await flush();
 
     expect(alice.events).toEqual(["connector.installed"]);
@@ -483,10 +498,7 @@ describe("SseEventManager — identity-scoped clients", () => {
     await flush();
     await flush();
 
-    mgr.emit({
-      type: "connector.installed",
-      data: { wsId: "ws_a", serverName: "x", connectorName: "y" },
-    });
+    mgr.emit(installed("ws_a", "x", "y"));
     await flush();
 
     expect(alice.events).toEqual([]);
@@ -504,10 +516,7 @@ describe("SseEventManager — identity-scoped clients", () => {
     await flush();
     await flush();
 
-    mgr.emit({
-      type: "connector.installed",
-      data: { wsId: "ws_a", serverName: "x", connectorName: "y" },
-    });
+    mgr.emit(installed("ws_a", "x", "y"));
     await flush();
 
     expect(alice.events).toEqual(["connector.installed"]);

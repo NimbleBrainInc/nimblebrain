@@ -44,7 +44,11 @@ import {
 } from "./content-helpers.ts";
 import { isContextOverflowError } from "./context-overflow.ts";
 import { withRetry } from "./retry.ts";
-import type { ConnectorSkillInjectedPayload } from "./schemas/events.ts";
+import type {
+  ConnectorSkillInjectedPayload,
+  RunErrorPayload,
+  ToolDonePayload,
+} from "./schemas/events.ts";
 import { createRunSupervisor, type RunSupervisor, type SupervisorVerdict } from "./supervisor.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "./token-estimate.ts";
 import { toolSchemaForLlm } from "./tool-schema-for-llm.ts";
@@ -797,7 +801,7 @@ function buildToolDoneData(params: {
   modelOutput: string;
   resourceLinks: ResourceLinkInfo[];
   verdict: SupervisorVerdict;
-}): Record<string, unknown> {
+}): ToolDonePayload {
   const {
     runId,
     name,
@@ -901,7 +905,7 @@ function reportedIterationCount(iteration: number, maxIter: number): number {
 }
 
 /** Shape the `run.error` event payload from a thrown value. */
-function buildRunErrorData(runId: string, err: unknown): Record<string, unknown> {
+function buildRunErrorData(runId: string, err: unknown): RunErrorPayload {
   return {
     runId,
     error: err instanceof Error ? err.message : String(err),

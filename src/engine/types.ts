@@ -2,6 +2,7 @@ import type { LanguageModelV4Message } from "@ai-sdk/provider";
 import type { McpUiToolVisibility } from "@modelcontextprotocol/ext-apps";
 import type { ContentBlock, TextContent, ToolAnnotations } from "@modelcontextprotocol/server";
 import type { TokenUsage } from "../usage/types.ts";
+import type { EngineEventPayloads } from "./schemas/events.ts";
 
 export type { ContentBlock, TextContent };
 
@@ -255,176 +256,19 @@ export interface EventSink {
   emit(event: EngineEvent): void;
 }
 
-export type EngineEventType =
-  | "chat.start"
-  | "run.start"
-  | "text.delta"
-  | "reasoning.delta"
-  | "tool.preparing"
-  | "tool.preparing.done"
-  | "tool.start"
-  | "tool.done"
-  | "tool.progress"
-  | "tool.promoted"
-  | "tool.released"
-  | "llm.done"
-  /**
-   * A provider LLM call failed terminally — the call threw and the in-call
-   * retry was exhausted (or a context overflow could not be recovered).
-   * NOT emitted for user-initiated cancellations (abort). Payload: { runId,
-   * model }. Observe-only signal for the LLM error-rate metric; the error
-   * itself still propagates and ends the run as `run.error`.
-   */
-  | "llm.error"
-  | "run.done"
-  | "run.error"
-  | "skills.loaded"
-  /**
-   * A curated connector-skill overlay was surfaced into the conversation for
-   * the first time, triggered by a matching connector tool call. The
-   * reconstructor turns this into a synthetic message carrying the skill
-   * body, placed after the tool results of the iteration that triggered it, so
-   * the guidance rides the cached, append-only history and is in context for
-   * the model's next action instead of re-entering the system prefix. Emitted
-   * at most once per (conversation, skill). Payload: { runId, toolName,
-   * skillName, skillBody, scope }.
-   */
-  | "connector.skill.injected"
-  /**
-   * A catalog skill's full body was delivered to the model via the
-   * `nb__use_skill` activation tool. The body itself persists as the tool
-   * result (`tool.done`), so — unlike `connector.skill.injected` — the
-   * reconstructor synthesizes NO extra message for this event; it only stamps
-   * the dedup marker on the reconstructed tool result. Emitted at most once
-   * per (conversation, skill). Payload: { runId, toolCallId, skillName,
-   * scope, tokens }.
-   */
-  | "skill.activated"
-  | "skill.suppression"
-  | "context.assembled"
-  /**
-   * Emitted when a model call is rejected for exceeding the context window
-   * and the engine re-windows history with a tighter budget before retrying.
-   * Payload: { runId, attempt, previousMessageCount, errorMessage }.
-   */
-  | "context.overflow_recovery"
-  | "connector.installed"
-  | "connector.uninstalled"
-  /**
-   * Per-principal connection state change for a remote URL connector.
-   * Payload: { wsId, serverName, principalId, state, authorizationUrl? }.
-   * Workspace-scoped connectors emit one event stream (principalId = "_workspace");
-   * member-scoped connectors emit one stream per active member.
-   */
-  | "connection.state_changed"
-  /**
-   * An app server sent a notification a host relays to the server's views
-   * (`RELAYED_SERVER_NOTIFICATIONS`), after coalescing. Forwarded to SSE as
-   * itself, scoped to the workspace; the web shell posts `{ method, params }`
-   * verbatim to that server's iframes. Payload: { server, workspaceId, method,
-   * params? }.
-   */
-  | "server.notification"
-  | "conversation.title"
-  | "config.changed"
-  | "skill.created"
-  | "skill.updated"
-  | "skill.deleted"
-  | "file.created"
-  | "file.deleted"
-  | "bridge.tool.call"
-  | "bridge.tool.done"
-  /**
-   * A notification a connector emitted reached a workspace's inbox. Emitted
-   * once per item, after the durable write — the inbox is the guarantee and
-   * everything downstream of it is best-effort. Payload:
-   * { workspaceId, id, seq, source, name, level, title, subject?, receivedAt }.
-   */
-  | "notification.created"
-  /**
-   * A route target delivered. The ledger row on the item changed after
-   * `notification.created` announced it, so without this a browser holding
-   * that item shows a delivery that never updates until an unrelated later
-   * frame happens to arrive. Payload:
-   * { workspaceId, id, seq, routeId, target, attempts }.
-   */
-  | "notification.delivered"
-  /**
-   * A route target reached a terminal outcome that is not delivery — refused,
-   * skipped for a departed author, or out of retries. Carries the same
-   * coordinates as the delivery-ledger row it accompanies, so a failed post is
-   * visible instead of silent. Payload:
-   * { workspaceId, id, seq, routeId, target, outcome, attempts, error }.
-   */
-  | "notification.delivery_failed"
-  | "http.error"
-  | "audit.auth_failure"
-  | "audit.permission_denied"
-  /**
-  /**
-   * A secret held in the credential store was revealed to a caller — presented
-   * as a header, exchanged at a token endpoint, handed to a provider SDK.
-   * Payload: { scope, key, caller, purpose } plus `workspaceId` / `userId` when
-   * the scope has one. NEVER the value.
-   *
-   * Emitted on the reveal rather than on the read that produced it, so the log
-   * records secrets that were used and not secrets that were probed for
-   * presence — and at most once per read, so a long-lived `fetch` wrapper
-   * presenting one secret does not write a line per request.
-   */
-  | "audit.credential_read"
-  /**
-   * A stored secret claimed to be sealed and could not be opened — no sealing
-   * key configured, no ring entry matching its `kid`, or a failed
-   * authentication tag. Payload: { scope, key, reason, wantedKid? } plus
-   * `workspaceId` / `userId` when the scope has one. NEVER the value: the bytes
-   * that failed to open are still the ciphertext of a live credential.
-   *
-   * A tag failure is either tampering or a misconfigured key, and both belong
-   * on the same stream the reads go to. `wantedKid` is a MAC over a constant,
-   * so naming it discloses nothing about the key behind it while letting an
-   * operator tell "the outgoing key was dropped too early" from "this file came
-   * from somewhere else".
-   */
-  | "audit.credential_seal_failure"
-  /**
-   * An unattended dispatch — one tool call made with no session, as a named
-   * principal, from stored configuration — reached the door. Emitted once per
-   * call, whatever the outcome, including the ones that never touch a registry:
-   * the point of the line is that the attempt is on the record, so a dispatch
-   * nobody watched is still something an operator can read back. Payload:
-   * { principalId, workspaceId, tool, reason, outcome, classification?, ms }.
-   */
-  | "audit.unattended_dispatch"
-  /**
-   * A call to a connector tool its catalog entry declares in `admin_tools`
-   * reached the role gate. Emitted once per call, admitted or refused, from
-   * the gate every door runs, so no door and no connector has to remember to
-   * write it. The connector is never told who called; this line is the only
-   * record that names them. Payload: `AdminToolCallPayload`.
-   */
-  | "audit.admin_tool_call"
-  /**
-   * The credential store finished its boot reconcile. Payload:
-   * { sealed, strictPlaintextRefusal } — whether a sealing key is configured,
-   * and whether the sweep saw enough to refuse plaintext from now on. Emitted
-   * once per boot; nothing after it changes either field.
-   */
-  | "credential_store.reconciled";
+/** Every engine event type: the keys of `EngineEventPayloads`. */
+export type EngineEventType = keyof EngineEventPayloads;
 
 /**
- * Generic event envelope. Per-event-type payload schemas are declared in
- * `./schemas/events.ts` (TypeBox + `Static<typeof X>` types). Code that
- * needs the precise payload shape can import the typed payload directly
- * (`SkillsLoadedPayload`, `ServerNotificationPayload`, etc.) and narrow on
- * `event.type` before access. Tightening `data` here to a discriminated
- * union over those payloads is a follow-up — it requires auditing every
- * consumer to add the corresponding `event.type === "..."` narrowing.
+ * An engine event: a `type` and the payload `EngineEventPayloads` declares for
+ * it. Narrowing on `event.type` narrows `event.data`.
  */
-export interface EngineEvent {
-  type: EngineEventType;
-  data: Record<string, unknown>;
-}
+export type EngineEvent = {
+  [K in EngineEventType]: { type: K; data: EngineEventPayloads[K] };
+}[EngineEventType];
+
+/** The event of one type. */
+export type EngineEventOf<K extends EngineEventType> = Extract<EngineEvent, { type: K }>;
 
 /** Hooks for intercepting the engine loop at 5 strategic points. */
 export interface EngineHooks {

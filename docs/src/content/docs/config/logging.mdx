@@ -86,13 +86,7 @@ Only workspace-level events are written to this log; conversation streaming even
 **`skill.created`, `skill.updated`, `skill.deleted`** — A workspace skill or context file changed. Carry the skill's `id` (filesystem path), `name`, and `scope`.
 
 ```json
-{"ts":"2026-03-25T14:30:02.000Z","event":"skill.created","id":"/skills/triage/SKILL.md","name":"triage","scope":"workspace","type":"skill"}
-```
-
-**`file.created`, `file.deleted`** — A workspace file was added or removed. `file.created` carries `id`, `filename`, `mimeType`, and `size`.
-
-```json
-{"ts":"2026-03-25T14:30:03.000Z","event":"file.created","id":"file_abc","filename":"report.pdf","mimeType":"application/pdf","size":20184}
+{"ts":"2026-03-25T14:30:02.000Z","event":"skill.created","id":"/skills/triage/SKILL.md","name":"triage","scope":"workspace"}
 ```
 
 **`tool.promoted`, `tool.released`** — A tool entered or left the active tool set. Carry the `runId` and `toolName`; `tool.released` adds `reason: "evicted"` when the engine reclaimed a slot under the active-tool cap.

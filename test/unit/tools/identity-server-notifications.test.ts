@@ -23,6 +23,7 @@ import {
   relayIdentitySourceNotifications,
   type ServerNotification,
 } from "../../../src/tools/server-notifications.ts";
+import { payloadsOf } from "../../helpers/engine-events.ts";
 
 const LIST_CHANGED: ServerNotification = { method: RESOURCES_LIST_CHANGED };
 
@@ -87,7 +88,7 @@ describe("relayIdentitySourceNotifications", () => {
     announceResourceListChangedFor("usr_b", files);
     await settle();
 
-    expect(events.map((e) => e.data.userId)).toEqual(["usr_a", "usr_b"]);
+    expect(notifiedUsers(events)).toEqual(["usr_a", "usr_b"]);
   });
 
   test("a notification that names no user is dropped, and counted", async () => {
@@ -133,7 +134,7 @@ describe("createIdentityServerNotificationRelay — the host sets the rate, per 
     for (let i = 0; i < 20; i++) announce("usr_a");
     announce("usr_b");
 
-    expect(events.map((e) => e.data.userId)).toEqual(["usr_a", "usr_b"]);
+    expect(notifiedUsers(events)).toEqual(["usr_a", "usr_b"]);
   });
 
   test("one person's own announcements coalesce into a leading and a trailing delivery", () => {
@@ -152,3 +153,10 @@ describe("createIdentityServerNotificationRelay — the host sets the rate, per 
     });
   });
 });
+
+/** The user each relayed notification names, in order. */
+function notifiedUsers(events: EngineEvent[]): (string | undefined)[] {
+  return payloadsOf(events, "server.notification").map((d) =>
+    "userId" in d ? d.userId : undefined,
+  );
+}

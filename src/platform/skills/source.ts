@@ -2426,7 +2426,7 @@ async function deleteSkillHandler(
   deleteSkill(dir, name);
   await reloadBootSkills(runtime);
 
-  eventSink.emit({ type: "skill.deleted", data: { id, name, scope } });
+  eventSink.emit({ type: "skill.deleted", data: { id: id as string, name, scope } });
   return {
     content: textContent(`Deleted ${scope} skill "${name}" (snapshotted to _versions/)`),
     structuredContent: { id, name, scope },

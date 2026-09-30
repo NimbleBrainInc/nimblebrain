@@ -4,6 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
+import type { LlmDonePayload } from "../../src/engine/schemas/events.ts";
+import {
+  engineEvent,
+  llmDonePayload,
+  runStartPayload,
+  toolDonePayload,
+} from "../helpers/engine-events.ts";
+
+/** A `tool.start` with the input the model sent. */
+function toolStart(runId: string, name: string, id: string, input: Record<string, unknown> = {}) {
+  return engineEvent("tool.start", { runId, name, id, resourceUri: undefined, input });
+}
 
 function makeDir() {
   const base = mkdtempSync(join(tmpdir(), "es-store-test-"));
@@ -43,21 +55,21 @@ describe("EventSourcedConversationStore", () => {
 
     store.emit({
       type: "run.start",
-      data: { runId: "r1", model: "test-model", maxIterations: 10, toolCount: 0 },
+      data: runStartPayload({ runId: "r1", model: "test-model", maxIterations: 10, toolCount: 0 }),
     });
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         content: [{ type: "text", text: "Hello" }],
         usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 50,
-      },
+      }),
     });
     store.emit({
       type: "run.done",
-      data: { runId: "r1", stopReason: "complete", totalMs: 100 },
+      data: { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 100 },
     });
 
     // Wait for async metadata cache update (llm.response triggers rewrite)
@@ -78,17 +90,20 @@ describe("EventSourcedConversationStore", () => {
     const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
-    const llmDone = (runId: string, finish: Record<string, unknown>) =>
+    const llmDone = (
+      runId: string,
+      finish: Pick<LlmDonePayload, "finishReason" | "finishReasonRaw">,
+    ) =>
       store.emit({
         type: "llm.done",
-        data: {
+        data: llmDonePayload({
           runId,
           model: "test-model",
           content: [{ type: "text", text: "Hello" }],
           usage: { inputTokens: 1, outputTokens: 1 },
           llmMs: 5,
           ...finish,
-        },
+        }),
       });
     llmDone("r1", { finishReason: "other", finishReasonRaw: "compaction" });
     llmDone("r2", { finishReason: "stop" });
@@ -113,7 +128,7 @@ describe("EventSourcedConversationStore", () => {
 
     store.emit({
       type: "tool.done",
-      data: {
+      data: toolDonePayload({
         runId: "r1",
         name: "web__deep_research",
         id: "tc_1",
@@ -122,7 +137,7 @@ describe("EventSourcedConversationStore", () => {
         output: "digest text",
         resourceUri: "artifact://art_abc",
         resourceLinks: [{ uri: "artifact://art_abc", name: "report", mimeType: "text/markdown" }],
-      },
+      }),
     });
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
@@ -230,8 +245,17 @@ describe("EventSourcedConversationStore", () => {
     store.setActiveConversation(conv.id);
 
     store.emit({ type: "text.delta", data: { runId: "r1", text: "hi" } });
-    store.emit({ type: "connector.installed", data: { serverName: "test" } });
-    store.emit({ type: "config.changed", data: {} });
+    store.emit(
+      engineEvent("connector.installed", {
+        wsId: "ws_test",
+        serverName: "test",
+        connectorName: "test",
+        version: "1.0.0",
+        ui: null,
+        placements: null,
+      }),
+    );
+    store.emit(engineEvent("config.changed", { fields: [] }));
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
     // Only line 0 (metadata), no event lines
@@ -248,20 +272,24 @@ describe("EventSourcedConversationStore", () => {
 
     debugStore.emit({
       type: "run.start",
-      data: {
+      data: runStartPayload({
         runId: "r1",
         model: "test-model",
         systemPrompt: "You are a helpful assistant",
         toolNames: ["bash", "read"],
-      },
+      }),
     });
-    debugStore.emit({
-      type: "tool.start",
-      data: { runId: "r1", name: "bash", id: "t1", input: { command: "ls" } },
-    });
+    debugStore.emit(toolStart("r1", "bash", "t1", { command: "ls" }));
     debugStore.emit({
       type: "tool.done",
-      data: { runId: "r1", name: "bash", id: "t1", ok: true, ms: 50, output: "file1.txt" },
+      data: toolDonePayload({
+        runId: "r1",
+        name: "bash",
+        id: "t1",
+        ok: true,
+        ms: 50,
+        output: "file1.txt",
+      }),
     });
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
@@ -279,20 +307,24 @@ describe("EventSourcedConversationStore", () => {
 
     store.emit({
       type: "run.start",
-      data: {
+      data: runStartPayload({
         runId: "r1",
         model: "test-model",
         systemPrompt: "secret prompt",
         toolNames: ["bash"],
-      },
+      }),
     });
-    store.emit({
-      type: "tool.start",
-      data: { runId: "r1", name: "bash", id: "t1", input: { command: "ls" } },
-    });
+    store.emit(toolStart("r1", "bash", "t1", { command: "ls" }));
     store.emit({
       type: "tool.done",
-      data: { runId: "r1", name: "bash", id: "t1", ok: true, ms: 50, output: "file1.txt" },
+      data: toolDonePayload({
+        runId: "r1",
+        name: "bash",
+        id: "t1",
+        ok: true,
+        ms: 50,
+        output: "file1.txt",
+      }),
     });
 
     const lines = readLines(join(dirs.dir, `${conv.id}.jsonl`));
@@ -311,40 +343,43 @@ describe("EventSourcedConversationStore", () => {
     store.setActiveConversation(conv.id);
 
     // Simulate a complete run with a tool call that produces output
-    store.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: "test-model" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         content: [{ type: "tool-call", toolCallId: "tc1", toolName: "files__read", input: "{}" }],
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 500,
-      },
+      }),
     });
-    store.emit({ type: "tool.start", data: { runId: "r1", name: "files__read", id: "tc1" } });
+    store.emit(toolStart("r1", "files__read", "tc1"));
     store.emit({
       type: "tool.done",
-      data: {
+      data: toolDonePayload({
         runId: "r1",
         name: "files__read",
         id: "tc1",
         ok: true,
         ms: 10,
         output: "Hello world file content",
-      },
+      }),
     });
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         content: [{ type: "text", text: "I read the file." }],
         usage: { inputTokens: 200, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 400,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId: "r1", stopReason: "end_turn", totalMs: 1000 } });
+    store.emit({
+      type: "run.done",
+      data: { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 1000 },
+    });
 
     // Load history — this goes through the reconstructor
     const messages = await store.history(conv);
@@ -370,13 +405,13 @@ describe("EventSourcedConversationStore", () => {
     store.setActiveConversation(conv1.id);
     store.emit({
       type: "run.start",
-      data: { runId: "r1", model: "m1" },
+      data: runStartPayload({ runId: "r1", model: "m1" }),
     });
 
     store.setActiveConversation(conv2.id);
     store.emit({
       type: "run.start",
-      data: { runId: "r2", model: "m2" },
+      data: runStartPayload({ runId: "r2", model: "m2" }),
     });
 
     const lines1 = readLines(join(dirs.dir, `${conv1.id}.jsonl`));
@@ -436,36 +471,42 @@ describe("EventSourcedConversationStore", () => {
 
     // Turn 1
     const runId = "run-1";
-    store.emit({ type: "run.start", data: { runId, model: "test" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId, model: "test" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId,
         model: "test",
         content: [{ type: "text", text: "response 1" }],
         usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 100,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId, stopReason: "complete", totalMs: 100 } });
+    store.emit({
+      type: "run.done",
+      data: { runId, stopReason: "complete", iterations: 1, totalMs: 100 },
+    });
 
     // Title generation fires (simulates fire-and-forget from runtime)
     const updatePromise = store.update(conv.id, { title: "Generated Title" });
 
     // Turn 2 starts before title generation completes
     const runId2 = "run-2";
-    store.emit({ type: "run.start", data: { runId: runId2, model: "test" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId: runId2, model: "test" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: runId2,
         model: "test",
         content: [{ type: "text", text: "response 2" }],
         usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 100,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId: runId2, stopReason: "complete", totalMs: 100 } });
+    store.emit({
+      type: "run.done",
+      data: { runId: runId2, stopReason: "complete", iterations: 1, totalMs: 100 },
+    });
 
     await updatePromise;
     await store.flush();
@@ -555,18 +596,21 @@ describe("EventSourcedConversationStore", () => {
     const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
-    store.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: "test-model" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         content: [{ type: "text", text: "First reply" }],
         usage: { inputTokens: 10, outputTokens: 5 },
         llmMs: 50,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId: "r1", stopReason: "complete", totalMs: 50 } });
+    store.emit({
+      type: "run.done",
+      data: { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 50 },
+    });
 
     store.appendEvent(conv.id, {
       ts: new Date().toISOString(),
@@ -574,18 +618,21 @@ describe("EventSourcedConversationStore", () => {
       content: [{ type: "text", text: "Follow up" }],
     } as ConversationEvent);
 
-    store.emit({ type: "run.start", data: { runId: "r2", model: "test-model" } });
+    store.emit(engineEvent("run.start", runStartPayload({ runId: "r2", model: "test-model" })));
     store.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r2",
         model: "test-model",
         content: [{ type: "text", text: "Second reply" }],
         usage: { inputTokens: 20, outputTokens: 8 },
         llmMs: 75,
-      },
+      }),
     });
-    store.emit({ type: "run.done", data: { runId: "r2", stopReason: "complete", totalMs: 75 } });
+    store.emit({
+      type: "run.done",
+      data: { runId: "r2", stopReason: "complete", iterations: 1, totalMs: 75 },
+    });
 
     const sourceMessages = await store.history(conv);
     const sourceAssistantCount = sourceMessages.filter((m) => m.role === "assistant").length;

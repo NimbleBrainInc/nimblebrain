@@ -534,8 +534,8 @@ export class McpSource implements ToolSource {
 
   /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
-   * `tool.progress` during task-augmented calls and `run.error` when the
-   * source crashes.
+   * `tool.task_status` during task-augmented calls and `connector.health` when
+   * the source crashes or restarts.
    *
    * Pass `new NoopEventSink()` only when a caller deliberately wants to
    * discard events (e.g. short-lived sources that aren't part of an agent
@@ -570,7 +570,7 @@ export class McpSource implements ToolSource {
   /**
    * The source name to put on an emitted event.
    *
-   * Consumers of `tool.progress` / `run.error` read this as a wire name. A
+   * Consumers of `tool.task_status` / `connector.health` read this as a wire name. A
    * personal connector emitting its bare name there is indistinguishable from a
    * workspace source installed under the same name, which is the exact
    * ambiguity the marker exists to remove.
@@ -1040,7 +1040,7 @@ export class McpSource implements ToolSource {
     if (this.stopping || this.dead) return;
     this.dead = true;
     this.eventSink.emit({
-      type: "run.error",
+      type: "connector.health",
       data: {
         source: this.eventSourceName,
         event: "source.crashed",
@@ -1924,14 +1924,14 @@ export class McpSource implements ToolSource {
     isTaskAugmented: boolean,
   ): ToolResult | Promise<ToolResult> {
     // Cancellation isn't a crash — the source is healthy, the client just asked
-    // to stop. Emit a terminal tool.progress for task-augmented calls so UIs
-    // watching the progress stream transition out of "working", then surface the
+    // to stop. Emit a terminal tool.task_status for task-augmented calls so a
+    // watcher of the task stream transitions out of "working", then surface the
     // error to the agent without marking the source dead or triggering restart.
     const wasAborted = signal?.aborted === true;
     if (wasAborted) {
       if (isTaskAugmented) {
         this.eventSink.emit({
-          type: "tool.progress",
+          type: "tool.task_status",
           data: {
             source: this.eventSourceName,
             tool: toolName,
@@ -2551,7 +2551,7 @@ export class McpSource implements ToolSource {
     // Emit the initial progress event inline so callers see `taskCreated`
     // before `startToolAsTask` returns.
     this.eventSink.emit({
-      type: "tool.progress",
+      type: "tool.task_status",
       data: {
         source: this.name,
         tool: toolName,
@@ -2690,7 +2690,7 @@ export class McpSource implements ToolSource {
    * `startToolAsTask` until the stream terminates.
    *
    * Responsibilities:
-   *   - Emit `tool.progress` for every `taskStatus` so the chat UI renders live.
+   *   - Emit `tool.task_status` for every `taskStatus`.
    *   - Refresh `handle.latestTask` on every `taskStatus`.
    *   - Resolve `handle.terminalDeferred` on `result`, reject on `error`.
    *   - On thrown errors (transport crash, abort), reject + stamp a
@@ -2728,14 +2728,14 @@ export class McpSource implements ToolSource {
 
   /**
    * `taskStatus`: refresh `handle.latestTask` + expiry and emit a live
-   * `tool.progress`. No-op when the message carried no task.
+   * `tool.task_status`. No-op when the message carried no task.
    */
   private applyTaskStatus(handle: TaskHandle, task: Task | undefined, toolName: string): void {
     if (!task) return;
     handle.latestTask = task;
     handle.expiresAt = computeExpiry(task);
     this.eventSink.emit({
-      type: "tool.progress",
+      type: "tool.task_status",
       data: {
         source: this.name,
         tool: toolName,
@@ -2990,13 +2990,13 @@ export class McpSource implements ToolSource {
       this.toolsFetchedAt = null;
       this.dead = false;
       this.eventSink.emit({
-        type: "run.error",
+        type: "connector.health",
         data: { source: this.name, event: "source.restarted" },
       });
       return true;
     } catch (err) {
       this.eventSink.emit({
-        type: "run.error",
+        type: "connector.health",
         data: { source: this.name, event: "source.restart_failed", error: String(err) },
       });
       return false;

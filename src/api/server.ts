@@ -181,6 +181,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     // Run with `NB_DEBUG=sse` to enable.
     if (
       (event.type === "tool.progress" ||
+        event.type === "tool.task_status" ||
         event.type === "tool.done" ||
         event.type === "server.notification") &&
       log.debugEnabled("sse")

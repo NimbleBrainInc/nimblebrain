@@ -11,8 +11,6 @@ const WORKSPACE_EVENTS = new Set<EngineEventType>([
   "skill.created",
   "skill.updated",
   "skill.deleted",
-  "file.created",
-  "file.deleted",
   "bridge.tool.done",
   "http.error",
   "audit.auth_failure",

@@ -2,10 +2,16 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EngineEvent, EngineEventType } from "../../src/engine/types.ts";
+import type { EngineEvent } from "../../src/engine/types.ts";
 import type { TelemetryClient } from "../../src/telemetry/manager.ts";
 import { TelemetryManager } from "../../src/telemetry/manager.ts";
 import { PostHogEventSink } from "../../src/telemetry/posthog-sink.ts";
+import {
+  engineEvent,
+  llmDonePayload,
+  runStartPayload,
+  toolDonePayload,
+} from "../helpers/engine-events.ts";
 
 // ---------------------------------------------------------------------------
 // Mock
@@ -49,9 +55,43 @@ function createMockSetup(): {
   return { client, sink, tmpDir };
 }
 
-function emit(sink: PostHogEventSink, type: EngineEventType, data: Record<string, unknown> = {}) {
-  sink.emit({ type, data } as EngineEvent);
+/**
+ * Fields an engine payload does not declare, carrying the kind of data the sink
+ * must never copy through. A payload built in a variable and then spread can
+ * carry extra fields at runtime; the sink has to ignore them.
+ */
+const LEAKY = {
+  conversationId: "conv-123",
+  userMessage: "email me at john@example.com",
+  path: "/Users/john/secret-project",
+  apiKey: "sk-ant-abc123",
+  stack: "Error at /Users/john/project/index.ts:42",
+};
+
+/** An event whose payload also carries `LEAKY`'s undeclared fields. */
+function leaky(event: EngineEvent): EngineEvent {
+  const data = { ...event.data, ...LEAKY };
+  return { ...event, data } as EngineEvent;
 }
+
+const runStart = (runId: string) =>
+  engineEvent("run.start", runStartPayload({ runId, toolNames: ["bash", "read"] }));
+const runDone = (runId: string) =>
+  engineEvent("run.done", { runId, stopReason: "complete", iterations: 1, totalMs: 10 });
+const runError = (runId: string, error: string) =>
+  engineEvent("run.error", { runId, error, type: "TypeError" });
+const connectorFields = {
+  wsId: "ws_test",
+  serverName: "tasks",
+  connectorName: "@nimblebraininc/tasks",
+};
+const connectorInstalled = engineEvent("connector.installed", {
+  ...connectorFields,
+  version: "1.2.3",
+  ui: { name: "Tasks", icon: "tasks" },
+  placements: null,
+});
+const connectorUninstalled = engineEvent("connector.uninstalled", connectorFields);
 
 function lastCaptured(client: MockTelemetryClient) {
   return client.events[client.events.length - 1];
@@ -113,26 +153,12 @@ describe("Telemetry Privacy", () => {
   describe("property allowlist", () => {
     const allowlists: Record<
       string,
-      {
-        telemetryEvent: string;
-        allowed: Set<string>;
-        emitData: Record<string, unknown>;
-        engineType: EngineEventType;
-      }
+      { telemetryEvent: string; allowed: Set<string>; events: EngineEvent[] }
     > = {
       "agent.chat_started": {
         telemetryEvent: "agent.chat_started",
-        allowed: new Set(["has_skill", "tool_count", "is_resume", ...COMMON_KEYS]),
-        engineType: "run.start",
-        emitData: {
-          runId: "r1",
-          skill: "my-skill",
-          toolNames: ["bash", "read"],
-          isResume: true,
-          conversationId: "conv-123",
-          userMessage: "secret user input",
-          model: "claude-sonnet-4-5-20250929",
-        },
+        allowed: new Set(["tool_count", ...COMMON_KEYS]),
+        events: [leaky(runStart("r1"))],
       },
       "agent.chat_completed": {
         telemetryEvent: "agent.chat_completed",
@@ -148,63 +174,29 @@ describe("Telemetry Privacy", () => {
           "cache_tokens",
           ...COMMON_KEYS,
         ]),
-        engineType: "run.done",
-        emitData: {
-          runId: "r1",
-          stopReason: "complete",
-          inputTokens: 1000,
-          outputTokens: 500,
-          output: "This is the full LLM response with PII",
-          conversationId: "conv-123",
-        },
+        // run.start first, so the run's metrics exist.
+        events: [runStart("r1"), leaky(runDone("r1"))],
       },
       "agent.error": {
         telemetryEvent: "agent.error",
-        allowed: new Set(["error_type", "error_code", ...COMMON_KEYS]),
-        engineType: "run.error",
-        emitData: {
-          runId: "r1",
-          error: Object.assign(new TypeError("ENOENT: /Users/john/.config"), { code: "ENOENT" }),
-          stack: "Error at /Users/john/project/index.ts:42",
-          conversationId: "conv-123",
-        },
+        allowed: new Set(["error_type", ...COMMON_KEYS]),
+        events: [leaky(runError("r1", "ENOENT: /Users/john/.config"))],
       },
       "connector.installed": {
         telemetryEvent: "connector.installed",
-        allowed: new Set(["source", "has_ui", "trust_score", ...COMMON_KEYS]),
-        engineType: "connector.installed",
-        emitData: {
-          serverName: "tasks",
-          connectorName: "@nimblebraininc/tasks",
-          installSource: "registry",
-          path: "/Users/john/connectors/tasks",
-          ui: { name: "Tasks", icon: "tasks" },
-          version: "1.2.3",
-          manifest: { name: "tasks" },
-        },
+        allowed: new Set(["source", "has_ui", ...COMMON_KEYS]),
+        events: [leaky(connectorInstalled)],
       },
       "connector.uninstalled": {
         telemetryEvent: "connector.uninstalled",
         allowed: new Set(["source", ...COMMON_KEYS]),
-        engineType: "connector.uninstalled",
-        emitData: {
-          serverName: "tasks",
-          connectorName: "@nimblebraininc/tasks",
-          installSource: "registry",
-          path: "/Users/john/connectors/tasks",
-          version: "1.2.3",
-        },
+        events: [leaky(connectorUninstalled)],
       },
     };
 
     for (const [label, spec] of Object.entries(allowlists)) {
       it(`${label}: only allowlisted keys appear`, () => {
-        // For run.done, first emit run.start so metrics exist
-        if (spec.engineType === "run.done") {
-          emit(sink, "run.start", { runId: "r1", toolNames: ["bash"] });
-        }
-
-        emit(sink, spec.engineType, spec.emitData);
+        for (const event of spec.events) sink.emit(event);
 
         const captured = client.events.find((e) => e.event === spec.telemetryEvent);
         expect(captured).toBeDefined();
@@ -223,53 +215,38 @@ describe("Telemetry Privacy", () => {
 
   describe("PII pattern scanning", () => {
     it("no captured event contains PII patterns", () => {
-      // Emit all event types with PII-laden data
-      emit(sink, "run.start", {
-        runId: "r1",
-        skill: "my-skill",
-        toolNames: ["bash"],
-        userMessage: "email me at john@example.com",
-        path: "/Users/john/secret-project",
-        apiKey: "sk-ant-abc123",
-      });
-
-      emit(sink, "llm.done", {
-        runId: "r1",
-        llmMs: 100,
-        cacheReadTokens: 50,
-        inputTokens: 200,
-        outputTokens: 100,
-      });
-
-      emit(sink, "tool.done", {
-        runId: "r1",
-        name: "bash",
-        ms: 50,
-        output: "Bearer eyJhbGciOiJIUzI1NiJ9",
-      });
-
-      emit(sink, "run.done", {
-        runId: "r1",
-        stopReason: "complete",
-        inputTokens: 200,
-        outputTokens: 100,
-        output: "Response with /Users/john path and john@example.com",
-      });
-
-      emit(sink, "run.error", {
-        runId: "r2",
-        error: Object.assign(new Error("ENOENT: /home/user/.ssh/id_rsa"), { code: "ENOENT" }),
-      });
-
-      emit(sink, "connector.installed", {
-        name: "@nimblebraininc/tasks",
-        path: "/Users/john/connectors",
-      });
-
-      emit(sink, "connector.uninstalled", {
-        name: "@nimblebraininc/tasks",
-        path: "/Users/john/connectors",
-      });
+      // Emit every captured event type, with PII in the declared string
+      // fields and in undeclared extras.
+      sink.emit(leaky(runStart("r1")));
+      sink.emit(
+        leaky(
+          engineEvent(
+            "llm.done",
+            llmDonePayload({
+              runId: "r1",
+              llmMs: 100,
+              usage: { inputTokens: 200, outputTokens: 100, cacheReadTokens: 50 },
+            }),
+          ),
+        ),
+      );
+      sink.emit(
+        leaky(
+          engineEvent(
+            "tool.done",
+            toolDonePayload({
+              runId: "r1",
+              name: "bash",
+              ms: 50,
+              output: "Bearer eyJhbGciOiJIUzI1NiJ9",
+            }),
+          ),
+        ),
+      );
+      sink.emit(leaky(runDone("r1")));
+      sink.emit(leaky(runError("r2", "ENOENT: /home/user/.ssh/id_rsa")));
+      sink.emit(leaky(connectorInstalled));
+      sink.emit(leaky(connectorUninstalled));
 
       expect(client.events.length).toBeGreaterThan(0);
 
@@ -306,10 +283,7 @@ describe("Telemetry Privacy", () => {
 
   describe("connector name exclusion", () => {
     it("connector.installed does not contain connector name", () => {
-      emit(sink, "connector.installed", {
-        name: "@nimblebraininc/tasks",
-        connectorName: "@nimblebraininc/tasks",
-      });
+      sink.emit(connectorInstalled);
 
       const captured = lastCaptured(client);
       expect(captured).toBeDefined();
@@ -320,10 +294,15 @@ describe("Telemetry Privacy", () => {
     });
 
     it("connector.installed does not contain connector path", () => {
-      emit(sink, "connector.installed", {
-        name: "@nimblebraininc/tasks",
-        path: "/Users/john/secret-project/connector",
-      });
+      sink.emit(
+        engineEvent("connector.installed", {
+          ...connectorFields,
+          connectorName: "/Users/john/secret-project/connector",
+          version: "1.2.3",
+          ui: null,
+          placements: null,
+        }),
+      );
 
       const captured = lastCaptured(client);
       expect(captured).toBeDefined();
@@ -340,12 +319,7 @@ describe("Telemetry Privacy", () => {
 
   describe("error message exclusion", () => {
     it("run.error does not leak error message or paths", () => {
-      emit(sink, "run.error", {
-        runId: "r1",
-        error: Object.assign(new Error("ENOENT: /Users/john/.nimblebrain/config"), {
-          code: "ENOENT",
-        }),
-      });
+      sink.emit(runError("r1", "ENOENT: /Users/john/.nimblebrain/config"));
 
       const captured = lastCaptured(client);
       expect(captured).toBeDefined();
@@ -358,16 +332,15 @@ describe("Telemetry Privacy", () => {
     });
 
     it("run.error does not leak stack traces", () => {
-      const err = new Error("Connection refused");
-      // Manually set a stack with file paths
-      err.stack = `Error: Connection refused
+      // A message carrying a stack with file paths.
+      sink.emit(
+        runError(
+          "r2",
+          `Error: Connection refused
     at connect (/Users/john/project/src/db.ts:42:5)
-    at main (/home/user/app/index.ts:10:3)`;
-
-      emit(sink, "run.error", {
-        runId: "r2",
-        error: err,
-      });
+    at main (/home/user/app/index.ts:10:3)`,
+        ),
+      );
 
       const captured = lastCaptured(client);
       expect(captured).toBeDefined();
@@ -401,20 +374,15 @@ describe("Telemetry Privacy", () => {
         const optOutSink = new PostHogEventSink(optOutManager);
 
         // Emit every event type
-        const allEvents: Array<{ type: EngineEventType; data: Record<string, unknown> }> = [
-          { type: "run.start", data: { runId: "r1", toolNames: ["bash"] } },
-          {
-            type: "run.done",
-            data: { runId: "r1", stopReason: "complete", inputTokens: 100, outputTokens: 50 },
-          },
-          { type: "run.error", data: { runId: "r2", error: new Error("fail") } },
-          { type: "connector.installed", data: { name: "test" } },
-          { type: "connector.uninstalled", data: { name: "test" } },
+        const allEvents: EngineEvent[] = [
+          runStart("r1"),
+          runDone("r1"),
+          runError("r2", "fail"),
+          connectorInstalled,
+          connectorUninstalled,
         ];
 
-        for (const evt of allEvents) {
-          optOutSink.emit(evt as EngineEvent);
-        }
+        for (const evt of allEvents) optOutSink.emit(evt);
 
         // Zero captures
         expect(optOutClient.events).toHaveLength(0);

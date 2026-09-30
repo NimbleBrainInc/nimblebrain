@@ -7,6 +7,7 @@ import { AgentEngine } from "../../src/engine/engine.ts";
 import type {
   EngineConfig,
   EngineEvent,
+  EngineEventOf,
   EventSink,
   ToolCall,
   ToolPromotionControls,
@@ -1430,7 +1431,7 @@ describe("AgentEngine", () => {
         // Without the per-engine toolPromotion factory, the child's
         // manage_tools would leak into the outer run.
         const innerEngine = new AgentEngine(innerModel, innerRouter, {
-          emit: (event) => events.push({ ...event, data: { ...event.data, scope: "inner" } }),
+          emit: (event) => events.push(event),
         });
         await innerEngine.run(
           {
@@ -1457,7 +1458,7 @@ describe("AgentEngine", () => {
     });
 
     const outerEngine = new AgentEngine(outerModel, outerRouter, {
-      emit: (event) => events.push({ ...event, data: { ...event.data, scope: "outer" } }),
+      emit: (event) => events.push(event),
     });
 
     // Wrap the whole flow in a request context so reqCtx exists for the
@@ -4568,8 +4569,11 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
   };
 
   /** Capture every `connector.skill.injected` event the engine emits. */
-  function injectionSink(): { sink: EventSink; injected: EngineEvent[] } {
-    const injected: EngineEvent[] = [];
+  function injectionSink(): {
+    sink: EventSink;
+    injected: EngineEventOf<"connector.skill.injected">[];
+  } {
+    const injected: EngineEventOf<"connector.skill.injected">[] = [];
     const sink: EventSink = {
       emit(event) {
         if (event.type === "connector.skill.injected") injected.push(event);
@@ -4748,11 +4752,11 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
   /** Capture `skill.activated` + `connector.skill.injected` events. */
   function activationSink(): {
     sink: EventSink;
-    activated: EngineEvent[];
-    injected: EngineEvent[];
+    activated: EngineEventOf<"skill.activated">[];
+    injected: EngineEventOf<"connector.skill.injected">[];
   } {
-    const activated: EngineEvent[] = [];
-    const injected: EngineEvent[] = [];
+    const activated: EngineEventOf<"skill.activated">[] = [];
+    const injected: EngineEventOf<"connector.skill.injected">[] = [];
     const sink: EventSink = {
       emit(event) {
         if (event.type === "skill.activated") activated.push(event);

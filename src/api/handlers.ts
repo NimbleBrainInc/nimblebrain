@@ -20,6 +20,7 @@ import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RefreshTokenError } from "../identity/provider.ts";
 import { getAvailableModels } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
+import { chatResponseBody } from "../runtime/chat-response.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
@@ -29,13 +30,12 @@ import {
 } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import type { ChatRequest, ChatResult } from "../runtime/types.ts";
+import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
-import { estimateCost } from "../usage/cost.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { defaultWorkspaceFor, ensureUserWorkspace } from "../workspace/provisioning.ts";
@@ -148,25 +148,6 @@ export async function handleChat(
     if (mapped) return mapped;
     throw err;
   }
-}
-
-/**
- * The body of `POST …/chat` and the `done` frame of `POST …/chat/stream`.
- * Cost is derived here, at the boundary, and never stored. There is no
- * result-level workspace: per-tool-call attribution is on each `tool.done`
- * event's `workspaceId`.
- */
-function chatResponseBody(result: ChatResult): ChatResponse {
-  return {
-    response: result.response,
-    conversationId: result.conversationId,
-    skillName: result.skillName,
-    toolCalls: result.toolCalls,
-    stopReason: result.stopReason,
-    inputTokens: result.usage.inputTokens,
-    outputTokens: result.usage.outputTokens,
-    usage: { ...result.usage, costUsd: estimateCost(result.usage.model, result.usage) },
-  };
 }
 
 /** Map a chat-turn error to its HTTP response, or null to rethrow. */
@@ -456,7 +437,7 @@ export async function handleChatStream(
             conversationEventManager.broadcastToConversation(
               convId,
               event.type,
-              event.data as Record<string, unknown>,
+              { ...event.data },
               originSubscriberId,
             );
           }

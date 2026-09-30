@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { EngineEvent } from "../../src/engine/types.ts";
 import type { CredentialScope, CredentialStore } from "../../src/tools/credential-store.ts";
 import { isRedacted } from "../../src/tools/redacted.ts";
+import { payloadsOf } from "./engine-events.ts";
 
 /**
  * The properties every `CredentialStore` has, whatever holds the bytes.
@@ -244,7 +245,10 @@ export function describeCredentialStoreConformance(
         await store.put(WS, "k", "v");
         (await store.get(WS, "k", { caller: "a", purpose: "first" }))?.reveal();
         (await store.get(WS, "k", { caller: "b", purpose: "second" }))?.reveal();
-        expect(events.map((e) => e.data.caller)).toEqual(["a", "b"]);
+        expect(payloadsOf(events, "audit.credential_read").map((d) => d.caller)).toEqual([
+          "a",
+          "b",
+        ]);
       } finally {
         cleanup();
       }

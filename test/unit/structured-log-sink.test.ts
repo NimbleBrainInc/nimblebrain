@@ -4,6 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StructuredLogSink } from "../../src/adapters/structured-log-sink.ts";
 import { log } from "../../src/observability/log.ts";
+import {
+  engineEvent,
+  llmDonePayload,
+  runStartPayload,
+  toolDonePayload,
+} from "../helpers/engine-events.ts";
+
+/** A run's end, with neutral counters. */
+function runDone(runId: string) {
+  return engineEvent("run.done", { runId, stopReason: "complete", iterations: 1, totalMs: 0 });
+}
 
 function makeLogDir(): string {
   return mkdtempSync(join(tmpdir(), "log-sink-test-"));
@@ -29,24 +40,31 @@ describe("StructuredLogSink", () => {
   it("writes each event as a separate log line", () => {
     const sink = new StructuredLogSink({ dir: logDir });
 
-    sink.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: "test-model" })));
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 500, cacheWriteTokens: 0 },
         llmMs: 80,
-      },
+      }),
     });
-    sink.emit({
-      type: "tool.start",
-      data: { runId: "r1", name: "my-tool", id: "call-1" },
-    });
-    sink.emit({
-      type: "tool.done",
-      data: { runId: "r1", name: "my-tool", id: "call-1", ok: true, ms: 120 },
-    });
+    sink.emit(
+      engineEvent("tool.start", {
+        runId: "r1",
+        name: "my-tool",
+        id: "call-1",
+        resourceUri: undefined,
+        input: {},
+      }),
+    );
+    sink.emit(
+      engineEvent(
+        "tool.done",
+        toolDonePayload({ runId: "r1", name: "my-tool", id: "call-1", ms: 120 }),
+      ),
+    );
     sink.emit({
       type: "run.done",
       data: { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 500 },
@@ -69,7 +87,7 @@ describe("StructuredLogSink", () => {
 
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "claude-sonnet-4-5-20250929",
         usage: {
@@ -79,16 +97,16 @@ describe("StructuredLogSink", () => {
           cacheWriteTokens: 100,
         },
         llmMs: 80,
-      },
+      }),
     });
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "claude-sonnet-4-5-20250929",
         usage: { inputTokens: 2000, outputTokens: 400, cacheReadTokens: 1500, cacheWriteTokens: 0 },
         llmMs: 120,
-      },
+      }),
     });
     sink.close();
 
@@ -109,15 +127,15 @@ describe("StructuredLogSink", () => {
   it("run.done is a lightweight bookend with no derived data", () => {
     const sink = new StructuredLogSink({ dir: logDir });
 
-    sink.emit({ type: "run.start", data: { runId: "r1", model: "test-model" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1", model: "test-model" })));
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "test-model",
         usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 50,
-      },
+      }),
     });
     sink.emit({
       type: "run.done",
@@ -142,15 +160,15 @@ describe("StructuredLogSink", () => {
   it("includes conversation ID on all records when set", () => {
     const sink = new StructuredLogSink({ dir: logDir, conversationId: "conv_abc" });
 
-    sink.emit({ type: "run.start", data: { runId: "r1" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "m",
         usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 1,
-      },
+      }),
     });
     sink.close();
 
@@ -163,16 +181,16 @@ describe("StructuredLogSink", () => {
   it("setConversationId updates sid for subsequent events", () => {
     const sink = new StructuredLogSink({ dir: logDir });
 
-    sink.emit({ type: "run.start", data: { runId: "r1" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.setConversationId("conv_xyz");
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "r1",
         model: "m",
         usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 1,
-      },
+      }),
     });
     sink.close();
 
@@ -192,19 +210,21 @@ describe("StructuredLogSink", () => {
 
   it("excludes noisy fields from log records", () => {
     const sink = new StructuredLogSink({ dir: logDir });
-    sink.emit({
-      type: "run.start",
-      data: {
-        runId: "r1",
-        model: "test-model",
-        toolNames: ["a", "b"],
-        systemPromptLength: 5000,
-        systemPrompt: "long prompt...",
-        messageRoles: ["user"],
-        estimatedMessageTokens: 1234,
-        toolCount: 2,
-      },
-    });
+    sink.emit(
+      engineEvent(
+        "run.start",
+        runStartPayload({
+          runId: "r1",
+          model: "test-model",
+          toolNames: ["a", "b"],
+          systemPromptLength: 5000,
+          systemPrompt: "long prompt...",
+          messageRoles: ["user"],
+          estimatedMessageTokens: 1234,
+          toolCount: 2,
+        }),
+      ),
+    );
     sink.close();
 
     const records = readLogRecords(logDir);
@@ -220,25 +240,25 @@ describe("StructuredLogSink", () => {
   it("concurrent runs produce independent event streams", () => {
     const sink = new StructuredLogSink({ dir: logDir });
 
-    sink.emit({ type: "run.start", data: { runId: "a" } });
-    sink.emit({ type: "run.start", data: { runId: "b" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "a" })));
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "b" })));
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "a",
         model: "model-a",
         usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 10,
-      },
+      }),
     });
     sink.emit({
       type: "llm.done",
-      data: {
+      data: llmDonePayload({
         runId: "b",
         model: "model-b",
         usage: { inputTokens: 200, outputTokens: 80, cacheReadTokens: 0, cacheWriteTokens: 0 },
         llmMs: 20,
-      },
+      }),
     });
     sink.emit({
       type: "run.done",
@@ -270,16 +290,18 @@ describe("StructuredLogSink", () => {
     mkdirSync(logFile);
     const warn = spyOn(log, "warn").mockImplementation(() => {});
     try {
-      expect(() => sink.emit({ type: "run.start", data: { runId: "r1" } })).not.toThrow();
-      expect(() => sink.emit({ type: "run.done", data: { runId: "r1" } })).not.toThrow();
+      expect(() =>
+        sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" }))),
+      ).not.toThrow();
+      expect(() => sink.emit(runDone("r1"))).not.toThrow();
       expect(warn).toHaveBeenCalledTimes(1); // suppressed after the first
 
       // A successful write re-arms the warning for the next failure episode.
       rmSync(logFile, { recursive: true });
-      sink.emit({ type: "run.start", data: { runId: "r2" } }); // writes the file → reset
+      sink.emit(engineEvent("run.start", runStartPayload({ runId: "r2" }))); // writes the file → reset
       rmSync(logFile);
       mkdirSync(logFile); // block again
-      sink.emit({ type: "run.done", data: { runId: "r2" } });
+      sink.emit(runDone("r2"));
       expect(warn).toHaveBeenCalledTimes(2);
     } finally {
       warn.mockRestore();

@@ -243,6 +243,7 @@ import { WorkspaceContext } from "../workspace/context.ts";
 import { retireLegacyPersonalWorkspaces } from "../workspace/legacy-personal.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { chatResponseBody } from "./chat-response.ts";
 import {
   ConversationAccessDeniedError,
   ConversationNotFoundError,
@@ -1224,13 +1225,7 @@ export class Runtime {
       .then((result) => {
         // Publish a terminal `done` carrying the final result so viewers
         // finalize the assistant message, then close the run.
-        this.publishTurnEvent(conversationId, "done", {
-          response: result.response,
-          conversationId: result.conversationId,
-          toolCalls: result.toolCalls,
-          stopReason: result.stopReason,
-          usage: result.usage,
-        });
+        this.publishTurnEvent(conversationId, "done", chatResponseBody(result));
         this.runBus.end(conversationId, "done");
       })
       .catch((err) => {
@@ -2580,20 +2575,23 @@ export class Runtime {
   ): EventSink {
     return {
       emit: (event) => {
-        const id =
-          (event.type === "tool.progress" || event.type === "tool.done") &&
-          typeof event.data.id === "string"
-            ? event.data.id
-            : undefined;
-        const wsId = id ? perCallWorkspaceMap.get(id) : undefined;
-        if (!id || wsId === undefined) {
+        if (event.type !== "tool.progress" && event.type !== "tool.done") {
           inner.emit(event);
           return;
         }
-        // Done is terminal — drop the entry now to keep the map bounded
-        // across long-running conversations.
-        if (event.type === "tool.done") perCallWorkspaceMap.delete(id);
-        inner.emit({ type: event.type, data: { ...event.data, workspaceId: wsId } });
+        const wsId = perCallWorkspaceMap.get(event.data.id);
+        if (wsId === undefined) {
+          inner.emit(event);
+          return;
+        }
+        if (event.type === "tool.done") {
+          // Done is terminal — drop the entry now to keep the map bounded
+          // across long-running conversations.
+          perCallWorkspaceMap.delete(event.data.id);
+          inner.emit({ type: "tool.done", data: { ...event.data, workspaceId: wsId } });
+          return;
+        }
+        inner.emit({ type: "tool.progress", data: { ...event.data, workspaceId: wsId } });
       },
     };
   }
@@ -5882,14 +5880,14 @@ function createPartialRunAccumulator(): {
   const toolCalls: RunHandle["toolCalls"] = [];
   const sink: EventSink = {
     emit(event: EngineEvent): void {
-      const { type, data } = event;
-      if (type === "llm.done") {
+      if (event.type === "llm.done") {
+        const { data } = event;
         totals.iterations += 1;
-        totals.llmMs += (data.llmMs as number) ?? 0;
-        const usage = (data.usage ?? {}) as { inputTokens?: number; outputTokens?: number };
-        totals.inputTokens += usage.inputTokens ?? 0;
-        totals.outputTokens += usage.outputTokens ?? 0;
-      } else if (type === "tool.done") {
+        totals.llmMs += data.llmMs;
+        totals.inputTokens += data.usage.inputTokens;
+        totals.outputTokens += data.usage.outputTokens;
+      } else if (event.type === "tool.done") {
+        const { data } = event;
         // `errorReason` is intentionally absent here: this accumulator only
         // feeds the abort/timeout path, which always returns
         // `stopReason: "aborted"` (never "complete"), so the automations
@@ -5897,12 +5895,12 @@ function createPartialRunAccumulator(): {
         // `tool.done` event doesn't carry `errorReason` either — no point
         // threading it through for a path that can't de-mask.)
         toolCalls.push({
-          id: (data.id as string) ?? "",
-          name: (data.name as string) ?? "",
+          id: data.id,
+          name: data.name,
           input: {},
-          output: (data.output as string) ?? "",
-          ok: (data.ok as boolean) ?? false,
-          ms: (data.ms as number) ?? 0,
+          output: data.output,
+          ok: data.ok,
+          ms: data.ms,
         });
       }
     },
