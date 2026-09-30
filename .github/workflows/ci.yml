@@ -325,6 +325,13 @@ jobs:
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/main'
       && !failure() && !cancelled()
+    # Two push runs of one commit (a duplicate push delivery) would otherwise build
+    # side by side, both find no `<sha>` tag, and the second push fails on the
+    # immutable tag. Queued per commit, the second starts after the first has
+    # pushed, and skip-existing then skips its builds.
+    concurrency:
+      group: build-and-push-${{ github.sha }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -381,9 +388,13 @@ jobs:
   roll-staging-edge:
     name: Roll staging edge channel
     needs: [build-and-push, changes]
+    # `!cancelled()` is load-bearing: without a status function GitHub adds an
+    # implicit success() over every ancestor, and the checks build-and-push needs
+    # are skipped on a commit verified-on-pr matched, which would skip this roll
+    # for every such merge. build-and-push's own `if` already implies push-to-main.
     if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
+      !cancelled() &&
+      needs.build-and-push.result == 'success' &&
       needs.changes.outputs.image_relevant == 'true'
     runs-on: ubuntu-latest
     environment: deploy-config-edge
