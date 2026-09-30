@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   type ConnectorTool,
   listConnectorToolsWithPermissions,
@@ -19,6 +19,13 @@ function errorMessage(err: unknown): string {
  * all" sit in the section header for the I-just-want-everything-on /
  * everything-off cases.
  *
+ * **`collapsible` starts it as one summary line** ("27 tools · all allowed").
+ * A connector can expose dozens of tools, and listed in full they bury
+ * everything after them on a page of sections; the summary says what matters
+ * at a glance, and the list opens on demand. The bulk controls appear with it.
+ * A host that is already a disclosure (a panel opened to show the tools)
+ * leaves it off, so opening the panel shows the list.
+ *
  * Defaults: tools without a recorded policy are treated as Allow.
  * The runtime gate at `ToolRegistry.execute` honors the same default,
  * so an empty permissions.json means "everything works." Trust-by-
@@ -33,6 +40,7 @@ export function ToolPermissionsTable({
   serverName,
   scope,
   canManage,
+  collapsible = false,
 }: {
   serverName: string;
   /** Which connector's policy this table shows: the active workspace's install,
@@ -43,12 +51,18 @@ export function ToolPermissionsTable({
    *  admin-gates the write; read stays open, so a member can see what their
    *  agent is allowed to do. A personal connector's policy is the viewer's own. */
   canManage: boolean;
+  /** Start as a summary line with a Show tools toggle, for a page where the
+   *  list sits among other sections. */
+  collapsible?: boolean;
 }) {
   const [tools, setTools] = useState<ConnectorTool[]>([]);
   const [policies, setPolicies] = useState<Record<string, ToolPolicy>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingTool, setSavingTool] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  const open = !collapsible || expanded;
 
   useEffect(() => {
     let cancelled = false;
@@ -121,7 +135,7 @@ export function ToolPermissionsTable({
             : "Which tools the agent can call. Workspace admins choose."}
         </p>
       </div>
-      {tools.length > 0 && canManage && (
+      {tools.length > 0 && canManage && open && (
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <button
             type="button"
@@ -182,23 +196,48 @@ export function ToolPermissionsTable({
     );
   }
 
+  const blocked = tools.filter((t) => policyFor(t.name) === "disallow").length;
   return (
     <section className="space-y-3">
       {header}
-      <ul className="border-t border-border/60">
-        {tools.map((tool) => (
-          <ToolPermissionRow
-            key={tool.name}
-            tool={tool}
-            policy={policyFor(tool.name)}
-            saving={savingTool === tool.name}
-            canManage={canManage}
-            onSetPolicy={updatePolicy}
-          />
-        ))}
-      </ul>
+      {collapsible && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm">{permissionSummary(tools.length, blocked)}</p>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={listId}
+            onClick={() => setExpanded((v) => !v)}
+            className="text-xs text-muted-foreground hover:text-foreground hover:underline underline-offset-4"
+          >
+            {expanded ? "Hide tools" : "Show tools"}
+          </button>
+        </div>
+      )}
+      {open && (
+        <ul id={listId} className="border-t border-border/60">
+          {tools.map((tool) => (
+            <ToolPermissionRow
+              key={tool.name}
+              tool={tool}
+              policy={policyFor(tool.name)}
+              saving={savingTool === tool.name}
+              canManage={canManage}
+              onSetPolicy={updatePolicy}
+            />
+          ))}
+        </ul>
+      )}
     </section>
   );
+}
+
+/** "27 tools · all allowed", "27 tools · 3 disallowed", "1 tool · none allowed". */
+export function permissionSummary(total: number, blocked: number): string {
+  const count = `${total} ${total === 1 ? "tool" : "tools"}`;
+  if (blocked === 0) return `${count} · all allowed`;
+  if (blocked === total) return `${count} · none allowed`;
+  return `${count} · ${blocked} disallowed`;
 }
 
 /**

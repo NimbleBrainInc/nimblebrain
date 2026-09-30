@@ -2,13 +2,16 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  ApiErrorBody,
+  ChatResponse,
+  HealthResponse,
+  ToolCallResponse,
+} from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
-import type { ToolResult } from "../../src/engine/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ChatResult } from "../../src/runtime/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
@@ -19,9 +22,6 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 import { resultText } from "../helpers/tool-result.ts";
 
 /** The chat route's body: the run's `ChatResult` plus its token totals at the top level. */
-type ChatResponse = ChatResult & { inputTokens: number; outputTokens: number };
-/** The tools/call route's body. */
-type ToolCallResponse = Pick<ToolResult, "content" | "structuredContent" | "isError">;
 
 // --- SSE parsing helper ---
 
@@ -99,7 +99,7 @@ describe("integration: full flow with auth", () => {
     // 1. Health is open without auth
     const healthRes = await fetch(`${baseUrl}/v1/health`);
     expect(healthRes.status).toBe(200);
-    const health = await readJson<{ status: string }>(healthRes);
+    const health = await readJson<HealthResponse>(healthRes);
     expect(health.status).toBe("ok");
 
     // 2. Chat without auth is rejected

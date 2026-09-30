@@ -2,10 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
-import type { ToolResult } from "../../src/engine/types.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -14,7 +13,6 @@ import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** What `POST …/tools/call` answers: the tool result's wire fields. */
-type ToolCallBody = Pick<ToolResult, "content" | "structuredContent" | "isError">;
 
 const testDir = join(tmpdir(), `nimblebrain-core-reg-${Date.now()}`);
 
@@ -108,7 +106,7 @@ describe("POST /v1/workspaces/:wsId/tools/call with server=nb", () => {
       }),
     });
     expect(res.status).toBe(200);
-    const body = await readJson<ToolCallBody>(res);
+    const body = await readJson<ToolCallResponse>(res);
     expect(body.isError).toBe(false);
     expect(Array.isArray(body.content)).toBe(true);
   });
@@ -141,7 +139,7 @@ describe("POST /v1/workspaces/:wsId/tools/call with an identity source (conversa
       body: JSON.stringify({ server: "conversations", tool: "list", arguments: {} }),
     });
     expect(res.status).toBe(200);
-    const body = await readJson<ToolCallBody>(res);
+    const body = await readJson<ToolCallResponse>(res);
     expect(body.isError).toBe(false);
   });
 
@@ -156,7 +154,7 @@ describe("POST /v1/workspaces/:wsId/tools/call with an identity source (conversa
       }),
     });
     expect(res.status).toBe(200);
-    const body = await readJson<ToolCallBody>(res);
+    const body = await readJson<ToolCallResponse>(res);
     expect(body.isError).toBe(false);
   });
 });

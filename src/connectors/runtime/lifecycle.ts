@@ -372,6 +372,26 @@ export class ConnectorLifecycleManager {
     return { provider, brokered };
   }
 
+  /**
+   * Whether disconnecting this connector means anything: its connection rests on
+   * a credential a person authorized, which Disconnect revokes and Connect
+   * re-establishes. True for a native OAuth connection and for a brokered one whose
+   * provider can reconnect. False when the credential is configuration rather than a
+   * sign-in — a platform-minted `provider` token or a stored bearer or header, the set
+   * `connectorHasStaticAuth` names — because there is nothing to revoke and nothing
+   * for a person to redo. The web offers Disconnect only where this is true; the
+   * disconnect tool refuses an established connection where it is false.
+   */
+  isDisconnectable(ref: ConnectorRef | undefined): boolean {
+    if (!ref || !("url" in ref)) return false;
+    const brokered = brokeredRef(ref);
+    if (brokered) {
+      const provider = this.managedConnectors.get(brokered.provider);
+      return !!provider && brokerCanReconnect(provider);
+    }
+    return !connectorHasStaticAuth(ref);
+  }
+
   /** Set the PlacementRegistry (called by Runtime after construction). */
   setPlacementRegistry(pr: PlacementRegistry): void {
     this.placementRegistry = pr;
@@ -1294,10 +1314,7 @@ export class ConnectorLifecycleManager {
     // delete may revoke both at the upstream vendor. Reporting `{ access }` only
     // (not faking `refresh`) keeps the return shape honest about what we know.
     const brokeredTarget = this.brokeredProvider(ref, "disconnect");
-    const canReconnect =
-      brokeredTarget?.provider.initiate !== undefined ||
-      brokeredTarget?.provider.connectApiKey !== undefined;
-    if (brokeredTarget?.provider.cleanup && canReconnect) {
+    if (brokeredTarget?.provider.cleanup && brokerCanReconnect(brokeredTarget.provider)) {
       const { upstreamDeleted, localDeleted, lastError } = await brokeredTarget.provider.cleanup({
         owner: { type: "workspace", wsId },
         brokered: brokeredTarget.brokered,
@@ -2249,4 +2266,11 @@ function buildSeededInstance(
     // oauthClient + scopes). Stored as an opaque copy.
     ref: { ...ref },
   };
+}
+
+/** A broker can re-establish a connection it tore down: it offers an interactive
+ *  `initiate` or an API-key `connectApiKey`. Without either, disconnect would be a
+ *  one-way door, which is why only such brokers are disconnectable. */
+function brokerCanReconnect(provider: ManagedConnectorProvider): boolean {
+  return provider.initiate !== undefined || provider.connectApiKey !== undefined;
 }

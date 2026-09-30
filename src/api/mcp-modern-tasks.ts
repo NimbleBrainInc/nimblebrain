@@ -26,6 +26,8 @@ import {
 import { TASKS_EXTENSION_ID } from "../tools/mcp-task-client.ts";
 import { TaskAlreadyTerminalError, TaskNotFoundError } from "../tools/types.ts";
 import type { TaskAwareSource, TaskScope } from "./mcp-task-store.ts";
+import type { McpTaskAnswer, McpTaskAnswerBody } from "./schemas/responses.ts";
+import { json } from "./types.ts";
 
 export { TASKS_EXTENSION_ID };
 
@@ -249,9 +251,6 @@ function headerMismatch(
   return null;
 }
 
-function jsonRpcResponse(
-  status: number,
-  message: { id: string | number; result?: unknown; error?: { code: number; message: string } },
-): Response {
-  return Response.json({ jsonrpc: "2.0", ...message }, { status });
+function jsonRpcResponse(status: number, message: McpTaskAnswer): Response {
+  return json<McpTaskAnswerBody>({ jsonrpc: "2.0", ...message }, status);
 }

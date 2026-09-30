@@ -40,10 +40,11 @@ import {
   GetTaskResultSchema,
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { getActiveWorkspaceId, uploadResource, type WorkspaceFile } from "../api/client";
+import { getActiveWorkspaceId, uploadResource } from "../api/client";
 import { humanBytes } from "../api/format-error";
 import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
+import type { FileEntry } from "../types";
 import { openAppChannel } from "./app-channel";
 import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
 import { buildHostCapabilities } from "./host-capabilities";
@@ -1311,7 +1312,7 @@ function filterHostContextForSpec(ctx: Record<string, unknown>): Record<string, 
 /**
  * Open the OS file picker, then upload the selected files to the
  * workspace file store via `POST /v1/workspaces/:wsId/resources`. Returns the
- * persisted `WorkspaceFile` entries — bytes never traverse the
+ * persisted `FileEntry` entries — bytes never traverse the
  * iframe-bridge boundary, so files of any size the server's
  * `maxFileSize` allows work without base64 inflation or hitting the
  * 1 MB tool-call JSON cap.
@@ -1383,7 +1384,7 @@ async function pickFiles(
  * `result.files` alone, so a result field would never reach the app.
  */
 interface RequestFileResult {
-  files: WorkspaceFile[];
+  files: FileEntry[];
 }
 
 interface RequestFileRefusal extends RequestFileResult {

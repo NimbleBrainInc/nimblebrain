@@ -44,7 +44,7 @@ import {
   saveBriefingPrefs,
 } from "../../lib/briefing-prefs";
 import { cn } from "../../lib/utils";
-import { statusLabel } from "../connectors/ConnectorStatusHero";
+import { statusLabel } from "../connectors/ConnectorHeader";
 
 interface BriefingViewProps {
   /** Scopes the member's hidden rows and collapsed state. */
@@ -133,7 +133,7 @@ function connectorRow(c: InstalledConnector, onOpen: (serverName: string) => voi
     muted: level === "info",
     onOpen: () => onOpen(c.serverName),
     content: statusLabel(c.status),
-    app: c.catalog?.name ?? c.serverName,
+    app: c.displayName,
   };
 }
 

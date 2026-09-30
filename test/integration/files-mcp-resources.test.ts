@@ -1,3 +1,5 @@
+import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * A2: workspace files are addressable as MCP resources at `files://<id>`.
  * This test verifies that uploading a file via chat-multipart makes it
@@ -97,7 +99,7 @@ async function uploadChatFile(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ server: "files", tool: "list", arguments: { limit: 100 } }),
   });
-  const listBody = (await listRes.json()) as { content: { type: string; text: string }[] };
+  const listBody = await readJson<ToolCallResponse>(listRes);
   const listed = JSON.parse(listBody.content[0]!.text) as FilesListOutput;
   const match = listed.files.find((f) => f.filename === filename);
   if (!match) throw new Error(`uploaded file ${filename} not found in registry`);

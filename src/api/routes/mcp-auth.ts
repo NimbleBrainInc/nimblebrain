@@ -15,7 +15,8 @@ import { log } from "../../observability/log.ts";
 import { type FlowOwner, peekFlowOwner, resolveWithCode } from "../../tools/oauth-flow-registry.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { requireWorkspace, WORKSPACE_ROUTE_PREFIX } from "../middleware/workspace.ts";
-import { type AppContext, type AppEnv, apiError } from "../types.ts";
+import type { OAuthInitiateResponse } from "../schemas/responses.ts";
+import { type AppContext, type AppEnv, apiError, json } from "../types.ts";
 import { profileConnectorsUrl, workspaceConnectorsUrl } from "./connectors-redirect.ts";
 import { SUCCESS_PAGE_CSP, successPageHtml } from "./oauth-success-page.ts";
 
@@ -100,7 +101,7 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // flow (provider-minted / already-authenticated) and is now running. Report it
       // so the UI refreshes state instead of redirecting to a nonexistent auth page,
       // rather than the old spurious 500 (#679).
-      if (started === null) return c.json({ authorizationUrl: null });
+      if (started === null) return json<OAuthInitiateResponse>({ authorizationUrl: null });
 
       // Bind the user's browser session to the SDK-built `state` via a
       // hashed cookie so a leaked `state` value alone can't let a
@@ -115,9 +116,9 @@ export function mcpAuthRoutes(ctx: AppContext) {
       // Cookie scoped to /v1/mcp-auth/callback so it's only sent on the
       // return leg. HttpOnly + SameSite=Lax matches the existing session
       // cookie posture; Secure when not on localhost.
-      c.header("Set-Cookie", buildOAuthStateCookie(stateHash, 900, ctx.secureCookies));
-
-      return c.json({ authorizationUrl });
+      return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
+        "Set-Cookie": buildOAuthStateCookie(stateHash, 900, ctx.secureCookies),
+      });
     },
   );
 
@@ -153,14 +154,15 @@ export function mcpAuthRoutes(ctx: AppContext) {
     // A null URL is the success signal: connected without an interactive flow
     // (already authenticated). Report it so the UI refreshes state instead of
     // redirecting to nothing (#679).
-    if (started === null) return c.json({ authorizationUrl: null });
+    if (started === null) return json<OAuthInitiateResponse>({ authorizationUrl: null });
 
     const prepared = prepareAuthorization(started, serverName, `user:${userId}`);
     if (prepared instanceof Response) return prepared;
     const { authorizationUrl, state } = prepared;
 
-    c.header("Set-Cookie", buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies));
-    return c.json({ authorizationUrl });
+    return json<OAuthInitiateResponse>({ authorizationUrl }, 200, {
+      "Set-Cookie": buildOAuthStateCookie(sha256Hex(state), 900, ctx.secureCookies),
+    });
   });
 
   // ── GET /v1/mcp-auth/callback ─────────────────────────────────────

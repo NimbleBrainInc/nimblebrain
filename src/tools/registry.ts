@@ -87,6 +87,7 @@ export class SharedSourceRef implements ToolSource {
 export type ConnectorAdminDenial = (
   serverName: string,
   toolName: string,
+  input: Record<string, unknown>,
 ) => Promise<ToolResult | null>;
 
 export class ToolRegistry implements ToolRouter {
@@ -284,7 +285,7 @@ export class ToolRegistry implements ToolRouter {
       if (denied) return denied;
     }
     if (this.adminDenial) {
-      const denied = await this.adminDenial(prefix, localName);
+      const denied = await this.adminDenial(prefix, localName, call.input);
       if (denied) return denied;
     }
 

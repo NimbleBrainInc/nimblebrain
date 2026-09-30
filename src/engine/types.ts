@@ -397,6 +397,14 @@ export type EngineEventType =
    */
   | "audit.unattended_dispatch"
   /**
+   * A call to a connector tool its catalog entry declares in `admin_tools`
+   * reached the role gate. Emitted once per call, admitted or refused, from
+   * the gate every door runs, so no door and no connector has to remember to
+   * write it. The connector is never told who called; this line is the only
+   * record that names them. Payload: `AdminToolCallPayload`.
+   */
+  | "audit.admin_tool_call"
+  /**
    * The credential store finished its boot reconcile. Payload:
    * { sealed, strictPlaintextRefusal } — whether a sealing key is configured,
    * and whether the sweep saw enough to refuse plaintext from now on. Emitted

@@ -61,7 +61,7 @@ export function ConnectorList({ configureBasePath }: { configureBasePath: string
     // searching. localeCompare with `sensitivity: "base"` does the
     // right thing for accented chars (É sorts with E) and ignores
     // case ("github" / "GitHub" don't fight each other).
-    const displayName = (c: InstalledConnector): string => c.catalog?.name ?? c.serverName;
+    const displayName = (c: InstalledConnector): string => c.displayName;
     const sorted = [...installed].sort((a, b) =>
       displayName(a).localeCompare(displayName(b), undefined, { sensitivity: "base" }),
     );
@@ -128,7 +128,7 @@ function ConnectorRow({
   installed: InstalledConnector;
   configureBasePath: string;
 }) {
-  const name = installed.catalog?.name ?? installed.serverName;
+  const name = installed.displayName;
   const iconUrl = installed.iconUrl;
   const summary = listSummary(installed);
 

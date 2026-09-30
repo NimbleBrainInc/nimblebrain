@@ -13,11 +13,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, ChatResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ChatResult } from "../../src/runtime/types.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
 import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -31,7 +30,6 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
  * What `POST /v1/workspaces/:wsId/chat` sends: the run's result with its token
  * counts lifted to the top level, and `usage` replaced by its wire form.
  */
-type ChatResponse = Omit<ChatResult, "usage"> & { inputTokens: number; outputTokens: number };
 
 const API_KEY = "chat-metadata-test-key-1234";
 let runtime: Runtime;

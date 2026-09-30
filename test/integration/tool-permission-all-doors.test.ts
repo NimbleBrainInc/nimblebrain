@@ -108,6 +108,7 @@ function buildHarness(): Harness {
   const store = new PermissionStore(workDir);
   const source = new MockSource();
   const router = new IdentityToolRouter({
+    caller: "chat",
     identityId: IDENTITY_ID,
     workspaceId: WS_ID,
     runtime: makeRuntime(workDir, source, store),

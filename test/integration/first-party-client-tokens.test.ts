@@ -22,6 +22,7 @@ import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpResourceUrl } from "../../src/api/mcp-resource.ts";
+import type { ChatStartResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import type { WorkosAuth } from "../../src/identity/instance.ts";
 import { WorkosIdentityProvider } from "../../src/identity/providers/workos.ts";
@@ -32,9 +33,6 @@ import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { readJson } from "../helpers/http.ts";
 
 /** What `POST …/chat/start` answers: the turn runs on, the id comes back now. */
-interface ChatStartBody {
-  conversationId: string;
-}
 
 const AUTHKIT_DOMAIN = "testapp";
 const AUTHKIT_ISSUER = `https://${AUTHKIT_DOMAIN}.authkit.app`;
@@ -240,7 +238,7 @@ describe("a channels-like token whose client_id is listed", () => {
   it("is admitted on POST /v1/workspaces/<member ws>/chat/start", async () => {
     const res = await chatStart(configured, wsMember, await channelsLike(CHANNELS_CLIENT_ID));
     expect(res.status).toBe(200);
-    expect((await readJson<ChatStartBody>(res)).conversationId).toMatch(/^conv_/);
+    expect((await readJson<ChatStartResponse>(res)).conversationId).toMatch(/^conv_/);
   });
 
   it("is admitted on GET /v1/bootstrap", async () => {

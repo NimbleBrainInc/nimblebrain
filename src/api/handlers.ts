@@ -29,7 +29,7 @@ import {
 } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import type { ChatRequest } from "../runtime/types.ts";
+import type { ChatRequest, ChatResult } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -44,10 +44,24 @@ import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { mcpResourceUrl } from "./mcp-resource.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
+import type {
+  AuthOkResponse,
+  BootstrapResponse,
+  ChatCancelResponse,
+  ChatResponse,
+  ChatStartResponse,
+  FileLimits,
+  HealthResponse,
+  ReadResourceResponse,
+  ResourceContents,
+  ShellResponse,
+  ToolCallResponse,
+  UploadResourceResponse,
+} from "./schemas/responses.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
 import { validateAgainst } from "./schemas/validate.ts";
 import { CONNECTED_FRAME, startSseHeartbeat } from "./sse-heartbeat.ts";
-import { apiError } from "./types.ts";
+import { apiError, json } from "./types.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
@@ -96,24 +110,7 @@ export async function handleChat(
     // subscriber. (The automations executor's deadline cancellation is
     // unaffected — that path supplies its own AbortController.)
     const result = await runtime.chat(parsed);
-    // Cost is derived at the boundary, never stored. Same wire shape as
-    // the streaming `done` event so clients see one consistent contract.
-    const wireUsage = {
-      ...result.usage,
-      costUsd: estimateCost(result.usage.model, result.usage),
-    };
-    // Stage 2: chat is identity-bound, so there is no `ChatResult.workspaceId`
-    // — per-tool-call workspace attribution lives on each `tool.done` event's
-    // `workspaceId` field (stamped from the orchestrator's resolved
-    // namespace), not on the response envelope. (`ChatRequest.workspaceId`
-    // exists as the focused workspace for prompt scoping, but it's an input,
-    // not part of the result.)
-    const responseBody = {
-      ...result,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      usage: wireUsage,
-    };
+    const responseBody = chatResponseBody(result);
 
     // Same-user cross-tab broadcast — parity with /v1/workspaces/:wsId/chat/stream. A
     // peer tab on /v1/conversations/:id/events sees the user.message
@@ -139,18 +136,37 @@ export async function handleChat(
         conversationEventManager.broadcastToConversation(
           broadcastConvId,
           "done",
-          responseBody as Record<string, unknown>,
+          { ...responseBody },
           originSubscriberId,
         );
       }
     }
 
-    return json(responseBody);
+    return json<ChatResponse>(responseBody);
   } catch (err) {
     const mapped = mapChatTurnError(err);
     if (mapped) return mapped;
     throw err;
   }
+}
+
+/**
+ * The body of `POST …/chat` and the `done` frame of `POST …/chat/stream`.
+ * Cost is derived here, at the boundary, and never stored. There is no
+ * result-level workspace: per-tool-call attribution is on each `tool.done`
+ * event's `workspaceId`.
+ */
+function chatResponseBody(result: ChatResult): ChatResponse {
+  return {
+    response: result.response,
+    conversationId: result.conversationId,
+    skillName: result.skillName,
+    toolCalls: result.toolCalls,
+    stopReason: result.stopReason,
+    inputTokens: result.usage.inputTokens,
+    outputTokens: result.usage.outputTokens,
+    usage: { ...result.usage, costUsd: estimateCost(result.usage.model, result.usage) },
+  };
 }
 
 /** Map a chat-turn error to its HTTP response, or null to rethrow. */
@@ -209,7 +225,7 @@ export async function handleChatStart(
   if (parsed instanceof Response) return parsed;
   try {
     const { conversationId } = await runtime.startTurn(parsed);
-    return Response.json({ conversationId });
+    return json<ChatStartResponse>({ conversationId });
   } catch (err) {
     // Both chat doors answer through the same mapper. A private copy of its
     // branches drifts out of step with it, and the two routes then disagree
@@ -264,7 +280,7 @@ export async function handleChatCancel(
     );
   }
   const cancelled = runtime.cancelTurn(conversationId);
-  return Response.json({ cancelled });
+  return json<ChatCancelResponse>({ cancelled });
 }
 
 function conversationNotFoundResponse(conversationId: string): Response {
@@ -469,28 +485,7 @@ export async function handleChatStream(
         // owns its own AbortController in platform/automations/executor.ts.
         .chat(parsed, sink)
         .then((result) => {
-          // Cost is computed at the API boundary — never stored. The
-          // wire-format `usage.costUsd` is what clients display; deriving
-          // it here means there is exactly one place this number is
-          // produced for live responses.
-          const wireUsage = {
-            ...result.usage,
-            costUsd: estimateCost(result.usage.model, result.usage),
-          };
-          // Stage 2 (T006): no `workspaceId` on the chat-level done
-          // envelope — per-tool-call attribution lives on each
-          // `tool.done` event's payload above. See `ChatResult`'s
-          // doc comment for the rationale.
-          const doneData = {
-            response: result.response,
-            conversationId: result.conversationId,
-            skillName: result.skillName,
-            toolCalls: result.toolCalls,
-            inputTokens: result.usage.inputTokens,
-            outputTokens: result.usage.outputTokens,
-            stopReason: result.stopReason,
-            usage: wireUsage,
-          };
+          const doneData = chatResponseBody(result);
           send("done", doneData);
           // Same-user cross-tab broadcast (Stage 1 single-owner).
           // Subscriber-keyed exclude — see docblock.
@@ -500,7 +495,7 @@ export async function handleChatStream(
               conversationEventManager.broadcastToConversation(
                 broadcastConvId,
                 "done",
-                doneData as Record<string, unknown>,
+                { ...doneData },
                 originSubscriberId,
               );
             }
@@ -612,7 +607,7 @@ export function friendlyError(raw: string): { code: string; message: string } {
  * the in-cluster `nb_connector_unhealthy` gauge.
  */
 export function handleHealth(): Response {
-  return json({ status: "ok" });
+  return json<HealthResponse>({ status: "ok" });
 }
 
 /**
@@ -670,7 +665,9 @@ async function serveIdentityAppResource(
       resource: `ui://${resourcePath}`,
     });
   }
-  return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
+  return json<ReadResourceResponse>({
+    contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)],
+  });
 }
 
 /** Handle GET /v1/workspaces/:wsId/apps/:name/resources/:path — fetch a ui:// resource. */
@@ -737,7 +734,9 @@ export async function handleResourceProxy(
   // clients see the protocol directly and can consume `_meta` (e.g. ext-apps
   // `_meta.ui.csp`) without a translation layer. Same shape as
   // `handleReadResource` (POST …/resources/read).
-  return json({ contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)] });
+  return json<ReadResourceResponse>({
+    contents: [buildResourceEnvelopeEntry(`ui://${resolvedPath}`, resource)],
+  });
 }
 
 /**
@@ -805,11 +804,8 @@ function resolveSourcePrimaryResourceUri(source: unknown): string | null {
  * Exported for direct unit-test coverage — see
  * `test/unit/resource-envelope.test.ts`.
  */
-export function buildResourceEnvelopeEntry(
-  uri: string,
-  resource: ResourceData,
-): Record<string, unknown> {
-  const entry: Record<string, unknown> = { uri };
+export function buildResourceEnvelopeEntry(uri: string, resource: ResourceData): ResourceContents {
+  const entry: ResourceContents = { uri };
   if (resource.mimeType) entry.mimeType = resource.mimeType;
   if (resource.blob) {
     entry.blob = bytesToBase64(resource.blob);
@@ -854,7 +850,7 @@ async function readArtifactResource(uri: string, workspaceId: string): Promise<R
   try {
     const result = await resolver.read(uri, workspaceId);
     artifactResolutionsTotal.inc({ result: "ok" });
-    return json(result as Record<string, unknown>);
+    return json<ReadResourceResponse>(result);
   } catch (err) {
     return mapArtifactReadError(err, uri, workspaceId);
   }
@@ -909,7 +905,7 @@ async function readIdentitySourceResource(
   if (resource === null) {
     return apiError(404, "resource_not_found", `Resource "${uri}" not found`, { server, uri });
   }
-  return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
+  return json<ReadResourceResponse>({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
 }
 
 /**
@@ -992,7 +988,7 @@ export async function handleReadResource(
     });
   }
 
-  return json({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
+  return json<ReadResourceResponse>({ contents: [buildResourceEnvelopeEntry(uri, resource)] });
 }
 
 /** Parse + validate a POST …/tools/call envelope, or return an error Response. */
@@ -1111,7 +1107,13 @@ async function validateRestToolInput(
     }
     return { ok: true, coercedArgs };
   } catch {
-    return { ok: false, response: json({ error: "tool_not_found", server, tool }, 404) };
+    return {
+      ok: false,
+      response: apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
+        server,
+        tool,
+      }),
+    };
   }
 }
 
@@ -1321,7 +1323,7 @@ export async function handleToolCall(
   // whose traffic is mostly reads; a view learns of a write only when the app's
   // server announces it (`src/tools/server-notifications.ts`).
 
-  return json({
+  return json<ToolCallResponse>({
     content: result.content,
     structuredContent: result.structuredContent,
     isError: result.isError,
@@ -1329,7 +1331,7 @@ export async function handleToolCall(
 }
 
 /** The attachment limits a chat message is held to. */
-function fileLimits(config: ReturnType<Runtime["getFilesConfig"]>) {
+function fileLimits(config: ReturnType<Runtime["getFilesConfig"]>): FileLimits {
   return {
     maxFileSize: config.maxFileSize,
     maxTotalSize: config.maxTotalSize,
@@ -1386,7 +1388,7 @@ export async function handleBootstrap(
   const maxInputTokens = runtime.getMaxInputTokens();
   const maxOutputTokens = runtime.getMaxOutputTokens();
 
-  return json({
+  return json<BootstrapResponse>({
     user: {
       id: identity.id,
       email: identity.email,
@@ -1400,10 +1402,6 @@ export async function handleBootstrap(
       role: ws.members.find((m) => m.userId === identity.id)!.role,
       memberCount: ws.members.length,
       connectorCount: ws.connectors.length,
-      // Deprecated: true for the default workspace (`activeWorkspace`). Kept
-      // only for a companion service that reads it to pick a default; read
-      // `activeWorkspace` instead.
-      isPersonal: ws.id === activeWorkspace,
       // The workspace's MCP endpoint in canonical form (the configured public
       // origin, never the request's host), for the settings page to show.
       mcpUrl: mcpResourceUrl(ws.id),
@@ -1443,7 +1441,7 @@ export async function handleBootstrap(
  * handler runs, it's resolved and membership-checked.
  */
 export async function handleShell(runtime: Runtime, workspaceId: string): Promise<Response> {
-  return json({
+  return json<ShellResponse>({
     placements: runtime.getPlacementRegistry().forWorkspace(workspaceId),
     chatEndpoint: `/v1/workspaces/${workspaceId}/chat/stream`,
     eventsEndpoint: "/v1/events",
@@ -1481,7 +1479,7 @@ export async function handleEvents(
 
 /** Handle POST /v1/auth/logout — clear all session cookies. */
 export function handleLogout(): Response {
-  const res = json({ ok: true });
+  const res = json<AuthOkResponse>({ ok: true });
   // Clear nb_session for both SameSite modes (covers Strict and Lax)
   res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
   res.headers.append("Set-Cookie", "nb_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
@@ -1709,7 +1707,7 @@ export async function handleOidcRefresh(
   try {
     const result = await provider.refreshToken(refreshToken);
 
-    const res = json({ ok: true });
+    const res = json<AuthOkResponse>({ ok: true });
     res.headers.set("Set-Cookie", sessionCookie(result.accessToken, secureCookies));
 
     if (result.refreshToken) {
@@ -2021,13 +2019,6 @@ async function parseJsonBody(request: Request): Promise<Record<string, unknown> 
   }
 }
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
 /**
  * Collect uploaded files from a resource-upload multipart body. Files MUST be
  * sent under the `file` or `files` key; other non-string entries (e.g. a Blob
@@ -2225,5 +2216,5 @@ export async function handleResourceUpload(
   if (entries.length === 0) {
     return apiError(400, "file_upload_error", "All uploads were rejected", { errors });
   }
-  return json({ files: entries, ...(errors.length > 0 ? { errors } : {}) });
+  return json<UploadResourceResponse>({ files: entries, ...(errors.length > 0 ? { errors } : {}) });
 }

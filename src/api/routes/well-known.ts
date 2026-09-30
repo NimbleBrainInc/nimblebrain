@@ -18,7 +18,12 @@ import {
   mcpResourceUrl,
   PROTECTED_RESOURCE_METADATA_PATH,
 } from "../mcp-resource.ts";
-import type { AppContext } from "../types.ts";
+import type {
+  AuthorizationServerMetadata,
+  ProtectedResourceMetadata,
+  WellKnownErrorBody,
+} from "../schemas/responses.ts";
+import { type AppContext, json } from "../types.ts";
 import { isWorkspaceIdShape } from "../workspace-address.ts";
 
 export function wellKnownRoutes(ctx: AppContext) {
@@ -40,13 +45,13 @@ export function wellKnownRoutes(ctx: AppContext) {
   app.get(`${PROTECTED_RESOURCE_METADATA_PATH}${MCP_PATH_PREFIX}/:wsId`, (c) => {
     const authServer = authorizationServer(ctx);
     if (!authServer) {
-      return c.json({ error: "MCP OAuth not configured" }, 404);
+      return json<WellKnownErrorBody>({ error: "MCP OAuth not configured" }, 404);
     }
     const wsId = c.req.param("wsId");
     if (!isWorkspaceIdShape(wsId)) {
-      return c.json({ error: "not_found" }, 404);
+      return json<WellKnownErrorBody>({ error: "not_found" }, 404);
     }
-    return c.json({
+    return json<ProtectedResourceMetadata>({
       resource: mcpResourceUrl(wsId),
       authorization_servers: [authServer.issuer],
       bearer_methods_supported: ["header"],
@@ -64,8 +69,8 @@ export function wellKnownRoutes(ctx: AppContext) {
    * the request is still unauthenticated, so none falls through to an
    * authenticated route's middleware and reads as a 401.
    */
-  const noResource: Handler = (c) =>
-    c.json(
+  const noResource: Handler = () =>
+    json<WellKnownErrorBody>(
       {
         error: "not_found",
         message: `Each workspace's MCP endpoint is its own resource; its metadata is at ${PROTECTED_RESOURCE_METADATA_PATH}${MCP_PATH_PREFIX}/<workspaceId>.`,
@@ -82,21 +87,21 @@ export function wellKnownRoutes(ctx: AppContext) {
    * this endpoint instead. We proxy the issuer's own metadata document so the
    * client can discover authorization/token/registration endpoints.
    */
-  app.get("/.well-known/oauth-authorization-server", async (c) => {
+  app.get("/.well-known/oauth-authorization-server", async () => {
     const metadataUrl = authorizationServer(ctx)?.metadataUrl;
     if (!metadataUrl) {
-      return c.json({ error: "MCP OAuth not configured" }, 404);
+      return json<WellKnownErrorBody>({ error: "MCP OAuth not configured" }, 404);
     }
 
     try {
       const upstream = await fetch(metadataUrl);
       if (!upstream.ok) {
-        return c.json({ error: "Failed to fetch upstream metadata" }, 502);
+        return json<WellKnownErrorBody>({ error: "Failed to fetch upstream metadata" }, 502);
       }
-      const metadata = await upstream.json();
-      return c.json(metadata);
+      const metadata = (await upstream.json()) as AuthorizationServerMetadata;
+      return json<AuthorizationServerMetadata>(metadata);
     } catch {
-      return c.json({ error: "Failed to fetch upstream metadata" }, 502);
+      return json<WellKnownErrorBody>({ error: "Failed to fetch upstream metadata" }, 502);
     }
   });
 

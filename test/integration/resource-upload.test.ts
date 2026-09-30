@@ -2,9 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, UploadResourceResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
-import type { FileEntry } from "../../src/files/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -13,10 +12,6 @@ import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** The upload route's body: the stored entries, plus the per-file rejections when some failed. */
-interface UploadResponse {
-  files: FileEntry[];
-  errors?: string[];
-}
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -60,7 +55,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await readJson<UploadResponse>(res);
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(1);
     const entry = body.files[0];
     expect(entry.id).toMatch(/^fl_[0-9a-f]{24}$/);
@@ -89,7 +84,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await readJson<UploadResponse>(res);
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(2);
     expect(body.files.map((f: { filename: string }) => f.filename).sort()).toEqual([
       "a.txt",
@@ -107,7 +102,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await readJson<UploadResponse>(res);
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(12);
   });
 
@@ -201,7 +196,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await readJson<UploadResponse>(res);
+    const body = await readJson<UploadResourceResponse>(res);
     const entry = body.files[0];
     expect(entry.tags).toEqual(["report", "q2"]);
     expect(entry.description).toBe("Quarterly numbers");
@@ -251,7 +246,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await readJson<UploadResponse>(res);
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(1);
     expect(body.files[0].filename).toBe("legit.txt");
   });
@@ -268,7 +263,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await readJson<UploadResponse>(res);
+    const body = await readJson<UploadResourceResponse>(res);
     expect(body.files).toHaveLength(1);
     expect(body.files[0].filename).toBe("p.txt");
   });

@@ -9,9 +9,11 @@ import {
   ADMIT_ALL,
   adminToolDenial,
   adminToolsContractWarnings,
+  auditArguments,
   filterAdmittedTools,
   isAdminToolAllowed,
   parseAdminToolsDeclaration,
+  REDACTED_ARGUMENT,
 } from "../../src/permissions/admin-tools.ts";
 import type { Tool } from "../../src/tools/types.ts";
 import type { Workspace, WorkspaceRole } from "../../src/workspace/types.ts";
@@ -234,5 +236,122 @@ describe("adminToolsContractWarnings", () => {
     expect(warnings[0]).toContain('"acme"');
     expect(warnings[0]).toContain("admin_tools is not a list");
     expect(warnings[0]).toContain("every tool");
+  });
+});
+
+describe("auditArguments", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      api_key: { type: "string", writeOnly: true },
+      enabled: { type: "boolean" },
+      nested: { type: "object", properties: { token: { type: "string", writeOnly: true } } },
+    },
+  };
+
+  test("redacts a writeOnly property and keeps the rest", () => {
+    expect(auditArguments({ api_key: "sk-live-1", enabled: true }, schema)).toEqual({
+      api_key: REDACTED_ARGUMENT,
+      enabled: true,
+    });
+  });
+
+  test("keeps an argument the schema does not describe", () => {
+    expect(auditArguments({ extra: 3 }, schema)).toEqual({ extra: 3 });
+  });
+
+  test("redacts a whole argument that holds a nested writeOnly", () => {
+    expect(auditArguments({ nested: { token: "t" } }, schema)).toEqual({
+      nested: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("redacts an optional secret: writeOnly in an anyOf branch", () => {
+    // The shape Pydantic emits for `SecretStr | None`.
+    const optional = {
+      type: "object",
+      properties: {
+        opt_secret: {
+          anyOf: [{ type: "string", format: "password", writeOnly: true }, { type: "null" }],
+          default: null,
+        },
+      },
+    };
+    expect(auditArguments({ opt_secret: "s2" }, optional)).toEqual({
+      opt_secret: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("redacts a model-typed argument whose $ref'd definition holds a writeOnly", () => {
+    const refd = {
+      type: "object",
+      $defs: {
+        Auth: {
+          type: "object",
+          properties: { user: { type: "string" }, token: { type: "string", writeOnly: true } },
+        },
+        Plain: { type: "object", properties: { note: { type: "string" } } },
+      },
+      properties: { auth: { $ref: "#/$defs/Auth" }, plain: { $ref: "#/$defs/Plain" } },
+    };
+    expect(
+      auditArguments({ auth: { user: "u", token: "s3" }, plain: { note: "hi" } }, refd),
+    ).toEqual({ auth: REDACTED_ARGUMENT, plain: { note: "hi" } });
+  });
+
+  test("terminates on a recursive $ref", () => {
+    const recursive = {
+      type: "object",
+      $defs: { Node: { type: "object", properties: { next: { $ref: "#/$defs/Node" } } } },
+      properties: { tree: { $ref: "#/$defs/Node" } },
+    };
+    expect(auditArguments({ tree: { next: null } }, recursive)).toEqual({ tree: { next: null } });
+  });
+
+  test("follows a root $ref: a secret reached through `#` is redacted", () => {
+    const rooted = {
+      type: "object",
+      properties: { token: { type: "string", writeOnly: true }, child: { $ref: "#" } },
+    };
+    expect(auditArguments({ token: "s1", child: { token: "s2" } }, rooted)).toEqual({
+      token: REDACTED_ARGUMENT,
+      child: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("redacts an argument whose $ref does not resolve", () => {
+    const unresolved = {
+      type: "object",
+      $defs: { "100%": { type: "string" } },
+      properties: {
+        anchor: { $ref: "#Auth" },
+        remote: { $ref: "other.json#/$defs/Auth" },
+        missing: { $ref: "#/$defs/Nope" },
+        malformed: { $ref: "#/$defs/100%" },
+      },
+    };
+    expect(
+      auditArguments({ anchor: "a", remote: "r", missing: "m", malformed: "x" }, unresolved),
+    ).toEqual({
+      anchor: REDACTED_ARGUMENT,
+      remote: REDACTED_ARGUMENT,
+      missing: REDACTED_ARGUMENT,
+      malformed: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("keeps only the names when there is no schema to read", () => {
+    expect(auditArguments({ api_key: "sk", enabled: true }, undefined)).toEqual({
+      api_key: REDACTED_ARGUMENT,
+      enabled: REDACTED_ARGUMENT,
+    });
+    expect(auditArguments({ api_key: "sk" }, { type: "object" })).toEqual({
+      api_key: REDACTED_ARGUMENT,
+    });
+  });
+
+  test("does not alias the caller's input", () => {
+    const input = { enabled: true };
+    expect(auditArguments(input, schema)).not.toBe(input);
   });
 });

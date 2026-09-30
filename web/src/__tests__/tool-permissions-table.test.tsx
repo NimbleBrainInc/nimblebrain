@@ -46,7 +46,9 @@ mock.module("../api/client", () => ({
 
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
-const { ToolPermissionsTable } = await import("../components/connectors/ToolPermissionsTable");
+const { ToolPermissionsTable, permissionSummary } = await import(
+  "../components/connectors/ToolPermissionsTable"
+);
 
 interface Mounted {
   container: HTMLDivElement;
@@ -62,19 +64,34 @@ afterEach(() => {
   setCalls.length = 0;
 });
 
+/** Mounted as each page mounts it: a workspace install collapsible, and opened
+ *  unless `open` is false; a personal connector's list shown as it is. */
 async function mount(
   canManage: boolean,
-  scope: "workspace" | "identity" = "workspace",
+  { scope = "workspace", open = true }: { scope?: "workspace" | "identity"; open?: boolean } = {},
 ): Promise<Mounted> {
+  const collapsible = scope === "workspace";
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(<ToolPermissionsTable serverName="acme" scope={scope} canManage={canManage} />);
+    root.render(
+      <ToolPermissionsTable
+        serverName="acme"
+        scope={scope}
+        canManage={canManage}
+        collapsible={collapsible}
+      />,
+    );
   });
   await act(async () => {
     await Promise.resolve();
   });
+  if (collapsible && open) {
+    await act(async () => {
+      buttonsNamed(container, "Show tools")[0]?.click();
+    });
+  }
   return {
     container,
     unmount() {
@@ -141,9 +158,57 @@ describe("ToolPermissionsTable — a workspace admin", () => {
   });
 });
 
+describe("ToolPermissionsTable — collapsed until asked", () => {
+  // A connector can expose dozens of tools; listed in full they bury the rest of the page.
+  test("starts as one summary line, with no rows and no bulk actions", async () => {
+    mounted = await mount(true, { open: false });
+    expect(mounted.container.textContent).toContain("2 tools · 1 disallowed");
+    expect(policyButtons(mounted.container)).toHaveLength(0);
+    expect(buttonsNamed(mounted.container, "Allow all")).toHaveLength(0);
+    expect(buttonsNamed(mounted.container, "Show tools")).toHaveLength(1);
+    expect(buttonsNamed(mounted.container, "Show tools")[0]?.getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+  });
+
+  test("opens to the full list, and closes again", async () => {
+    mounted = await mount(true, { open: false });
+    await act(async () => {
+      buttonsNamed(mounted!.container, "Show tools")[0]?.click();
+    });
+    expect(policyButtons(mounted.container)).toHaveLength(4);
+    const toggle = buttonsNamed(mounted.container, "Hide tools")[0];
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(
+      mounted.container.querySelector(
+        `#${CSS.escape(toggle?.getAttribute("aria-controls") ?? "")}`,
+      ),
+    ).toBeTruthy();
+    await act(async () => {
+      buttonsNamed(mounted!.container, "Hide tools")[0]?.click();
+    });
+    expect(policyButtons(mounted.container)).toHaveLength(0);
+  });
+});
+
+describe("permissionSummary", () => {
+  test("says how many tools and how many the agent may not call", () => {
+    expect(permissionSummary(27, 0)).toBe("27 tools · all allowed");
+    expect(permissionSummary(27, 3)).toBe("27 tools · 3 disallowed");
+    expect(permissionSummary(1, 1)).toBe("1 tool · none allowed");
+  });
+});
+
 describe("ToolPermissionsTable — a personal connector", () => {
+  // Its panel is already the disclosure: opening it shows the list, with no second toggle.
+  test("shows the list as it is, with no Show tools toggle", async () => {
+    mounted = await mount(true, { scope: "identity" });
+    expect(policyButtons(mounted.container)).toHaveLength(4);
+    expect(buttonsNamed(mounted.container, "Show tools")).toHaveLength(0);
+  });
+
   test("reads and writes the viewer's own policy", async () => {
-    mounted = await mount(true, "identity");
+    mounted = await mount(true, { scope: "identity" });
     expect(listCalls).toEqual([["acme", "identity"]]);
     const allowAll = buttonsNamed(mounted.container, "Allow all")[0];
     await act(async () => {
@@ -154,7 +219,7 @@ describe("ToolPermissionsTable — a personal connector", () => {
 
   test("says why the section is empty when no tools could be listed", async () => {
     listedTools = [];
-    mounted = await mount(true, "identity");
+    mounted = await mount(true, { scope: "identity" });
     expect(mounted.container.textContent).toContain("No tools to show right now");
   });
 });

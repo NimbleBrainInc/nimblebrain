@@ -22,7 +22,7 @@ import type {
   ReasoningDeltaEvent,
   StreamErrorEvent,
   TextDeltaEvent,
-  ToolCallResult,
+  ToolCallResponse,
   ToolDoneEvent,
   ToolPreparingEvent,
   ToolStartEvent,
@@ -420,7 +420,7 @@ interface LoadedConversation {
  * Throws on an error result; falls back to parsing `content[0].text` as JSON
  * when the server returned no `structuredContent`.
  */
-function parseConversationResult(res: ToolCallResult): LoadedConversation {
+function parseConversationResult(res: ToolCallResponse): LoadedConversation {
   if (res.isError) {
     const errText = res.content
       ?.map((b) => b.text ?? "")

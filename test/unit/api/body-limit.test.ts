@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { BodyLimitOptions } from "../../../src/api/middleware/body-limit.ts";
 import { bodyLimit } from "../../../src/api/middleware/body-limit.ts";
-import type { ApiErrorBody } from "../../../src/api/types.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import { readJson } from "../../helpers/http.ts";
 
 /** The middleware's 413: an `apiError` body whose details name the bound it hit. */

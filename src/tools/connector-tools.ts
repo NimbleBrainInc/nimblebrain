@@ -207,7 +207,7 @@ export function deriveConnectorStatus(input: StatusInputs): {
     return { status: "starting" };
   }
   // 4. Failures. Reported with the reason; the web client decides the
-  //    affordance (`resolveAction` in ConnectorStatusHero.tsx — Reconnect,
+  //    affordance (`resolveAction` in ConnectorHeader.tsx — Reconnect,
   //    usually). `dead` covers a connector whose boot-start failed, which the
   //    doors revive on next use.
   if (input.state === "crashed" || input.state === "dead" || input.state === "stopped") {
@@ -597,6 +597,18 @@ function handleListBoundSkills(ctx: ManageConnectorsContext, wsId: string | null
 type InstalledEntry = {
   serverName: string;
   connectorName: string;
+  /**
+   * The name to show a person, resolved once here so every surface shows the same
+   * one: the catalog entry's name, else the name the connector declares for its
+   * host UI, else the server name. Clients read this and never re-derive it.
+   */
+  displayName: string;
+  /**
+   * Whether Disconnect means anything for this connector: its connection rests on a
+   * credential a person authorized (see `ConnectorLifecycleManager.isDisconnectable`).
+   * False for a fleet connector's platform-minted token or a stored static credential.
+   */
+  disconnectable: boolean;
   version: string;
   /**
    * The version the running server reports in its MCP `initialize` handshake
@@ -885,6 +897,8 @@ async function buildInstalledEntry(
   const entry: InstalledEntry = {
     serverName: instance.serverName,
     connectorName: instance.connectorName,
+    displayName: cat?.name || instance.ui?.name || instance.serverName,
+    disconnectable: deps.ctx.runtime.getLifecycle().isDisconnectable(instance.ref),
     version: instance.version,
     ...(handshakeVersion ? { handshakeVersion } : {}),
     state: instance.state,
@@ -2378,6 +2392,16 @@ async function handleDisconnect(
       structuredContent: { error: "permission_denied" },
       isError: true,
     };
+  }
+  // An ESTABLISHED connection with no sign-in behind it has nothing to disconnect.
+  // One that never finished connecting is always resettable: that is the header's
+  // Cancel on a connector wedged mid-connect, whatever its credential.
+  const target = lifecycle.getInstance(serverName, wsId);
+  if (target?.state === "running" && !lifecycle.isDisconnectable(target.ref)) {
+    return errResult(
+      `"${serverName}" has no sign-in to disconnect: its credential is configuration, not ` +
+        "an authorization a person made. Uninstall it to remove it.",
+    );
   }
   try {
     const result = await lifecycle.disconnect(serverName, wsId, "_workspace", {

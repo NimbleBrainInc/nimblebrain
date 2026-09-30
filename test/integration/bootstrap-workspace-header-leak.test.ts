@@ -1,3 +1,5 @@
+import type { ApiErrorBody, BootstrapResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * Bootstrap reads nothing from the request to choose a workspace, and routers
  * mounted beside it do not leak workspace middleware onto it or onto other
@@ -143,11 +145,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
         "X-Workspace-Id": wsId,
       },
     });
-    const body = (await res.json()) as {
-      activeWorkspace: string | null;
-      workspaces: { id: string }[];
-      shell: { chatEndpoint: string };
-    };
+    const body = await readJson<BootstrapResponse>(res);
     return { status: res.status, body };
   }
 
@@ -196,7 +194,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
       body: JSON.stringify({ message: "hello" }),
     });
     expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: string };
+    const body = await readJson<ApiErrorBody>(res);
     expect(body.error).toBe("not_found");
   });
 

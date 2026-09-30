@@ -7,7 +7,7 @@ import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { corsMiddleware } from "../../../src/api/middleware/cors.ts";
 import { rejectCrossSiteWrites } from "../../../src/api/middleware/fetch-site.ts";
-import type { ApiErrorBody } from "../../../src/api/types.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import { readJson } from "../../helpers/http.ts";
 
 const ORIGIN = "https://nb.example.com";

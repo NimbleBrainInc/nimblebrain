@@ -1153,6 +1153,121 @@ describe("manage_connectors.get_installed", () => {
   });
 });
 
+describe("manage_connectors installed entry — displayName", () => {
+  // Every surface shows the name the server resolved, so the rule lives here once:
+  // catalog name, else the connector's declared host name, else the server name.
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const displayNameOf = async (): Promise<string | undefined> => {
+    const one = await buildTool(h, ADMIN_USER).handler({
+      action: "get_installed",
+      serverName: STUB_SERVER_NAME,
+    });
+    return (one.structuredContent as { installed: { displayName?: string } }).installed.displayName;
+  };
+
+  test("uses the name the connector declares for its host UI when no catalog entry names it", async () => {
+    await h.lifecycle.seedInstance(
+      STUB_SERVER_NAME,
+      STUB_URL,
+      { url: STUB_URL, serverName: STUB_SERVER_NAME, ui: { name: "IP Info", icon: "" } },
+      { manifestName: STUB_SERVER_NAME, version: "1.0.0", ui: { name: "IP Info", icon: "" } },
+      h.wsId,
+    );
+    expect(await displayNameOf()).toBe("IP Info");
+  });
+
+  test("falls back to the server name when nothing names it", async () => {
+    await seedConnector(h);
+    expect(await displayNameOf()).toBe(STUB_SERVER_NAME);
+  });
+});
+
+describe("manage_connectors — disconnect applies only to a sign-in", () => {
+  // Disconnect revokes a credential a person authorized so it can be redone. A
+  // fleet connector's token is minted by the platform and a static credential is
+  // configuration: neither has a sign-in, so neither is disconnectable.
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = buildHarness();
+    await provisionWorkspace(h);
+  });
+
+  afterEach(() => {
+    rmSync(h.workDir, { recursive: true, force: true });
+  });
+
+  const seedWith = async (transport?: Record<string, unknown>) =>
+    h.lifecycle.seedInstance(
+      STUB_SERVER_NAME,
+      STUB_URL,
+      {
+        url: STUB_URL,
+        serverName: STUB_SERVER_NAME,
+        ...(transport ? { transport } : {}),
+      } as never,
+      { manifestName: STUB_SERVER_NAME, version: "1.0.0", ui: null },
+      h.wsId,
+    );
+
+  const entryFlag = async (): Promise<boolean | undefined> => {
+    const one = await buildTool(h, ADMIN_USER).handler({
+      action: "get_installed",
+      serverName: STUB_SERVER_NAME,
+    });
+    return (one.structuredContent as { installed: { disconnectable?: boolean } }).installed
+      .disconnectable;
+  };
+
+  test("an OAuth connection is disconnectable", async () => {
+    await seedWith();
+    expect(await entryFlag()).toBe(true);
+  });
+
+  test("a platform-minted (fleet) connection is not, and the tool refuses it", async () => {
+    await seedWith({ type: "streamable-http", auth: { type: "provider", provider: "minted" } });
+    expect(await entryFlag()).toBe(false);
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "disconnect",
+      serverName: STUB_SERVER_NAME,
+    });
+    expect(result.isError).toBe(true);
+    expect((result.content?.[0] as { text?: string } | undefined)?.text).toContain(
+      "no sign-in to disconnect",
+    );
+  });
+
+  test("a connection that never finished connecting is still resettable, whatever its credential", async () => {
+    // The header's Cancel on a connector wedged mid-connect calls disconnect. Only an
+    // ESTABLISHED connection with no sign-in is refused.
+    await seedWith({ type: "streamable-http", auth: { type: "provider", provider: "minted" } });
+    const instance = h.lifecycle.getInstance(STUB_SERVER_NAME, h.wsId) as { state: string };
+    instance.state = "starting";
+    const result = await buildTool(h, ADMIN_USER).handler({
+      action: "disconnect",
+      serverName: STUB_SERVER_NAME,
+    });
+    expect((result.content?.[0] as { text?: string } | undefined)?.text ?? "").not.toContain(
+      "no sign-in to disconnect",
+    );
+  });
+
+  test("a stored static credential is not", async () => {
+    await seedWith({ type: "streamable-http", auth: { type: "bearer", token: "t" } });
+    expect(await entryFlag()).toBe(false);
+  });
+});
+
 describe("manage_connectors.uninstall", () => {
   let h: Harness;
 

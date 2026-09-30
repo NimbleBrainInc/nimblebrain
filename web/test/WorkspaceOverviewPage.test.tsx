@@ -189,6 +189,8 @@ describe("WorkspaceOverviewPage — briefing", () => {
     const gmail: InstalledConnector = {
       serverName: "gmail",
       connectorName: "gmail",
+      displayName: "gmail",
+      disconnectable: true,
       version: "1.0.0",
       state: "reauth_required",
       scope: "workspace",

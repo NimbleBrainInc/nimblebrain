@@ -1,3 +1,5 @@
+import type { JsonRpcErrorBody } from "../../../src/api/schemas/responses.ts";
+import { readJson } from "../../helpers/http.ts";
 /**
  * Unit tests for `McpServerHost`'s reclamation policy:
  *
@@ -102,7 +104,7 @@ describe("McpServerHost — reclamation", () => {
       // also cleaned by the onclose cascade.
       const res = await host.handle(listRequest(sid), FAKE_FEATURES, SESSION_CTX);
       expect(res.status).toBe(404);
-      const body = (await res.json()) as { error: { data: { reason: string } } };
+      const body = await readJson<JsonRpcErrorBody>(res);
       expect(body.error.data.reason).toBe("not_found");
     });
 
@@ -142,7 +144,7 @@ describe("McpServerHost — reclamation", () => {
       // s1 is gone — should now miss with not_found.
       const res = await host.handle(listRequest(s1), FAKE_FEATURES, SESSION_CTX);
       expect(res.status).toBe(404);
-      const body = (await res.json()) as { error: { data: { reason: string } } };
+      const body = await readJson<JsonRpcErrorBody>(res);
       expect(body.error.data.reason).toBe("not_found");
 
       // s4 is live.

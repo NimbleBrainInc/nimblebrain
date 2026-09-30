@@ -70,7 +70,7 @@ A settings section is a placement with `slot: "settings"`, not a separate top-le
 }
 ```
 
-**Where it renders.** On your connector's settings page, **Settings → Connectors → &lt;your connector&gt;**, after the host's own sections (status, connection, secrets, tool permissions), under your connector's name. It claims no navigation: there is no tab, nav entry or route.
+**Where it renders.** On your connector's settings page, **Settings → Connectors → &lt;your connector&gt;**, under a **Settings** heading, after the host's connection sections (status, connection, secrets) and before tool permissions. It claims no navigation: there is no tab, nav entry or route.
 
 **What it may declare.**
 - `resourceUri`: the `ui://` page that renders the section, served by your server.
@@ -313,6 +313,15 @@ It returns an error result whose `structuredContent` is
   here is a warning on install.
 - **Personal connectors are not gated.** A connector a user connects for
   themselves acts on their own account.
+- **Every call is audited.** The host writes an
+  [`audit.admin_tool_call`](/config/logging/#event-types) line to the workspace
+  log for each call to one of these tools, admitted or refused. It names the
+  person and whether the call came from chat, an automation, your app's UI or
+  another client, and records the arguments. Mark every secret
+  `"writeOnly": true` in the tool's input schema. An argument whose schema
+  contains it anywhere (an optional secret's `anyOf` branch, a nested field, a
+  `$ref`'d definition) is recorded whole as `"[redacted]"`. Pydantic's
+  `SecretStr` emits it for you.
 
 :::caution
 `admin_tools` controls **who** can call a tool, not whether a person is
