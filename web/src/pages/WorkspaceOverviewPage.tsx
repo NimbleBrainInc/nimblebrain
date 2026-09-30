@@ -29,7 +29,7 @@ import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
 import { cn } from "../lib/utils";
-import { workspaceApps } from "../lib/workspace-apps";
+import { connectorSettingsPath, workspaceApps } from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
@@ -69,7 +69,8 @@ export function WorkspaceOverviewPage() {
 
   const handleConnectorOpen = useCallback(
     (serverName: string) => {
-      navigate(`/w/${slug}/settings/connectors/${serverName}`);
+      const path = connectorSettingsPath(slug, serverName);
+      if (path) navigate(path);
     },
     [navigate, slug],
   );

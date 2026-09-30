@@ -40,6 +40,7 @@ import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
+import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { ContextInspectorPage } from "./pages/ContextInspectorPage";
@@ -608,9 +609,9 @@ function ActionBridge({
       // apps have no workspace settings page, so they no-op.
       openConnectorSettings(params) {
         const serverName = params.serverName as string | undefined;
-        const slug = slugRef.current;
-        if (!serverName || !slug || isIdentityApp(serverName)) return;
-        navigateRef.current(`/w/${slug}/settings/connectors/${encodeURIComponent(serverName)}`);
+        if (!serverName) return;
+        const path = connectorSettingsPath(slugRef.current, serverName);
+        if (path) navigateRef.current(path);
       },
     };
 
