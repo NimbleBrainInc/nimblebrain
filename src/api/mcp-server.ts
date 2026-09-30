@@ -431,11 +431,11 @@ export class McpServerHost {
     if (sessionId) {
       const local = this.transports.get(sessionId);
       if (local) {
-        // A `/mcp` session is bound to the identity and workspace that
-        // initialized it. The route proves the caller holds *some* valid
+        // A `/mcp` session is bound to the identity, workspace and grant kind
+        // that initialized it. The route proves the caller holds *some* valid
         // identity and is a member of the URL's workspace, not that this
-        // session id is theirs there — so reject reuse by any other identity
-        // or under any other workspace's URL. Without this check, a leaked
+        // session id is theirs there — so reject reuse by any other identity,
+        // under any other workspace's URL, or under another kind of credential. Without this check, a leaked
         // `Mcp-Session-Id` lets a same-tenant user drive the owner's tools as
         // the owner, and one workspace's session answers for another. Respond
         // exactly like an unknown session id (`not_found`) so the caller can't

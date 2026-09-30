@@ -144,6 +144,18 @@ beforeAll(async () => {
   await neighborSource.start();
   registry.addSource(neighborSource);
 
+  // A source that cannot list its tools (not connected), so an agent's call
+  // cannot read the visibility of any tool it routes to.
+  registry.addSource({
+    name: "down",
+    start: async () => {},
+    stop: async () => {},
+    tools: async () => {
+      throw new Error('McpSource "down" not started');
+    },
+    execute: async () => ({ content: [{ type: "text", text: "ran" }], isError: false }),
+  });
+
   handle = startServer({ runtime, port: 0 });
   baseUrl = `http://localhost:${handle.port}`;
 }, 30_000);
@@ -257,6 +269,17 @@ describe("MCP Apps tool visibility — an agent's tools/call", () => {
         _meta: { [RESOURCE_SOURCE_META_KEY]: "vis" },
       });
       expect(scoped.isError).toBeFalsy();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("asks for a retry when the source cannot list its tools", async () => {
+    const client = await createMcpClient(true);
+    try {
+      await expect(client.callTool({ name: "down__anything", arguments: {} })).rejects.toThrow(
+        /its server is not connected.*Retry/,
+      );
     } finally {
       await client.close();
     }

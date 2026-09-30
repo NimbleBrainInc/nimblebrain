@@ -43,14 +43,14 @@ function mcpError(status: number, message: string): Response {
   );
 }
 
+/** `AuthEnv` plus the grant the caller's credential carries, set by {@link requireMcpAuth}. */
+type McpAuthEnv = { Variables: AuthEnv["Variables"] & { grant: TokenGrant } };
+
 /**
  * The one answer for a workspace this caller cannot reach: malformed, unknown,
  * or not theirs. Identical in every case, so it says nothing about which
  * workspaces exist.
  */
-/** `AuthEnv` plus the grant the caller's credential carries, set by {@link requireMcpAuth}. */
-type McpAuthEnv = { Variables: AuthEnv["Variables"] & { grant: TokenGrant } };
-
 function workspaceNotFound(): Response {
   return mcpError(404, "Workspace not found");
 }
