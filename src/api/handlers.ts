@@ -44,6 +44,7 @@ import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { mcpResourceUrl } from "./mcp-resource.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
+import type { ConversationStreamEvents } from "./schemas/events.ts";
 import type {
   AuthOkResponse,
   BootstrapResponse,
@@ -371,7 +372,10 @@ export async function handleChatStream(
       // Write to this response. No-op once the client has detached — the
       // run keeps producing events, which still reach other observers via
       // the broadcast below and the persisted conversation.
-      const send = (event: string, data: unknown) => {
+      const send = <K extends keyof ConversationStreamEvents>(
+        event: K,
+        data: ConversationStreamEvents[K],
+      ) => {
         if (!transportOpen) return;
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
