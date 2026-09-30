@@ -1,22 +1,7 @@
 // REST response bodies are the server's own types, generated from
 // `src/api/schemas/responses.ts`. Import them from here or from the generated
 // module; never restate one.
-export type {
-  ApiErrorBody,
-  BootstrapResponse,
-  ChatResponse,
-  ChatStartResponse,
-  ComposioInitiateResponse,
-  FileEntry,
-  FileLimits,
-  OAuthInitiateResponse,
-  PlacementEntry,
-  ReadResourceResponse,
-  ResourceContents,
-  ShellResponse,
-  ToolCallResponse,
-  UploadResourceResponse,
-} from "./_generated/api/responses";
+
 // SSE events, by stream, generated from `src/api/schemas/events.ts`.
 export type {
   ChatStartEvent,
@@ -37,6 +22,22 @@ export type {
   UserMessageEvent,
   WorkspaceStreamEvents,
 } from "./_generated/api/events";
+export type {
+  ApiErrorBody,
+  BootstrapResponse,
+  ChatResponse,
+  ChatStartResponse,
+  ComposioInitiateResponse,
+  FileEntry,
+  FileLimits,
+  OAuthInitiateResponse,
+  PlacementEntry,
+  ReadResourceResponse,
+  ResourceContents,
+  ShellResponse,
+  ToolCallResponse,
+  UploadResourceResponse,
+} from "./_generated/api/responses";
 
 /** Context identifying the app/server the user is interacting with. */
 export interface AppContext {
