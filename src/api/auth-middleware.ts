@@ -17,8 +17,12 @@ export interface AuthMiddlewareOptions {
   eventSink: EventSink;
 }
 
-/** Successful auth result: the caller the provider verified. */
-export type AuthSuccess = { identity: UserIdentity };
+/**
+ * Successful auth result: the caller the provider verified, and the grant their
+ * credential carries. `/mcp` reads the grant to tell an external MCP client
+ * from the operator's own clients (`McpSessionContext.grant`).
+ */
+export type AuthSuccess = { identity: UserIdentity; grant: TokenGrant };
 
 /** Auth check result: a Response (rejection) or AuthSuccess. */
 export type AuthResult = Response | AuthSuccess;
@@ -49,7 +53,7 @@ export async function authenticateRequest(
   if (verified instanceof Response) return verified;
   if (verified) {
     const { grant, ...identity } = verified;
-    if (grantAdmits(grant, resource)) return { identity };
+    if (grantAdmits(grant, resource)) return { identity, grant };
     // A valid token presented where it is not valid: 401 so a client
     // re-runs discovery and obtains one for this resource.
     log.warn("[auth] token audience does not name this resource", {

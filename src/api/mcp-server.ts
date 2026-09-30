@@ -117,7 +117,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
-import type { UserIdentity } from "../identity/provider.ts";
+import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
   ConnectorGrantDenied,
@@ -134,6 +134,7 @@ import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import type { ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { toWireJson } from "../util/wire-json.ts";
 import {
@@ -217,6 +218,12 @@ interface TransportEntry {
   /** Workspace bound to this session at initialize time: the one in its URL. */
   workspaceId: string;
   /**
+   * Grant kind bound to this session at initialize time. The 2025 leg's
+   * handlers keep the initializing context, so a request under another kind of
+   * credential must not reach them.
+   */
+  grant: TokenGrant["kind"];
+  /**
    * Wall-clock ms of the last request that touched this transport. Drives
    * both idle eviction (sweep closes entries older than `idleTtlMs`) and
    * LRU ordering (the Map is mutated on each touch so iteration order is
@@ -253,13 +260,20 @@ export interface McpServerHostOptions {
 }
 
 /**
- * The (identity, workspace) a request addresses. At initialize it becomes the
- * session's binding; on every later request it must match that binding.
- * `workspaceId` is the membership-validated workspace from the URL.
+ * The (identity, workspace, grant) a request addresses. At initialize it
+ * becomes the session's binding; on every later request it must match that
+ * binding. `workspaceId` is the membership-validated workspace from the URL.
  */
 export interface McpSessionContext {
   identity: UserIdentity | null;
   workspaceId: string;
+  /**
+   * The kind of grant the caller's credential carries. Only a `first_party`
+   * caller's `tools/call` can be an app's (`isAppCall`): a `resource` token was
+   * minted for an external MCP client, whose calls are an agent's whatever
+   * `_meta` they carry.
+   */
+  grant: TokenGrant["kind"];
 }
 
 /**
@@ -598,7 +612,7 @@ export class McpServerHost {
    * GET/SSE handler (see the class header) must add the same gate.
    */
   private ownsTransport(entry: TransportEntry, sessionCtx: McpSessionContext): boolean {
-    return this.bindingMatches(entry, sessionCtx);
+    return this.bindingMatches(entry, sessionCtx) && entry.grant === sessionCtx.grant;
   }
 
   /** The (identity, workspace) comparison, shared by the transport map and the registry. */
@@ -642,9 +656,15 @@ export class McpServerHost {
       onsessioninitialized: (sid: string) => {
         const now = Date.now();
 
-        // The session is bound to the identity and workspace that initialized
-        // it; `ownsTransport` holds every later request to both.
-        this.transports.set(sid, { transport, identityId, workspaceId, lastAccessedAt: now });
+        // The session is bound to the identity, workspace and grant kind that
+        // initialized it; `ownsTransport` holds every later request to all three.
+        this.transports.set(sid, {
+          transport,
+          identityId,
+          workspaceId,
+          grant: sessionCtx.grant,
+          lastAccessedAt: now,
+        });
         // The one line that names the client by its own declared `clientInfo`;
         // later misses for this session carry only the user agent.
         log.info(
@@ -791,8 +811,8 @@ function createHandlers(
       tools: all
         // A tool without "model" in its `ui.visibility` is left out of an
         // agent's tool list (MCP Apps), this surface included (mirrors
-        // `surfaceTools` on the chat path). Still callable by name via
-        // `tools/call`, which is how an app's view reaches it.
+        // `surfaceTools` on the chat path). An agent's `tools/call` that names
+        // one is refused too (`assertAgentMayCall`); only an app's call reaches it.
         .filter(isModelVisible)
         // Feature gating + role visibility apply to the BARE tool name.
         .filter((t) => isToolEnabled(bareToolName(t.name), features))
@@ -827,7 +847,9 @@ function createHandlers(
       );
     }
 
-    // ── Stage 1: a call that names a source is an app's (MCP Apps visibility)
+    // ── Stage 1: a call that names a source is held to that app's scope (MCP
+    // Apps visibility). Naming a source only narrows reach, so it is checked
+    // for any caller; whether the call is an app's is decided below.
     const appSource = scopedSourceName(request.params._meta);
     if (appSource !== undefined) {
       const refused = await assertAppMayCall(
@@ -865,6 +887,11 @@ function createHandlers(
       });
     } catch (err) {
       mapRouteToolError(err);
+    }
+
+    // ── Stage 3: every call that is not an app's is an agent's, held to "model"
+    if (!isAppCall(appSource, sessionCtx)) {
+      await assertAgentMayCall(routed.source, routed.toolName, name);
     }
 
     // Identity request (bare `<source>__<tool>`): dispatch against the caller's
@@ -1637,10 +1664,10 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  * of its own server, and only one whose `ui.visibility` includes `"app"`.
  *
  * The bridge names the calling view's server under
- * {@link RESOURCE_SOURCE_META_KEY}; that name is the only way this door can
- * tell a view's call from an agent's, because every iframe and the agent share
- * one `/mcp` session. A client that names a source only narrows what it can
- * reach, so accepting the key from any client widens nothing. A name that
+ * {@link RESOURCE_SOURCE_META_KEY}. The key narrows what any caller can reach,
+ * so it is checked whoever sends it; it widens reach to app-only tools only for
+ * a first-party caller (`isAppCall`), and every other call is also held to
+ * `assertAgentMayCall`. A name that
  * matches no listed tool is refused too: its visibility cannot be read, and
  * routing would still reach a source whose listing failed (it reconnects on
  * demand), so letting it through would skip the check rather than the call.
@@ -1683,6 +1710,63 @@ async function assertAppMayCall(
         ? `Tool "${name}" is not callable from an app: its visibility does not include "app".`
         : `Tool "${name}" is not callable from an app: it is not listed, so its visibility is unknown.`,
       { reason: "not_app_callable", toolName: name },
+    );
+  }
+}
+
+/**
+ * Whether a `tools/call` is an app's: it names a source (the iframe bridge
+ * names the calling view's server on every call) and the caller's credential
+ * is first-party.
+ *
+ * The grant is what the host can verify. A `resource` token was minted by the
+ * authorization server for an external MCP client, and the client it was
+ * issued to is signed into it (ADR-0038), so such a caller is never a view,
+ * whatever `_meta` it sends. A first-party credential is the operator's own
+ * client: the web shell, whose bridge makes every view's call, or an operator
+ * app. The source key cannot tell those apart, so under a first-party
+ * credential it is trusted as the caller states it. That is the limit of this
+ * check: a provider that marks every credential first-party (`oidc`, `dev`)
+ * leaves an external client able to name a source and be taken for a view.
+ */
+function isAppCall(appSource: string | undefined, sessionCtx: McpSessionContext): boolean {
+  return appSource !== undefined && sessionCtx.grant === "first_party";
+}
+
+/**
+ * Hold an agent's `tools/call` to the tools an agent may call: those whose
+ * `ui.visibility` includes `"model"` (MCP Apps). The engine refuses the same
+ * tools at the chat door; this is the `/mcp` door's half.
+ *
+ * Visibility is read from the routed source's own listing, not the workspace
+ * listing, so a connector's role gate still answers with its own refusal. A
+ * tool the listing does not name is refused, as `assertAppMayCall` does: its
+ * visibility cannot be read. So is a call while the source cannot list its
+ * tools (it is not connected), with a message that says to retry.
+ */
+async function assertAgentMayCall(
+  source: ToolSource,
+  innerToolName: string,
+  name: string,
+): Promise<void> {
+  let tools: Awaited<ReturnType<ToolSource["tools"]>>;
+  try {
+    tools = await source.tools();
+  } catch {
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Tool "${name}" is unavailable: its server is not connected, so its visibility cannot be read. Retry shortly.`,
+      { reason: "source_unavailable", toolName: name },
+    );
+  }
+  const tool = tools.find((t) => t.name === innerToolName);
+  if (!tool || !isModelVisible(tool)) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      tool
+        ? `Tool "${name}" is not callable by an agent: its visibility does not include "model". Only its app's view calls it.`
+        : `Tool "${name}" is not callable by an agent: it is not listed, so its visibility is unknown.`,
+      { reason: "not_agent_callable", toolName: name },
     );
   }
 }

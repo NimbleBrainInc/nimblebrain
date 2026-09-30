@@ -91,9 +91,11 @@ Skills are not a resource convention. A server publishes them through the MCP [S
 
 <Aside type="note" title="Tool visibility uses the specification">
 To make a tool callable by its app but hidden from the model, set the MCP Apps
-specification's `_meta.ui.visibility` to `["app"]`. The host honors it on every
-tool listing it gives a model, whether in chat or at the MCP endpoint. There is
-no NimbleBrain-specific key for this.
+specification's `_meta.ui.visibility` to `["app"]`. The host leaves the tool out
+of every tool listing it gives a model, whether in chat or at the MCP endpoint,
+and refuses a call to it from anything but an app's view: the chat agent, or an
+MCP client connected to the endpoint. There is no NimbleBrain-specific key for
+this.
 </Aside>
 
 ## Related
