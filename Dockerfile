@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+# The pinned frontend provides `COPY --parents`, used below for the UI build layer.
 FROM python:3.13-slim AS base
 
 LABEL org.opencontainers.image.title="NimbleBrain"
