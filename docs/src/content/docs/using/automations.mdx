@@ -36,6 +36,8 @@ Three schedule types:
 - **Interval** — a fixed interval in milliseconds, minimum 60000 (one minute)
 - **Event** — no time at all: the automation runs when a notification reaches it
 
+The runtime runs two scheduled automations at a time, across all of its workspaces. One that comes due while both slots are busy waits for a slot and then runs, oldest due first, so a tightly spaced batch runs late rather than being dropped.
+
 ## Running on an event
 
 A connector can record facts nobody asked for — a domain went active, a reply
