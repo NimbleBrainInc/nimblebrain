@@ -387,7 +387,11 @@ function AuthenticatedAppContent({
     <ShellProvider value={{ forSlot, mainRoutes, shellWorkspaceId }}>
       {/* ActionBridge handles iframe action events. It consumes ChatContext
           (streaming) but renders nothing, so its re-renders are free. */}
-      <ActionBridge handleNavigate={handleNavigate} resolveAppRoute={resolveAppRoute} />
+      <ActionBridge
+        handleNavigate={handleNavigate}
+        resolveAppRoute={resolveAppRoute}
+        activeSlug={activeSlug}
+      />
       {/* Command palette (⌘P) — global surface, sibling of the shell layout
           and chat chrome, so it's reachable from any route. */}
       <CommandPalette onLogout={onLogout} />
@@ -565,9 +569,11 @@ function AuthenticatedAppContent({
 function ActionBridge({
   handleNavigate,
   resolveAppRoute,
+  activeSlug,
 }: {
   handleNavigate: (route: string) => void;
   resolveAppRoute: (name: string) => string | null;
+  activeSlug: string | null;
 }) {
   const chatPanel = useChatPanelContext();
 
@@ -579,11 +585,14 @@ function ActionBridge({
   navigateRef.current = handleNavigate;
   const resolveRef = useRef(resolveAppRoute);
   resolveRef.current = resolveAppRoute;
+  const slugRef = useRef(activeSlug);
+  slugRef.current = activeSlug;
 
   useEffect(() => {
     // Dispatch table keyed by action name. Each handler reads current state
     // through the refs, so the listener registers once and unknown actions
-    // no-op. Params carry the event detail (`id`, `name`).
+    // no-op. Params carry the event detail (`id`, `name`, and the bridge's
+    // `serverName`).
     const actions: Record<string, (params: Record<string, unknown>) => void> = {
       openConversation(params) {
         if (params.id) chatPanelRef.current.openPanel(params.id as string);
@@ -593,6 +602,15 @@ function ActionBridge({
         if (!name) return;
         const route = resolveRef.current(name);
         if (route) navigateRef.current(route);
+      },
+      // The sending connector's own settings page. The connector is the one the
+      // bridge names, never a param, so an app can open only its own. Identity
+      // apps have no workspace settings page, so they no-op.
+      openConnectorSettings(params) {
+        const serverName = params.serverName as string | undefined;
+        const slug = slugRef.current;
+        if (!serverName || !slug || isIdentityApp(serverName)) return;
+        navigateRef.current(`/w/${slug}/settings/connectors/${encodeURIComponent(serverName)}`);
       },
     };
 

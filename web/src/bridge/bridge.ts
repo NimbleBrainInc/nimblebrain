@@ -387,7 +387,7 @@ export function createBridge(
       // Extension: ai.nimblebrain/action — semantic host actions
       // -----------------------------------------------------------------
       case ACTION_METHOD:
-        handleSynapseAction(msg.params, callbacks);
+        handleSynapseAction(msg.params, callbacks, appName);
         break;
 
       // -----------------------------------------------------------------
@@ -962,12 +962,18 @@ function handleUpdateModelContext(
 /**
  * Handle an ai.nimblebrain/action: invoke onAction, or dispatch an `nb:action`
  * event when no callback is wired. The shell resolves the action by name.
+ *
+ * `serverName` is the server whose view sent the action, set here and last so
+ * a param of the same name from the app cannot replace it. An action about
+ * "this connector" reads it; the app never names itself.
  */
 function handleSynapseAction(
   params: UiActionMessage["params"],
   callbacks: BridgeCallbacks | undefined,
+  appName: string,
 ): void {
-  const { action, ...actionParams } = params;
+  const { action, ...rest } = params;
+  const actionParams = { ...rest, serverName: appName };
   if (callbacks?.onAction) {
     callbacks.onAction(action, actionParams);
   } else {

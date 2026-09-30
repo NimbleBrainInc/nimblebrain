@@ -54,7 +54,7 @@ export interface BridgeCallbacks {
   onChat?: (message: string) => void;
   /** Called when the iframe requests a resize (inline views). */
   onResize?: (height: number) => void;
-  /** Called when the iframe requests a semantic action. */
+  /** Called when the iframe requests a semantic action. `params.serverName` is the sending view's server, set by the bridge. */
   onAction?: (action: string, params: Record<string, unknown>) => void;
   /** Called when the iframe confirms handshake complete. */
   onInitialized?: () => void;
