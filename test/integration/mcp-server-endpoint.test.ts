@@ -157,18 +157,14 @@ describe("MCP Server Endpoint (/mcp)", () => {
     }
   });
 
-  it("tool call with unknown tool returns error", async () => {
+  it("tool call with unknown tool is refused", async () => {
     const client = await createMcpClient();
     try {
-      // A valid source with a bad tool name — resolves the source, fails the tool.
-      // inner tool, so the source lookup succeeds (source "fake")
-      // but the inner tool is unknown. Source.execute should surface
-      // `isError: true`.
-      const result = await client.callTool({
-        name: "fake__nonexistent",
-        arguments: {},
-      });
-      expect(result.isError).toBe(true);
+      // A valid source with a bad tool name: the source resolves, and the
+      // agent-call visibility check refuses a tool its listing does not name.
+      await expect(client.callTool({ name: "fake__nonexistent", arguments: {} })).rejects.toThrow(
+        /it is not listed/,
+      );
     } finally {
       await client.close();
     }

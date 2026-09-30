@@ -25,7 +25,7 @@ import type { ResolvedFeatures } from "../../../src/config/features.ts";
 
 const FAKE_FEATURES = {} as ResolvedFeatures;
 const SAMPLE_SID = "11111111-2222-3333-4444-555555555555";
-const SESSION_CTX = { identity: null, workspaceId: "ws_a" };
+const SESSION_CTX = { identity: null, workspaceId: "ws_a", grant: "first_party" as const };
 
 function postRequest(sessionId: string): Request {
   return new Request("http://test/mcp/ws_a", {

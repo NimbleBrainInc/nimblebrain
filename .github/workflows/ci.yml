@@ -375,7 +375,9 @@ jobs:
   # no-ops, so forks and pre-setup CI stay green. Config:
   #   vars.DEPLOY_CONFIG_REPO       — deploy-config repo name (same org)
   #   vars.EDGE_BUMP_APP_ID          — GitHub App id (Contents: write on that repo)
-  #   secrets.EDGE_BUMP_APP_KEY      — that App's private key
+  #   secrets.EDGE_BUMP_APP_KEY      — that App's private key, held only in the
+  #                                    `deploy-config-edge` environment, which admits
+  #                                    `main` alone, so no pull_request run can read it
   roll-staging-edge:
     name: Roll staging edge channel
     needs: [build-and-push, changes]
@@ -384,6 +386,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.changes.outputs.image_relevant == 'true'
     runs-on: ubuntu-latest
+    environment: deploy-config-edge
     # Authenticates with a minted App token, never GITHUB_TOKEN — needs no grants.
     permissions: {}
     steps:

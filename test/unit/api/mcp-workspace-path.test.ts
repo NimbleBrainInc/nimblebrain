@@ -172,7 +172,7 @@ describe("authorization-server tokens at /mcp/<wsId>: aud must equal the canonic
   it("accepts an exact aud for a member, bound to that workspace", async () => {
     const res = await post(makeApp(), `/mcp/${WS_A}`, "alice-aud-exact");
     expect(res.status).toBe(200);
-    expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_A }]);
+    expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_A, grant: "resource" }]);
   });
 
   it("accepts an aud array that contains the exact URL", async () => {
@@ -240,7 +240,7 @@ describe("first-party credentials", () => {
   it("accepts the web app's own login token at /mcp/<wsId> for a member", async () => {
     const res = await post(makeApp(), `/mcp/${WS_B}`, "alice-first-party");
     expect(res.status).toBe(200);
-    expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_B }]);
+    expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_B, grant: "first_party" }]);
   });
 
   it("answers 401 with the workspace's discovery header when there is no credential", async () => {
