@@ -37,7 +37,8 @@ export interface EventConnection {
   close(): void;
 }
 
-/** Per-chunk SSE accumulator: the `event:` name seen so far, awaiting its `data:`. */
+/** SSE frame accumulator, carried across reads for one connection: the `event:`
+ *  name seen so far, awaiting its `data:`. */
 interface SseParserState {
   currentEvent: string;
 }
