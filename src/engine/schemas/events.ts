@@ -752,7 +752,6 @@ export interface EngineEventPayloads {
   "audit.auth_failure": AuthFailurePayload;
   "audit.permission_denied": PermissionDeniedPayload;
   /**
-  /**
    * A secret held in the credential store was revealed to a caller — presented
    * as a header, exchanged at a token endpoint, handed to a provider SDK.
    * Payload: { scope, key, caller, purpose } plus `workspaceId` / `userId` when

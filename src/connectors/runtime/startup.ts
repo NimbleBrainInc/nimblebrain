@@ -616,10 +616,10 @@ export async function startConnectorSource(
   ref: ConnectorRef,
   registry: ToolRegistry,
   // Required. The runtime event sink is threaded into the McpSource so
-  // task-augmented tool calls can emit `tool.progress` and a crashed source
-  // its `run.error`. Callers without a real sink (rare) must pass
-  // `new NoopEventSink()` explicitly, so dropping events is a decision rather
-  // than an omission.
+  // task-augmented tool calls can emit `tool.task_status` and a crashed or
+  // restarted source its `connector.health`. Callers without a real sink
+  // (rare) must pass `new NoopEventSink()` explicitly, so dropping events is a
+  // decision rather than an omission.
   eventSink: EventSink,
   opts?: StartConnectorOpts,
 ): Promise<StartConnectorResult> {

@@ -2558,16 +2558,14 @@ export class Runtime {
 
   /**
    * Wrap an `EventSink` so `tool.progress` / `tool.done` events carry
-   * `workspaceId` from the per-call dispatch map. The map is populated
-   * inside `_buildIdentityToolRouter` BEFORE `source.execute(...)` so
-   * an early `tool.progress` event from a task-augmented tool can find
-   * its entry. The map entry stays through `tool.done` so the audit
-   * record sees the same field, then is deleted to keep the map bounded.
+   * `workspaceId` from the per-call dispatch map, keyed by the tool call id.
+   * The map is populated inside `_buildIdentityToolRouter` BEFORE
+   * `source.execute(...)`, so any event for the call finds its entry. The
+   * entry stays through `tool.done` so the audit record sees the same field,
+   * then is deleted to keep the map bounded.
    *
-   * `data` is `Record<string, unknown>` on `EngineEvent`; we copy the
-   * existing object, write the `workspaceId` field, and re-emit. No
-   * `as unknown as T` shenanigans — the field is `unknown`-typed by
-   * construction so a plain assignment works.
+   * Both payloads declare an optional `workspaceId`, so the wrap copies the
+   * payload with the field set and re-emits it under the same type.
    */
   private _wrapSinkWithWorkspaceAttribution(
     inner: EventSink,
