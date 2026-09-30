@@ -295,6 +295,10 @@ describe("McpSource — OAuth retry path", () => {
     expect(tools[0]?.name).toBe("retry-test__noop");
     // Connect completed via the retry seam → exactly one readiness emit.
     expect(readinessFires).toBe(1);
+    // The first attempt's 401 went through cleanupOnStartFailure(), which starts
+    // an outage; the retry seam's success must end it, or the source's next
+    // restart is judged already past the restart horizon.
+    expect((source as unknown as { downSince: number | null }).downSince).toBeNull();
 
     await source.stop();
   }, 15_000);

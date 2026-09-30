@@ -423,7 +423,7 @@ export class McpSource implements ToolSource {
   private lastReconnectFailedAt: number | null = null;
   /** When this source went down involuntarily (a crash, or a start that failed),
    *  or null while it is up or was never started. Kept across the failed
-   *  restarts of one outage and cleared only by a successful `start()`, so it
+   *  restarts of one outage and cleared only by a successful connect, so it
    *  measures the whole outage, not the last attempt. A deliberate `stop()`
    *  leaves it alone: {@link stopped} is what marks that terminal. Read by
    *  {@link awaitRestartingSource} to tell a source that is restarting from one
@@ -630,7 +630,6 @@ export class McpSource implements ToolSource {
     // So the floor gates only CONSECUTIVE failed reconnects with no connect between,
     // and a fresh idle-close right after an out-of-band heal is never wrongly gated.
     this.lastReconnectFailedAt = null;
-    this.downSince = null;
     this.startedAt = Date.now();
 
     // Now that start has succeeded, wire transport close-detection.
@@ -889,6 +888,10 @@ export class McpSource implements ToolSource {
    * stream its change notifications ride.
    */
   private onConnected(): void {
+    // Both success seams (the bottom of `start()` and the OAuth retry) pass
+    // through here, and the OAuth retry's first attempt ran
+    // `cleanupOnStartFailure()`, so the outage ends here, not in `start()`.
+    this.downSince = null;
     const client = this.client;
     const transport = this.transport;
     if (!client || !transport) return;

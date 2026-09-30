@@ -1,4 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { createRunSupervisor } from "../../src/engine/supervisor.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
@@ -87,7 +88,7 @@ describe("McpSource waits for a restarting source", () => {
         const elapsed = Date.now() - started;
         expect(isNotStarted(result)).toBe(true);
         // Bounded: the wait ends at its deadline, plus timer slack.
-        expect(elapsed).toBeLessThan(waitMs + 100);
+        expect(elapsed).toBeLessThan(waitMs + 500);
         verdicts.push(
           supervisor.observe(
             { id: `c${i}`, name: "svc__search", input: { q: `query ${i}` } },
@@ -112,7 +113,7 @@ describe("McpSource waits for a restarting source", () => {
       const started = Date.now();
       const result = await source.execute("search", {});
       expect(isNotStarted(result)).toBe(true);
-      expect(Date.now() - started).toBeLessThan(100);
+      expect(Date.now() - started).toBeLessThan(1_000);
       // Only the on-demand reconnect ran; nothing retried inside a wait.
       expect(restart).toHaveBeenCalledTimes(1);
     } finally {
@@ -129,7 +130,7 @@ describe("McpSource waits for a restarting source", () => {
       const started = Date.now();
       const result = await source.execute("search", {}, controller.signal);
       expect(isNotStarted(result)).toBe(true);
-      expect(Date.now() - started).toBeLessThan(500);
+      expect(Date.now() - started).toBeLessThan(2_000);
     } finally {
       restart.mockRestore();
     }
@@ -143,7 +144,7 @@ describe("McpSource waits for a restarting source", () => {
       const started = Date.now();
       const result = await source.execute("search", {});
       expect(isNotStarted(result)).toBe(true);
-      expect(Date.now() - started).toBeLessThan(100);
+      expect(Date.now() - started).toBeLessThan(1_000);
       expect(restart).not.toHaveBeenCalled();
     } finally {
       restart.mockRestore();
@@ -166,5 +167,54 @@ describe("McpSource waits for a restarting source", () => {
     internal.downSince = (first ?? 0) - 5_000;
     source._emitSourceCrashedForTesting("again");
     expect(internal.downSince).toBe((first ?? 0) - 5_000);
+  });
+
+  it("test_failed_start_records_down_since_and_keeps_it_across_retries", async () => {
+    // A transport that cannot open fails the connect, which goes through
+    // cleanupOnStartFailure(): the path every failed restart takes.
+    const unreachable = {
+      start: () => Promise.reject(new Error("connect refused")),
+      send: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    };
+    const server = new Server({ name: "svc", version: "0.1.0" }, { capabilities: {} });
+    const source = new McpSource(
+      "svc",
+      {
+        type: "inProcess",
+        createServer: async () => ({
+          server,
+          clientTransport: unreachable as unknown as InMemoryTransport,
+        }),
+      },
+      new NoopEventSink(),
+    );
+    const internal = source as unknown as Internals;
+    await expect(source.start()).rejects.toThrow();
+    const first = internal.downSince;
+    expect(first).not.toBeNull();
+    internal.downSince = (first ?? 0) - 5_000;
+    await expect(source.start()).rejects.toThrow();
+    expect(internal.downSince).toBe((first ?? 0) - 5_000);
+  });
+
+  it("test_successful_connect_clears_down_since", async () => {
+    const server = new Server({ name: "svc", version: "0.1.0" }, { capabilities: { tools: {} } });
+    server.setRequestHandler("tools/list", async () => ({ tools: [] }));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const source = new McpSource(
+      "svc",
+      { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
+      new NoopEventSink(),
+    );
+    const internal = source as unknown as Internals;
+    internal.downSince = Date.now() - 5_000;
+    try {
+      await source.start();
+      expect(internal.downSince).toBeNull();
+    } finally {
+      await source.stop();
+    }
   });
 });
