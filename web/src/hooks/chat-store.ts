@@ -15,13 +15,13 @@ import { nameFromSkillId } from "../lib/skill-display.ts";
 import type {
   AppContext,
   ChatRequest,
-  ChatResult,
-  ChatStreamEventMap,
+  ChatResponse,
+  ConversationStreamEvents,
   LedgerSkill,
   LlmDoneEvent,
-  ReasoningDeltaEvent,
   StreamErrorEvent,
   TextDeltaEvent,
+  UserMessageEvent,
   ToolCallResponse,
   ToolDoneEvent,
   ToolPreparingEvent,
@@ -321,7 +321,7 @@ const updateTool =
 /** Fill in tool results the stream never resolved from the terminal `done` payload. */
 function backfillToolResults(
   slice: ConversationSlice,
-  resultToolCalls: ChatResult["toolCalls"],
+  resultToolCalls: ChatResponse["toolCalls"],
 ): void {
   const outputMap = new Map(resultToolCalls.map((tc) => [tc.id, tc.output]));
   const backfill = (tc: ToolCallDisplay): ToolCallDisplay => {
@@ -337,7 +337,7 @@ function backfillToolResults(
 
 /** Assemble the finalized assistant message from the terminal `done` payload. */
 function buildFinalAssistantMessage(
-  result: ChatResult,
+  result: ChatResponse,
   finalBlocks: ContentBlock[],
   finalTools: ToolCallDisplay[] | undefined,
   usage: ChatMessage["usage"],
@@ -897,7 +897,7 @@ export function createChatStore(): ChatStore {
   // -- stream reducer --
 
   function handleUserMessage(slice: ConversationSlice, data: unknown): void {
-    const evt = data as { content: string; userId?: string; timestamp?: string };
+    const evt = data as UserMessageEvent;
     resetScratch(slice);
     if (slice.pendingEcho) {
       // Our optimistic user message + assistant placeholder are already in
@@ -925,7 +925,7 @@ export function createChatStore(): ChatStore {
   }
 
   function handleChatStart(slice: ConversationSlice, data: unknown): void {
-    const evt = data as ChatStreamEventMap["chat.start"];
+    const evt = data as ConversationStreamEvents["chat.start"];
     // The binding arrives with the id because a just-created conversation is
     // never loaded, so `loadConversation` would never supply it — and the
     // composer has to state the model the server pinned, not the one asked for.
@@ -1003,7 +1003,7 @@ export function createChatStore(): ChatStore {
   }
 
   function handleReasoningDelta(slice: ConversationSlice, data: unknown): void {
-    const evt = data as ReasoningDeltaEvent;
+    const evt = data as TextDeltaEvent;
     // A reasoning block's cryptographic signature arrives as a delta carrying
     // no text. Taking it as "streaming" hides the live cursor behind a block
     // that renders nothing, leaving the turn with no indicator at all.
@@ -1068,7 +1068,7 @@ export function createChatStore(): ChatStore {
   }
 
   function handleDone(slice: ConversationSlice, data: unknown): void {
-    const result = data as ChatResult;
+    const result = data as ChatResponse;
     slice.streamingState = null;
     slice.preparingTool = null;
     slice.isStreaming = false;

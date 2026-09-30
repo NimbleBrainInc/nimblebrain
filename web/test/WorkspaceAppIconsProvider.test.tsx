@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type { InstalledConnector } from "../src/api/client";
-import type { SseEventType } from "../src/types";
+import type { WorkspaceStreamEvents } from "../src/types";
 import { realClient } from "./setup";
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ const mockGetInstalled = mock(
 
 // Capture the latest onEvent handler registered via connectEvents so tests can
 // drive SSE events directly.
-let capturedOnEvent: (<K extends SseEventType>(type: K, data: unknown) => void) | null = null;
+let capturedOnEvent: (<K extends keyof WorkspaceStreamEvents>(type: K, data: unknown) => void) | null = null;
 const mockConnectEvents = mock((opts: { onEvent: typeof capturedOnEvent }) => {
   capturedOnEvent = opts.onEvent;
   return { close: () => {} };
@@ -50,7 +50,7 @@ const { __internal__: eventsClient } = await import("../src/api/events-client");
 const { useWorkspaceAppIcons } = await import("../src/context/WorkspaceAppIconsContext");
 type WorkspaceAppIconsValue = import("../src/context/WorkspaceAppIconsContext").WorkspaceAppIconsValue;
 
-function fire(type: SseEventType, data: Record<string, unknown> = {}) {
+function fire(type: keyof WorkspaceStreamEvents, data: Record<string, unknown> = {}) {
   if (!capturedOnEvent) throw new Error("connectEvents.onEvent was never registered");
   act(() => {
     capturedOnEvent?.(type, data);

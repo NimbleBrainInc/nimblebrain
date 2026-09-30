@@ -255,11 +255,12 @@ injectHeaders(CONNECTOR_TYPES_DEST, CONNECTOR_TYPES_DEST, "src");
 
 console.log(`[codegen] OK → ${CONNECTOR_TYPES_DEST.replace(REPO_ROOT, ".")}`);
 
-// ── REST response bodies ───────────────────────────────────────────
+// ── REST response bodies and SSE events ───────────────────────────────────────────
 //
-// The body of every JSON route, the types the handlers build through
-// `json<T>()`. `responses.ts` imports nothing, and the config's `rootDir` is its
-// own directory, so tsc refuses an import rather than emitting its graph here.
+// The body of every JSON route (`responses.ts`) and every SSE event
+// (`events.ts`). Both import nothing outside their directory, and the config's
+// `rootDir` is that directory, so tsc refuses an outside import rather than
+// emitting its graph here.
 
 console.log("[codegen] api → web/src/_generated/api/");
 

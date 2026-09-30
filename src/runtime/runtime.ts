@@ -10,6 +10,7 @@ import type {
 import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
+import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -1262,17 +1263,30 @@ export class Runtime {
     return this.runBus.bufferedSince(conversationId, afterSeq);
   }
 
+  /** Publish a frame the runtime builds itself: typed by the conversation stream's catalog. */
+  private publishTurnEvent<K extends TurnFrame>(
+    conversationId: string,
+    type: K,
+    data: ConversationStreamEvents[K],
+  ): void {
+    this.publishToRunBus(conversationId, type, data);
+  }
+
   /** Publish to the RunBus (buffer/replay) and fan out live (SSE viewers). */
-  private publishTurnEvent(conversationId: string, type: string, data: unknown): void {
+  private publishToRunBus(conversationId: string, type: string, data: unknown): void {
     const buffered = this.runBus.publish(conversationId, type, data);
     if (buffered) this.onTurnEvent?.(conversationId, buffered);
   }
 
-  /** EventSink that forwards engine events into the RunBus for one turn. */
+  /**
+   * EventSink that forwards engine events into the RunBus for one turn,
+   * verbatim. `src/api/schemas/events-drift-guard.ts` holds each forwarded
+   * payload to its `ConversationStreamEvents` entry.
+   */
   private createRunBusSink(conversationId: string): EventSink {
     return {
       emit: (event: EngineEvent) => {
-        this.publishTurnEvent(conversationId, event.type, event.data);
+        this.publishToRunBus(conversationId, event.type, event.data);
       },
     };
   }

@@ -2,6 +2,7 @@ import type { EngineEventPayloads } from "../engine/schemas/events.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import type { HeartbeatEvent, WorkspaceStreamEvents } from "./schemas/events.ts";
 import { CONNECTED_FRAME } from "./sse-heartbeat.ts";
 
 /**
@@ -79,7 +80,10 @@ type SseRoute<K extends EngineEventType> =
   | { scope: "workspace"; wsIdField: PayloadKey<K> }
   | { scope: "owner"; wsIdField?: PayloadKey<K>; userIdField: PayloadKey<K> };
 
-const SSE_ROUTES: { [K in EngineEventType]?: SseRoute<K> } = {
+/** The engine events `GET /v1/events` may send: those `WorkspaceStreamEvents` declares. */
+type WorkspaceStreamEngineEvent = EngineEventType & keyof WorkspaceStreamEvents;
+
+const SSE_ROUTES: { [K in WorkspaceStreamEngineEvent]?: SseRoute<K> } = {
   // Connector lifecycle — workspace-scoped. `wsId` is on every payload (added
   // in lifecycle.ts when emitting); without it we can't safely scope, so the
   // event drops at the boundary below.
@@ -128,6 +132,11 @@ const SSE_ROUTES: { [K in EngineEventType]?: SseRoute<K> } = {
   "notification.delivered": { scope: "workspace", wsIdField: "workspaceId" },
   "notification.delivery_failed": { scope: "workspace", wsIdField: "workspaceId" },
 };
+
+/** Whether `type` is an engine event the route table may carry. */
+function isWorkspaceStreamEvent(type: EngineEventType): type is WorkspaceStreamEngineEvent {
+  return type in SSE_ROUTES;
+}
 
 /**
  * A payload field named by a route. The route table checks each name against
@@ -210,7 +219,7 @@ export class SseEventManager implements EventSink {
     this.heartbeatTimer = setInterval(() => {
       this.broadcast("heartbeat", {
         timestamp: new Date().toISOString(),
-      });
+      } satisfies HeartbeatEvent);
     }, this.heartbeatIntervalMs);
 
     if (this.workspaceStore && !this.unsubscribeMembership) {
@@ -323,6 +332,7 @@ export class SseEventManager implements EventSink {
    * workspace id.
    */
   emit(event: EngineEvent): void {
+    if (!isWorkspaceStreamEvent(event.type)) return;
     const route: SseRoute<EngineEventType> | undefined = SSE_ROUTES[event.type];
     if (!route) return;
     if (route.scope === "global") {

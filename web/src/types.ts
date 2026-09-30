@@ -17,38 +17,26 @@ export type {
   ToolCallResponse,
   UploadResourceResponse,
 } from "./_generated/api/responses";
-
-/** UI metadata for a connector (sidebar entry, icon). */
-export interface ConnectorUiMeta {
-  name: string;
-  icon: string;
-}
-
-/** Connector lifecycle states. */
-export type ConnectionState =
-  | "starting"
-  | "running"
-  | "crashed"
-  | "dead"
-  | "stopped"
-  | "pending_auth";
-
-/** Tool call record in a chat result. */
-export interface ToolCallRecord {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-  output: string;
-  ok: boolean;
-  ms: number;
-  resourceUri?: string;
-  resourceLinks?: Array<{
-    uri: string;
-    name?: string;
-    mimeType?: string;
-    description?: string;
-  }>;
-}
+// SSE events, by stream, generated from `src/api/schemas/events.ts`.
+export type {
+  ChatStartEvent,
+  ConfigChangedEvent,
+  ConnectionStateChangedEvent,
+  ConversationStreamEvents,
+  ConversationTitleEvent,
+  LlmDoneEvent,
+  NotificationCreatedEvent,
+  NotificationDeliveredEvent,
+  NotificationDeliveryFailedEvent,
+  ServerNotificationEvent,
+  StreamErrorEvent,
+  TextDeltaEvent,
+  ToolDoneEvent,
+  ToolPreparingEvent,
+  ToolStartEvent,
+  UserMessageEvent,
+  WorkspaceStreamEvents,
+} from "./_generated/api/events";
 
 /** Context identifying the app/server the user is interacting with. */
 export interface AppContext {
@@ -71,250 +59,7 @@ export interface ChatRequest {
   appContext?: AppContext;
 }
 
-/**
- * Token usage for a single chat turn, as the SSE `done` event carries it.
- * The synchronous `POST …/chat` body is the generated `ChatResponse`.
- */
-export interface TurnUsage extends UsageShape {
-  model: string;
-  llmMs: number;
-  iterations: number;
-  /** Computed at the API boundary from (model, usage). Always present. */
-  costUsd: number;
-}
-
-/** The final SSE `done` event of a chat turn. */
-export interface ChatResult {
-  response: string;
-  conversationId: string;
-  skillName: string | null;
-  toolCalls: ToolCallRecord[];
-  inputTokens: number;
-  outputTokens: number;
-  stopReason: string;
-  usage?: TurnUsage;
-}
-
-// --- SSE Event Types ---
-
-// All connector.* events are workspace-scoped at the SSE layer (server filters
-// by wsId before fan-out). The wsId is included on the payload so consumers
-// can disambiguate when they hold state across multiple workspace sessions.
-
-export interface ConnectorInstalledEvent {
-  wsId: string;
-  name: string;
-  connectorName: string;
-  status: ConnectionState;
-  ui: ConnectorUiMeta | null;
-}
-
-export interface ConnectorUninstalledEvent {
-  wsId: string;
-  name: string;
-}
-
-export interface ConnectionStateChangedEvent {
-  wsId: string;
-  serverName: string;
-  connectorName: string;
-  principalId: string;
-  state: ConnectionState;
-  /** Populated only when state === "pending_auth". */
-  authorizationUrl?: string;
-  /** Populated when state === "dead" or "crashed". */
-  lastError?: string;
-}
-
-/**
- * An app server's own notification, relayed by the runtime to that server's
- * views. `server` is the bare server name (an iframe's `data-app`); `method`
- * and `params` go to the iframe verbatim.
- *
- * It names exactly one owner. `workspaceId` is set for a workspace's app, and
- * the runtime delivers it to that workspace's members. `userId` is set for one
- * of a person's own apps (`conversations`, `files`, `automations`), which
- * belongs to no workspace, and the runtime delivers it to that person alone.
- */
-export interface ServerNotificationEvent {
-  server: string;
-  workspaceId?: string;
-  userId?: string;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-export interface HeartbeatEvent {
-  timestamp: string;
-}
-
-export interface ConfigChangedEvent {
-  fields?: string[];
-  timestamp: string;
-}
-
-/** Live auto-generated conversation title (routed to a slice by conversationId). */
-export interface ConversationTitleEvent {
-  conversationId: string;
-  title: string;
-}
-
-/**
- * A connector's notification reached a workspace's inbox.
- *
- * A summary, not the item: enough to know something arrived in a workspace the
- * tab can see, and deliberately not the body, the link or the connector's
- * payload. The inbox refetches on it rather than rendering from it — the frame
- * is a hint that the list moved, and the list is the thing that is true.
- */
-export interface NotificationCreatedEvent {
-  workspaceId: string;
-  id: string;
-  seq: number;
-  source: string;
-  name: string;
-  level: "info" | "attention" | "urgent";
-  title: string;
-  subject?: string;
-  receivedAt: string;
-}
-
-/**
- * One route target reached a terminal outcome.
- *
- * Typed down to what the fan-out itself guarantees: `SSE_ROUTES` requires
- * `workspaceId` to scope the frame at all, and `id` names the item whose
- * ledger changed. The rest of the payload is on the ledger row, which the
- * consumer refetches — a frame is a hint that an item moved, and the list is
- * the thing that is true.
- *
- * Both delivery outcomes carry the same shape, and both exist because the
- * ledger row changes *after* `notification.created` announced the item: a
- * browser holding it would otherwise show a delivery frozen at whatever it was
- * when the item arrived, until an unrelated later frame happened to land.
- */
-export interface NotificationDeliveryEvent {
-  workspaceId: string;
-  id: string;
-}
-
-/** SSE event type to payload mapping. */
-export interface SseEventMap {
-  "connector.installed": ConnectorInstalledEvent;
-  "connector.uninstalled": ConnectorUninstalledEvent;
-  "connection.state_changed": ConnectionStateChangedEvent;
-  "server.notification": ServerNotificationEvent;
-  "conversation.title": ConversationTitleEvent;
-  "config.changed": ConfigChangedEvent;
-  "notification.created": NotificationCreatedEvent;
-  "notification.delivered": NotificationDeliveryEvent;
-  "notification.delivery_failed": NotificationDeliveryEvent;
-  heartbeat: HeartbeatEvent;
-}
-
-/** Union of all SSE event type strings. */
-export type SseEventType = keyof SseEventMap;
-
-// --- Chat Stream SSE Events ---
-
-export interface TextDeltaEvent {
-  runId: string;
-  text: string;
-}
-
-/**
- * Streaming reasoning (extended-thinking) delta. Same shape as
- * `TextDeltaEvent` — handled symmetrically in `useChat`. Only fires
- * when the model emits reasoning content (Anthropic with
- * `providerOptions.anthropic.thinking` enabled, or any model that
- * produces reasoning by default).
- */
-export interface ReasoningDeltaEvent {
-  runId: string;
-  text: string;
-}
-
-export interface ToolStartEvent {
-  runId: string;
-  name: string;
-  id: string;
-  resourceUri?: string;
-  input?: Record<string, unknown>;
-}
-
-/**
- * Fired when the model begins emitting a tool-call block, before the
- * tool actually executes. Bridges the dark gap between the last text
- * delta and `tool.start` when the model is streaming a large tool
- * input (e.g. a 45 KB document body) — without this, the UI has no
- * signal during that window.
- */
-export interface ToolPreparingEvent {
-  runId: string;
-  id: string;
-  name: string;
-}
-
-export interface ToolPreparingDoneEvent {
-  runId: string;
-  id: string;
-}
-
-export interface ResourceLinkInfo {
-  uri: string;
-  name?: string;
-  mimeType?: string;
-  description?: string;
-}
-
-export interface ToolDoneEvent {
-  runId: string;
-  name: string;
-  id: string;
-  ok: boolean;
-  ms: number;
-  resourceUri?: string;
-  /** MCP `resource_link` blocks surfaced by the tool result, if any. */
-  resourceLinks?: ResourceLinkInfo[];
-  result?: {
-    content: Array<{ type: string; text?: string; [key: string]: unknown }>;
-    structuredContent?: Record<string, unknown>;
-    isError: boolean;
-  };
-}
-
-export interface StreamErrorEvent {
-  error: string;
-  message: string;
-  retryAfter?: number;
-}
-
-/**
- * Token usage carried on llm.done SSE events. Mirrors the runtime's
- * canonical `TokenUsage` (src/usage/types.ts). Web is a separate package
- * so the shape is duplicated rather than imported — keep in sync.
- */
-export interface UsageShape {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  reasoningTokens?: number;
-}
-
-export interface LlmDoneEvent {
-  runId: string;
-  model: string;
-  /** Token usage for this single LLM call (canonical AI SDK V3 shape). */
-  usage: UsageShape;
-  llmMs: number;
-  /**
-   * Per-call finish reason (AI SDK V3 unified). Optional for backward
-   * compat; surfaces length truncation, content filter, etc. so the UI
-   * can render a per-message indicator.
-   */
-  finishReason?: "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
-}
+// --- Chat stream projections ---
 
 /** Which tier a skill lives in — mirrors the server `SkillScope`. */
 export type LedgerSkillScope = "org" | "workspace" | "user" | "provided";
@@ -343,36 +88,6 @@ export interface LedgerSkill {
   loadedBy: "always" | "tool_affinity" | "trigger";
   reason: string;
 }
-
-/**
- * `skills.loaded` — emitted once per turn from prompt composition (before any
- * block streams), forwarded verbatim over the RunBus stream. Drives the
- * skills ledger line. Absent for a turn that composed no Layer-3 skills.
- */
-export interface SkillsLoadedEvent {
-  runId: string;
-  skills: LedgerSkill[];
-  totalTokens: number;
-}
-
-/** Chat stream SSE event type to payload mapping. */
-export interface ChatStreamEventMap {
-  /** `model` is the conversation's binding, absent on records that have none. */
-  "chat.start": { conversationId: string; model?: string };
-  "text.delta": TextDeltaEvent;
-  "reasoning.delta": ReasoningDeltaEvent;
-  "tool.preparing": ToolPreparingEvent;
-  "tool.preparing.done": ToolPreparingDoneEvent;
-  "tool.start": ToolStartEvent;
-  "tool.done": ToolDoneEvent;
-  "llm.done": LlmDoneEvent;
-  "skills.loaded": SkillsLoadedEvent;
-  done: ChatResult;
-  error: StreamErrorEvent;
-}
-
-/** Union of all chat stream event type strings. */
-export type ChatStreamEventType = keyof ChatStreamEventMap;
 
 /**
  * The parts of `get_config` the chat surface consumes. The tool publishes more

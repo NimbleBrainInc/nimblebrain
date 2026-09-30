@@ -188,7 +188,15 @@ describe("a live frame", () => {
     listCalls = 0;
 
     await act(async () => {
-      lastOptions?.onEvent("notification.delivery_failed", { workspaceId: WS, id: "n1" });
+      lastOptions?.onEvent("notification.delivery_failed", {
+        workspaceId: WS,
+        id: "n1",
+        seq: 1,
+        routeId: "rt_1",
+        target: "slack",
+        attempts: 3,
+        outcome: "failed",
+      });
     });
     await settle();
 

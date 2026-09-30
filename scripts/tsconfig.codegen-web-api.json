@@ -12,5 +12,5 @@
     "strict": true,
     "esModuleInterop": true
   },
-  "include": ["../src/api/schemas/responses.ts"]
+  "include": ["../src/api/schemas/responses.ts", "../src/api/schemas/events.ts"]
 }

@@ -136,7 +136,7 @@ export async function handleChat(
         conversationEventManager.broadcastToConversation(
           broadcastConvId,
           "done",
-          { ...responseBody },
+          responseBody,
           originSubscriberId,
         );
       }
@@ -434,12 +434,7 @@ export async function handleChatStream(
           // `originSubscriberId` block above for why subscriber-keyed
           // exclusion is correct and userId-keyed exclusion isn't.
           if (convId && conversationEventManager && identity) {
-            conversationEventManager.broadcastToConversation(
-              convId,
-              event.type,
-              { ...event.data },
-              originSubscriberId,
-            );
+            conversationEventManager.forwardToConversation(convId, event, originSubscriberId);
           }
         }
       });
@@ -476,7 +471,7 @@ export async function handleChatStream(
               conversationEventManager.broadcastToConversation(
                 broadcastConvId,
                 "done",
-                { ...doneData },
+                doneData,
                 originSubscriberId,
               );
             }

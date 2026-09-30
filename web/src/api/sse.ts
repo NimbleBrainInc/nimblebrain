@@ -1,4 +1,4 @@
-import type { SseEventMap, SseEventType } from "../types";
+import type { WorkspaceStreamEvents } from "../types";
 import { refreshSession } from "./client";
 
 /** Options for connecting to the workspace event stream. */
@@ -15,7 +15,7 @@ export interface ConnectEventsOptions {
    */
   workspaceId?: string;
   /** Called when a typed SSE event is received. */
-  onEvent: <K extends SseEventType>(type: K, data: SseEventMap[K]) => void;
+  onEvent: <K extends keyof WorkspaceStreamEvents>(type: K, data: WorkspaceStreamEvents[K]) => void;
   /** Called when the connection is established (each open, not just the first). */
   onOpen?: () => void;
   /** Called when the connection is lost (before reconnect). */
@@ -163,7 +163,7 @@ export function connectEvents(options: ConnectEventsOptions): EventConnection {
     if (line.startsWith("data: ") && state.currentEvent) {
       try {
         const data = JSON.parse(line.slice(6));
-        onEvent(state.currentEvent as SseEventType, data);
+        onEvent(state.currentEvent as keyof WorkspaceStreamEvents, data);
       } catch {
         // Skip malformed data lines
       }
