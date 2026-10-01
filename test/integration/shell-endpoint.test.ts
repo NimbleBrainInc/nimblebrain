@@ -9,7 +9,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
-import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // --- Unauthenticated server (dev mode) ---
@@ -88,7 +88,9 @@ describe("GET /v1/workspaces/:wsId/shell auth", () => {
       workDir: shellAuthDir,
     });
 
-    await provisionTestWorkspace(authRuntime);
+    await provisionTestWorkspace(authRuntime, TEST_WORKSPACE_ID, "Test Workspace", [
+      TEST_IDENTITY.id,
+    ]);
 
     authHandle = startServer({
       runtime: authRuntime,

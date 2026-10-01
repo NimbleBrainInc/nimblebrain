@@ -76,7 +76,7 @@ beforeAll(async () => {
     maxOutputTokens: 512,
   });
 
-  await provisionTestWorkspace(runtime);
+  await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
   // The bound workspace overrides `models.fast`, distinct from the configured
   // slot, so which one the forked summarizer resolves is observable below.
   await runtime

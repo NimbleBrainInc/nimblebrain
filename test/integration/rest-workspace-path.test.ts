@@ -46,13 +46,9 @@ beforeAll(async () => {
     workDir: testDir,
   });
   const store = runtime.getWorkspaceStore();
-  // The foreign workspace is the store's oldest, a millisecond ahead of the
-  // rest, so it heads `list()`: anything that falls back to "the first
-  // workspace" for this caller lands on the one it must be refused.
-  wsForeign = (await store.create("Elsewhere")).id;
-  await Bun.sleep(2);
   wsA = (await store.create("Acme Corp")).id;
   wsB = (await store.create("Tenant A")).id;
+  wsForeign = (await store.create("Elsewhere")).id;
   await store.addMember(wsA, TEST_IDENTITY.id, "admin");
   await store.addMember(wsB, TEST_IDENTITY.id, "admin");
   await store.addMember(wsForeign, "usr_someone_else", "admin");

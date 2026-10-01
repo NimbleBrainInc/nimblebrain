@@ -129,7 +129,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
       logging: { disabled: true },
       workDir,
     });
-    await provisionTestWorkspace(runtime);
+    await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
     handle = startServer({
       runtime,
       port: 0,
@@ -323,7 +323,7 @@ describe("ownerless conversation file — no 500s", () => {
       logging: { disabled: true },
       workDir,
     });
-    await provisionTestWorkspace(runtime);
+    await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
     handle = startServer({
       runtime,
       port: 0,

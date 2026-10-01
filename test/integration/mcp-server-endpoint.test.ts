@@ -14,7 +14,7 @@ import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
-import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -376,7 +376,9 @@ describe("MCP Server Auth", () => {
       workDir: authTestDir,
     });
 
-    await provisionTestWorkspace(authRuntime);
+    await provisionTestWorkspace(authRuntime, TEST_WORKSPACE_ID, "Test Workspace", [
+      TEST_IDENTITY.id,
+    ]);
 
     authHandle = startServer({
       runtime: authRuntime,

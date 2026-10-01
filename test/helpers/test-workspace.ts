@@ -33,15 +33,19 @@ export function makeTestWorkspaceContext(
 
 /**
  * Provision a workspace for integration tests.
- * Creates the workspace in the store, ensures a registry exists, and adds
- * the dev user (usr_default) as a member so that DevIdentityProvider-based
- * API requests resolve to this workspace automatically.
- * Idempotent — safe to call multiple times with the same wsId.
+ * Creates the workspace in the store, seats `memberIds` as admins, and
+ * ensures a registry exists. The default seats the dev user (usr_default), the
+ * identity DevIdentityProvider authenticates as; a test that authenticates
+ * through TestAuthAdapter passes `[TEST_IDENTITY.id]`. Neither identity
+ * provider seats anyone, so the members named here are the only ones.
+ * Idempotent — safe to call multiple times with the same wsId; members are
+ * seated only when the call creates the workspace.
  */
 export async function provisionTestWorkspace(
   runtime: Runtime,
   wsId: string = TEST_WORKSPACE_ID,
   name: string = "Test Workspace",
+  memberIds: readonly string[] = [DEV_IDENTITY.id],
 ): Promise<string> {
   const wsStore = runtime.getWorkspaceStore();
   const existing = await wsStore.get(wsId);
@@ -49,7 +53,7 @@ export async function provisionTestWorkspace(
     // Strip the ws_ prefix to get the slug — WorkspaceStore.create prefixes it back
     const slug = wsId.startsWith("ws_") ? wsId.slice(3) : wsId;
     const ws = await wsStore.create(name, slug);
-    await wsStore.addMember(ws.id, DEV_IDENTITY.id, "admin");
+    for (const userId of memberIds) await wsStore.addMember(ws.id, userId, "admin");
   }
   await runtime.ensureWorkspaceRegistry(wsId);
   return wsId;

@@ -2,9 +2,10 @@
  * In-memory IdentityProvider for tests.
  *
  * Validates Bearer tokens via simple string comparison (no bcrypt).
- * On first successful auth, provisions the user profile and, when the test
- * user belongs to no workspace, seats it in one, so workspace resolution
- * doesn't fail.
+ * On first successful auth, provisions the user profile (as DevIdentityProvider
+ * does). It seats the user in no workspace: authenticating is not membership,
+ * and no production provider grants one. A test seats `TEST_IDENTITY` itself,
+ * e.g. `provisionTestWorkspace(runtime, wsId, name, [TEST_IDENTITY.id])`.
  */
 
 import { existsSync, mkdirSync } from "node:fs";
@@ -21,7 +22,6 @@ import type {
 import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User, UserStore } from "../../src/identity/user.ts";
 import type { IdentityStores } from "../../src/runtime/types.ts";
-import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "./identity.ts";
 
 export const TEST_IDENTITY: UserIdentity = makeIdentity({
@@ -44,7 +44,6 @@ export class TestAuthAdapter implements IdentityProvider {
   constructor(
     private apiKey: string,
     private userStore?: UserStore,
-    private workspaceStore?: WorkspaceStore,
     private workDir?: string,
   ) {}
 
@@ -80,10 +79,8 @@ export class TestAuthAdapter implements IdentityProvider {
   }
 
   private ensureDefaults(): Promise<void> {
-    // Single-flight: concurrent requests share one in-flight promise so we
-    // don't double-provision the user/workspace. Without this, parallel
-    // authenticated requests all race past the init check and multiple
-    // addMember() calls collide on MemberConflictError.
+    // Single-flight: concurrent requests share one in-flight promise so
+    // parallel authenticated requests write the profile once.
     if (!this.initPromise) {
       this.initPromise = this.doEnsureDefaults();
     }
@@ -91,7 +88,7 @@ export class TestAuthAdapter implements IdentityProvider {
   }
 
   private async doEnsureDefaults(): Promise<void> {
-    if (!this.userStore || !this.workspaceStore) return;
+    if (!this.userStore) return;
 
     const existingUser = await this.userStore.get(TEST_IDENTITY.id);
     if (!existingUser) {
@@ -116,14 +113,6 @@ export class TestAuthAdapter implements IdentityProvider {
         );
       }
     }
-
-    // Seat the test user only when it belongs to no workspace. A test that
-    // seated it itself has chosen its memberships, and any other workspace in
-    // the store may be one the test means it to be refused.
-    const workspaces = await this.workspaceStore.list();
-    if (workspaces.some((ws) => ws.members.some((m) => m.userId === TEST_IDENTITY.id))) return;
-    const ws = workspaces[0] ?? (await this.workspaceStore.create("Default", "default"));
-    await this.workspaceStore.addMember(ws.id, TEST_IDENTITY.id, "admin");
   }
 }
 
@@ -133,6 +122,5 @@ export class TestAuthAdapter implements IdentityProvider {
  * into the store instances the runtime reads and listens on.
  */
 export function testAuthAdapter(apiKey: string): (stores: IdentityStores) => TestAuthAdapter {
-  return ({ workDir, userStore, workspaceStore }) =>
-    new TestAuthAdapter(apiKey, userStore, workspaceStore, workDir);
+  return ({ workDir, userStore }) => new TestAuthAdapter(apiKey, userStore, workDir);
 }

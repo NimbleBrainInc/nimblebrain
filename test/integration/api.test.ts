@@ -12,7 +12,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { engineEvent, runStartPayload } from "../helpers/engine-events.ts";
 import { readJson } from "../helpers/http.ts";
 import { readConnected } from "../helpers/sse.ts";
-import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** The chat route's body: the run's `ChatResult` plus its token totals at the top level. */
@@ -296,7 +296,9 @@ describe("Bearer token authentication", () => {
       workDir: authDir,
     });
 
-    await provisionTestWorkspace(authRuntime);
+    await provisionTestWorkspace(authRuntime, TEST_WORKSPACE_ID, "Test Workspace", [
+      TEST_IDENTITY.id,
+    ]);
 
     authHandle = startServer({
       runtime: authRuntime,
@@ -596,7 +598,9 @@ describe("auth enforcement on new endpoints", () => {
       workDir: authDir2,
     });
 
-    await provisionTestWorkspace(authRuntime2);
+    await provisionTestWorkspace(authRuntime2, TEST_WORKSPACE_ID, "Test Workspace", [
+      TEST_IDENTITY.id,
+    ]);
 
     authHandle2 = startServer({
       runtime: authRuntime2,

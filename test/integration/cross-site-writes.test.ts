@@ -107,8 +107,8 @@ beforeAll(async () => {
 
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
-    identityProvider: ({ workDir, userStore, workspaceStore }: IdentityStores) =>
-      new CookieSessionProvider(API_KEY, userStore, workspaceStore, workDir),
+    identityProvider: ({ workDir, userStore }: IdentityStores) =>
+      new CookieSessionProvider(API_KEY, userStore, workDir),
     model: { provider: "custom", adapter: createEchoModel() },
     logging: { disabled: true },
     workDir: testDir,

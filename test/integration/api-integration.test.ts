@@ -18,7 +18,7 @@ import { engineEvent, runStartPayload } from "../helpers/engine-events.ts";
 import { readJson } from "../helpers/http.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { readConnected } from "../helpers/sse.ts";
-import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
+import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 import { resultText } from "../helpers/tool-result.ts";
 
@@ -81,7 +81,7 @@ describe("integration: full flow with auth", () => {
       workDir,
     });
 
-    await provisionTestWorkspace(runtime);
+    await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
 
     handle = startServer({
       runtime,
@@ -171,7 +171,7 @@ describe("integration: concurrent authenticated load", () => {
       workDir,
     });
 
-    await provisionTestWorkspace(runtime);
+    await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
 
     handle = startServer({
       runtime,
@@ -369,7 +369,7 @@ describe("integration: auth boundary", () => {
       workDir,
     });
 
-    await provisionTestWorkspace(runtime);
+    await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
 
     handle = startServer({
       runtime,

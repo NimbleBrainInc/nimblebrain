@@ -77,7 +77,7 @@ async function startRuntime(workDir: string, compaction: boolean) {
     maxOutputTokens: 512,
     maxIterations: TOOL_STEPS + 2,
   });
-  await provisionTestWorkspace(runtime);
+  await provisionTestWorkspace(runtime, TEST_WORKSPACE_ID, "Test Workspace", [TEST_IDENTITY.id]);
   const handle = startServer({
     runtime,
     port: 0,
