@@ -1,3 +1,5 @@
+import type { ApiErrorBody } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * Each router's middleware runs for its own routes and no others.
  *
@@ -225,7 +227,7 @@ describe("a path no router registered", () => {
       verifications = 0;
       const res = await fetch(`${baseUrl}${path}`);
       expect(res.status).toBe(404);
-      expect(((await res.json()) as { error: string }).error).toBe("not_found");
+      expect((await readJson<ApiErrorBody>(res)).error).toBe("not_found");
       expect(verifications).toBe(0);
     });
   }

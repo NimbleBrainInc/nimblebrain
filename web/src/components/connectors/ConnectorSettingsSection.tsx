@@ -1,6 +1,5 @@
 import { useShellContext } from "../../context/ShellContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { ProvidedBy } from "../../pages/settings/components";
 import { SlotRenderer } from "../SlotRenderer";
 
 /**
@@ -22,11 +21,9 @@ import { SlotRenderer } from "../SlotRenderer";
  */
 export function ConnectorSettingsSection({
   serverName,
-  name,
   canManage,
 }: {
   serverName: string;
-  name: string;
   canManage: boolean;
 }) {
   const shell = useShellContext();
@@ -42,11 +39,11 @@ export function ConnectorSettingsSection({
 
   return (
     <section className="space-y-2">
+      {/* "Settings", not the connector's name: the page is already headed by it. */}
       <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-        {name}
+        Settings
       </h2>
       <SlotRenderer placements={[placement]} canManage={canManage} fitContent />
-      <ProvidedBy serverName={placement.serverName} />
     </section>
   );
 }

@@ -253,7 +253,7 @@ describe("handleCreate", () => {
         body: "Generate daily report",
       },
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.id).toBe("daily-report");
@@ -278,7 +278,7 @@ describe("handleCreate", () => {
         body: "Generate daily report",
       },
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(first.created).toBe(true);
 
@@ -291,7 +291,7 @@ describe("handleCreate", () => {
         body: "Different prompt",
       },
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(second.created).toBe(false);
     expect(second.automation.id).toBe(first.automation.id);
@@ -342,20 +342,37 @@ describe("handleList paging", () => {
     truncated?: string;
   };
 
-  /** Seed n automations through the real create path. */
+  /**
+   * Seed n automations as one map through a single save. Paging needs only
+   * records on disk; the create path has its own tests. Seeding through
+   * `handleCreate` costs O(n²) disk work, because each create reads every
+   * definition and `save` rewrites every one, so 105 records take ~2s.
+   * Names are `Seeded NNN` and ids their kebab form, as create would produce.
+   */
   function seed(ctx: ToolContext, n: number): void {
+    const now = new Date().toISOString();
+    const map = new Map<string, Automation>();
     for (let i = 0; i < n; i++) {
-      handleCreate(
-        {
-          manifest: {
-            name: `Seeded ${String(i).padStart(3, "0")}`,
-            schedule: { type: "interval", intervalMs: 1_800_000 },
-          },
-          body: "noop",
-        },
-        ctx,
-      );
+      const name = `Seeded ${String(i).padStart(3, "0")}`;
+      const id = toKebabCase(name);
+      map.set(id, {
+        id,
+        name,
+        prompt: "noop",
+        schedule: { type: "interval", intervalMs: 1_800_000 },
+        enabled: true,
+        source: "agent",
+        createdAt: now,
+        updatedAt: now,
+        runCount: 0,
+        consecutiveErrors: 0,
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
+        ownerId: OWNER,
+        workspaceId: WS,
+      });
     }
+    ctx.save(map);
   }
 
   test("caps at the default limit and reports the unpaged total", () => {
@@ -460,31 +477,9 @@ describe("handleList paging", () => {
 
   test("clamps a limit above the ceiling to 500", () => {
     // Needs more than 500 records or the assertion holds with or without the
-    // clamp. Built as one map through a single save: seeding 501 through
-    // handleCreate re-saves the whole store per create and takes ~30s.
+    // clamp.
     const ctx = makeCtx();
-    const now = new Date().toISOString();
-    const map = new Map<string, Automation>();
-    for (let i = 0; i < 501; i++) {
-      const id = `bulk-${String(i).padStart(4, "0")}`;
-      map.set(id, {
-        id,
-        name: id,
-        prompt: "noop",
-        schedule: { type: "interval", intervalMs: 1_800_000 },
-        enabled: true,
-        source: "agent",
-        createdAt: now,
-        updatedAt: now,
-        runCount: 0,
-        consecutiveErrors: 0,
-        cumulativeInputTokens: 0,
-        cumulativeOutputTokens: 0,
-        ownerId: OWNER,
-        workspaceId: WS,
-      });
-    }
-    ctx.save(map);
+    seed(ctx, 501);
 
     const r = handleList({ limit: 10_000 }, ctx) as ListResult;
     expect(r.total).toBe(501);
@@ -529,10 +524,7 @@ describe("handleUpdate", () => {
       ctx,
     );
 
-    const result = handleUpdate(updateArgs("Daily Report", { enabled: false }), ctx) as {
-      automation: Automation;
-      updated: boolean;
-    };
+    const result = handleUpdate(updateArgs("Daily Report", { enabled: false }), ctx);
 
     expect(result.updated).toBe(true);
     expect(result.automation.enabled).toBe(false);
@@ -567,9 +559,7 @@ describe("handleUpdate", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = handleUpdate(updateArgs("Scoped", { allowedTools: ["crm__*"] }), ctx) as {
-      automation: Automation;
-    };
+    const result = handleUpdate(updateArgs("Scoped", { allowedTools: ["crm__*"] }), ctx);
 
     expect(result.automation.allowedTools).toEqual(["crm__*"]);
   });
@@ -597,7 +587,7 @@ describe("handleCreate — allowedTools", () => {
         },
       ),
       ctx,
-    ) as { automation: Automation };
+    );
 
     expect(result.automation.allowedTools).toEqual(["crm__*", "files__read"]);
   });
@@ -629,9 +619,7 @@ describe("handleDelete", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Temp", "Temporary", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const delResult = handleDelete({ name: "Temp" }, ctx) as {
-      deleted: boolean;
-    };
+    const delResult = handleDelete({ name: "Temp" }, ctx);
     expect(delResult.deleted).toBe(true);
 
     const listResult = handleList({}, ctx) as { total: number };
@@ -1034,7 +1022,7 @@ describe("handleCreate — new fields", () => {
         },
       ),
       ctx,
-    ) as Record<string, unknown>;
+    );
 
     const auto = result.automation as Automation;
     expect(auto.maxRunDurationMs).toBe(60_000);
@@ -1067,10 +1055,7 @@ describe("handleUpdate — re-enable clears disable state", () => {
     saveDefs(defs);
 
     // Re-enable
-    const result = handleUpdate(updateArgs("Disabled Test", { enabled: true }), ctx) as Record<
-      string,
-      unknown
-    >;
+    const result = handleUpdate(updateArgs("Disabled Test", { enabled: true }), ctx);
     const updated = result.automation as Automation;
     expect(updated.enabled).toBe(true);
     expect(updated.consecutiveErrors).toBe(0);
@@ -1337,7 +1322,7 @@ describe("handleUpdate — validation", () => {
         schedule: { type: "cron", expression: "0 9 * * 1" },
       }),
       ctx,
-    ) as Record<string, unknown>;
+    );
     expect(result.updated).toBe(true);
   });
 });
@@ -1355,7 +1340,7 @@ describe("automation ownership", () => {
         intervalMs: 60_000,
       }),
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.ownerId).toBe("usr_alice");
@@ -1369,7 +1354,7 @@ describe("automation ownership", () => {
         intervalMs: 60_000,
       }),
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.workspaceId).toBe("ws_engineering");
@@ -1386,7 +1371,7 @@ describe("automation ownership", () => {
         expression: "0 9 * * *",
       }),
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.ownerId).toBe("usr_bob");
@@ -1404,7 +1389,7 @@ describe("automation ownership", () => {
         intervalMs: 120_000,
       }),
       ctx,
-    ) as { automation: Automation; created: boolean };
+    );
 
     expect(result.created).toBe(true);
     expect(result.automation.ownerId).toBe(OWNER);
@@ -1477,7 +1462,7 @@ describe("event schedules", () => {
       },
       ctx,
     );
-    expect(created).toMatchObject({ created: true });
+    expect(created.created).toBe(true);
 
     const status = await handleStatus({ name: "Reply triage" }, ctx);
     expect(status.automation.schedule).toEqual({

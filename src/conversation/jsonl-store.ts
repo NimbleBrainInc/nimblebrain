@@ -139,12 +139,6 @@ export class JsonlConversationStore implements ConversationStore {
     assertNoBinaryPayloads(message, `message(${message.role})`);
     const path = this.path(conversation.id);
 
-    // Track lastModel for display. Token totals are derived from the
-    // message history at read time (see ConversationIndex), never stored.
-    if (message.role === "assistant" && message.metadata?.model) {
-      conversation.lastModel = message.metadata.model;
-    }
-
     // Update updatedAt from message timestamp
     conversation.updatedAt = message.timestamp;
 
@@ -152,8 +146,22 @@ export class JsonlConversationStore implements ConversationStore {
     const content = await readFile(path, "utf-8");
     const lines = content.split("\n").filter(Boolean);
 
-    // Replace line 1 with updated metadata
-    lines[0] = JSON.stringify(conversation);
+    // Line 1 as stored is the source of truth for every field an append does
+    // not own. An append owns `updatedAt` and, when the message names one,
+    // `lastModel` (kept for display; token totals are derived from the
+    // history at read time, see ConversationIndex). The caller's
+    // `conversation` can predate an `update()` (the background auto-title is
+    // one), so writing it whole would erase that title. Merge only what an
+    // append sets, and bring the caller's copy up to date with line 1.
+    const stored = JSON.parse(lines[0]!) as Conversation;
+    const model = message.role === "assistant" ? message.metadata?.model : undefined;
+    conversation.title = stored.title;
+    conversation.lastModel = model ?? stored.lastModel;
+    lines[0] = JSON.stringify({
+      ...stored,
+      lastModel: conversation.lastModel,
+      updatedAt: conversation.updatedAt,
+    });
     // Append the new message
     lines.push(JSON.stringify(message));
 

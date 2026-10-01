@@ -5,6 +5,7 @@ import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
 import { buildHostExtensions } from "../bridge/host-extensions";
 import { createAppIframe } from "../bridge/iframe";
+import { useFileLimits } from "../context/ChatContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { ToolResultForUI } from "../hooks/useChat";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
@@ -53,6 +54,9 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
   const { activeWorkspace } = useWorkspaceContext();
   const workspaceRef = useRef(activeWorkspace);
   workspaceRef.current = activeWorkspace;
+  const uploadLimits = useFileLimits();
+  const uploadLimitsRef = useRef(uploadLimits);
+  uploadLimitsRef.current = uploadLimits;
 
   const [height, setHeight] = useState(DEFAULT_CONTENT_HEIGHT);
   const [loading, setLoading] = useState(true);
@@ -114,7 +118,9 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
               bridge.sendToolResult(tr.result);
             }
           },
-          getHostExtensions: () => buildHostExtensions(workspaceRef.current),
+          getHostExtensions: () =>
+            buildHostExtensions(workspaceRef.current, undefined, uploadLimitsRef.current),
+          getUploadLimits: () => uploadLimitsRef.current,
         });
         bridgeRef.current = bridge;
 

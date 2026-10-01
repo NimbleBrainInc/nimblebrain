@@ -142,7 +142,7 @@ function makeApp(identity: HookIdentity = IDENTITY): Hono {
   return new Hono().route("/", routes);
 }
 
-function deliver(app: Hono, path: string, init: RequestInit = {}): Promise<Response> {
+async function deliver(app: Hono, path: string, init: RequestInit = {}): Promise<Response> {
   return app.fetch(
     new Request(`https://runtime.example${path}`, {
       method: "POST",

@@ -356,7 +356,6 @@ interface ChatRequest {
 interface ChatResult {
   response: string;
   conversationId: string;
-  workspaceId?: string;
   skillName: string | null;
   toolCalls: Array<{
     id: string;
@@ -365,9 +364,8 @@ interface ChatResult {
     output: string;
     ok: boolean;
     ms: number;
+    errorReason?: string;
   }>;
-  inputTokens: number;
-  outputTokens: number;
   stopReason: string;
   usage: TurnUsage;
 }
@@ -512,7 +510,7 @@ When total tools ≤30, all are surfaced directly. Above 30 with no skill matche
 
 ### MCP Tasks Client
 
-`src/engine/tasks.ts` detects `CreateTaskResult` from MCP tool calls. Polls `tasks/get` until terminal state (completed/failed/cancelled). Emits `tool.progress` events during polling. Cancels active tasks on engine abort.
+`McpSource` (`src/tools/mcp-source.ts`) runs task-augmented MCP tool calls: it follows the task until a terminal state (completed/failed/cancelled), emits a `tool.task_status` event on each status change, and cancels the task on engine abort.
 
 ### Conversation Storage
 

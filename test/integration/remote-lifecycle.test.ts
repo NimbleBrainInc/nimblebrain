@@ -134,7 +134,7 @@ describe("startConnectorSource — remote url entries", () => {
 
     expect(meta).not.toBeNull();
     expect(meta.meta).not.toBeNull();
-    expect(meta.meta!.version).toBe("remote (2 tools)");
+    expect(meta.meta!.version).toBe("remote");
     expect(registry.hasSource("startup-remote")).toBe(true);
 
     // Tools are available

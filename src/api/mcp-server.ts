@@ -1,10 +1,13 @@
 /**
  * MCP Server endpoint — exposes the platform as an MCP server via Streamable HTTP.
  *
- * Two protocol eras on one URL. A request carrying the 2026-07-28 `_meta`
+ * Two protocol eras on one URL, and they are equivalent: a client on either
+ * can do the same things here. A request carrying the 2026-07-28 `_meta`
  * envelope is served per request by an SDK v2 server (`handleModern`); every
  * other request is 2025-era traffic for the sessionful leg this header
- * describes, on SDK v1. Both legs mount the same handlers (`createHandlers`).
+ * describes, on SDK v1. Both legs mount the same handlers (`createHandlers`),
+ * and `test/integration/mcp-era-parity.test.ts` drives the same scenarios
+ * against both.
  *
  * External MCP clients (Claude Code, Open WebUI, etc.) connect to
  * `/mcp/<wsId>` and reach that workspace's tools through the standard MCP
@@ -106,13 +109,15 @@ import type {
   Tool,
 } from "@modelcontextprotocol/server";
 import {
+  CLIENT_CAPABILITIES_META_KEY,
   createMcpHandler,
   isLegacyRequest,
+  MissingRequiredClientCapabilityError,
   Server as ModernServer,
 } from "@modelcontextprotocol/server";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
-import type { UserIdentity } from "../identity/provider.ts";
+import type { TokenGrant, UserIdentity } from "../identity/provider.ts";
 import { log } from "../observability/log.ts";
 import {
   ConnectorGrantDenied,
@@ -129,8 +134,17 @@ import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import type { ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { toWireJson } from "../util/wire-json.ts";
+import {
+  answerModernTaskRequest,
+  type ModernCreateTaskResult,
+  type ModernTaskContext,
+  modernCreateTaskResult,
+  optsInToTasks,
+  TASKS_EXTENSION_ID,
+} from "./mcp-modern-tasks.ts";
 import {
   createMcpTaskStore,
   type McpTaskStore,
@@ -138,7 +152,9 @@ import {
   type TaskAwareSource,
   type TaskScope,
 } from "./mcp-task-store.ts";
+import type { JsonRpcErrorBody } from "./schemas/responses.ts";
 import type { SessionRegistry } from "./session-store/index.ts";
+import { json } from "./types.ts";
 
 /**
  * JSON-RPC error code for "resource not found".
@@ -202,6 +218,12 @@ interface TransportEntry {
   /** Workspace bound to this session at initialize time: the one in its URL. */
   workspaceId: string;
   /**
+   * Grant kind bound to this session at initialize time. The 2025 leg's
+   * handlers keep the initializing context, so a request under another kind of
+   * credential must not reach them.
+   */
+  grant: TokenGrant["kind"];
+  /**
    * Wall-clock ms of the last request that touched this transport. Drives
    * both idle eviction (sweep closes entries older than `idleTtlMs`) and
    * LRU ordering (the Map is mutated on each touch so iteration order is
@@ -238,13 +260,20 @@ export interface McpServerHostOptions {
 }
 
 /**
- * The (identity, workspace) a request addresses. At initialize it becomes the
- * session's binding; on every later request it must match that binding.
- * `workspaceId` is the membership-validated workspace from the URL.
+ * The (identity, workspace, grant) a request addresses. At initialize it
+ * becomes the session's binding; on every later request it must match that
+ * binding. `workspaceId` is the membership-validated workspace from the URL.
  */
 export interface McpSessionContext {
   identity: UserIdentity | null;
   workspaceId: string;
+  /**
+   * The kind of grant the caller's credential carries. Only a `first_party`
+   * caller's `tools/call` can be an app's (`isAppCall`): a `resource` token was
+   * minted for an external MCP client, whose calls are an agent's whatever
+   * `_meta` they carry.
+   */
+  grant: TokenGrant["kind"];
 }
 
 /**
@@ -402,11 +431,11 @@ export class McpServerHost {
     if (sessionId) {
       const local = this.transports.get(sessionId);
       if (local) {
-        // A `/mcp` session is bound to the identity and workspace that
-        // initialized it. The route proves the caller holds *some* valid
+        // A `/mcp` session is bound to the identity, workspace and grant kind
+        // that initialized it. The route proves the caller holds *some* valid
         // identity and is a member of the URL's workspace, not that this
-        // session id is theirs there — so reject reuse by any other identity
-        // or under any other workspace's URL. Without this check, a leaked
+        // session id is theirs there — so reject reuse by any other identity,
+        // under any other workspace's URL, or under another kind of credential. Without this check, a leaked
         // `Mcp-Session-Id` lets a same-tenant user drive the owner's tools as
         // the owner, and one workspace's session answers for another. Respond
         // exactly like an unknown session id (`not_found`) so the caller can't
@@ -467,12 +496,21 @@ export class McpServerHost {
    * that (identity, workspace) exactly as a 2025 session is. `legacy: "reject"`
    * because 2025 traffic never reaches this leg; `isLegacyRequest` routed it
    * to the sessionful one.
+   *
+   * `tasks/get` and `tasks/cancel` are answered ahead of the SDK, which routes
+   * no task method (`mcp-modern-tasks.ts`).
    */
-  private handleModern(
+  private async handleModern(
     request: Request,
     features: ResolvedFeatures,
     sessionCtx: McpSessionContext,
   ): Promise<Response> {
+    const taskReply = await answerModernTaskRequest(
+      request,
+      modernTaskContext(this.runtime, sessionCtx),
+      (meta) => taskScope(meta, sessionCtx.workspaceId),
+    );
+    if (taskReply) return taskReply;
     const handler = createMcpHandler(() => createModernServer(this.runtime, features, sessionCtx), {
       legacy: "reject",
       onerror: (err) => log.warn(`[mcp] modern request failed: ${err.message}`),
@@ -539,13 +577,13 @@ export class McpServerHost {
 
   /** Build the JSON-RPC 404 body shared by every `/mcp` session-miss path. */
   private sessionMissResponse(reason: "not_found" | "unavailable"): Response {
-    return new Response(
-      JSON.stringify({
+    return json<JsonRpcErrorBody>(
+      {
         jsonrpc: "2.0",
         error: { code: -32000, message: "Session not found", data: { reason } },
         id: null,
-      }),
-      { status: 404, headers: { "Content-Type": "application/json" } },
+      },
+      404,
     );
   }
 
@@ -574,7 +612,7 @@ export class McpServerHost {
    * GET/SSE handler (see the class header) must add the same gate.
    */
   private ownsTransport(entry: TransportEntry, sessionCtx: McpSessionContext): boolean {
-    return this.bindingMatches(entry, sessionCtx);
+    return this.bindingMatches(entry, sessionCtx) && entry.grant === sessionCtx.grant;
   }
 
   /** The (identity, workspace) comparison, shared by the transport map and the registry. */
@@ -618,9 +656,15 @@ export class McpServerHost {
       onsessioninitialized: (sid: string) => {
         const now = Date.now();
 
-        // The session is bound to the identity and workspace that initialized
-        // it; `ownsTransport` holds every later request to both.
-        this.transports.set(sid, { transport, identityId, workspaceId, lastAccessedAt: now });
+        // The session is bound to the identity, workspace and grant kind that
+        // initialized it; `ownsTransport` holds every later request to all three.
+        this.transports.set(sid, {
+          transport,
+          identityId,
+          workspaceId,
+          grant: sessionCtx.grant,
+          lastAccessedAt: now,
+        });
         // The one line that names the client by its own declared `clientInfo`;
         // later misses for this session carry only the user agent.
         log.info(
@@ -724,8 +768,10 @@ export class McpServerHost {
  * routes through `routeToolCall`, and no name can address another workspace:
  * the `ws_<id>-` form is retired and refused as `invalid_tool_name`.
  *
- * `taskStore` is the 2025 leg's session task store; the modern leg has none,
- * so a `tools/call` there never starts a task.
+ * `taskStore` is the 2025 leg's session task store. The 2026 leg has none: a
+ * task it starts is found again through the id it hands out
+ * (`mcp-modern-tasks.ts`), so `callTool` takes the era's own ask
+ * ({@link TaskAsk}).
  *
  * When `runtime` is null (legacy unit-test path), tool handlers degrade
  * to safe no-ops: `tools/list` returns empty and `tools/call` rejects
@@ -733,7 +779,7 @@ export class McpServerHost {
  */
 interface McpHandlers {
   listTools(): Promise<ListToolsResult>;
-  callTool(request: CallToolRequest): Promise<CallToolResult | CreateTaskResult>;
+  callTool(request: CallToolRequest, ask: TaskAsk): Promise<ToolCallAnswer>;
   listResources(request: ListResourcesRequest): Promise<ListResourcesResult>;
   listResourceTemplates(
     request: ListResourceTemplatesRequest,
@@ -765,8 +811,8 @@ function createHandlers(
       tools: all
         // A tool without "model" in its `ui.visibility` is left out of an
         // agent's tool list (MCP Apps), this surface included (mirrors
-        // `surfaceTools` on the chat path). Still callable by name via
-        // `tools/call`, which is how an app's view reaches it.
+        // `surfaceTools` on the chat path). An agent's `tools/call` that names
+        // one is refused too (`assertAgentMayCall`); only an app's call reaches it.
         .filter(isModelVisible)
         // Feature gating + role visibility apply to the BARE tool name.
         .filter((t) => isToolEnabled(bareToolName(t.name), features))
@@ -791,9 +837,8 @@ function createHandlers(
     };
   };
 
-  const callTool = async (request: CallToolRequest): Promise<CallToolResult | CreateTaskResult> => {
+  const callTool = async (request: CallToolRequest, ask: TaskAsk): Promise<ToolCallAnswer> => {
     const { name, arguments: args } = request.params;
-    const taskParam = request.params.task; // { ttl?, pollInterval? } | undefined
 
     if (!runtime || !identityId) {
       throw new McpError(
@@ -802,10 +847,19 @@ function createHandlers(
       );
     }
 
-    // ── Stage 1: a call that names a source is an app's (MCP Apps visibility)
+    // ── Stage 1: a call that names a source is held to that app's scope (MCP
+    // Apps visibility). Naming a source only narrows reach, so it is checked
+    // for any caller; whether the call is an app's is decided below.
     const appSource = scopedSourceName(request.params._meta);
     if (appSource !== undefined) {
-      const refused = await assertAppMayCall(name, appSource, runtime, wsId, identityId);
+      const refused = await assertAppMayCall(
+        name,
+        (args ?? {}) as Record<string, unknown>,
+        appSource,
+        runtime,
+        wsId,
+        identityId,
+      );
       if (refused) return refused;
     }
 
@@ -835,6 +889,11 @@ function createHandlers(
       mapRouteToolError(err);
     }
 
+    // ── Stage 3: every call that is not an app's is an agent's, held to "model"
+    if (!isAppCall(appSource, sessionCtx)) {
+      await assertAgentMayCall(routed.source, routed.toolName, name);
+    }
+
     // Identity request (bare `<source>__<tool>`): dispatch against the caller's
     // identity, no workspace. See `executeIdentityToolCall` for the rationale.
     if (routed.kind === "identity") {
@@ -844,7 +903,8 @@ function createHandlers(
       routed,
       name,
       args,
-      taskParam,
+      appSource,
+      ask,
       runtime,
       features,
       sessionCtx,
@@ -1024,7 +1084,15 @@ function createLegacyServer(
 
   const handlers = createHandlers(runtime, features, sessionCtx, taskStore);
   server.setRequestHandler(ListToolsRequestSchema, () => handlers.listTools());
-  server.setRequestHandler(CallToolRequestSchema, (request) => handlers.callTool(request));
+  server.setRequestHandler(
+    CallToolRequestSchema,
+    // A legacy ask never answers with a 2026 task, so the answer is one this
+    // leg's result schema admits.
+    (request) =>
+      handlers.callTool(request, { era: "legacy", param: request.params.task }) as Promise<
+        CallToolResult | CreateTaskResult
+      >,
+  );
   server.setRequestHandler(ListResourcesRequestSchema, (request) =>
     handlers.listResources(request),
   );
@@ -1038,9 +1106,10 @@ function createLegacyServer(
 /**
  * The 2026-07-28 leg: an SDK v2 `Server` built for one request by
  * `createMcpHandler`, which answers `server/discover` and serves the request
- * under the per-request `_meta` envelope. The same handlers as the 2025 leg,
- * minus tasks: the 2026 revision has no task methods in core, and the tasks
- * extension is not served here.
+ * under the per-request `_meta` envelope. The same handlers as the 2025 leg.
+ * Tasks are the tasks extension (SEP-2663), advertised in `server/discover`: a
+ * `tools/call` whose client capabilities name it may be answered with a flat
+ * task, and `handleModern` answers the polls.
  */
 function createModernServer(
   runtime: Runtime | null,
@@ -1049,14 +1118,24 @@ function createModernServer(
 ): ModernServer {
   const server = new ModernServer(
     { name: "nimblebrain", version: MCP_SERVER_VERSION },
-    { capabilities: { tools: {}, resources: {} } },
+    {
+      capabilities: {
+        tools: {},
+        resources: {},
+        ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {} } } : {}),
+      },
+    },
   );
   const handlers = createHandlers(runtime, features, sessionCtx, undefined);
   server.setRequestHandler("tools/list", () => handlers.listTools());
-  server.setRequestHandler("tools/call", async (request) => {
-    const result = await handlers.callTool(request);
-    // Without a task store `callTool` never starts a task, so this is the
-    // tool's own result.
+  server.setRequestHandler("tools/call", async (request, ctx) => {
+    // The SDK types the lifted envelope as `{}`; its keys are the reserved
+    // `_meta` names, the client capabilities among them.
+    const envelope = ctx.mcpReq.envelope as Record<string, unknown> | undefined;
+    const optedIn = optsInToTasks(envelope?.[CLIENT_CAPABILITIES_META_KEY]);
+    const result = await handlers.callTool(request, { era: "modern", optedIn });
+    // The SDK types a `tools/call` result as the tool's own; a SEP-2663 task
+    // is the other result the extension allows, and the SDK sends it as given.
     return result as CallToolResult;
   });
   server.setRequestHandler("resources/list", (request) => handlers.listResources(request));
@@ -1073,6 +1152,51 @@ type IdentityRoute = Extract<Awaited<ReturnType<typeof routeToolCall>>, { kind: 
 type WorkspaceRoute = Extract<Awaited<ReturnType<typeof routeToolCall>>, { kind: "workspace" }>;
 type TaskAwareSourceHandle = NonNullable<ReturnType<ToolRegistry["findTaskAwareSource"]>>;
 type CallToolTaskParam = CallToolRequest["params"]["task"];
+
+/**
+ * What a `tools/call` asks of the task machinery, in its era's vocabulary. On
+ * 2025 the client asks for a task (`params.task`) and a tool that cannot run
+ * as one refuses. On 2026-07-28 the client only opts in to the tasks
+ * extension, and the door tasks a call to a tool that can run as one.
+ */
+type TaskAsk = { era: "legacy"; param: CallToolTaskParam } | { era: "modern"; optedIn: boolean };
+
+/** A `tools/call` answer: the tool's result, or the task it runs as, in the request's era. */
+type ToolCallAnswer = CallToolResult | CreateTaskResult | ModernCreateTaskResult;
+
+/**
+ * The task the call runs as, given the tool's `taskSupport`, or undefined to
+ * run it inline. A `required` tool refuses a call that asked for no task, in
+ * each era's words: `-32601` on 2025, and on 2026 `-32021` naming the
+ * extension the request did not declare.
+ */
+function requestedTask(
+  ask: TaskAsk,
+  taskSupport: "optional" | "required" | "forbidden" | undefined,
+): { ttl?: number } | undefined {
+  if (ask.era === "legacy") return ask.param;
+  return ask.optedIn && (taskSupport === "optional" || taskSupport === "required") ? {} : undefined;
+}
+
+/**
+ * Where a 2026 task request resolves: the request's (workspace, identity), and
+ * the task-aware sources of that workspace. Null without a runtime or an
+ * identity, which reach no task.
+ */
+function modernTaskContext(
+  runtime: Runtime | null,
+  sessionCtx: McpSessionContext,
+): ModernTaskContext | null {
+  const identityId = sessionCtx.identity?.id;
+  if (!runtime || !identityId) return null;
+  const wsId = sessionCtx.workspaceId;
+  return {
+    workspaceId: wsId,
+    identityId,
+    findSource: (name) =>
+      runtime.getRegistryForWorkspace(wsId).findTaskAwareSource(name) as TaskAwareSource | null,
+  };
+}
 
 /** Shape an engine ToolResult into an MCP CallToolResult, preserving optional structuredContent. */
 function toCallToolResult(result: ToolResult) {
@@ -1220,13 +1344,14 @@ async function executeWorkspaceToolCall(
   routed: WorkspaceRoute,
   name: string,
   args: Record<string, unknown> | undefined,
-  taskParam: CallToolTaskParam,
+  /** The calling view's server when an app made the call, else undefined. */
+  appSource: string | undefined,
+  ask: TaskAsk,
   runtime: Runtime,
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
   taskStore: McpTaskStore | undefined,
-) {
-  const isTaskRequest = taskParam !== undefined;
+): Promise<ToolCallAnswer> {
   const { context: workspaceContext, toolName: innerToolName, source } = routed;
 
   // Feature gating + role visibility on the BARE tool name (post-parse).
@@ -1259,28 +1384,32 @@ async function executeWorkspaceToolCall(
   // one. Mirrors the engine door (`IdentityToolRouter`) and the REST registry
   // gate, so all three doors enforce the same workspace policy.
   if (sourceName) {
-    const denied = await assertToolAllowed(
-      runtime.getPermissionStore(),
-      { scope: "workspace", wsId },
+    const denied = await connectorGateDenial(
+      runtime,
+      wsId,
+      sessionCtx,
       sourceName,
       localName,
+      args,
+      appSource,
     );
     if (denied) return toCallToolResult(denied);
-    // The connector role gate (`admin_tools`), against the workspace this URL
-    // is bound to and the session's identity.
-    const adminDenied = await runtime.connectorAdminDenial(
-      wsId,
-      sessionCtx.identity,
-      sourceName,
-      localName,
-    );
-    if (adminDenied) return toCallToolResult(adminDenied);
   }
 
   const wsRegistry = runtime.getRegistryForWorkspace(wsId);
   const taskAwareSource = sourceName ? wsRegistry.findTaskAwareSource(sourceName) : null;
   const taskSupport = await resolveTaskSupport(taskAwareSource, innerToolName);
+  const taskParam = requestedTask(ask, taskSupport);
+  const isTaskRequest = taskParam !== undefined;
 
+  if (ask.era === "modern" && taskSupport === "required" && !isTaskRequest) {
+    // The 2026 answer for a call that needs a capability the request did not
+    // declare, naming it so the client can opt in and retry.
+    throw new MissingRequiredClientCapabilityError(
+      { requiredCapabilities: { extensions: { [TASKS_EXTENSION_ID]: {} } } },
+      `Tool ${name} runs only as a task; declare the ${TASKS_EXTENSION_ID} extension to call it`,
+    );
+  }
   assertTaskNegotiation(name, taskSupport, isTaskRequest);
 
   // Build per-request context for AsyncLocalStorage (concurrency-safe). The
@@ -1292,19 +1421,9 @@ async function executeWorkspaceToolCall(
     workspaceId: wsId,
   };
 
-  if (isTaskRequest && sourceName && taskAwareSource && taskStore) {
-    return startWorkspaceTask(
-      taskParam,
-      sourceName,
-      taskAwareSource,
-      taskStore,
-      reqCtx,
-      localName,
-      innerToolName,
-      args,
-      wsId,
-      sessionCtx,
-    );
+  if (taskParam && sourceName && taskAwareSource && (ask.era === "modern" || taskStore)) {
+    const started = { taskParam, sourceName, taskAwareSource, reqCtx, localName, args, wsId };
+    return answerWithTask(ask, started, innerToolName, sessionCtx, taskStore);
   }
 
   // ── Inline path ────────────────────────────────────────────────────────────
@@ -1321,6 +1440,34 @@ async function executeWorkspaceToolCall(
     source.execute(localName, (args ?? {}) as Record<string, unknown>),
   );
   return toCallToolResult(result);
+}
+
+/**
+ * The connector gates a workspace tool call passes before it runs: the
+ * operator's permission policy, then the `admin_tools` role gate against the
+ * workspace this URL is bound to and the session's identity.
+ */
+async function connectorGateDenial(
+  runtime: Runtime,
+  wsId: string,
+  sessionCtx: McpSessionContext,
+  sourceName: string,
+  localName: string,
+  args: Record<string, unknown> | undefined,
+  appSource: string | undefined,
+): Promise<ToolResult | null> {
+  const denied = await assertToolAllowed(
+    runtime.getPermissionStore(),
+    { scope: "workspace", wsId },
+    sourceName,
+    localName,
+  );
+  if (denied) return denied;
+  const call = {
+    input: (args ?? {}) as Record<string, unknown>,
+    caller: appSource ? "app" : "mcp",
+  } as const;
+  return runtime.connectorAdminDenial(wsId, sessionCtx.identity, sourceName, localName, call);
 }
 
 /**
@@ -1365,45 +1512,73 @@ function assertTaskNegotiation(
 }
 
 /**
- * Task-augmented workspace dispatch (MCP spec 2025-11-25 §tasks). Returns a
- * CreateTaskResult immediately; the McpSource has already started the stream and
- * is draining it in the background. Stashes the (source, owner) pair in the
- * session's task store so the task handlers (`registerTaskHandlers`) can find
- * their way back for later `tasks/result` and `tasks/cancel`.
- *
- * The task is stamped with the source it runs on (`originApp`), so a task
- * request scoped to any other source cannot reach it (`registerTaskHandlers`).
+ * Start the call as a task and answer in the request's era: the 2025 leg
+ * records the task in the session's task store and answers the connector's
+ * `CreateTaskResult`; the 2026 leg answers a flat task under an id that names
+ * the source, which is how its polls find the task again.
  */
-async function startWorkspaceTask(
-  taskParam: NonNullable<CallToolTaskParam>,
-  sourceName: string,
-  taskAwareSource: TaskAwareSourceHandle,
-  taskStore: McpTaskStore,
-  reqCtx: RequestContext,
-  localName: string,
+async function answerWithTask(
+  ask: TaskAsk,
+  started: StartedTask,
   innerToolName: string,
-  args: Record<string, unknown> | undefined,
+  sessionCtx: McpSessionContext,
+  taskStore: McpTaskStore | undefined,
+): Promise<CreateTaskResult | ModernCreateTaskResult> {
+  const created = await startWorkspaceTask(started, sessionCtx);
+  if (ask.era === "modern") return modernCreateTaskResult(started.sourceName, created.task);
+  taskStore?.recordTask({
+    source: started.taskAwareSource as TaskAwareSource,
+    toolFullName: innerToolName,
+    task: created.task,
+    ownerContext: ownerContextFor(started.wsId, sessionCtx, started.sourceName),
+  });
+  return created;
+}
+
+/** What `startWorkspaceTask` needs to start one call as a task. */
+interface StartedTask {
+  taskParam: { ttl?: number };
+  sourceName: string;
+  taskAwareSource: TaskAwareSourceHandle;
+  reqCtx: RequestContext;
+  localName: string;
+  args: Record<string, unknown> | undefined;
+  wsId: string;
+}
+
+/**
+ * The owner stamped on a task `/mcp` starts: the workspace, the identity, and
+ * the source it runs on (`originApp`), so a task request scoped to any other
+ * source cannot reach it.
+ */
+function ownerContextFor(
   wsId: string,
   sessionCtx: McpSessionContext,
-): Promise<CreateTaskResult> {
-  const ownerContext: OwnerContext = {
+  sourceName: string,
+): OwnerContext {
+  return {
     workspaceId: wsId,
     ...(sessionCtx.identity?.id ? { identityId: sessionCtx.identity.id } : {}),
     originApp: sourceName,
   };
-  const createResult: CreateTaskResult = await runWithRequestContext(reqCtx, () =>
+}
+
+/**
+ * Task-augmented workspace dispatch. Returns the connector's CreateTaskResult
+ * immediately; the McpSource has already started the stream and is draining it
+ * in the background.
+ */
+async function startWorkspaceTask(
+  started: StartedTask,
+  sessionCtx: McpSessionContext,
+): Promise<CreateTaskResult> {
+  const { taskParam, sourceName, taskAwareSource, reqCtx, localName, args, wsId } = started;
+  return runWithRequestContext(reqCtx, () =>
     taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
-      ownerContext,
+      ownerContext: ownerContextFor(wsId, sessionCtx, sourceName),
       ...(taskParam.ttl !== undefined ? { ttlMs: taskParam.ttl } : {}),
     }),
   );
-  taskStore.recordTask({
-    source: taskAwareSource as TaskAwareSource,
-    toolFullName: innerToolName,
-    task: createResult.task,
-    ownerContext,
-  });
-  return createResult;
 }
 
 /**
@@ -1489,10 +1664,10 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  * of its own server, and only one whose `ui.visibility` includes `"app"`.
  *
  * The bridge names the calling view's server under
- * {@link RESOURCE_SOURCE_META_KEY}; that name is the only way this door can
- * tell a view's call from an agent's, because every iframe and the agent share
- * one `/mcp` session. A client that names a source only narrows what it can
- * reach, so accepting the key from any client widens nothing. A name that
+ * {@link RESOURCE_SOURCE_META_KEY}. The key narrows what any caller can reach,
+ * so it is checked whoever sends it; it widens reach to app-only tools only for
+ * a first-party caller (`isAppCall`), and every other call is also held to
+ * `assertAgentMayCall`. A name that
  * matches no listed tool is refused too: its visibility cannot be read, and
  * routing would still reach a source whose listing failed (it reconnects on
  * demand), so letting it through would skip the check rather than the call.
@@ -1503,6 +1678,7 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  */
 async function assertAppMayCall(
   name: string,
+  args: Record<string, unknown>,
   appSource: string,
   runtime: Runtime,
   wsId: string,
@@ -1523,6 +1699,7 @@ async function assertAppMayCall(
       { id: identityId },
       appSource,
       name.slice(appSource.length + 2),
+      { input: args, caller: "app" },
     );
     if (denied) return toCallToolResult(denied);
   }
@@ -1533,6 +1710,63 @@ async function assertAppMayCall(
         ? `Tool "${name}" is not callable from an app: its visibility does not include "app".`
         : `Tool "${name}" is not callable from an app: it is not listed, so its visibility is unknown.`,
       { reason: "not_app_callable", toolName: name },
+    );
+  }
+}
+
+/**
+ * Whether a `tools/call` is an app's: it names a source (the iframe bridge
+ * names the calling view's server on every call) and the caller's credential
+ * is first-party.
+ *
+ * The grant is what the host can verify. A `resource` token was minted by the
+ * authorization server for an external MCP client, and the client it was
+ * issued to is signed into it (ADR-0038), so such a caller is never a view,
+ * whatever `_meta` it sends. A first-party credential is the operator's own
+ * client: the web shell, whose bridge makes every view's call, or an operator
+ * app. The source key cannot tell those apart, so under a first-party
+ * credential it is trusted as the caller states it. That is the limit of this
+ * check: a provider that marks every credential first-party (`oidc`, `dev`)
+ * leaves an external client able to name a source and be taken for a view.
+ */
+function isAppCall(appSource: string | undefined, sessionCtx: McpSessionContext): boolean {
+  return appSource !== undefined && sessionCtx.grant === "first_party";
+}
+
+/**
+ * Hold an agent's `tools/call` to the tools an agent may call: those whose
+ * `ui.visibility` includes `"model"` (MCP Apps). The engine refuses the same
+ * tools at the chat door; this is the `/mcp` door's half.
+ *
+ * Visibility is read from the routed source's own listing, not the workspace
+ * listing, so a connector's role gate still answers with its own refusal. A
+ * tool the listing does not name is refused, as `assertAppMayCall` does: its
+ * visibility cannot be read. So is a call while the source cannot list its
+ * tools (it is not connected), with a message that says to retry.
+ */
+async function assertAgentMayCall(
+  source: ToolSource,
+  innerToolName: string,
+  name: string,
+): Promise<void> {
+  let tools: Awaited<ReturnType<ToolSource["tools"]>>;
+  try {
+    tools = await source.tools();
+  } catch {
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Tool "${name}" is unavailable: its server is not connected, so its visibility cannot be read. Retry shortly.`,
+      { reason: "source_unavailable", toolName: name },
+    );
+  }
+  const tool = tools.find((t) => t.name === innerToolName);
+  if (!tool || !isModelVisible(tool)) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      tool
+        ? `Tool "${name}" is not callable by an agent: its visibility does not include "model". Only its app's view calls it.`
+        : `Tool "${name}" is not callable by an agent: it is not listed, so its visibility is unknown.`,
+      { reason: "not_agent_callable", toolName: name },
     );
   }
 }
@@ -1728,14 +1962,7 @@ async function readResourceFromWorkspace(
 
 /** JSON-RPC error response with the proper headers. */
 function jsonRpcError(status: number, code: number, message: string): Response {
-  return new Response(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      error: { code, message },
-      id: null,
-    }),
-    { status, headers: { "Content-Type": "application/json" } },
-  );
+  return json<JsonRpcErrorBody>({ jsonrpc: "2.0", error: { code, message }, id: null }, status);
 }
 
 /** Cap on a client-supplied string written to a log line. */

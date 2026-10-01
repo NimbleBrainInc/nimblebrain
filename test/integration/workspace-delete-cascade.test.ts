@@ -255,7 +255,7 @@ test("reaches the broker's revoke for a brokered connector, and clears its crede
   const provider: ManagedConnectorProvider = {
     id: BROKER,
     userId: (owner) => (owner.type === "workspace" ? `ws:${owner.wsId}` : `u:${owner.userId}`),
-    createSession: async () => ({ url: "https://broker.example.test/mcp" }),
+    createSession: async () => ({ type: "http", url: "https://broker.example.test/mcp" }),
     cleanup: async ({ owner, brokered }) => {
       cleanups.push({
         connectorId: brokered.connectorId,

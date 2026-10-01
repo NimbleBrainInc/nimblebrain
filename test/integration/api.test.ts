@@ -2,13 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody, HealthResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ChatResult } from "../../src/runtime/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { engineEvent, runStartPayload } from "../helpers/engine-events.ts";
 import { readJson } from "../helpers/http.ts";
 import { readConnected } from "../helpers/sse.ts";
 import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -374,7 +375,7 @@ describe("Bearer token authentication", () => {
   it("GET /v1/health returns 200 regardless of auth", async () => {
     const res = await fetch(`${authUrl}/v1/health`);
     expect(res.status).toBe(200);
-    const body = await readJson<{ status: string }>(res);
+    const body = await readJson<HealthResponse>(res);
     expect(body.status).toBe("ok");
   });
 });
@@ -548,15 +549,19 @@ describe("SSE Event Manager", () => {
     await readConnected(reader);
 
     // Emit a run.start event — should NOT be forwarded
-    manager.emit({
-      type: "run.start",
-      data: { runId: "test" },
-    });
+    manager.emit(engineEvent("run.start", runStartPayload({ runId: "test" })));
 
     // Emit a connector.installed event — SHOULD be forwarded
     manager.emit({
       type: "connector.installed",
-      data: { wsId: "ws_test", serverName: "weather", connectorName: "@test/weather" },
+      data: {
+        wsId: "ws_test",
+        serverName: "weather",
+        connectorName: "@test/weather",
+        version: "1.0.0",
+        ui: null,
+        placements: null,
+      },
     });
 
     const { value } = await reader.read();

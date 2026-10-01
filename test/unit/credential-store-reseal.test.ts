@@ -28,6 +28,7 @@ import {
   parseSealedValue,
 } from "../../src/tools/credential-seal.ts";
 import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
@@ -282,7 +283,9 @@ describe("one bad secret does not take the tenant down", () => {
         createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
       );
       await store.reconcile?.();
-      expect(events.map((e) => e.data.reason)).toEqual(["reseal_skipped"]);
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "reseal_skipped",
+      ]);
       expect(events[0]?.data).toMatchObject({ scope: "workspace:ws_test", key: "bad.one" });
     } finally {
       cleanup();
@@ -364,7 +367,9 @@ describe("only what may be plaintext holds strict mode off", () => {
       const path = seed(dir, SCOPE_DIRS[1][1], "planted.key", "NBS1.x");
       await store.reconcile?.();
       expect(readFileSync(path, "utf-8")).toBe("NBS1.x");
-      expect(events.map((e) => e.data.reason)).toEqual(["reseal_skipped"]);
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "reseal_skipped",
+      ]);
       expect(events[0]?.data).toMatchObject({ scope: "workspace:ws_test", key: "planted.key" });
       const got = await store.get(WS, "planted.key", READ);
       expect(() => got?.reveal()).toThrow();
@@ -388,7 +393,9 @@ describe("only what may be plaintext holds strict mode off", () => {
       seed(dir, SCOPE_DIRS[1][1], "legacy.key", "still-readable");
       await store.reconcile?.();
       expect(readRaw(dir, SCOPE_DIRS[1][1], "legacy.key")).toBe("still-readable");
-      expect(events.map((e) => e.data.reason)).toEqual(["reseal_skipped"]);
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "reseal_skipped",
+      ]);
       expect((await store.get(WS, "legacy.key", READ))?.reveal()).toBe("still-readable");
     } finally {
       cleanup();
@@ -463,7 +470,9 @@ describe("a ring that recognizes none of the sealed secrets refuses to start", (
       seed(dir, SCOPE_DIRS[1][1], "stray.key", stray);
       await store.reconcile?.();
       expect(readRaw(dir, SCOPE_DIRS[1][1], "stray.key")).toBe(stray);
-      expect(events.map((e) => e.data.reason)).toEqual(["reseal_skipped"]);
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "reseal_skipped",
+      ]);
       expect((await store.get(WS, "acme.key", READ))?.reveal()).toBe("fine");
     } finally {
       cleanup();
@@ -668,7 +677,9 @@ describe("strict mode — plaintext is refused once everything is sealed", () =>
       seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
       const got = await store.get(WS, "injected.key", READ);
       expect(() => got?.reveal()).toThrow();
-      expect(events.map((e) => e.data.reason)).toEqual(["plaintext_refused"]);
+      expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
+        "plaintext_refused",
+      ]);
       expect(JSON.stringify(events)).not.toContain("attacker-chosen");
     } finally {
       cleanup();

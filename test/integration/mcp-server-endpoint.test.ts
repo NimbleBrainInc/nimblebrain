@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import type { JsonRpcErrorBody } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -12,6 +13,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { readJson } from "../helpers/http.ts";
 import { testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
@@ -155,18 +157,14 @@ describe("MCP Server Endpoint (/mcp)", () => {
     }
   });
 
-  it("tool call with unknown tool returns error", async () => {
+  it("tool call with unknown tool is refused", async () => {
     const client = await createMcpClient();
     try {
-      // A valid source with a bad tool name — resolves the source, fails the tool.
-      // inner tool, so the source lookup succeeds (source "fake")
-      // but the inner tool is unknown. Source.execute should surface
-      // `isError: true`.
-      const result = await client.callTool({
-        name: "fake__nonexistent",
-        arguments: {},
-      });
-      expect(result.isError).toBe(true);
+      // A valid source with a bad tool name: the source resolves, and the
+      // agent-call visibility check refuses a tool its listing does not name.
+      await expect(client.callTool({ name: "fake__nonexistent", arguments: {} })).rejects.toThrow(
+        /it is not listed/,
+      );
     } finally {
       await client.close();
     }
@@ -233,9 +231,7 @@ describe("MCP Server Endpoint (/mcp)", () => {
         }),
       });
       expect(res.status).toBe(404);
-      const body = (await res.json()) as {
-        error?: { code: number; message: string; data?: { reason?: string } };
-      };
+      const body = await readJson<JsonRpcErrorBody>(res);
       expect(body.error?.code).toBe(-32000);
       expect(body.error?.message).toBe("Session not found");
       // Default registry is in-memory and starts empty; an unknown
@@ -455,7 +451,7 @@ describe("MCP Server Auth", () => {
     });
     expect(res.status).toBe(404);
     expect(res.headers.get("www-authenticate")).toBeNull();
-    const body = (await res.json()) as { error: { message: string } };
+    const body = await readJson<JsonRpcErrorBody>(res);
     expect(body.error.message).toContain("/mcp/<workspaceId>");
   });
 
@@ -470,8 +466,6 @@ describe("MCP Server Auth", () => {
       body: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
     });
     expect(res.status).toBe(404);
-    expect(((await res.json()) as { error: { message: string } }).error.message).toBe(
-      "Workspace not found",
-    );
+    expect((await readJson<JsonRpcErrorBody>(res)).error.message).toBe("Workspace not found");
   });
 });

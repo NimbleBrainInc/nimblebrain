@@ -11,14 +11,14 @@ function tempDir(): string {
   return dir;
 }
 
-function msg(role: "user" | "assistant", content: string): StoredMessage {
-  return { role, content, timestamp: new Date().toISOString() };
+function msg(role: "user" | "assistant", text: string): StoredMessage {
+  return { role, content: [{ type: "text", text }], timestamp: new Date().toISOString() };
 }
 
-function assistantMsg(content: string, metadata: StoredMessage["metadata"]): StoredMessage {
+function assistantMsg(text: string, metadata: StoredMessage["metadata"]): StoredMessage {
   return {
     role: "assistant",
-    content,
+    content: [{ type: "text", text }],
     timestamp: new Date().toISOString(),
     metadata,
   };
@@ -96,8 +96,12 @@ describe("Conversation full lifecycle (store-level)", () => {
 
     const forkedHistory = await store.history(forked!);
     expect(forkedHistory).toHaveLength(2);
-    expect(forkedHistory[0]!.content).toBe("Tell me about deployment pipelines");
-    expect(forkedHistory[1]!.content).toBe("Deployment pipelines automate releases...");
+    expect(forkedHistory[0]!.content).toEqual([
+      { type: "text", text: "Tell me about deployment pipelines" },
+    ]);
+    expect(forkedHistory[1]!.content).toEqual([
+      { type: "text", text: "Deployment pipelines automate releases..." },
+    ]);
 
     // original still has 3 messages
     const originalHistory = await store.history(conv);
@@ -188,8 +192,10 @@ describe("Backward compatibility: old-format JSONL → append", () => {
     // Verify history includes old + new messages
     const history = await store.history(loaded!);
     expect(history).toHaveLength(3);
-    expect(history[0]!.content).toBe("old question about budgets");
-    expect(history[2]!.content).toBe("Updated budget analysis...");
+    // The legacy line keeps the string content it was written with; the type
+    // describes what the runtime writes now.
+    expect(history[0]!.content as unknown).toBe("old question about budgets");
+    expect(history[2]!.content).toEqual([{ type: "text", text: "Updated budget analysis..." }]);
 
     // Reload from disk to verify persistence
     const store2 = new JsonlConversationStore(dir);

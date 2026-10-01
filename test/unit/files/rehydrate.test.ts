@@ -82,7 +82,7 @@ const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PDF_BYTES = Buffer.from("%PDF-1.4");
 const DEFAULT_OPTIONS = { model: "anthropic:claude-sonnet-4-6", maxExtractedTextSize: 1024 };
 
-function userMessage(content: StoredMessage["content"]): StoredMessage {
+function userMessage(content: Extract<StoredMessage, { role: "user" }>["content"]): StoredMessage {
   return {
     role: "user",
     content,

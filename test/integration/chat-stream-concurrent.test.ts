@@ -10,9 +10,9 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import type { ApiErrorBody } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";

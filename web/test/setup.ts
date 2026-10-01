@@ -31,6 +31,12 @@ import * as realConversationStreamMod from "../src/api/conversation-stream";
 
 export const realConversationStream = { ...realConversationStreamMod };
 
+// And for `sse` (the workspace stream): events-client.test and
+// WorkspaceAppIconsProvider.test `mock.module` it with a fake `connectEvents`.
+import * as realSseMod from "../src/api/sse";
+
+export const realSse = { ...realSseMod };
+
 const window = new Window({ url: "http://localhost" });
 
 // Register DOM globals that React and testing-library need
@@ -39,7 +45,7 @@ for (const key of Object.getOwnPropertyNames(window)) {
 	if (key in globalThis) continue;
 	try {
 		Object.defineProperty(globalThis, key, {
-			value: (window as Record<string, unknown>)[key],
+			value: Reflect.get(window, key),
 			writable: true,
 			configurable: true,
 		});

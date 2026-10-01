@@ -111,7 +111,7 @@ describe("events-client — event routing", () => {
     subscribe("config.changed", c);
 
     // Drive an event through the fake's captured onEvent.
-    lastOptions!.onEvent("server.notification", { server: "x", method: "y" });
+    lastOptions!.onEvent("server.notification", { server: "x", method: "y", workspaceId: "ws_a" });
 
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
@@ -126,7 +126,11 @@ describe("events-client — event routing", () => {
     subscribe("server.notification", thrower);
     subscribe("server.notification", good);
 
-    lastOptions!.onEvent("server.notification", { server: "x" });
+    lastOptions!.onEvent("server.notification", {
+      server: "x",
+      method: "notifications/message",
+      workspaceId: "ws_a",
+    });
 
     expect(thrower).toHaveBeenCalledTimes(1);
     expect(good).toHaveBeenCalledTimes(1);
@@ -134,7 +138,13 @@ describe("events-client — event routing", () => {
 
   test("events for types with no subscribers are dropped without error", () => {
     subscribe("server.notification", () => {});
-    expect(() => lastOptions!.onEvent("skill.created", { id: "x" })).not.toThrow();
+    expect(() =>
+      lastOptions!.onEvent("conversation.title", {
+        conversationId: "c1",
+        title: "t",
+        ownerId: "usr_a",
+      }),
+    ).not.toThrow();
   });
 });
 

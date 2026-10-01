@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import {
   _clearAll,
+  DEFAULT_FLOW_TTL_MS,
   OAuthFlowExpiredError,
   peekFlowOwner,
   register,
   rejectFlow,
   resolveWithCode,
+  takeScopeFallback,
 } from "../../src/tools/oauth-flow-registry.ts";
 
 const WS = { kind: "workspace", wsId: "ws_test" } as const;
@@ -104,5 +106,27 @@ describe("oauth-flow-registry", () => {
     // Promise is immutable once settled, so a late reject would only show
     // as an unhandled rejection. Absence of one (no diagnostic below) is
     // our positive signal here.
+  });
+
+  it("a scope fallback is taken once, tells the initiator, and leaves the flow pending", async () => {
+    let used = 0;
+    const p = register("state-fallback", WS, "srv", DEFAULT_FLOW_TTL_MS, {
+      url: "https://as.example/authorize?scope=mcp",
+      onUse: () => used++,
+    });
+    expect(takeScopeFallback("state-fallback")).toBe("https://as.example/authorize?scope=mcp");
+    expect(used).toBe(1);
+    // A second refusal gets no further retry.
+    expect(takeScopeFallback("state-fallback")).toBeNull();
+    expect(used).toBe(1);
+    // The flow itself carries on with the same state.
+    expect(resolveWithCode("state-fallback", "the-code")).toBe(true);
+    await expect(p).resolves.toBe("the-code");
+  });
+
+  it("a flow with no scope fallback, or no flow, has none to take", () => {
+    register("state-plain", WS, "srv");
+    expect(takeScopeFallback("state-plain")).toBeNull();
+    expect(takeScopeFallback("unknown-state")).toBeNull();
   });
 });

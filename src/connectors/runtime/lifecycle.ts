@@ -20,7 +20,12 @@ import {
   removeConnectorSkillsForServer,
 } from "../../skills/connector-skill-store.ts";
 import { personalConnectorWireName } from "../../tools/identity-sources.ts";
-import { hasMcpOAuthTokens, McpOAuthRecords } from "../../tools/mcp-oauth-records.ts";
+import {
+  clearMcpOAuthAuthLost,
+  hasMcpOAuthAuthLost,
+  hasMcpOAuthTokens,
+  McpOAuthRecords,
+} from "../../tools/mcp-oauth-records.ts";
 import { McpSource } from "../../tools/mcp-source.ts";
 import { OAuthFlowExpiredError } from "../../tools/oauth-flow-registry.ts";
 import { SharedSourceRef, ToolRegistry } from "../../tools/registry.ts";
@@ -365,6 +370,26 @@ export class ConnectorLifecycleManager {
       return undefined;
     }
     return { provider, brokered };
+  }
+
+  /**
+   * Whether disconnecting this connector means anything: its connection rests on
+   * a credential a person authorized, which Disconnect revokes and Connect
+   * re-establishes. True for a native OAuth connection and for a brokered one whose
+   * provider can reconnect. False when the credential is configuration rather than a
+   * sign-in — a platform-minted `provider` token or a stored bearer or header, the set
+   * `connectorHasStaticAuth` names — because there is nothing to revoke and nothing
+   * for a person to redo. The web offers Disconnect only where this is true; the
+   * disconnect tool refuses an established connection where it is false.
+   */
+  isDisconnectable(ref: ConnectorRef | undefined): boolean {
+    if (!ref || !("url" in ref)) return false;
+    const brokered = brokeredRef(ref);
+    if (brokered) {
+      const provider = this.managedConnectors.get(brokered.provider);
+      return !!provider && brokerCanReconnect(provider);
+    }
+    return !connectorHasStaticAuth(ref);
   }
 
   /** Set the PlacementRegistry (called by Runtime after construction). */
@@ -1289,16 +1314,14 @@ export class ConnectorLifecycleManager {
     // delete may revoke both at the upstream vendor. Reporting `{ access }` only
     // (not faking `refresh`) keeps the return shape honest about what we know.
     const brokeredTarget = this.brokeredProvider(ref, "disconnect");
-    const canReconnect =
-      brokeredTarget?.provider.initiate !== undefined ||
-      brokeredTarget?.provider.connectApiKey !== undefined;
-    if (brokeredTarget?.provider.cleanup && canReconnect) {
+    if (brokeredTarget?.provider.cleanup && brokerCanReconnect(brokeredTarget.provider)) {
       const { upstreamDeleted, localDeleted, lastError } = await brokeredTarget.provider.cleanup({
         owner: { type: "workspace", wsId },
         brokered: brokeredTarget.brokered,
         workDir: opts.workDir,
       });
       await this.teardownConnectionSource(serverName, wsId, principalId);
+      await clearMcpOAuthAuthLost(opts.workDir, { type: "workspace", wsId }, serverName);
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
         authorizationUrl: undefined,
       });
@@ -1330,6 +1353,10 @@ export class ConnectorLifecycleManager {
     const result = await provider.revokeAndDeleteTokens({ connectorUrl: ref.url });
 
     await this.teardownConnectionSource(serverName, wsId, principalId);
+    // A disconnect is deliberate: whatever broke before it, the connection now
+    // rests. Cleared after teardown, so a refresh still in flight on the old
+    // source — racing the revoke above — cannot set it again.
+    await clearMcpOAuthAuthLost(opts.workDir, { type: "workspace", wsId }, serverName);
 
     this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
       authorizationUrl: undefined,
@@ -2084,14 +2111,21 @@ export class ConnectorLifecycleManager {
    *      persisted but rejected — the SDK fell back to the interactive branch
    *      and the URL was buffered). Record `reauth_required` with the captured
    *      URL so the UI shows a "Reconnect" affordance instead of "Connect".
-   *   2. Boot-start was attempted and threw (`startError`) → record `dead` with
+   *   2. The credential was rejected upstream and nobody has reconnected or
+   *      disconnected since (the `auth_lost` flag), and boot either failed or
+   *      found no tokens (the SDK deletes them on `invalid_grant`) → record
+   *      `reauth_required`. The flag outlives the tokens so a restart keeps a
+   *      broken connection apart from one the user disconnected, and it is read
+   *      before `startError` because the boot that discovers the rejection
+   *      fails with it.
+   *   3. Boot-start was attempted and threw (`startError`) → record `dead` with
    *      the message. Reconnecting is not the recovery path here (the
    *      credential is fine; the endpoint was unreachable), so this must not
    *      fall through to the auth-derived states below.
-   *   3. No persisted auth on disk → record `not_authenticated`. The connector is
-   *      silently installed; the user discovers it on the Connections page and
-   *      clicks Connect to initiate OAuth.
-   *   4. Auth present and source.start() succeeded → record `running`.
+   *   4. No persisted auth on disk → record `not_authenticated`. The connector is
+   *      silently installed (never connected, or disconnected); the user
+   *      discovers it on the Connections page and clicks Connect.
+   *   5. Auth present and source.start() succeeded → record `running`.
    */
   private async seedUrlConnectionState(
     serverName: string,
@@ -2107,6 +2141,31 @@ export class ConnectorLifecycleManager {
       return;
     }
 
+    // The runtime's resolved workDir, not `defaultWorkDir()` — these probes read
+    // credential state that install and the OAuth callback wrote under
+    // `runtime.getWorkDir()`, and the two diverge exactly when an operator sets
+    // `workDir` in `nimblebrain.json` without `NB_WORK_DIR`. Probing the wrong
+    // root finds no tokens and seeds `not_authenticated` for every remote
+    // connector at boot, however many are actually connected. See
+    // `resolvedWorkDir`.
+    const workDir = this.resolvedWorkDir ?? defaultWorkDir();
+    const owner = { type: "workspace", wsId } as const;
+    // A brokered connector's readiness is its provider's to answer; see below.
+    const brokered = brokeredConnectionPresent(this.managedConnectors, ref, wsId, workDir);
+    // Only a connection held in our OAuth records can carry `auth_lost`: a
+    // brokered or static-auth one keeps its credential elsewhere.
+    const oauthRecordAuth = brokered === undefined && !connectorHasStaticAuth(ref);
+    if (
+      oauthRecordAuth &&
+      (await hasMcpOAuthAuthLost(workDir, owner, serverName)) &&
+      (startError !== undefined || !(await hasMcpOAuthTokens(workDir, owner, serverName)))
+    ) {
+      this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required", {
+        ...(startError ? { lastError: startError } : {}),
+      });
+      return;
+    }
+
     // Boot-start failed. The connector stays installed and its placements stay
     // registered, but the connection is `dead` — the state whose recovery path
     // is "try again", which is what `tryRecoverSource` does on next use.
@@ -2117,16 +2176,8 @@ export class ConnectorLifecycleManager {
       return;
     }
 
-    // The runtime's resolved workDir, not `defaultWorkDir()` — this probe reads
-    // credential state that install and the OAuth callback wrote under
-    // `runtime.getWorkDir()`, and the two diverge exactly when an operator sets
-    // `workDir` in `nimblebrain.json` without `NB_WORK_DIR`. Probing the wrong
-    // root finds no tokens and seeds `not_authenticated` for every remote
-    // connector at boot, however many are actually connected. See
-    // `resolvedWorkDir`.
-    const workDir = this.resolvedWorkDir ?? defaultWorkDir();
     // A brokered connector's readiness is its provider's to answer, and it is
-    // asked FIRST: a brokered connector carries static transport auth but may still
+    // asked FIRST (`brokered`, above): a brokered connector carries static transport auth but may still
     // need a per-owner connect, so the generic static-auth check below would
     // seed `running` for an unconnected one and lose its Connect button. A
     // provider with no `hasConnection` has nothing to connect per-owner and
@@ -2137,9 +2188,8 @@ export class ConnectorLifecycleManager {
     // boot-start either succeeded or was never attempted — a failure returned
     // above on `startError` — so `running` is accurate.
     const hasAuth =
-      brokeredConnectionPresent(this.managedConnectors, ref, wsId, workDir) ??
-      (connectorHasStaticAuth(ref) ||
-        (await hasMcpOAuthTokens(workDir, { type: "workspace", wsId }, serverName)));
+      brokered ??
+      (connectorHasStaticAuth(ref) || (await hasMcpOAuthTokens(workDir, owner, serverName)));
     if (!hasAuth) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
     } else {
@@ -2216,4 +2266,11 @@ function buildSeededInstance(
     // oauthClient + scopes). Stored as an opaque copy.
     ref: { ...ref },
   };
+}
+
+/** A broker can re-establish a connection it tore down: it offers an interactive
+ *  `initiate` or an API-key `connectApiKey`. Without either, disconnect would be a
+ *  one-way door, which is why only such brokers are disconnectable. */
+function brokerCanReconnect(provider: ManagedConnectorProvider): boolean {
+  return provider.initiate !== undefined || provider.connectApiKey !== undefined;
 }

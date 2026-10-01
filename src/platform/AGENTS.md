@@ -35,8 +35,12 @@ and the generated tree under `web/src/_generated/platform-schemas/` mirrors
 its shape.
 
 Register a new app in `index.ts`. Its UI, if it has one, is picked up by
-`build:platform-apps` and the image build from the `src/platform/*/ui` glob —
-there is no list to add it to.
+`build:platform-apps`, `check:platform-apps`, and the image build from the
+`src/platform/*/ui` glob — there is no list to add it to. The typecheck needs
+two configs in the UI package: `tsconfig.json` for the shipped source (browser
+libs, no Bun types, tests excluded) and `tsconfig.test.json` extending it with
+`types: ["vite/client", "bun"]` so `bun:test` resolves. Copy both from an
+existing app; `scripts/check-platform-apps.ts` says why each exists.
 
 An app's placements are the `placements:` array passed to `defineInProcessApp`,
 and that is the only copy the runtime reads. Two apps also carry a
@@ -317,13 +321,12 @@ const result = (await handleRun({ name: "Foo" }, ctx)) as { run: AutomationRun }
 expect(result.run.toolCalls).toBe(3);
 ```
 
-### Known gap: tests aren't type-checked by CI today
+### Tests are typechecked
 
-`tsconfig.json` only includes `src/**`. `bun run check` does not validate
-test files. The shared-types convention still applies to tests — it's a
-code-reading signal and turns into a compile gate the moment a future PR
-adds `test/**` to the typecheck scope. Worth doing; ~1000 existing type
-errors in tests are the cleanup pricetag, so it's a separate effort.
+`check:test-signatures` (in `verify:static`) typechecks `test/` under
+`tsconfig.test.json`, so a test typed with the named output type fails the
+build when the handler's shape moves. An inline `as { … }` escapes that check;
+that is why tests import the same names.
 
 For SDK boundary tests in particular (anything that mocks an `McpError`,
 `Task`, `CallToolResult`, etc.), construct **real instances of the
@@ -392,9 +395,12 @@ update by grep is the discipline; the type system is the safety net.
 - **Type system**: typed `interface XxxInput` per handler — drift between
   the schema and the type surfaces at compile.
 - **Type system, output side (§2.1)**: handler return types are the named
-  `XxxOutput` exports from `schemas/`; consumers import and narrow. Once
-  tests are added to typecheck scope, every consumer drift surfaces at
-  compile.
+  `XxxOutput` exports from `schemas/`; consumers import and narrow, and
+  consumer drift, tests included, surfaces at compile.
+- **Check, output side (§2.1)**: `bun run check:platform-output-types`
+  (in `verify:static`) fails on any function under `src/platform/` declared
+  to return `object` or `Promise<object>`. Rule doc: `CODE_STYLE.md`,
+  "Platform tool handlers return a named output type".
 - **Code review**: section 3 (anti-patterns) — flag in PRs explicitly.
 
 If you're tempted to violate any of section 1, ask whether the underlying

@@ -1,4 +1,5 @@
 import { createMiddleware } from "hono/factory";
+import type { HttpErrorPayload } from "../../engine/schemas/events.ts";
 import type { EventSink } from "../../engine/types.ts";
 import type { AppEnv } from "../types.ts";
 
@@ -35,7 +36,7 @@ export function errorLog({ eventSink }: ErrorLogDeps) {
       // Response body may not be JSON (e.g., SSE streams, empty 401)
     }
 
-    const record = {
+    const record: HttpErrorPayload = {
       ts: new Date().toISOString(),
       event: "http.error",
       status: c.res.status,

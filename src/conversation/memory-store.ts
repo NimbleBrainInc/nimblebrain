@@ -2,6 +2,7 @@ import { estimateCost } from "../usage/cost.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import { addUsage, emptyUsage } from "../usage/types.ts";
 import { canAccess } from "./index-cache.ts";
+import { previewTextOf } from "./preview.ts";
 import type {
   Conversation,
   ConversationAccessContext,
@@ -34,11 +35,10 @@ function deriveSummaryTotals(messages: StoredMessage[]): {
   return { usage, costUsd };
 }
 
-/** First user message's text content, or "" when there is none / it is non-string. */
+/** First user message's preview text, or "" when there is none. */
 function firstUserPreview(messages: StoredMessage[]): string {
   const firstUser = messages.find((m) => m.role === "user");
-  if (!firstUser) return "";
-  return typeof firstUser.content === "string" ? firstUser.content : "";
+  return firstUser ? previewTextOf(firstUser.content) : "";
 }
 
 /** True when the lowercased search term hits the title or the preview. */

@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   FetchLike,
-  OAuthClientInformationFull,
   OAuthClientProvider,
   OAuthTokens,
+  StoredOAuthClientInformation,
   Transport,
 } from "@modelcontextprotocol/client";
 import {
@@ -24,6 +24,7 @@ import {
   setCredentialStore,
 } from "../../src/tools/credential-store.ts";
 import { createRemoteTransport } from "../../src/tools/remote-transport.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 describe("createRemoteTransport", () => {
@@ -350,7 +351,7 @@ describe("createRemoteTransport — a credential reference resolves on every req
     expect(seen).toHaveLength(0);
 
     await send(t);
-    expect(events.map((e) => e.data.key)).toEqual([KEY]);
+    expect(payloadsOf(events, "audit.credential_read").map((d) => d.key)).toEqual([KEY]);
   });
 
   test("every request's resolve is audited, naming the header", async () => {
@@ -485,7 +486,7 @@ describe("createRemoteTransport — a connector's headers stay on the connector'
   }
 
   function memoryProvider(): OAuthClientProvider {
-    let client: OAuthClientInformationFull | undefined;
+    let client: StoredOAuthClientInformation | undefined;
     let tokens: OAuthTokens | undefined;
     let verifier = "";
     return {

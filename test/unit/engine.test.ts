@@ -7,6 +7,7 @@ import { AgentEngine } from "../../src/engine/engine.ts";
 import type {
   EngineConfig,
   EngineEvent,
+  EngineEventOf,
   EventSink,
   ToolCall,
   ToolPromotionControls,
@@ -621,6 +622,70 @@ describe("AgentEngine", () => {
     expect(manageCall?.ok).toBe(true);
     // Only the public tool was promoted; the app-only one was rejected per-item.
     expect(events.filter((e) => e.type === "tool.promoted")).toHaveLength(1);
+  });
+
+  it("refuses a model call that names an app-only tool, without running it", async () => {
+    let callCount = 0;
+    const model = createMockModel(() => {
+      callCount++;
+      if (callCount === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call_hidden",
+              toolName: "internal__secret",
+              input: JSON.stringify({}),
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call_public",
+              toolName: "app__public",
+              input: JSON.stringify({}),
+            },
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return { content: [{ type: "text", text: "Done" }], inputTokens: 10, outputTokens: 5 };
+    });
+
+    const toolSchemas: ToolSchema[] = [
+      {
+        name: "app__public",
+        description: "Public tool",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "internal__secret",
+        description: "Internal secret tool",
+        inputSchema: { type: "object", properties: {} },
+        meta: { ui: { visibility: ["app"] } },
+      },
+    ];
+
+    const executed: string[] = [];
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter(toolSchemas, (call) => {
+        executed.push(call.name);
+        return { content: textContent("ran"), isError: false };
+      }),
+      { emit: () => {} },
+    );
+
+    const result = await engine.run(
+      defaultConfig,
+      "",
+      [{ role: "user", content: [{ type: "text", text: "Call both" }] }],
+      [toolSchemas[0]!],
+    );
+
+    expect(executed).toEqual(["app__public"]);
+    const hidden = result.toolCalls.find((c) => c.name === "internal__secret");
+    expect(hidden?.ok).toBe(false);
+    expect(result.toolCalls.find((c) => c.name === "app__public")?.ok).toBe(true);
   });
 
   it("nb__manage_tools add rejects role/feature-ineligible tools per-item", async () => {
@@ -1366,7 +1431,7 @@ describe("AgentEngine", () => {
         // Without the per-engine toolPromotion factory, the child's
         // manage_tools would leak into the outer run.
         const innerEngine = new AgentEngine(innerModel, innerRouter, {
-          emit: (event) => events.push({ ...event, data: { ...event.data, scope: "inner" } }),
+          emit: (event) => events.push(event),
         });
         await innerEngine.run(
           {
@@ -1393,7 +1458,7 @@ describe("AgentEngine", () => {
     });
 
     const outerEngine = new AgentEngine(outerModel, outerRouter, {
-      emit: (event) => events.push({ ...event, data: { ...event.data, scope: "outer" } }),
+      emit: (event) => events.push(event),
     });
 
     // Wrap the whole flow in a request context so reqCtx exists for the
@@ -1797,7 +1862,7 @@ describe("AgentEngine", () => {
         {
           ...defaultConfig,
           model: "anthropic:claude-sonnet-4-6",
-          thinking: { mode: "enabled", budgetTokens: 4096 },
+          thinking: { mode: "enabled", budgetTokens: 4096, effort: "high", source: "operator" },
         },
         "",
         [{ role: "user", content: [{ type: "text", text: "x" }] }],
@@ -4504,8 +4569,11 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
   };
 
   /** Capture every `connector.skill.injected` event the engine emits. */
-  function injectionSink(): { sink: EventSink; injected: EngineEvent[] } {
-    const injected: EngineEvent[] = [];
+  function injectionSink(): {
+    sink: EventSink;
+    injected: EngineEventOf<"connector.skill.injected">[];
+  } {
+    const injected: EngineEventOf<"connector.skill.injected">[] = [];
     const sink: EventSink = {
       emit(event) {
         if (event.type === "connector.skill.injected") injected.push(event);
@@ -4684,11 +4752,11 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
   /** Capture `skill.activated` + `connector.skill.injected` events. */
   function activationSink(): {
     sink: EventSink;
-    activated: EngineEvent[];
-    injected: EngineEvent[];
+    activated: EngineEventOf<"skill.activated">[];
+    injected: EngineEventOf<"connector.skill.injected">[];
   } {
-    const activated: EngineEvent[] = [];
-    const injected: EngineEvent[] = [];
+    const activated: EngineEventOf<"skill.activated">[] = [];
+    const injected: EngineEventOf<"connector.skill.injected">[] = [];
     const sink: EventSink = {
       emit(event) {
         if (event.type === "skill.activated") activated.push(event);

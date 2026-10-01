@@ -11,11 +11,16 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  ApiErrorBody,
+  BootstrapResponse,
+  ChatStartResponse,
+  ShellResponse,
+  UploadResourceResponse,
+} from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ShellData } from "../../web/src/api/client.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -187,7 +192,9 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
       headers: { "X-Workspace-Id": wsB },
     });
     expect(res.status).toBe(200);
-    expect((await readJson<ShellData>(res)).chatEndpoint).toBe(`/v1/workspaces/${wsA}/chat/stream`);
+    expect((await readJson<ShellResponse>(res)).chatEndpoint).toBe(
+      `/v1/workspaces/${wsA}/chat/stream`,
+    );
   });
 
   it("a new conversation is born in the path's workspace", async () => {
@@ -196,7 +203,7 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
       headers: { "X-Workspace-Id": wsB },
     });
     expect(res.status).toBe(200);
-    const { conversationId } = (await res.json()) as { conversationId: string };
+    const { conversationId } = await readJson<ChatStartResponse>(res);
     let conversation = await runtime.findConversation(conversationId);
     for (let i = 0; i < 50 && !conversation; i++) {
       await Bun.sleep(20);
@@ -211,7 +218,7 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
       headers: { "X-Workspace-Id": wsB },
     });
     expect(res.status).toBe(200);
-    const { files } = (await res.json()) as { files: Array<{ id: string }> };
+    const { files } = await readJson<UploadResourceResponse>(res);
     const fileId = files[0]!.id;
     const locator = runtime.getFileLocator();
     expect(await locator.resolve(TEST_IDENTITY.id, fileId)).toBe(wsA);
@@ -243,7 +250,7 @@ describe("identity-scoped routes need no workspace", () => {
   it("bootstrap", async () => {
     const res = await send("GET", "/v1/bootstrap");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { activeWorkspace: string };
+    const body = await readJson<BootstrapResponse>(res);
     expect(typeof body.activeWorkspace).toBe("string");
   });
 
@@ -262,7 +269,7 @@ describe("identity-scoped routes need no workspace", () => {
     const started = await send("POST", `/v1/workspaces/${wsA}/chat/start`, {
       body: { message: "for the event stream" },
     });
-    const { conversationId } = (await started.json()) as { conversationId: string };
+    const { conversationId } = await readJson<ChatStartResponse>(started);
 
     const events = await send("GET", `/v1/conversations/${conversationId}/events`);
     expect(events.status).toBe(200);
@@ -274,7 +281,7 @@ describe("identity-scoped routes need no workspace", () => {
 
   it("a file by its bare id", async () => {
     const uploaded = await send("POST", `/v1/workspaces/${wsB}/resources`, { body: uploadForm() });
-    const { files } = (await uploaded.json()) as { files: Array<{ id: string }> };
+    const { files } = await readJson<UploadResourceResponse>(uploaded);
     const res = await send("GET", `/v1/files/${files[0]!.id}`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("hello");

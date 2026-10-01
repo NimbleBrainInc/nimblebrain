@@ -26,6 +26,7 @@ import { PermissionStore } from "../../../src/permissions/permission-store.ts";
 import { getRequestContext, type RequestContext } from "../../../src/runtime/request-context.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
+import { firstPayloadOf } from "../../helpers/engine-events.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 // ── Stubs ─────────────────────────────────────────────────────────
@@ -580,7 +581,7 @@ describe("dispatchUnattended — audit", () => {
 
     await call(runtime, "crm__search", { reason: "r".repeat(1_000) });
 
-    expect(String(events[0]?.data.reason).length).toBe(200);
+    expect(firstPayloadOf(events, "audit.unattended_dispatch")?.reason.length).toBe(200);
   });
 
   // `MultiEventSink` fans out to its sinks without a per-sink guard, so a sink

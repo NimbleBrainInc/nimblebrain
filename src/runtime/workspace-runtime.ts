@@ -254,7 +254,7 @@ export async function startWorkspaceConnectors(
   platformSources: ToolSource[],
   systemSource: ToolSource | null,
   // Required. Propagated to every McpSource so task-augmented tool calls
-  // can emit `tool.progress` events that reach the SSE broadcast layer.
+  // can emit `tool.task_status` and a source its `connector.health`.
   // Pass `new NoopEventSink()` only if intentionally discarding events.
   eventSink: EventSink,
   opts?: {

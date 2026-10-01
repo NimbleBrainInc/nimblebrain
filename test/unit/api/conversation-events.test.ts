@@ -20,6 +20,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { ConversationEventManager } from "../../../src/api/conversation-events.ts";
+import { engineEvent } from "../../helpers/engine-events.ts";
 
 const decoder = new TextDecoder();
 
@@ -80,7 +81,7 @@ describe("ConversationEventManager", () => {
     const tab2 = mgr.addSubscriber(convId, "usr_alice");
     const otherConv = mgr.addSubscriber(otherConvId, "usr_alice");
 
-    mgr.broadcastToConversation(convId, "text.delta", { delta: "hello" });
+    mgr.forwardToConversation(convId, engineEvent("text.delta", { runId: "run_1", text: "hello" }));
 
     const [t1Raw, t2Raw, oRaw] = await Promise.all([
       drainImmediately(tab1.stream),
@@ -93,7 +94,7 @@ describe("ConversationEventManager", () => {
 
     expect(t1.length).toBe(1);
     expect(t1[0]).toContain("event: text.delta");
-    expect(t1[0]).toContain('"delta":"hello"');
+    expect(t1[0]).toContain('"text":"hello"');
     expect(t2.length).toBe(1);
     expect(t2[0]).toContain("event: text.delta");
     expect(other.length).toBe(0);
@@ -112,10 +113,9 @@ describe("ConversationEventManager", () => {
     const sender = mgr.addSubscriber(convId, "usr_alice");
     const peer = mgr.addSubscriber(convId, "usr_alice");
 
-    mgr.broadcastToConversation(
+    mgr.forwardToConversation(
       convId,
-      "text.delta",
-      { delta: "from chat-stream" },
+      engineEvent("text.delta", { runId: "run_1", text: "from chat-stream" }),
       sender.subscriberId,
     );
 
@@ -126,7 +126,7 @@ describe("ConversationEventManager", () => {
     expect(broadcastFrames(senderRaw).length).toBe(0);
     const peerFrames = broadcastFrames(peerRaw);
     expect(peerFrames.length).toBe(1);
-    expect(peerFrames[0]).toContain('"delta":"from chat-stream"');
+    expect(peerFrames[0]).toContain('"text":"from chat-stream"');
 
     mgr.stop();
   });
@@ -138,7 +138,10 @@ describe("ConversationEventManager", () => {
     const targetSub = mgr.addSubscriber(target, "usr_alice");
     const decoySub = mgr.addSubscriber(decoy, "usr_alice");
 
-    mgr.broadcastToConversation(target, "user.message", { content: "ping" });
+    mgr.broadcastToConversation(target, "user.message", {
+      content: "ping",
+      timestamp: new Date().toISOString(),
+    });
 
     const [t, d] = await Promise.all([
       drainImmediately(targetSub.stream),
@@ -160,7 +163,7 @@ describe("ConversationEventManager", () => {
     // must not throw against a closed controller.
     await stream.cancel();
     expect(mgr.subscriberCount).toBe(0);
-    mgr.broadcastToConversation(convId, "done", { ok: true });
+    mgr.broadcastToConversation(convId, "cancelled", {});
 
     mgr.stop();
   });

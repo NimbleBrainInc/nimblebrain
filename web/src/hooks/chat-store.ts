@@ -15,17 +15,17 @@ import { nameFromSkillId } from "../lib/skill-display.ts";
 import type {
   AppContext,
   ChatRequest,
-  ChatResult,
-  ChatStreamEventMap,
+  ChatResponse,
+  ConversationStreamEvents,
   LedgerSkill,
   LlmDoneEvent,
-  ReasoningDeltaEvent,
   StreamErrorEvent,
   TextDeltaEvent,
-  ToolCallResult,
+  ToolCallResponse,
   ToolDoneEvent,
   ToolPreparingEvent,
   ToolStartEvent,
+  UserMessageEvent,
 } from "../types";
 
 export type { LedgerSkill } from "../types";
@@ -321,7 +321,7 @@ const updateTool =
 /** Fill in tool results the stream never resolved from the terminal `done` payload. */
 function backfillToolResults(
   slice: ConversationSlice,
-  resultToolCalls: ChatResult["toolCalls"],
+  resultToolCalls: ChatResponse["toolCalls"],
 ): void {
   const outputMap = new Map(resultToolCalls.map((tc) => [tc.id, tc.output]));
   const backfill = (tc: ToolCallDisplay): ToolCallDisplay => {
@@ -337,11 +337,10 @@ function backfillToolResults(
 
 /** Assemble the finalized assistant message from the terminal `done` payload. */
 function buildFinalAssistantMessage(
-  result: ChatResult,
+  result: ChatResponse,
   finalBlocks: ContentBlock[],
   finalTools: ToolCallDisplay[] | undefined,
   usage: ChatMessage["usage"],
-  resultFiles: MessageFileAttachment[] | undefined,
   skillsLoaded: SkillsLoadedContext | undefined,
 ): ChatMessage {
   return {
@@ -354,7 +353,6 @@ function buildFinalAssistantMessage(
     ...(result.stopReason && result.stopReason !== "complete"
       ? { stopReason: result.stopReason }
       : {}),
-    ...(resultFiles && resultFiles.length > 0 ? { files: resultFiles } : {}),
   };
 }
 
@@ -420,7 +418,7 @@ interface LoadedConversation {
  * Throws on an error result; falls back to parsing `content[0].text` as JSON
  * when the server returned no `structuredContent`.
  */
-function parseConversationResult(res: ToolCallResult): LoadedConversation {
+function parseConversationResult(res: ToolCallResponse): LoadedConversation {
   if (res.isError) {
     const errText = res.content
       ?.map((b) => b.text ?? "")
@@ -899,7 +897,7 @@ export function createChatStore(): ChatStore {
   // -- stream reducer --
 
   function handleUserMessage(slice: ConversationSlice, data: unknown): void {
-    const evt = data as { content: string; userId?: string; timestamp?: string };
+    const evt = data as UserMessageEvent;
     resetScratch(slice);
     if (slice.pendingEcho) {
       // Our optimistic user message + assistant placeholder are already in
@@ -927,7 +925,7 @@ export function createChatStore(): ChatStore {
   }
 
   function handleChatStart(slice: ConversationSlice, data: unknown): void {
-    const evt = data as ChatStreamEventMap["chat.start"];
+    const evt = data as ConversationStreamEvents["chat.start"];
     // The binding arrives with the id because a just-created conversation is
     // never loaded, so `loadConversation` would never supply it — and the
     // composer has to state the model the server pinned, not the one asked for.
@@ -1005,7 +1003,7 @@ export function createChatStore(): ChatStore {
   }
 
   function handleReasoningDelta(slice: ConversationSlice, data: unknown): void {
-    const evt = data as ReasoningDeltaEvent;
+    const evt = data as TextDeltaEvent;
     // A reasoning block's cryptographic signature arrives as a delta carrying
     // no text. Taking it as "streaming" hides the live cursor behind a block
     // that renders nothing, leaving the turn with no indicator at all.
@@ -1070,7 +1068,7 @@ export function createChatStore(): ChatStore {
   }
 
   function handleDone(slice: ConversationSlice, data: unknown): void {
-    const result = data as ChatResult;
+    const result = data as ChatResponse;
     slice.streamingState = null;
     slice.preparingTool = null;
     slice.isStreaming = false;
@@ -1092,11 +1090,6 @@ export function createChatStore(): ChatStore {
           llmMs: result.usage.llmMs,
         }
       : undefined;
-    // Cast: `files` is attached to the done payload by the server but isn't
-    // on the typed ChatResult — read it defensively.
-    const resultFiles = (result as unknown as Record<string, unknown>).files as
-      | MessageFileAttachment[]
-      | undefined;
 
     const updated = [...slice.messages];
     if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
@@ -1105,7 +1098,6 @@ export function createChatStore(): ChatStore {
         finalBlocks,
         finalTools,
         usage,
-        resultFiles,
         slice.skillsLoaded,
       );
       slice.messages = updated;

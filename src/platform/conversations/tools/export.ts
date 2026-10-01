@@ -4,6 +4,7 @@
  * Export a conversation as markdown or JSON.
  */
 
+import type { ConversationsExportOutput } from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import { type DisplayMessage, readConversation } from "../jsonl-reader.ts";
 
@@ -87,7 +88,7 @@ export async function handleExport(
   input: ExportInput,
   index: ConversationIndex,
   access?: AccessContext,
-): Promise<object> {
+): Promise<ConversationsExportOutput> {
   const entry = index.get(input.id, access);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);

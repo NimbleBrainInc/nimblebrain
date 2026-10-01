@@ -413,7 +413,9 @@ async function finalizeUrlSourceStart(
   log.info(`[connectors] ✓ ${sourceName} ready (${tools.length} tools, remote)`);
   return {
     meta: {
-      version: `remote (${tools.length} tools)`,
+      // "remote" is the sentinel for "a remote connector declares no version"; the
+      // tool count and the connection state are their own fields, never the version.
+      version: "remote",
       ui: ref.ui ?? null,
     },
     sourceName,
@@ -594,7 +596,7 @@ async function startUrlConnectorSource(
     startPromise.catch(() => {});
     return {
       meta: {
-        version: "remote (pending auth)",
+        version: "remote",
         ui: ref.ui ?? null,
       },
       sourceName,
@@ -614,10 +616,10 @@ export async function startConnectorSource(
   ref: ConnectorRef,
   registry: ToolRegistry,
   // Required. The runtime event sink is threaded into the McpSource so
-  // task-augmented tool calls can emit `tool.progress` and a crashed source
-  // its `run.error`. Callers without a real sink (rare) must pass
-  // `new NoopEventSink()` explicitly, so dropping events is a decision rather
-  // than an omission.
+  // task-augmented tool calls can emit `tool.task_status` and a crashed or
+  // restarted source its `connector.health`. Callers without a real sink
+  // (rare) must pass `new NoopEventSink()` explicitly, so dropping events is a
+  // decision rather than an omission.
   eventSink: EventSink,
   opts?: StartConnectorOpts,
 ): Promise<StartConnectorResult> {

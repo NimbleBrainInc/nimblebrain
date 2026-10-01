@@ -96,7 +96,7 @@ If you want a UI surface where a workspace admin edits the instructions (versus 
 }
 ```
 
-Then publish the section's HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain renders it on your connector's settings page, **Settings → Connectors → My App**, after the host's own sections.
+Then publish the section's HTML at `ui://my-app/settings` and call your tools via the iframe bridge. NimbleBrain renders it on your connector's settings page, **Settings → Connectors → My App**, under a Settings heading, before tool permissions.
 
 The section is shown to every member who can open that page. Use `hostContext.connector.canManage` to disable the editor for anyone who is not a workspace admin, and name the tool that writes the instructions in [`admin_tools`](/extensions/admin-tools/) if only an admin should change them: the flag shapes the UI, and `admin_tools` is what the host enforces. See [Settings sections](/extensions/settings-sections/) for both, and the [MCP App Bridge](/apps/bridge/) page for iframe → tool call wiring.
 

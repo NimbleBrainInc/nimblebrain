@@ -8,16 +8,29 @@ import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import type { McpServerHost } from "./mcp-server.ts";
 import type { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
+import type { ApiErrorBody } from "./schemas/responses.ts";
 
 // ---------------------------------------------------------------------------
-// Standardized API error response
+// JSON responses
 // ---------------------------------------------------------------------------
 
-/** Consistent error shape returned by all API endpoints. */
-export interface ApiErrorBody {
-  error: string; // machine-readable error code (snake_case)
-  message: string; // human-readable description
-  details?: Record<string, unknown>; // optional structured context
+/**
+ * A JSON response whose body is the named type `T`, from
+ * `src/api/schemas/responses.ts`. `T` is required: it is never inferred from
+ * the body, so `json({...})` without one does not compile. The named type is
+ * what the web shell and the tests import, so a body that moves without it
+ * fails the build. `check:rest-responses` refuses every other way to write a
+ * JSON response.
+ */
+export function json<T = never>(
+  body: NoInfer<T>,
+  status = 200,
+  headers?: Record<string, string>,
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...headers },
+  });
 }
 
 /** Build a JSON error response with a consistent shape. */
@@ -30,10 +43,7 @@ export function apiError(
 ): Response {
   const body: ApiErrorBody = { error, message };
   if (details) body.details = details;
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json", ...headers },
-  });
+  return json<ApiErrorBody>(body, status, headers);
 }
 
 /**

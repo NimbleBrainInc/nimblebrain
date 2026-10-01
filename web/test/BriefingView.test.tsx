@@ -10,7 +10,6 @@ import type { InstalledConnector } from "../src/api/client";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { BriefingView } = await import("../src/components/briefing/BriefingView");
@@ -24,6 +23,7 @@ let mounted: Mounted | null = null;
 afterEach(() => {
   mounted?.unmount();
   mounted = null;
+  localStorage.clear();
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -100,6 +100,9 @@ function connector(
   return {
     serverName,
     connectorName: serverName,
+    // What the server resolves: the catalog name when there is one, else the server name.
+    displayName: name ?? serverName,
+    disconnectable: false,
     version: "1.0.0",
     state: "running",
     scope: "workspace",
@@ -111,6 +114,7 @@ function connector(
 }
 
 interface Props {
+  workspaceId?: string;
   briefing?: BriefingOutput | null;
   connectors?: InstalledConnector[];
   loading?: boolean;
@@ -123,6 +127,7 @@ interface Props {
 function view(p: Props = {}) {
   return (
     <BriefingView
+      workspaceId={p.workspaceId ?? "ws_test"}
       briefing={p.briefing === undefined ? makeBriefing() : p.briefing}
       connectors={p.connectors ?? []}
       loading={p.loading ?? false}
@@ -165,7 +170,7 @@ describe("BriefingView", () => {
     const row = findByTestId(mounted.container, "briefing-item-unavailable");
     expect(row?.textContent).toBe("Critical: Tasks blocked — unavailable · Tasks");
     const button = row?.getElementsByTagName("button")[0];
-    expect(button?.className).toContain("text-muted-foreground");
+    expect(button?.getElementsByTagName("span")[2]?.className).toContain("text-muted-foreground");
     await act(async () => {
       button?.click();
     });
@@ -177,7 +182,9 @@ describe("BriefingView", () => {
       items: [{ app: "A", facet: "a", label: "Things", count: 3, level: "warning", route: null, state: "ok" }],
     });
     mounted = await mount(view({ briefing }));
-    expect(mounted.container.getElementsByTagName("button")).toHaveLength(0);
+    const row = findByTestId(mounted.container, "briefing-item");
+    // Only the row's hide control is a button; the row itself opens nothing.
+    expect(Array.from(row?.getElementsByTagName("button") ?? []).map((b) => b.getAttribute("data-testid"))).toEqual(["briefing-hide"]);
   });
 
   test("renders a label as text, never as markup", async () => {
@@ -189,7 +196,7 @@ describe("BriefingView", () => {
     expect(mounted.container.textContent ?? "").toContain("<b>bold</b>");
   });
 
-  test("a connector needing sign-in gets a row that opens its page", async () => {
+  test("a connector needing reconnection gets a row that opens its page", async () => {
     const opened: string[] = [];
     mounted = await mount(
       view({
@@ -200,14 +207,26 @@ describe("BriefingView", () => {
     );
     const rows = findAllByTestId(mounted.container, "briefing-connector-status");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.textContent).toBe("Critical: Sign-in required · Gmail");
+    expect(rows[0]?.textContent).toBe("Critical: Reconnection needed · Gmail");
     await act(async () => {
       rows[0]?.getElementsByTagName("button")[0]?.click();
     });
     expect(opened).toEqual(["gmail"]);
   });
 
-  test("every status but ready gets a row, with the connector page's label", async () => {
+  test("a connector at rest (never connected, or disconnected) gets no row", async () => {
+    mounted = await mount(
+      view({
+        briefing: makeBriefing({ items: [] }),
+        connectors: [connector("gmail", "not_connected", "Gmail"), connector("crm", "ready")],
+      }),
+    );
+    // Nothing else needs anyone either, so there is no panel at all.
+    expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
+    expect(mounted.container.innerHTML).toBe("");
+  });
+
+  test("every status but ready and not_connected gets a row, with the connector page's label", async () => {
     mounted = await mount(
       view({
         briefing: makeBriefing({ items: [] }),
@@ -246,13 +265,14 @@ describe("BriefingView", () => {
     );
     const rows = Array.from(mounted.container.getElementsByTagName("li"));
     expect(rows.map((li) => [li.getAttribute("data-level"), li.textContent])).toEqual([
-      ["critical", "Critical: Sign-in required · Notion"],
+      ["critical", "Critical: Reconnection needed · Notion"],
       ["critical", "Critical: 1 Tasks blocked · Tasks"],
       ["warning", "Warning: 4 Drafts · Out"],
       ["info", "Info: Connecting… · Slack"],
       ["info", "Info: 2 Replies · Out"],
     ]);
-    const tone = (li: Element) => li.getElementsByTagName("svg")[0]?.getAttribute("class") ?? "";
+    // The level's tone is on the icon badge, the row's first span.
+    const tone = (li: Element) => li.getElementsByTagName("span")[0]?.getAttribute("class") ?? "";
     expect(tone(rows[0]!)).toContain("text-destructive");
     expect(tone(rows[2]!)).toContain("text-warning");
     expect(tone(rows[3]!)).toContain("text-muted-foreground");
@@ -276,39 +296,146 @@ describe("BriefingView", () => {
     expect(levels).toEqual(["warning", "warning"]);
   });
 
-  describe("empty state", () => {
-    const EMPTY = "Nothing needs you in this workspace.";
-
-    test("renders when there are no items and every connector is ready", async () => {
+  describe("no element", () => {
+    test("when there are no items and every connector is ready", async () => {
       mounted = await mount(
         view({ briefing: makeBriefing({ items: [] }), connectors: [connector("crm", "ready")] }),
       );
-      expect(findByTestId(mounted.container, "workspace-briefing-empty")?.textContent).toBe(EMPTY);
-      expect(mounted.container.getElementsByTagName("li")).toHaveLength(0);
+      expect(findByTestId(mounted.container, "workspace-briefing")).toBeNull();
+      expect(mounted.container.innerHTML).toBe("");
     });
 
-    test("does not render while a connector needs attention", async () => {
+    test("while loading", async () => {
+      mounted = await mount(view({ briefing: null, loading: true }));
+      expect(mounted.container.innerHTML).toBe("");
+    });
+
+    test("but a connector needing attention is enough to show it", async () => {
       mounted = await mount(
         view({ briefing: makeBriefing({ items: [] }), connectors: [connector("g", "needs_auth")] }),
       );
-      expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+      expect(findByTestId(mounted.container, "workspace-briefing")).not.toBeNull();
+    });
+  });
+
+  describe("hiding a row until it changes", () => {
+    const one = (count: number) =>
+      makeBriefing({
+        items: [{ app: "Tasks", facet: "blocked", label: "Tasks blocked", count, level: "critical", route: null, state: "ok" }],
+      });
+    const rows = () => findAllByTestId(mounted!.container, "briefing-item");
+    const hideFirst = async () => {
+      await act(async () => {
+        findByTestId(mounted!.container, "briefing-hide")?.click();
+      });
+    };
+    const rerender = async (element: React.ReactElement) => {
+      mounted?.unmount();
+      mounted = await mount(element);
+    };
+
+    test("hides it, counts it in the header, and Show brings it back", async () => {
+      mounted = await mount(view({ briefing: one(2) }));
+      await hideFirst();
+      expect(rows()).toHaveLength(0);
+      expect(findByTestId(mounted.container, "briefing-show-hidden")?.textContent).toBe("1 hidden · Show");
+      await act(async () => {
+        findByTestId(mounted!.container, "briefing-show-hidden")?.click();
+      });
+      expect(rows()).toHaveLength(1);
     });
 
-    test("does not render while an item is waiting", async () => {
-      mounted = await mount(view({ connectors: [connector("crm", "ready")] }));
-      expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+    test("stays hidden across a reload while the count holds or falls", async () => {
+      mounted = await mount(view({ briefing: one(2) }));
+      await hideFirst();
+      await rerender(view({ briefing: one(2) }));
+      expect(rows()).toHaveLength(0);
+      await rerender(view({ briefing: one(1) }));
+      expect(rows()).toHaveLength(0);
     });
 
-    test("does not render while loading; a skeleton holds the space", async () => {
-      mounted = await mount(view({ briefing: null, loading: true }));
-      expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
-      expect(findByTestId(mounted.container, "workspace-briefing-loading")).not.toBeNull();
+    test("comes back when new work follows progress", async () => {
+      mounted = await mount(view({ briefing: one(2) }));
+      await hideFirst();
+      await rerender(view({ briefing: one(1) }));
+      expect(rows()).toHaveLength(0);
+      await rerender(view({ briefing: one(2) }));
+      expect(rows().map((r) => r.textContent)).toEqual(["Critical: 2 Tasks blocked · Tasks"]);
     });
 
-    test("does not render on an error", async () => {
-      mounted = await mount(view({ briefing: null, error: "boom" }));
-      expect(findByTestId(mounted.container, "workspace-briefing-empty")).toBeNull();
+    test("once back, a later fall does not hide it again", async () => {
+      mounted = await mount(view({ briefing: one(2) }));
+      await hideFirst();
+      await rerender(view({ briefing: one(3) }));
+      await rerender(view({ briefing: one(2) }));
+      expect(rows()).toHaveLength(1);
     });
+
+    test("comes back when the count rises", async () => {
+      mounted = await mount(view({ briefing: one(2) }));
+      await hideFirst();
+      await rerender(view({ briefing: one(3) }));
+      expect(rows().map((r) => r.textContent)).toEqual(["Critical: 3 Tasks blocked · Tasks"]);
+    });
+
+    test("a hidden connector comes back when its status changes", async () => {
+      const empty = makeBriefing({ items: [] });
+      mounted = await mount(view({ briefing: empty, connectors: [connector("n", "needs_auth", "Notion")] }));
+      await hideFirst();
+      await rerender(view({ briefing: empty, connectors: [connector("n", "needs_auth", "Notion")] }));
+      expect(findAllByTestId(mounted.container, "briefing-connector-status")).toHaveLength(0);
+      await rerender(view({ briefing: empty, connectors: [connector("n", "failed", "Notion")] }));
+      expect(findAllByTestId(mounted.container, "briefing-connector-status")).toHaveLength(1);
+    });
+
+    test("forgets a hidden row that went away, so its return shows", async () => {
+      mounted = await mount(view({ briefing: one(2), connectors: [connector("n", "needs_auth")] }));
+      await hideFirst();
+      // The facet goes to zero (the server omits it), then returns at the same count.
+      await rerender(view({ briefing: makeBriefing({ items: [] }), connectors: [connector("n", "needs_auth")] }));
+      await rerender(view({ briefing: one(2), connectors: [connector("n", "needs_auth")] }));
+      expect(rows()).toHaveLength(1);
+    });
+
+    test("is scoped to the workspace", async () => {
+      mounted = await mount(view({ briefing: one(2), workspaceId: "ws_a" }));
+      await hideFirst();
+      await rerender(view({ briefing: one(2), workspaceId: "ws_b" }));
+      expect(rows()).toHaveLength(1);
+    });
+
+    test("keeps the panel, with Show, when every row is hidden", async () => {
+      mounted = await mount(view({ briefing: one(2) }));
+      await hideFirst();
+      expect(findByTestId(mounted.container, "workspace-briefing")).not.toBeNull();
+      expect(findByTestId(mounted.container, "briefing-show-hidden")).not.toBeNull();
+    });
+  });
+
+  test("an error shows while the panel is collapsed", async () => {
+    mounted = await mount(view());
+    await act(async () => {
+      findByTestId(mounted!.container, "briefing-toggle")?.click();
+    });
+    mounted.unmount();
+    mounted = await mount(view({ error: "boom" }));
+    expect(findByTestId(mounted.container, "briefing-toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(findByTestId(mounted.container, "workspace-briefing-error")?.textContent).toContain("boom");
+  });
+
+  test("collapses and expands, and remembers it", async () => {
+    mounted = await mount(view());
+    const toggle = () => findByTestId(mounted!.container, "briefing-toggle");
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => {
+      toggle()?.click();
+    });
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("false");
+    expect(mounted.container.getElementsByTagName("li")).toHaveLength(0);
+    expect(findByTestId(mounted.container, "briefing-critical-count")?.textContent).toBe("1 critical");
+    mounted.unmount();
+    mounted = await mount(view());
+    expect(toggle()?.getAttribute("aria-expanded")).toBe("false");
   });
 
   test("renders an error with a working Retry", async () => {

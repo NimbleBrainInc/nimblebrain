@@ -8,6 +8,7 @@ import { resolveFeatures } from "../../src/config/features.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
+import { engineEvent, firstPayloadOf, runStartPayload } from "../helpers/engine-events.ts";
 
 function makeLogDir(): string {
   return mkdtempSync(join(tmpdir(), "audit-test-"));
@@ -42,7 +43,7 @@ describe("StructuredLogSink identity context", () => {
       userId: "user_abc",
       workspaceId: "ws_test",
     });
-    sink.emit({ type: "run.start", data: { runId: "r1" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.close();
 
     const records = readLogRecords(logDir);
@@ -52,7 +53,7 @@ describe("StructuredLogSink identity context", () => {
 
   it("omits uid and wsId when not set", () => {
     const sink = new StructuredLogSink({ dir: logDir });
-    sink.emit({ type: "run.start", data: { runId: "r1" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.close();
 
     const records = readLogRecords(logDir);
@@ -62,10 +63,12 @@ describe("StructuredLogSink identity context", () => {
 
   it("setUserId and setWorkspaceId update subsequent records", () => {
     const sink = new StructuredLogSink({ dir: logDir });
-    sink.emit({ type: "run.start", data: { runId: "r1" } });
+    sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.setUserId("user_xyz");
     sink.setWorkspaceId("ws_prod");
-    sink.emit({ type: "run.done", data: { runId: "r1" } });
+    sink.emit(
+      engineEvent("run.done", { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 0 }),
+    );
     sink.close();
 
     const records = readLogRecords(logDir);
@@ -244,10 +247,10 @@ describe("createPrivilegeHook audit emission", () => {
 
     expect(result).toBeNull();
     expect(events).toHaveLength(1);
-    expect(events[0]!.type).toBe("audit.permission_denied");
-    expect(events[0]!.data.tool).toBe("skills__create");
-    expect(events[0]!.data.action).toBe("create");
-    expect(events[0]!.data.target).toBe("my-skill");
+    const denied = firstPayloadOf(events, "audit.permission_denied");
+    expect(denied?.tool).toBe("skills__create");
+    expect(denied?.action).toBe("create");
+    expect(denied?.target).toBe("my-skill");
   });
 
   it("does not emit audit event when gate approves", async () => {

@@ -31,11 +31,11 @@
 //     `ensureOpen()`.
 // ---------------------------------------------------------------------------
 
-import type { SseEventMap, SseEventType } from "../types";
+import type { WorkspaceStreamEvents } from "../types";
 import { addAuthLifecycleHandler, getAuthToken } from "./client";
 import { type ConnectEventsOptions, connectEvents, type EventConnection } from "./sse";
 
-type Handler<K extends SseEventType> = (data: SseEventMap[K]) => void;
+type Handler<K extends keyof WorkspaceStreamEvents> = (data: WorkspaceStreamEvents[K]) => void;
 type ReconnectHandler = () => void;
 
 // The connector the singleton actually calls. Defaults to the real SSE
@@ -51,7 +51,7 @@ type Connector = (options: ConnectEventsOptions) => EventConnection;
 let connectImpl: Connector = connectEvents;
 
 // biome-ignore lint/suspicious/noExplicitAny: subscriber set is keyed by event type; type-safety is enforced by `subscribe<K>` at the public boundary
-const eventHandlers = new Map<SseEventType, Set<Handler<any>>>();
+const eventHandlers = new Map<keyof WorkspaceStreamEvents, Set<Handler<any>>>();
 const reconnectHandlers = new Set<ReconnectHandler>();
 
 let connection: EventConnection | null = null;
@@ -68,7 +68,7 @@ function ensureOpen(): void {
   if (connection) return;
   connection = connectImpl({
     token: getAuthToken() ?? undefined,
-    onEvent: <K extends SseEventType>(type: K, data: SseEventMap[K]) => {
+    onEvent: <K extends keyof WorkspaceStreamEvents>(type: K, data: WorkspaceStreamEvents[K]) => {
       const set = eventHandlers.get(type);
       if (!set) return;
       for (const h of set) {
@@ -127,7 +127,10 @@ addAuthLifecycleHandler(authLifecycleHandler);
  * Handler errors are caught so a buggy subscriber can't strand
  * subsequent handlers for the same event.
  */
-export function subscribe<K extends SseEventType>(type: K, handler: Handler<K>): () => void {
+export function subscribe<K extends keyof WorkspaceStreamEvents>(
+  type: K,
+  handler: Handler<K>,
+): () => void {
   ensureOpen();
   let set = eventHandlers.get(type);
   if (!set) {

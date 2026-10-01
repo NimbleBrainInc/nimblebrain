@@ -1,6 +1,7 @@
 import { useCallTool } from "@nimblebrain/synapse/react";
 import { useEffect, useRef, useState } from "react";
 import { BackArrowIcon } from "../icons.tsx";
+import type { AutomationRun } from "../types.ts";
 import { asDict, formatCost, formatDuration, formatTokens, statusDotClass } from "../utils.ts";
 import { SchedulePicker, type ScheduleSpec } from "./SchedulePicker.tsx";
 
@@ -70,7 +71,7 @@ export function CreateAutomationForm({
   const [allowedTools, setAllowedTools] = useState("");
   const [creating, setCreating] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
+  const [testResult, setTestResult] = useState<Partial<AutomationRun> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -146,7 +147,9 @@ export function CreateAutomationForm({
     try {
       const result = await runTool.call({ name: created });
       const data = asDict(result.data);
-      setTestResult((data.run as Record<string, unknown>) ?? data);
+      // A run that outlasts the tool's sync wait returns a dispatched envelope
+      // (status, startedAt) in place of `run`; both render through the same fields.
+      setTestResult((data.run as AutomationRun | undefined) ?? (data as Partial<AutomationRun>));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Test run failed");
     }
@@ -323,7 +326,8 @@ export function CreateAutomationForm({
           <div style={hintStyle}>
             Comma-separated names or globs, e.g. <code>gmail__*</code>, <code>files__read</code> (a
             personal connection is <code>my_gmail__*</code>). Runs can't use anything else, apart
-            from system tools. Leave empty to allow every tool.
+            from <code>nb__search</code> and <code>nb__manage_tools</code>. Leave empty to allow
+            every tool.
           </div>
         </div>
 
@@ -389,8 +393,8 @@ export function CreateAutomationForm({
               }}
             >
               <div style={{ marginBottom: 8 }}>
-                <span className={`dot ${statusDotClass(testResult.status as string, true)}`} />
-                <strong>{testResult.status as string}</strong>
+                <span className={`dot ${statusDotClass(testResult.status, true)}`} />
+                <strong>{testResult.status}</strong>
                 {testResult.inputTokens != null && (
                   <span
                     style={{
@@ -399,8 +403,8 @@ export function CreateAutomationForm({
                       fontSize: 11,
                     }}
                   >
-                    {formatTokens(testResult.inputTokens as number)} in /{" "}
-                    {formatTokens(testResult.outputTokens as number)} out
+                    {formatTokens(testResult.inputTokens)} in /{" "}
+                    {formatTokens(testResult.outputTokens)} out
                   </span>
                 )}
                 {testResult.startedAt && testResult.completedAt && (
@@ -411,21 +415,18 @@ export function CreateAutomationForm({
                       fontSize: 11,
                     }}
                   >
-                    {formatDuration(
-                      testResult.startedAt as string,
-                      testResult.completedAt as string,
-                    )}
+                    {formatDuration(testResult.startedAt, testResult.completedAt)}
                   </span>
                 )}
               </div>
               {testResult.resultPreview && (
                 <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>
-                  {testResult.resultPreview as string}
+                  {testResult.resultPreview}
                 </pre>
               )}
               {testResult.error && (
                 <pre style={{ color: "var(--nb-color-danger)", fontSize: 12 }}>
-                  {testResult.error as string}
+                  {testResult.error}
                 </pre>
               )}
             </div>

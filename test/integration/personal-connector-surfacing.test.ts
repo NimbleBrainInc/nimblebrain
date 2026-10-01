@@ -154,6 +154,7 @@ describe("personal-connector surfacing", () => {
   // /mcp and nb__search doors forward identity the same way.
   it("surfaces through IdentityToolRouter.availableTools (the engine door)", async () => {
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: DEV_IDENTITY.id,
       workspaceId: SHARED_WS,
       runtime,

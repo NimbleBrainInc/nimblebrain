@@ -10,7 +10,12 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import { iconMapFromInstalled, MAX_INLINE_APPS, workspaceApps } from "../lib/workspace-apps";
+import {
+  connectorSettingsPath,
+  iconMapFromInstalled,
+  MAX_INLINE_APPS,
+  workspaceApps,
+} from "../lib/workspace-apps";
 import type { PlacementEntry } from "../types";
 
 function p(over: Partial<PlacementEntry> & { serverName: string; slot: string }): PlacementEntry {
@@ -83,5 +88,23 @@ describe("iconMapFromInstalled", () => {
 
   test("empty list -> empty map", () => {
     expect(iconMapFromInstalled([]).size).toBe(0);
+  });
+});
+
+describe("connectorSettingsPath", () => {
+  test("a connector's settings page in the workspace, its name encoded", () => {
+    expect(connectorSettingsPath("acme", "com-acme-tasks")).toBe(
+      "/w/acme/settings/connectors/com-acme-tasks",
+    );
+    expect(connectorSettingsPath("acme", "a/b")).toBe("/w/acme/settings/connectors/a%2Fb");
+  });
+
+  test("no workspace -> null", () => {
+    expect(connectorSettingsPath(null, "com-acme-tasks")).toBeNull();
+    expect(connectorSettingsPath(undefined, "com-acme-tasks")).toBeNull();
+  });
+
+  test("an identity app has no workspace settings page -> null", () => {
+    expect(connectorSettingsPath("acme", "conversations")).toBeNull();
   });
 });

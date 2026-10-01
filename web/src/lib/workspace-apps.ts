@@ -1,4 +1,5 @@
 import type { PlacementEntry } from "../types";
+import { isIdentityApp } from "./identity-apps";
 
 /**
  * Max apps shown inline under the focused workspace in the sidebar
@@ -46,4 +47,18 @@ export function iconMapFromInstalled(
     if (c.iconUrl) map.set(c.serverName, c.iconUrl);
   }
   return map;
+}
+
+/**
+ * The settings page of an installed connector in a workspace:
+ * `/w/<slug>/settings/connectors/<serverName>`. Null when there is no
+ * workspace to put it in, or for an identity app, which has no workspace
+ * settings page.
+ */
+export function connectorSettingsPath(
+  slug: string | null | undefined,
+  serverName: string,
+): string | null {
+  if (!slug || isIdentityApp(serverName)) return null;
+  return `/w/${slug}/settings/connectors/${encodeURIComponent(serverName)}`;
 }

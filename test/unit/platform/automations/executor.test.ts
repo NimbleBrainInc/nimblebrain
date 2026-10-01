@@ -4,6 +4,7 @@ import {
   type ExecutorContext,
   type TaskFn,
   type TaskFnResult,
+  type TaskFnToolCall,
 } from "../../../../src/platform/automations/executor.ts";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
 import { fakeFetch } from "../../../helpers/fake-fetch.ts";
@@ -326,7 +327,7 @@ describe("createDirectExecutor — stopReason other names the raw stop reason", 
 // ---------------------------------------------------------------------------
 
 describe("createDirectExecutor — connector-unreachable de-masking", () => {
-  function taskFnWithToolCalls(toolCalls: Array<Record<string, unknown>>): TaskFn {
+  function taskFnWithToolCalls(toolCalls: TaskFnToolCall[]): TaskFn {
     return async (): Promise<TaskFnResult> => ({
       output: "I documented the gap in the deliverable.",
       runId: "run_test000000",
@@ -336,7 +337,7 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
     });
   }
 
-  async function runWith(toolCalls: Array<Record<string, unknown>>): Promise<AutomationRun> {
+  async function runWith(toolCalls: TaskFnToolCall[]): Promise<AutomationRun> {
     const executor = createDirectExecutor(taskFnWithToolCalls(toolCalls), () => ({}));
     const { run } = await executor(makeAutomation());
     return run;
@@ -454,7 +455,7 @@ describe("createDirectExecutor — abandoned-tool de-masking", () => {
     return { id, name, input: {}, output: ok ? "{}" : "validation error", ok, ms: 10 };
   }
 
-  async function runWith(toolCalls: Array<Record<string, unknown>>): Promise<AutomationRun> {
+  async function runWith(toolCalls: TaskFnToolCall[]): Promise<AutomationRun> {
     const taskFn: TaskFn = async (): Promise<TaskFnResult> => ({
       output: "Here is the summary. Some items could not be recorded.",
       runId: "run_test000000",
@@ -560,7 +561,7 @@ describe("createDirectExecutor — degraded runs", () => {
     };
   }
 
-  async function runWith(toolCalls: Array<Record<string, unknown>>): Promise<AutomationRun> {
+  async function runWith(toolCalls: TaskFnToolCall[]): Promise<AutomationRun> {
     const taskFn: TaskFn = async (): Promise<TaskFnResult> => ({
       output: "All records created.",
       runId: "run_test000000",

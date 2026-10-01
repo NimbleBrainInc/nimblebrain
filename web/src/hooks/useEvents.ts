@@ -5,7 +5,8 @@ import type {
   ConnectionStateChangedEvent,
   ConversationTitleEvent,
   NotificationCreatedEvent,
-  NotificationDeliveryEvent,
+  NotificationDeliveredEvent,
+  NotificationDeliveryFailedEvent,
   ServerNotificationEvent,
 } from "../types";
 
@@ -37,7 +38,9 @@ export interface UseEventsOptions {
    * `onNotificationCreated`: the change is on an item already in the list, and
    * the list is where the ledger lives.
    */
-  onNotificationDelivery?: (event: NotificationDeliveryEvent) => void;
+  onNotificationDelivery?: (
+    event: NotificationDeliveredEvent | NotificationDeliveryFailedEvent,
+  ) => void;
   /**
    * Called after every successful reconnection (NOT the initial
    * connect). The workspace stream has no `Last-Event-Id` replay, so
@@ -105,7 +108,7 @@ export function useEvents(
     );
     unsubs.push(
       subscribe("conversation.title", (data) => {
-        onConversationTitleRef.current?.(data as ConversationTitleEvent);
+        onConversationTitleRef.current?.(data);
       }),
     );
     unsubs.push(

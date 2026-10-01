@@ -24,7 +24,7 @@ function makeCtx(): AppContext {
   } as unknown as AppContext;
 }
 
-function logout(headers: Record<string, string>): Promise<Response> {
+async function logout(headers: Record<string, string>): Promise<Response> {
   return authRoutes(makeCtx()).request("/v1/auth/logout", {
     method: "POST",
     headers: {

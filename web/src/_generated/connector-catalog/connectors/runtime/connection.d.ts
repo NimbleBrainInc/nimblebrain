@@ -21,7 +21,8 @@ export declare const WORKSPACE_PRINCIPAL_ID = "_workspace";
  *   (init)              → not_authenticated   (URL connector installed, no tokens)
  *   (init)              → starting            (URL connector has persisted tokens; attempting boot)
  *   (init)              → dead                (URL connector installed; boot-start attempted and failed)
- *   (init)              → reauth_required     (boot hit interactive OAuth; the URL was buffered)
+ *   (init)              → reauth_required     (the `auth_lost` flag is set: the credential was
+ *                                              rejected before this boot, or on it)
  *   not_authenticated   → pending_auth        (user clicked Connect; OAuth flow in progress)
  *   reauth_required     → pending_auth        (user clicked Reconnect after RT failure)
  *   pending_auth        → running             (callback succeeded; tokens stored)
@@ -37,7 +38,8 @@ export declare const WORKSPACE_PRINCIPAL_ID = "_workspace";
  *   *                   → stopped             (explicit uninstall — connector removed)
  *
  * UI contract:
- *   - `not_authenticated`: silent. Connections card shows "Connect" button.
+ *   - `not_authenticated`: a resting state, not an error — never connected, or
+ *     disconnected on purpose. Neutral "Not connected", "Connect" button.
  *   - `pending_auth`: silent during normal flow (browser is being redirected). If we render anything, "Connecting…" + spinner.
  *   - `running`: green pill, "Disconnect" button.
  *   - `reauth_required`: amber pill "Reconnection needed", "Reconnect" button.
@@ -51,8 +53,8 @@ export type ConnectionState = "starting" | "running" | "crashed" | "dead" | "sto
 /**
  * URL connector is installed but no tokens exist for this principal. Initial
  * state for a freshly-installed URL connector, and the resting state after
- * `disconnect`. UI shows "Connect" — clicking initiates the OAuth flow
- * (transitioning to `pending_auth`).
+ * `disconnect`. UI shows a neutral "Not connected" with "Connect" — clicking
+ * initiates the OAuth flow (transitioning to `pending_auth`).
  */
  | "not_authenticated"
 /**
@@ -70,7 +72,9 @@ export type ConnectionState = "starting" | "running" | "crashed" | "dead" | "sto
  *
  * Distinct from `not_authenticated` so the UI can surface a stronger
  * affordance ("your previously-working connection broke") and from
- * `dead` so the UI knows reconnection is the recovery path.
+ * `dead` so the UI knows reconnection is the recovery path. The distinction
+ * survives a restart through the `auth_lost` OAuth record
+ * (`src/tools/mcp-oauth-records.ts`).
  */
  | "reauth_required";
 /**

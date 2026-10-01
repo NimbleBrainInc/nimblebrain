@@ -196,6 +196,55 @@ export function setNextRunAt(automation: Automation, nextRun: number | null): vo
 }
 
 /**
+ * The next run of a stored automation, or null when its schedule cannot be
+ * placed in time. Create and update refuse a schedule that throws here (an
+ * unknown timezone), so a stored one reaches it only by a hand edit or a
+ * default timezone that stopped resolving. Null clears `nextRunAt` like a
+ * schedule with no next run: keeping a past value would leave it due, so it
+ * would re-run on every tick. A later reconcile re-seeds it once the schedule
+ * resolves again.
+ */
+function nextRunOrNone(auto: Automation, now: number, defaultTimezone?: string): number | null {
+  try {
+    return computeNextRunAt(auto, now, defaultTimezone);
+  } catch (err) {
+    log.warn("[automations] could not compute next run", {
+      automationId: auto.id,
+      workspaceId: auto.workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
+ * Automations ordered by `nextRunAt`, earliest first, so the oldest due run
+ * takes a free slot. One with no `nextRunAt` (an interval's first run, due
+ * immediately) sorts first.
+ */
+function byNextRunAt(automations: Iterable<Automation>): Automation[] {
+  const at = (a: Automation) => (a.nextRunAt ? new Date(a.nextRunAt).getTime() : 0);
+  return [...automations].sort((a, b) => at(a) - at(b));
+}
+
+/**
+ * Whether `nextRunAt` is a moment the automation's cron schedule actually
+ * fires at. A cron that never occurs (`0 9 31 2 *`) cannot have produced one,
+ * so a stored value there is stale; a real occurrence that has passed is a run
+ * still owed.
+ */
+function isPendingOccurrence(auto: Automation, defaultTimezone?: string): boolean {
+  const { schedule, nextRunAt } = auto;
+  if (schedule.type !== "cron" || !schedule.expression || !nextRunAt) return false;
+  try {
+    const tz = schedule.timezone ?? defaultTimezone;
+    return new Cron(schedule.expression, { timezone: tz }).match(new Date(nextRunAt));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Whether an automation with no `nextRunAt` is due now. Only an interval
  * schedule that has not been given one yet is (its first run fires
  * immediately); a cron schedule without one has no next run, and an event
@@ -348,7 +397,7 @@ function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: numbe
 
 /** Compute and set nextRunAt, pushing it out by backoff during an error streak. */
 function applyNextRunAt(auto: Automation, now: number, defaultTimezone?: string): void {
-  const nextRun = computeNextRunAt(auto, now, defaultTimezone);
+  const nextRun = nextRunOrNone(auto, now, defaultTimezone);
   if (nextRun === null) {
     setNextRunAt(auto, null);
     return;
@@ -502,25 +551,17 @@ export class Scheduler {
 
   /**
    * Seed a missing `nextRunAt`, or clear one whose schedule has no next run.
-   * One on a schedule that still has a next run is left alone. Returns
+   * One on a schedule that still has a next run is left alone, and so is an
+   * occurrence of the schedule that has not run yet: a run deferred at the
+   * concurrency limit holds its past `nextRunAt` until a slot frees, and for a
+   * cron whose last date has passed that is the only run it has left. Returns
    * whether it changed.
    */
   private reconcileNextRunAt(auto: Automation, now: number): boolean {
     if (isEventSchedule(auto.schedule)) return false;
     if (!auto.enabled || !auto.ownerId || !auto.workspaceId) return false;
-    let next: number | null;
-    try {
-      next = computeNextRunAt(auto, now, this.config.defaultTimezone);
-    } catch (err) {
-      // One unreadable schedule must not stop the scheduler starting for
-      // every workspace; it keeps its stored nextRunAt.
-      log.warn("[automations] could not compute next run", {
-        automationId: auto.id,
-        workspaceId: auto.workspaceId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return false;
-    }
+    const next = nextRunOrNone(auto, now, this.config.defaultTimezone);
+    if (next === null && isPendingOccurrence(auto, this.config.defaultTimezone)) return false;
     const changed = next === null ? Boolean(auto.nextRunAt) : !auto.nextRunAt;
     if (changed) setNextRunAt(auto, next);
     return changed;
@@ -700,6 +741,16 @@ export class Scheduler {
     if (!this.running) return;
     this.clearTimer();
 
+    // At the concurrency limit a due automation is deferred, not skipped, so it
+    // stays due: arming for it would tick at zero delay and defer it again, in a
+    // loop. Wake on the heartbeat instead. A tick whose own runs free the slots
+    // re-arms when they settle; the heartbeat covers slots held by Run now and
+    // event runs, which no tick waits on.
+    if (this.activeRuns.size >= this.maxConcurrentRuns) {
+      this.timer = runDetached(() => setTimeout(() => this.onTimer(), MAX_TIMER_MS));
+      return;
+    }
+
     const now = Date.now();
     let minDelay = MAX_TIMER_MS;
 
@@ -739,7 +790,7 @@ export class Scheduler {
     const now = Date.now();
     const dispatched: Promise<AutomationRun>[] = [];
 
-    for (const auto of this.definitions.values()) {
+    for (const auto of byNextRunAt(this.definitions.values())) {
       // One automation cannot take the timer down with it. `armTimer()` below
       // is the only thing that re-arms, and the promise this runs inside is
       // discarded by the `setTimeout` that scheduled it — so a throw reaching
@@ -796,13 +847,13 @@ export class Scheduler {
 
     // Global concurrency limit — shared across ALL owners (one in-process
     // scheduler per platform process, and the platform runs one process per
-    // tenant). A busy owner can defer other owners' due runs to the next
-    // tick; acceptable under the per-tenant-process model. Revisit with a
-    // per-owner fair-share queue only if multi-tenant fairness becomes a need.
-    if (this.activeRuns.size >= this.maxConcurrentRuns) {
-      this.recordSkipped(auto, `Global concurrent run limit (${this.maxConcurrentRuns}) reached`);
-      return null;
-    }
+    // tenant). A due run over the limit is deferred: no run is recorded and
+    // `nextRunAt` stays where it is, so it fires on the first tick with a free
+    // slot. The limit is capacity, not a verdict on the run; skipping would
+    // advance a one-shot cron past its only date and lose the run. `onTimer`
+    // walks due runs oldest first, so deferral is FIFO. Revisit with a per-owner
+    // fair-share queue only if multi-tenant fairness becomes a need.
+    if (this.activeRuns.size >= this.maxConcurrentRuns) return null;
 
     return this.dispatchRun(auto, "scheduled");
   }
@@ -955,7 +1006,7 @@ export class Scheduler {
       // composite key stays consistent with what `loadAll` keyed under.
       fresh.workspaceId = wsId;
       fresh.ownerId = ownerId;
-      const nextRun = computeNextRunAt(fresh, now, this.config.defaultTimezone);
+      const nextRun = nextRunOrNone(fresh, now, this.config.defaultTimezone);
       if (nextRun !== null) {
         // Ensure nextRunAt is in the future — if the computed time is past
         // (e.g., interval based on old lastRunAt), advance by intervalMs from now

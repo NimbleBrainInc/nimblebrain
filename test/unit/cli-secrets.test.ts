@@ -322,7 +322,7 @@ describe("the work directory both entry points share", () => {
 describe("the hidden prompt's keymap", () => {
   // The prompt echoes nothing, so an operator cannot see that a correction did
   // not land. Every one of these is a key a terminal actually sends.
-  test.each([
+  test.each<[string, ReturnType<typeof classifyPromptKey>]>([
     ["\r", "submit"],
     ["\n", "submit"],
     ["\u0004", "submit"], // Ctrl-D

@@ -2,7 +2,6 @@ export { CopyableWorkspaceId } from "./CopyableWorkspaceId";
 export { EmptyState } from "./EmptyState";
 export { InlineError } from "./InlineError";
 export { type ModelEntry, ModelSelect } from "./ModelSelect";
-export { ProvidedBy } from "./ProvidedBy";
 export { RequireActiveWorkspace } from "./RequireActiveWorkspace";
 export { Section } from "./Section";
 export { SettingsDashboardPage } from "./SettingsDashboardPage";

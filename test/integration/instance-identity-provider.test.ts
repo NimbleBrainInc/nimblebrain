@@ -1,3 +1,5 @@
+import type { BootstrapResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * `instance.json` names the identity provider, `dev` included, and nothing
  * else does. A runtime with no `instance.json` (and none passed in) refuses to
@@ -59,7 +61,7 @@ describe("instance.json selects the identity provider", () => {
     handle = startServer({ runtime, port: 0 });
     const res = await fetch(`http://localhost:${handle.port}/v1/bootstrap`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { user: { id: string } };
+    const body = await readJson<BootstrapResponse>(res);
     expect(body.user.id).toBe(DEV_IDENTITY.id);
   });
 

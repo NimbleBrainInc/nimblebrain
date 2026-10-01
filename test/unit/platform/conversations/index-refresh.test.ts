@@ -147,7 +147,7 @@ test("handleFork's new conversation is announced, so it appears on a targeted re
   await index.build(workspacesRoot());
   expect(index.list().totalCount).toBe(1);
 
-  const forked = (await handleFork({ id: CONV }, index)) as { id: string };
+  const forked = await handleFork({ id: CONV }, index);
   await index.refresh();
 
   // Absent, not merely stale: the index has never seen this conversation, so

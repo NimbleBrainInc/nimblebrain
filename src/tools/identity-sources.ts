@@ -35,11 +35,9 @@ export function isIdentitySource(name: string): boolean {
  *
  * Wire tool names are bare `<source>__<tool>`, so a workspace source and a
  * personal connector of the same name would be indistinguishable to the model
- * and at dispatch. That collision is real and is NOT catchable at install time:
- * the install guard only sees the *caller's* own personal connectors, so user A
- * installing `gmail` into a shared workspace cannot know that member B holds a
- * personal `gmail` — or will install one tomorrow, or join the workspace next
- * week. Exactly one of the two doors therefore has to carry a marker.
+ * and at dispatch. Both may legitimately exist: user A installs `gmail` into a
+ * shared workspace while member B holds a personal `gmail` granted there, or one
+ * user holds both. Exactly one of the two doors therefore has to carry a marker.
  *
  * We mark the personal side because it is the **rare** one: a session surfaces
  * every tool of every workspace source, and only the caller's granted personal

@@ -126,7 +126,7 @@ describe("tryBootstrap", () => {
   });
 
   test("returns null on network error without throwing", async () => {
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (_input: string | URL | Request): Promise<Response> => {
       throw new TypeError("Failed to fetch");
     }) as typeof fetch;
 

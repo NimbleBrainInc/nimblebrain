@@ -79,6 +79,15 @@ This is the same rule as the [settings section](/extensions/settings-sections/)'
 - **Personal connectors are not gated.** A connector a user
   [connects for themselves](/using/personal-connectors/) acts on their own
   account, not on the workspace, so the list does not apply to it.
+- **Every call is audited.** The host writes an
+  [`audit.admin_tool_call`](/config/logging/#event-types) line to the workspace
+  log for each call to one of these tools, admitted or refused. It names the
+  person and whether the call came from chat, an automation, your app's UI or
+  another client, and records the arguments. Mark every secret
+  `"writeOnly": true` in the tool's input schema. An argument whose schema
+  contains it anywhere (an optional secret's `anyOf` branch, a nested field, a
+  `$ref`'d definition) is recorded whole as `"[redacted]"`. Pydantic's
+  `SecretStr` emits it for you.
 
 ## The honest limit
 

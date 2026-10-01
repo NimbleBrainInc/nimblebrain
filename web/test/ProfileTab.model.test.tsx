@@ -104,11 +104,10 @@ async function mount(): Promise<Mounted> {
       React.createElement(
         MemoryRouter,
         null,
-        React.createElement(
-          SessionProvider,
-          { session: SESSION },
-          React.createElement(ThemeProvider, null, React.createElement(ProfileTab)),
-        ),
+        React.createElement(SessionProvider, {
+          session: SESSION,
+          children: React.createElement(ThemeProvider, null, React.createElement(ProfileTab)),
+        }),
       ),
     );
   });

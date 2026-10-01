@@ -537,6 +537,7 @@ app.openLink('https://example.com');
 
 action(app, 'openConversation', { id: 'conv_abc123' });
 action(app, 'openApp', { name: '@nimblebraininc/contacts' });
+action(app, 'openConnectorSettings'); // this connector's settings page
 ```
 
 To tell the agent what the user is acting on, push it with `app.updateModelContext()` (see [LLM-aware UI state](#llm-aware-ui-state)) before `sendMessage`; the next turn carries it.
@@ -546,6 +547,7 @@ Legacy API (via `createSynapse`):
 ```typescript
 synapse.action('openConversation', { id: 'conv_abc123' });
 synapse.action('openApp', { name: '@nimblebraininc/contacts' });
+synapse.action('openConnectorSettings'); // this connector's settings page
 
 synapse.chat('Show me the Q2 report');
 

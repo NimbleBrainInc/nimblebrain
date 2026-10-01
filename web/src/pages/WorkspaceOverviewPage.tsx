@@ -29,7 +29,7 @@ import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
 import { cn } from "../lib/utils";
-import { workspaceApps } from "../lib/workspace-apps";
+import { connectorSettingsPath, workspaceApps } from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
@@ -69,7 +69,8 @@ export function WorkspaceOverviewPage() {
 
   const handleConnectorOpen = useCallback(
     (serverName: string) => {
-      navigate(`/w/${slug}/settings/connectors/${serverName}`);
+      const path = connectorSettingsPath(slug, serverName);
+      if (path) navigate(path);
     },
     [navigate, slug],
   );
@@ -129,17 +130,16 @@ export function WorkspaceOverviewPage() {
 
         {/* What needs a member here: each app's open counts, and each
             connector that needs attention. */}
-        <div className="mb-10">
-          <BriefingView
-            briefing={briefing}
-            connectors={connectorsReady ? connectors.installed : []}
-            loading={briefingLoading || !connectorsReady}
-            error={briefingError}
-            onRetry={refreshBriefing}
-            onOpen={handleBriefingOpen}
-            onOpenConnector={handleConnectorOpen}
-          />
-        </div>
+        <BriefingView
+          workspaceId={workspace.id}
+          briefing={briefing}
+          connectors={connectorsReady ? connectors.installed : []}
+          loading={briefingLoading || !connectorsReady}
+          error={briefingError}
+          onRetry={refreshBriefing}
+          onOpen={handleBriefingOpen}
+          onOpenConnector={handleConnectorOpen}
+        />
 
         <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
           Available apps

@@ -1,3 +1,5 @@
+import type { JsonRpcErrorBody } from "../../../src/api/schemas/responses.ts";
+import { readJson } from "../../helpers/http.ts";
 /**
  * Unit tests for `/mcp/<wsId>` session binding.
  *
@@ -38,9 +40,9 @@ const MALLORY = identity("usr_mallory");
 const WS_A = "ws_a";
 const WS_B = "ws_b";
 
-/** The (identity, workspace) a request addresses: who, at which `/mcp/<wsId>`. */
+/** The (identity, workspace, grant) a request addresses: who, at which `/mcp/<wsId>`. */
 function at(who: UserIdentity, workspaceId: string = WS_A) {
-  return { identity: who, workspaceId };
+  return { identity: who, workspaceId, grant: "first_party" as const };
 }
 
 function initRequest(): Request {
@@ -105,7 +107,7 @@ describe("McpServerHost — /mcp session binding", () => {
 
     const res = await host.handle(reuseRequest(sid, "POST"), FAKE_FEATURES, at(MALLORY));
     expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: { data: { reason: string } } };
+    const body = await readJson<JsonRpcErrorBody>(res);
     // Opaque: a non-owner must not be able to tell an owned, live session
     // (`unavailable`) apart from a nonexistent one (`not_found`).
     expect(body.error.data.reason).toBe("not_found");
@@ -139,7 +141,7 @@ describe("McpServerHost — /mcp session binding", () => {
 
     const res = await host.handle(reuseRequest(sid, "POST"), FAKE_FEATURES, at(ALICE, WS_B));
     expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: { data: { reason: string } } };
+    const body = await readJson<JsonRpcErrorBody>(res);
     expect(body.error.data.reason).toBe("not_found");
     expect(host.transportCount()).toBe(1);
 
@@ -176,7 +178,7 @@ describe("McpServerHost — /mcp session binding", () => {
     const reasonFor = async (ctx: ReturnType<typeof at>) => {
       const res = await host.handle(reuseRequest(sid, "POST"), FAKE_FEATURES, ctx);
       expect(res.status).toBe(404);
-      return ((await res.json()) as { error: { data: { reason: string } } }).error.data.reason;
+      return (await readJson<JsonRpcErrorBody>(res)).error.data.reason;
     };
 
     expect(await reasonFor(at(ALICE, WS_A))).toBe("unavailable");

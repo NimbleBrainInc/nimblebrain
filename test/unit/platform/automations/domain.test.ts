@@ -119,6 +119,49 @@ describe("updateAutomation — pause/resume regression (CLI path)", () => {
     expect(result.automation.disabledReason).toBeUndefined();
   });
 
+  test("test_reenable_one_off_paused_past_its_date_clears_the_stale_run", () => {
+    const ctx = makeCtx();
+    const year = new Date().getUTCFullYear() + 1;
+    const created = createAutomation(
+      {
+        name: "One-off send",
+        prompt: "Send it",
+        schedule: { type: "cron", expression: `0 0 9 1 1 * ${year}`, timezone: "UTC" },
+      },
+      ctx,
+    );
+    updateAutomation("One-off send", { enabled: false }, ctx);
+
+    // The date passes while it is paused: its only occurrence is now behind it,
+    // and the stored nextRunAt is that occurrence.
+    const defs = ctx.definitions();
+    const auto = defs.get(created.automation.id)!;
+    auto.schedule = { type: "cron", expression: "0 0 9 1 1 * 2020", timezone: "UTC" };
+    auto.nextRunAt = "2020-01-01T09:00:00.000Z";
+    ctx.save(defs);
+
+    const result = updateAutomation("One-off send", { enabled: true }, ctx);
+    expect(result.automation.enabled).toBe(true);
+    expect(result.automation.nextRunAt).toBeUndefined();
+    expect(ctx.definitions().get(created.automation.id)?.nextRunAt).toBeUndefined();
+  });
+
+  test("test_reenable_recurring_cron_keeps_its_past_run_for_one_catch_up", () => {
+    const ctx = makeCtx();
+    const created = createAutomation(
+      { name: "Daily", prompt: "Digest", schedule: { type: "cron", expression: "0 9 * * *" } },
+      ctx,
+    );
+    updateAutomation("Daily", { enabled: false }, ctx);
+    const defs = ctx.definitions();
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    defs.get(created.automation.id)!.nextRunAt = past;
+    ctx.save(defs);
+
+    const result = updateAutomation("Daily", { enabled: true }, ctx);
+    expect(result.automation.nextRunAt).toBe(past);
+  });
+
   test("scheduler reload fires once per mutation, not on no-op", () => {
     const ctx = makeCtx();
     createAutomation(

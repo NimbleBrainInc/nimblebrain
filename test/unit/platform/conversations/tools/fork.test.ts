@@ -98,7 +98,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = await handleFork({ id: SOURCE_ID }, index);
 
     // Result should have a new ID
     expect(result.id).not.toBe(SOURCE_ID);
@@ -143,7 +143,7 @@ describe("handleFork", () => {
     writeSourceConversation({ model });
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = await handleFork({ id: SOURCE_ID }, index);
 
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
     const newConv = await readConversation(newFilePath);
@@ -156,7 +156,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = await handleFork({ id: SOURCE_ID }, index);
 
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
     const newConv = await readConversation(newFilePath);
@@ -171,10 +171,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID, atMessage: 3 }, index)) as Record<
-      string,
-      unknown
-    >;
+    const result = await handleFork({ id: SOURCE_ID, atMessage: 3 }, index);
 
     // Should have 3 messages (indices 0, 1, 2)
     expect(result.messageCount).toBe(3);
@@ -234,7 +231,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = await handleFork({ id: SOURCE_ID }, index);
     const newFilePath = join(TMP_DIR, `${result.id}.jsonl`);
 
     // Read raw content and verify structure
@@ -269,10 +266,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID, atMessage: 0 }, index)) as Record<
-      string,
-      unknown
-    >;
+    const result = await handleFork({ id: SOURCE_ID, atMessage: 0 }, index);
 
     expect(result.messageCount).toBe(0);
     expect(result.totalInputTokens).toBe(0);
@@ -295,7 +289,7 @@ describe("handleFork", () => {
     writeSourceConversation();
     const index = await buildIndex();
 
-    const result = (await handleFork({ id: SOURCE_ID }, index)) as Record<string, unknown>;
+    const result = await handleFork({ id: SOURCE_ID }, index);
     const id = result.id as string;
 
     expect(id).toMatch(/^conv_[0-9a-f]{16}$/);

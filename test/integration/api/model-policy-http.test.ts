@@ -2,11 +2,18 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { readJson } from "../../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
+
+/** The `400 model_not_allowed` body: `ApiErrorBody` with the refused model and the configured providers. */
+type ModelNotAllowedBody = ApiErrorBody & {
+  details?: { model?: string; configuredProviders?: string[] };
+};
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -60,10 +67,7 @@ describe.each([
     const res = await post(route, { message: "hi", model: REFUSED });
     expect(res.status).toBe(400);
 
-    const body = (await res.json()) as {
-      error: string;
-      details?: { model?: string; configuredProviders?: string[] };
-    };
+    const body = await readJson<ModelNotAllowedBody>(res);
     expect(body.error).toBe("model_not_allowed");
     expect(body.details?.model).toBe(REFUSED);
     expect(body.details?.configuredProviders).toContain("anthropic");

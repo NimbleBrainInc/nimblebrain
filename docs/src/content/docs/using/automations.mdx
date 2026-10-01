@@ -36,6 +36,8 @@ Three schedule types:
 - **Interval** — a fixed interval in milliseconds, minimum 60000 (one minute)
 - **Event** — no time at all: the automation runs when a notification reaches it
 
+The runtime runs two automations at a time across all of its workspaces, and Run now and event runs take those same two slots. A scheduled run that comes due while both are busy waits for a slot and then runs, oldest due first, so a tightly spaced batch runs late rather than being dropped.
+
 ## Running on an event
 
 A connector can record facts nobody asked for — a domain went active, a reply
@@ -121,7 +123,7 @@ Both limits sit under **Limits** in the create form, and the agent can set them 
 ![The create form's Limits section, with a daily token budget and an allowed-tools list filled in](../../../assets/guide/automation-create-limits.png)
 
 - **Token budget** — a cap on the tokens (not dollars) an automation's runs use per day or month, or over its lifetime. It is checked after each run finishes: once the period's total passes the cap, the automation turns off and stays off until you turn it back on. The run that crosses the cap still finishes, so to bound a single run, use the per-run token and iteration caps.
-- **Allowed tools** — tool names or globs the automation's runs may use, such as `gmail__*` for a workspace connector's tools, `my_gmail__*` for your personal connection, or `files__read` for a single tool. A run can't activate or call anything outside the list; NimbleBrain's own system tools (`nb__*`) stay available. Prefer a `<connector>__*` glob, since a connector can rename its tools. Leave it empty to allow every tool. The list can't include the tools that create, update, or delete automations.
+- **Allowed tools** — tool names or globs the automation's runs may use, such as `gmail__*` for a workspace connector's tools, `my_gmail__*` for your personal connection, or `files__read` for a single tool. A run can't activate or call anything outside the list; only `nb__search` and `nb__manage_tools`, which find and activate the listed tools, stay available regardless. Add any other system tool a run needs, such as `nb__use_skill` to load skills or `nb__read_resource` to read a connector's resources. Prefer a `<connector>__*` glob, since a connector can rename its tools. Leave it empty to allow every tool. The list can't include the tools that create, update, or delete automations.
 
 A shorter tool list also makes each run cheaper, because the model is sent fewer tool definitions.
 

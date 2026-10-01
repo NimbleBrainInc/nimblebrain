@@ -1,3 +1,5 @@
+import type { BootstrapResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * The chat surface reads its config by two routes, and they have to agree.
  *
@@ -122,7 +124,7 @@ describe("the two config routes agree", () => {
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
     expect(res.status).toBe(200);
-    return ((await res.json()) as { config: ComposerConfig }).config;
+    return (await readJson<BootstrapResponse>(res)).config;
   }
 
   async function fromGetConfig(): Promise<ComposerConfig> {

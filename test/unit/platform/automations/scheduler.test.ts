@@ -15,6 +15,7 @@ import {
 } from "../../../../src/platform/automations/scheduler.ts";
 import {
   loadOwnerAutomations,
+  readRuns,
   saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
@@ -779,55 +780,132 @@ describe("Scheduler — concurrency", () => {
     scheduler.stop();
   });
 
-  it("global limit: 3rd run skipped when maxConcurrentRuns=2 and 2 are active", async () => {
-    const auto1 = makeAutomation({
-      id: "auto-1",
-      name: "Auto 1",
-      nextRunAt: new Date(Date.now() - 1000).toISOString(),
-    });
-    const auto2 = makeAutomation({
-      id: "auto-2",
-      name: "Auto 2",
-      nextRunAt: new Date(Date.now() - 1000).toISOString(),
-    });
-    const auto3 = makeAutomation({
-      id: "auto-3",
-      name: "Auto 3",
-      nextRunAt: new Date(Date.now() - 1000).toISOString(),
-    });
-    const defs = new Map<string, Automation>();
-    defs.set(auto1.id, auto1);
-    defs.set(auto2.id, auto2);
-    defs.set(auto3.id, auto3);
-    seedDefs(tmpDir, defs);
+  /** Three automations due at staggered past moments, each run held open until resolved. */
+  function seedThreeDue(workDir: string, schedule?: Automation["schedule"]): Automation[] {
+    const autos = [3000, 2000, 1000].map((ago, i) =>
+      makeAutomation({
+        id: `auto-${i + 1}`,
+        name: `Auto ${i + 1}`,
+        ...(schedule ? { schedule } : {}),
+        nextRunAt: new Date(Date.now() - ago).toISOString(),
+      }),
+    );
+    // Seed newest first, so load order is the reverse of due order.
+    seedDefs(workDir, new Map([...autos].reverse().map((a) => [a.id, a])));
+    return autos;
+  }
 
-    // Each automation gets its own blocking promise
-    const promises: Array<{ resolve: (run: AutomationRun) => void }> = [];
+  function createHeldExecutor(): {
+    executor: Executor;
+    callLog: string[];
+    release: () => void;
+  } {
+    const pending: Array<(run: AutomationRun) => void> = [];
     const callLog: string[] = [];
     const executor: Executor = mock(async (auto: Automation, _signal: AbortSignal) => {
       callLog.push(auto.id);
       return new Promise<{ run: AutomationRun; result: null }>((resolve) => {
-        promises.push({ resolve: (run: AutomationRun) => resolve(execOk(run)) });
+        pending.push((run) => resolve(execOk(run)));
       });
     }) as Executor;
+    const release = () => {
+      for (const r of pending.splice(0)) r(makeSuccessRun("any"));
+    };
+    return { executor, callLog, release };
+  }
 
-    const scheduler = new Scheduler(executor, {
-      workDir: tmpDir,
-      maxConcurrentRuns: 2,
-    });
+  it("test_global_limit_reached_defers_the_run_instead_of_skipping_it", async () => {
+    const [, , auto3] = seedThreeDue(tmpDir);
+    const { executor, callLog, release } = createHeldExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
     scheduler.start();
 
-    // Fire onTimer (don't await — blocking executors)
-    scheduler.onTimer();
+    const tick = scheduler.onTimer();
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(callLog.length).toBe(2);
+    expect(callLog).toEqual(["auto-1", "auto-2"]);
     expect(scheduler.getActiveRunIds().length).toBe(2);
+    // Deferred: no run recorded, and still due at the moment it was scheduled for.
+    expect(readRuns(tmpDir, WS, OWNER, auto3.id)).toEqual([]);
+    expect(defOf(scheduler, auto3.id)?.nextRunAt).toBe(auto3.nextRunAt);
+    expect(loadDefs(tmpDir).get(auto3.id)?.nextRunAt).toBe(auto3.nextRunAt);
 
-    // Clean up
-    for (const p of promises) {
-      p.resolve(makeSuccessRun("any"));
+    // The slots free; the next tick runs the deferred automation.
+    release();
+    await tick;
+    // The settled tick re-arms at zero delay for the run it deferred.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(callLog).toEqual(["auto-1", "auto-2", "auto-3"]);
+
+    release();
+    scheduler.stop();
+  });
+
+  it("test_global_limit_deferred_one_shot_cron_survives_reload_and_runs", async () => {
+    // A cron with one date, already passed: its only run is the one deferred.
+    const at = new Date(Date.now() - 60_000);
+    at.setUTCSeconds(0, 0);
+    const oneShot = {
+      type: "cron" as const,
+      expression: `0 ${at.getUTCMinutes()} ${at.getUTCHours()} ${at.getUTCDate()} ${at.getUTCMonth() + 1} * ${at.getUTCFullYear()}`,
+      timezone: "UTC",
+    };
+    // Two runs due before it hold both slots.
+    const busy = ["busy-1", "busy-2"].map((id, i) =>
+      makeAutomation({ id, nextRunAt: new Date(at.getTime() - (2 - i) * 60_000).toISOString() }),
+    );
+    const send = makeAutomation({ id: "send-01", schedule: oneShot, nextRunAt: at.toISOString() });
+    seedDefs(tmpDir, new Map([...busy, send].map((a) => [a.id, a])));
+
+    const { executor, callLog, release } = createHeldExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    scheduler.start();
+    const tick = scheduler.onTimer();
+    await new Promise((r) => setTimeout(r, 50));
+    // send-01 is deferred behind the two older due runs.
+    expect(callLog).toEqual(busy.map((a) => a.id));
+
+    // Any automation mutation reloads; the deferred one-shot must keep its run.
+    scheduler.reload();
+    expect(defOf(scheduler, send.id)?.nextRunAt).toBe(at.toISOString());
+
+    release();
+    await tick;
+    // The settled tick re-arms at zero delay for the run it deferred.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(callLog).toContain("send-01");
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(readRuns(tmpDir, WS, OWNER, send.id).map((r) => r.status)).toEqual(["success"]);
+    expect(defOf(scheduler, send.id)?.nextRunAt).toBeUndefined();
+
+    scheduler.stop();
+  });
+
+  it("test_global_limit_reached_arms_the_heartbeat_not_a_zero_delay_tick", async () => {
+    seedThreeDue(tmpDir);
+    const { executor, release } = createHeldExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    scheduler.start();
+    const tick = scheduler.onTimer();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const originalSetTimeout = globalThis.setTimeout;
+    let capturedDelay = -1;
+    globalThis.setTimeout = ((fn: () => void, delay?: number) => {
+      capturedDelay = delay ?? 0;
+      return originalSetTimeout(fn, delay);
+    }) as typeof globalThis.setTimeout;
+    try {
+      // A reload mid-batch re-arms while auto-3 is due and both slots are held.
+      scheduler.reload();
+      expect(capturedDelay).toBe(60_000);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
     }
+
+    release();
+    await tick;
     scheduler.stop();
   });
 });
@@ -1455,56 +1533,6 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("after skip, automation is no longer due for next interval", async () => {
-    const auto = makeAutomation({
-      id: "auto-skip-test",
-      schedule: { type: "interval", intervalMs: 1_800_000 },
-      nextRunAt: new Date(Date.now() - 1000).toISOString(),
-      lastRunAt: new Date(Date.now() - 1_800_001).toISOString(),
-    });
-    // Also create a blocking automation to trigger the skip
-    const blocking = makeAutomation({
-      id: "auto-blocker",
-      name: "Blocker",
-      nextRunAt: new Date(Date.now() - 2000).toISOString(),
-      lastRunAt: new Date(Date.now() - 60_001).toISOString(),
-    });
-    const defs = new Map<string, Automation>();
-    defs.set(blocking.id, blocking);
-    defs.set(auto.id, auto);
-    seedDefs(tmpDir, defs);
-
-    // Block on the first automation, skip the second
-    let resolveBlock!: (run: AutomationRun) => void;
-    const blockPromise = new Promise<{ run: AutomationRun; result: null }>((r) => {
-      resolveBlock = (run: AutomationRun) => r(execOk(run));
-    });
-    let callCount = 0;
-    const executor: Executor = mock(async (a: Automation, _signal: AbortSignal) => {
-      callCount++;
-      if (a.id === "auto-blocker") return blockPromise;
-      return execOk(makeSuccessRun(a.id));
-    }) as Executor;
-
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
-    scheduler.start();
-
-    // First timer: dispatches blocker, skips auto-skip-test (don't await — blocker blocks)
-    scheduler.onTimer();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(callCount).toBe(1);
-
-    // Check that the skipped automation's nextRunAt was advanced into the future
-    const updated = defOf(scheduler, "auto-skip-test")!;
-    expect(updated.nextRunAt).toBeDefined();
-    const nextMs = new Date(updated.nextRunAt!).getTime();
-    // Should be ~30 min in the future (now + intervalMs since old nextRunAt was past)
-    expect(nextMs).toBeGreaterThan(Date.now() + 1_700_000);
-
-    resolveBlock(makeSuccessRun("auto-blocker"));
-    scheduler.stop();
-  });
-
   it("a skip refused because the workspace is gone drops the automation instead of re-arming at zero delay", async () => {
     // `recordSkipped` writes before it advances `nextRunAt`, so a refused
     // write leaves the automation due. Kept, the timer would re-arm at zero
@@ -1519,13 +1547,15 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
     );
     seedDefs(tmpDir, defs);
 
-    const executor: Executor = mock(async (a: Automation) =>
-      execOk(makeSuccessRun(a.id)),
-    ) as Executor;
-    // Cap of 0: every due automation takes the `recordSkipped` path.
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 0 });
+    // Its first run is held open, so the next tick finds it still active and
+    // takes the `recordSkipped` path.
+    const { executor } = createBlockingExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
+    scheduler.onTimer();
+    await new Promise((r) => setTimeout(r, 50));
     rmSync(join(tmpDir, "workspaces", WS), { recursive: true, force: true });
+    defOf(scheduler, "auto-ghost")!.nextRunAt = new Date(Date.now() - 1000).toISOString();
 
     await scheduler.onTimer();
 
@@ -2096,5 +2126,95 @@ describe("Scheduler — degraded runs", () => {
 
     expect(await runsCounted("degraded")).toBe(before.degraded + 1);
     expect(await runsCounted("failure")).toBe(before.failure + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Scheduler — a cron schedule whose next run cannot be computed
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — cron schedule whose next run cannot be computed", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Create and update refuse an unknown timezone, so a stored row reaches this
+  // only by a hand edit or a default timezone that stops resolving.
+  const BAD_TZ = { type: "cron" as const, expression: "* * * * *", timezone: "Not/AZone" };
+
+  it("never runs a stored row with a past nextRunAt, and clears it", async () => {
+    const auto = makeAutomation({
+      schedule: BAD_TZ,
+      nextRunAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+    const executor = createMockExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+    for (let tick = 0; tick < 5; tick++) await scheduler.onTimer();
+    scheduler.stop();
+
+    expect(executor).not.toHaveBeenCalled();
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+    expect(loadDefs(tmpDir).get(auto.id)?.nextRunAt).toBeUndefined();
+  });
+
+  it("records the run and clears nextRunAt when the next run fails to compute after it", async () => {
+    const auto = makeAutomation({
+      schedule: { type: "cron", expression: "* * * * *" },
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+    const executor = createMockExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+
+    // The stored row's timezone stops resolving while the timer still holds
+    // a due run.
+    const stored = loadDefs(tmpDir).get(auto.id)!;
+    saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
+    defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+
+    for (let tick = 0; tick < 5; tick++) await scheduler.onTimer();
+    scheduler.stop();
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+    expect(loadDefs(tmpDir).get(auto.id)?.runCount).toBe(1);
+  });
+
+  it("clears nextRunAt on a skipped run whose next run fails to compute", async () => {
+    const auto = makeAutomation({
+      schedule: { type: "cron", expression: "* * * * *" },
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+    const { executor, resolve } = createBlockingExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+    scheduler.onTimer();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // While the first run is still active, the timezone stops resolving and
+    // the timer still holds a due run, so the next tick skips it.
+    const stored = loadDefs(tmpDir).get(auto.id)!;
+    saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
+    defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
+    await scheduler.onTimer();
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
+
+    resolve(makeSuccessRun(auto.id));
+    scheduler.stop();
   });
 });

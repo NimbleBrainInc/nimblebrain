@@ -153,8 +153,9 @@ const ManifestFields = {
       description:
         "Tools this automation's runs may use, as names or globs: `gmail__*` for a workspace " +
         "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
-        "run cannot activate or call a tool outside the list; the `nb__*` system tools stay " +
-        "available. Prefer a `<connector>__*` " +
+        "run cannot activate or call a tool outside the list; only nb__search and " +
+        "nb__manage_tools pass without being listed, so name any other nb__ tool a run needs " +
+        "(nb__use_skill for skills, nb__read_resource for resources). Prefer a `<connector>__*` " +
         "glob, since a connector can rename its tools. Omit or leave empty to allow every tool in the " +
         "workspace. May not name automations__create, automations__update, or automations__delete.",
     }),
@@ -570,6 +571,60 @@ export type AutomationsRunOutput =
 
 export interface AutomationsCancelOutput {
   cancelled: boolean;
+  id: string;
+  message: string;
+}
+
+/**
+ * A stored automation, as `automations__create` and `automations__update`
+ * return it. Mirror of `Automation` (`src/platform/automations/types.ts`),
+ * held to it by `src/platform/automations/output-types-drift-guard.ts`.
+ */
+export interface AutomationRecord {
+  id: string;
+  name: string;
+  description?: string;
+  prompt: string;
+  schedule: AutomationScheduleSpec;
+  skill?: string;
+  allowedTools?: string[];
+  maxIterations?: number;
+  maxInputTokens?: number;
+  maxRunDurationMs?: number;
+  model?: string | null;
+  enabled: boolean;
+  ownerId?: string;
+  workspaceId?: string;
+  source: "user" | "agent";
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt?: string;
+  lastRunStatus?: AutomationLastRunStatus;
+  nextRunAt?: string;
+  runCount: number;
+  consecutiveErrors: number;
+  disabledAt?: string;
+  disabledReason?: string;
+  cumulativeInputTokens: number;
+  cumulativeOutputTokens: number;
+  tokenBudget?: AutomationTokenBudget;
+  budgetResetAt?: string;
+}
+
+export interface AutomationsCreateOutput {
+  automation: AutomationRecord;
+  created: boolean;
+  message: string;
+}
+
+export interface AutomationsUpdateOutput {
+  automation: AutomationRecord;
+  updated: boolean;
+  message: string;
+}
+
+export interface AutomationsDeleteOutput {
+  deleted: boolean;
   id: string;
   message: string;
 }

@@ -6,6 +6,10 @@
  */
 
 import { readFile } from "node:fs/promises";
+import type {
+  ConversationSearchResult,
+  ConversationsSearchOutput,
+} from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex, WorkspaceScope } from "../index-cache.ts";
 
 export interface SearchInput {
@@ -13,15 +17,7 @@ export interface SearchInput {
   limit?: number;
 }
 
-interface MatchSnippet {
-  snippet: string;
-}
-
-interface SearchResult {
-  id: string;
-  title: string | null;
-  matches: MatchSnippet[];
-}
+type MatchSnippet = ConversationSearchResult["matches"][number];
 
 const SNIPPET_CONTEXT = 100;
 const MAX_SNIPPETS_PER_CONVERSATION = 3;
@@ -92,7 +88,7 @@ export async function handleSearch(
   index: ConversationIndex,
   scope: WorkspaceScope,
   access?: AccessContext,
-): Promise<object> {
+): Promise<ConversationsSearchOutput> {
   const query = input.query?.trim();
   if (!query) {
     throw new Error("query is required and cannot be empty");
@@ -111,7 +107,7 @@ export async function handleSearch(
     },
     access,
   );
-  const results: SearchResult[] = [];
+  const results: ConversationSearchResult[] = [];
 
   for (const entry of allConversations.conversations) {
     if (results.length >= limit) break;

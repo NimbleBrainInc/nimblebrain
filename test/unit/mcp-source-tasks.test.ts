@@ -9,6 +9,7 @@ import {
   TaskNotFoundError,
   type TaskOwnerContext,
 } from "../../src/tools/types.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
 
 // Unit coverage for McpSource's task-augmented surface.
 //
@@ -29,12 +30,12 @@ function recordingSink(): RecordingSink {
   return { events, sink: { emit: (e) => events.push(e) } };
 }
 
-function progressEvents(events: EngineEvent[]) {
-  return events.filter((e) => e.type === "tool.progress");
+function taskStatusEvents(events: EngineEvent[]) {
+  return payloadsOf(events, "tool.task_status");
 }
 
-function runErrorEvents(events: EngineEvent[]) {
-  return events.filter((e) => e.type === "run.error");
+function healthEvents(events: EngineEvent[]) {
+  return payloadsOf(events, "connector.health");
 }
 
 /**
@@ -210,11 +211,11 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect(result.content).toEqual([{ type: "text", text: "done" }]);
 
     // taskCreated (emitted inline by startToolAsTask) + one taskStatus both
-    // become tool.progress events
-    const progress = progressEvents(events);
+    // become tool.task_status events
+    const progress = taskStatusEvents(events);
     expect(progress.length).toBe(2);
-    expect(progress.every((e) => (e.data as { tool: string }).tool === "do_work")).toBe(true);
-    expect((progress[1]!.data as { message?: string }).message).toBe("halfway");
+    expect(progress.every((d) => d.tool === "do_work")).toBe(true);
+    expect(progress[1]!.message).toBe("halfway");
   });
 
   it("stream-level `error` message is surfaced as isError without restart", async () => {
@@ -236,7 +237,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toMatch(/research failed/);
     expect(restartCalled).toBe(false);
-    expect(runErrorEvents(events).length).toBe(0);
+    expect(healthEvents(events).length).toBe(0);
   });
 
   it("recovers tasks/result content when SDK reports generic `Task <id> failed`", async () => {
@@ -374,7 +375,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect(result.isError).toBe(true);
   });
 
-  it("abort mid-stream emits terminal tool.progress(status=cancelled) and does NOT restart", async () => {
+  it("abort mid-stream emits terminal tool.task_status(status=cancelled) and does NOT restart", async () => {
     const { sink, events } = recordingSink();
     const controller = new AbortController();
     let restartCalled = false;
@@ -398,12 +399,10 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
 
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toMatch(/cancelled/i);
-    const cancelled = progressEvents(events).filter(
-      (e) => (e.data as { status: string }).status === "cancelled",
-    );
+    const cancelled = taskStatusEvents(events).filter((d) => d.status === "cancelled");
     expect(cancelled.length).toBe(1);
     expect(restartCalled).toBe(false);
-    expect(runErrorEvents(events).length).toBe(0);
+    expect(healthEvents(events).length).toBe(0);
   });
 
   it("task-augmented transport failure is NOT auto-retried (no tryRestart, no inline fallback)", async () => {
@@ -426,9 +425,7 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
     expect(result.isError).toBe(true);
     expect((result.content[0] as { text: string }).text).toMatch(/cannot be auto-retried/);
     expect(restartCalled).toBe(false);
-    const crashed = runErrorEvents(events).filter(
-      (e) => (e.data as { event?: string }).event === "source.crashed",
-    );
+    const crashed = healthEvents(events).filter((d) => d.event === "source.crashed");
     expect(crashed.length).toBe(1);
   });
 
@@ -465,9 +462,9 @@ describe("McpSource agent-loop (callToolAsTask wrapper)", () => {
 
     await source.execute("do_work", {});
 
-    const progress = progressEvents(events);
+    const progress = taskStatusEvents(events);
     expect(progress.length).toBe(2);
-    expect(progress.every((e) => (e.data as { taskId: string }).taskId === "task-42")).toBe(true);
+    expect(progress.every((d) => d.taskId === "task-42")).toBe(true);
   });
 });
 

@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
+import type { TokenGrant } from "../../identity/provider.ts";
 import { publicOrigin } from "../../oauth/public-origin.ts";
 import { authenticateRequest, isAuthError } from "../auth-middleware.ts";
 import { MCP_PATH_PREFIX, mcpResourceMetadataUrl, mcpResourceUrl } from "../mcp-resource.ts";
 import type { McpSessionContext } from "../mcp-server.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { requestRateLimit } from "../middleware/rate-limit.ts";
-import { type AppContext, type AuthEnv, apiError } from "../types.ts";
+import type { JsonRpcErrorBody } from "../schemas/responses.ts";
+import { type AppContext, type AuthEnv, apiError, json } from "../types.ts";
 import { isAddressedWorkspaceMember, isWorkspaceIdShape } from "../workspace-address.ts";
 
 /**
@@ -35,11 +37,14 @@ function hasMcpOAuth(ctx: AppContext): boolean {
 
 /** A JSON-RPC error envelope, the shape an MCP client reports to its user. */
 function mcpError(status: number, message: string): Response {
-  return new Response(
-    JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message }, id: null }),
-    { status, headers: { "Content-Type": "application/json" } },
+  return json<JsonRpcErrorBody>(
+    { jsonrpc: "2.0", error: { code: -32000, message }, id: null },
+    status,
   );
 }
+
+/** `AuthEnv` plus the grant the caller's credential carries, set by {@link requireMcpAuth}. */
+type McpAuthEnv = { Variables: AuthEnv["Variables"] & { grant: TokenGrant } };
 
 /**
  * The one answer for a workspace this caller cannot reach: malformed, unknown,
@@ -59,7 +64,7 @@ function workspaceNotFound(): Response {
  * URL so the client can discover the authorization server and obtain one.
  */
 function requireMcpAuth(ctx: AppContext) {
-  return createMiddleware<AuthEnv>(async (c, next) => {
+  return createMiddleware<McpAuthEnv>(async (c, next) => {
     const wsId = c.req.param("wsId") ?? "";
     // Shape only — answered before authentication, and says nothing about
     // whether the workspace exists.
@@ -78,6 +83,7 @@ function requireMcpAuth(ctx: AppContext) {
 
     if (result.identity) {
       c.set("identity", result.identity);
+      c.set("grant", result.grant);
     }
     await next();
   });
@@ -97,7 +103,7 @@ function bareMcpRefused(): Response {
 }
 
 export function mcpRoutes(ctx: AppContext) {
-  const app = new Hono<AuthEnv>();
+  const app = new Hono<McpAuthEnv>();
 
   app.all(MCP_PATH_PREFIX, bareMcpRefused);
   app.all(`${MCP_PATH_PREFIX}/`, bareMcpRefused);
@@ -132,7 +138,11 @@ export function mcpRoutes(ctx: AppContext) {
         return workspaceNotFound();
       }
 
-      const sessionCtx: McpSessionContext = { identity, workspaceId: wsId };
+      const sessionCtx: McpSessionContext = {
+        identity,
+        workspaceId: wsId,
+        grant: c.var.grant.kind,
+      };
       return ctx.mcpHost.handle(c.req.raw, features, sessionCtx);
     },
   );

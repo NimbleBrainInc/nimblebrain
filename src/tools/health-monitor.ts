@@ -1,3 +1,4 @@
+import type { ConnectorHealthPayload } from "../engine/schemas/events.ts";
 import type { EventSink } from "../engine/types.ts";
 import type { McpSource } from "./mcp-source.ts";
 
@@ -223,15 +224,15 @@ export class HealthMonitor {
     }
   }
 
-  /** Emit a `run.error` lifecycle event for a connector, flagging remote sources. */
+  /** Emit a `connector.health` event for a connector, flagging remote sources. */
   private emitConnectorEvent(
     record: ConnectorRecord,
-    event: string,
+    event: ConnectorHealthPayload["event"],
     remote: boolean,
-    extra: Record<string, unknown> = {},
+    extra: Pick<ConnectorHealthPayload, "retryInMs" | "attempt" | "delayMs"> = {},
   ): void {
     this.eventSink.emit({
-      type: "run.error",
+      type: "connector.health",
       data: {
         source: record.source.name,
         event,

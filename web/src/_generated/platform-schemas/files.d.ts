@@ -50,7 +50,7 @@ export declare const FilesCreateInput: import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     }>;
     body: import("@sinclair/typebox").TString;
-    encoding: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"base64" | "text">>;
+    encoding: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"text" | "base64">>;
 }>;
 export type FilesCreateInput = Static<typeof FilesCreateInput>;
 export declare const FilesInfoInput: import("@sinclair/typebox").TObject<{
@@ -67,3 +67,51 @@ export declare const FilesDeleteInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
 export type FilesDeleteInput = Static<typeof FilesDeleteInput>;
+/**
+ * A file's registry entry, as `files__list`, `files__search`, and
+ * `files__info` return it. Mirror of `FileEntry` (`src/files/types.ts`),
+ * held to it by `src/platform/files/output-types-drift-guard.ts`.
+ */
+export interface FileRecord {
+    id: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+    tags: string[];
+    source: "chat" | "agent" | "app" | "manual";
+    conversationId: string | null;
+    createdAt: string;
+    description: string | null;
+    ownerId?: string;
+    workspaceId?: string;
+    visibility?: "private" | "shared";
+    deleted?: true;
+    deletedAt?: string;
+}
+/** What `files__list` returns: one page of matching files and the count of all matches. */
+export interface FilesListOutput {
+    files: FileRecord[];
+    total: number;
+}
+/** What `files__search` returns: the newest matches up to `limit`, and the count of all matches. */
+export interface FilesSearchOutput {
+    files: FileRecord[];
+    total: number;
+}
+/** What `files__create` returns: the stored file's id, its filename, and its size in bytes. */
+export interface FilesCreateOutput {
+    id: string;
+    filename: string;
+    size: number;
+}
+/** What `files__info` returns: the file's registry entry. */
+export type FilesInfoOutput = FileRecord;
+/** What `files__tag` returns: the file's tags after the change. */
+export interface FilesTagOutput {
+    id: string;
+    tags: string[];
+}
+/** What `files__delete` returns. */
+export interface FilesDeleteOutput {
+    deleted: true;
+}

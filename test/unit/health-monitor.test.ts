@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
 
 /** Minimal mock of McpSource exposing only what HealthMonitor needs. */
 function makeMockSource(name: string): McpSource & {
@@ -60,7 +61,7 @@ function makeEventCollector(): EventSink & { events: EngineEvent[] } {
 }
 
 function eventNames(collector: { events: EngineEvent[] }): string[] {
-  return collector.events.map((e) => (e.data as { event: string }).event);
+  return payloadsOf(collector.events, "connector.health").map((d) => d.event);
 }
 
 describe("HealthMonitor", () => {
@@ -261,8 +262,7 @@ describe("HealthMonitor", () => {
     // Backoff resets between episodes: every restarting attempt fires at the
     // base delay (2 ** 0), never the escalated delays a climbing counter
     // would produce.
-    const delays = sink.events
-      .map((e) => e.data as { event: string; delayMs?: number })
+    const delays = payloadsOf(sink.events, "connector.health")
       .filter((d) => d.event === "connector.restarting")
       .map((d) => d.delayMs);
     expect(delays.length).toBe(8);

@@ -8,8 +8,15 @@
  * Separate from SseEventManager which handles workspace-level events.
  */
 
+import type { EngineEvent } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import type { BufferedRunEvent } from "../runtime/run-bus.ts";
+import type {
+  ConversationStreamEvents,
+  HeartbeatEvent,
+  SubscribedEvent,
+  TurnFrame,
+} from "./schemas/events.ts";
 
 /** A subscriber watching a specific conversation's events. */
 interface ConversationSubscriber {
@@ -100,7 +107,7 @@ export class ConversationEventManager {
             subscriberId: id,
             isActive: meta?.isActive ?? false,
             activeSeq: meta?.activeSeq ?? 0,
-          }),
+          } satisfies SubscribedEvent),
         );
         // Replay the in-flight turn (if any) BEFORE registering for live
         // fan-out. start() runs synchronously and we add to the subscribers
@@ -183,11 +190,34 @@ export class ConversationEventManager {
    * @param excludeSubscriberId - Optional subscriber id to skip
    *   (typically the sender's own, to prevent self-echo).
    */
-  broadcastToConversation(
+  broadcastToConversation<K extends TurnFrame>(
+    conversationId: string,
+    eventType: K,
+    data: ConversationStreamEvents[K],
+    excludeSubscriberId?: string,
+  ): void {
+    this.fanOut(conversationId, eventType, data, excludeSubscriberId);
+  }
+
+  /**
+   * Broadcast a run's engine event to the conversation's subscribers, verbatim,
+   * like {@link broadcastToConversation}. `src/api/schemas/events-drift-guard.ts`
+   * holds each forwarded payload to its `ConversationStreamEvents` entry.
+   */
+  forwardToConversation(
+    conversationId: string,
+    event: EngineEvent,
+    excludeSubscriberId?: string,
+  ): void {
+    this.fanOut(conversationId, event.type, event.data, excludeSubscriberId);
+  }
+
+  /** Write one seq-less frame to every subscriber of the conversation but the excluded one. */
+  private fanOut(
     conversationId: string,
     eventType: string,
-    data: Record<string, unknown>,
-    excludeSubscriberId?: string,
+    data: unknown,
+    excludeSubscriberId: string | undefined,
   ): void {
     const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
     const encoded = encoder.encode(message);
@@ -213,7 +243,7 @@ export class ConversationEventManager {
   }
 
   /** Send heartbeat to all subscribers. */
-  private broadcastToAll(eventType: string, data: Record<string, unknown>): void {
+  private broadcastToAll(eventType: "heartbeat", data: HeartbeatEvent): void {
     const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
     const encoded = encoder.encode(message);
 

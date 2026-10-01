@@ -26,7 +26,7 @@ Which services appear under **Add a connector** is set by the platform operator 
 3. Sign in and approve access. You're returned to **Profile → Connectors**, and the service moves into **Your connectors** as **Connected**.
 </Steps>
 
-When the service reports which account you signed in with, the row reads **Connected as** that account (for example, an email address). A service that signs in with OpenID Connect reports it, and so does a Composio connection. To switch accounts, **Disconnect** and connect again with the other account.
+When the service reports which account you signed in with, the row reads **Connected as** that account (for example, an email address). A service whose sign-in supports OpenID Connect reports it, since the platform asks it for your email address, and so does a Composio connection. A service without OpenID Connect has no standard way to report the account, so its row reads **Connected**. So does a service that supports OpenID Connect but won't share your email address with the platform: the sign-in goes ahead without it. To switch accounts, **Disconnect** and connect again with the other account.
 
 Connecting installs the connector on your identity and runs the sign-in in one step. Nothing runs on the platform host except the connection itself; your tokens are stored against your identity, outside any workspace.
 
@@ -52,6 +52,12 @@ You can also grant from **chat**: ask the agent to "grant Granola to this worksp
 ## Using it in a workspace
 
 Once a personal connector is **granted into the workspace you're chatting in**, its tools are available to the agent there, namespaced to that workspace. Ask the agent to use the service ("summarize my last three Granola meetings") and it will call the connector's tools. In a workspace where you haven't granted it, those tools simply aren't present.
+
+## Tool permissions
+
+A connected personal connector has a **Tool permissions** link on its row. It opens a table of the connector's tools, each set to **Allow** or **Disallow**, with **Allow all** and **Disallow all** for the whole set. A tool with no setting is allowed.
+
+The policy is yours, like the connector: it applies in every workspace you grant the connector into, and no admin role is needed to change it. It is separate from a workspace connector of the same name, whose policy the workspace's admins set under Settings → Connectors. From chat, ask the agent to set it; the agent addresses your personal connector with `scope: "identity"`.
 
 ## In a notification route
 

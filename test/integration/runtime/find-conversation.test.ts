@@ -21,10 +21,9 @@ import { mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../../src/api/server.ts";
 import { startServer } from "../../../src/api/server.ts";
-import type { ApiErrorBody } from "../../../src/api/types.ts";
 import { workspaceConversationsDir } from "../../../src/conversation/paths.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";

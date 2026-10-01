@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+# The pinned frontend provides `COPY --parents`, used below for the UI build layer.
 FROM python:3.13-slim AS base
 
 LABEL org.opencontainers.image.title="NimbleBrain"
@@ -24,25 +26,22 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
-COPY --chown=1000:1000 src/ src/
-COPY --chown=1000:1000 scripts/ scripts/
-# Out-of-kernel Sentry preload + its bunfig wiring. bunfig.toml must sit at the
-# WORKDIR (the runtime's cwd) so Bun applies `preload` to `bun run src/cli/...`.
-# Inert unless NB_SENTRY_ENABLED=true; the kernel under src/ stays Sentry-free.
-COPY --chown=1000:1000 bunfig.toml ./
-COPY --chown=1000:1000 instrument/ instrument/
-
 # Build every platform app UI (`src/platform/*/ui`) — each is its own
-# single-file Vite app and must build in the container because dist/
-# is gitignored. UI deps are installed fresh here and removed after build; the
-# source tree's nested node_modules are excluded by .dockerignore
-# (**/node_modules) so they never enter the build context.
+# single-file Vite app and must build in the container because dist/ is
+# gitignored. Only the UI directories are copied for this step, ahead of the
+# rest of src/: each UI builds from its own directory alone, so a change
+# elsewhere in src/ reuses this layer instead of reinstalling and rebuilding
+# every UI. `--parents` keeps each matched directory at its path. UI deps are
+# installed fresh here and removed after build; the source tree's nested
+# node_modules are excluded by .dockerignore (**/node_modules) so they never
+# enter the build context.
 #
 # Built in parallel (each app does its own install + build) rather than
 # serially — they're independent. PIDs are collected and waited on individually
 # so any single app's failure fails the whole RUN (a bare `wait` would mask
 # a nonzero exit). Each subshell tags its own failure with the app's UI path so
 # the culprit is greppable even though parallel output is interleaved.
+COPY --chown=1000:1000 --parents src/platform/*/ui/ ./
 RUN set -e; \
     pids=""; \
     for ui in src/platform/*/ui; do \
@@ -52,6 +51,14 @@ RUN set -e; \
       pids="$pids $!"; \
     done; \
     for p in $pids; do wait "$p"; done
+
+COPY --chown=1000:1000 src/ src/
+COPY --chown=1000:1000 scripts/ scripts/
+# Out-of-kernel Sentry preload + its bunfig wiring. bunfig.toml must sit at the
+# WORKDIR (the runtime's cwd) so Bun applies `preload` to `bun run src/cli/...`.
+# Inert unless NB_SENTRY_ENABLED=true; the kernel under src/ stays Sentry-free.
+COPY --chown=1000:1000 bunfig.toml ./
+COPY --chown=1000:1000 instrument/ instrument/
 
 USER 1000
 

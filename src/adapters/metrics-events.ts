@@ -10,14 +10,22 @@ import {
   toolCallsTotal,
   toolPromotionsTotal,
 } from "../api/metrics.ts";
-import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
+import { dispatchEngineEvent, type EngineEventHandlers } from "../engine/event-dispatch.ts";
+import type {
+  ConnectorHealthPayload,
+  CredentialSealFailurePayload,
+  CredentialStoreReconciledPayload,
+  LlmDonePayload,
+  LlmErrorPayload,
+  RunDonePayload,
+  RunErrorPayload,
+  ToolDonePayload,
+  ToolPromotionChangedPayload,
+} from "../engine/schemas/events.ts";
+import type { EngineEvent, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import { isSealFailureReason } from "../tools/credential-store.ts";
 import { originOf, recordLlmCall } from "../usage/record.ts";
-import type { TokenUsage } from "../usage/types.ts";
-
-/** Payload envelope carried by every engine event (`EngineEvent.data`). */
-type EventData = EngineEvent["data"];
 
 /**
  * Defensive cap on in-flight runs tracked for promoted-but-never-called. A run
@@ -48,48 +56,38 @@ export class MetricsEventSink implements EventSink {
   private readonly runs = new Map<string, { promoted: Set<string>; called: Set<string> }>();
 
   /** Per-event-type metric handlers; event types with no metric are absent. */
-  private readonly handlers: Partial<Record<EngineEventType, (data: EventData) => void>> = {
+  private readonly handlers: EngineEventHandlers = {
     "llm.done": (data) => this.onLlmDone(data),
     "llm.error": (data) => this.onLlmError(data),
     "tool.done": (data) => this.onToolDone(data),
     "tool.promoted": (data) => this.onToolPromoted(data),
     "run.done": (data) => this.onRunDone(data),
     "run.error": (data) => this.onRunError(data),
+    "connector.health": (data) => this.onConnectorHealth(data),
     "audit.credential_seal_failure": (data) => this.onCredentialSealFailure(data),
     "credential_store.reconciled": (data) => this.onCredentialStoreReconciled(data),
   };
 
   emit(event: EngineEvent): void {
-    this.handlers[event.type]?.(event.data);
+    dispatchEngineEvent(this.handlers, event);
   }
 
   /** Record main-loop LLM usage and per-call latency for a completed provider call. */
-  private onLlmDone(data: EventData): void {
-    const model = (data.model as string) ?? "unknown";
-    const usage = data.usage as TokenUsage | undefined;
+  private onLlmDone(data: LlmDonePayload): void {
+    const { model, usage } = data;
     // `data` carries the engine's `runId`; `recordLlmCall` reads attribution
     // off the event and the ambient request scope rather than being told, so a
     // new call path cannot forget to say who it was for.
-    if (usage)
-      recordLlmCall({
-        source: "main",
-        model,
-        usage,
-        ...(typeof data.llmMs === "number" ? { llmMs: data.llmMs } : {}),
-        event: data,
-      });
+    recordLlmCall({ source: "main", model, usage, llmMs: data.llmMs, event: data });
     // Both latency histograms carry `origin` because latency means different
     // things depending on who is waiting: `chat` is a person watching a spinner,
     // `task` is an automation nobody is watching. Blended, a p99 says neither —
     // an alert on it fires the same for a slow overnight run as for a stalled
     // user turn.
     const origin = originOf();
-    // Per-call latency for the p99 alert. `llmMs` is set on every llm.done
-    // (engine measures it around the provider call); guard the type anyway.
-    const llmMs = data.llmMs;
-    if (typeof llmMs === "number") {
-      llmRequestDurationSeconds.observe({ source: "main", model, origin }, llmMs / 1000);
-    }
+    // Per-call latency for the p99 alert; the engine measures it around the
+    // provider call.
+    llmRequestDurationSeconds.observe({ source: "main", model, origin }, data.llmMs / 1000);
     // Time-to-first-token (connect + prefill), the prefill-vs-decode
     // discriminator. Absent when the call emitted no output part — skip rather
     // than record a misleading 0.
@@ -110,64 +108,61 @@ export class MetricsEventSink implements EventSink {
     // ends without a finish part reaches exactly that state, leaving the usage
     // totals at their zero initializers.
     const estimated = data.estimatedInputTokens;
-    if (typeof estimated === "number" && estimated > 0 && (usage?.inputTokens ?? 0) > 0) {
+    if (estimated > 0 && usage.inputTokens > 0) {
       llmInputTokensEstimatedTotal.inc({ source: "main", model, origin }, estimated);
     }
   }
 
   /** Count a terminal provider failure toward the LLM error rate. */
-  private onLlmError(data: EventData): void {
+  private onLlmError(data: LlmErrorPayload): void {
     // Terminal provider failure after retries (aborts excluded upstream).
     // Pairs with nb_llm_calls_total to form the error rate.
-    llmErrorsTotal.inc({ source: "main", model: (data.model as string) ?? "unknown" });
+    llmErrorsTotal.inc({ source: "main", model: data.model });
   }
 
   /** Count the tool call and note it as called for its run's promotion tracking. */
-  private onToolDone(data: EventData): void {
-    toolCallsTotal.inc({ ok: data.ok === false ? "false" : "true" });
-    const runId = data.runId as string | undefined;
-    const name = data.name as string | undefined;
-    if (runId && name) this.run(runId).called.add(name);
+  private onToolDone(data: ToolDonePayload): void {
+    toolCallsTotal.inc({ ok: data.ok ? "true" : "false" });
+    this.run(data.runId).called.add(data.name);
   }
 
   /** Track a tool promotion so run end can label it used-or-not. */
-  private onToolPromoted(data: EventData): void {
-    const runId = data.runId as string | undefined;
-    const toolName = data.toolName as string | undefined;
-    if (runId && toolName) this.run(runId).promoted.add(toolName);
+  private onToolPromoted(data: ToolPromotionChangedPayload): void {
+    this.run(data.runId).promoted.add(data.toolName);
   }
 
   /** Flush the run's promotion samples on normal completion. */
-  private onRunDone(data: EventData): void {
-    this.finalizeRun(data.runId as string | undefined);
+  private onRunDone(data: RunDonePayload): void {
+    this.finalizeRun(data.runId);
   }
 
-  /** Record a connector crash when signaled, then flush the run's promotion samples. */
-  private onRunError(data: EventData): void {
-    // The HealthMonitor reports connector liveness via `run.error`
-    // with a nested `event` discriminator (connector.crashed / restarting /
-    // cooldown / recovered) and no runId. `connector.crashed` is the canonical
-    // crash signal and counting here is 1:1 with a real detection — counts
-    // once per HealthMonitor sweep a source is found down, the per-sweep
-    // cadence the alert thresholds on.
+  /** Flush the failed run's promotion samples. */
+  private onRunError(data: RunErrorPayload): void {
+    this.finalizeRun(data.runId);
+  }
+
+  /** Count a connector the health monitor found down. */
+  private onConnectorHealth(data: ConnectorHealthPayload): void {
+    // `connector.crashed` is the canonical crash signal: one per HealthMonitor
+    // sweep that finds a source down, the per-sweep cadence the alert
+    // thresholds on.
     if (data.event === "connector.crashed") {
-      recordConnectorCrash(data.source as string | undefined, data.remote === true);
+      recordConnectorCrash(data.source, data.remote === true);
     }
-    this.finalizeRun(data.runId as string | undefined);
   }
 
   /** Count a secret that failed to open, re-seal, or was refused as plaintext. */
-  private onCredentialSealFailure(data: EventData): void {
+  private onCredentialSealFailure(data: CredentialSealFailurePayload): void {
     // The store emits only the closed set; anything else is a new reason that
     // has not been added to it, and must not mint a series on its own.
     if (isSealFailureReason(data.reason)) recordCredentialSealFailure(data.reason);
   }
 
   /** Record whether the store is sealed, and whether its boot sweep left it accepting plaintext. */
-  private onCredentialStoreReconciled(data: EventData): void {
-    const sealed = data.sealed === true;
+  private onCredentialStoreReconciled(data: CredentialStoreReconciledPayload): void {
+    const { sealed } = data;
     credentialStoreSealed.set(sealed ? 1 : 0);
-    credentialStorePlaintextAccepted.set(sealed && data.strictPlaintextRefusal !== true ? 1 : 0);
+    credentialStorePlaintextAccepted.set(sealed && !data.strictPlaintextRefusal ? 1 : 0);
   }
 
   /** Get (or lazily create) the per-run promoted/called tracking state. */

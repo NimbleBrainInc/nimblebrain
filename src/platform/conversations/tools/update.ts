@@ -7,6 +7,7 @@
  */
 
 import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
+import type { ConversationsUpdateOutput } from "../../schemas/conversations.ts";
 import type { AccessContext, ConversationIndex } from "../index-cache.ts";
 import {
   type ConversationMeta,
@@ -77,7 +78,7 @@ export async function handleUpdate(
   input: UpdateInput,
   index: ConversationIndex,
   access?: AccessContext,
-): Promise<object> {
+): Promise<ConversationsUpdateOutput> {
   const entry = index.get(input.id, access);
   if (!entry) {
     throw new Error(`Conversation not found: ${input.id}`);

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import type { ConnectorHealthPayload } from "../../src/engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
+import { payloadsOf } from "../helpers/engine-events.ts";
 
 /** Mock remote source — has isRemote() returning true. */
 function makeMockRemoteSource(name: string): McpSource & {
@@ -117,11 +119,11 @@ function makeEventCollector(): EventSink & { events: EngineEvent[] } {
 }
 
 function eventNames(collector: { events: EngineEvent[] }): string[] {
-  return collector.events.map((e) => (e.data as { event: string }).event);
+  return payloadsOf(collector.events, "connector.health").map((d) => d.event);
 }
 
-function eventData(collector: { events: EngineEvent[] }): Record<string, unknown>[] {
-  return collector.events.map((e) => e.data as Record<string, unknown>);
+function eventData(collector: { events: EngineEvent[] }): ConnectorHealthPayload[] {
+  return payloadsOf(collector.events, "connector.health");
 }
 
 describe("HealthMonitor — remote sources", () => {

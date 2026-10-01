@@ -535,8 +535,9 @@ The `action` field is required. All other fields in `params` are action-specific
 |--------|--------|-------------|
 | `openConversation` | `{ id: string }` | Open the chat panel and load a specific conversation. |
 | `openApp` | `{ name: string }` | Open an installed app, named by its route or server name. |
+| `openConnectorSettings` | none | Open this connector's settings page in the current workspace. The connector is always the one that sent the action. |
 
-The bridge hands every action to the registered `onAction` callback, or dispatches it as an `nb:action` custom event on `window` when no callback is registered. The shell ignores an action it does not know. To put a message into the conversation, use [`ui/message`](#uimessage); to open an external page, [`ui/open-link`](#uiopen-link).
+The bridge adds `serverName`, the server whose view sent the action, to every action's params, replacing any `serverName` the app passed. It hands every action to the registered `onAction` callback, or dispatches it as an `nb:action` custom event on `window` when no callback is registered. The shell ignores an action it does not know. To put a message into the conversation, use [`ui/message`](#uimessage); to open an external page, [`ui/open-link`](#uiopen-link).
 
 <Aside type="note">
 `ai.nimblebrain/action` is a NimbleBrain platform extension — it is not part of the ext-apps specification. The host declares it as `experimental["ai.nimblebrain/action"]`.
@@ -569,7 +570,9 @@ Open the OS file picker. The host uploads each chosen file to the workspace file
 
 **The result is always `{ files: [...] }`**, for one file or many, and a cancel answers `{ files: [] }`. A JSON-RPC result is an object by definition and MCP types it as one, so a client that validates against the spec cannot parse a bare array or `null` — it never settles the call, and the picker hangs rather than failing.
 
-Every param is optional: `accept` takes the same value as an `<input type="file">` accept attribute and defaults to any file, `multiple` defaults to `false`, and `maxSize` defaults to 25 MB. `maxSize` is enforced in the browser as a fast fail; the server remains the source of truth, and an oversize file or a failed upload comes back as a JSON-RPC error rather than an empty list.
+Every param is optional: `accept` takes the same value as an `<input type="file">` accept attribute and defaults to any file, `multiple` defaults to `false`, and `maxSize` defaults to the instance's per-file limit. An app may ask for a smaller `maxSize`, never a larger one. The host also holds the chosen files to the instance's total per upload, and refuses a set over it before uploading anything, with an error that names the limit. Both are enforced in the browser as a fast fail; the server remains the source of truth, and an oversize file or a failed upload comes back as a JSON-RPC error rather than an empty list.
+
+**The limits arrive in `hostContext.uploads`** as `{ maxFileSize, maxTotalSize }`, in bytes, so an app can state them before the user picks.
 
 **The call succeeds only when every chosen file was stored.** When any file is refused (over `maxSize`, or refused by the server for its type or size), the host answers a JSON-RPC error whose `data` names each refused file and why, and lists the files it stored anyway:
 

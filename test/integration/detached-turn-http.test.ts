@@ -2,8 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  ApiErrorBody,
+  ChatCancelResponse,
+  ChatStartResponse,
+} from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import type { ApiErrorBody } from "../../src/api/types.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -12,14 +16,8 @@ import { readJson } from "../helpers/http.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /** What `POST /v1/conversations/:id/cancel` answers. */
-interface CancelBody {
-  cancelled: boolean;
-}
 
 /** What `POST …/chat/start` answers: the turn runs on, the id comes back now. */
-interface ChatStartBody {
-  conversationId: string;
-}
 
 // Dev-mode caller (no identity provider) — every request resolves to this
 // owner, and conversations are born in TEST_WORKSPACE_ID's owner partition.
@@ -86,7 +84,7 @@ describe("detached turn HTTP surface", () => {
       body: JSON.stringify({ message: "Hello over HTTP", workspaceId: TEST_WORKSPACE_ID }),
     });
     expect(res.status).toBe(200);
-    const body = await readJson<ChatStartBody>(res);
+    const body = await readJson<ChatStartResponse>(res);
     expect(body.conversationId).toMatch(/^conv_/);
   });
 
@@ -96,7 +94,7 @@ describe("detached turn HTTP surface", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Replay me", workspaceId: TEST_WORKSPACE_ID }),
     });
-    const { conversationId } = await readJson<ChatStartBody>(startRes);
+    const { conversationId } = await readJson<ChatStartResponse>(startRes);
 
     // Let the echo turn run + buffer, then connect a fresh viewer — it should
     // replay the whole turn from the RunBus (within the grace window).
@@ -116,12 +114,12 @@ describe("detached turn HTTP surface", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "cancel target", workspaceId: TEST_WORKSPACE_ID }),
     });
-    const { conversationId } = await readJson<ChatStartBody>(startRes);
+    const { conversationId } = await readJson<ChatStartResponse>(startRes);
     const res = await fetch(`${baseUrl}/v1/conversations/${conversationId}/cancel`, {
       method: "POST",
     });
     expect(res.status).toBe(200);
-    const body = await readJson<CancelBody>(res);
+    const body = await readJson<ChatCancelResponse>(res);
     expect(typeof body.cancelled).toBe("boolean");
   });
 

@@ -1,3 +1,5 @@
+import type { BootstrapResponse } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * /v1/bootstrap provisions a workspace for a user who belongs to none and
  * picks the default focus (`activeWorkspace`) from the user's
@@ -17,19 +19,6 @@ import { resolveFeatures } from "../../src/config/features.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
-
-interface BootstrapResponse {
-  user: { id: string };
-  workspaces: Array<{
-    id: string;
-    name: string;
-    role: "admin" | "member";
-    memberCount: number;
-    connectorCount: number;
-    isPersonal: boolean;
-  }>;
-  activeWorkspace: string | null;
-}
 
 const OPAQUE_ID = /^ws_[0-9a-f]{16}$/;
 
@@ -91,7 +80,7 @@ async function bootstrapFor(userId: string, displayName = userId): Promise<Boots
     preferences: profile?.preferences ?? {},
   });
   expect(res.status).toBe(200);
-  return (await res.json()) as BootstrapResponse;
+  return await readJson<BootstrapResponse>(res);
 }
 
 describe("bootstrap — a user with no workspace gets one", () => {
@@ -182,17 +171,14 @@ describe("bootstrap — default focus", () => {
     expect(body.activeWorkspace).toBe(team!);
   });
 
-  test("workspaces[].isPersonal is true only for activeWorkspace", async () => {
+  test("no workspace entry carries isPersonal", async () => {
     await createUser("user_alice", "Alice");
     await createInOrder(["Team Alpha", "Team Beta"], "user_alice");
 
     const body = await bootstrapFor("user_alice");
 
     expect(body.workspaces).toHaveLength(2);
-    for (const ws of body.workspaces) {
-      expect(ws.isPersonal).toBe(ws.id === body.activeWorkspace);
-    }
-    expect(body.workspaces.filter((w) => w.isPersonal)).toHaveLength(1);
+    expect(body.workspaces.every((w) => !("isPersonal" in w))).toBe(true);
   });
 });
 
@@ -207,14 +193,14 @@ describe("bootstrap — attachment limits", () => {
 
   test("carries the files config when file context is on", async () => {
     const res = await handleBootstrap(runtime, identity, resolveFeatures({ fileContext: true }));
-    const body = (await res.json()) as { config: { files?: unknown } };
+    const body = await readJson<BootstrapResponse>(res);
     const { maxFileSize, maxTotalSize, maxFilesPerMessage } = runtime.getFilesConfig();
     expect(body.config.files).toEqual({ maxFileSize, maxTotalSize, maxFilesPerMessage });
   });
 
   test("omits it when file context is off", async () => {
     const res = await handleBootstrap(runtime, identity, resolveFeatures({ fileContext: false }));
-    const body = (await res.json()) as { config: { files?: unknown } };
+    const body = await readJson<BootstrapResponse>(res);
     expect(body.config.files).toBeUndefined();
   });
 });

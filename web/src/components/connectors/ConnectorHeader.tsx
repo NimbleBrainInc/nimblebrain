@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+import { Menu } from "@base-ui/react/menu";
+import { MoreHorizontal } from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   disconnectConnector,
   type InstalledConnector,
@@ -6,51 +8,65 @@ import {
   initiateMcpOAuth,
 } from "../../api/client";
 import { Button } from "../ui/button";
+import { ConfirmDialog } from "../ui/confirm-dialog";
 import { ComposioApiKeyModal } from "./ComposioApiKeyModal";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { OperatorSetupModal, type OperatorSetupTarget } from "./OperatorSetupModal";
 
 /**
- * Hero block for the Connector Configure page. Carries the visual
- * weight of the page: status indicator + connector identity + the
- * primary call-to-action derived from `installed.status`.
+ * The header of every connector's settings page. One structure for all of them:
  *
- * The status block is an absorbing element — when a connector is
- * `ready`, the whole status row hides and the page reads as a quiet
- * settings surface. When attention is required (`needs_setup`,
- * `needs_auth`, `failed`), the status row appears as the page's first
- * actionable concern, ahead of the secondary sections that show
- * connection details / OAuth client audit / connector config.
+ *   [icon] <display name>  ● <status>                                  [⋯]
+ *          <description>
+ *   [ status banner + primary action — only when something needs doing ]
+ *
+ * - **Identity and state on one line.** The status badge says what is true now
+ *   ("Connected", "Connected as <account>", "Not connected"), so a connection
+ *   needs no row of its own.
+ * - **Secondary and destructive actions behind ⋯.** Documentation, Disconnect and
+ *   Uninstall are rare and, for the last two, costly to click by accident, so they
+ *   do not sit on the page. Each of those two confirms in its own dialog.
+ * - **Technical detail in the menu's footer**, not under the name: the version,
+ *   the tool count and whether the connector has an interface.
+ *
+ * The status banner is an absorbing element — when a connector is `ready` it
+ * hides and the page reads as a quiet settings surface. When attention is
+ * required (`needs_setup`, `needs_auth`, `failed`), it appears as the page's
+ * first actionable concern. `not_connected` shows the same banner in a neutral
+ * tone: nothing is wrong, but Connect is still the one thing to do here.
  *
  * Owns the primary CTA dispatch:
  *   - needs_setup + missing operator OAuth → OperatorSetupModal
- *   - needs_auth (any cause)                → initiateMcpOAuth
+ *   - not_connected                         → initiateMcpOAuth (Connect)
+ *   - needs_auth                            → initiateMcpOAuth (Reconnect)
  *   - failed                                → initiateMcpOAuth (same as Reconnect)
  *   - connecting/starting                   → Cancel (reset a wedged OAuth)
  *
- * Disconnecting an *established* connection is intentionally NOT here —
- * that destructive affordance lives on the connection details section.
- * The one exception is Cancel on a connector wedged mid-connect: it
- * resets a connection that never completed (no live session to tear
- * down), turning a dead-end "Connecting…" back into an actionable
- * Connect. The hero otherwise carries forward-motion CTAs only.
+ * The banner carries forward-motion CTAs only; disconnecting an established
+ * connection is in the menu. The one exception is Cancel on a connector wedged
+ * mid-connect: it resets a connection that never completed (no live session to
+ * tear down), turning a dead-end "Connecting…" back into an actionable Connect.
  */
-export function ConnectorStatusHero({
+export function ConnectorHeader({
   installed,
   canManage,
   onChanged,
+  onUninstall,
 }: {
   installed: InstalledConnector;
   canManage: boolean;
   onChanged: () => void;
+  /** Opens the page's uninstall confirmation. Offered to a workspace admin only. */
+  onUninstall: () => void;
 }) {
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [operatorModalOpen, setOperatorModalOpen] = useState(false);
   const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
   const cat = installed.catalog;
-  const name = cat?.name ?? installed.serverName;
+  const name = installed.displayName;
 
   // The OAuth-app target for OperatorSetupModal, present only for a static-auth
   // entry that declares one. Null is also the "no Set up CTA" signal below.
@@ -154,7 +170,19 @@ export function ConnectorStatusHero({
 
   return (
     <section className="space-y-5">
-      <IdentityRow installed={installed} name={name} />
+      <IdentityRow
+        installed={installed}
+        name={name}
+        menu={
+          <ConnectorMenu
+            installed={installed}
+            canManage={canManage}
+            acting={acting}
+            onDisconnect={() => setConfirmingDisconnect(true)}
+            onUninstall={onUninstall}
+          />
+        }
+      />
 
       <StatusBlock
         installed={installed}
@@ -166,6 +194,14 @@ export function ConnectorStatusHero({
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
+      {canManage && (
+        <DisconnectDialog
+          installed={installed}
+          open={confirmingDisconnect}
+          onOpenChange={setConfirmingDisconnect}
+          onDisconnected={onChanged}
+        />
+      )}
       {operatorModalOpen && operatorTarget && (
         <OperatorSetupModal
           entry={operatorTarget}
@@ -196,38 +232,20 @@ export function ConnectorStatusHero({
 
 // ── Hero sections ───────────────────────────────────────────────────
 
-/** Identity row — icon + name + interactive badge + version + description.
- *  Always present; the page's title block. */
-function IdentityRow({ installed, name }: { installed: InstalledConnector; name: string }) {
-  const cat = installed.catalog;
-
-  // Connector version, two axes: the running serverInfo.version (handshakeVersion —
-  // what's actually connected) takes precedence over the declared catalog/manifest
-  // version (installed.version). Either can arrive as a placeholder sentinel — "remote"
-  // for a remote connector that declares none, "unknown" when it isn't known — which are
-  // not versions and never render. When both are real and differ, the declared one is
-  // surfaced as a small drift note rather than silently hidden.
-  const asVersion = (v: string | undefined) =>
-    v && v !== "remote" && v !== "unknown" ? v : undefined;
-  // Display form: exactly one leading "v", but only for a version NUMBER. Image tags
-  // carry it (v0.1.0) and catalog manifests may not (0.1.0), so normalize both to a
-  // single "v". A build SHA (edge channel, e.g. cd0ab7f) or other non-semver
-  // identifier is shown as-is; the "v" convention is semver's, not a commit's.
-  const vlabel = (v: string) => {
-    const bare = v.replace(/^v/, "");
-    return /^\d+\.\d+/.test(bare) ? `v${bare}` : bare;
-  };
-
-  const declaredVersion = asVersion(installed.version);
-  const runningVersion = asVersion(installed.handshakeVersion);
-  const shownVersion = runningVersion ?? declaredVersion;
-  const versionDrift =
-    runningVersion && declaredVersion && vlabel(runningVersion) !== vlabel(declaredVersion)
-      ? declaredVersion
-      : undefined;
-
+/** Identity row — icon, display name, status badge and description, with the
+ *  connector's menu at the right. Always present; the page's title block. */
+function IdentityRow({
+  installed,
+  name,
+  menu,
+}: {
+  installed: InstalledConnector;
+  name: string;
+  menu: ReactNode;
+}) {
   return (
-    <div className="flex items-start gap-4">
+    // Centred on the icon: with or without a description, the name sits level with it.
+    <div className="flex items-center gap-4">
       {/* The icon falls back to a letter avatar with a deterministic tint
           when no iconUrl is set (or the URL 404s — Asana's vendor link does
           without auth), matching the Browse cards' treatment. */}
@@ -237,30 +255,241 @@ function IdentityRow({ installed, name }: { installed: InstalledConnector; name:
         className="h-12 w-12 rounded-sm text-base"
       />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-xl font-semibold tracking-tight">{name}</h1>
-          {installed.interactive && (
-            <span className="text-3xs px-1.5 py-0.5 rounded bg-accent/50 text-accent-foreground font-medium">
-              Interactive
-            </span>
-          )}
+          <StatusBadge installed={installed} />
         </div>
-        {/* Version: running serverInfo.version primary, declared (catalog/manifest)
-            version shown only when it drifts from what's running. Covers remote
-            connectors (fleet, Composio, OAuth) — which report a handshake version
-            but carry no meaningful connector version — as well as local connectors. */}
-        {shownVersion && (
-          <p className="text-xs text-muted-foreground font-mono mt-0.5">
-            {vlabel(shownVersion)}
-            {versionDrift && <span className="ml-2">catalog {vlabel(versionDrift)}</span>}
-          </p>
-        )}
-        {cat?.description && (
-          <p className="text-sm text-muted-foreground mt-1">{cat.description}</p>
+        {installed.catalog?.description && (
+          <p className="text-sm text-muted-foreground mt-1">{installed.catalog.description}</p>
         )}
       </div>
+      <div className="shrink-0">{menu}</div>
     </div>
   );
+}
+
+/** What is true of the connection now, beside the name. "Connected as <account>"
+ *  when the connector reports whose account it acts as. */
+function StatusBadge({ installed }: { installed: InstalledConnector }) {
+  const account = installed.identity?.email ?? installed.identity?.name;
+  const label =
+    installed.status === "ready"
+      ? account
+        ? `Connected as ${account}`
+        : "Connected"
+      : statusLabel(installed.status);
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      <StatusDot status={installed.status} className="" />
+      {label}
+    </span>
+  );
+}
+
+/**
+ * Disconnect asks first, and says what it leaves: the connection is shared, so it
+ * goes for everyone, while the install, its tool permissions and its settings stay,
+ * and Uninstall is what removes them. Without that, a disconnected connector reads
+ * as something to clean up rather than a connector at rest. A failure stays in the
+ * dialog with its error.
+ */
+export function DisconnectDialog({
+  installed,
+  open,
+  onOpenChange,
+  onDisconnected,
+}: {
+  installed: InstalledConnector;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDisconnected: () => void;
+}) {
+  const name = installed.displayName;
+  return (
+    <ConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Disconnect ${name}?`}
+      description="Disconnects it for everyone in this workspace. Its tools stop working in chats and automations until someone connects it again."
+      confirmLabel="Disconnect"
+      pendingLabel="Disconnecting…"
+      onConfirm={async () => {
+        await disconnectConnector(installed.serverName, installed.scope);
+        onOpenChange(false);
+        onDisconnected();
+      }}
+    >
+      <p className="text-muted-foreground">
+        {name} stays installed, with its tool permissions and settings. To remove it, use Uninstall.
+      </p>
+    </ConfirmDialog>
+  );
+}
+
+/** One entry in the connector's ⋯ menu, in order. */
+export type ConnectorMenuItem =
+  | { kind: "docs"; href: string }
+  | { kind: "disconnect" }
+  | { kind: "uninstall" }
+  | { kind: "details"; text: string };
+
+/**
+ * What the ⋯ menu offers, decided here and only rendered by the component.
+ * A member gets the documentation link and the details; a workspace admin also
+ * gets Disconnect — only for an established connection whose credential a person
+ * authorized (`disconnectable`); a fleet connector has none — and Uninstall.
+ */
+export function connectorMenuItems(
+  installed: InstalledConnector,
+  canManage: boolean,
+): ConnectorMenuItem[] {
+  const items: ConnectorMenuItem[] = [];
+  const docsUrl = installed.catalog?.docsUrl;
+  if (docsUrl) items.push({ kind: "docs", href: docsUrl });
+  if (canManage && installed.disconnectable && installed.state === "running") {
+    items.push({ kind: "disconnect" });
+  }
+  if (canManage) items.push({ kind: "uninstall" });
+  const details = connectorDetails(installed);
+  if (details) items.push({ kind: "details", text: details });
+  return items;
+}
+
+/** The connector's ⋯ menu: renders `connectorMenuItems`, with a rule before the
+ *  destructive item and before the details. */
+function ConnectorMenu({
+  installed,
+  canManage,
+  acting,
+  onDisconnect,
+  onUninstall,
+}: {
+  installed: InstalledConnector;
+  canManage: boolean;
+  acting: boolean;
+  onDisconnect: () => void;
+  onUninstall: () => void;
+}) {
+  const items = connectorMenuItems(installed, canManage);
+  if (items.length === 0) return null;
+  const itemClass =
+    "flex w-full cursor-default items-center px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-foreground/10 data-[disabled]:opacity-50";
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        aria-label={`${installed.displayName} options`}
+        className="rounded-sm p-1.5 text-muted-foreground hover:bg-foreground/5 hover:text-foreground data-[popup-open]:bg-foreground/10"
+      >
+        <MoreHorizontal className="h-4 w-4" aria-hidden />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="end" sideOffset={4} className="z-50">
+          <Menu.Popup className="min-w-52 rounded-sm border bg-popover py-1 text-popover-foreground shadow-md outline-none">
+            {items.flatMap((item, i) => {
+              // A rule separates the destructive item, and the details, from what precedes them.
+              const rule =
+                i > 0 && (item.kind === "uninstall" || item.kind === "details")
+                  ? [
+                      <Menu.Separator
+                        key={`rule-${item.kind}`}
+                        className="my-1 h-px bg-border/60"
+                      />,
+                    ]
+                  : [];
+              return [
+                ...rule,
+                renderMenuItem(item, { itemClass, acting, onDisconnect, onUninstall }),
+              ];
+            })}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
+/** One menu entry, by kind. */
+function renderMenuItem(
+  item: ConnectorMenuItem,
+  handlers: {
+    itemClass: string;
+    acting: boolean;
+    onDisconnect: () => void;
+    onUninstall: () => void;
+  },
+): ReactNode {
+  const { itemClass, acting, onDisconnect, onUninstall } = handlers;
+  switch (item.kind) {
+    case "docs":
+      return (
+        <Menu.LinkItem
+          key="docs"
+          href={item.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={itemClass}
+        >
+          Documentation ↗
+        </Menu.LinkItem>
+      );
+    case "disconnect":
+      return (
+        <Menu.Item key="disconnect" className={itemClass} disabled={acting} onClick={onDisconnect}>
+          Disconnect
+        </Menu.Item>
+      );
+    case "uninstall":
+      return (
+        <Menu.Item
+          key="uninstall"
+          className={`${itemClass} text-destructive`}
+          onClick={onUninstall}
+        >
+          Uninstall…
+        </Menu.Item>
+      );
+    case "details":
+      // A disabled item, not a paragraph: arrow keys reach it and a screen reader reads it.
+      return (
+        <Menu.Item
+          key="details"
+          disabled
+          className="cursor-default px-3 py-1.5 text-2xs text-muted-foreground outline-none data-[highlighted]:bg-foreground/5"
+        >
+          {item.text}
+        </Menu.Item>
+      );
+  }
+}
+
+/**
+ * "v4.0.10 · 27 tools · Interactive", for the menu's footer. The version is the
+ * running server's (serverInfo.version) when it reports one, else the declared
+ * one, and the declared one follows as "catalog vX" when the two differ. The
+ * placeholder sentinels "remote" and "unknown" are not versions and are left out.
+ * A version number gets one leading "v"; a build SHA is shown as-is.
+ */
+export function connectorDetails(installed: InstalledConnector): string {
+  const asVersion = (v: string | undefined) =>
+    v && v !== "remote" && v !== "unknown" ? v : undefined;
+  const running = asVersion(installed.handshakeVersion);
+  const declared = asVersion(installed.version);
+  const version = running ?? declared;
+  const vlabel = (v: string) => {
+    const bare = v.replace(/^v/, "");
+    return /^\d+\.\d+/.test(bare) ? `v${bare}` : bare;
+  };
+  const drift = running && declared && vlabel(running) !== vlabel(declared) ? declared : undefined;
+  return [
+    version ? vlabel(version) : undefined,
+    drift ? `catalog ${vlabel(drift)}` : undefined,
+    installed.toolCount > 0
+      ? `${installed.toolCount} ${installed.toolCount === 1 ? "tool" : "tools"}`
+      : undefined,
+    installed.interactive ? "Interactive" : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** Status block — the page's actionable anchor when the connector needs
@@ -329,10 +558,18 @@ function StatusBlock({
 /** Colored dot + optional pulse. Sits on the leading edge of the
  *  status block — small enough to recede when the user has read the
  *  label, distinctive enough to scan. */
-function StatusDot({ status }: { status: InstalledConnector["status"] }) {
+function StatusDot({
+  status,
+  className = "mt-1.5",
+}: {
+  status: InstalledConnector["status"];
+  className?: string;
+}) {
   const cls: Record<InstalledConnector["status"], string> = {
     ready: "bg-emerald-500",
     needs_setup: "bg-amber-500",
+    // At rest, not a warning: never connected, or disconnected on purpose.
+    not_connected: "bg-muted-foreground/50",
     needs_auth: "bg-amber-500",
     // Pulse on connecting/starting is the one motion exception — it
     // signals "in-flight, do not retry yet" and disappears as soon
@@ -341,7 +578,9 @@ function StatusDot({ status }: { status: InstalledConnector["status"] }) {
     starting: "bg-blue-500 animate-pulse",
     failed: "bg-rose-500",
   };
-  return <span className={`mt-1.5 h-2 w-2 rounded-full ${cls[status]} shrink-0`} aria-hidden />;
+  return (
+    <span className={`${className} h-2 w-2 rounded-full ${cls[status]} shrink-0`} aria-hidden />
+  );
 }
 
 /** One short phrase per status. Reads as "what's true right now,"
@@ -352,8 +591,10 @@ export function statusLabel(status: InstalledConnector["status"]): string {
       return "Ready";
     case "needs_setup":
       return "Configuration required";
+    case "not_connected":
+      return "Not connected";
     case "needs_auth":
-      return "Sign-in required";
+      return "Reconnection needed";
     case "connecting":
       return "Connecting…";
     case "starting":
@@ -437,12 +678,13 @@ function resolveAction(
       return null;
     }
 
-    case "needs_auth": {
-      // First-time auth vs re-auth: same flow, different verb. The
-      // user has stronger context if we tell them which.
-      const verb = installed.state === "reauth_required" ? "Reconnect" : "Connect";
-      return { kind: "oauth", label: verb, adminOnly: authRotatesSharedCredential };
-    }
+    // First-time auth vs re-auth: same flow, different verb. The user has
+    // stronger context if we tell them which.
+    case "not_connected":
+      return { kind: "oauth", label: "Connect", adminOnly: authRotatesSharedCredential };
+
+    case "needs_auth":
+      return { kind: "oauth", label: "Reconnect", adminOnly: authRotatesSharedCredential };
 
     case "failed":
       // Reconnect is usually the fix (token upstream rejected, transport

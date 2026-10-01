@@ -103,3 +103,205 @@ export const ConversationsExportInput = Type.Object(
   { required: ["format"] },
 );
 export type ConversationsExportInput = Static<typeof ConversationsExportInput>;
+
+// ── Output types ────────────────────────────────────────────────────────
+//
+// The display shapes are declared here, where the handlers' outputs name
+// them; `jsonl-reader.ts` builds them and re-exports them for its callers.
+
+/** What `conversations__fork` returns: a summary of the new conversation. */
+export interface ConversationsForkOutput {
+  id: string;
+  title: null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  lastModel: string | null;
+  preview: string;
+}
+
+/**
+ * A single chat turn as it should be rendered. One per `user.message` event
+ * and one per `run.start`→`run.done` span — never split per iteration.
+ */
+export interface DisplayMessage {
+  role: "user" | "assistant";
+  /** Aggregated text across all text blocks (convenient for copy/title). */
+  content: string;
+  /** Ordered content blocks — the primary structure for rendering. */
+  blocks: DisplayBlock[];
+  timestamp: string;
+  userId?: string;
+  /** All tool calls flattened out of blocks — derived, for consumers that scan them. */
+  toolCalls?: DisplayToolCall[];
+  /** Aggregate LLM usage for the whole turn; undefined for user messages. */
+  usage?: DisplayUsage;
+  files?: DisplayFile[];
+  /**
+   * Non-"complete" run terminations bubble up here: a `run.done` stopReason
+   * verbatim ("max_iterations", "cancelled", …), "error" for a `run.error`,
+   * "interrupted" for a run with no terminal event.
+   */
+  stopReason?: string;
+  /**
+   * True when this assistant turn has no terminal event yet (no run.done /
+   * run.error) — i.e. the run was still in flight when the file was read. Lets
+   * a live viewer tell a partial disk snapshot from a finished turn and decide
+   * whether to reconcile against the server's replay.
+   */
+  pending?: boolean;
+  /**
+   * Skills the runtime composed into this turn's prompt (the `skills.loaded`
+   * event for the run) — the Context Ledger's durable source. The live stream
+   * carries the same payload for an in-flight turn; this is how a reopened
+   * conversation re-derives the ledger line. Absent when the turn loaded none.
+   */
+  skillsLoaded?: DisplaySkillsContext;
+}
+
+/** One skill in a turn's `skills.loaded` telemetry, projected for display. */
+export interface DisplaySkill {
+  id: string;
+  /** The skill's own name — resolved here, safe to render directly. */
+  name: string;
+  /** The MCP server that published it; absent for filesystem skills. */
+  connector?: string;
+  scope: "org" | "workspace" | "user" | "provided";
+  tokens: number;
+  loadedBy: string;
+  reason: string;
+}
+
+/** A turn's skills-loaded telemetry — the ledger line's data. */
+export interface DisplaySkillsContext {
+  skills: DisplaySkill[];
+  totalTokens: number;
+}
+
+export type DisplayBlock =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "tool"; toolCalls: DisplayToolCall[] };
+
+export interface DisplayToolCall {
+  id: string;
+  /** Full tool name (may include "server__tool" prefix). */
+  name: string;
+  /** Server prefix from the name (before "__"), if any — convenience for routing. */
+  appName?: string;
+  /** Terminal status — tool calls from history are never mid-flight. */
+  status: "done" | "error";
+  ok: boolean;
+  ms: number;
+  input: Record<string, unknown>;
+  /**
+   * MCP tool-result envelope — identical shape to what streaming emits, so the
+   * UI consumes one type regardless of source. `content[0].text` is the tool's
+   * text output; `isError` mirrors `!ok`.
+   */
+  result: DisplayToolResult;
+  resourceUri?: string;
+  resourceLinks?: DisplayResourceLink[];
+}
+
+export interface DisplayToolResult {
+  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  structuredContent?: Record<string, unknown>;
+  isError: boolean;
+}
+
+export interface DisplayResourceLink {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+  description?: string;
+}
+
+export interface DisplayUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  /**
+   * Cache-write and reasoning subtotals carried through so fork() can
+   * round-trip them onto the new file. The chat UI doesn't currently
+   * render these per-message, but losing them here means a forked
+   * conversation would silently report lower cost than the original on
+   * cache-heavy or reasoning-heavy turns.
+   */
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  /** Model of the last LLM call in the run (runs can switch models mid-turn). */
+  model: string;
+  llmMs: number;
+}
+
+export interface DisplayFile {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  extracted: boolean;
+}
+
+/** Metadata `conversations__get` returns for a conversation. */
+export interface ConversationMetadata {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  lastModel: string | null;
+  /** The model the conversation is bound to; absent on records predating the binding. */
+  model?: string;
+  ownerId?: string;
+  /** The workspace the conversation is sealed to; absent when the record carries no stamp. */
+  workspaceId?: string;
+}
+
+/**
+ * What `conversations__get` returns. `expand: "metadata"` sends no messages and
+ * `expand: "full"` the whole transcript; the default sends the most recent
+ * messages under a character budget, and says so when it dropped older ones.
+ */
+export interface ConversationsGetOutput {
+  metadata: ConversationMetadata;
+  totalMessages: number;
+  messages: DisplayMessage[];
+  truncated?: true;
+  droppedOlderMessages?: number;
+  truncationHint?: string;
+}
+
+/** What `conversations__update` returns: the conversation as a reader now projects it. */
+export interface ConversationsUpdateOutput {
+  id: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  lastModel: string | null;
+  preview: string;
+}
+
+/** What `conversations__export` returns: the transcript as Markdown or as JSON text. */
+export interface ConversationsExportOutput {
+  content: string;
+}
+
+/** One conversation whose messages matched a `conversations__search` query. */
+export interface ConversationSearchResult {
+  id: string;
+  title: string | null;
+  matches: Array<{ snippet: string }>;
+}
+
+/** What `conversations__search` returns. */
+export interface ConversationsSearchOutput {
+  results: ConversationSearchResult[];
+  totalMatches: number;
+}

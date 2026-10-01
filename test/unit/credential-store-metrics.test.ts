@@ -16,7 +16,11 @@ import {
   credentialStoreSealed,
 } from "../../src/api/metrics.ts";
 import { type CredentialSealer, createCredentialSealer } from "../../src/tools/credential-seal.ts";
-import { FileCredentialStore, SEAL_FAILURE_REASONS } from "../../src/tools/credential-store.ts";
+import {
+  FileCredentialStore,
+  SEAL_FAILURE_REASONS,
+  type SealFailureReason,
+} from "../../src/tools/credential-store.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
@@ -76,7 +80,7 @@ describe("nb_credential_seal_failures_total", () => {
       skipped: await failures("reseal_skipped"),
       kid: await failures("unknown_kid"),
     };
-    const emit = (reason: string) =>
+    const emit = (reason: SealFailureReason) =>
       sink.emit({
         type: "audit.credential_seal_failure",
         data: { scope: "workspace:ws_test", key: "acme.key", reason },
@@ -86,15 +90,6 @@ describe("nb_credential_seal_failures_total", () => {
     emit("unknown_kid");
     expect((await failures("reseal_skipped")) - before.skipped).toBe(2);
     expect((await failures("unknown_kid")) - before.kid).toBe(1);
-  });
-
-  test("a reason outside the closed set mints no series", async () => {
-    new MetricsEventSink().emit({
-      type: "audit.credential_seal_failure",
-      data: { scope: "instance", key: "acme.key", reason: "something_new" },
-    });
-    const metric = await credentialSealFailuresTotal.get();
-    expect(metric.values.some((s) => s.labels.reason === "something_new")).toBe(false);
   });
 
   test("a sweep over a planted sealed-looking file counts it", async () => {

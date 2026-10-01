@@ -1,4 +1,5 @@
 import { createMiddleware } from "hono/factory";
+import { humanSize } from "../../files/human-size.ts";
 import { apiError } from "../types.ts";
 
 export interface BodyLimitOptions {
@@ -135,6 +136,17 @@ async function discardBody(request: Request, declaredLength: number, limit: numb
 }
 
 /**
+ * The refusal's message, naming the size and the limit. The message is what a
+ * client shows, so the limit belongs in it and not only in `details`. A
+ * multipart body is an upload (a chat message's or the file picker's), and its
+ * declared length counts the form encoding as well as the files.
+ */
+function payloadTooLargeMessage(received: number, limit: number, isMultipart: boolean): string {
+  const noun = isMultipart ? "Upload" : "Request body";
+  return `${noun} is ${humanSize(received)}; the limit is ${humanSize(limit)}.`;
+}
+
+/**
  * Request body size limit middleware.
  * Returns 413 Payload Too Large if Content-Length exceeds the applicable
  * limit. JSON payloads are bounded by `maxBytes`; multipart uploads use
@@ -170,11 +182,16 @@ export function bodyLimit(maxBytes: number, opts: BodyLimitOptions = {}) {
     const limit = isMultipart && opts.multipart !== undefined ? opts.multipart : maxBytes;
     if (received > limit) {
       await discardBody(c.req.raw, received, limit);
-      return apiError(413, "payload_too_large", "Payload too large", {
-        limit,
-        received,
-        contentType,
-      });
+      return apiError(
+        413,
+        "payload_too_large",
+        payloadTooLargeMessage(received, limit, isMultipart),
+        {
+          limit,
+          received,
+          contentType,
+        },
+      );
     }
     await next();
   });

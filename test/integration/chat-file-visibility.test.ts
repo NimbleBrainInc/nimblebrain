@@ -1,3 +1,5 @@
+import type { ApiErrorBody } from "../../src/api/schemas/responses.ts";
+import { readJson } from "../helpers/http.ts";
 /**
  * End-to-end regression test for the bug where chat-multipart uploads were
  * written to a tenant-global `/data/files/` directory and therefore invisible
@@ -12,6 +14,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import type {
+  FileRecord,
+  FilesCreateOutput,
+  FilesListOutput,
+} from "../../src/platform/schemas/files.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -97,26 +104,10 @@ function extractStructured(body: unknown): unknown {
   return JSON.parse(first.text);
 }
 
-async function listFiles(): Promise<
-  {
-    id: string;
-    filename: string;
-    source: string;
-    mimeType: string;
-    conversationId: string | null;
-  }[]
-> {
+async function listFiles(): Promise<FileRecord[]> {
   const res = await callFilesTool("list", { limit: 100 });
   expect(res.status).toBe(200);
-  const structured = extractStructured(res.body) as {
-    files: {
-      id: string;
-      filename: string;
-      source: string;
-      mimeType: string;
-      conversationId: string | null;
-    }[];
-  };
+  const structured = extractStructured(res.body) as FilesListOutput;
   return structured.files;
 }
 
@@ -196,14 +187,14 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     for (const id of [newShape, legacyShape]) {
       const res = await fetch(`${baseUrl}/v1/files/${id}`);
       expect(res.status).toBe(404);
-      const body = (await res.json()) as { error: string };
+      const body = await readJson<ApiErrorBody>(res);
       expect(body.error).toBe("not_found");
     }
 
     // Negative control: malformed id gets rejected at the regex, 400.
     const bad = await fetch(`${baseUrl}/v1/files/not-a-valid-id`);
     expect(bad.status).toBe(400);
-    const badBody = (await bad.json()) as { error: string };
+    const badBody = await readJson<ApiErrorBody>(bad);
     expect(badBody.error).toBe("bad_request");
   });
 
@@ -213,7 +204,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
       body: Buffer.from("agent bytes").toString("base64"),
     });
     expect(agentCreate.status).toBe(200);
-    const agentId = (extractStructured(agentCreate.body) as { id: string }).id;
+    const agentId = (extractStructured(agentCreate.body) as FilesCreateOutput).id;
 
     await uploadChatFile("chat bytes", "from-chat.bin", "application/octet-stream");
 

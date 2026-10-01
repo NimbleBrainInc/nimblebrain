@@ -70,7 +70,6 @@ mock.module("../api/client", () => ({
   installConnector,
 }));
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useLocation } = await import("react-router-dom");
@@ -94,7 +93,7 @@ const ADMIN_WORKSPACE = {
   id: "ws_test",
   name: "Acme",
   memberCount: 1,
-  connectors: [],
+  connectorCount: 0,
   userRole: "admin" as const,
 };
 

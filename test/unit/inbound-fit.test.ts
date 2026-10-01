@@ -110,7 +110,7 @@ describe("normalizeForReplay", () => {
         type: "tool-call",
         toolCallId: "tc-1",
         toolName: "echo",
-        input: { x: 1 }, // already an object — no parse needed
+        input: '{"x":1}',
       },
     ];
     const out = normalizeForReplay(input);

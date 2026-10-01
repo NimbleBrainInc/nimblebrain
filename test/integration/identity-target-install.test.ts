@@ -35,8 +35,8 @@ import {
  * mock, so its happy path lives in the unit suite
  * (`connector-tools-composio-install.test.ts`); here we pin the gate (composio is
  * admitted, and fails on the missing platform prerequisite, not the auth type).
- * The collision rule ("a serverName can't be both a personal connector and a
- * shared-workspace install") is enforced at both install points.
+ * A connector can be both a personal connector and a workspace install: the two
+ * are owned apart (identity vs workspace) and reached through different doors.
  */
 
 const USER: UserIdentity = {
@@ -330,8 +330,8 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     expect(resultText(result)).toMatch(/isn't supported for personal connectors yet/i);
   });
 
-  describe("forbid the collision (both install directions)", () => {
-    test("shared-workspace install then identity install of the same connector → rejected", async () => {
+  describe("a personal connector and a workspace install coexist (both install directions)", () => {
+    test("workspace install then identity install of the same connector → both land", async () => {
       const shared = await h.tool.handler({
         action: "install",
         entry: dcrEntry(),
@@ -344,15 +344,13 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
         entry: dcrEntry(),
         scope: "identity",
       });
-      expect(identity.isError).toBe(true);
-      expect(resultText(identity)).toMatch(/already installed as a connector in a workspace/i);
-      // The rejected identity install wrote nothing.
+      expect(identity.isError).toBe(false);
       expect(await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id)).toHaveLength(
-        0,
+        1,
       );
     });
 
-    test("identity install then shared-workspace install of the same connector → rejected", async () => {
+    test("identity install then workspace install of the same connector → both land", async () => {
       const identity = await h.tool.handler({
         action: "install",
         entry: dcrEntry(),
@@ -365,13 +363,10 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
         entry: dcrEntry(),
         wsId: h.sharedWsId,
       });
-      expect(shared.isError).toBe(true);
-      expect(resultText(shared)).toMatch(/already one of your personal connectors/i);
+      expect(shared.isError).toBe(false);
     });
 
-    // No workspace is exempt: one the caller alone belongs to collides the same
-    // way, since it can gain members like any other.
-    test("install into the caller's own workspace then identity install → rejected", async () => {
+    test("install into the caller's own workspace then identity install → both land", async () => {
       const own = await h.tool.handler({ action: "install", entry: dcrEntry(), wsId: h.ownWsId });
       expect(own.isError).toBe(false);
 
@@ -380,21 +375,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
         entry: dcrEntry(),
         scope: "identity",
       });
-      expect(identity.isError).toBe(true);
-      expect(resultText(identity)).toMatch(/already installed as a connector in a workspace/i);
-    });
-
-    test("identity install then install into the caller's own workspace → rejected", async () => {
-      const identity = await h.tool.handler({
-        action: "install",
-        entry: dcrEntry(),
-        scope: "identity",
-      });
       expect(identity.isError).toBe(false);
-
-      const own = await h.tool.handler({ action: "install", entry: dcrEntry(), wsId: h.ownWsId });
-      expect(own.isError).toBe(true);
-      expect(resultText(own)).toMatch(/already one of your personal connectors/i);
     });
   });
 });

@@ -20,7 +20,7 @@ describe("multi-model routing", () => {
     it("echoes user message through AgentEngine with custom model", async () => {
       const echoModel = createEchoModel();
       const router = new StaticToolRouter([], () => ({
-        content: "",
+        content: [],
         isError: false,
       }));
       const engine = new AgentEngine(echoModel, router, new NoopEventSink());
@@ -81,7 +81,7 @@ describe("multi-model routing", () => {
 
       const echoModel = createEchoModel();
       const router = new StaticToolRouter([], () => ({
-        content: "",
+        content: [],
         isError: false,
       }));
       const engine = new AgentEngine(echoModel, router, sink);

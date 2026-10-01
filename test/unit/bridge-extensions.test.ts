@@ -217,8 +217,28 @@ describe("Bridge — ai.nimblebrain/action", () => {
     });
 
     expect(customEventsFired.filter((e) => e.type === "nb:action")).toEqual([
-      { type: "nb:action", detail: { action: "openApp", name: "crm" } },
-      { type: "nb:action", detail: { action: "navigate", route: "/settings" } },
+      { type: "nb:action", detail: { action: "openApp", name: "crm", serverName: "test-app" } },
+      {
+        type: "nb:action",
+        detail: { action: "navigate", route: "/settings", serverName: "test-app" },
+      },
+    ]);
+
+    handle.destroy();
+  });
+
+  it("names the sending server itself, whatever server the app claims to be", () => {
+    const { iframe } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+
+    simulatePostMessage(iframe, {
+      jsonrpc: "2.0",
+      method: "ai.nimblebrain/action",
+      params: { action: "openConnectorSettings", serverName: "other-app" },
+    });
+
+    expect(customEventsFired.filter((e) => e.type === "nb:action")).toEqual([
+      { type: "nb:action", detail: { action: "openConnectorSettings", serverName: "test-app" } },
     ]);
 
     handle.destroy();
@@ -250,7 +270,7 @@ describe("Bridge — methods the host does not serve", () => {
   it("ignores the synapse/download-file notification older SDKs send", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");
-    const createObjectURL = mock(() => "blob:x");
+    const createObjectURL = mock((): `blob:${string}` => "blob:x");
     const original = URL.createObjectURL;
     URL.createObjectURL = createObjectURL;
     try {

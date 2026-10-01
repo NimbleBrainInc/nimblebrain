@@ -82,11 +82,11 @@ async function mount(seen: { unread: number }): Promise<void> {
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        NotificationsProvider,
-        { token: "t", workspaceId: WS },
-        probeElement(seen),
-      ),
+      React.createElement(NotificationsProvider, {
+        token: "t",
+        workspaceId: WS,
+        children: probeElement(seen),
+      }),
     );
   });
   unmount = () => {
@@ -188,7 +188,15 @@ describe("a live frame", () => {
     listCalls = 0;
 
     await act(async () => {
-      lastOptions?.onEvent("notification.delivery_failed", { workspaceId: WS });
+      lastOptions?.onEvent("notification.delivery_failed", {
+        workspaceId: WS,
+        id: "n1",
+        seq: 1,
+        routeId: "rt_1",
+        target: "slack",
+        attempts: 3,
+        outcome: "failed",
+      });
     });
     await settle();
 

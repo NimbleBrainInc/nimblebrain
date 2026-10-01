@@ -14,7 +14,7 @@ import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
 import { toSlug, toWsId } from "../lib/workspace-slug";
-import type { AppContext, ConfigInfo, FileLimits, ToolCallResult } from "../types";
+import type { AppContext, ConfigInfo, FileLimits, ToolCallResponse } from "../types";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ export interface ChatContextValue extends Omit<UseChatReturn, "sendMessage"> {
 const ChatContext = createContext<ChatContextValue | null>(null);
 
 /** Extract the config payload from a get_config result, preferring structuredContent over the first text block (parsed as JSON, else the raw block). */
-function extractConfigPayload(result: ToolCallResult): unknown {
+function extractConfigPayload(result: ToolCallResponse): unknown {
   const raw = result.structuredContent;
   if (raw) return raw;
   const block = result.content?.[0];
@@ -363,6 +363,15 @@ export function useChatConfigContext(): ChatConfigContextValue {
     throw new Error("useChatConfigContext must be used within a ChatProvider");
   }
   return ctx;
+}
+
+/**
+ * The instance's attachment limits, or `undefined` outside a ChatProvider.
+ * For code that can render without one (app mounts, their tests), which
+ * treats unknown limits as none known rather than an error.
+ */
+export function useFileLimits(): FileLimits | undefined {
+  return useContext(ChatConfigContext)?.fileLimits;
 }
 
 /** Consume streaming/conversation state (messages, streaming, tools). */

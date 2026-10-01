@@ -421,6 +421,18 @@ export class McpSource implements ToolSource {
    *  with no successful connect between them; a healthy idle-close heals on the
    *  first call. */
   private lastReconnectFailedAt: number | null = null;
+  /** When this source went down involuntarily (a crash, or a start that failed),
+   *  or null while it is up or was never started. Kept across the failed
+   *  restarts of one outage and cleared only by a successful connect, so it
+   *  measures the whole outage, not the last attempt. A deliberate `stop()`
+   *  leaves it alone: {@link stopped} is what marks that terminal. Read by
+   *  {@link awaitRestartingSource} to tell a source that is restarting from one
+   *  that is gone. */
+  private downSince: number | null = null;
+  /** Timings for {@link awaitRestartingSource}. Defaults to
+   *  `RESTARTING_SOURCE_WAIT`; overridable so tests run the policy without real
+   *  waits. */
+  private restartingSourceWait: RestartingSourceWait = RESTARTING_SOURCE_WAIT;
   private startedAt: number | null = null;
   /** Optional `instructions` string returned by the MCP server during
    *  `initialize`. Captured after connect so callers (e.g. the system
@@ -534,8 +546,8 @@ export class McpSource implements ToolSource {
 
   /**
    * `eventSink` is REQUIRED, not optional. Emitted events include
-   * `tool.progress` during task-augmented calls and `run.error` when the
-   * source crashes.
+   * `tool.task_status` during task-augmented calls and `connector.health` when
+   * the source crashes or restarts.
    *
    * Pass `new NoopEventSink()` only when a caller deliberately wants to
    * discard events (e.g. short-lived sources that aren't part of an agent
@@ -570,7 +582,7 @@ export class McpSource implements ToolSource {
   /**
    * The source name to put on an emitted event.
    *
-   * Consumers of `tool.progress` / `run.error` read this as a wire name. A
+   * Consumers of `tool.task_status` / `connector.health` read this as a wire name. A
    * personal connector emitting its bare name there is indistinguishable from a
    * workspace source installed under the same name, which is the exact
    * ambiguity the marker exists to remove.
@@ -876,6 +888,10 @@ export class McpSource implements ToolSource {
    * stream its change notifications ride.
    */
   private onConnected(): void {
+    // Both success seams (the bottom of `start()` and the OAuth retry) pass
+    // through here, and the OAuth retry's first attempt ran
+    // `cleanupOnStartFailure()`, so the outage ends here, not in `start()`.
+    this.downSince = null;
     const client = this.client;
     const transport = this.transport;
     if (!client || !transport) return;
@@ -1003,6 +1019,9 @@ export class McpSource implements ToolSource {
     // every failed connect would emit a parallel crash event for a
     // source the listener has never seen "running."
     this.stopping = true;
+    // A failed start is an outage whether or not the source was ever up, and a
+    // failed restart continues the outage already running: keep its start time.
+    this.downSince ??= Date.now();
     try {
       if (this.transport) await this.transport.close();
       if (this.inProcessServer) await this.inProcessServer.close();
@@ -1039,8 +1058,9 @@ export class McpSource implements ToolSource {
   private emitSourceCrashed(error: string): void {
     if (this.stopping || this.dead) return;
     this.dead = true;
+    this.downSince ??= Date.now();
     this.eventSink.emit({
-      type: "run.error",
+      type: "connector.health",
       data: {
         source: this.eventSourceName,
         event: "source.crashed",
@@ -1489,6 +1509,50 @@ export class McpSource implements ToolSource {
     return false;
   }
 
+  /**
+   * Wait for a source that is expected back, so a restart shorter than the wait
+   * costs the caller latency instead of a strike. Returns whether a live client
+   * is available afterward.
+   *
+   * Expected back means not deliberately stopped and down for less than
+   * `horizonMs`. Only the source knows both, so it decides here rather than
+   * asking an outside observer. The call waits until the earlier of its own
+   * bound (`waitMs`) and the end of the horizon, and stops early on `signal`.
+   * Past the horizon it returns false at once, so a source that is not coming
+   * back costs at most one horizon of waiting per outage before every call
+   * strikes instantly again.
+   *
+   * While waiting it re-attempts the connection itself, at most once per
+   * `retryMs` across all waiters (spaced from `lastReconnectFailedAt`, and
+   * coalesced onto one stop()/start() by {@link tryRestart}). It cannot rely on
+   * HealthMonitor alone: that sweeps every 30s and tracks only the sources that
+   * existed at boot.
+   */
+  private async awaitRestartingSource(signal?: AbortSignal): Promise<boolean> {
+    const { waitMs, horizonMs, retryMs } = this.restartingSourceWait;
+    if (this.downSince === null || this.isStopped()) return false;
+    const deadline = Math.min(Date.now() + waitMs, this.downSince + horizonMs);
+    while (!this.client) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0 || signal?.aborted) return false;
+      const nextAttemptAt = (this.lastReconnectFailedAt ?? 0) + retryMs;
+      if (Date.now() < nextAttemptAt) {
+        await settleWithin(null, Math.min(nextAttemptAt - Date.now(), remaining), signal);
+        continue;
+      }
+      // A restart in flight passes through stop(), which sets `stopped` until its
+      // start() clears it, so only a quiet `stopped` means a deliberate teardown.
+      if (!this.restartInFlight && this.isStopped()) return false;
+      const attempt = this.tryRestart().then(() => {
+        if (!this.client) this.lastReconnectFailedAt = Date.now();
+      });
+      // A connect can outlast the deadline (15s remote handshake timeout). Stop
+      // waiting then; the attempt runs on and serves the next call if it lands.
+      await settleWithin(attempt, remaining, signal);
+    }
+    return true;
+  }
+
   async stop(): Promise<void> {
     // Tell our onclose handlers this is a deliberate teardown — see
     // `stopping` field. Without this, every graceful stop would emit a
@@ -1832,17 +1896,25 @@ export class McpSource implements ToolSource {
     // — the #581 policy), so short-circuiting on `dead` here would deny that
     // self-heal and surface a spurious "not started". Only a genuinely torn-down
     // (null) client errors, and only after an on-demand reconnect fails — healing
-    // the window between an idle-close and the next HealthMonitor tick.
-    if (!this.client && !(await this.reconnectOnDemand())) {
+    // the window between an idle-close and the next HealthMonitor tick. A source
+    // that is restarting is then waited for, bounded, so a brief restart does not
+    // cost the call a strike.
+    if (
+      !this.client &&
+      !(await this.reconnectOnDemand()) &&
+      !(await this.awaitRestartingSource(signal))
+    ) {
       // Deliberately NOT marked infrastructure. This branch is reached only
-      // after `reconnectOnDemand()` has already failed, and a failed reconnect
-      // is floored behind RECONNECT_COOLDOWN_MS — so every later call returns
-      // here instantly and for free. Exempting it from the strike count would
-      // remove the run's only brake on a source that is not coming back, and
-      // let the model re-issue the same dead call every iteration. Tripping at
-      // three is the correct outcome here; the sibling spelling of the same
-      // condition (a source absent from the registry, via
-      // `mapOrchestratorErrorToToolResult`) is unmarked for the same reason.
+      // after `reconnectOnDemand()` has failed and the source is either not
+      // expected back or did not return within the bounded wait. Past the
+      // restart horizon, and with a failed reconnect floored behind
+      // RECONNECT_COOLDOWN_MS, every later call returns here instantly and for
+      // free. Exempting it from the strike count would remove the run's only
+      // brake on a source that is not coming back, and let the model re-issue
+      // the same dead call every iteration. Tripping at three is the correct
+      // outcome here; the sibling spelling of the same condition (a source
+      // absent from the registry, via `mapOrchestratorErrorToToolResult`) is
+      // unmarked for the same reason.
       return {
         content: textContent(`McpSource "${this.name}" not started`),
         isError: true,
@@ -1924,14 +1996,14 @@ export class McpSource implements ToolSource {
     isTaskAugmented: boolean,
   ): ToolResult | Promise<ToolResult> {
     // Cancellation isn't a crash — the source is healthy, the client just asked
-    // to stop. Emit a terminal tool.progress for task-augmented calls so UIs
-    // watching the progress stream transition out of "working", then surface the
+    // to stop. Emit a terminal tool.task_status for task-augmented calls so a
+    // watcher of the task stream transitions out of "working", then surface the
     // error to the agent without marking the source dead or triggering restart.
     const wasAborted = signal?.aborted === true;
     if (wasAborted) {
       if (isTaskAugmented) {
         this.eventSink.emit({
-          type: "tool.progress",
+          type: "tool.task_status",
           data: {
             source: this.eventSourceName,
             tool: toolName,
@@ -2551,7 +2623,7 @@ export class McpSource implements ToolSource {
     // Emit the initial progress event inline so callers see `taskCreated`
     // before `startToolAsTask` returns.
     this.eventSink.emit({
-      type: "tool.progress",
+      type: "tool.task_status",
       data: {
         source: this.name,
         tool: toolName,
@@ -2690,7 +2762,7 @@ export class McpSource implements ToolSource {
    * `startToolAsTask` until the stream terminates.
    *
    * Responsibilities:
-   *   - Emit `tool.progress` for every `taskStatus` so the chat UI renders live.
+   *   - Emit `tool.task_status` for every `taskStatus`.
    *   - Refresh `handle.latestTask` on every `taskStatus`.
    *   - Resolve `handle.terminalDeferred` on `result`, reject on `error`.
    *   - On thrown errors (transport crash, abort), reject + stamp a
@@ -2728,14 +2800,14 @@ export class McpSource implements ToolSource {
 
   /**
    * `taskStatus`: refresh `handle.latestTask` + expiry and emit a live
-   * `tool.progress`. No-op when the message carried no task.
+   * `tool.task_status`. No-op when the message carried no task.
    */
   private applyTaskStatus(handle: TaskHandle, task: Task | undefined, toolName: string): void {
     if (!task) return;
     handle.latestTask = task;
     handle.expiresAt = computeExpiry(task);
     this.eventSink.emit({
-      type: "tool.progress",
+      type: "tool.task_status",
       data: {
         source: this.name,
         tool: toolName,
@@ -2990,13 +3062,13 @@ export class McpSource implements ToolSource {
       this.toolsFetchedAt = null;
       this.dead = false;
       this.eventSink.emit({
-        type: "run.error",
+        type: "connector.health",
         data: { source: this.name, event: "source.restarted" },
       });
       return true;
     } catch (err) {
       this.eventSink.emit({
-        type: "run.error",
+        type: "connector.health",
         data: { source: this.name, event: "source.restart_failed", error: String(err) },
       });
       return false;
@@ -3305,6 +3377,30 @@ const SESSION_RECOVERY_DELAYS_MS = [0, 500, 2000] as const;
  */
 const RECONNECT_COOLDOWN_MS = 30_000;
 
+/** Timings for {@link McpSource.awaitRestartingSource}. */
+interface RestartingSourceWait {
+  /** Longest one call waits for the source to come back. */
+  waitMs: number;
+  /** How long after going down a source still counts as restarting. */
+  horizonMs: number;
+  /** Minimum spacing between reconnect attempts made while waiting. */
+  retryMs: number;
+}
+
+/**
+ * A rolling restart leaves a remote endpoint unreachable while the new instance
+ * becomes ready, typically 30-60s; the horizon covers that window and no more,
+ * so a source down longer is treated as gone. The per-call wait is shorter than
+ * the horizon because the engine awaits every parallel call of an iteration
+ * together, so one waiting call holds back its siblings' results; across the
+ * calls a model makes during an outage, the waits add up to the horizon.
+ */
+const RESTARTING_SOURCE_WAIT: RestartingSourceWait = {
+  waitMs: 20_000,
+  horizonMs: 60_000,
+  retryMs: 3_000,
+};
+
 /**
  * Backoff for a tool-call (`execute`) recovery: a SINGLE immediate re-establish +
  * retry. A `tools/call` can be a mutation (and `idempotent: !isTaskAugmented`
@@ -3317,6 +3413,29 @@ const TOOL_CALL_RECOVERY_DELAYS = [0] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Resolve when `work` settles, `ms` elapses, or `signal` aborts, whichever is
+ * first. Never rejects, and clears its timer and abort listener either way.
+ * `work` null waits on the time and the signal only.
+ */
+function settleWithin(
+  work: Promise<unknown> | null,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+    if (signal?.aborted) done();
+    work?.then(done, done);
+  });
 }
 
 /**

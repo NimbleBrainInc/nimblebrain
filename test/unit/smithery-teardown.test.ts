@@ -32,6 +32,10 @@ import {
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import {
+  installTestCredentialStore,
+  resetTestCredentialStore,
+} from "../helpers/credential-store.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 
 const ENV_KEYS = ["SMITHERY_API_KEY"] as const;
@@ -196,6 +200,8 @@ describe("uninstall → broker teardown wiring", () => {
     const { calls } = stubDelete(204);
 
     const workDir = mkdtempSync(join(tmpdir(), "nb-smithery-uninstall-"));
+    // Seeding probes the connector's OAuth records, which live in the store.
+    installTestCredentialStore(workDir);
     try {
       const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
       lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([createSmitheryProvider()]));
@@ -213,14 +219,7 @@ describe("uninstall → broker teardown wiring", () => {
           },
         },
       };
-      await lifecycle.seedInstance(
-        "ai-bassethound-mcp",
-        ref.url,
-        ref,
-        undefined,
-        "ws_test",
-        workDir,
-      );
+      await lifecycle.seedInstance("ai-bassethound-mcp", ref.url, ref, undefined, "ws_test");
 
       await lifecycle.uninstall("ai-bassethound-mcp", new ToolRegistry(), "ws_test");
 
@@ -229,6 +228,7 @@ describe("uninstall → broker teardown wiring", () => {
       expect(deletes[0]?.url).toContain("/connect/install-time-ns/nb-abc");
       expect(deletes[0]?.url).not.toContain("current-ns");
     } finally {
+      resetTestCredentialStore();
       rmSync(workDir, { recursive: true, force: true });
     }
   });

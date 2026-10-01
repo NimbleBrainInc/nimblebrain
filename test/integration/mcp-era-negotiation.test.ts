@@ -65,7 +65,9 @@ function serve(fetch: Fetch): Served {
 }
 
 /** The connector under test: one tool, one `ui://` resource, and whatever extensions it is given. */
-function buildServer(opts: { extensions?: Record<string, object>; taskTools?: boolean } = {}) {
+function buildServer(
+  opts: { extensions?: ServerCapabilities["extensions"]; taskTools?: boolean } = {},
+) {
   const capabilities: ServerCapabilities = {
     tools: {},
     resources: {},

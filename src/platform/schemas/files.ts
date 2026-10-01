@@ -119,3 +119,60 @@ export const FilesDeleteInput = Type.Object(
   { required: ["id"] },
 );
 export type FilesDeleteInput = Static<typeof FilesDeleteInput>;
+
+// ── Output types ────────────────────────────────────────────────────────
+
+/**
+ * A file's registry entry, as `files__list`, `files__search`, and
+ * `files__info` return it. Mirror of `FileEntry` (`src/files/types.ts`),
+ * held to it by `src/platform/files/output-types-drift-guard.ts`.
+ */
+export interface FileRecord {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  tags: string[];
+  source: "chat" | "agent" | "app" | "manual";
+  conversationId: string | null;
+  createdAt: string;
+  description: string | null;
+  ownerId?: string;
+  workspaceId?: string;
+  visibility?: "private" | "shared";
+  deleted?: true;
+  deletedAt?: string;
+}
+
+/** What `files__list` returns: one page of matching files and the count of all matches. */
+export interface FilesListOutput {
+  files: FileRecord[];
+  total: number;
+}
+
+/** What `files__search` returns: the newest matches up to `limit`, and the count of all matches. */
+export interface FilesSearchOutput {
+  files: FileRecord[];
+  total: number;
+}
+
+/** What `files__create` returns: the stored file's id, its filename, and its size in bytes. */
+export interface FilesCreateOutput {
+  id: string;
+  filename: string;
+  size: number;
+}
+
+/** What `files__info` returns: the file's registry entry. */
+export type FilesInfoOutput = FileRecord;
+
+/** What `files__tag` returns: the file's tags after the change. */
+export interface FilesTagOutput {
+  id: string;
+  tags: string[];
+}
+
+/** What `files__delete` returns. */
+export interface FilesDeleteOutput {
+  deleted: true;
+}

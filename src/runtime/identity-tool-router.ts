@@ -39,6 +39,7 @@ import {
   type RoutedToolCall,
   routeToolCall,
 } from "../orchestrator/route.ts";
+import type { AdminToolCaller } from "../permissions/admin-tools.ts";
 import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import type { PermissionOwner } from "../permissions/permission-store.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
@@ -86,6 +87,12 @@ export interface IdentityToolRouterOptions {
   runtime: OrchestratorRuntime;
   /** Optional audit-attribution hook. See `WorkspaceDispatchHook`. */
   onWorkspaceDispatch?: WorkspaceDispatchHook;
+  /**
+   * Which kind of run this router dispatches for, as the admin-tool audit line
+   * records it: a chat, an unattended run, or an unattended dispatch. The
+   * constructor's caller knows; nothing downstream can tell.
+   */
+  caller: Extract<AdminToolCaller, "chat" | "automation" | "dispatch">;
   /**
    * Narrows what the run may reach: a tool name it rejects is neither listed
    * (so `nb__manage_tools` cannot activate it) nor dispatched. The run's
@@ -141,6 +148,7 @@ export class IdentityToolRouter implements ToolRouter {
   private readonly runtime: OrchestratorRuntime;
   private readonly onWorkspaceDispatch?: WorkspaceDispatchHook;
   private readonly isToolAllowed?: (name: string) => boolean;
+  private readonly caller: IdentityToolRouterOptions["caller"];
 
   constructor(opts: IdentityToolRouterOptions) {
     // The type system already pins the shape; we only need to catch the
@@ -152,6 +160,7 @@ export class IdentityToolRouter implements ToolRouter {
     }
     this.identityId = opts.identityId;
     this.workspaceId = opts.workspaceId;
+    this.caller = opts.caller;
     this.runtime = opts.runtime;
     if (opts.onWorkspaceDispatch) this.onWorkspaceDispatch = opts.onWorkspaceDispatch;
     if (opts.isToolAllowed) this.isToolAllowed = opts.isToolAllowed;
@@ -216,7 +225,7 @@ export class IdentityToolRouter implements ToolRouter {
 
     const denied =
       (await this.connectorPermissionDenial(routed, sourcePrefix, bareToolName)) ??
-      (await this.connectorAdminDenial(routed, sourcePrefix, bareToolName));
+      (await this.connectorAdminDenial(routed, sourcePrefix, bareToolName, call.input));
     if (denied) return denied;
 
     // Restamp the per-call workspace from the ROUTED namespace, not ambient
@@ -270,6 +279,7 @@ export class IdentityToolRouter implements ToolRouter {
     routed: RoutedToolCall,
     sourcePrefix: string,
     bareToolName: string,
+    input: Record<string, unknown>,
   ): Promise<ToolResult | null> {
     if (routed.kind !== "workspace" || !this.runtime.connectorAdminDenial) return null;
     return this.runtime.connectorAdminDenial(
@@ -277,6 +287,7 @@ export class IdentityToolRouter implements ToolRouter {
       { id: this.identityId },
       sourcePrefix,
       bareToolName,
+      { input, caller: this.caller },
     );
   }
 }

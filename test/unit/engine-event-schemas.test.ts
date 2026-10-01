@@ -1,9 +1,7 @@
 /**
- * Tests for `src/engine/schemas/events.ts` — the typed payload schemas
- * for SSE events. These schemas are the declarative source of truth for
- * the wire shape of each named event; today they aren't enforced at the
- * EngineEvent level (consumer narrowing isn't yet wired), but they're
- * available for any code that wants the precise type or runtime check.
+ * Tests for `src/engine/schemas/events.ts` — the payload schemas of the
+ * engine event catalog. The compiler holds every emit site to its payload's
+ * static type; these runtime checks hold the JSON Schemas themselves.
  *
  * The tests below exercise representative payloads so future drift in
  * the schemas (or the producer interfaces they mirror) surfaces here.
@@ -14,8 +12,6 @@ import { Value } from "@sinclair/typebox/value";
 import {
   ConnectorSkillInjectedPayload,
   ContextAssembledPayload,
-  FileCreatedPayload,
-  FileDeletedPayload,
   SkillCreatedPayload,
   SkillDeletedPayload,
   SkillsLoadedPayload,
@@ -66,7 +62,6 @@ describe("event schemas — accept representative payloads", () => {
         id: "/data/skills/foo.md",
         name: "foo",
         scope: "workspace",
-        type: "skill",
       }),
     ).toBe(true);
   });
@@ -89,18 +84,6 @@ describe("event schemas — accept representative payloads", () => {
         scope: "user",
       }),
     ).toBe(true);
-  });
-
-  test("file.created / file.deleted — basic shapes", () => {
-    expect(
-      Value.Check(FileCreatedPayload, {
-        id: "file-abc",
-        filename: "logo.png",
-        mimeType: "image/png",
-        size: 1024,
-      }),
-    ).toBe(true);
-    expect(Value.Check(FileDeletedPayload, { id: "file-abc" })).toBe(true);
   });
 
   test("tool.promoted / tool.released — basic shape", () => {
@@ -188,7 +171,6 @@ describe("event schemas — reject malformed payloads", () => {
         id: "/x.md",
         name: "x",
         scope: "provided",
-        type: "skill",
       }),
     ).toBe(false);
   });

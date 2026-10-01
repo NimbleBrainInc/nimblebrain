@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -130,6 +130,7 @@ function gmailEntry(): import("../../src/connectors/catalog/types.ts").CatalogLi
     install: {
       kind: "remote-oauth",
       url: GMAIL_URL,
+      transportType: "streamable-http",
       auth: "composio",
       composio: {
         toolkit: "gmail",
@@ -576,6 +577,77 @@ describe("manage_connectors.install (composio-auth)", () => {
     // Lifecycle instance was re-seeded so subsequent ops can resolve it.
     const lifecycle = h.runtime.getLifecycle();
     expect(lifecycle.getInstance("com-google-gmail", h.wsId)).not.toBeNull();
+  });
+
+  test("(f-2) self-heal takes the host UI from the catalog, not the orphan's stored copy", async () => {
+    process.env.COMPOSIO_API_KEY = "k_test";
+    // The catalog now declares a settings placement the orphan's install never saw.
+    const catalogFile = join(h.workDir, "empty-catalog.yaml");
+    writeFileSync(
+      catalogFile,
+      [
+        readFileSync(catalogFile, "utf-8").trimEnd(),
+        "      ai.nimblebrain/host:",
+        '        host_version: "1.4"',
+        "        name: Gmail",
+        "        placements:",
+        "          - slot: settings",
+        "            resourceUri: ui://gmail/settings",
+        "",
+      ].join("\n"),
+    );
+    const orphanRef: Extract<ConnectorRef, { url: string }> = {
+      url: "https://composio.test/mcp/session_orphaned",
+      serverName: "com-google-gmail",
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+      brokered: { provider: "composio", connectorId: GMAIL_ID },
+      ui: { name: "Gmail", icon: "", placements: [] },
+    };
+    await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
+
+    const result = await buildTool(h).handler({
+      action: "install",
+      entry: gmailEntry(),
+      wsId: h.wsId,
+    });
+
+    expect(result.isError).toBe(false);
+    const instance = h.runtime.getLifecycle().getInstance("com-google-gmail", h.wsId);
+    expect(instance?.ui?.placements?.map((p) => p.resourceUri)).toEqual(["ui://gmail/settings"]);
+  });
+
+  test("(f-3) self-heal keeps the orphan's stored host UI when no catalog entry names it", async () => {
+    const url = "https://uncatalogued.test/mcp";
+    const orphanRef: Extract<ConnectorRef, { url: string }> = {
+      url,
+      serverName: "com-example-uncatalogued",
+      transport: { type: "streamable-http" },
+      oauthScope: "workspace",
+      ui: {
+        name: "Uncatalogued",
+        icon: "",
+        placements: [{ slot: "settings", resourceUri: "ui://uncatalogued/settings" }],
+      },
+    };
+    await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
+
+    const result = await buildTool(h).handler({
+      action: "install",
+      entry: {
+        id: "com.example/uncatalogued",
+        name: "Uncatalogued",
+        description: "Not in the catalog",
+        install: { kind: "remote-oauth", url, auth: "dcr" },
+      },
+      wsId: h.wsId,
+    });
+
+    expect(result.isError).toBe(false);
+    const instance = h.runtime.getLifecycle().getInstance("com-example-uncatalogued", h.wsId);
+    expect(instance?.ui?.placements?.map((p) => p.resourceUri)).toEqual([
+      "ui://uncatalogued/settings",
+    ]);
   });
 
   test("install surfaces createComposioSession failures as errResult", async () => {

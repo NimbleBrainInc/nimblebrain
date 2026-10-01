@@ -8,8 +8,8 @@ import { InMemoryConversationStore } from "../../src/conversation/memory-store.t
 import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
 import { windowMessages } from "../../src/conversation/window.ts";
 
-function msg(role: "user" | "assistant", content: string): StoredMessage {
-  return { role, content, timestamp: new Date().toISOString() };
+function msg(role: "user" | "assistant", text: string): StoredMessage {
+  return { role, content: [{ type: "text", text }], timestamp: new Date().toISOString() };
 }
 
 function conversationTests(name: string, makeStore: () => ConversationStore) {
@@ -47,9 +47,9 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
       const history = await store.history(conv);
       expect(history).toHaveLength(3);
       expect(history[0]!.role).toBe("user");
-      expect(history[0]!.content).toBe("Hello");
+      expect(history[0]!.content).toEqual([{ type: "text", text: "Hello" }]);
       expect(history[1]!.role).toBe("assistant");
-      expect(history[2]!.content).toBe("How are you?");
+      expect(history[2]!.content).toEqual([{ type: "text", text: "How are you?" }]);
     });
 
     it("respects limit parameter", async () => {
@@ -60,8 +60,8 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
 
       const history = await store.history(conv, 2);
       expect(history).toHaveLength(2);
-      expect(history[0]!.content).toBe("Second");
-      expect(history[1]!.content).toBe("Third");
+      expect(history[0]!.content).toEqual([{ type: "text", text: "Second" }]);
+      expect(history[1]!.content).toEqual([{ type: "text", text: "Third" }]);
     });
 
     it("returns empty history for new conversation", async () => {
@@ -79,7 +79,7 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
 
       const history = await store.history(conv);
       expect(history[0]!.role).toBe("assistant");
-      expect(history[0]!.content).toBe("Matched skill");
+      expect(history[0]!.content).toEqual([{ type: "text", text: "Matched skill" }]);
       expect(history[0]!.metadata).toBeDefined();
       expect(history[0]!.metadata!.skill).toBe("test-skill");
     });
@@ -116,7 +116,7 @@ describe("JsonlConversationStore (persistence)", () => {
 
     const history = await store2.history(loaded!);
     expect(history).toHaveLength(1);
-    expect(history[0]!.content).toBe("Remember me");
+    expect(history[0]!.content).toEqual([{ type: "text", text: "Remember me" }]);
   });
 });
 
@@ -214,22 +214,22 @@ describe("windowMessages", () => {
 
   it("handles messages with complex content (tool results)", () => {
     const messages: LanguageModelV4Message[] = [
-      { role: "user", content: "Hello" },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
       {
         role: "assistant",
         content: [
           { type: "text", text: "Let me check." },
-          { type: "tool_use", id: "1", name: "test", input: {} },
+          { type: "tool-call", toolCallId: "1", toolName: "test", input: {} },
         ],
       },
       {
-        role: "user",
+        role: "tool",
         content: [
           {
-            type: "tool_result",
-            toolUseId: "1",
-            content: "result data",
-            isError: false,
+            type: "tool-result",
+            toolCallId: "1",
+            toolName: "test",
+            output: { type: "text", value: "result data" },
           },
         ],
       },

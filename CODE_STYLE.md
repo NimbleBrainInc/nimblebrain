@@ -170,6 +170,89 @@ except `src/api/app.ts`.
 metrics, CORS, security headers, the cross-site guard) is app-wide by design
 and is the only place `.use()` belongs.
 
+### A route's JSON body is a named response type
+
+A route writes a JSON body only through `json<T>()` (`src/api/types.ts`), with
+`T` a type from `src/api/schemas/responses.ts`.
+
+```ts
+// BAD — the body is described nowhere but here; the web client and the tests
+// each write their own copy.
+return c.json({ authorizationUrl });
+return Response.json({ conversationId });
+return json<{ ok: boolean }>({ ok: true });
+```
+
+```ts
+// GOOD — the named type is the contract the web shell and the tests import.
+import type { OAuthInitiateResponse } from "../schemas/responses.ts";
+
+return json<OAuthInitiateResponse>({ authorizationUrl }, 200, { "Set-Cookie": cookie });
+```
+
+**Rationale.** A body built inline is described again by every reader: the web
+client's hand-written type, a test's local interface. Those copies drift from the
+handler the first time it changes, and nothing fails. `responses.ts` is emitted
+into `web/src/_generated/api/` by `bun run codegen`, so a changed body fails the
+build at the web client and at the tests. `json<T>()` takes `T` as `NoInfer`, so
+it does not compile without one.
+
+**Detection.** `bun run check:rest-responses` (wired into `verify:static`) flags,
+in any `.ts` file under `src/` outside the platform app UIs: a `.json(...)` call
+with an argument (`c.json(body)`, `Response.json(body)`), a
+`new Response(JSON.stringify(...))` outside `src/api/types.ts`, and a
+`json<T>()` whose `T` is not a name imported from `schemas/responses.ts`.
+
+**Override.** None. Declare the body in `responses.ts`. A body that restates a
+domain type (`FileEntry`, `PlacementEntry`) mirrors it there, because
+`responses.ts` imports nothing, and `responses-drift-guard.ts` pins the mirror to
+its source.
+
+---
+
+## Platform tools
+
+### Platform tool handlers return a named output type
+
+A tool handler under `src/platform/` declares a named output type from
+`src/platform/schemas/<app>.ts` as its return type, never `object`. The full
+rule, including the construction-site form for handlers that build their own
+`ToolResult`, is `src/platform/AGENTS.md` §2.1.
+
+```ts
+// BAD — every caller gets an untyped result and re-declares its shape.
+async function handleTag(store: FileStore, args: TagInput): Promise<object> {
+  return { id: args.id, tags: newTags };
+}
+```
+
+```ts
+// GOOD — the named type is the contract every caller imports.
+import type { FilesTagOutput } from "../schemas/files.ts";
+
+async function handleTag(store: FileStore, args: TagInput): Promise<FilesTagOutput> {
+  return { id: args.id, tags: newTags };
+}
+```
+
+**Rationale.** A handler's return type is its tool's contract. Declared as
+`object`, it checks nothing: callers and tests cast the result to a shape they
+write themselves, and those casts drift from the handler the first time it
+changes. A named type in `schemas/` is compiled against the handler and, through
+codegen, shared with the web client, so a changed shape fails the build at each
+consumer.
+
+**Detection.** `bun run check:platform-output-types` (wired into
+`verify:static`) flags any function implementation in a `.ts` file under
+`src/platform/`, outside the app UI packages, whose declared return type is
+`object`, `Promise<object>`, or a union with either as a member. A function type
+is not flagged, so a registration signature that accepts a handler
+(`fn: (input) => Promise<object>`) passes.
+
+**Override.** None. Declare the output type in `schemas/`; when it mirrors a
+domain type the schemas tree cannot import, hold the two together with a
+drift guard (`src/platform/files/output-types-drift-guard.ts`).
+
 ---
 
 ## Adding a new rule

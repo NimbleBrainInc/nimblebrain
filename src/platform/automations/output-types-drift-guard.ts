@@ -2,8 +2,8 @@
  * Compile-time drift guard for automation output types.
  *
  * The output types in `src/platform/schemas/automations.ts`
- * (`AutomationSummary`, `AutomationStatusDetail`, `AutomationRunRecord`,
- * etc.) are STRUCTURAL MIRRORS of the canonical `Automation` /
+ * (`AutomationRecord`, `AutomationSummary`, `AutomationStatusDetail`,
+ * `AutomationRunRecord`, etc.) are STRUCTURAL MIRRORS of the canonical `Automation` /
  * `AutomationRun` / `ScheduleSpec` / `TokenBudget` types in `./types.ts`.
  * They're duplicated because the schemas tree is self-contained for the
  * web codegen (`scripts/codegen-web-platform-schemas.ts` pins `rootDir`
@@ -29,6 +29,7 @@
  */
 
 import type {
+  AutomationRecord,
   AutomationRunRecord,
   AutomationScheduleSpec,
   AutomationStatusDetail,
@@ -83,6 +84,11 @@ type AssertNever<_T extends never> = unknown;
 // no overlays.
 export type DriftRunRecordA = AssertAssignable<AutomationRunRecord, AutomationRun>;
 export type DriftRunRecordB = AssertAssignable<AutomationRun, AutomationRunRecord>;
+
+// AutomationRecord ↔ Automation — bidirectional structural mirror, no
+// overlays: create and update return the stored automation as-is.
+export type DriftRecordA = AssertAssignable<AutomationRecord, Automation>;
+export type DriftRecordB = AssertAssignable<Automation, AutomationRecord>;
 
 // AutomationScheduleSpec ↔ ScheduleSpec — identical structural mirror.
 export type DriftScheduleA = AssertAssignable<AutomationScheduleSpec, ScheduleSpec>;

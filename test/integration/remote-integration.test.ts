@@ -138,7 +138,7 @@ describe("Remote integration: config → validate → load → tools", () => {
 
     expect(meta).not.toBeNull();
     expect(meta.meta).not.toBeNull();
-    expect(meta.meta!.version).toBe("remote (3 tools)");
+    expect(meta.meta!.version).toBe("remote");
     expect(registry.hasSource("validated-remote")).toBe(true);
 
     // Step 4: Verify tools are actually callable

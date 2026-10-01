@@ -7,9 +7,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { isAppCallable, isModelVisible, toolVisibility } from "../../../src/engine/types.ts";
 import { McpSource } from "../../../src/tools/mcp-source.ts";
@@ -38,7 +36,7 @@ describe("toolVisibility", () => {
 
 async function connectorSource(): Promise<McpSource> {
   const server = new Server({ name: "dash", version: "0.1.0" }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler("tools/list", async () => ({
     tools: [
       {
         name: "refresh",
@@ -53,7 +51,7 @@ async function connectorSource(): Promise<McpSource> {
       },
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => ({
+  server.setRequestHandler("tools/call", async (request) => ({
     content: [{ type: "text", text: `ran ${request.params.name}` }],
   }));
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

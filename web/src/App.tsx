@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import type { ShellData } from "./api/client";
 import {
   callTool,
   logout,
@@ -41,6 +40,7 @@ import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
+import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
 import { ContextInspectorPage } from "./pages/ContextInspectorPage";
@@ -73,7 +73,13 @@ import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
-import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
+import type {
+  BootstrapResponse,
+  ConfigInfo,
+  FileLimits,
+  PlacementEntry,
+  ShellResponse,
+} from "./types";
 import "./index.css";
 
 function AuthenticatedApp({
@@ -113,7 +119,7 @@ function AuthenticatedApp({
 
   const initialWorkspaces: WorkspaceInfo[] = bootstrapWorkspacesToInfo(bootstrap.workspaces);
 
-  const initialShell: ShellData = bootstrap.shell;
+  const initialShell: ShellResponse = bootstrap.shell;
 
   const initialConfig = {
     configuredProviders: bootstrap.config.configuredProviders,
@@ -163,7 +169,7 @@ function BootstrappedShell({
   onLogout,
 }: {
   token: string;
-  initialShell: ShellData;
+  initialShell: ShellResponse;
   initialConfig: {
     configuredProviders: string[];
     newConversationModel?: string;
@@ -382,7 +388,11 @@ function AuthenticatedAppContent({
     <ShellProvider value={{ forSlot, mainRoutes, shellWorkspaceId }}>
       {/* ActionBridge handles iframe action events. It consumes ChatContext
           (streaming) but renders nothing, so its re-renders are free. */}
-      <ActionBridge handleNavigate={handleNavigate} resolveAppRoute={resolveAppRoute} />
+      <ActionBridge
+        handleNavigate={handleNavigate}
+        resolveAppRoute={resolveAppRoute}
+        activeSlug={activeSlug}
+      />
       {/* Command palette (⌘P) — global surface, sibling of the shell layout
           and chat chrome, so it's reachable from any route. */}
       <CommandPalette onLogout={onLogout} />
@@ -560,9 +570,11 @@ function AuthenticatedAppContent({
 function ActionBridge({
   handleNavigate,
   resolveAppRoute,
+  activeSlug,
 }: {
   handleNavigate: (route: string) => void;
   resolveAppRoute: (name: string) => string | null;
+  activeSlug: string | null;
 }) {
   const chatPanel = useChatPanelContext();
 
@@ -574,11 +586,14 @@ function ActionBridge({
   navigateRef.current = handleNavigate;
   const resolveRef = useRef(resolveAppRoute);
   resolveRef.current = resolveAppRoute;
+  const slugRef = useRef(activeSlug);
+  slugRef.current = activeSlug;
 
   useEffect(() => {
     // Dispatch table keyed by action name. Each handler reads current state
     // through the refs, so the listener registers once and unknown actions
-    // no-op. Params carry the event detail (`id`, `name`).
+    // no-op. Params carry the event detail (`id`, `name`, and the bridge's
+    // `serverName`).
     const actions: Record<string, (params: Record<string, unknown>) => void> = {
       openConversation(params) {
         if (params.id) chatPanelRef.current.openPanel(params.id as string);
@@ -588,6 +603,15 @@ function ActionBridge({
         if (!name) return;
         const route = resolveRef.current(name);
         if (route) navigateRef.current(route);
+      },
+      // The sending connector's own settings page. The connector is the one the
+      // bridge names, never a param, so an app can open only its own. Identity
+      // apps have no workspace settings page, so they no-op.
+      openConnectorSettings(params) {
+        const serverName = params.serverName as string | undefined;
+        if (!serverName) return;
+        const path = connectorSettingsPath(slugRef.current, serverName);
+        if (path) navigateRef.current(path);
       },
     };
 

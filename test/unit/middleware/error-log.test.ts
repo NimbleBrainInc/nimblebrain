@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { errorLog } from "../../../src/api/middleware/error-log.ts";
 import type { AppEnv } from "../../../src/api/types.ts";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
+import { firstPayloadOf } from "../../helpers/engine-events.ts";
 
 /** Collects emitted events for assertion. */
 function collectingSink(): { events: EngineEvent[]; sink: EventSink } {
@@ -37,8 +38,7 @@ describe("errorLog middleware", () => {
     expect(res.status).toBe(400);
 
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("http.error");
-    const record = events[0].data;
+    const record = firstPayloadOf(events, "http.error")!;
     expect(record.event).toBe("http.error");
     expect(record.status).toBe(400);
     expect(record.method).toBe("POST");
@@ -67,8 +67,8 @@ describe("errorLog middleware", () => {
 
     await app.request("/v1/secret");
     expect(events).toHaveLength(1);
-    expect(events[0].data.status).toBe(401);
-    expect(events[0].data.error).toBe("unknown");
+    expect(firstPayloadOf(events, "http.error")?.status).toBe(401);
+    expect(firstPayloadOf(events, "http.error")?.error).toBe("unknown");
   });
 
   it("emits for a 500 response", async () => {
@@ -80,7 +80,7 @@ describe("errorLog middleware", () => {
 
     await app.request("/v1/boom");
     expect(events).toHaveLength(1);
-    expect(events[0].data.status).toBe(500);
-    expect(events[0].data.error).toBe("internal_error");
+    expect(firstPayloadOf(events, "http.error")?.status).toBe(500);
+    expect(firstPayloadOf(events, "http.error")?.error).toBe("internal_error");
   });
 });

@@ -12,23 +12,36 @@ import {
 import type { Redacted } from "./redacted.ts";
 
 /**
- * The four records an OAuth connection persists per `(owner, server)`.
+ * The records an OAuth connection persists per `(owner, server)`.
  *
  *   - `tokens`   — the access + refresh token pair.
  *   - `verifier` — the PKCE verifier for the flow in progress.
  *   - `client`   — the DCR registration. For a confidential client this
  *                  carries a `client_secret`.
- *   - `identity` — OIDC claims lifted from an `id_token` (`sub` / `email` /
- *                  `name`), so the UI can say "Connected as …".
+ *   - `identity` — OIDC claims (`sub` / `email` / `name`) from an `id_token`
+ *                  or the userinfo endpoint, so the UI can say "Connected as …".
  *
- * Three of the four are secrets of the same class as the `client_secret` the
- * credential store was built for, and the fourth is bound 1:1 to them, so all
- * four go through the same door. The store never learns their shape: each value
- * is a JSON string it holds opaquely.
+ *   - `auth_lost` — a flag, not a secret: the connection's credential was
+ *                  rejected upstream (revoked, expired) and nobody has
+ *                  reconnected or disconnected since. It outlives the tokens
+ *                  the SDK deletes on `invalid_grant`, so a restart still tells
+ *                  a broken connection (`reauth_required`) from one the user
+ *                  disconnected (`not_authenticated`). Workspace scope only.
+ *
+ * Three are secrets of the same class as the `client_secret` the credential
+ * store was built for, and the rest are bound to them, so all go through the
+ * same door and are deleted together. The store never learns their shape: each
+ * value is a JSON string it holds opaquely.
  */
-export type McpOAuthRecord = "tokens" | "verifier" | "client" | "identity";
+export type McpOAuthRecord = "tokens" | "verifier" | "client" | "identity" | "auth_lost";
 
-const ALL_RECORDS: readonly McpOAuthRecord[] = ["tokens", "verifier", "client", "identity"];
+const ALL_RECORDS: readonly McpOAuthRecord[] = [
+  "tokens",
+  "verifier",
+  "client",
+  "identity",
+  "auth_lost",
+];
 
 /**
  * Key namespace for every OAuth record. Also the legacy directory name — the
@@ -210,7 +223,7 @@ export class McpOAuthRecords {
 
   /**
    * Remove every record for this connection — the teardown a disconnect or an
-   * uninstall performs. Keys, not a directory: the records are four keys in a
+   * uninstall performs. Keys, not a directory: the records are keys in a
    * scope that holds other connectors' keys too, so there is nothing here whose
    * removal can take a neighbour with it.
    */
@@ -307,4 +320,30 @@ export async function hasMcpOAuthTokens(
   serverName: string,
 ): Promise<boolean> {
   return new McpOAuthRecords({ owner, serverName, workDir }).has("tokens");
+}
+
+/**
+ * Whether an `(owner, server)` carries the `auth_lost` flag — its credential
+ * was rejected upstream and nobody has reconnected or disconnected since. The
+ * boot seed reads it to record `reauth_required` rather than
+ * `not_authenticated` once the SDK has deleted the rejected tokens.
+ */
+export async function hasMcpOAuthAuthLost(
+  workDir: string,
+  owner: ConnectorOwner,
+  serverName: string,
+): Promise<boolean> {
+  return new McpOAuthRecords({ owner, serverName, workDir }).has("auth_lost");
+}
+
+/**
+ * Drop the `auth_lost` flag. Disconnect calls it after the live source is torn
+ * down, so a refresh still in flight on that source cannot re-set it.
+ */
+export async function clearMcpOAuthAuthLost(
+  workDir: string,
+  owner: ConnectorOwner,
+  serverName: string,
+): Promise<void> {
+  await new McpOAuthRecords({ owner, serverName, workDir }).delete("auth_lost");
 }

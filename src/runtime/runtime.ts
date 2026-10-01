@@ -10,6 +10,7 @@ import type {
 import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
+import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -28,13 +29,18 @@ import {
   type ManagedConnectorRegistry,
 } from "../connectors/providers/registry.ts";
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
+import { catalogUiByServerName, withCatalogUi } from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
-import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
+import type {
+  ConnectorInstance,
+  ConnectorUiMeta,
+  PlacementDeclaration,
+} from "../connectors/runtime/types.ts";
 import {
   type ConnectorTeardownOutcome,
   uninstallWorkspaceConnector,
@@ -66,6 +72,7 @@ import {
 } from "../conversation/types.ts";
 import { applyReasoningReplayPolicy, windowMessages } from "../conversation/window.ts";
 import { AgentEngine } from "../engine/engine.ts";
+import type { AdminToolCallPayload } from "../engine/schemas/events.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
 import type {
   ConnectorSkillCandidate,
@@ -124,11 +131,14 @@ import {
 } from "../orchestrator/index.ts";
 import {
   ADMIT_ALL,
+  type AdminToolCall,
   adminToolDenial,
   adminToolsContractWarnings,
+  auditArguments,
   type ConnectorAdmission,
   filterAdmittedTools,
   isAdminToolAllowed,
+  isDeclaredAdminTool,
 } from "../permissions/admin-tools.ts";
 import {
   isDisallowed,
@@ -210,7 +220,10 @@ import {
   isTaskForbiddenIdentityTool,
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
-import { resolveInstanceCredentialRefs } from "../tools/instance-credentials.ts";
+import {
+  resolveInstanceCredentialRefs,
+  type WithCredentialRefs,
+} from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { APP_INSTRUCTIONS_URI } from "../tools/resource-schemes.ts";
@@ -231,6 +244,7 @@ import { WorkspaceContext } from "../workspace/context.ts";
 import { retireLegacyPersonalWorkspaces } from "../workspace/legacy-personal.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { chatResponseBody } from "./chat-response.ts";
 import {
   ConversationAccessDeniedError,
   ConversationNotFoundError,
@@ -316,7 +330,23 @@ function reportStrandedSlots(rt: Runtime, allowed: string[] | undefined): void {
   }
 }
 
-function resolveWorkDir(config: RuntimeConfig): string {
+/**
+ * The `RuntimeConfig` fields `Runtime.start` reads before the credential store
+ * exists: the store lives under `workDir`, is chosen by `secrets`, and audits
+ * through the sink `events`, `logging` and `telemetry` build. None of them can
+ * be a credential reference, because nothing could resolve it yet.
+ */
+type PreStoreConfigKey = "workDir" | "secrets" | "telemetry" | "logging" | "events";
+
+/**
+ * `RuntimeConfig` as a caller declares it: a credential reference admitted
+ * wherever the runtime resolves one at boot (`resolveInstanceCredentialRefs`),
+ * which is every string outside the pre-store fields.
+ */
+export type DeclaredRuntimeConfig = Pick<RuntimeConfig, PreStoreConfigKey> &
+  WithCredentialRefs<Omit<RuntimeConfig, PreStoreConfigKey>>;
+
+function resolveWorkDir(config: Pick<RuntimeConfig, "workDir">): string {
   if (config.workDir) return config.workDir;
   // Hard guard: under `bun test` (NODE_ENV=test is set automatically by the
   // bun test runner), defaulting to `~/.nimblebrain` would pollute the
@@ -431,6 +461,21 @@ export class Runtime {
   _getWorkspaceId: () => string | null = () => null;
   /** Per-workspace ToolRegistry instances — each workspace gets its own scoped registry. */
   private _workspaceRegistries: Map<string, ToolRegistry>;
+  /**
+   * Settles when `start()` has finished assembling the runtime: the workspace
+   * registries and their connectors, the lifecycle instances seeded over them,
+   * and self-heal bound to them. Until then `_workspaceRegistries` is the empty
+   * map the constructor received, and a run would be composed over a stand-in
+   * registry holding only `nb` — no connectors, no installed apps — and report
+   * the workspace's connectors as missing.
+   *
+   * The run doors (`startRun`, `dispatchUnattended`) wait on it. Nothing reaches
+   * them over HTTP before `start()` returns, but the sources started inside
+   * `start()` (the automations scheduler, the notifications dispatcher) run
+   * their timers from the moment they are created, and a scheduler that boots
+   * with an overdue automation fires it at once.
+   */
+  private readonly _bootReady = bootBarrier();
   // Protected sources are captured in start() and passed to startWorkspaceConnectors directly.
   /** The system source ("nb") — shared across workspace registries. */
   _systemSource: ToolSource | null;
@@ -567,7 +612,7 @@ export class Runtime {
   }
 
   /** Create and start a runtime from config. */
-  static async start(declaredConfig: RuntimeConfig): Promise<Runtime> {
+  static async start(declaredConfig: DeclaredRuntimeConfig): Promise<Runtime> {
     // The secrets door, opened before anything reads config, because config is
     // read THROUGH it. `nimblebrain.json` may point at an instance-scope secret
     // rather than carry one (`{ ref: "credential", key }`), and the readers of
@@ -579,8 +624,9 @@ export class Runtime {
     //
     // The sink comes first in turn: the store audits every reveal through it,
     // and the first reveal happens inside the dereference on the last line.
-    // `workDir` is the one field that cannot itself be a reference — the store
-    // lives under it — so reading it off the raw config is not an ordering bug.
+    // The fields read here, before the store exists, cannot themselves be
+    // references (`PreStoreConfigKey`), so reading them off the raw config is
+    // not an ordering bug.
     //
     // This is the single construction of the credential store. It is installed
     // for the leaf readers (`remote-transport.ts` resolving a header, the
@@ -821,166 +867,182 @@ export class Runtime {
     );
     rtHolder.rt = rt;
 
-    // Declared here rather than beside `manageUsersCtx` above: both carry the
-    // runtime, because `manage_workspaces delete` cascades connector teardown
-    // through `Runtime.deleteWorkspace` rather than calling the store.
-    const manageWorkspacesCtx = { getIdentity, workspaceStore, runtime: rt };
-    const manageMembersCtx = { getIdentity, workspaceStore, userStore, runtime: rt };
+    // Everything from here to `return rt` builds what a run is composed over, so
+    // the run doors wait on it (`_bootReady`). A failed boot releases them with
+    // the error rather than leaving a scheduled run parked forever.
+    try {
+      // Declared here rather than beside `manageUsersCtx` above: both carry the
+      // runtime, because `manage_workspaces delete` cascades connector teardown
+      // through `Runtime.deleteWorkspace` rather than calling the store.
+      const manageWorkspacesCtx = { getIdentity, workspaceStore, runtime: rt };
+      const manageMembersCtx = { getIdentity, workspaceStore, userStore, runtime: rt };
 
-    // Brokered teardown and boot-state derivation dispatch through the
-    // configured providers; without this the lifecycle can only do the kernel's
-    // half (remove the credential directory, apply the generic auth check).
-    lifecycle.setManagedConnectorRegistry(rt.getManagedConnectorRegistry());
+      // Brokered teardown and boot-state derivation dispatch through the
+      // configured providers; without this the lifecycle can only do the kernel's
+      // half (remove the credential directory, apply the generic auth check).
+      lifecycle.setManagedConnectorRegistry(rt.getManagedConnectorRegistry());
 
-    // The runtime shares the store `start` opened above rather than building a
-    // second one — same instance, same sink, same audit trail.
-    rt._credentialStore = credentialStore;
-    // The `credential` transport credential resolves a secret from the
-    // connection's workspace, so it can only be registered once the store is
-    // installed — which is why it is not in `registerBuiltinCredentialProviders`
-    // with `minted` at the top of `start`. Still ahead of
-    // `startWorkspaceConnectors`, which is the ordering that matters: an
-    // unregistered provider name fails a boot-started source outright.
-    registerCredentialTransportCredentialProvider();
+      // The runtime shares the store `start` opened above rather than building a
+      // second one — same instance, same sink, same audit trail.
+      rt._credentialStore = credentialStore;
+      // The `credential` transport credential resolves a secret from the
+      // connection's workspace, so it can only be registered once the store is
+      // installed — which is why it is not in `registerBuiltinCredentialProviders`
+      // with `minted` at the top of `start`. Still ahead of
+      // `startWorkspaceConnectors`, which is the ordering that matters: an
+      // unregistered provider name fails a boot-started source outright.
+      registerCredentialTransportCredentialProvider();
 
-    // Hooks reconcile. A connection reaching `running` is the one moment both
-    // halves are available — a live source to hand a minted URL to, and a
-    // connector whose declarations can be read — so it covers a fresh install,
-    // a boot, and an interactive OAuth flow completing long after the install
-    // returned, without that logic appearing on three paths. The reconcile
-    // provisions only what is MISSING, so an already-registered stream costs
-    // nothing on a boot or a source self-heal.
-    // The same transition carries the connector's lifecycle notification, as a
-    // second reconcile rather than a step inside the first: the two ask
-    // different questions of the connector and coalesce differently (see
-    // `src/lifecycle/notify.ts`), so neither calls the other.
-    lifecycle.setConnectionRunningObserver((wsId, serverName) => {
-      ensureHooksOnRunning(rt.getHookReconcileDeps(), wsId, serverName);
-      notifyReadyOnRunning(rt.getLifecycleNotifyDeps(), wsId, serverName);
-    });
-    rt._getIdentity = getIdentity;
-    rt._getWorkspaceId = getWorkspaceId;
-    rt.usageLedger = usageLedger;
-
-    reportStrandedSlots(rt, config.modelPolicy?.allowed);
-
-    // Register the `nb` system source. Built as an in-process MCP server
-    // — `createSystemTools` returns it already-started so it's ready to
-    // serve tools and resources to every workspace registry.
-    const systemTools = await createSystemTools(
-      () => rt.getRegistryForCurrentWorkspace(),
-      config.configPath,
-      gate,
-      lifecycle,
-      undefined, // reserved slot — was the nb__delegate spawn context (removed)
-      skillDirPath,
-      boundReloadSkills,
-      boundGetSkills,
-      events,
-      features,
-      rt,
-      undefined, // reserved slot — was a registry-SDK home (legacy connector-search path, removed)
-      manageUsersCtx,
-      manageWorkspacesCtx,
-      manageMembersCtx,
-      undefined, // reserved slot — was manageConnectorCtx (nb__manage_app, removed)
-      toolPromotionCtx,
-      toolEligibilityCtx,
-    );
-    rt._systemSource = systemTools;
-
-    // Phase 2: Create platform capability sources. Each is an in-process
-    // MCP server reachable through `InMemoryTransport` — no subprocess.
-    // `createPlatformSources` returns sources already started.
-    const { createPlatformSources } = await import("../platform/index.ts");
-    const platformSources = await createPlatformSources(rt, events);
-    // Make the host-resources factory accessible on `rt` so non-lifecycle
-    // install paths (connector-tools, boot reload) can pull deps directly.
-    rt._connectorMcpDepsFactory = connectorMcpDepsFactory;
-
-    // Register placements declared by platform sources.
-    registerPlatformPlacements(placementRegistry, platformSources);
-
-    // Partition: workspace registries get every platform source EXCEPT the
-    // kernel identity sources (conversations, …). Identity sources stay in
-    // `_platformSources` (already started by `createPlatformSources`) and reach
-    // the user only through the identity door — never `ws_<id>-conversations`.
-    const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
-
-    // Phase 3: Start workspace connectors with per-workspace registries
-    const { registries: workspaceRegistries, entries: workspaceConnectorEntries } =
-      await startWorkspaceConnectors(workspaceStore, workspaceSources, systemTools, events, {
-        workDir: resolveWorkDir(config),
-        allowInsecureRemotes: config.allowInsecureRemotes,
-        // Boot re-spawn picks up host-resources handlers per workspace so
-        // a platform restart doesn't silently drop the capability for
-        // already-installed connectors.
-        getConnectorMcpDeps: connectorMcpDepsFactory,
-        // A brokered connector's boot readiness is its provider's answer, not a
-        // token file — the same predicate `seedUrlConnectionState` consumes.
-        managedConnectors: rt.getManagedConnectorRegistry(),
-        // Late-bound: a boot-started connection that loses auth mid-session
-        // fires this on a post-boot tool call, by which point `rt.lifecycle`
-        // is constructed. Flip the Connection to reauth_required so the UI
-        // offers "Reconnect" instead of every call failing silently.
-        onAuthLost: (wsId: string, serverName: string) => {
-          rt.lifecycle?.recordConnectionStateChange(
-            serverName,
-            wsId,
-            "_workspace",
-            "reauth_required",
-          );
-        },
+      // Hooks reconcile. A connection reaching `running` is the one moment both
+      // halves are available — a live source to hand a minted URL to, and a
+      // connector whose declarations can be read — so it covers a fresh install,
+      // a boot, and an interactive OAuth flow completing long after the install
+      // returned, without that logic appearing on three paths. The reconcile
+      // provisions only what is MISSING, so an already-registered stream costs
+      // nothing on a boot or a source self-heal.
+      // The same transition carries the connector's lifecycle notification, as a
+      // second reconcile rather than a step inside the first: the two ask
+      // different questions of the connector and coalesce differently (see
+      // `src/lifecycle/notify.ts`), so neither calls the other.
+      lifecycle.setConnectionRunningObserver((wsId, serverName) => {
+        ensureHooksOnRunning(rt.getHookReconcileDeps(), wsId, serverName);
+        notifyReadyOnRunning(rt.getLifecycleNotifyDeps(), wsId, serverName);
       });
-    rt._workspaceRegistries = workspaceRegistries;
-    rt._platformSources = platformSources;
-    rt._workspaceSources = workspaceSources;
-    // Identity sources are in no workspace registry, so no registry relays
-    // their servers' notifications. This does, each to the person it names.
-    relayIdentitySourceNotifications(platformSources, events);
+      rt._getIdentity = getIdentity;
+      rt._getWorkspaceId = getWorkspaceId;
+      rt.usageLedger = usageLedger;
 
-    // Wire the workspace registries into lifecycle so workspace-scope
-    // startAuth / disconnect / install can add+remove sources without
-    // each route having to thread the registry through. The accessor, not the
-    // map: `ensureWorkspaceRegistry` keeps adding to whatever `rt` holds, and
-    // the lifecycle has to see those workspaces too.
-    lifecycle.bindWorkspaceRegistries(() => rt.getWorkspaceRegistries());
+      reportStrandedSlots(rt, config.modelPolicy?.allowed);
 
-    // Seed lifecycle instances for workspace connectors.
-    await seedWorkspaceConnectorInstances(lifecycle, placementRegistry, workspaceConnectorEntries);
+      // Register the `nb` system source. Built as an in-process MCP server
+      // — `createSystemTools` returns it already-started so it's ready to
+      // serve tools and resources to every workspace registry.
+      const systemTools = await createSystemTools(
+        () => rt.getRegistryForCurrentWorkspace(),
+        config.configPath,
+        gate,
+        lifecycle,
+        undefined, // reserved slot — was the nb__delegate spawn context (removed)
+        skillDirPath,
+        boundReloadSkills,
+        boundGetSkills,
+        events,
+        features,
+        rt,
+        undefined, // reserved slot — was a registry-SDK home (legacy connector-search path, removed)
+        manageUsersCtx,
+        manageWorkspacesCtx,
+        manageMembersCtx,
+        undefined, // reserved slot — was manageConnectorCtx (nb__manage_app, removed)
+        toolPromotionCtx,
+        toolEligibilityCtx,
+      );
+      rt._systemSource = systemTools;
 
-    // Reconcile connector-skill overlays to the pinned version. Overlays bind
-    // only at connector install, and the pin is deploy-time config — so boot
-    // (a restart) is exactly when a pin bump must reach connectors that are
-    // already installed. Best-effort + version-gated: a no-op when nothing is
-    // stale, so steady-state boots pay only a per-connector version comparison.
-    await bootReconcileConnectorSkills({
-      workDir: rt.getWorkDir(),
-      listWorkspaces: () => workspaceStore.list(),
-      updateWorkspaceConnectors: (wsId, connectors) => workspaceStore.update(wsId, { connectors }),
-      syncBoundSkills: (identity, serverName, wsId, wd) =>
-        lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
-      catalogByIdMap: () => rt.getConnectorCatalog().catalogByIdMap(),
-      catalogByUrl: () => rt.getConnectorCatalog().catalogByUrl(),
-    });
+      // Phase 2: Create platform capability sources. Each is an in-process
+      // MCP server reachable through `InMemoryTransport` — no subprocess.
+      // `createPlatformSources` returns sources already started.
+      const { createPlatformSources } = await import("../platform/index.ts");
+      const platformSources = await createPlatformSources(rt, events);
+      // Make the host-resources factory accessible on `rt` so non-lifecycle
+      // install paths (connector-tools, boot reload) can pull deps directly.
+      rt._connectorMcpDepsFactory = connectorMcpDepsFactory;
 
-    // Report Composio auth-config wiring across the whole catalog. Resolution is
-    // lazy and per-connector, so it only ever runs for toolkits someone has
-    // installed, connected, or probed — the wrong set for deciding the legacy
-    // env fallback is unused (#789), or for catching an `authConfigs` key that
-    // matches no toolkit. Read-only and best-effort.
-    await bootAuditComposioAuthConfigs({
-      catalogEntries: () => rt.getConnectorCatalog().catalogEntries(),
-    });
+      // Register placements declared by platform sources.
+      registerPlatformPlacements(placementRegistry, platformSources);
 
-    // Boot-time visibility: the locked curated registry is the platform's
-    // non-empty-Browse guarantee. Warn loudly if its resolved catalog
-    // path yields zero entries (missing/empty mount, mis-set
-    // NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
-    // than silent.
-    await warnIfCatalogEmpty(rt.getConnectorCatalog());
+      // Partition: workspace registries get every platform source EXCEPT the
+      // kernel identity sources (conversations, …). Identity sources stay in
+      // `_platformSources` (already started by `createPlatformSources`) and reach
+      // the user only through the identity door — never `ws_<id>-conversations`.
+      const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
 
-    return rt;
+      // Phase 3: Start workspace connectors with per-workspace registries
+      const { registries: workspaceRegistries, entries: workspaceConnectorEntries } =
+        await startWorkspaceConnectors(workspaceStore, workspaceSources, systemTools, events, {
+          workDir: resolveWorkDir(config),
+          allowInsecureRemotes: config.allowInsecureRemotes,
+          // Boot re-spawn picks up host-resources handlers per workspace so
+          // a platform restart doesn't silently drop the capability for
+          // already-installed connectors.
+          getConnectorMcpDeps: connectorMcpDepsFactory,
+          // A brokered connector's boot readiness is its provider's answer, not a
+          // token file — the same predicate `seedUrlConnectionState` consumes.
+          managedConnectors: rt.getManagedConnectorRegistry(),
+          // Late-bound: a boot-started connection that loses auth mid-session
+          // fires this on a post-boot tool call, by which point `rt.lifecycle`
+          // is constructed. Flip the Connection to reauth_required so the UI
+          // offers "Reconnect" instead of every call failing silently.
+          onAuthLost: (wsId: string, serverName: string) => {
+            rt.lifecycle?.recordConnectionStateChange(
+              serverName,
+              wsId,
+              "_workspace",
+              "reauth_required",
+            );
+          },
+        });
+      rt._workspaceRegistries = workspaceRegistries;
+      rt._platformSources = platformSources;
+      rt._workspaceSources = workspaceSources;
+      // Identity sources are in no workspace registry, so no registry relays
+      // their servers' notifications. This does, each to the person it names.
+      relayIdentitySourceNotifications(platformSources, events);
+
+      // Wire the workspace registries into lifecycle so workspace-scope
+      // startAuth / disconnect / install can add+remove sources without
+      // each route having to thread the registry through. The accessor, not the
+      // map: `ensureWorkspaceRegistry` keeps adding to whatever `rt` holds, and
+      // the lifecycle has to see those workspaces too.
+      lifecycle.bindWorkspaceRegistries(() => rt.getWorkspaceRegistries());
+
+      // Seed lifecycle instances for workspace connectors, with each one's host UI
+      // taken from the catalog rather than the copy its install stored, so a
+      // placement the catalog gained since install reaches it (`catalog-ui.ts`).
+      await seedWorkspaceConnectorInstances(
+        lifecycle,
+        placementRegistry,
+        withCatalogUi(workspaceConnectorEntries, await bootCatalogUi(rt)),
+      );
+
+      // Reconcile connector-skill overlays to the pinned version. Overlays bind
+      // only at connector install, and the pin is deploy-time config — so boot
+      // (a restart) is exactly when a pin bump must reach connectors that are
+      // already installed. Best-effort + version-gated: a no-op when nothing is
+      // stale, so steady-state boots pay only a per-connector version comparison.
+      await bootReconcileConnectorSkills({
+        workDir: rt.getWorkDir(),
+        listWorkspaces: () => workspaceStore.list(),
+        updateWorkspaceConnectors: (wsId, connectors) =>
+          workspaceStore.update(wsId, { connectors }),
+        syncBoundSkills: (identity, serverName, wsId, wd) =>
+          lifecycle.syncBoundSkills(identity, serverName, wsId, wd),
+        catalogByIdMap: () => rt.getConnectorCatalog().catalogByIdMap(),
+        catalogByUrl: () => rt.getConnectorCatalog().catalogByUrl(),
+      });
+
+      // Report Composio auth-config wiring across the whole catalog. Resolution is
+      // lazy and per-connector, so it only ever runs for toolkits someone has
+      // installed, connected, or probed — the wrong set for deciding the legacy
+      // env fallback is unused (#789), or for catching an `authConfigs` key that
+      // matches no toolkit. Read-only and best-effort.
+      await bootAuditComposioAuthConfigs({
+        catalogEntries: () => rt.getConnectorCatalog().catalogEntries(),
+      });
+
+      // Boot-time visibility: the locked curated registry is the platform's
+      // non-empty-Browse guarantee. Warn loudly if its resolved catalog
+      // path yields zero entries (missing/empty mount, mis-set
+      // NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
+      // than silent.
+      await warnIfCatalogEmpty(rt.getConnectorCatalog());
+
+      rt._bootReady.resolve();
+      return rt;
+    } catch (err) {
+      rt._bootReady.reject(err);
+      throw err;
+    }
   }
 
   /** True if a chat() is currently in flight on this conversation. */
@@ -1164,13 +1226,7 @@ export class Runtime {
       .then((result) => {
         // Publish a terminal `done` carrying the final result so viewers
         // finalize the assistant message, then close the run.
-        this.publishTurnEvent(conversationId, "done", {
-          response: result.response,
-          conversationId: result.conversationId,
-          toolCalls: result.toolCalls,
-          stopReason: result.stopReason,
-          usage: result.usage,
-        });
+        this.publishTurnEvent(conversationId, "done", chatResponseBody(result));
         this.runBus.end(conversationId, "done");
       })
       .catch((err) => {
@@ -1207,17 +1263,30 @@ export class Runtime {
     return this.runBus.bufferedSince(conversationId, afterSeq);
   }
 
+  /** Publish a frame the runtime builds itself: typed by the conversation stream's catalog. */
+  private publishTurnEvent<K extends TurnFrame>(
+    conversationId: string,
+    type: K,
+    data: ConversationStreamEvents[K],
+  ): void {
+    this.publishToRunBus(conversationId, type, data);
+  }
+
   /** Publish to the RunBus (buffer/replay) and fan out live (SSE viewers). */
-  private publishTurnEvent(conversationId: string, type: string, data: unknown): void {
+  private publishToRunBus(conversationId: string, type: string, data: unknown): void {
     const buffered = this.runBus.publish(conversationId, type, data);
     if (buffered) this.onTurnEvent?.(conversationId, buffered);
   }
 
-  /** EventSink that forwards engine events into the RunBus for one turn. */
+  /**
+   * EventSink that forwards engine events into the RunBus for one turn,
+   * verbatim. `src/api/schemas/events-drift-guard.ts` holds each forwarded
+   * payload to its `ConversationStreamEvents` entry.
+   */
   private createRunBusSink(conversationId: string): EventSink {
     return {
       emit: (event: EngineEvent) => {
-        this.publishTurnEvent(conversationId, event.type, event.data);
+        this.publishToRunBus(conversationId, event.type, event.data);
       },
     };
   }
@@ -1434,6 +1503,9 @@ export class Runtime {
    * doors each re-implementing it hold it only until the third forgets.
    */
   async startRun(spec: RunSpec): Promise<RunHandle> {
+    // No run is composed over a runtime still assembling its registries. See
+    // `_bootReady`. Optional because a prototype-built test double has no fields.
+    await this._bootReady?.promise;
     const { ownerId } = spec.principal;
     const binding = spec.conversation;
     // A run with a person in the loop. The only axis `trigger` decides: it
@@ -1752,7 +1824,14 @@ export class Runtime {
     }
 
     // ── The tool set ────────────────────────────────────────────────────────
-    const allTools = await this.listRunTools(spec.workspaceId, identity, attended);
+    // An unattended run's `allowedTools` bounds what its router reaches (see
+    // `_buildIdentityToolRouter`), so the same predicate bounds what it is
+    // shown; otherwise the model is offered tools every call to which is refused.
+    const runAllowedTools = attended ? undefined : spec.input.allowedTools;
+    const listedTools = await this.listRunTools(spec.workspaceId, identity, attended);
+    const allTools = runAllowedTools
+      ? listedTools.filter((t) => isToolAllowedForRun(t.name, runAllowedTools))
+      : listedTools;
 
     // ── The skill pools ─────────────────────────────────────────────────────
     // Per-run skill pool. The boot-time `this.skillMatcher` only ever scans
@@ -1899,13 +1978,18 @@ export class Runtime {
       this.loadConnectorSkillCandidates(spec.workspaceId),
       suppressed,
     );
-    const skillCatalog = toCatalogEntries(
-      collectActivatableSkills({
-        fsCapability: poolCapability,
-        connectorCapability,
-        connectorCandidates: connectorOverlayCandidates,
-      }),
-    );
+    // The catalog is loaded through `nb__use_skill`, so a run whose list does
+    // not name that tool gets no catalog rather than one it cannot open.
+    const skillCatalog =
+      runAllowedTools && !isToolAllowedForRun("nb__use_skill", runAllowedTools)
+        ? []
+        : toCatalogEntries(
+            collectActivatableSkills({
+              fsCapability: poolCapability,
+              connectorCapability,
+              connectorCandidates: connectorOverlayCandidates,
+            }),
+          );
 
     // Task mode prepends TASK_IDENTITY so an unattended run produces a
     // deliverable rather than a conversational reply. The runtime owns that
@@ -2113,6 +2197,9 @@ export class Runtime {
    * no conversation, no run record, no inbox item.
    */
   async dispatchUnattended(opts: UnattendedDispatchOptions): Promise<UnattendedDispatchResult> {
+    // Routing reads the workspace registries synchronously; before boot there
+    // is no registry to route into. See `_bootReady`.
+    await this._bootReady?.promise;
     return dispatchUnattended(this, opts);
   }
 
@@ -2473,6 +2560,7 @@ export class Runtime {
       identityId,
       workspaceId,
       runtime: this,
+      caller: attended ? "chat" : "automation",
       ...(allowedTools
         ? { isToolAllowed: (name: string) => isToolAllowedForRun(name, allowedTools) }
         : {}),
@@ -2484,16 +2572,14 @@ export class Runtime {
 
   /**
    * Wrap an `EventSink` so `tool.progress` / `tool.done` events carry
-   * `workspaceId` from the per-call dispatch map. The map is populated
-   * inside `_buildIdentityToolRouter` BEFORE `source.execute(...)` so
-   * an early `tool.progress` event from a task-augmented tool can find
-   * its entry. The map entry stays through `tool.done` so the audit
-   * record sees the same field, then is deleted to keep the map bounded.
+   * `workspaceId` from the per-call dispatch map, keyed by the tool call id.
+   * The map is populated inside `_buildIdentityToolRouter` BEFORE
+   * `source.execute(...)`, so any event for the call finds its entry. The
+   * entry stays through `tool.done` so the audit record sees the same field,
+   * then is deleted to keep the map bounded.
    *
-   * `data` is `Record<string, unknown>` on `EngineEvent`; we copy the
-   * existing object, write the `workspaceId` field, and re-emit. No
-   * `as unknown as T` shenanigans — the field is `unknown`-typed by
-   * construction so a plain assignment works.
+   * Both payloads declare an optional `workspaceId`, so the wrap copies the
+   * payload with the field set and re-emits it under the same type.
    */
   private _wrapSinkWithWorkspaceAttribution(
     inner: EventSink,
@@ -2501,20 +2587,23 @@ export class Runtime {
   ): EventSink {
     return {
       emit: (event) => {
-        const id =
-          (event.type === "tool.progress" || event.type === "tool.done") &&
-          typeof event.data.id === "string"
-            ? event.data.id
-            : undefined;
-        const wsId = id ? perCallWorkspaceMap.get(id) : undefined;
-        if (!id || wsId === undefined) {
+        if (event.type !== "tool.progress" && event.type !== "tool.done") {
           inner.emit(event);
           return;
         }
-        // Done is terminal — drop the entry now to keep the map bounded
-        // across long-running conversations.
-        if (event.type === "tool.done") perCallWorkspaceMap.delete(id);
-        inner.emit({ type: event.type, data: { ...event.data, workspaceId: wsId } });
+        const wsId = perCallWorkspaceMap.get(event.data.id);
+        if (wsId === undefined) {
+          inner.emit(event);
+          return;
+        }
+        if (event.type === "tool.done") {
+          // Done is terminal — drop the entry now to keep the map bounded
+          // across long-running conversations.
+          perCallWorkspaceMap.delete(event.data.id);
+          inner.emit({ type: "tool.done", data: { ...event.data, workspaceId: wsId } });
+          return;
+        }
+        inner.emit({ type: "tool.progress", data: { ...event.data, workspaceId: wsId } });
       },
     };
   }
@@ -3425,10 +3514,9 @@ export class Runtime {
       ...identityTools.map(toToolSchema),
       // Personal connectors carry the reserved marker. With workspace tools now
       // bare, a workspace `gmail` and the caller's personal `gmail` would other-
-      // wise be the same string — a collision install-time checks cannot prevent,
-      // since the guard only sees the *caller's* connectors and says nothing
-      // about another member's. Marking the rare side keeps both reachable and
-      // tells the model whose credentials it is about to spend.
+      // wise be the same string, and both are allowed to exist. Marking the rare
+      // side keeps both reachable and tells the model whose credentials it is
+      // about to spend.
       ...personalTools.map((t) => ({
         ...t,
         name: personalConnectorWireName(t.name),
@@ -3546,8 +3634,14 @@ export class Runtime {
     );
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
-    wsRegistry.setPermissionContext(wsId, this.getPermissionStore(), (serverName, toolName) =>
-      this.connectorAdminDenial(wsId, getRequestContext()?.identity, serverName, toolName),
+    wsRegistry.setPermissionContext(
+      wsId,
+      this.getPermissionStore(),
+      (serverName, toolName, input) =>
+        this.connectorAdminDenial(wsId, getRequestContext()?.identity, serverName, toolName, {
+          input,
+          caller: "api",
+        }),
     );
     this._workspaceRegistries.set(wsId, wsRegistry);
     return wsRegistry;
@@ -4010,16 +4104,78 @@ export class Runtime {
   /**
    * The `workspace_admin_required` refusal for one call, or `null` when
    * `principal` may make it. Every dispatch door runs this beside
-   * `assertToolAllowed` for a workspace connector tool.
+   * `assertToolAllowed` for a workspace connector tool, once per call.
+   *
+   * It is also where a call to a declared admin tool is audited, admitted or
+   * refused: every door already passes through here, so the line cannot be
+   * forgotten by a door or a connector.
    */
   async connectorAdminDenial(
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
     serverName: string,
     toolName: string,
+    call: AdminToolCall,
   ): Promise<ToolResult | null> {
     const admission = await this.connectorAdmission(wsId, principal);
-    return admission.admits(serverName, toolName) ? null : adminToolDenial(serverName, toolName);
+    const admitted = admission.admits(serverName, toolName);
+    await this.auditAdminToolCall(wsId, principal, serverName, toolName, call, admitted);
+    return admitted ? null : adminToolDenial(serverName, toolName);
+  }
+
+  /**
+   * Write `audit.admin_tool_call` when the catalog declares `toolName` an admin
+   * tool, whoever called. An admin's admission skips the catalog, so the
+   * declaration is read here; it is the same cached read a member's every call
+   * already makes.
+   */
+  private async auditAdminToolCall(
+    wsId: string,
+    principal: Pick<UserIdentity, "id"> | null | undefined,
+    serverName: string,
+    toolName: string,
+    call: AdminToolCall,
+    admitted: boolean,
+  ): Promise<void> {
+    const declared = await this.adminToolsByServer();
+    if (!isDeclaredAdminTool(declared.get(serverName), toolName)) return;
+    const ctx = getRequestContext();
+    this.defaultEvents.emit({
+      type: "audit.admin_tool_call",
+      data: {
+        workspaceId: wsId,
+        userId: principal?.id ?? null,
+        connector: serverName,
+        tool: toolName,
+        caller: call.caller,
+        outcome: admitted ? "admitted" : "refused",
+        arguments: auditArguments(
+          call.input,
+          await this.inputSchemaFor(wsId, serverName, toolName),
+        ),
+        ...(ctx?.conversationId ? { conversationId: ctx.conversationId } : {}),
+        ...(ctx?.runId ? { runId: ctx.runId } : {}),
+      } satisfies AdminToolCallPayload,
+    });
+  }
+
+  /**
+   * The input schema a workspace connector advertises for one tool, if it can
+   * say. A source lists its tools under their `<source>__<tool>` names.
+   */
+  private async inputSchemaFor(
+    wsId: string,
+    serverName: string,
+    toolName: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    const source = this._workspaceRegistries.get(wsId)?.getSource(serverName);
+    const listed = `${serverName}__${toolName}`;
+    try {
+      const tools = (await source?.tools()) ?? [];
+      return tools.find((t) => t.name === listed)?.inputSchema;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -5360,6 +5516,17 @@ function requireRequestWorkspace(workspaceId: string | undefined): string {
 // --- Factory helpers (keep Runtime.start() readable) ---
 
 /**
+ * The `_bootReady` barrier. Its promise is marked handled up front: a boot that
+ * fails with no run waiting must not surface as an unhandled rejection, while a
+ * run that is waiting still receives the error.
+ */
+function bootBarrier(): PromiseWithResolvers<void> {
+  const barrier = Promise.withResolvers<void>();
+  barrier.promise.catch(() => {});
+  return barrier;
+}
+
+/**
  * Best-effort placement extraction for any ToolSource. `McpSource`
  * exposes `getPlacements()` (returning declarations from
  * `defineInProcessApp`); sources that don't declare any — including
@@ -5387,6 +5554,25 @@ function registerPlatformPlacements(
     if (placements.length > 0) {
       placementRegistry.register(src.name, placements);
     }
+  }
+}
+
+/**
+ * The catalog's host UI by server name, for the boot seed. A catalog that cannot
+ * be read yields an empty map, which leaves every connector with its stored `ui`:
+ * a bad catalog file must not take every app out of the shell.
+ */
+async function bootCatalogUi(rt: Runtime): Promise<Map<string, ConnectorUiMeta | null>> {
+  try {
+    return catalogUiByServerName(await rt.getConnectorCatalog().catalogEntries());
+  } catch (err) {
+    log.warn(
+      "[connectors] catalog unreadable at boot; installed connectors keep their stored host UI",
+      {
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+    return new Map();
   }
 }
 
@@ -5483,7 +5669,7 @@ function initWorkDir(config: RuntimeConfig): void {
 // are workspace-owned, so each chat/task turn routes its engine events through its
 // own per-call workspace store (see `_chatInner`). There is no flat top-level
 // conversation store.
-function buildEventSink(config: RuntimeConfig): EventSink {
+function buildEventSink(config: Pick<RuntimeConfig, "workDir" | "events" | "logging">): EventSink {
   const sinks: EventSink[] = config.events ? [...config.events] : [];
   if (!config.logging?.disabled) {
     const workDir = resolveWorkDir(config);
@@ -5506,7 +5692,10 @@ function buildEventSink(config: RuntimeConfig): EventSink {
  * (increments in memory whether or not `/metrics` is scraped), so it is safe in
  * a local `bun run dev` with no Prometheus.
  */
-function buildRuntimeEventSink(config: RuntimeConfig, telemetry: TelemetryManager): EventSink {
+function buildRuntimeEventSink(
+  config: Pick<RuntimeConfig, "workDir" | "events" | "logging">,
+  telemetry: TelemetryManager,
+): EventSink {
   const sinks: EventSink[] = [buildEventSink(config), new MetricsEventSink()];
   if (telemetry.isEnabled()) {
     sinks.push(new PostHogEventSink(telemetry));
@@ -5703,14 +5892,14 @@ function createPartialRunAccumulator(): {
   const toolCalls: RunHandle["toolCalls"] = [];
   const sink: EventSink = {
     emit(event: EngineEvent): void {
-      const { type, data } = event;
-      if (type === "llm.done") {
+      if (event.type === "llm.done") {
+        const { data } = event;
         totals.iterations += 1;
-        totals.llmMs += (data.llmMs as number) ?? 0;
-        const usage = (data.usage ?? {}) as { inputTokens?: number; outputTokens?: number };
-        totals.inputTokens += usage.inputTokens ?? 0;
-        totals.outputTokens += usage.outputTokens ?? 0;
-      } else if (type === "tool.done") {
+        totals.llmMs += data.llmMs;
+        totals.inputTokens += data.usage.inputTokens;
+        totals.outputTokens += data.usage.outputTokens;
+      } else if (event.type === "tool.done") {
+        const { data } = event;
         // `errorReason` is intentionally absent here: this accumulator only
         // feeds the abort/timeout path, which always returns
         // `stopReason: "aborted"` (never "complete"), so the automations
@@ -5718,12 +5907,12 @@ function createPartialRunAccumulator(): {
         // `tool.done` event doesn't carry `errorReason` either — no point
         // threading it through for a path that can't de-mask.)
         toolCalls.push({
-          id: (data.id as string) ?? "",
-          name: (data.name as string) ?? "",
+          id: data.id,
+          name: data.name,
           input: {},
-          output: (data.output as string) ?? "",
-          ok: (data.ok as boolean) ?? false,
-          ms: (data.ms as number) ?? 0,
+          output: data.output,
+          ok: data.ok,
+          ms: data.ms,
         });
       }
     },

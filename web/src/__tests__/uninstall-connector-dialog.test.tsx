@@ -62,7 +62,6 @@ mock.module("../api/client", () => ({
   uninstallConnector,
 }));
 
-const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 
@@ -87,6 +86,8 @@ function installed(overrides: {
   return {
     serverName: "com-acme-db-query",
     connectorName: "https://mcp.acme.test/mcp",
+    displayName: "Acme DB Query",
+    disconnectable: false,
     version: "1.0.0",
     state: "running",
     scope: "workspace",

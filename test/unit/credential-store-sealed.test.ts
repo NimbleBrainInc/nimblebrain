@@ -18,12 +18,17 @@ import { join } from "node:path";
 import { WorkspaceLogSink } from "../../src/adapters/workspace-log-sink.ts";
 import type { EngineEvent } from "../../src/engine/types.ts";
 import { type CredentialSealer, createCredentialSealer } from "../../src/tools/credential-seal.ts";
-import { type CredentialScope, FileCredentialStore } from "../../src/tools/credential-store.ts";
+import {
+  type CredentialScope,
+  FileCredentialStore,
+  type SealFailureReason,
+} from "../../src/tools/credential-store.ts";
 import {
   createCredentialStore,
   registerBuiltinCredentialStoreBackends,
   runSealCanary,
 } from "../../src/tools/credential-store-backend.ts";
+import { firstPayloadOf } from "../helpers/engine-events.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
@@ -290,7 +295,7 @@ describe("a presence probe never opens anything", () => {
 describe("each way an open can fail says which one it was", () => {
   // Collapsing these makes a stray trailing newline read as a wrong key, and
   // sends an operator to rotate a key that was never the problem.
-  const cases: [string, string, RegExp][] = [
+  const cases: [string, SealFailureReason, RegExp][] = [
     ["a kid the ring does not hold", "unknown_kid", /Load the key that did/],
     ["bytes that fail the tag", "auth_failed", /failed authentication/],
     ["a value damaged out of its grammar", "malformed", /not a well-formed sealed value/],
@@ -317,7 +322,7 @@ describe("each way an open can fail says which one it was", () => {
       seed(dir, "acme.key", onDisk);
       const got = await store.get(WS, "acme.key", READ);
       expect(() => got?.reveal()).toThrow(remedy);
-      expect(events[0]?.data.reason).toBe(reason);
+      expect(firstPayloadOf(events, "audit.credential_seal_failure")?.reason).toBe(reason);
     } finally {
       cleanup();
     }

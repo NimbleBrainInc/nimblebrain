@@ -17,7 +17,7 @@ The shell layout has the following slots:
 | `sidebar` | No nav entry for a connector | Reserved for the host's own views (Conversations, Automations, Files). A connector's `sidebar` placement with a `route` still registers that route. |
 | `sidebar.bottom` | The bottom of the mobile navigation drawer | A pinned item. It does not render in the desktop sidebar. |
 | `main` | A route, with no nav entry | A full-page view. Requires a `route`. Reachable by URL or when your app navigates to it. |
-| `settings` | The connector's settings page | Your connector's settings component, rendered after the host's own sections on **Settings → Connectors → your connector**. See [Settings sections](/extensions/settings-sections/). |
+| `settings` | The connector's settings page | Your connector's settings component, rendered under a Settings heading on **Settings → Connectors → your connector**, after its connection sections and before tool permissions. See [Settings sections](/extensions/settings-sections/). |
 
 An unknown slot is dropped, never fatal.
 

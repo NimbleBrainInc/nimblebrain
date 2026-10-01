@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { deriveUsageMetrics } from "../../src/conversation/event-reconstructor.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
+import { engineEvent, llmDonePayload, runStartPayload } from "../helpers/engine-events.ts";
 
 function makeDirs() {
   const base = mkdtempSync(join(tmpdir(), "es-integ-test-"));
@@ -29,24 +30,27 @@ describe("Event-sourced integration", () => {
 
     // Simulate engine events via emit()
     store.setActiveConversation(conv.id);
-    store.emit({
-      type: "run.start",
-      data: { runId: "r1", model: "claude-sonnet-4-5-20250929", maxIterations: 10, toolCount: 0 },
-    });
-    store.emit({
-      type: "llm.done",
-      data: {
-        runId: "r1",
-        model: "claude-sonnet-4-5-20250929",
-        content: [{ type: "text", text: "Hi there!" }],
-        usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 0 },
-        llmMs: 200,
-      },
-    });
-    store.emit({
-      type: "run.done",
-      data: { runId: "r1", stopReason: "complete", totalMs: 250 },
-    });
+    store.emit(
+      engineEvent(
+        "run.start",
+        runStartPayload({ runId: "r1", model: "claude-sonnet-4-5-20250929" }),
+      ),
+    );
+    store.emit(
+      engineEvent(
+        "llm.done",
+        llmDonePayload({
+          runId: "r1",
+          model: "claude-sonnet-4-5-20250929",
+          content: [{ type: "text", text: "Hi there!" }],
+          usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 0 },
+          llmMs: 200,
+        }),
+      ),
+    );
+    store.emit(
+      engineEvent("run.done", { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 250 }),
+    );
 
     // Wait for async metadata cache update
     await new Promise((r) => setTimeout(r, 100));
@@ -146,22 +150,21 @@ describe("Event-sourced integration", () => {
     const normalConv = await normalStore.create({ ownerId: "user_test" });
     const debugConv = await debugStore.create({ ownerId: "user_test" });
 
-    const engineEvent = {
-      type: "run.start" as const,
-      data: {
+    const runStart = engineEvent(
+      "run.start",
+      runStartPayload({
         runId: "r1",
         model: "test-model",
         systemPrompt: "You are a helpful assistant.",
         toolNames: ["bash", "read_file"],
-        maxIterations: 10,
-      },
-    };
+      }),
+    );
 
     normalStore.setActiveConversation(normalConv.id);
-    normalStore.emit(engineEvent);
+    normalStore.emit(runStart);
 
     debugStore.setActiveConversation(debugConv.id);
-    debugStore.emit(engineEvent);
+    debugStore.emit(runStart);
 
     const normalLines = readFileSync(join(normalDirs.dir, `${normalConv.id}.jsonl`), "utf-8")
       .trim()

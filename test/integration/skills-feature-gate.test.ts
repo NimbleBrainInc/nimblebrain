@@ -82,6 +82,7 @@ describe("skillManagement: false", () => {
     // runs. Asserting the refusal alone would pass against a handler that
     // errored for an unrelated reason — so the skill list is checked after.
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: "dev",
       workspaceId: TEST_WORKSPACE_ID,
       runtime,
@@ -136,6 +137,7 @@ describe("skillManagement: true (the default)", () => {
 
   test("the chat door creates a skill when the flag is on", async () => {
     const router = new IdentityToolRouter({
+      caller: "chat",
       identityId: "dev",
       workspaceId: TEST_WORKSPACE_ID,
       runtime,

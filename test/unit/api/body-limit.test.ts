@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { BodyLimitOptions } from "../../../src/api/middleware/body-limit.ts";
 import { bodyLimit } from "../../../src/api/middleware/body-limit.ts";
-import type { ApiErrorBody } from "../../../src/api/types.ts";
+import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import { readJson } from "../../helpers/http.ts";
 
 /** The middleware's 413: an `apiError` body whose details name the bound it hit. */
@@ -33,7 +33,7 @@ describe("bodyLimit middleware", () => {
     expect(res.status).toBe(413);
     const body = await readJson<PayloadTooLarge>(res);
     expect(body.error).toBe("payload_too_large");
-    expect(body.message).toBe("Payload too large");
+    expect(body.message).toBe("Request body is 2 KB; the limit is 1 KB.");
   });
 
   test("413 body includes limit, received, and contentType", async () => {
@@ -131,6 +131,21 @@ describe("bodyLimit middleware", () => {
     expect(body.details?.limit).toBe(4096);
     expect(body.details?.received).toBe(8192);
     expect(body.details?.contentType).toContain("multipart/form-data");
+  });
+
+  test("an upload over the total limit names the size and the limit in its message", async () => {
+    const app = createTestApp(1_048_576, { multipart: 104_857_600 });
+    const res = await app.request("/test", {
+      method: "POST",
+      headers: {
+        "Content-Length": String(125_829_120),
+        "Content-Type": "multipart/form-data; boundary=abc",
+      },
+    });
+    expect(res.status).toBe(413);
+    const body = await readJson<PayloadTooLarge>(res);
+    expect(body.error).toBe("payload_too_large");
+    expect(body.message).toBe("Upload is 120.0 MB; the limit is 100.0 MB.");
   });
 
   test("non-multipart content-types stay bounded by the base limit even when multipart is set", async () => {

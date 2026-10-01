@@ -1,6 +1,8 @@
+import type { EngineEventPayloads } from "../engine/schemas/events.ts";
 import type { EngineEvent, EngineEventType, EventSink } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import type { HeartbeatEvent, WorkspaceStreamEvents } from "./schemas/events.ts";
 import { CONNECTED_FRAME } from "./sse-heartbeat.ts";
 
 /**
@@ -61,17 +63,27 @@ const encoder = new TextEncoder();
  * Events with no entry are NOT forwarded — operational events like
  * `tool.progress` / `tool.done` / `run.error` stay internal to the runtime.
  *
- * Adding a new SSE-bound event type is a one-line edit here. The
- * `Partial<Record<EngineEventType, SseRoute>>` shape makes the key a
- * compile-time check against `EngineEventType`, so a typo or a renamed
- * event surfaces as a build error rather than silently no-routing.
+ * Adding a new SSE-bound event type is a one-line edit here. The table is
+ * keyed by `EngineEventType` and each route's field names by that event's
+ * payload keys, so a typo, a renamed event or a renamed field is a build
+ * error rather than an event that silently stops routing.
  */
-type SseRoute =
-  | { scope: "global" }
-  | { scope: "workspace"; wsIdField: string }
-  | { scope: "owner"; wsIdField: string; userIdField: string };
+/** Every key of a payload, across the members of a union payload. */
+type PayloadKey<K extends EngineEventType> = EngineEventPayloads[K] extends infer P
+  ? P extends unknown
+    ? keyof P & string
+    : never
+  : never;
 
-const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
+type SseRoute<K extends EngineEventType> =
+  | { scope: "global" }
+  | { scope: "workspace"; wsIdField: PayloadKey<K> }
+  | { scope: "owner"; wsIdField?: PayloadKey<K>; userIdField: PayloadKey<K> };
+
+/** The engine events `GET /v1/events` may send: those `WorkspaceStreamEvents` declares. */
+type WorkspaceStreamEngineEvent = EngineEventType & keyof WorkspaceStreamEvents;
+
+const SSE_ROUTES: { [K in WorkspaceStreamEngineEvent]?: SseRoute<K> } = {
   // Connector lifecycle — workspace-scoped. `wsId` is on every payload (added
   // in lifecycle.ts when emitting); without it we can't safely scope, so the
   // event drops at the boundary below.
@@ -94,7 +106,7 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   // the owner (`ownerId`) and reaches that identity's tabs alone. Scoping by the
   // conversation's workspace would leak the title to every member of it. The
   // shell routes it to the matching conversation slice by `conversationId`.
-  "conversation.title": { scope: "owner", wsIdField: "wsId", userIdField: "ownerId" },
+  "conversation.title": { scope: "owner", userIdField: "ownerId" },
   // Org-level config (model preferences, feature flags). Affects every
   // workspace; broadcast to all.
   "config.changed": { scope: "global" },
@@ -120,6 +132,19 @@ const SSE_ROUTES: Partial<Record<EngineEventType, SseRoute>> = {
   "notification.delivered": { scope: "workspace", wsIdField: "workspaceId" },
   "notification.delivery_failed": { scope: "workspace", wsIdField: "workspaceId" },
 };
+
+/** Whether `type` is an engine event the route table may carry. */
+function isWorkspaceStreamEvent(type: EngineEventType): type is WorkspaceStreamEngineEvent {
+  return type in SSE_ROUTES;
+}
+
+/**
+ * A payload field named by a route. The route table checks each name against
+ * its event's payload; this read is by that name, so it is untyped.
+ */
+function payloadField(event: EngineEvent, field: string): unknown {
+  return (event.data as Record<string, unknown>)[field];
+}
 
 /** The value when it is a non-empty string, else undefined. */
 function nonEmptyString(value: unknown): string | undefined {
@@ -194,7 +219,7 @@ export class SseEventManager implements EventSink {
     this.heartbeatTimer = setInterval(() => {
       this.broadcast("heartbeat", {
         timestamp: new Date().toISOString(),
-      });
+      } satisfies HeartbeatEvent);
     }, this.heartbeatIntervalMs);
 
     if (this.workspaceStore && !this.unsubscribeMembership) {
@@ -307,15 +332,18 @@ export class SseEventManager implements EventSink {
    * workspace id.
    */
   emit(event: EngineEvent): void {
-    const route = SSE_ROUTES[event.type];
+    if (!isWorkspaceStreamEvent(event.type)) return;
+    const route: SseRoute<EngineEventType> | undefined = SSE_ROUTES[event.type];
     if (!route) return;
     if (route.scope === "global") {
       this.broadcast(event.type, event.data);
       return;
     }
     if (route.scope === "owner") {
-      const wsId = nonEmptyString(event.data[route.wsIdField]);
-      const userId = nonEmptyString(event.data[route.userIdField]);
+      const wsId = route.wsIdField
+        ? nonEmptyString(payloadField(event, route.wsIdField))
+        : undefined;
+      const userId = nonEmptyString(payloadField(event, route.userIdField));
       // Exactly one owner. Neither is a payload bug; both is ambiguous, and
       // either answer would hand one owner's signal to the other's audience.
       if (wsId !== undefined && userId === undefined) {
@@ -328,8 +356,8 @@ export class SseEventManager implements EventSink {
     // Workspace-scoped: extract the wsId from the declared field. A
     // missing wsId is a payload bug — drop rather than fan out to every
     // workspace, since that would leak one workspace's signals to others.
-    const wsId = event.data[route.wsIdField];
-    if (typeof wsId !== "string" || wsId.length === 0) return;
+    const wsId = nonEmptyString(payloadField(event, route.wsIdField));
+    if (wsId === undefined) return;
     this.broadcast(event.type, event.data, wsId);
   }
 

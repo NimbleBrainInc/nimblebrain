@@ -79,9 +79,7 @@ describe("handleExport — markdown", () => {
   test("exports 4 messages as readable markdown", async () => {
     await setupConversation(META, MESSAGES);
 
-    const result = (await handleExport({ id: "conv_export001", format: "markdown" }, index)) as {
-      content: string;
-    };
+    const result = await handleExport({ id: "conv_export001", format: "markdown" }, index);
 
     expect(result.content).toContain("# Conversation: Export Test Conversation");
     expect(result.content).toContain("**Created:** 2025-06-01T10:00:00.000Z");
@@ -102,9 +100,7 @@ describe("handleExport — markdown", () => {
     const meta = { ...META, id: "conv_notitle", title: null };
     await setupConversation(meta, MESSAGES.slice(0, 2), "conv_notitle.jsonl");
 
-    const result = (await handleExport({ id: "conv_notitle", format: "markdown" }, index)) as {
-      content: string;
-    };
+    const result = await handleExport({ id: "conv_notitle", format: "markdown" }, index);
 
     expect(result.content).toContain("# Conversation: Untitled");
   });
@@ -143,9 +139,7 @@ describe("handleExport — markdown", () => {
     const meta = { ...META, id: "conv_tools001" };
     await setupConversation(meta, messagesWithTools, "conv_tools001.jsonl");
 
-    const result = (await handleExport({ id: "conv_tools001", format: "markdown" }, index)) as {
-      content: string;
-    };
+    const result = await handleExport({ id: "conv_tools001", format: "markdown" }, index);
 
     expect(result.content).toContain("> **Tool call:** file_search");
     expect(result.content).toContain("> Input:");
@@ -173,9 +167,7 @@ describe("handleExport — markdown", () => {
     const meta = { ...META, id: "conv_code001" };
     await setupConversation(meta, codeMessage, "conv_code001.jsonl");
 
-    const result = (await handleExport({ id: "conv_code001", format: "markdown" }, index)) as {
-      content: string;
-    };
+    const result = await handleExport({ id: "conv_code001", format: "markdown" }, index);
 
     expect(result.content).toContain("```typescript\nfunction hello() {");
     expect(result.content).toContain("```typescript\nfunction hello(name: string): string {");
@@ -213,9 +205,7 @@ describe("handleExport — markdown", () => {
     const meta = { ...META, id: "conv_long001" };
     await setupConversation(meta, messagesWithLongToolCalls, "conv_long001.jsonl");
 
-    const result = (await handleExport({ id: "conv_long001", format: "markdown" }, index)) as {
-      content: string;
-    };
+    const result = await handleExport({ id: "conv_long001", format: "markdown" }, index);
 
     // Input should be truncated to ~100 chars + "..."
     const inputLine = result.content.split("\n").find((l: string) => l.startsWith("> Input:"));
@@ -238,9 +228,7 @@ describe("handleExport — json", () => {
   test("exports valid JSON array of messages", async () => {
     await setupConversation(META, MESSAGES);
 
-    const result = (await handleExport({ id: "conv_export001", format: "json" }, index)) as {
-      content: string;
-    };
+    const result = await handleExport({ id: "conv_export001", format: "json" }, index);
 
     const parsed = JSON.parse(result.content) as DisplayMessage[];
     expect(Array.isArray(parsed)).toBe(true);
@@ -254,9 +242,7 @@ describe("handleExport — json", () => {
   test("JSON output is pretty-printed", async () => {
     await setupConversation(META, MESSAGES);
 
-    const result = (await handleExport({ id: "conv_export001", format: "json" }, index)) as {
-      content: string;
-    };
+    const result = await handleExport({ id: "conv_export001", format: "json" }, index);
 
     // Pretty-printed JSON has newlines and indentation
     expect(result.content).toContain("\n");

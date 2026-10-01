@@ -1,3 +1,5 @@
+import type { JsonRpcErrorBody } from "../../../src/api/schemas/responses.ts";
+import { readJson } from "../../helpers/http.ts";
 /**
  * `/mcp/<wsId>`: which credentials reach a workspace's MCP endpoint.
  *
@@ -118,7 +120,7 @@ function makeApp(): Hono {
   return app;
 }
 
-function post(app: Hono, path: string, token?: string): Promise<Response> {
+async function post(app: Hono, path: string, token?: string): Promise<Response> {
   return app.request(`http://api.example.com${path}`, {
     method: "POST",
     headers: {
@@ -147,7 +149,7 @@ describe("bare /mcp", () => {
       const res = await post(app, path, "alice-first-party");
       expect(res.status).toBe(404);
       expect(res.headers.get("WWW-Authenticate")).toBeNull();
-      const body = (await res.json()) as { error: { message: string } };
+      const body = await readJson<JsonRpcErrorBody>(res);
       expect(body.error.message).toContain(`${ORIGIN}/mcp/<workspaceId>`);
     }
     // No credential at all gets the same answer: no default workspace, and no
@@ -170,7 +172,7 @@ describe("authorization-server tokens at /mcp/<wsId>: aud must equal the canonic
   it("accepts an exact aud for a member, bound to that workspace", async () => {
     const res = await post(makeApp(), `/mcp/${WS_A}`, "alice-aud-exact");
     expect(res.status).toBe(200);
-    expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_A }]);
+    expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_A, grant: "resource" }]);
   });
 
   it("accepts an aud array that contains the exact URL", async () => {
@@ -238,7 +240,7 @@ describe("first-party credentials", () => {
   it("accepts the web app's own login token at /mcp/<wsId> for a member", async () => {
     const res = await post(makeApp(), `/mcp/${WS_B}`, "alice-first-party");
     expect(res.status).toBe(200);
-    expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_B }]);
+    expect(reached).toEqual([{ identity: ALICE, workspaceId: WS_B, grant: "first_party" }]);
   });
 
   it("answers 401 with the workspace's discovery header when there is no credential", async () => {

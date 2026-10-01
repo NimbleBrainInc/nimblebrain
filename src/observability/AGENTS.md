@@ -21,7 +21,7 @@ Namespaces (`src/observability/log.ts`):
 | Namespace | Emits | Answers |
 |---|---|---|
 | `mcp` | McpSource construction; per-call dispatch showing `taskSupport` / `path=task-augmented\|inline` / cached tool count | "Why is my tool going inline vs task-augmented?" "Is my tool cache populated?" |
-| `sse` | Every `tool.progress` / `tool.done` / `server.notification` entering the runtime sink wrap | "Are progress events and relayed notifications reaching the SSE layer?" |
+| `sse` | Every `tool.progress` / `tool.task_status` / `tool.done` / `server.notification` entering the runtime sink wrap | "Are progress events and relayed notifications reaching the SSE layer?" |
 | `auth` | Identity-provider verify rejections at debug volume (the routine, self-healing reasons `no_token` / `token_expired`). Anomalous reasons — `org_mismatch`, `bad_signature`, `jwks_unavailable`, etc. — log at `warn` and need no flag. | "Why is a user being 401'd / involuntarily logged out?" |
 | `notify` | Notification envelopes, outbox declarations and poll results dropped at parse, with the field that failed; sweeps skipped because a workspace is already being read | "Why is this connector's event not in the inbox?" |
 

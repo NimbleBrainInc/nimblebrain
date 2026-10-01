@@ -73,11 +73,16 @@ export function toolNameMatchesPattern(toolName: string, pattern: string): boole
 }
 
 /**
- * Whether a run limited to `allowedTools` may reach `toolName`. The `nb__*`
- * system tools always may: search and activation are how a run finds the tools
- * it is allowed.
+ * The tools a run limited to `allowedTools` reaches whatever its list says:
+ * search and activation, which are how it finds and promotes the tools it is
+ * allowed. Every other `nb__` tool reads or changes something beyond those
+ * tools (a connector's resources, the owner's preferences, a skill's body), so
+ * it passes only when the list names it.
  */
+const RUN_DISCOVERY_TOOLS: ReadonlySet<string> = new Set(["nb__search", "nb__manage_tools"]);
+
+/** Whether a run limited to `allowedTools` may reach `toolName`. */
 export function isToolAllowedForRun(toolName: string, allowedTools: string[]): boolean {
-  if (bareToolName(toolName).startsWith("nb__")) return true;
+  if (RUN_DISCOVERY_TOOLS.has(bareToolName(toolName))) return true;
   return allowedTools.some((pattern) => toolNameMatchesPattern(toolName, pattern));
 }

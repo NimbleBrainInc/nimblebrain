@@ -70,13 +70,13 @@ async function mountChrome(): Promise<void> {
       React.createElement(
         MemoryRouter,
         { initialEntries: ["/w/a/overview"] },
-        React.createElement(
-          WorkspaceProvider,
-          { initialWorkspaces: [WS_A], initialActiveId: "ws_a" },
-          React.createElement(
-            ChatProvider,
-            { currentUserId: "u1", initialConfig: { configuredProviders: ["anthropic"] } },
-            React.createElement(
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS_A],
+          initialActiveId: "ws_a",
+          children: React.createElement(ChatProvider, {
+            currentUserId: "u1",
+            initialConfig: { configuredProviders: ["anthropic"] },
+            children: React.createElement(
               ChatPanelProvider,
               null,
               React.createElement(
@@ -85,8 +85,8 @@ async function mountChrome(): Promise<void> {
                 React.createElement(FocusedAppProvider, null, React.createElement(ChatChrome)),
               ),
             ),
-          ),
-        ),
+          }),
+        }),
       ),
     );
   });

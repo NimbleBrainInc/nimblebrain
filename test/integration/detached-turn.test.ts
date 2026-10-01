@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ChatResponse } from "../../src/api/schemas/responses.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
@@ -70,6 +71,12 @@ describe("detached turns (server-authoritative streaming)", () => {
     expect(events.length).toBeGreaterThan(0);
     // Sequence numbers are monotonic 1..n.
     expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
+    // `done` carries the same body as `POST …/chat`, cost included.
+    const done = events[events.length - 1]?.data as ChatResponse;
+    expect(done.conversationId).toBe(conversationId);
+    expect(typeof done.inputTokens).toBe("number");
+    expect(typeof done.outputTokens).toBe("number");
+    expect(Number.isFinite(done.usage.costUsd)).toBe(true);
   });
 
   it("announces the owner's conversations once the run has ended", async () => {
