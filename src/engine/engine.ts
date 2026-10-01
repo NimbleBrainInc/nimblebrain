@@ -73,6 +73,7 @@ import {
   type ToolRouter,
   type ToolSchema,
 } from "./types.ts";
+import { formatUnknownArgumentsError, unknownArgumentNames } from "./unknown-tool-args.ts";
 
 /** Default when the env knob is unset or unusable. */
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
@@ -733,12 +734,15 @@ function parseToolCallInput(input: LanguageModelV4ToolCall["input"]): Record<str
 }
 
 /**
- * Coerce a tool call's input against its declared schema, then validate it.
+ * Coerce a model tool call's input against its declared schema, then validate it.
  * Coerce first: models occasionally emit nested object/array values as
  * JSON-encoded strings (`{ manifest: "{...}" }`); the coerce pass uses the
  * schema as a parsing oracle to recover those one-level misencodings before
- * validation. Returns the (possibly coerced) input plus an isError result when
- * validation fails. With no schema the input passes through unchanged.
+ * validation. An argument name the schema does not declare is rejected with
+ * the declared arguments listed (see unknown-tool-args.ts); the check runs
+ * against the tool's own schema, not the LLM-flattened one. Returns the
+ * (possibly coerced) input plus an isError result when validation fails. With
+ * no schema the input passes through unchanged.
  */
 function coerceAndValidateToolInput(
   input: Record<string, unknown>,
@@ -747,6 +751,17 @@ function coerceAndValidateToolInput(
   if (!toolSchema?.inputSchema) return { input };
   const schema = toolSchema.inputSchema as Record<string, unknown>;
   const coerced = coerceInputForSchema(input, schema);
+  const unknown = unknownArgumentNames(coerced, schema);
+  if (unknown.length > 0) {
+    log.info("[engine] invalid_input.unknown_keys", { tool: toolSchema.name, keys: unknown });
+    return {
+      input: coerced,
+      errorResult: {
+        content: textContent(formatUnknownArgumentsError(toolSchema.name, unknown, schema)),
+        isError: true,
+      },
+    };
+  }
   const validation = validateToolInput(coerced, schema);
   if (!validation.valid) {
     return {
@@ -931,6 +946,8 @@ interface ToolExecContext {
   /** Surfaced overlays whose bodies are still being fetched; settled before the drain. */
   pendingOverlayFetches: PendingOverlayFetch[];
   toolSchemaMap: Map<string, ToolSchema>;
+  /** Every router tool's schema: validates a call to a tool promoted in the same message. */
+  allToolSchemaMap: Map<string, ToolSchema>;
   promotedLastUsed: Map<string, number>;
   bumpUseCounter: () => number;
   supervisor: RunSupervisor;
@@ -1386,6 +1403,7 @@ export class AgentEngine {
           pendingOverlayDeliveries,
           pendingOverlayFetches,
           toolSchemaMap,
+          allToolSchemaMap,
           promotedLastUsed,
           bumpUseCounter,
           supervisor,
@@ -2092,7 +2110,10 @@ export class AgentEngine {
     const start = performance.now();
 
     // Validate + coerce tool input against the declared schema before execution.
-    const toolSchema = ctx.toolSchemaMap.get(gatedCall.name);
+    // The iteration map lacks a tool promoted by `nb__manage_tools` in this same
+    // assistant message, so fall back to the router-wide map for it.
+    const toolSchema =
+      ctx.toolSchemaMap.get(gatedCall.name) ?? ctx.allToolSchemaMap.get(gatedCall.name);
     const coercion = coerceAndValidateToolInput(gatedCall.input, toolSchema);
     gatedCall.input = coercion.input;
     let result: ToolResult | undefined = coercion.errorResult;
