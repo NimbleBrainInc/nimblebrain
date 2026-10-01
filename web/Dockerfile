@@ -3,7 +3,8 @@
 # version on each build, leaving us exposed to upstream publish races (e.g. a
 # transitive dep pinned to a version not yet live on the registry). Bun honors
 # the lockfile and builds deterministically, matching the platform Dockerfile.
-FROM oven/bun:1-alpine AS build
+# Same bun as CI (test/unit/build-pins.test.ts checks it); Renovate bumps every copy together.
+FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0 AS build
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
@@ -13,7 +14,7 @@ COPY . .
 # every tenant and environment. The bundle ships clean.
 RUN bun run build
 
-FROM caddy:2-alpine
+FROM caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
 
 LABEL org.opencontainers.image.title="NimbleBrain Web"
 LABEL org.opencontainers.image.description="Web UI for the NimbleBrain self-hosted platform (Caddy + React SPA)"

@@ -46,6 +46,10 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         if: steps.changes.outputs.docs == 'true'
+        with:
+          # Same bun as ci.yml (test/unit/build-pins.test.ts checks it).
+          # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
+          bun-version: "1.3.14"
 
       - name: Install and build (fails on broken internal links)
         if: steps.changes.outputs.docs == 'true'
