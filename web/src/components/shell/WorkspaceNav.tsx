@@ -198,8 +198,8 @@ function WorkspaceTreeNode({
 // the chevron is a state indicator, not a separate toggle, since exactly one
 // workspace (the focused one) is ever expanded. The pin toggle is a sibling
 // button laid over the row's right edge (a button cannot nest in a button):
-// shown on hover or keyboard focus, and kept visible while pinned so a pinned
-// workspace reads as pinned at rest.
+// shown on hover or keyboard focus (always, on a touch screen), and kept
+// visible while pinned so a pinned workspace reads as pinned at rest.
 function WorkspaceHeaderRow({
   workspace,
   focused,
@@ -233,7 +233,9 @@ function WorkspaceHeaderRow({
         data-workspace-id={workspace.id}
         className={cn(
           "absolute right-5 top-1/2 -translate-y-1/2 p-1 rounded-sm transition-opacity",
-          "hover:bg-sidebar-foreground/10 focus-visible:opacity-100 group-hover/ws:opacity-100",
+          // A touch screen has no hover, so the pin shows there at rest; an
+          // invisible pin would still take the tap meant for the row.
+          "hover:bg-sidebar-foreground/10 focus-visible:opacity-100 group-hover/ws:opacity-100 [@media(pointer:coarse)]:opacity-100",
           pinned ? "opacity-60" : "opacity-0",
         )}
       >
@@ -272,7 +274,9 @@ function WorkspaceHeaderButton({
         // Right padding leaves room for the pin toggle laid over the row, only
         // while it shows, so an unpinned name is not truncated at rest.
         "group flex flex-1 min-w-0 items-center gap-1.5 text-sm transition-colors text-left rounded-sm mx-2 my-px pl-1.5 py-1.5",
-        reservePinSpace ? "pr-9" : "pr-1.5 group-hover/ws:pr-9 group-focus-within/ws:pr-9",
+        reservePinSpace
+          ? "pr-9"
+          : "pr-1.5 group-hover/ws:pr-9 group-focus-within/ws:pr-9 [@media(pointer:coarse)]:pr-9",
         focused
           ? "bg-sidebar-foreground/10 font-medium text-foreground"
           : "font-normal hover:bg-sidebar-foreground/5",

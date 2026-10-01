@@ -11,7 +11,7 @@
  * invokes it by name over `/v1/workspaces/:wsId/tools/call`; the model never sees it. The
  * overlay is injected into every conversation's prompt, so its author is the
  * human, on a surface where they see the whole text they are replacing —
- * never the agent overwriting an 8 KiB prose blob to add one line. An agent
+ * never the agent overwriting an 8,192-character prose blob to add one line. An agent
  * asked to persist standing guidance drafts the text and points the user at
  * workspace settings (see `bootstrap.md`); facts and state go to a memory
  * app where one is installed.
