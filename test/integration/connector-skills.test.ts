@@ -733,6 +733,11 @@ function createAffinityFixtureServer(tools: string[], skills: Record<string, str
     })),
   }));
   serveSkills(server, () => bodies);
+  server.setRequestHandler("resources/read", async (request) => {
+    const text = bodies[request.params.uri];
+    if (text === undefined) throw new Error(`Resource not found: ${request.params.uri}`);
+    return { contents: [{ uri: request.params.uri, mimeType: "text/markdown", text }] };
+  });
   return server;
 }
 
@@ -850,5 +855,27 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("loads a published skill only for the tools it declares", async () => {
+    const loadedFor = async (tool: string): Promise<string[]> => {
+      const chat = await affinityRuntime.chat({
+        identity: DEV_IDENTITY,
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "go",
+        allowedTools: [`${AFFINITY_SERVER}__${tool}`],
+      });
+      const store = await affinityRuntime.resolveConversationStore(chat.conversationId);
+      const events = await store!.readEvents(chat.conversationId);
+      const loaded = events.find((e) => e.type === "skills.loaded") as unknown as
+        | { skills: Array<{ id: string }> }
+        | undefined;
+      return loaded?.skills.map((s) => s.id) ?? [];
+    };
+
+    // `writing` declares `draft_email`; without its declared affinity it would
+    // be bound to every tool of the server and load for `send_email` too.
+    expect(await loadedFor("draft_email")).toContain("skill://writing/SKILL.md");
+    expect(await loadedFor("send_email")).not.toContain("skill://writing/SKILL.md");
   });
 });

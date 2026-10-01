@@ -533,11 +533,12 @@ export class Runtime {
    */
   private skillResourceCache = new Map<string, { skills: DiscoveredSkill[]; fetchedAt: number }>();
   /**
-   * Overlay affinity checks already run, keyed by workspace, server, overlay
-   * version (lock shas), and the advertised tool names, so a check runs again
-   * only when the overlay or the connector's tools change, not every turn.
+   * The overlay version (lock shas) and advertised tool names each overlaid
+   * connector was last checked against, keyed by workspace and server, so a
+   * check runs again only when the overlay or the connector's tools change, not
+   * every turn. Bounded by {@link boundedSet}.
    */
-  private overlayAffinityChecked = new Set<string>();
+  private overlayAffinityChecked = new Map<string, string>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   /**
    * Verified, budget-capped server skill bodies keyed by the `SKILL.md`
@@ -2908,15 +2909,16 @@ export class Runtime {
       await Promise.all(
         sources.map(async (source) => {
           const toolNames = await advertisedToolNames(source);
-          const key = [wsId, source.name, lockKeys.get(source.name) ?? "", ...toolNames].join("\0");
-          return { serverName: source.name, toolNames, key };
+          const key = `${wsId}\0${source.name}`;
+          const checked = [lockKeys.get(source.name) ?? "", ...toolNames].join("\0");
+          return { serverName: source.name, toolNames, key, checked };
         }),
       )
-    ).filter((c) => c.toolNames.length > 0 && !this.overlayAffinityChecked.has(c.key));
+    ).filter((c) => c.toolNames.length > 0 && this.overlayAffinityChecked.get(c.key) !== c.checked);
     if (pending.length === 0) return;
     const overlays = this.listConnectorOverlays(wsId);
-    for (const { serverName, toolNames, key } of pending) {
-      this.overlayAffinityChecked.add(key);
+    for (const { serverName, toolNames, key, checked } of pending) {
+      boundedSet(this.overlayAffinityChecked, key, checked);
       reportUnmatchedToolAffinity({
         wsId,
         serverName,
@@ -6116,7 +6118,7 @@ async function hydrateSelected(selected: SelectedSkill[]): Promise<SelectedSkill
   return loaded.filter((sel): sel is SelectedSkill => sel !== null);
 }
 
-/** Entries a body cache holds before evicting its oldest. */
+/** Entries a bounded runtime map (skill body caches, overlay checks) holds before evicting its oldest. */
 const SKILL_BODY_CACHE_MAX = 512;
 
 /** `map.set` that evicts the oldest entry once the map holds {@link SKILL_BODY_CACHE_MAX}. */
