@@ -151,9 +151,10 @@ metadata:
 
 Installing a connector can automatically apply a short **usage overlay** — curated guidance for *that* connector's tools (e.g. "confirm the recipient before sending mail"). Overlays target the connectors you don't author yourself (Composio and other third-party MCP servers), so they're sourced from a NimbleBrain-curated **public overlay repo** keyed by the connector's flat slug (the Composio toolkit, e.g. `gmail`; otherwise the connector slug, e.g. `notion`) at a pinned version.
 
-Overlays differ from authored skills in two ways:
+Overlays differ from authored skills in three ways:
 
 - **Surfaced once into the conversation, not the system prompt.** An authored `dynamic` + `tool-affinity` skill composes into the system prompt for the turn. A connector overlay instead appears in the conversation history exactly once — on the first call to a matching tool — and then rides the (cached, append-only) history for the rest of the conversation. It's relevant (only when the connector's tools are actually used) and cache-friendly (it never re-varies the cached system prefix turn to turn). The tradeoff of this reactive model: the overlay surfaces *after* the first matching tool call, so guidance whose value is preemptive (e.g. "confirm before sending") does not gate that very first call. It does reach the model before its next action in the same turn, so it governs every call after the one that triggered it. For hard preconditions, prefer an authored `always` skill or a tool-side guard.
+- **Bound to the connector's tools.** An overlay is bound to every tool of the connector it is installed for (`<server-name>__*`), or, when its frontmatter declares `metadata.nimblebrain.tool-affinity`, only to the tools it names, read the same way as for a [skill published by the server](#skills-published-by-an-mcp-server). The other runtime fields are stamped on install, so the block must still parse: give it `loading-strategy: dynamic`.
 - **Stored separately.** Materialized overlays live in a `connector-skills/` store, distinct from authored `skills/`. They don't appear in the `skills__list` tool output; list them with the connector tool's `list_bound_skills` action instead.
 
 Resolution is **always on and fail-soft**: it fetches at a pinned repo version, records the fetched content hash, and treats a missing overlay (or any fetch error) as a no-op — a connector install never fails because its optional guidance couldn't be fetched, and there's nothing to enable (an overlay exists only if we've curated one). Override the repo / version with `CONNECTOR_SKILLS_REPO` and `CONNECTOR_SKILLS_VERSION`. When a connector has a curated overlay, the platform skips synthesizing the server's own `skill://<name>/SKILL.md` guidance so the model sees one set of instructions, not two.
@@ -183,11 +184,25 @@ The skill's name is its frontmatter `name`. When two skills on one server share 
 | `loading-strategy` | `always` composes it every turn; `dynamic` (the default when omitted) loads it on demand. |
 | `priority` | Ordering, same scale. Defaults to 60. |
 | `triggers` | Phrases that load it deterministically, whether or not the server's tools are in the active tool set. |
+| `tool-affinity` | The server's own tools the skill governs, as bare names or globs (`draft_email`, `draft_*`). The platform prefixes each with `<server-name>__`. Omitted, the skill is bound to every tool of the server (`<server-name>__*`). |
 
 Two differences from an on-disk skill:
 
 - **Reading is lenient, not strict.** A malformed or absent `metadata.nimblebrain` block leaves the fields unset and the defaults apply — an unrecognized value never rejects the skill. (An on-disk skill with bad frontmatter is skipped and logged.) Blank trigger phrases are dropped: an empty phrase would match every message.
-- **`tool-affinity` and `allowed-tools` are not read from the server.** The platform stamps affinity itself, as `<server-name>__*`, so a `dynamic` published skill loads whenever that server's tools are active.
+- **`tool-affinity` is scoped to the publishing server.** A server cannot know the name it is installed under, so it declares its tools bare and the platform binds them to that install. Matching is anchored after the prefix, so a declared pattern can only narrow within the server's own tools: `*` means all of them, and no declared value reaches another connector's tools. A `dynamic` skill loads, and is delivered when a tool is promoted or called mid-turn, only when a tool it names is involved, so a server that publishes several workflow skills should give each one the tools it governs. `allowed-tools` is not read from the server.
+
+  ```yaml
+  ---
+  name: writing
+  description: How to draft email in the user's voice. Use when drafting or replying.
+  metadata:
+    nimblebrain:
+      loading-strategy: dynamic
+      tool-affinity:
+        - draft_email
+        - reply_*
+  ---
+  ```
 
 If a connector has a curated overlay, the platform skips synthesizing its published skills — see the section above.
 

@@ -17,6 +17,7 @@
 import { type Dirent, existsSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { ConnectorSkillCandidate } from "../engine/types.ts";
+import { connectorToolAffinity } from "./connector-skills.ts";
 import { parseSkillContent, parseSkillFile } from "./loader.ts";
 import type { SkillManifest } from "./types.ts";
 import { writeSkill } from "./writer.ts";
@@ -41,11 +42,14 @@ export interface MaterializedConnectorSkill {
 /**
  * Materialize a curated overlay into `<connectorSkillsDir>/<serverName>/<skill>.md`.
  *
- * The overlay's own frontmatter supplies `name` + `description` + body; the
- * runtime fields are (re)stamped here so a materialized overlay always loads as
- * a connector candidate regardless of what the author declared:
+ * The overlay's own frontmatter supplies `name` + `description` + body, and
+ * optionally `metadata.nimblebrain.tool-affinity` as bare tool names or globs.
+ * The runtime fields are (re)stamped here so a materialized overlay always
+ * loads as a connector candidate:
  *   - `loading-strategy: dynamic`, `status: active`
- *   - `tool-affinity: ["<serverName>__*"]` (bound to THIS install's namespace)
+ *   - `tool-affinity`: the declared patterns prefixed `<serverName>__` (bound to
+ *     THIS install's namespace), or `["<serverName>__*"]` when none is declared
+ *     — see `connectorToolAffinity`
  *   - `provenance: { origin: "connector", source }`
  *
  * Returns the written path + name, or `null` when the overlay body can't be
@@ -78,7 +82,7 @@ export function materializeConnectorSkill(args: {
     loadingStrategy: "dynamic",
     priority: parsed.manifest.priority,
     status: "active",
-    toolAffinity: [`${args.serverName}__*`],
+    toolAffinity: connectorToolAffinity(args.serverName, parsed.manifest.toolAffinity),
     ...(parsed.manifest.allowedTools ? { allowedTools: parsed.manifest.allowedTools } : {}),
     ...(parsed.manifest.version ? { version: parsed.manifest.version } : {}),
     provenance: {

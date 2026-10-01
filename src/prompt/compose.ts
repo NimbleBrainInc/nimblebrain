@@ -770,7 +770,8 @@ function skillKey(sourcePath: string | undefined, name: string): string {
  *
  * This overlap has always been reachable for a filesystem skill declaring both
  * fields. For a server-published skill it is the ordinary case, because
- * synthesis stamps `toolAffinity: ["<server>__*"]` on every one.
+ * synthesis stamps a tool-affinity on every one (`<server>__*` when the skill
+ * declares none).
  */
 function matchedSkillLayers(
   matchedSkill?: Skill | null,

@@ -22,6 +22,7 @@ import {
   type RequestContext,
   runWithRequestContext,
 } from "../../src/runtime/request-context.ts";
+import { synthesizeConnectorSkill } from "../../src/skills/connector-skills.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 
@@ -4727,6 +4728,112 @@ describe("AgentEngine — connector-skill surface-once (P4)", () => {
     );
 
     expect(injected).toHaveLength(0);
+  });
+});
+
+describe("AgentEngine — connector skills bound by declared tool-affinity", () => {
+  // Two skills one server publishes, as the runtime builds them: one declares
+  // the tool it governs, the other declares nothing and keeps the whole server.
+  const candidates = [
+    synthesizeConnectorSkill({
+      serverName: "acme",
+      skillName: "writing",
+      description: "How to draft email",
+      body: "Write in the user's voice.",
+      uri: "skill://writing/SKILL.md",
+      toolAffinity: ["draft_email"],
+    }),
+    synthesizeConnectorSkill({
+      serverName: "acme",
+      skillName: "usage",
+      description: "How to use acme",
+      body: "General acme guidance.",
+      uri: "skill://usage/SKILL.md",
+    }),
+  ].map((s) => ({
+    name: s.manifest.name,
+    body: s.body,
+    scope: "provided",
+    toolAffinity: s.manifest.toolAffinity ?? [],
+  }));
+
+  const schemas: ToolSchema[] = [
+    { name: "nb__manage_tools", description: "Patch tool list", inputSchema: {} },
+    { name: "acme__draft_email", description: "Draft", inputSchema: {} },
+    { name: "acme__update_settings", description: "Settings", inputSchema: {} },
+  ];
+
+  /** Promote `toolName` on iteration 1, then stop; return the injected skill names. */
+  async function injectedOnPromoting(toolName: string): Promise<string[]> {
+    const injected: string[] = [];
+    let controls: ToolPromotionControls | null = null;
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) {
+        return {
+          content: [
+            {
+              type: "tool-call" as const,
+              toolCallId: "promote",
+              toolName: "nb__manage_tools",
+              input: JSON.stringify({ add: [toolName] }),
+            },
+          ],
+        };
+      }
+      return { content: [{ type: "text", text: "done" }] };
+    });
+    const engine = makeEngine(
+      model,
+      {
+        schemas,
+        handler: (call) => {
+          const add = (call.input.add as string[] | undefined) ?? [];
+          const promoted = add.map((name) => controls!.addTool(name));
+          return {
+            content: textContent("ok"),
+            structuredContent: { promoted, released: [] },
+            isError: false,
+          };
+        },
+      },
+      {
+        emit(event) {
+          if (event.type === "connector.skill.injected") injected.push(event.data.skillName);
+        },
+      },
+    );
+    await engine.run(
+      {
+        ...defaultConfig,
+        connectorSkillCandidates: candidates,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (c) => {
+            controls = c;
+            return () => {
+              controls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      [schemas[0]!],
+    );
+    return injected;
+  }
+
+  it("injects a skill declaring draft_email on promoting <server>__draft_email", async () => {
+    expect(await injectedOnPromoting("acme__draft_email")).toEqual([
+      "connector:acme:writing",
+      "connector:acme:usage",
+    ]);
+  });
+
+  it("does not inject that skill on promoting <server>__update_settings; the undeclared one still fires", async () => {
+    expect(await injectedOnPromoting("acme__update_settings")).toEqual(["connector:acme:usage"]);
   });
 });
 

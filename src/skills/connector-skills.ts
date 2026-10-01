@@ -114,6 +114,11 @@ export interface DiscoveredSkill {
    * `SkillMatcher` fires on. Absent when the server declared none.
    */
   triggers?: string[];
+  /**
+   * Declared `metadata.nimblebrain.tool-affinity` — bare tool names or globs
+   * within the publishing server. Absent when the server declared none.
+   */
+  toolAffinity?: string[];
   /** The listing entry: what a fetched body is verified against. */
   entry: SkillEntry;
 }
@@ -153,8 +158,33 @@ function skillPath(uri: string): string {
 }
 
 /**
- * Read the declared loading configuration — strategy, priority, and trigger
- * phrases — from a discovered skill's parsed frontmatter, using the SAME
+ * Bind a connector skill's tool-affinity to the server it belongs to.
+ *
+ * A connector skill is authored without knowing the name its server is
+ * installed under, so it declares affinity as bare tool names or globs of its
+ * own tools (`draft_email`, `draft_*`), and the runtime prefixes each with
+ * `<serverName>__`. The prefix is also the containment: matching is anchored
+ * (`toolNameMatchesPattern`), so a prefixed pattern reaches only this server's
+ * tools — a declared `*` means every tool of this server, and no declared value
+ * can name another connector's tools or a personal (`my_`) one. Blank entries
+ * are dropped.
+ *
+ * With nothing declared, the skill is bound to the whole server (`<serverName>__*`).
+ */
+export function connectorToolAffinity(
+  serverName: string,
+  declared: readonly string[] | undefined,
+): string[] {
+  const patterns = (declared ?? [])
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => `${serverName}__${p}`);
+  return patterns.length > 0 ? [...new Set(patterns)] : [`${serverName}__*`];
+}
+
+/**
+ * Read the declared loading configuration — strategy, priority, trigger
+ * phrases, and tool-affinity — from a discovered skill's parsed frontmatter, using the SAME
  * `metadata.nimblebrain.*` fields the filesystem loader reads
  * (`mapFrontmatterToManifest`). Every field is READ, not invented, so identical
  * frontmatter means identical loading behavior whether the skill came off disk
@@ -166,12 +196,15 @@ function skillPath(uri: string): string {
  * applies the defaults). Only recognized values are returned: strategy must be
  * `always` or `dynamic`; priority must be a number in [0, 100]; triggers must be
  * an array, from which non-string and blank entries are dropped (a trigger that
- * is empty after trimming would substring-match every message).
+ * is empty after trimming would substring-match every message). Tool-affinity
+ * is read the same way and stays bare here; synthesis binds it to the server
+ * ({@link connectorToolAffinity}).
  */
 function readDeclaredLoading(data: Record<string, unknown>): {
   loadingStrategy?: SkillLoadingStrategy;
   priority?: number;
   triggers?: string[];
+  toolAffinity?: string[];
 } {
   const metadata = data.metadata;
   const nb =
@@ -182,14 +215,21 @@ function readDeclaredLoading(data: Record<string, unknown>): {
   const block = nb as Record<string, unknown>;
   const strategy = block["loading-strategy"];
   const priority = block.priority;
-  const triggers = Array.isArray(block.triggers)
-    ? block.triggers.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
-    : [];
+  const triggers = nonBlankStrings(block.triggers);
+  const toolAffinity = nonBlankStrings(block["tool-affinity"]);
   return {
     ...(strategy === "always" || strategy === "dynamic" ? { loadingStrategy: strategy } : {}),
     ...(typeof priority === "number" && priority >= 0 && priority <= 100 ? { priority } : {}),
     ...(triggers.length > 0 ? { triggers } : {}),
+    ...(toolAffinity.length > 0 ? { toolAffinity } : {}),
   };
+}
+
+/** The non-blank strings of `value` when it is an array, else none. */
+function nonBlankStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    : [];
 }
 
 /**
@@ -267,14 +307,21 @@ export interface ConnectorSkillInput {
    * publishing server's tools happen to be in the active toolset.
    */
   triggers?: string[];
+  /**
+   * Declared tool-affinity from the skill's frontmatter: bare tool names or
+   * globs within this server, bound to it by {@link connectorToolAffinity}.
+   */
+  toolAffinity?: string[];
 }
 
 /**
  * Synthesize a `Skill` from a server-published skill, honoring the strategy the
  * skill DECLARES:
- *  - `dynamic` (the default when none is declared): tool-affined to
- *    `<serverName>__*`, so it loads via `selectLayer3Skills` whenever the
- *    server's tools are in the active toolset.
+ *  - `dynamic` (the default when none is declared): tool-affined to the tools
+ *    it declares, prefixed `<serverName>__` ({@link connectorToolAffinity}), or
+ *    to `<serverName>__*` when it declares none. It loads via
+ *    `selectLayer3Skills` when a matching tool is in the active toolset, and is
+ *    delivered mid-turn when a matching tool is promoted or called.
  *  - `always`: composed into the always-on context channel every turn (routed
  *    there by `partitionSkillsByRole`). `toolAffinity` is still stamped but
  *    unused on this path — the context channel is unconditional.
@@ -300,6 +347,7 @@ export interface ConnectorSkillInput {
  */
 export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
   const { serverName, skillName, description, uri, loadingStrategy, priority, triggers } = input;
+  const toolAffinity = connectorToolAffinity(serverName, input.toolAffinity);
   return {
     manifest: {
       name: connectorSkillManifestName(serverName, skillName),
@@ -307,7 +355,7 @@ export function synthesizeConnectorSkill(input: ConnectorSkillInput): Skill {
       priority: priority ?? CONNECTOR_SKILL_PRIORITY,
       scope: PUBLISHED_SKILL_SCOPE,
       loadingStrategy: loadingStrategy ?? DEFAULT_CONNECTOR_LOADING_STRATEGY,
-      toolAffinity: [`${serverName}__*`],
+      toolAffinity,
       ...(triggers?.length ? { triggers } : {}),
       status: "active",
     },

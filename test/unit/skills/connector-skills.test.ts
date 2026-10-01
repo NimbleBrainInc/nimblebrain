@@ -11,6 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   connectorSkillManifestName,
+  connectorToolAffinity,
   discoveredSkillFromEntry,
   hydrateSkill,
   parseConnectorSkillName,
@@ -18,7 +19,11 @@ import {
   synthesizeConnectorSkill,
 } from "../../../src/skills/connector-skills.ts";
 import { SkillMatcher } from "../../../src/skills/matcher.ts";
-import { partitionSkillsByRole, selectLayer3Skills } from "../../../src/skills/select.ts";
+import {
+  partitionSkillsByRole,
+  selectLayer3Skills,
+  toolMatches,
+} from "../../../src/skills/select.ts";
 import type { SkillBodyLoad } from "../../../src/skills/types.ts";
 
 describe("discoveredSkillFromEntry", () => {
@@ -41,6 +46,52 @@ describe("discoveredSkillFromEntry", () => {
       triggers: ["x"],
     });
     expect("body" in skill).toBe(false);
+  });
+
+  test("reads a declared tool-affinity bare, dropping blank and non-string entries", () => {
+    const skill = discoveredSkillFromEntry({
+      uri: "skill://acme/writing/SKILL.md",
+      frontmatter: {
+        name: "writing",
+        description: "Drafting guidance",
+        metadata: { nimblebrain: { "tool-affinity": ["draft_email", " ", 7, "draft_*"] } },
+      },
+      resources: "dynamic",
+    });
+    expect(skill.toolAffinity).toEqual(["draft_email", "draft_*"]);
+  });
+
+  test("declares no tool-affinity when the listing names none", () => {
+    const skill = discoveredSkillFromEntry({
+      uri: "skill://acme/usage/SKILL.md",
+      frontmatter: { name: "usage", description: "Usage" },
+      resources: "dynamic",
+    });
+    expect(skill.toolAffinity).toBeUndefined();
+  });
+});
+
+describe("connectorToolAffinity", () => {
+  test("prefixes each declared name or glob with the server", () => {
+    expect(connectorToolAffinity("acme", ["draft_email", "draft_*"])).toEqual([
+      "acme__draft_email",
+      "acme__draft_*",
+    ]);
+  });
+
+  test("falls back to the whole server when nothing usable is declared", () => {
+    expect(connectorToolAffinity("acme", undefined)).toEqual(["acme__*"]);
+    expect(connectorToolAffinity("acme", [])).toEqual(["acme__*"]);
+    expect(connectorToolAffinity("acme", ["", "  "])).toEqual(["acme__*"]);
+  });
+
+  test("keeps every declared pattern inside the server's namespace", () => {
+    const affinity = connectorToolAffinity("acme", ["*", "other__send", "*__send", "ws_a-x"]);
+    const matchesAny = (tool: string) => affinity.some((p) => toolMatches(tool, p));
+    expect(matchesAny("acme__anything")).toBe(true);
+    expect(matchesAny("other__send")).toBe(false);
+    expect(matchesAny("my_acme__send")).toBe(false);
+    expect(matchesAny("beta__send")).toBe(false);
   });
 });
 
@@ -420,6 +471,24 @@ describe("selectLayer3Skills with server skills", () => {
   test("does NOT load when the toolset is empty", () => {
     const result = selectLayer3Skills({ skills: [skill("foo")], activeTools: [] });
     expect(result).toHaveLength(0);
+  });
+
+  test("a skill declaring tool-affinity loads only for the tools it names", () => {
+    const writing = synthesizeConnectorSkill({
+      serverName: "acme",
+      skillName: "writing",
+      description: "",
+      body: "# writing",
+      uri: "skill://writing/SKILL.md",
+      toolAffinity: ["draft_email"],
+    });
+    expect(writing.manifest.toolAffinity).toEqual(["acme__draft_email"]);
+    expect(
+      selectLayer3Skills({ skills: [writing], activeTools: ["acme__draft_email"] }),
+    ).toHaveLength(1);
+    expect(
+      selectLayer3Skills({ skills: [writing], activeTools: ["acme__update_settings"] }),
+    ).toHaveLength(0);
   });
 
   test("each server's skill matches only its own tools", () => {
