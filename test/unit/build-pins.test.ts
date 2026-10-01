@@ -4,8 +4,7 @@ import { join } from "node:path";
 
 // A rebuild of the same commit must pull the same external images and the same
 // toolchain CI tested, or the image can change while nothing in the repo did.
-// This is a small guard for this repo's two Dockerfiles; the shared build action's
-// `check` mode is the general version of it.
+// This guards this repo's two Dockerfiles and the workflows' bun.
 
 const root = join(import.meta.dir, "../..");
 const read = (path: string) => readFileSync(join(root, path), "utf8");
