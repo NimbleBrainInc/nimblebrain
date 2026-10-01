@@ -30,6 +30,7 @@ import {
 } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { isStreamedRunEvent } from "../runtime/turn-stream.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
@@ -419,16 +420,7 @@ export async function handleChatStream(
       };
 
       const unsubscribe = sink.subscribe((event: EngineEvent) => {
-        if (
-          event.type === "chat.start" ||
-          event.type === "text.delta" ||
-          event.type === "reasoning.delta" ||
-          event.type === "tool.preparing" ||
-          event.type === "tool.preparing.done" ||
-          event.type === "tool.start" ||
-          event.type === "tool.done" ||
-          event.type === "llm.done"
-        ) {
+        if (isStreamedRunEvent(event)) {
           if (event.type === "chat.start") {
             broadcastUserMessageOnce();
           }
@@ -1130,9 +1122,8 @@ function dispatchRestToolCall(
   return workspaceRegistry.execute({ id: callId, name: toolName, input: coercedArgs });
 }
 
-/** Emit bridge.tool.call (pre-execution) to the ephemeral SSE + durable event sinks. */
+/** Emit bridge.tool.call (pre-execution) to the durable event sink. */
 function emitBridgeToolCall(
-  sseManager: SseEventManager | undefined,
   eventSink: EventSink | undefined,
   toolName: string,
   callId: string,
@@ -1150,13 +1141,11 @@ function emitBridgeToolCall(
       workspaceId,
     },
   };
-  sseManager?.emit(event);
   eventSink?.emit(event);
 }
 
-/** Emit bridge.tool.done (post-execution) to the ephemeral SSE + durable event sinks. */
+/** Emit bridge.tool.done (post-execution) to the durable event sink. */
 function emitBridgeToolDone(
-  sseManager: SseEventManager | undefined,
   eventSink: EventSink | undefined,
   toolName: string,
   callId: string,
@@ -1176,7 +1165,6 @@ function emitBridgeToolDone(
       workspaceId,
     },
   };
-  sseManager?.emit(event);
   eventSink?.emit(event);
 }
 
@@ -1186,7 +1174,6 @@ export async function handleToolCall(
   runtime: Runtime,
   features: ResolvedFeatures,
   options: {
-    sseManager?: SseEventManager;
     eventSink?: EventSink;
     identity?: UserIdentity;
     workspaceId: string;
@@ -1199,7 +1186,7 @@ export async function handleToolCall(
   if (envelope instanceof Response) return envelope;
   const { server, tool, args } = envelope;
 
-  const { sseManager, eventSink, identity, workspaceId } = options;
+  const { eventSink, identity, workspaceId } = options;
 
   // Resolve the source through the two doors — the same decision the
   // orchestrator makes for `/mcp` (`routeToolCall`). Identity sources
@@ -1254,8 +1241,8 @@ export async function handleToolCall(
   log.info(`[api] tools/call server=${server} tool=${tool} identity=${identity?.id ?? "none"}`);
   const callId = `api_${crypto.randomUUID().slice(0, 8)}`;
 
-  // Emit bridge.tool.call before execution (ephemeral SSE + durable event sink)
-  emitBridgeToolCall(sseManager, eventSink, toolName, callId, server, identity, eventWorkspaceId);
+  // Emit bridge.tool.call before execution (durable event sink)
+  emitBridgeToolCall(eventSink, toolName, callId, server, identity, eventWorkspaceId);
 
   const t0 = performance.now();
   let result: Awaited<ReturnType<ToolRegistry["execute"]>> | undefined;
@@ -1273,31 +1260,13 @@ export async function handleToolCall(
     );
   } catch (err) {
     const ms = Math.round(performance.now() - t0);
-    emitBridgeToolDone(
-      sseManager,
-      eventSink,
-      toolName,
-      callId,
-      false,
-      ms,
-      identity,
-      eventWorkspaceId,
-    );
+    emitBridgeToolDone(eventSink, toolName, callId, false, ms, identity, eventWorkspaceId);
     throw err;
   }
 
   const ms = Math.round(performance.now() - t0);
-  // Emit bridge.tool.done after execution (ephemeral SSE + durable event sink)
-  emitBridgeToolDone(
-    sseManager,
-    eventSink,
-    toolName,
-    callId,
-    !result.isError,
-    ms,
-    identity,
-    eventWorkspaceId,
-  );
+  // Emit bridge.tool.done after execution (durable event sink)
+  emitBridgeToolDone(eventSink, toolName, callId, !result.isError, ms, identity, eventWorkspaceId);
 
   // No refresh signal goes out from here. This is the MCP App Bridge proxy,
   // whose traffic is mostly reads; a view learns of a write only when the app's

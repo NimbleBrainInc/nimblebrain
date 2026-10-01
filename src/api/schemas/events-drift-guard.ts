@@ -14,11 +14,7 @@
 import type { ConnectionState } from "../../connectors/runtime/connection.ts";
 import type { ConnectorUiMeta, PlacementDeclaration } from "../../connectors/runtime/types.ts";
 import type { ResourceLinkInfo } from "../../engine/content-helpers.ts";
-import type {
-  ContextAssembledSource,
-  EngineEventPayloads,
-  SkillsLoadedEntry,
-} from "../../engine/schemas/events.ts";
+import type { EngineEventPayloads, SkillsLoadedEntry } from "../../engine/schemas/events.ts";
 import type * as Wire from "./events.ts";
 
 /** Every key across the members of a union. */
@@ -51,9 +47,6 @@ export type DriftConnectorUiMeta = AssertTrue<Restates<ConnectorUiMeta, Wire.Con
 export type DriftResourceLink = AssertTrue<Restates<ResourceLinkInfo, Wire.ResourceLinkInfo>>;
 export type DriftSkillsLoadedEntry = AssertTrue<
   Restates<SkillsLoadedEntry, Wire.SkillsLoadedEntry>
->;
-export type DriftContextSource = AssertTrue<
-  Restates<ContextAssembledSource, Wire.ContextAssembledSource>
 >;
 
 /**

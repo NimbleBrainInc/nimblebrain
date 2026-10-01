@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # The pinned frontend provides `COPY --parents`, used below for the UI build layer.
-FROM python:3.13-slim AS base
+FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS base
 
 LABEL org.opencontainers.image.title="NimbleBrain"
 LABEL org.opencontainers.image.description="Self-hosted platform for MCP Apps and agent automations"
@@ -11,11 +11,18 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Bun runtime, plus the toolchain the in-image platform app UIs build with.
 # `git` and `curl` are used by the install steps below and by the health check.
+# Exact versions, so a rebuild pulls the toolchain CI tested rather than whatever is
+# newest. BUN_VERSION must equal ci.yml's (test/unit/build-pins.test.ts checks it);
+# Renovate bumps every copy together.
+# renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
+ARG BUN_VERSION=1.3.14
+# renovate: datasource=node-version depName=node
+ARG NODE_VERSION=24.21.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl unzip git ca-certificates gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr bash \
+    && apt-get install -y --no-install-recommends "nodejs=${NODE_VERSION}-1nodesource1" \
+    && curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr bash -s "bun-v${BUN_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user (UID 1000 matches K8s securityContext)

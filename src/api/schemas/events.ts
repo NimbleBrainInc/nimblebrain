@@ -2,8 +2,14 @@
 // The events the two SSE streams send to a client, by stream.
 //
 // `WorkspaceStreamEvents` is `GET /v1/events`; `ConversationStreamEvents` is
-// `GET /v1/conversations/:id/events` (and the frames of `POST …/chat/stream`,
-// a subset of it). Each maps an SSE `event:` name to its `data:` payload.
+// `GET /v1/conversations/:id/events` (and `POST …/chat/stream`). Each maps an
+// SSE `event:` name to its `data:` payload.
+//
+// Each catalog is also the stream's allowlist: an engine event reaches a client
+// only if its stream's catalog lists it (`SSE_ROUTES` in `src/api/events.ts`,
+// `STREAMED_RUN_EVENTS` in `src/runtime/turn-stream.ts`). An event no client
+// reads is not listed, so it stays on the server; the system prompt in
+// `run.start` and connector skill bodies are the reason that matters.
 //
 // Like `responses.ts`, this module imports nothing outside this directory, so
 // `bun run codegen` emits it into `web/src/_generated/api/` on its own. An
@@ -65,19 +71,6 @@ export interface SkillsLoadedEntry {
   contentHash: string;
   loadedBy: "always" | "tool_affinity" | "trigger";
   reason: string;
-}
-
-/** Mirrors `ContextAssembledSource` (`src/engine/schemas/events.ts`). */
-export interface ContextAssembledSource {
-  kind: string;
-  count?: number;
-  tokens: number;
-  toolSetHash?: string;
-  version?: string | number;
-  userId?: string;
-  messages?: number;
-  turns?: number;
-  compacted?: boolean;
 }
 
 /** The AI SDK unified finish reason. */
@@ -143,33 +136,6 @@ export interface ConfigChangedEvent {
   fields: string[];
 }
 
-/** A skill was created, updated or deleted. */
-export interface SkillChangedEvent {
-  /** Filesystem path of the skill. */
-  id: string;
-  name: string;
-  scope: "org" | "workspace" | "user";
-}
-
-/** An iframe app called a tool through the bridge. */
-export interface BridgeToolCallEvent {
-  name: string;
-  id: string;
-  server: string;
-  userId: string | null;
-  workspaceId: string | null;
-}
-
-/** A bridge tool call finished. */
-export interface BridgeToolDoneEvent {
-  name: string;
-  id: string;
-  ok: boolean;
-  ms: number;
-  userId: string | null;
-  workspaceId: string | null;
-}
-
 /** A notification reached a workspace's inbox. */
 export interface NotificationCreatedEvent {
   workspaceId: string;
@@ -211,11 +177,6 @@ export interface WorkspaceStreamEvents {
   "server.notification": ServerNotificationEvent;
   "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;
-  "skill.created": SkillChangedEvent;
-  "skill.updated": SkillChangedEvent;
-  "skill.deleted": SkillChangedEvent;
-  "bridge.tool.call": BridgeToolCallEvent;
-  "bridge.tool.done": BridgeToolDoneEvent;
   "notification.created": NotificationCreatedEvent;
   "notification.delivered": NotificationDeliveredEvent;
   "notification.delivery_failed": NotificationDeliveryFailedEvent;
@@ -258,38 +219,6 @@ export interface ChatStartEvent {
   model?: string;
 }
 
-/** The engine started a run. */
-export interface RunStartEvent {
-  runId: string;
-  model: string;
-  maxIterations: number;
-  maxOutputTokens: number;
-  maxInputTokens: number;
-  toolCount: number;
-  toolNames: string[];
-  systemPromptLength: number;
-  systemPrompt: string;
-  messageCount: number;
-  messageRoles: string[];
-  estimatedMessageTokens: number;
-}
-
-/** A run finished. */
-export interface RunDoneEvent {
-  runId: string;
-  stopReason: string;
-  iterations: number;
-  totalMs: number;
-}
-
-/** A run failed. */
-export interface RunErrorEvent {
-  runId: string;
-  error: string;
-  /** The error's class name. */
-  type: string;
-}
-
 /** Streamed model text (`text.delta`) or reasoning (`reasoning.delta`). */
 export interface TextDeltaEvent {
   runId: string;
@@ -301,12 +230,6 @@ export interface ToolPreparingEvent {
   runId: string;
   id: string;
   name: string;
-}
-
-/** The model finished streaming a tool call's arguments. */
-export interface ToolPreparingDoneEvent {
-  runId: string;
-  id: string;
 }
 
 /** A tool call is about to execute, with the input as the model sent it. */
@@ -345,22 +268,6 @@ export interface ToolDoneEvent {
   workspaceId?: string;
 }
 
-/** A running tool call reported progress. */
-export interface ToolProgressEvent {
-  runId: string;
-  id: string;
-  message: string;
-  workspaceId?: string;
-}
-
-/** A tool entered (`tool.promoted`) or left (`tool.released`) the active set. */
-export interface ToolPromotionChangedEvent {
-  runId: string;
-  toolName: string;
-  /** `"evicted"` when the engine reclaimed a slot under the active-tool cap. */
-  reason?: string;
-}
-
 /** A provider call completed. */
 export interface LlmDoneEvent {
   runId: string;
@@ -375,60 +282,11 @@ export interface LlmDoneEvent {
   finishReasonRaw?: string;
 }
 
-/** A provider call failed terminally. */
-export interface LlmErrorEvent {
-  runId: string;
-  model: string;
-}
-
 /** The skills composed into this turn's prompt. */
 export interface SkillsLoadedEvent {
   runId: string;
   skills: SkillsLoadedEntry[];
   totalTokens: number;
-}
-
-/** What this turn's context was assembled from. */
-export interface ContextAssembledEvent {
-  runId: string;
-  sources: ContextAssembledSource[];
-  excluded: ContextAssembledSource[];
-  totalTokens: number;
-  modelMaxContext?: number;
-  headroomTokens?: number;
-}
-
-/** A call exceeded the context window; history is re-windowed and retried. */
-export interface ContextOverflowRecoveryEvent {
-  runId: string;
-  attempt: number;
-  previousMessageCount: number;
-  errorMessage: string;
-}
-
-/** A connector's curated skill surfaced into the conversation. */
-export interface ConnectorSkillInjectedEvent {
-  runId: string;
-  toolName: string;
-  skillName: string;
-  skillBody: string;
-  scope: string;
-}
-
-/** A catalog skill's body reached the model through `nb__use_skill`. */
-export interface SkillActivatedEvent {
-  runId: string;
-  toolCallId: string;
-  skillName: string;
-  scope: string;
-  tokens: number;
-}
-
-/** A skill's surfacing was suppressed or restored. */
-export interface SkillSuppressionEvent {
-  runId: string;
-  skillName: string;
-  suppressed: boolean;
 }
 
 /** The frames the runtime builds for a turn itself; every other run frame is a forwarded engine event. */
@@ -446,24 +304,11 @@ export interface ConversationStreamEvents {
   cancelled: CancelledEvent;
   error: StreamErrorEvent;
   "chat.start": ChatStartEvent;
-  "run.start": RunStartEvent;
-  "run.done": RunDoneEvent;
-  "run.error": RunErrorEvent;
   "text.delta": TextDeltaEvent;
   "reasoning.delta": TextDeltaEvent;
   "tool.preparing": ToolPreparingEvent;
-  "tool.preparing.done": ToolPreparingDoneEvent;
   "tool.start": ToolStartEvent;
   "tool.done": ToolDoneEvent;
-  "tool.progress": ToolProgressEvent;
-  "tool.promoted": ToolPromotionChangedEvent;
-  "tool.released": ToolPromotionChangedEvent;
   "llm.done": LlmDoneEvent;
-  "llm.error": LlmErrorEvent;
   "skills.loaded": SkillsLoadedEvent;
-  "context.assembled": ContextAssembledEvent;
-  "context.overflow_recovery": ContextOverflowRecoveryEvent;
-  "connector.skill.injected": ConnectorSkillInjectedEvent;
-  "skill.activated": SkillActivatedEvent;
-  "skill.suppression": SkillSuppressionEvent;
 }

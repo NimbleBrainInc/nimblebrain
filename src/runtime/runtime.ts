@@ -272,6 +272,7 @@ import type {
   UserTextPart,
 } from "./run-spec.ts";
 import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
+import { isStreamedRunEvent } from "./turn-stream.ts";
 import type {
   ChatRequest,
   ChatResult,
@@ -1288,13 +1289,15 @@ export class Runtime {
   }
 
   /**
-   * EventSink that forwards engine events into the RunBus for one turn,
-   * verbatim. `src/api/schemas/events-drift-guard.ts` holds each forwarded
-   * payload to its `ConversationStreamEvents` entry.
+   * EventSink that forwards a turn's engine events into the RunBus, verbatim,
+   * when its viewers receive them (`isStreamedRunEvent`).
+   * `src/api/schemas/events-drift-guard.ts` holds each forwarded payload to its
+   * `ConversationStreamEvents` entry.
    */
   private createRunBusSink(conversationId: string): EventSink {
     return {
       emit: (event: EngineEvent) => {
+        if (!isStreamedRunEvent(event)) return;
         this.publishToRunBus(conversationId, event.type, event.data);
       },
     };
