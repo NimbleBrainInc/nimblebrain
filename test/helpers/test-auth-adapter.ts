@@ -2,8 +2,9 @@
  * In-memory IdentityProvider for tests.
  *
  * Validates Bearer tokens via simple string comparison (no bcrypt).
- * Provisions a default user profile and workspace on first successful auth
- * (same pattern as DevIdentityProvider) so workspace resolution doesn't fail.
+ * On first successful auth, provisions the user profile and, when the test
+ * user belongs to no workspace, seats it in one, so workspace resolution
+ * doesn't fail.
  */
 
 import { existsSync, mkdirSync } from "node:fs";
@@ -116,18 +117,13 @@ export class TestAuthAdapter implements IdentityProvider {
       }
     }
 
+    // Seat the test user only when it belongs to no workspace. A test that
+    // seated it itself has chosen its memberships, and any other workspace in
+    // the store may be one the test means it to be refused.
     const workspaces = await this.workspaceStore.list();
-    if (workspaces.length === 0) {
-      const ws = await this.workspaceStore.create("Default", "default");
-      await this.workspaceStore.addMember(ws.id, TEST_IDENTITY.id, "admin");
-    } else {
-      // Ensure test user is a member of the first workspace
-      const ws = workspaces[0]!;
-      const isMember = ws.members.some((m) => m.userId === TEST_IDENTITY.id);
-      if (!isMember) {
-        await this.workspaceStore.addMember(ws.id, TEST_IDENTITY.id, "admin");
-      }
-    }
+    if (workspaces.some((ws) => ws.members.some((m) => m.userId === TEST_IDENTITY.id))) return;
+    const ws = workspaces[0] ?? (await this.workspaceStore.create("Default", "default"));
+    await this.workspaceStore.addMember(ws.id, TEST_IDENTITY.id, "admin");
   }
 }
 
