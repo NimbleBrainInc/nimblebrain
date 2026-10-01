@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { HealthMonitor } from "../../src/tools/health-monitor.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
@@ -82,5 +83,81 @@ describe("a restart in flight is not a deliberate stop", () => {
     } finally {
       monitor.stop();
     }
+  });
+});
+
+describe("a restart asked for mid-connect or mid-restart is joined", () => {
+  it("test_monitor_check_during_first_start_does_not_stop_the_connect", async () => {
+    // A connect flow registers the source before its first start() settles, so
+    // a check can find it not yet alive while it is still connecting.
+    const { closed: ready, release } = gate();
+    const server = new Server({ name: "svc", version: "0.1.0" }, { capabilities: { tools: {} } });
+    server.setRequestHandler("tools/list", async () => ({ tools: [] }));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const source = new McpSource(
+      "svc",
+      {
+        type: "inProcess",
+        createServer: async () => {
+          await ready;
+          return { server, clientTransport };
+        },
+      },
+      new NoopEventSink(),
+    );
+    const stop = spyOn(source, "stop");
+    const monitor = new HealthMonitor(() => [source], new NoopEventSink(), {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
+    try {
+      const starting = source.start();
+      const checking = monitor.check();
+      // Past the monitor's backoff, so its restart is waiting on the connect.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      release();
+      await Promise.all([starting, checking]);
+      expect(stop).not.toHaveBeenCalled();
+      expect(source.isAlive()).toBe(true);
+    } finally {
+      monitor.stop();
+      stop.mockRestore();
+      await source.stop();
+    }
+  });
+
+  it("test_call_arriving_mid_restart_joins_it_instead_of_failing", async () => {
+    const { closed: started, release } = gate();
+    const source = new McpSource(
+      "svc",
+      { type: "remote", url: new URL("https://svc.example.com/mcp") },
+      new NoopEventSink(),
+    );
+    const internal = source as unknown as Internals;
+    const okClient = {
+      callTool: () => Promise.resolve({ content: [{ type: "text", text: "ok" }], isError: false }),
+      close: () => Promise.resolve(),
+    };
+    internal.client = okClient;
+    internal.transport = { close: () => Promise.resolve() };
+    internal.dead = true;
+    internal.start = async () => {
+      await started;
+      internal.stopped = false;
+      internal.client = okClient;
+      internal.transport = { close: () => Promise.resolve() };
+    };
+
+    const restarting = source.restart();
+    // stop() has finished: no client, `stopped` set, the restart's start() waiting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.client).toBeNull();
+
+    const calling = source.execute("search", {});
+    release();
+    const [restarted, result] = await Promise.all([restarting, calling]);
+    expect(restarted).toBe(true);
+    expect(result.isError).toBe(false);
   });
 });

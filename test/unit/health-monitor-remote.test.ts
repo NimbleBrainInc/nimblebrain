@@ -335,7 +335,7 @@ describe("HealthMonitor — remote sources", () => {
 
   it("test_deliberately_stopped_source_not_reconnected_marked_dead", async () => {
     // A source torn down via stop() (teardown / user-initiated startAuth rebuild)
-    // lingers in the boot snapshot. The monitor must NOT reconnect this orphan —
+    // can still be listed when a check reaches it. The monitor must NOT reconnect it —
     // doing so runs its stale provider's refresh, which can delete shared creds
     // and clobber a live pending_auth. It must go terminal (dead) silently.
     const source = makeMockRemoteSource("stopped-remote");

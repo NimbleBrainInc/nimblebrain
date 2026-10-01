@@ -106,9 +106,8 @@ describe("ToolRegistry.hasEstablishedSource", () => {
     // The regression this exists to prevent. An idle close / network blip sets
     // `dead`, so `isAlive()` reads exactly like a boot failure — but this one
     // heals in place via reconnectOnDemand and the next sweep. Treating it as
-    // absent runs a destructive re-spawn: it stop()s a working source, and the
-    // replacement object is missing from HealthMonitor's boot snapshot, so the
-    // connector loses monitoring for the life of the process.
+    // absent runs a destructive re-spawn: it stop()s a working source to build a
+    // replacement that has to connect from scratch.
     const registry = new ToolRegistry();
     registry.addSource(downSource("people", true));
     expect(registry.hasEstablishedSource("people")).toBe(true);

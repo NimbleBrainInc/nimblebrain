@@ -407,6 +407,10 @@ export class McpSource implements ToolSource {
    *  session-loss reads here at once; without this each would fire its own
    *  restart — a restart storm on a single source. */
   private restartInFlight: Promise<boolean> | null = null;
+  /** A {@link start} in progress. A connect flow registers a source before its
+   *  first start settles, so a restart can be asked for while it is still
+   *  connecting; {@link tryRestart} joins this instead of stopping it. */
+  private startInFlight: Promise<void> | null = null;
   /** Backoff schedule for `recover`'s re-establish loop. Defaults to
    *  `SESSION_RECOVERY_DELAYS_MS`; overridable so tests exercise the policy
    *  branches without real sleeps. */
@@ -597,6 +601,16 @@ export class McpSource implements ToolSource {
   }
 
   async start(): Promise<void> {
+    const starting = this.doStart();
+    this.startInFlight = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.startInFlight === starting) this.startInFlight = null;
+    }
+  }
+
+  private async doStart(): Promise<void> {
     // Clear deliberate-teardown flags so a restart re-enables crash detection
     // on the new transport. Set in `stop()` to suppress onclose-emitted
     // `source.crashed` events during graceful teardown.
@@ -3048,6 +3062,12 @@ export class McpSource implements ToolSource {
     // inline session recovery (readResource / callTool) and HealthMonitor can
     // all reach here for the same source after a remote roll. See `restartInFlight`.
     if (this.restartInFlight) return this.restartInFlight;
+    // A connect already under way is joined, not restarted: stop() would tear
+    // down the connection it is building, failing the Connect a user waits on.
+    if (this.startInFlight) {
+      await this.startInFlight.catch(() => {});
+      return this.isAlive();
+    }
     this.restartInFlight = this.doRestart();
     try {
       return await this.restartInFlight;
