@@ -10,8 +10,9 @@
  *
  * The engine treats a schema that declares `properties` and nothing that
  * opens it (`additionalProperties` true or a schema, `patternProperties`,
- * `unevaluatedProperties`, an unresolved `$ref`) as the complete list of
- * argument names. A call naming anything else is rejected before dispatch,
+ * `unevaluatedProperties`, an unresolved `$ref`, or a conditional keyword:
+ * `if` / `then` / `else`, `dependentSchemas`, `dependencies`) as the complete
+ * list of argument names. A call naming anything else is rejected before dispatch,
  * with the declared arguments listed so the model can correct in one step.
  *
  * This applies to model calls only. `validateToolInput` keeps plain JSON
@@ -38,9 +39,16 @@ function branchesOf(node: Schema, keywords: readonly string[] = COMPOSITION_KEYW
   });
 }
 
+/**
+ * Keywords that can declare argument names under a condition. This check does
+ * not evaluate conditions, so a node carrying one has no closed list.
+ */
+const CONDITIONAL_KEYWORDS = ["if", "then", "else", "dependentSchemas", "dependencies"] as const;
+
 /** True when the node itself admits keys beyond its `properties`. */
 function opensKeySet(node: Schema): boolean {
   if (typeof node.$ref === "string") return true;
+  if (CONDITIONAL_KEYWORDS.some((keyword) => node[keyword] !== undefined)) return true;
   for (const keyword of ["additionalProperties", "unevaluatedProperties"] as const) {
     const value = node[keyword];
     if (value !== undefined && value !== false) return true;

@@ -4275,6 +4275,21 @@ describe("malformed tool call input", () => {
       ["additionalProperties: true", { additionalProperties: true }],
       ["an additionalProperties schema", { additionalProperties: { type: "string" } }],
       ["patternProperties", { patternProperties: { "^x_": { type: "string" } } }],
+      ["unevaluatedProperties: true", { unevaluatedProperties: true }],
+      [
+        "if/then",
+        // biome-ignore lint/suspicious/noThenProperty: `then` is a JSON Schema keyword here, not a thenable.
+        { if: { required: ["a"] }, then: { properties: { x_extra: { type: "string" } } } },
+      ],
+      [
+        "dependentSchemas",
+        { dependentSchemas: { a: { properties: { x_extra: { type: "string" } } } } },
+      ],
+      ["dependencies", { dependencies: { a: { properties: { x_extra: { type: "string" } } } } }],
+      [
+        "a $ref inside an allOf branch",
+        { allOf: [{ $ref: "#/$defs/extra" }], $defs: { extra: {} } },
+      ],
     ];
     for (const [label, opener] of openSchemas) {
       it(`passes an undeclared key when the schema opens the key set with ${label}`, async () => {
@@ -4322,6 +4337,24 @@ describe("malformed tool call input", () => {
         { slug: "s" },
       );
       expect(outcome.executed).toBe(true);
+    });
+
+    it("accepts a key declared only in a oneOf branch, and refuses one no branch declares", async () => {
+      const schema = {
+        name: "acme__oneof",
+        description: "One of",
+        inputSchema: {
+          type: "object",
+          oneOf: [
+            { properties: { id: { type: "string" } }, required: ["id"] },
+            { properties: { slug: { type: "string" } }, required: ["slug"] },
+          ],
+        },
+      };
+      expect((await callOnce(schema, { id: "i" })).executed).toBe(true);
+      const refused = await callOnce(schema, { name: "n" });
+      expect(refused.executed).toBe(false);
+      expect(refused.call.output).toContain('no argument named "name"');
     });
 
     it("leaves a root $ref schema to plain validation", async () => {
