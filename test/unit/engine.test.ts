@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
+import { type ConfirmationGate, createPrivilegeHook } from "../../src/config/privilege.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type {
@@ -4400,6 +4401,109 @@ describe("malformed tool call input", () => {
       expect(promotedCall.ok).toBe(false);
       expect(promotedCall.output).toContain('"buy_domains_enabled"');
       expect(promotedCall.output).toContain("domain_purchasing (boolean, required)");
+    });
+  });
+
+  describe("input validation precedes the confirmation gate", () => {
+    // A privileged tool: the privilege hook asks the gate before it runs.
+    const createSkill: ToolSchema = {
+      name: "skills__create",
+      description: "Create a skill",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          scope: { type: "string", enum: ["workspace", "platform"] },
+          triggers: { type: "array", items: { type: "string" } },
+        },
+        required: ["name", "scope"],
+      },
+    };
+
+    /** One model call to skills__create through the privilege hook; records what the gate was asked and what ran. */
+    async function callThroughGate(
+      input: Record<string, unknown>,
+      opts: { rewrite?: (call: ToolCall) => ToolCall } = {},
+    ) {
+      const confirmed: Array<Record<string, unknown>> = [];
+      const gate: ConfirmationGate = {
+        supportsInteraction: true,
+        confirm: async (_description, details) => {
+          confirmed.push(details);
+          return true;
+        },
+      };
+      const privilegeHook = createPrivilegeHook(gate, new NoopEventSink());
+      const executed: Array<Record<string, unknown>> = [];
+      const model = createEchoModel({
+        responses: [
+          {
+            toolCalls: [
+              { toolCallId: "call_1", toolName: createSkill.name, input: JSON.stringify(input) },
+            ],
+          },
+          { text: "done" },
+        ],
+      });
+      const engine = makeEngine(model, {
+        schemas: [createSkill],
+        handler: (call) => {
+          executed.push(call.input);
+          return { content: textContent("ok"), isError: false };
+        },
+      });
+      const result = await engine.run(
+        {
+          ...defaultConfig,
+          hooks: {
+            beforeToolCall: async (call) => {
+              const gated = await privilegeHook(call);
+              return gated && opts.rewrite ? opts.rewrite(gated) : gated;
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        [createSkill],
+      );
+      return { confirmed, executed, call: result.toolCalls[0]! };
+    }
+
+    it("never asks to confirm a call with an undeclared argument", async () => {
+      const outcome = await callThroughGate({ name: "n", scope: "workspace", owner: "x" });
+      expect(outcome.confirmed).toEqual([]);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.ok).toBe(false);
+      expect(outcome.call.output).toContain('has no argument named "owner"');
+    });
+
+    it("never asks to confirm a call that fails schema validation", async () => {
+      const outcome = await callThroughGate({ name: "n", scope: "everywhere" });
+      expect(outcome.confirmed).toEqual([]);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.output).toContain("Invalid tool input");
+    });
+
+    it("asks to confirm a valid call with the coerced input, and dispatches that input", async () => {
+      const outcome = await callThroughGate({
+        name: "n",
+        scope: "workspace",
+        triggers: JSON.stringify(["a", "b"]),
+      });
+      const coerced = { name: "n", scope: "workspace", triggers: ["a", "b"] };
+      expect(outcome.confirmed).toEqual([coerced]);
+      expect(outcome.executed).toEqual([coerced]);
+      expect(outcome.call.ok).toBe(true);
+    });
+
+    it("checks a call the hook rewrites before dispatching it", async () => {
+      const outcome = await callThroughGate(
+        { name: "n", scope: "workspace" },
+        { rewrite: (call) => ({ ...call, input: { ...call.input, owner: "x" } }) },
+      );
+      expect(outcome.confirmed).toHaveLength(1);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.output).toContain('has no argument named "owner"');
     });
   });
 

@@ -49,6 +49,9 @@ function opensKeySet(node: Schema): boolean {
   return isSchema(pattern) && Object.keys(pattern).length > 0;
 }
 
+/** Declared names by schema reference (schemas are stable at runtime), as validate-input.ts caches validators. */
+const declaredNamesCache = new WeakMap<Schema, Set<string> | null>();
+
 /**
  * Every argument name the schema declares, from the root `properties` and
  * from `allOf` / `anyOf` / `oneOf` branches (recursively). Null when the key
@@ -56,6 +59,14 @@ function opensKeySet(node: Schema): boolean {
  * no closed list to check against.
  */
 function declaredArgumentNames(schema: Schema): Set<string> | null {
+  const cached = declaredNamesCache.get(schema);
+  if (cached !== undefined) return cached;
+  const names = computeDeclaredArgumentNames(schema);
+  declaredNamesCache.set(schema, names);
+  return names;
+}
+
+function computeDeclaredArgumentNames(schema: Schema): Set<string> | null {
   const names = new Set<string>();
   let declaresProperties = false;
   const visit = (node: Schema): boolean => {
