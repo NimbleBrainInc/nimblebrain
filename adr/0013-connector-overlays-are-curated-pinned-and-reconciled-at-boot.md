@@ -51,9 +51,12 @@ overlay to `connector-skills/<server>/<skill>.md`, a sibling of the authored
 `skills/` tree and deliberately not inside it: the authored-skill loader must
 never pick an overlay up, because an overlay is not system-prompt content. The
 runtime fields are re-stamped at materialize regardless of what the overlay
-declares — `dynamic`, active, tool-affined to *this* install's namespace, and
+declares — `dynamic`, active, tool-affined to *this* install's namespace (the
+overlay's declared bare tool patterns under that prefix, or all of its tools), and
 `provenance.origin = "connector"` with the `connector:<identity>@<version>`
-source ref. The binding is recorded on the install (`skillsLock`) with the
+source ref. Because the strategy is stamped, an overlay's `metadata.nimblebrain`
+block need not declare `loading-strategy` (ADR-0009 requires it of a skill whose
+author decides how it loads); a block carrying only `tool-affinity` parses. The binding is recorded on the install (`skillsLock`) with the
 identity, the version, and the sha.
 
 **Overlays ride the conversation history, once.** They are candidates for the

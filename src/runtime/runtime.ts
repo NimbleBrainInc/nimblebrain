@@ -171,12 +171,14 @@ import {
   readConnectorSkillCandidates,
 } from "../skills/connector-skill-store.ts";
 import {
+  connectorToolAffinity,
   type DiscoveredSkill,
   disambiguateSkillNames,
   discoveredSkillFromEntry,
   hydrateSkill,
   PUBLISHED_SKILL_SCOPE,
   parseSkillMarkdown,
+  reportUnmatchedToolAffinity,
   synthesizeConnectorSkill,
 } from "../skills/connector-skills.ts";
 import {
@@ -530,6 +532,12 @@ export class Runtime {
    * and the surface-once candidates together, since both read this.
    */
   private skillResourceCache = new Map<string, { skills: DiscoveredSkill[]; fetchedAt: number }>();
+  /**
+   * Overlay affinity checks already run, keyed by workspace, server, overlay
+   * version (lock shas), and the advertised tool names, so a check runs again
+   * only when the overlay or the connector's tools change, not every turn.
+   */
+  private overlayAffinityChecked = new Set<string>();
   private static readonly SKILL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   /**
    * Verified, budget-capped server skill bodies keyed by the `SKILL.md`
@@ -2853,8 +2861,69 @@ export class Runtime {
       });
     } else {
       this.skillResourceCache.set(cacheKey, { skills, fetchedAt: Date.now() });
+      await this.reportUnmatchedPublishedAffinity(wsId, serverName, unwrapped, skills);
     }
     return skills;
+  }
+
+  /**
+   * Warn for each published skill whose declared tool-affinity names no tool
+   * its server advertises. Discovery is where the declared affinity and the
+   * server's tools are both in hand; it runs on a complete enumeration, so once
+   * per discovery TTL per server, against the source's memoized tool list.
+   */
+  private async reportUnmatchedPublishedAffinity(
+    wsId: string,
+    serverName: string,
+    source: ToolSource,
+    skills: DiscoveredSkill[],
+  ): Promise<void> {
+    const declared = skills.filter((s) => s.toolAffinity?.length);
+    if (declared.length === 0) return;
+    reportUnmatchedToolAffinity({
+      wsId,
+      serverName,
+      toolNames: await advertisedToolNames(source),
+      skills: declared.map((s) => ({
+        name: s.name,
+        toolAffinity: connectorToolAffinity(serverName, s.toolAffinity),
+      })),
+    });
+  }
+
+  /**
+   * Warn for each materialized overlay whose tool-affinity names no tool its
+   * connector advertises. An overlay is materialized before its connector has
+   * connected, so the check waits for the connector's tools: a connector that
+   * advertises none yet is checked on a later call. Each check is recorded
+   * against the overlay version and the advertised tool set
+   * (`overlayAffinityChecked`), so it runs again only when either changes.
+   */
+  private async reportUnmatchedOverlayAffinity(
+    wsId: string,
+    sources: ToolSource[],
+    lockKeys: Map<string, string>,
+  ): Promise<void> {
+    const pending = (
+      await Promise.all(
+        sources.map(async (source) => {
+          const toolNames = await advertisedToolNames(source);
+          const key = [wsId, source.name, lockKeys.get(source.name) ?? "", ...toolNames].join("\0");
+          return { serverName: source.name, toolNames, key };
+        }),
+      )
+    ).filter((c) => c.toolNames.length > 0 && !this.overlayAffinityChecked.has(c.key));
+    if (pending.length === 0) return;
+    const overlays = this.listConnectorOverlays(wsId);
+    for (const { serverName, toolNames, key } of pending) {
+      this.overlayAffinityChecked.add(key);
+      reportUnmatchedToolAffinity({
+        wsId,
+        serverName,
+        toolNames,
+        skills: overlays.filter((o) => o.server === serverName),
+      });
+    }
   }
 
   /**
@@ -3097,17 +3166,22 @@ export class Runtime {
     // `skill://…/SKILL.md` guidance — the curated overlay supersedes it (and
     // would otherwise double the guidance under two framings). A server "has an
     // overlay" iff its persisted ref carries a non-empty `skillsLock`.
-    const overlaidServers = new Set(
-      this.getConnectorInstancesForWorkspace(wsId)
-        .filter((i) => i.ref && "skillsLock" in i.ref && (i.ref.skillsLock?.length ?? 0) > 0)
-        .map((i) => i.serverName),
-    );
+    // The lock's shas key the overlay affinity check to the overlay version.
+    const overlayLocks = new Map<string, string>();
+    for (const i of this.getConnectorInstancesForWorkspace(wsId)) {
+      const lock = i.ref && "skillsLock" in i.ref ? i.ref.skillsLock : undefined;
+      if (lock?.length) overlayLocks.set(i.serverName, lock.map((e) => e.sha).join(","));
+    }
 
     const candidates: string[] = [];
+    const overlaidSources: ToolSource[] = [];
     const registeredNames = new Set<string>();
     for (const source of registry.getSources()) {
       registeredNames.add(source.name);
-      if (overlaidServers.has(source.name)) continue;
+      if (overlayLocks.has(source.name)) {
+        overlaidSources.push(source);
+        continue;
+      }
       const inner = source instanceof SharedSourceRef ? source.unwrap() : source;
       if (!(inner instanceof McpSource)) continue;
       candidates.push(source.name);
@@ -3119,6 +3193,11 @@ export class Runtime {
     // latency on workspaces with many non-skill servers. `discoverServerSkills`
     // caches both positive and empty results so steady-state cost is zero. A
     // server may expose more than one skill, so each candidate yields 0..N.
+    const overlayAffinityCheck = this.reportUnmatchedOverlayAffinity(
+      wsId,
+      overlaidSources,
+      overlayLocks,
+    );
     const synthesized = await Promise.all(
       candidates.map(async (name) => {
         try {
@@ -3153,6 +3232,7 @@ export class Runtime {
         }
       }),
     );
+    await overlayAffinityCheck;
     return synthesized.flat();
   }
 
@@ -6047,6 +6127,18 @@ function boundedSet<V>(map: Map<string, V>, key: string, value: V): void {
     if (oldest !== undefined) map.delete(oldest);
   }
   map.set(key, value);
+}
+
+/**
+ * The names of the tools `source` advertises, or none when it cannot list them
+ * yet (a source that has not connected throws).
+ */
+async function advertisedToolNames(source: ToolSource): Promise<string[]> {
+  try {
+    return (await source.tools()).map((t) => t.name);
+  } catch {
+    return [];
+  }
 }
 
 /**

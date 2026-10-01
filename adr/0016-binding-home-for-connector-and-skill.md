@@ -10,21 +10,29 @@ Three mechanisms currently associate guidance with a connector, and they bind in
 three different places.
 
 A **server-published skill** (ADR-0011) needs no binding at all: the skill is a
-resource on the server, so the association is the fact of publication, and the
-tool-affinity glob the adapter stamps is derived from the source's own name.
+resource on the server, so the association is the fact of publication. Its
+tool-affinity is scoped to the source's own name: the skill may declare
+`tool-affinity` as bare names or globs of the server's own tools, which the
+adapter prefixes with `<source>__` (`connectorToolAffinity`,
+`src/skills/connector-skills.ts`), and one that declares none is bound to
+`<source>__*`. The prefix is also the containment — matching is anchored, so a
+declared pattern can only narrow within the server's own tools.
 
 A **curated overlay** (ADR-0013) binds by *identity string*. The overlay repo is
 keyed `<identity>/SKILL.md`, and the identity is derived at install by
 `connectorSkillIdentity` (`src/connectors/catalog/server-detail.ts`) — the brokered
 toolkit slug when the catalog entry names one, otherwise the last dotted segment
-of the reverse-DNS server name's first path component. The materialized copy is
-then re-stamped with a tool-affinity glob bound to *that install's* namespace.
+of the reverse-DNS server name's first path component. The materialized copy's
+tool-affinity is bound to *that install's* namespace the same way: the overlay's
+declared bare patterns under `<server>__`, or `<server>__*` when it declares none.
 
 An **authored skill** binds by whatever `tool-affinity` globs its author typed.
 
 So the same relationship — this guidance is about that connector — is expressed
-as a derived string in one place, a namespace glob in another, and an implicit
-publication fact in a third. The derivation is the fragile one: it is a formula
+as a derived string in one place, a namespace prefix in another, and an implicit
+publication fact in a third. Which of the connector's tools a connector skill
+governs is a separate question, answered by the skill's own declared patterns;
+this ADR concerns only which connector it belongs to. The derivation is the fragile one: it is a formula
 over a name, it can collide across unrelated connectors that happen to share a
 last segment, and a connector whose name does not follow the shape it assumes
 resolves to an identity no overlay is keyed under. The failure is a silent 404,

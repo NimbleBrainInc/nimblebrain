@@ -23,14 +23,15 @@
  *   extension forbids fetching a skill's files ahead of need — so the `Skill`
  *   carries a `loadBody` the composer resolves through `hydrateSkill`. The
  *   synthesized skill flows through `partitionSkillsByRole`: a `dynamic` skill
- *   routes to the `selectLayer3Skills` capability channel with
- *   `toolAffinity: ["<serverName>__*"]` (loads when the server's tools are in
- *   the active toolset); an `always` skill routes to the always-on context
+ *   routes to the `selectLayer3Skills` capability channel, tool-affined to the
+ *   server's tools it declares, or to `<serverName>__*` when it declares none
+ *   (`connectorToolAffinity`), and loads when a matching tool is in the active
+ *   toolset; an `always` skill routes to the always-on context
  *   channel (composed every turn, the same path filesystem `always` skills use).
  *
  *   Loading config is READ from the skill's frontmatter, not invented: a server
  *   declares `metadata.nimblebrain.loading-strategy` (and an optional
- *   `priority` and `triggers`) exactly as a filesystem skill does, and the host
+ *   `priority`, `triggers`, and `tool-affinity`) exactly as a filesystem skill does, and the host
  *   honors it — identical frontmatter must not behave differently by origin. A
  *   skill that declares nothing defaults to `dynamic`.
  *
@@ -41,6 +42,8 @@
 
 import matter from "gray-matter";
 
+import { log } from "../observability/log.ts";
+import { toolNameMatchesPattern } from "../tools/tool-pattern.ts";
 import type { SkillEntry } from "./skills-extension.ts";
 import type { Skill, SkillBodyLoad, SkillLoadingStrategy, SkillScope } from "./types.ts";
 
@@ -180,6 +183,43 @@ export function connectorToolAffinity(
     .filter((p) => p.length > 0)
     .map((p) => `${serverName}__${p}`);
   return patterns.length > 0 ? [...new Set(patterns)] : [`${serverName}__*`];
+}
+
+/**
+ * The patterns of a bound tool-affinity that match none of `toolNames`.
+ */
+export function unmatchedToolAffinity(
+  affinity: readonly string[],
+  toolNames: readonly string[],
+): string[] {
+  return affinity.filter((p) => !toolNames.some((t) => toolNameMatchesPattern(t, p)));
+}
+
+/**
+ * Warn for each connector skill whose bound tool-affinity has a pattern that
+ * matches none of the tools its connector advertises. Such a pattern never
+ * selects the skill, so a misspelled or renamed tool would otherwise leave the
+ * guidance silently dark. A connector that advertises no tools says nothing
+ * about the patterns (it is not connected yet), so it is not checked.
+ */
+export function reportUnmatchedToolAffinity(input: {
+  wsId: string;
+  serverName: string;
+  skills: readonly { name: string; toolAffinity: readonly string[] }[];
+  toolNames: readonly string[];
+}): void {
+  if (input.toolNames.length === 0) return;
+  for (const skill of input.skills) {
+    const unmatched = unmatchedToolAffinity(skill.toolAffinity, input.toolNames);
+    if (unmatched.length === 0) continue;
+    log.warn("[skill] connector skill declares a tool-affinity no tool of its connector matches", {
+      event: "skills.tool_affinity.unmatched",
+      workspace_id: input.wsId,
+      server: input.serverName,
+      skill: skill.name,
+      patterns: unmatched,
+    });
+  }
 }
 
 /**

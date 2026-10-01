@@ -8,7 +8,8 @@
  * behavior (active toolset → skill loads) without spinning up a Runtime.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { log } from "../../../src/observability/log.ts";
 import {
   connectorSkillManifestName,
   connectorToolAffinity,
@@ -16,7 +17,9 @@ import {
   hydrateSkill,
   parseConnectorSkillName,
   parseSkillMarkdown,
+  reportUnmatchedToolAffinity,
   synthesizeConnectorSkill,
+  unmatchedToolAffinity,
 } from "../../../src/skills/connector-skills.ts";
 import { SkillMatcher } from "../../../src/skills/matcher.ts";
 import {
@@ -92,6 +95,67 @@ describe("connectorToolAffinity", () => {
     expect(matchesAny("other__send")).toBe(false);
     expect(matchesAny("my_acme__send")).toBe(false);
     expect(matchesAny("beta__send")).toBe(false);
+  });
+});
+
+describe("unmatchedToolAffinity", () => {
+  const tools = ["acme__draft_email", "acme__send_email"];
+
+  test("returns the patterns no advertised tool matches", () => {
+    expect(
+      unmatchedToolAffinity(["acme__draft_email", "acme__draft_emial", "acme__reply_*"], tools),
+    ).toEqual(["acme__draft_emial", "acme__reply_*"]);
+  });
+
+  test("returns nothing when every pattern matches a tool", () => {
+    expect(unmatchedToolAffinity(["acme__send_*", "acme__*"], tools)).toEqual([]);
+  });
+});
+
+describe("reportUnmatchedToolAffinity", () => {
+  const warnings = (run: () => void) => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      run();
+      return warn.mock.calls.map((c) => c[1]);
+    } finally {
+      warn.mockRestore();
+    }
+  };
+
+  test("warns once per skill with an unmatched pattern, naming connector, skill, and patterns", () => {
+    const fields = warnings(() =>
+      reportUnmatchedToolAffinity({
+        wsId: "ws_a",
+        serverName: "acme",
+        toolNames: ["acme__draft_email"],
+        skills: [
+          { name: "writing", toolAffinity: ["acme__draft_email"] },
+          { name: "outreach", toolAffinity: ["acme__draft_email", "acme__send_*"] },
+        ],
+      }),
+    );
+    expect(fields).toEqual([
+      {
+        event: "skills.tool_affinity.unmatched",
+        workspace_id: "ws_a",
+        server: "acme",
+        skill: "outreach",
+        patterns: ["acme__send_*"],
+      },
+    ]);
+  });
+
+  test("says nothing about a connector that advertises no tools yet", () => {
+    const fields = warnings(() =>
+      reportUnmatchedToolAffinity({
+        wsId: "ws_a",
+        serverName: "acme",
+        toolNames: [],
+        skills: [{ name: "outreach", toolAffinity: ["acme__send_*"] }],
+      }),
+    );
+    expect(fields).toEqual([]);
   });
 });
 

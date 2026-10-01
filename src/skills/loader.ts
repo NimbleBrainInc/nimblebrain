@@ -228,7 +228,20 @@ export function parseSkillContent(
   opts?: { cap?: boolean },
 ): Skill | null {
   const { data, content } = matter(raw);
+  return parseSkillParts(data, content, sourcePath, opts);
+}
 
+/**
+ * Parse a skill from frontmatter already split from its body. For a caller
+ * that applies its own defaults to the frontmatter before validation (a
+ * connector overlay); everything else goes through {@link parseSkillContent}.
+ */
+export function parseSkillParts(
+  data: Record<string, unknown>,
+  content: string,
+  sourcePath: string,
+  opts?: { cap?: boolean },
+): Skill | null {
   // Strict-validate the frontmatter against the canonical schema; fail-soft per
   // skill (skip + warn, never throw — mirrors `parseSkillFileGuarded`). The
   // mapper is the ONE place the on-disk (nested/kebab) → runtime (flat/camel)

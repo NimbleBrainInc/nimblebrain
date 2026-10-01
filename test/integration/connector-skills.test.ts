@@ -27,7 +27,12 @@ import { Server } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { reconstructMessages } from "../../src/conversation/event-reconstructor.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import {
+  CONNECTOR_SKILLS_SUBDIR,
+  materializeConnectorSkill,
+} from "../../src/skills/connector-skill-store.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -693,5 +698,157 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
     expect(prompt).toContain("ALWAYS_ON_WORKFLOW_MARKER");
     // The `dynamic` skill stays tool-gated on the task path too.
     expect(prompt).not.toContain("DYNAMIC_USAGE_MARKER");
+  });
+});
+
+// ── A declared tool-affinity that names no tool of its connector ────────────
+
+const AFFINITY_SERVER = "ai-nimblebrain-affinity-mcp";
+const OVERLAY_SERVER = "ai-nimblebrain-overlaid-mcp";
+
+/** A server with one tool set and the given `skill://<name>/SKILL.md` skills. */
+function createAffinityFixtureServer(tools: string[], skills: Record<string, string>): Server {
+  const server = new Server(
+    { name: "affinity", version: "0.1.0" },
+    { capabilities: { tools: {}, resources: {}, ...SKILLS_EXTENSION_CAPABILITY } },
+  );
+  server.setRequestHandler("tools/list", async () => ({
+    tools: tools.map((name) => ({
+      name,
+      description: `Do ${name}`,
+      inputSchema: { type: "object", properties: {} },
+    })),
+  }));
+  server.setRequestHandler("tools/call", async () => ({
+    content: [{ type: "text", text: "done" }],
+  }));
+  const bodies = Object.fromEntries(
+    Object.entries(skills).map(([name, body]) => [`skill://${name}/SKILL.md`, body]),
+  );
+  server.setRequestHandler("resources/list", async () => ({
+    resources: Object.keys(skills).map((name) => ({
+      uri: `skill://${name}/SKILL.md`,
+      name,
+      mimeType: "text/markdown",
+    })),
+  }));
+  serveSkills(server, () => bodies);
+  return server;
+}
+
+function affinitySkill(name: string, affinity: string[]): string {
+  return `---
+name: ${name}
+description: Guidance for ${name}.
+metadata:
+  nimblebrain:
+    tool-affinity:
+${affinity.map((a) => `      - ${a}`).join("\n")}
+---
+
+# ${name}`;
+}
+
+describe("connector-skill adapter — unmatched tool-affinity", () => {
+  const dir = join(tmpdir(), `nimblebrain-connector-skills-affinity-${Date.now()}`);
+  let affinityRuntime: Runtime;
+  const servers: RemoteMcpFixture[] = [];
+  const sources: McpSource[] = [];
+
+  async function addSource(name: string, server: () => Server): Promise<void> {
+    const fixture = startRemoteMcpServer(server);
+    servers.push(fixture);
+    const source = new McpSource(
+      name,
+      { type: "remote", url: new URL(fixture.url), allowInsecure: true },
+      new NoopEventSink(),
+    );
+    await source.start();
+    sources.push(source);
+    affinityRuntime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
+  }
+
+  beforeAll(async () => {
+    mkdirSync(dir, { recursive: true });
+    affinityRuntime = await Runtime.start({
+      identityProvider: devProvider,
+      model: { provider: "custom", adapter: createEchoModel() },
+      logging: { disabled: true },
+      workDir: dir,
+      telemetry: { enabled: false },
+    });
+    await provisionTestWorkspace(affinityRuntime);
+
+    await addSource(AFFINITY_SERVER, () =>
+      createAffinityFixtureServer(["draft_email", "send_email"], {
+        writing: affinitySkill("writing", ["draft_email"]),
+        outreach: affinitySkill("outreach", ["draft_emial", "send_*"]),
+      }),
+    );
+
+    // A connector with a curated overlay whose affinity names a tool it lacks.
+    await addSource(OVERLAY_SERVER, () => createAffinityFixtureServer(["list_pages"], {}));
+    materializeConnectorSkill({
+      connectorSkillsDir: affinityRuntime
+        .getWorkspaceContext(TEST_WORKSPACE_ID)
+        .getDataPath(CONNECTOR_SKILLS_SUBDIR),
+      serverName: OVERLAY_SERVER,
+      overlayBody: `${affinitySkill("pages-usage", ["create_page"])}\n\nConfirm the parent page.`,
+      source: "connector:pages@v0.1.0",
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    await affinityRuntime.getLifecycle().seedInstance(
+      OVERLAY_SERVER,
+      OVERLAY_SERVER,
+      {
+        url: servers[1]!.url,
+        skillsLock: [{ identity: "pages", version: "v0.1.0", sha: "a1", path: "pages-usage.md" }],
+      },
+      undefined,
+      TEST_WORKSPACE_ID,
+    );
+  });
+
+  afterAll(async () => {
+    for (const s of sources) {
+      try {
+        await s.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    for (const f of servers) f.close();
+    await affinityRuntime.shutdown();
+    if (existsSync(dir)) rmSync(dir, { recursive: true });
+  });
+
+  it("warns once per skill whose declared patterns name no advertised tool", async () => {
+    const warn = spyOn(log, "warn");
+    try {
+      // Two discoveries: the second is served from the discovery cache and the
+      // overlay's check is recorded for its version, so neither warns again.
+      await affinityRuntime.listActivatableSkills(TEST_WORKSPACE_ID, null);
+      await affinityRuntime.listActivatableSkills(TEST_WORKSPACE_ID, null);
+      const unmatched = warn.mock.calls
+        .map((c) => c[1] as Record<string, unknown> | undefined)
+        .filter((f) => f?.event === "skills.tool_affinity.unmatched");
+      expect(unmatched).toHaveLength(2);
+      expect(unmatched).toContainEqual({
+        event: "skills.tool_affinity.unmatched",
+        workspace_id: TEST_WORKSPACE_ID,
+        server: AFFINITY_SERVER,
+        skill: "outreach",
+        patterns: [`${AFFINITY_SERVER}__draft_emial`],
+      });
+      expect(unmatched).toContainEqual({
+        event: "skills.tool_affinity.unmatched",
+        workspace_id: TEST_WORKSPACE_ID,
+        server: OVERLAY_SERVER,
+        skill: "pages-usage",
+        patterns: [`${OVERLAY_SERVER}__create_page`],
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

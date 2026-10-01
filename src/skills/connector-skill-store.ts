@@ -16,9 +16,10 @@
 
 import { type Dirent, existsSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import matter from "gray-matter";
 import type { ConnectorSkillCandidate } from "../engine/types.ts";
 import { connectorToolAffinity } from "./connector-skills.ts";
-import { parseSkillContent, parseSkillFile } from "./loader.ts";
+import { parseSkillFile, parseSkillParts } from "./loader.ts";
 import type { SkillManifest } from "./types.ts";
 import { writeSkill } from "./writer.ts";
 
@@ -43,7 +44,8 @@ export interface MaterializedConnectorSkill {
  * Materialize a curated overlay into `<connectorSkillsDir>/<serverName>/<skill>.md`.
  *
  * The overlay's own frontmatter supplies `name` + `description` + body, and
- * optionally `metadata.nimblebrain.tool-affinity` as bare tool names or globs.
+ * optionally `metadata.nimblebrain.tool-affinity` as bare tool names or globs;
+ * the block needs no `loading-strategy` ({@link withOverlayLoadingStrategy}).
  * The runtime fields are (re)stamped here so a materialized overlay always
  * loads as a connector candidate:
  *   - `loading-strategy: dynamic`, `status: active`
@@ -66,7 +68,13 @@ export function materializeConnectorSkill(args: {
   now: string;
 }): MaterializedConnectorSkill | null {
   const serverDir = join(args.connectorSkillsDir, args.serverName);
-  const parsed = parseSkillContent(args.overlayBody, join(serverDir, "overlay.md"), { cap: false });
+  const { data, content } = matter(args.overlayBody);
+  const parsed = parseSkillParts(
+    withOverlayLoadingStrategy(data),
+    content,
+    join(serverDir, "overlay.md"),
+    { cap: false },
+  );
   if (!parsed) return null;
   // An empty body has nothing to surface. Treat it as "no overlay" (like an
   // unparseable one) — symmetric with the event store dropping an empty
@@ -98,6 +106,33 @@ export function materializeConnectorSkill(args: {
 }
 
 /**
+ * Fill `loading-strategy` into an overlay's `metadata.nimblebrain` block when
+ * the block omits it.
+ *
+ * The schema requires the field of any skill that declares the block, because
+ * for an authored skill it is the author's statement of how the skill loads.
+ * An overlay's author has no such statement to make: materialize stamps
+ * `dynamic` whatever the overlay says, and the block exists only to carry
+ * `tool-affinity`. Requiring the field there would reject a block that declares
+ * only what an overlay author governs, and a rejected overlay is no overlay.
+ * Returns a copy; the parsed frontmatter is not mutated.
+ */
+function withOverlayLoadingStrategy(data: Record<string, unknown>): Record<string, unknown> {
+  const metadata = data.metadata;
+  if (!isRecord(metadata)) return data;
+  const nb = metadata.nimblebrain;
+  if (!isRecord(nb) || "loading-strategy" in nb) return data;
+  return {
+    ...data,
+    metadata: { ...metadata, nimblebrain: { "loading-strategy": "dynamic", ...nb } },
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
  * Read every materialized overlay under `connectorSkillsDir` into the engine's
  * candidate shape. Each `<server>/` subdir contributes its `*.md` overlays;
  * tool-affinity comes from the file (stamped at materialize) and falls back to
@@ -114,9 +149,7 @@ export function readConnectorSkillCandidates(
     // would never dedup (the store drops the empty event). Defense for any
     // empty file that predates the materialize-time guard.
     if (!skill.body.trim()) continue;
-    const affinity = skill.manifest.toolAffinity?.length
-      ? skill.manifest.toolAffinity
-      : [`${serverName}__*`];
+    const affinity = boundAffinity(serverName, skill.manifest.toolAffinity);
     out.push({
       name: skill.manifest.name,
       ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
@@ -159,6 +192,8 @@ export interface ConnectorOverlayInfo {
   description?: string;
   /** Provenance source ref, e.g. `connector:gmail@v0.2.0`. */
   source?: string;
+  /** The tool patterns the overlay is bound to, under the server's namespace. */
+  toolAffinity: string[];
   /** Absolute path to the materialized file. */
   path: string;
 }
@@ -177,10 +212,19 @@ export function listConnectorOverlays(connectorSkillsDir: string): ConnectorOver
       name: skill.manifest.name,
       ...(skill.manifest.description ? { description: skill.manifest.description } : {}),
       ...(skill.manifest.provenance?.source ? { source: skill.manifest.provenance.source } : {}),
+      toolAffinity: boundAffinity(serverName, skill.manifest.toolAffinity),
       path,
     });
   }
   return out;
+}
+
+/**
+ * A materialized overlay's tool-affinity: the one stamped at materialize, or
+ * `<server>__*` for a file that carries none.
+ */
+function boundAffinity(serverName: string, stamped: string[] | undefined): string[] {
+  return stamped?.length ? stamped : [`${serverName}__*`];
 }
 
 function safeReadDir(dir: string) {
