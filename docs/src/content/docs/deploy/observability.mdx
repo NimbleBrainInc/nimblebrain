@@ -220,5 +220,5 @@ These apply regardless of store and tune the per-process transport map:
 | `MCP_SESSION_TTL_SECONDS` | `28800` (8h) | Idle session TTL. Drives both the per-process idle sweep and the registry TTL |
 
 <Aside type="caution">
-`sessionStore: "redis"` is necessary but **not sufficient** for `replicas > 1`. You also need session-affinity routing on `Mcp-Session-Id` (ALB `lb_cookie` stickiness or header-hash routing) and shared (RWX) storage for workspace data. Until those are in place, keep the platform at a single replica.
+`sessionStore: "redis"` does not make `replicas > 1` work. More than one replica is not supported; see [Scaling to multiple replicas](/config/nimblebrain-json/#scaling-to-multiple-replicas). Keep the platform at a single replica.
 </Aside>

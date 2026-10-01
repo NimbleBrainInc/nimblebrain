@@ -42,21 +42,17 @@ export async function runServe(opts: ServeOptions, telemetry: TelemetryManager):
   // every individual MCP request.
   const sessionStoreConfig = resolveSessionStoreConfig(runtime.getSessionStoreConfig());
   const sessionRegistry = await createSessionRegistry(sessionStoreConfig);
-  // Multi-replica intent (Redis-backed sessions) implies the operator may run
-  // platform.replicas > 1. RunBus is still single-process — turn replay/resume
-  // only works on the pod that holds the run. Sticky routing on Mcp-Session-Id
-  // (a replicas > 1 prerequisite in src/api/AGENTS.md) mitigates for the
-  // active tab but a pod restart / cross-pod viewer still drops the in-flight
-  // turn. Loud heads-up at boot; not a hard error (sticky routing is enough
-  // for most cases, and operators may accept the gap until the clustered
-  // RunBus lands).
+  // Redis-backed sessions suggest the operator means to run more than one
+  // replica, which is not supported: the runtime assumes it is the only process
+  // on a tenant's data (src/api/AGENTS.md, "Running more than one replica").
+  // A heads-up at boot rather than a hard error, because Redis sessions are
+  // also valid at one replica.
   if (sessionStoreConfig.type === "redis") {
     log.warn(
-      "[nimblebrain] sessionStore=redis detected. RunBus is still single-process; " +
-        "if platform.replicas > 1, a viewer that hits a different pod sees " +
-        "isActive:false for an in-flight turn. Ensure Mcp-Session-Id sticky " +
-        "routing is in place (src/api/AGENTS.md, replicas > 1 prerequisites); RunBus Redis port " +
-        "is tracked as deferred work.",
+      "[nimblebrain] sessionStore=redis detected. Run platform.replicas: 1; more " +
+        "than one replica is not supported (automations and notifications run once " +
+        "per pod, writes to workspace data race, and caches and live events stay on " +
+        "the pod that made them).",
     );
   }
 

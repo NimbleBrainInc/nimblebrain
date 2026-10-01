@@ -1,6 +1,6 @@
 # Connector runtime
 
-Scope: a live connection's life, `src/connectors/runtime/`. The `on_ready` / `on_removing` contract is in `src/lifecycle/AGENTS.md`; the `replicas > 1` prerequisites are in `src/api/AGENTS.md`.
+Scope: a live connection's life, `src/connectors/runtime/`. The `on_ready` / `on_removing` contract is in `src/lifecycle/AGENTS.md`; what blocks more than one replica is in `src/api/AGENTS.md`.
 
 ## Connector teardown is a function, and it has two callers
 

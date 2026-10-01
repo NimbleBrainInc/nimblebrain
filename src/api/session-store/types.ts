@@ -19,8 +19,9 @@
  *
  * The registry is **deliberately deployment-vocabulary-free**: no pod, no
  * instance, no ownership. Routing live requests to the process that owns a
- * given session's transport is the load balancer's job (sticky cookie, or
- * header-hash on `Mcp-Session-Id`), not the registry's. Treating the
+ * given session's transport is the load balancer's job (cookie affinity;
+ * hashing a random session id cannot find the pod that created it), not the
+ * registry's. Treating the
  * registry as a router would either re-introduce process identity into
  * the metadata schema or pull cross-process proxying into the application
  * layer — both of which leak into a clean interface.

@@ -433,14 +433,14 @@ When `type: "redis"` is set without a `redis.url`, NimbleBrain refuses to fall b
 
 ### Scaling to multiple replicas
 
-`platform.replicas > 1` requires all of:
+Run `platform.replicas: 1`. More than one replica is **not supported**: the runtime assumes it is the only process on a tenant's data, and no combination of settings makes a second replica safe today. With two replicas:
 
-1. **Storage that supports concurrent multi-process mounts.** The default chart's PVC is `ReadWriteOnce` and blocks `RollingUpdate` rollouts. Move workspace data out of the PVC (Postgres/S3) or relocate to `ReadWriteMany` (EFS).
-2. **Routing strategy keyed on `Mcp-Session-Id`.** ALB `lb_cookie` stickiness is the simplest path on AWS; alternatives are NGINX/Envoy with header-hash routing, or application-level cross-process proxying.
-3. **Cluster-shared session store.** `sessionStore.type: "redis"`.
-4. **Deploy strategy that doesn't drop all replicas at once.** `platform.strategy.type: RollingUpdate` (with the storage from (1) in place).
+- **Work runs twice.** Every pod's scheduler fires every due automation, and every pod polls every notification outbox, so runs, posts and deliveries happen once per pod.
+- **Writes are lost.** Workspace records and notification files are rewritten whole, with locks that hold within one process only.
+- **State goes stale between pods.** A connector installed or removed on one pod, a deactivated user, a changed model config, and live events (including an in-flight chat turn) stay on the pod that saw them.
+- **Sticky routing does not fix this.** Load-balancer cookie affinity pins a browser, not an MCP client or a webhook sender, and routing on `Mcp-Session-Id` cannot pin a session to the pod that created it.
 
-Drop any one of these and multi-replica is broken in a different way: PVC deadlock, re-init storms, partitioned session view, or deploy-time outages.
+`sessionStore.type: "redis"` is valid at one replica, for cluster-wide visibility into sessions, but it is not what makes more than one replica work.
 
 ### Tuning `ttlSeconds`
 

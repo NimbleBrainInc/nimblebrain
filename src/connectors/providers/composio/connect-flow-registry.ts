@@ -28,7 +28,7 @@
  * session affinity (already configured, a no-op at one replica) pins a browser
  * to the pod that served `/initiate`, so the callback still resolves here;
  * moving to a shared (Redis) store to also survive a mid-flow pod restart is
- * deferred with the other `replicas > 1` prerequisites.
+ * deferred with the rest of what blocks more than one replica (`src/api/AGENTS.md`).
  */
 
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";

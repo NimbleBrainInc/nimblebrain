@@ -27,8 +27,8 @@ const inflight = new WeakMap<WorkspaceStore, Map<string, Promise<Workspace[]>>>(
  *
  * Concurrent calls for one user share one in-flight provisioning, so a burst
  * of first requests creates one workspace, not several. The guard is
- * per-process, which is enough at `replicas: 1` (see the `replicas > 1`
- * prerequisites in `src/api/AGENTS.md`).
+ * per-process, which is enough at `replicas: 1` (see "Running more than one
+ * replica" in `src/api/AGENTS.md`).
  */
 export function ensureUserWorkspace(
   store: WorkspaceStore,
