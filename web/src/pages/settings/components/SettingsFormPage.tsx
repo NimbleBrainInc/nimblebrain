@@ -23,7 +23,7 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  * Pages that don't have a save bar (e.g. read-only forms) can omit the
  * `save` prop entirely.
  */
-export interface SettingsFormPageProps extends Omit<SettingsPageHeaderProps, "action"> {
+export interface SettingsFormPageProps extends SettingsPageHeaderProps {
   /**
    * Save bar config. Omit for read-only pages. The bar renders inline
    * below `children`, not sticky — most settings forms aren't long enough
@@ -63,6 +63,7 @@ export function SettingsFormPage({
   title,
   description,
   icon,
+  action,
   back,
   save,
   loadError,
@@ -73,7 +74,13 @@ export function SettingsFormPage({
 }: SettingsFormPageProps) {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <SettingsPageHeader title={title} description={description} icon={icon} back={back} />
+      <SettingsPageHeader
+        title={title}
+        description={description}
+        icon={icon}
+        action={action}
+        back={back}
+      />
 
       {loadError ? <InlineError message={loadError} /> : null}
 
