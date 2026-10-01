@@ -9,11 +9,12 @@
 // when their data sources are ready, without changing the page shape.
 // ---------------------------------------------------------------------------
 
-import { Plus } from "lucide-react";
+import { Pin, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useSession } from "../context/SessionContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
 import { getGreeting } from "../lib/greeting";
+import { usePinnedWorkspaces } from "../lib/pinned-workspaces";
 import { cn } from "../lib/utils";
 import { getWorkspaceAvatar } from "../lib/workspace-avatar";
 import { orderWorkspacesForSidebar } from "../lib/workspace-order";
@@ -30,7 +31,8 @@ export function GlobalHomePage() {
     year: "numeric",
   });
   const name = session?.user?.displayName ?? session?.user?.email ?? "";
-  const ordered = orderWorkspacesForSidebar(wsCtx.workspaces);
+  const { pinned, toggle: togglePin } = usePinnedWorkspaces();
+  const ordered = orderWorkspacesForSidebar(wsCtx.workspaces, pinned);
 
   return (
     <div className="h-full overflow-y-auto" data-testid="global-home-page">
@@ -49,7 +51,12 @@ export function GlobalHomePage() {
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {ordered.map((ws) => (
-              <WorkspaceTile key={ws.id} workspace={ws} />
+              <WorkspaceTile
+                key={ws.id}
+                workspace={ws}
+                pinned={pinned.has(ws.id)}
+                onTogglePin={() => togglePin(ws.id)}
+              />
             ))}
             <NewWorkspaceTile />
           </div>
@@ -59,15 +66,57 @@ export function GlobalHomePage() {
   );
 }
 
-function WorkspaceTile({ workspace }: { workspace: WorkspaceInfo }) {
+// The pin toggle is a sibling of the tile's link, laid over its right edge (an
+// interactive control cannot nest in a link). Same store as the sidebar's pin.
+function WorkspaceTile({
+  workspace,
+  pinned,
+  onTogglePin,
+}: {
+  workspace: WorkspaceInfo;
+  pinned: boolean;
+  onTogglePin: () => void;
+}) {
   const avatar = getWorkspaceAvatar(workspace);
+  return (
+    <div className="group/tile relative">
+      <WorkspaceTileLink workspace={workspace} avatar={avatar} />
+      <button
+        type="button"
+        onClick={onTogglePin}
+        aria-label={pinned ? `Unpin ${workspace.name}` : `Pin ${workspace.name} to the top`}
+        aria-pressed={pinned}
+        title={pinned ? "Unpin" : "Pin to top"}
+        data-testid="home-workspace-pin"
+        data-workspace-id={workspace.id}
+        className={cn(
+          "absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-sm text-muted-foreground",
+          "hover:bg-foreground/10 hover:text-foreground transition-opacity",
+          "focus-visible:opacity-100 group-hover/tile:opacity-100 [@media(pointer:coarse)]:opacity-100",
+          pinned ? "opacity-60" : "opacity-0",
+        )}
+      >
+        <Pin className={cn("w-4 h-4", pinned && "fill-current")} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function WorkspaceTileLink({
+  workspace,
+  avatar,
+}: {
+  workspace: WorkspaceInfo;
+  avatar: ReturnType<typeof getWorkspaceAvatar>;
+}) {
   return (
     <Link
       to={`/w/${toSlug(workspace.id)}/`}
       data-testid="home-workspace-tile"
       data-workspace-id={workspace.id}
       className={cn(
-        "group flex items-center gap-3 p-4 rounded-sm border border-border bg-card",
+        // Right padding leaves room for the pin toggle laid over the tile.
+        "group flex items-center gap-3 p-4 pr-12 rounded-sm border border-border bg-card",
         "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
       )}
     >
@@ -80,7 +129,9 @@ function WorkspaceTile({ workspace }: { workspace: WorkspaceInfo }) {
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-foreground">{workspace.name}</div>
-        {workspace.userRole && (
+        {/* Only an exception is worth a line: most tiles are the viewer's own
+            workspaces, where "admin" on every tile says nothing. */}
+        {workspace.userRole && workspace.userRole !== "admin" && (
           <div className="truncate text-xs text-muted-foreground">{workspace.userRole}</div>
         )}
       </div>

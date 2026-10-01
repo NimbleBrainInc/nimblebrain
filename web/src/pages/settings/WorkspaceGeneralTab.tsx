@@ -1,7 +1,6 @@
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import {
-  CopyableWorkspaceId,
   RequireActiveWorkspace,
   Section,
   SettingsFormPage,
@@ -9,8 +8,8 @@ import {
 } from "./components";
 
 /**
- * Workspace "General" tab — the workspace ID and the workspace's custom
- * instructions.
+ * Workspace "General" tab — the workspace's custom instructions. The workspace
+ * ID is not shown here: the MCP tab offers it beside the URL that embeds it.
  *
  * Route: /w/:slug/settings/general (the workspace is the URL slug).
  * Permission: any workspace member can read; only a workspace **admin member**
@@ -37,16 +36,10 @@ function Inner() {
   const ws = activeWorkspace!;
 
   return (
-    <SettingsFormPage
-      title={ws.name}
-      description="Settings for the active workspace. Changes affect everyone in this workspace."
-    >
-      <Section title="Workspace ID" flush>
-        <CopyableWorkspaceId workspaceId={ws.id} />
-      </Section>
-
+    <SettingsFormPage title={ws.name} description="Changes here affect everyone in this workspace.">
       <Section
-        title="Workspace Instructions"
+        flush
+        title="Workspace instructions"
         description="Custom instructions injected into every conversation in this workspace. Applies on top of organization-wide policies and is readable by anyone in the workspace."
       >
         <WorkspaceInstructions wsId={ws.id} canEdit={canEdit} />

@@ -36,5 +36,9 @@ export interface WriteResult {
   updated_at: string;
 }
 
-/** Maximum allowed instruction body in bytes (UTF-8). */
-export const MAX_INSTRUCTIONS_BYTES = 8 * 1024;
+/**
+ * Maximum allowed instruction body, in characters (Unicode code points). The
+ * editor shows this count to the people writing instructions, so the limit is
+ * stated in the unit they can see; an emoji is one character, not four.
+ */
+export const MAX_INSTRUCTIONS_CHARS = 8 * 1024;

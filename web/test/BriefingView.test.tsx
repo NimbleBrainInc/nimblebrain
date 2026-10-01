@@ -144,7 +144,7 @@ describe("BriefingView", () => {
     mounted = await mount(view());
     const rows = findAllByTestId(mounted.container, "briefing-item");
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.textContent).toBe("Warning: 2 Follow-ups overdue · CRM");
+    expect(rows[0]?.textContent).toBe("Warning: Follow-ups overdue 2 · CRM");
   });
 
   test("hides nothing the server sent, in the order it sent it", async () => {
@@ -158,9 +158,9 @@ describe("BriefingView", () => {
     mounted = await mount(view({ briefing }));
     const rows = Array.from(mounted.container.getElementsByTagName("li")).map((li) => li.textContent);
     expect(rows).toEqual([
-      "Warning: 1 Second app · B",
+      "Warning: Second app 1 · B",
       "Warning: Down — unavailable · A",
-      "Warning: 7 Third · A",
+      "Warning: Third 7 · A",
     ]);
   });
 
@@ -266,10 +266,10 @@ describe("BriefingView", () => {
     const rows = Array.from(mounted.container.getElementsByTagName("li"));
     expect(rows.map((li) => [li.getAttribute("data-level"), li.textContent])).toEqual([
       ["critical", "Critical: Reconnection needed · Notion"],
-      ["critical", "Critical: 1 Tasks blocked · Tasks"],
-      ["warning", "Warning: 4 Drafts · Out"],
+      ["critical", "Critical: Tasks blocked 1 · Tasks"],
+      ["warning", "Warning: Drafts 4 · Out"],
       ["info", "Info: Connecting… · Slack"],
-      ["info", "Info: 2 Replies · Out"],
+      ["info", "Info: Replies 2 · Out"],
     ]);
     // The level's tone is on the icon badge, the row's first span.
     const tone = (li: Element) => li.getElementsByTagName("span")[0]?.getAttribute("class") ?? "";
@@ -360,7 +360,7 @@ describe("BriefingView", () => {
       await rerender(view({ briefing: one(1) }));
       expect(rows()).toHaveLength(0);
       await rerender(view({ briefing: one(2) }));
-      expect(rows().map((r) => r.textContent)).toEqual(["Critical: 2 Tasks blocked · Tasks"]);
+      expect(rows().map((r) => r.textContent)).toEqual(["Critical: Tasks blocked 2 · Tasks"]);
     });
 
     test("once back, a later fall does not hide it again", async () => {
@@ -375,7 +375,7 @@ describe("BriefingView", () => {
       mounted = await mount(view({ briefing: one(2) }));
       await hideFirst();
       await rerender(view({ briefing: one(3) }));
-      expect(rows().map((r) => r.textContent)).toEqual(["Critical: 3 Tasks blocked · Tasks"]);
+      expect(rows().map((r) => r.textContent)).toEqual(["Critical: Tasks blocked 3 · Tasks"]);
     });
 
     test("a hidden connector comes back when its status changes", async () => {

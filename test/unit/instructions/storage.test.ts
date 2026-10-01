@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InstructionsStore, MAX_INSTRUCTIONS_BYTES } from "../../../src/instructions/index.ts";
+import { InstructionsStore, MAX_INSTRUCTIONS_CHARS } from "../../../src/instructions/index.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
 let workDir: string;
@@ -88,23 +88,27 @@ describe("InstructionsStore — empty text clears", () => {
 });
 
 describe("InstructionsStore — length cap", () => {
-  test("write of 8 KB exactly is accepted", async () => {
-    const body = "x".repeat(MAX_INSTRUCTIONS_BYTES);
+  test("write of exactly the character limit is accepted", async () => {
+    const body = "x".repeat(MAX_INSTRUCTIONS_CHARS);
     await store.write({ wsId: "ws_demo", text: body, updatedBy: "ui" });
     expect(await store.read({ wsId: "ws_demo" })).toBe(body);
   });
 
-  test("write of 8 KB + 1 byte rejects", async () => {
-    const body = "x".repeat(MAX_INSTRUCTIONS_BYTES + 1);
+  test("write one character over the limit rejects", async () => {
+    const body = "x".repeat(MAX_INSTRUCTIONS_CHARS + 1);
     await expect(store.write({ wsId: "ws_demo", text: body, updatedBy: "ui" })).rejects.toThrow(
       /8192/,
     );
   });
 
-  test("byte length is UTF-8, not character length (multibyte counted correctly)", async () => {
-    // "🙂" is 4 bytes in UTF-8; 2049 of them is 8196 bytes — over cap.
-    const body = "🙂".repeat(2049);
-    await expect(store.write({ wsId: "ws_demo", text: body, updatedBy: "ui" })).rejects.toThrow();
+  test("the limit counts characters, not UTF-8 bytes or UTF-16 units", async () => {
+    // "🙂" is 4 bytes in UTF-8 and 2 UTF-16 units, but one character.
+    const atLimit = "🙂".repeat(MAX_INSTRUCTIONS_CHARS);
+    await store.write({ wsId: "ws_demo", text: atLimit, updatedBy: "ui" });
+    expect(await store.read({ wsId: "ws_demo" })).toBe(atLimit);
+    await expect(
+      store.write({ wsId: "ws_demo", text: `${atLimit}🙂`, updatedBy: "ui" }),
+    ).rejects.toThrow(/8192/);
   });
 });
 

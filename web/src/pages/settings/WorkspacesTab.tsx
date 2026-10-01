@@ -57,12 +57,12 @@ function CreateWorkspaceForm({
   return (
     <>
       <div className="space-y-1.5 max-w-sm">
-        <Label htmlFor="create-ws-name">Workspace Name</Label>
+        <Label htmlFor="create-ws-name">Name</Label>
         <Input
           id="create-ws-name"
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
-          placeholder="My Workspace"
+          placeholder="e.g. Sales team"
           onKeyDown={(e) => {
             if (e.key === "Enter" && name.trim()) onSubmit();
           }}
@@ -70,7 +70,7 @@ function CreateWorkspaceForm({
       </div>
       {error ? <InlineError message={error} /> : null}
       <Button size="sm" onClick={onSubmit} disabled={creating || !name.trim()}>
-        {creating ? "Creating..." : "Create Workspace"}
+        {creating ? "Creating..." : "Create workspace"}
       </Button>
     </>
   );
@@ -311,7 +311,7 @@ export function WorkspacesTab() {
       create={
         isAdmin
           ? {
-              label: "Create Workspace",
+              label: "New workspace",
               showing: showCreate,
               canCreate: true,
               onToggle: () => {

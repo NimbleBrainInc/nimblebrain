@@ -7,7 +7,8 @@
 // one workspace at a time, so exactly one workspace is ever open here. The way
 // to "see another workspace's stuff" is to focus it (the accordion swings over).
 //
-// Workspaces sort by name. The focused workspace's subtree nests its identity views (Conversations / Automations / Files), then
+// Pinned workspaces sort first, then the rest, each by name (pins are per
+// browser — see lib/pinned-workspaces). The focused workspace's subtree nests its identity views (Conversations / Automations / Files), then
 // its APPS (People, Tasks, … — capped with a View-all overflow), then a
 // CONNECTORS row — each routed into `/w/<slug>/…`. The identity views' TOOLS
 // still dispatch bare through the identity door (see lib/identity-apps); the
@@ -19,7 +20,7 @@
 // there is no cross-workspace list), so the UI nests them under the workspace.
 // ---------------------------------------------------------------------------
 
-import { ArrowRight, ChevronRight, Plus } from "lucide-react";
+import { ArrowRight, ChevronRight, Pin, Plus } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useNotifications } from "../../context/NotificationsContext";
@@ -29,6 +30,7 @@ import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
 import { resolveIcon } from "../../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../../lib/identity-apps";
+import { usePinnedWorkspaces } from "../../lib/pinned-workspaces";
 import { cn } from "../../lib/utils";
 import { MAX_INLINE_APPS, workspaceApps } from "../../lib/workspace-apps";
 import { getWorkspaceAvatar } from "../../lib/workspace-avatar";
@@ -49,7 +51,11 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
   const wsCtx = useWorkspaceContext();
   const navigate = useNavigate();
 
-  const ordered = useMemo(() => orderWorkspacesForSidebar(wsCtx.workspaces), [wsCtx.workspaces]);
+  const { pinned, toggle: togglePin } = usePinnedWorkspaces();
+  const ordered = useMemo(
+    () => orderWorkspacesForSidebar(wsCtx.workspaces, pinned),
+    [wsCtx.workspaces, pinned],
+  );
   const focusedId = wsCtx.activeWorkspace?.id;
 
   const handleSelect = useCallback(
@@ -101,8 +107,8 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
         <button
           type="button"
           onClick={handleAdd}
-          aria-label="Add workspace"
-          title="Add workspace"
+          aria-label="New workspace"
+          title="New workspace"
           data-testid="sidebar-workspace-add"
           className="p-1 rounded-sm hover:bg-sidebar-foreground/10 transition-colors"
         >
@@ -120,20 +126,12 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
             key={ws.id}
             workspace={ws}
             focused={ws.id === focusedId}
+            pinned={pinned.has(ws.id)}
             onSelect={() => handleSelect(ws)}
+            onTogglePin={() => togglePin(ws.id)}
           />
         ))
       )}
-
-      <button
-        type="button"
-        onClick={handleAdd}
-        data-testid="sidebar-workspace-new"
-        className="flex items-center gap-2 mx-2 my-px px-3 py-1.5 rounded-sm text-sm hover:bg-sidebar-foreground/5 transition-colors"
-      >
-        <Plus className="size-[18px] shrink-0" />
-        <span className="flex-1 truncate text-left">New workspace</span>
-      </button>
     </div>
   );
 }
@@ -146,11 +144,15 @@ export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
 function WorkspaceTreeNode({
   workspace,
   focused,
+  pinned,
   onSelect,
+  onTogglePin,
 }: {
   workspace: WorkspaceInfo;
   focused: boolean;
+  pinned: boolean;
   onSelect: () => void;
+  onTogglePin: () => void;
 }) {
   return (
     <div
@@ -158,7 +160,13 @@ function WorkspaceTreeNode({
       data-testid="sidebar-workspace-node"
       data-workspace-id={workspace.id}
     >
-      <WorkspaceHeaderRow workspace={workspace} focused={focused} onSelect={onSelect} />
+      <WorkspaceHeaderRow
+        workspace={workspace}
+        focused={focused}
+        pinned={pinned}
+        onSelect={onSelect}
+        onTogglePin={onTogglePin}
+      />
       <div
         // grid-rows 0fr→1fr animates height to/from content size; the inner
         // `overflow-hidden` + `min-h-0` clips during the transition. This is an
@@ -188,14 +196,63 @@ function WorkspaceTreeNode({
 // The clickable workspace header row: a disclosure chevron, the avatar, and
 // the name. The whole row focuses the workspace —
 // the chevron is a state indicator, not a separate toggle, since exactly one
-// workspace (the focused one) is ever expanded.
+// workspace (the focused one) is ever expanded. The pin toggle is a sibling
+// button laid over the row's right edge (a button cannot nest in a button):
+// shown on hover or keyboard focus, and kept visible while pinned so a pinned
+// workspace reads as pinned at rest.
 function WorkspaceHeaderRow({
   workspace,
   focused,
+  pinned,
+  onSelect,
+  onTogglePin,
+}: {
+  workspace: WorkspaceInfo;
+  focused: boolean;
+  pinned: boolean;
+  onSelect: () => void;
+  onTogglePin: () => void;
+}) {
+  const label = workspace.name;
+  const pinLabel = pinned ? `Unpin ${label}` : `Pin ${label} to the top`;
+  return (
+    <div className="group/ws relative flex">
+      <WorkspaceHeaderButton
+        workspace={workspace}
+        focused={focused}
+        reservePinSpace={pinned}
+        onSelect={onSelect}
+      />
+      <button
+        type="button"
+        onClick={onTogglePin}
+        aria-label={pinLabel}
+        aria-pressed={pinned}
+        title={pinned ? "Unpin" : "Pin to top"}
+        data-testid="sidebar-workspace-pin"
+        data-workspace-id={workspace.id}
+        className={cn(
+          "absolute right-5 top-1/2 -translate-y-1/2 p-1 rounded-sm transition-opacity",
+          "hover:bg-sidebar-foreground/10 focus-visible:opacity-100 group-hover/ws:opacity-100",
+          pinned ? "opacity-60" : "opacity-0",
+        )}
+      >
+        <Pin className={cn("size-3.5", pinned && "fill-current")} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function WorkspaceHeaderButton({
+  workspace,
+  focused,
+  reservePinSpace,
   onSelect,
 }: {
   workspace: WorkspaceInfo;
   focused: boolean;
+  /** Keep room for the pin at rest; otherwise the room opens only on hover. */
+  reservePinSpace: boolean;
   onSelect: () => void;
 }) {
   const label = workspace.name;
@@ -212,7 +269,10 @@ function WorkspaceHeaderRow({
       data-workspace-id={workspace.id}
       data-focused={focused ? "true" : "false"}
       className={cn(
-        "group flex items-center gap-1.5 text-sm transition-colors text-left rounded-sm mx-2 my-px px-1.5 py-1.5",
+        // Right padding leaves room for the pin toggle laid over the row, only
+        // while it shows, so an unpinned name is not truncated at rest.
+        "group flex flex-1 min-w-0 items-center gap-1.5 text-sm transition-colors text-left rounded-sm mx-2 my-px pl-1.5 py-1.5",
+        reservePinSpace ? "pr-9" : "pr-1.5 group-hover/ws:pr-9 group-focus-within/ws:pr-9",
         focused
           ? "bg-sidebar-foreground/10 font-medium text-foreground"
           : "font-normal hover:bg-sidebar-foreground/5",
@@ -353,8 +413,8 @@ function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; f
         </>
       )}
 
-      <SubLabel>Connectors</SubLabel>
-      {/* Connectors — the workspace's installed tools. Routes to its settings
+      {/* Connectors — the workspace's installed tools. No sub-label: a heading
+          over its one row would only repeat it. Routes to its settings
           tab; sub-routes (browse, detail) keep it lit, so not `end`. The count
           is the focused workspace's installed connectors (the provider holds
           one workspace's set); a collapsed node omits it to avoid showing the

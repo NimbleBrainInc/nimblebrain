@@ -115,8 +115,11 @@ function facetRow(item: BriefingItem, onOpen: (route: string) => void): PanelRow
     content: unavailable ? (
       <>{item.label} — unavailable</>
     ) : (
+      // The label is an app-authored noun phrase ("Tasks blocked") with no
+      // singular form, so the count follows it rather than leading it:
+      // "Tasks blocked 1" reads right at any count, "1 Tasks blocked" does not.
       <>
-        <span className="font-bold tabular-nums">{item.count}</span> {item.label}
+        {item.label} <span className="font-bold tabular-nums">{item.count}</span>
       </>
     ),
     app: item.app,

@@ -1,14 +1,16 @@
 // ---------------------------------------------------------------------------
 // orderWorkspacesForSidebar — sidebar ordering rule.
 //
-// Workspaces sort alphabetically by display name; none sorts ahead of the
-// others. Adversarial cases pinned:
+// Pinned workspaces sort first; otherwise alphabetically by display name, and
+// nothing else lifts a workspace ahead of the others. Adversarial cases pinned:
 //
 //   1. No workspace is lifted out of order — not one named for the user, not
 //      one where the user is admin.
 //   2. Alphabetical comparison is case-insensitive — "alpha" sorts before
 //      "Beta", not after.
 //   3. Tie-break on identical names is deterministic via `id`.
+//   4. Pinned workspaces lead, each group still alphabetical; a pinned id
+//      that names no workspace changes nothing.
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
@@ -57,5 +59,18 @@ describe("orderWorkspacesForSidebar", () => {
     const snapshot = input.map((w) => w.id);
     orderWorkspacesForSidebar(input);
     expect(input.map((w) => w.id)).toEqual(snapshot);
+  });
+
+  test("pinned workspaces lead, each group alphabetical", () => {
+    const out = orderWorkspacesForSidebar(
+      [
+        ws({ id: "ws_helix", name: "Helix" }),
+        ws({ id: "ws_acme", name: "Acme" }),
+        ws({ id: "ws_zeta", name: "Zeta" }),
+        ws({ id: "ws_basecamp", name: "Basecamp" }),
+      ],
+      new Set(["ws_zeta", "ws_basecamp", "ws_gone"]),
+    );
+    expect(out.map((w) => w.id)).toEqual(["ws_basecamp", "ws_zeta", "ws_acme", "ws_helix"]);
   });
 });

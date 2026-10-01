@@ -1,16 +1,12 @@
 import { Check, Copy } from "lucide-react";
 import { Button } from "../../../components/ui/button";
-import { Label } from "../../../components/ui/label";
 import { useFlashState } from "../../../hooks/useFlashState";
 
 /**
- * Workspace ID + copy button + helper text. Used by both
- * `WorkspaceGeneralTab` (active workspace) and `WorkspaceDetailPage`
- * (org-admin "manage another workspace") — same widget, same copy.
- *
- * The two call sites both render this inside a `<Section title="Workspace
- * ID">`, so this component does NOT render its own heading; the Section above
- * it owns that.
+ * Workspace ID + copy button, for `WorkspaceDetailPage` (org-admin "manage
+ * another workspace"). The call site renders it inside a `<Section
+ * title="Workspace ID">`, so this component renders no heading or label of
+ * its own; the Section above it owns that.
  *
  * Design notes:
  *
@@ -31,35 +27,26 @@ export function CopyableWorkspaceId({ workspaceId }: { workspaceId: string }) {
       .writeText(workspaceId)
       .then(flashCopied)
       .catch(() => {
-        // ID is visible above; the user can fall back to manual select.
+        // The ID is visible beside the button; the user can select it by hand.
       });
   };
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1 min-w-0">
-          <Label className="text-xs text-muted-foreground">Workspace ID</Label>
-          <code className="block text-sm font-mono truncate">{workspaceId}</code>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleCopy}
-          className="h-8 w-8 p-0 shrink-0"
-          aria-label="Copy workspace ID"
-        >
-          {copied ? (
-            <Check className="h-4 w-4 text-success" />
-          ) : (
-            <Copy className="h-4 w-4 text-muted-foreground" />
-          )}
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Identifies this workspace. MCP clients connect with the workspace's MCP URL, under the
-        workspace's settings → MCP.
-      </p>
+    <div className="flex items-center justify-between gap-2">
+      <code className="block min-w-0 text-sm font-mono truncate">{workspaceId}</code>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={handleCopy}
+        className="h-8 w-8 p-0 shrink-0"
+        aria-label="Copy workspace ID"
+      >
+        {copied ? (
+          <Check className="h-4 w-4 text-success" />
+        ) : (
+          <Copy className="h-4 w-4 text-muted-foreground" />
+        )}
+      </Button>
     </div>
   );
 }

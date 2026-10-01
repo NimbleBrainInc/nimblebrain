@@ -7,18 +7,19 @@ import { useFlashState } from "../../../hooks/useFlashState";
 import { InlineError } from "./InlineError";
 
 /**
- * Byte cap matches the backend's `MAX_INSTRUCTIONS_BYTES` in
- * `src/instructions/types.ts`. Counting must be in UTF-8 bytes (via
- * `Blob`) — using `text.length` (UTF-16 code units, ≈ characters)
- * lets emoji-heavy bodies pass UI validation and 500 on save. The
- * counter label is "bytes" to match what's actually being measured;
- * for ASCII text bytes ≡ characters, but emoji-heavy bodies will
- * exceed `text.length` here and that's the correct behavior.
+ * Character cap matches the backend's `MAX_INSTRUCTIONS_CHARS` in
+ * `src/instructions/types.ts`. Both count Unicode code points, so an emoji is
+ * one character — `text.length` (UTF-16 units) would count it as two.
  */
 const MAX_WORKSPACE_INSTRUCTIONS = 8 * 1024;
 
-function utf8ByteLength(text: string): number {
-  return new Blob([text]).size;
+/** The counter appears once the text reaches this share of the cap. */
+const COUNTER_THRESHOLD = 0.8;
+
+function charLength(text: string): number {
+  let n = 0;
+  for (const _ of text) n++;
+  return n;
 }
 
 /**
@@ -59,7 +60,8 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
   }, [load]);
 
   const dirty = text !== lastSaved;
-  const charCount = utf8ByteLength(text);
+  const charCount = charLength(text);
+  const showCounter = charCount >= MAX_WORKSPACE_INSTRUCTIONS * COUNTER_THRESHOLD;
   const overLimit = charCount > MAX_WORKSPACE_INSTRUCTIONS;
 
   const handleSave = useCallback(async () => {
@@ -118,12 +120,17 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
           }
           disabled={!canEdit}
           aria-invalid={overLimit}
-          className="min-h-32 font-mono text-sm"
+          className="min-h-32 text-sm"
         />
         <div className="flex items-center justify-between text-xs">
-          <span className={overLimit ? "text-destructive" : "text-muted-foreground"}>
-            {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()} bytes
-          </span>
+          {showCounter ? (
+            <span className={overLimit ? "text-destructive" : "text-muted-foreground"}>
+              {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()}{" "}
+              characters
+            </span>
+          ) : (
+            <span />
+          )}
           {savedFlash ? (
             <span role="status" className="text-success dark:text-green-400">
               Saved
@@ -144,9 +151,11 @@ export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit
           >
             {saving ? "Saving..." : "Save"}
           </Button>
-          <Button size="sm" variant="outline" onClick={handleReset} disabled={saving || !dirty}>
-            Reset
-          </Button>
+          {dirty ? (
+            <Button size="sm" variant="outline" onClick={handleReset} disabled={saving}>
+              Reset
+            </Button>
+          ) : null}
         </div>
       ) : (
         <p className="text-xs text-muted-foreground italic">

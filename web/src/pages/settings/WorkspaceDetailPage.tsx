@@ -340,7 +340,7 @@ export function WorkspaceDetailPage() {
         one. To edit a workspace's instructions, switch into it via the
         header switcher and use Settings → This Workspace → General.
       */}
-      <Section title="Installed Connectors" icon={<Package className="h-4 w-4" />}>
+      <Section title="Installed connectors" icon={<Package className="h-4 w-4" />}>
         <ConnectorsList connectors={workspace?.connectors} />
       </Section>
     </div>
@@ -356,7 +356,7 @@ function AddMemberButton({ showAdd, onToggle }: { showAdd: boolean; onToggle: ()
       ) : (
         <>
           <Plus className="mr-1 h-4 w-4" />
-          Add Member
+          Add member
         </>
       )}
     </Button>
@@ -422,7 +422,7 @@ function AddMemberForm({
         </div>
         {addError ? <InlineError message={addError} /> : null}
         <Button size="sm" onClick={onAdd} disabled={adding || !addUserId}>
-          {adding ? "Adding..." : "Add Member"}
+          {adding ? "Adding..." : "Add member"}
         </Button>
       </CardContent>
     </Card>
@@ -451,7 +451,7 @@ function MembersTable({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Display Name</TableHead>
+          <TableHead>Name</TableHead>
           <TableHead>Email</TableHead>
           <TableHead>Role</TableHead>
           {canManageMembers && <TableHead className="w-[60px]" />}

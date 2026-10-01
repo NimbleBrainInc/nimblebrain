@@ -105,15 +105,7 @@ export function WorkspaceOverviewPage() {
       <div className="max-w-6xl mx-auto px-8 py-10">
         <header className="mb-8 flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div
-              className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground"
-              data-testid="workspace-overview-breadcrumb"
-            >
-              Workspace · {workspace.id}
-            </div>
-            <h1 className="mt-1 text-3xl font-heading font-medium text-foreground">
-              {workspace.name}
-            </h1>
+            <h1 className="text-3xl font-heading font-medium text-foreground">{workspace.name}</h1>
             <p className="mt-2 text-sm text-muted-foreground italic">
               {describeWorkspace(workspace, apps ? apps.length : null)}
             </p>
@@ -209,27 +201,12 @@ function AppCard({
       data-testid="workspace-overview-app-card"
       data-app-route={placement.route ?? ""}
       className={cn(
-        "group flex flex-col gap-2 p-4 rounded-sm border border-border bg-card text-left",
+        "group flex items-center gap-2 p-4 rounded-sm border border-border bg-card text-left",
         "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
       )}
     >
-      <div className="flex items-center gap-2">
-        <ConnectorIcon name={label} iconUrl={iconUrl} className="h-5 w-5 rounded text-3xs" />
-        <div className="truncate text-sm font-medium text-foreground">{label}</div>
-      </div>
-      <div className="text-3xs font-medium tracking-[0.04em] uppercase text-muted-foreground">
-        {describePlacementType(placement)}
-      </div>
+      <ConnectorIcon name={label} iconUrl={iconUrl} className="h-5 w-5 rounded text-3xs" />
+      <div className="truncate text-sm font-medium text-foreground">{label}</div>
     </button>
   );
-}
-
-/**
- * Best-effort type pill for v1. A placement with a `route` registers UI,
- * so we render it as "MCP App · UI". A placement without a route (rare
- * in `sidebar.<group>`) is treated as tool-only. When connector manifests
- * expose richer type metadata via the placement, we can refine this.
- */
-function describePlacementType(p: PlacementEntry): string {
-  return p.route ? "MCP App · UI" : "Tool server";
 }

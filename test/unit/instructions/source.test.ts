@@ -226,7 +226,7 @@ describe("instructions source — write_instructions", () => {
     expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("");
   });
 
-  test("8KB cap rejection surfaces as isError, never throws", async () => {
+  test("character-limit rejection surfaces as isError, never throws", async () => {
     const src = await buildSource();
     runtime.wsId = "ws_demo";
     const client = src.getClient()!;

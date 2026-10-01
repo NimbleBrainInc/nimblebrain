@@ -136,6 +136,7 @@ beforeEach(() => {
 afterEach(() => {
   mounted?.unmount();
   mounted = null;
+  localStorage.clear();
 });
 
 function ws(overrides: Partial<WorkspaceInfo> & { id: string; name: string }): WorkspaceInfo {
@@ -424,10 +425,30 @@ describe("WorkspaceNav — selection + navigation", () => {
 // ---------------------------------------------------------------------------
 
 describe("WorkspaceNav — affordances + collapsed mode", () => {
-  test("renders the add-workspace and New workspace affordances", async () => {
+  test("pinning a workspace moves it to the top without focusing it", async () => {
+    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_mine" });
+    const order = () =>
+      byTestId(mounted!.container, "sidebar-workspace-header").map((h) =>
+        h.getAttribute("data-workspace-id"),
+      );
+    expect(order()).toEqual(["ws_acme", "ws_helix", "ws_mine"]);
+
+    setActiveSpy.mockClear();
+    const pin = byTestId(mounted.container, "sidebar-workspace-pin").find(
+      (b) => b.getAttribute("data-workspace-id") === "ws_mine",
+    );
+    await act(async () => {
+      pin?.click();
+    });
+
+    expect(order()).toEqual(["ws_mine", "ws_acme", "ws_helix"]);
+    expect(pin?.getAttribute("aria-pressed")).toBe("true");
+    expect(setActiveSpy).not.toHaveBeenCalled();
+  });
+
+  test("renders one New workspace affordance, in the section header", async () => {
     mounted = await mount({ workspaces: [MINE], activeId: "ws_mine" });
     expect(byTestId(mounted.container, "sidebar-workspace-add")).toHaveLength(1);
-    expect(byTestId(mounted.container, "sidebar-workspace-new")).toHaveLength(1);
   });
 
   test("collapsed mode renders avatar buttons only — no expanded subtree, no header", async () => {
@@ -448,6 +469,5 @@ describe("WorkspaceNav — affordances + collapsed mode", () => {
     // No nested contents / add affordances in icon-only mode.
     expect(byTestId(mounted.container, "sidebar-workspace-contents")).toHaveLength(0);
     expect(byTestId(mounted.container, "sidebar-workspace-add")).toHaveLength(0);
-    expect(byTestId(mounted.container, "sidebar-workspace-new")).toHaveLength(0);
   });
 });

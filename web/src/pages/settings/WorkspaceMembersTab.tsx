@@ -105,7 +105,7 @@ function Inner() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Display Name</TableHead>
+              <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
             </TableRow>

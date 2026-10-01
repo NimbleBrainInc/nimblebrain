@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { assertWorkspaceRootExists, WorkspaceContext } from "../workspace/context.ts";
 import {
   type InstructionsMeta,
-  MAX_INSTRUCTIONS_BYTES,
+  MAX_INSTRUCTIONS_CHARS,
   type ReadOptions,
   type WriteOptions,
   type WriteResult,
@@ -63,10 +63,10 @@ export class InstructionsStore {
       return { updated_at: new Date().toISOString() };
     }
 
-    const bytes = Buffer.byteLength(opts.text, "utf-8");
-    if (bytes > MAX_INSTRUCTIONS_BYTES) {
+    const chars = countChars(opts.text);
+    if (chars > MAX_INSTRUCTIONS_CHARS) {
       throw new Error(
-        `Instructions exceed ${MAX_INSTRUCTIONS_BYTES} byte limit (got ${bytes} bytes)`,
+        `Instructions exceed the ${MAX_INSTRUCTIONS_CHARS} character limit (got ${chars} characters)`,
       );
     }
 
@@ -140,4 +140,11 @@ async function rmIfExists(filePath: string): Promise<void> {
 
 function isENOENT(err: unknown): boolean {
   return (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
+/** Unicode code points, so a surrogate pair (an emoji) counts as one character. */
+function countChars(text: string): number {
+  let n = 0;
+  for (const _ of text) n++;
+  return n;
 }
