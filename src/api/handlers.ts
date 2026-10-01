@@ -30,6 +30,7 @@ import {
 } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { isStreamedRunEvent } from "../runtime/turn-stream.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
@@ -419,16 +420,7 @@ export async function handleChatStream(
       };
 
       const unsubscribe = sink.subscribe((event: EngineEvent) => {
-        if (
-          event.type === "chat.start" ||
-          event.type === "text.delta" ||
-          event.type === "reasoning.delta" ||
-          event.type === "tool.preparing" ||
-          event.type === "tool.preparing.done" ||
-          event.type === "tool.start" ||
-          event.type === "tool.done" ||
-          event.type === "llm.done"
-        ) {
+        if (isStreamedRunEvent(event)) {
           if (event.type === "chat.start") {
             broadcastUserMessageOnce();
           }
