@@ -275,6 +275,9 @@ jobs:
     needs: release
     if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
+    # The prod-promote key is an environment secret: `deploy-config-prod` admits only
+    # `main` (workflow_dispatch) and `v*` tags, never a pull_request run.
+    environment: deploy-config-prod
     permissions: {}
     steps:
       - name: Check prod-promote config

@@ -28,7 +28,7 @@ One more key is set by the host's own components and scoped to a single hop:
 
 | Key | Where | Meaning |
 |---|---|---|
-| `ai.nimblebrain/source` | `tools/call`, `resources/read`, and task requests at the [MCP endpoint](/connect/mcp-endpoint/) | Names the server a request is for. A workspace endpoint serves many servers behind one URL, and two servers can use the same resource URI. The app bridge always sets it to the app's own server, whatever the app asks for. A `tools/call` that names a source is treated as that app's call: it may reach only that server's tools, and only those whose `ui.visibility` includes `"app"`. A client that sets the key can only narrow what it reaches. |
+| `ai.nimblebrain/source` | `tools/call`, `resources/read`, and task requests at the [MCP endpoint](/connect/mcp-endpoint/) | Names the server a request is for. A workspace endpoint serves many servers behind one URL, and two servers can use the same resource URI. The app bridge always sets it to the app's own server, whatever the app asks for. A `tools/call` that names a source may reach only that server's tools, and only those whose `ui.visibility` includes `"app"`. It counts as the app's call only under a first-party credential (the web app's own session); a token issued to an external MCP client is treated as an agent's whatever it names, so it never reaches a tool without `"model"`. |
 
 ## If you see one
 

@@ -465,6 +465,12 @@ describe.each([
     expect(result.isError).toBe(false);
   });
 
+  it("refuses an agent's call to an app-only tool", async () => {
+    // `nb__workspace_info` declares `ui.visibility: ["app"]`; this call names
+    // no source, so it is an agent's.
+    await expect(d.callTool("nb__workspace_info", {})).rejects.toThrow(/not callable by an agent/);
+  });
+
   it("runs a task to completion", async () => {
     const taskId = await d.startTask(`${SOURCE}__research`);
     expect(await d.status(taskId)).toBe("working");

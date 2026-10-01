@@ -206,10 +206,11 @@ export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
  *     model: the chat list (`surfaceTools`), `nb__search`, the `/mcp`
  *     `tools/list`, the invalid-name recovery hint, and promotion. The engine,
  *     the host on the chat door, also refuses a model's call that names one.
- *     It stays callable by name over REST, which is how the web shell's
- *     settings reach the platform's own UI-driven tools. On `/mcp` the external
- *     host enforces it: the listing withholds the tool, and a call cannot be
- *     told from an app's, since they share one session.
+ *     `/mcp` refuses an agent's call that names one: any call that is not an
+ *     app's, which takes a first-party credential naming a source
+ *     (`isAppCall` in `src/api/mcp-server.ts`). REST admits first-party
+ *     credentials only, and the web shell's settings reach the platform's own
+ *     UI-driven tools there.
  *   - A `tools/call` from an app is refused for a tool without `"app"`
  *     (`/mcp`, keyed on the source the iframe bridge names).
  *

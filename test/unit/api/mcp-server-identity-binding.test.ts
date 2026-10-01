@@ -40,9 +40,9 @@ const MALLORY = identity("usr_mallory");
 const WS_A = "ws_a";
 const WS_B = "ws_b";
 
-/** The (identity, workspace) a request addresses: who, at which `/mcp/<wsId>`. */
+/** The (identity, workspace, grant) a request addresses: who, at which `/mcp/<wsId>`. */
 function at(who: UserIdentity, workspaceId: string = WS_A) {
-  return { identity: who, workspaceId };
+  return { identity: who, workspaceId, grant: "first_party" as const };
 }
 
 function initRequest(): Request {

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
 import type { ShellResponse, ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
@@ -212,12 +213,15 @@ describe("MCP client e2e with nb tools", () => {
     }
   });
 
-  it("callTool nb__workspace_info returns structured data", async () => {
+  // `workspace_info` is app-only, so the call is made as the bridge makes a
+  // view's: naming its server under the source key.
+  it("callTool nb__workspace_info from the nb app returns structured data", async () => {
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
         name: `${NB_PREFIX}workspace_info`,
         arguments: {},
+        _meta: { [RESOURCE_SOURCE_META_KEY]: "nb" },
       });
       expect(result.isError).toBeFalsy();
       expect(Array.isArray(result.content)).toBe(true);
