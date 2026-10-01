@@ -61,8 +61,8 @@ env:
 # widening `path:` to cover a `node_modules` tree would be what breaks it.
 jobs:
   # On a push to main, the four check jobs below usually re-test a commit whose
-  # tree already passed. They skip when either proof holds; anything short of
-  # both, including an API error, runs them.
+  # tree already passed. They skip when either proof holds; when neither does,
+  # including on an API error, they run.
   #   1. Merge queue: main advanced to the exact commit the queue tested, so the
   #      latest merge_group run of this workflow on this SHA succeeded.
   #   2. Up-to-date PR (a merge outside the queue): all three of
