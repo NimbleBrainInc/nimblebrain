@@ -225,6 +225,7 @@
 
 ### Fixed
 
+- **A tool error reaches an app's view as a result, not a JSON-RPC error.** A view's `tools/call` answers the `CallToolResult` with `isError: true` and its `structuredContent`, so a connector's structured refusal arrives intact; a pushed `ui/notifications/tool-result` carries `isError` too. A JSON-RPC error now means the call never ran, and a server's refusal keeps its code and `data` ([docs](https://docs.nimblebrain.ai/apps/bridge/#toolscall)).
 - **A remote OAuth connector whose server refuses `openid` signs in again.** A server that advertises OpenID Connect but answers `invalid_scope` to this client is asked once more with the connector's own scopes, and the row reads **Connected** with no account ([#1431](https://github.com/NimbleBrainInc/nimblebrain/issues/1431)).
 - **`tools/call` answers an unknown tool with a standard error body.** The `404 tool_not_found` now carries `message`, with `server` and `tool` under `details`, like every other REST error.
 - **A disconnected connector reads as at rest, not broken.** Disconnect leaves a workspace connector installed as a neutral **Not connected** with **Connect**, and off the overview's attention list; amber **Reconnect** is kept for a connection whose credential the vendor rejected, and now survives a restart. Disconnect asks first and says what stays and that Uninstall removes it.

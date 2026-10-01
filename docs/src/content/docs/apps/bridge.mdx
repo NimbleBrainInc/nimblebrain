@@ -154,7 +154,7 @@ If you're using the `@nimblebrain/synapse` SDK, `connect()` handles the entire h
 
 ### `ui/notifications/tool-result`
 
-Sent when the agent calls one of your app's tools during a conversation. The params follow the standard MCP `CallToolResult` shape.
+Sent when the agent calls one of your app's tools during a conversation. The params are the tool's standard MCP `CallToolResult`, including `isError: true` when the tool reported an error.
 
 ```json
 {
@@ -257,15 +257,30 @@ Call a tool on your app's MCP server. This is a JSON-RPC **request** — the res
 }
 ```
 
-**Error response:**
+**Tool error response.** A tool that ran and reported an error answers a `CallToolResult` with `isError: true`, not a JSON-RPC error, so its `structuredContent` reaches your view:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "call-1",
+  "result": {
+    "isError": true,
+    "content": [{ "type": "text", "text": "{\"error\":{\"code\":\"not_found\",\"message\":\"City not found\"}}" }],
+    "structuredContent": { "error": { "code": "not_found", "message": "City not found" } }
+  }
+}
+```
+
+**Error response.** A JSON-RPC error means the call never ran: the tool is not yours or not callable from an app, or the host could not reach your server. A refusal from your server keeps its code and `data`; a transport failure is `-32000`.
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "call-1",
   "error": {
-    "code": -32000,
-    "message": "City not found"
+    "code": -32602,
+    "message": "MCP error -32602: Tool \"get_weather\" is not callable from an app: its visibility does not include \"app\".",
+    "data": { "reason": "not_app_callable", "toolName": "get_weather" }
   }
 }
 ```
@@ -657,8 +672,14 @@ The bridge enforces four security boundaries:
       }
 
       // Tool call response (CallToolResult)
+      // A tool error is a result too: check `isError`.
       if (msg.id === 'weather-1' && msg.result) {
         const data = msg.result.structuredContent || msg.result;
+        if (msg.result.isError) {
+          document.getElementById('output').textContent =
+            'Tool error: ' + JSON.stringify(data);
+          return;
+        }
         document.getElementById('output').textContent =
           JSON.stringify(data, null, 2);
       }

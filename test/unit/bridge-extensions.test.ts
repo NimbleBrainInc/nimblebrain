@@ -579,6 +579,34 @@ describe("Bridge — ext-apps dual protocol", () => {
     handle.destroy();
   });
 
+  it("delivers a pushed tool result as its CallToolResult, isError included", () => {
+    const { iframe, posted } = makeFakeIframe();
+    const handle = createBridge(iframe, "test-app");
+    completeHandshake(iframe);
+    const before = posted.length;
+
+    const refusal = { error: { code: "not_found", message: "No such record" } };
+    handle.sendToolResult({
+      content: [{ type: "text", text: JSON.stringify(refusal) }],
+      structuredContent: refusal,
+      isError: true,
+    });
+
+    expect(posted.slice(before)).toEqual([
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/tool-result",
+        params: {
+          content: [{ type: "text", text: JSON.stringify(refusal) }],
+          structuredContent: refusal,
+          isError: true,
+        },
+      },
+    ]);
+
+    handle.destroy();
+  });
+
   it("holds one frame per thing to say, in the place it was first said", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");

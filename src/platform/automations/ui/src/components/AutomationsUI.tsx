@@ -1,7 +1,8 @@
-import { useCallTool, useDataSync } from "@nimblebrain/synapse/react";
+import { useDataSync } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { ClockIcon, PlusIcon } from "../icons.tsx";
 import type { AutomationRun, AutomationSummary } from "../types.ts";
+import { useTool } from "../useTool.ts";
 import { asDict } from "../utils.ts";
 import { AutomationDetailView } from "./AutomationDetailView.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
@@ -44,12 +45,12 @@ async function fetchAllAutomations(
 
 export function AutomationsUI() {
   // Tool hooks
-  const listTool = useCallTool<string>("list");
-  const runsTool = useCallTool<string>("runs");
-  const runNowTool = useCallTool<string>("run");
-  const updateTool = useCallTool<string>("update");
-  const deleteTool = useCallTool<string>("delete");
-  const cancelTool = useCallTool<string>("cancel");
+  const listTool = useTool<string>("list");
+  const runsTool = useTool<string>("runs");
+  const runNowTool = useTool<string>("run");
+  const updateTool = useTool<string>("update");
+  const deleteTool = useTool<string>("delete");
+  const cancelTool = useTool<string>("cancel");
 
   // Data state
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);

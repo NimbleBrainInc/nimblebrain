@@ -39,7 +39,6 @@ export type {
   UiResourceResultResponse,
   UiSizeChangedMessage,
   UiToolResultError,
-  UiToolResultMessage,
   UiToolResultResponse,
   UiUpdateModelContextMessage,
 } from "./schemas";

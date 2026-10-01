@@ -38,6 +38,7 @@ import {
   GetTaskPayloadResultSchema,
   type GetTaskRequest,
   GetTaskResultSchema,
+  McpError,
   TaskStatusNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource } from "../api/client";
@@ -56,13 +57,13 @@ import type {
   ExtAppsHostContextChangedNotification,
   ExtAppsInitializeResponse,
   ExtAppsToolInputNotification,
+  ExtAppsToolResultNotification,
   ResourcesListMessage,
   ResourcesReadMessage,
   SynapseRequestFileMessage,
   UiActionMessage,
   UiMessageMessage,
   UiToolResultError,
-  UiToolResultMessage,
   UiToolResultResponse,
   UiUpdateModelContextMessage,
 } from "./types";
@@ -117,8 +118,12 @@ export function getAppState(appName: string): AppStateEntry | undefined {
 
 /** Handle returned by createBridge. Used to send messages and tear down. */
 export interface BridgeHandle {
-  /** Send a ui/notifications/tool-result notification (agent-side tool result). */
-  sendToolResult(result: { content: unknown[]; structuredContent?: Record<string, unknown> }): void;
+  /**
+   * Send a ui/notifications/tool-result notification (agent-side tool result).
+   * The params are the tool's `CallToolResult`, `isError` included, so a view
+   * can tell a refusal from a result.
+   */
+  sendToolResult(result: ExtAppsToolResultNotification["params"]): void;
   /** Send ui/notifications/host-context-changed (ext-apps spec). */
   setHostContext(context: Record<string, unknown>): void;
   /** Send ui/notifications/tool-input (ext-apps spec). */
@@ -479,18 +484,12 @@ export function createBridge(
   }
 
   return {
-    sendToolResult(result: {
-      content: unknown[];
-      structuredContent?: Record<string, unknown>;
-    }): void {
+    sendToolResult(result: ExtAppsToolResultNotification["params"]): void {
       postToIframe({
         jsonrpc: "2.0",
         method: "ui/notifications/tool-result",
-        params: {
-          content: result.content,
-          structuredContent: result.structuredContent,
-        },
-      } as UiToolResultMessage);
+        params: result,
+      } satisfies ExtAppsToolResultNotification);
     },
 
     setHostContext(context: Record<string, unknown>): void {
@@ -804,14 +803,29 @@ function handleToolsCall(
   }
 
   callToolViaMcp(appName, params, id).then(postToIframe, (err: unknown) => {
-    const errorMsg = err instanceof Error ? err.message : "Tool call failed";
-    const errorResponse: UiToolResultError = {
+    postToIframe({
       jsonrpc: "2.0",
       id,
-      error: { code: -32000, message: errorMsg },
-    };
-    postToIframe(errorResponse);
+      error: toolCallError(err),
+    } satisfies UiToolResultError);
   });
+}
+
+/**
+ * The JSON-RPC error for a `tools/call` that never ran. A server's refusal
+ * (`McpError`: an unknown tool, a tool not callable from an app, a denied
+ * workspace) keeps its code and `data`, so a view can read `data.reason`;
+ * anything else (transport, session) is `-32000` with its message.
+ */
+function toolCallError(err: unknown): UiToolResultError["error"] {
+  if (err instanceof McpError) {
+    return {
+      code: err.code,
+      message: err.message,
+      ...(err.data !== undefined && { data: err.data }),
+    };
+  }
+  return { code: -32000, message: err instanceof Error ? err.message : "Tool call failed" };
 }
 
 /**
@@ -1046,9 +1060,10 @@ function handleRequestFile(
 //     `{ contents }` for resources. For task-augmented calls the full
 //     CreateTaskResult is preserved as-is (see §Non-Negotiable Rule 4:
 //     CallToolResult / task results forwarded verbatim, never unwrapped).
-//   - Errors translate to JSON-RPC `{ code: -32000, message }` envelopes
-//     consistent with the REST path so iframes don't need to branch on
-//     which transport ran.
+//   - A tool execution error is a result (`isError: true`, forwarded
+//     verbatim with its `structuredContent`), never a JSON-RPC error. A
+//     JSON-RPC error means the call never ran: a server's refusal keeps its
+//     code and `data`; a transport failure is `-32000`.
 //   - the target-source authz is handled at the call site — this helper
 //     receives the already-resolved server name.
 // ---------------------------------------------------------------------------
@@ -1156,27 +1171,17 @@ async function callToolViaMcp(
       CallToolResultSchema,
     );
 
-    if (result.isError) {
-      const errorText =
-        (result.content as Array<{ text?: string }> | undefined)
-          ?.map((b) => b.text ?? "")
-          .filter(Boolean)
-          .join("\n") || "Tool error";
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: { code: -32000, message: errorText },
-      } satisfies UiToolResultError;
-    }
-
-    // Forward the full CallToolResult shape (content + structuredContent).
+    // The CallToolResult verbatim. A tool execution error is a result with
+    // `isError: true` (MCP; ext-apps `callServerTool` returns it rather than
+    // throwing), so its `structuredContent` reaches the view intact.
+    //
+    // Cast: `callTool`'s return type also admits the legacy `{ toolResult }`
+    // compatibility shape, but parsing against `CallToolResultSchema` (above)
+    // guarantees `content`, so the value is always a `CallToolResult`.
     return {
       jsonrpc: "2.0",
       id,
-      result: {
-        content: result.content as UiToolResultResponse["result"]["content"],
-        structuredContent: result.structuredContent as Record<string, unknown> | undefined,
-      },
+      result: result as UiToolResultResponse["result"],
     } satisfies UiToolResultResponse;
   });
 }

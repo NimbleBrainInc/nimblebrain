@@ -1,8 +1,9 @@
-import { useCallTool, useDataSync } from "@nimblebrain/synapse/react";
+import { useDataSync } from "@nimblebrain/synapse/react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { BackArrowIcon, WarningIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
 import type { AutomationDetail, AutomationRun } from "../types.ts";
+import { useTool } from "../useTool.ts";
 import {
   asDict,
   formatCost,
@@ -35,8 +36,8 @@ export function AutomationDetailView({
   onCancel: () => void;
   onUpdate: (name: string, fields: Record<string, unknown>) => Promise<void>;
 }) {
-  const statusTool = useCallTool<string>("status");
-  const runNowTool = useCallTool<string>("run");
+  const statusTool = useTool<string>("status");
+  const runNowTool = useTool<string>("run");
   const [detail, setDetail] = useState<AutomationDetail | null>(null);
   const [detailRuns, setDetailRuns] = useState<AutomationRun[]>([]);
   const [loading, setLoading] = useState(true);

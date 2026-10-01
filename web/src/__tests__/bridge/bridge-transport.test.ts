@@ -13,8 +13,10 @@
 //   - Task-augmented `tools/call` (`params.task` present) routes through
 //     the SDK's generic `request()` path so `CreateTaskResult` flows back
 //     to the iframe verbatim within the fast-path budget.
-//   - Errors (transport failures, `isError: true` results, thrown
-//     `readResource`) translate to JSON-RPC error envelopes.
+//   - A tool execution error (`isError: true`) is a result, forwarded with
+//     its `structuredContent`. A call that never ran (a server's refusal, a
+//     transport failure, a thrown `readResource`) is a JSON-RPC error; a
+//     server's refusal keeps its code and `data`.
 //
 // Strategy: mock the MCP client so we can inspect call shape, argument
 // forwarding, and error propagation. Inbound iframe traffic is simulated
@@ -23,6 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import { realClient } from "../../../test/setup";
 
 // ---------------------------------------------------------------------------
@@ -329,10 +332,14 @@ describe("tools/call — MCP transport", () => {
     expect(reply.error?.message).toContain("connect refused");
   });
 
-  test("tool result with isError translates to JSON-RPC error", async () => {
+  test("a tool execution error reaches the view as a result, structuredContent intact", async () => {
+    const refusal = {
+      error: { code: "not_found", message: "No such record", next_step: "list records" },
+    };
     mcpBehavior.callTool = async () => ({
       isError: true,
-      content: [{ type: "text", text: "boom" }],
+      content: [{ type: "text", text: JSON.stringify(refusal) }],
+      structuredContent: refusal,
     });
     const frame = mount("synapse-research");
 
@@ -344,9 +351,40 @@ describe("tools/call — MCP transport", () => {
     });
 
     const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "err-2")) as {
-      error?: { code: number; message: string };
+      result?: Record<string, unknown>;
+      error?: unknown;
     };
-    expect(reply.error).toEqual({ code: -32000, message: "boom" });
+    expect(reply.error).toBeUndefined();
+    expect(reply.result).toEqual({
+      isError: true,
+      content: [{ type: "text", text: JSON.stringify(refusal) }],
+      structuredContent: refusal,
+    });
+  });
+
+  test("a server's refusal is a JSON-RPC error that keeps its code and data", async () => {
+    mcpBehavior.callTool = async () => {
+      throw new McpError(-32602, 'Tool "x" is not callable from an app', {
+        reason: "not_app_callable",
+      });
+    };
+    const frame = mount("synapse-research");
+
+    frame.send({
+      jsonrpc: "2.0",
+      id: "err-3",
+      method: "tools/call",
+      params: { name: "x", arguments: {} },
+    });
+
+    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "err-3")) as {
+      result?: unknown;
+      error?: { code: number; message: string; data?: unknown };
+    };
+    expect(reply.result).toBeUndefined();
+    expect(reply.error?.code).toBe(-32602);
+    expect(reply.error?.message).toContain("not callable from an app");
+    expect(reply.error?.data).toEqual({ reason: "not_app_callable" });
   });
 });
 

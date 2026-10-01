@@ -1,7 +1,7 @@
-import { useCallTool } from "@nimblebrain/synapse/react";
 import { useEffect, useRef, useState } from "react";
 import { BackArrowIcon } from "../icons.tsx";
 import type { AutomationRun } from "../types.ts";
+import { useTool } from "../useTool.ts";
 import { asDict, formatCost, formatDuration, formatTokens, statusDotClass } from "../utils.ts";
 import { SchedulePicker, type ScheduleSpec } from "./SchedulePicker.tsx";
 
@@ -55,9 +55,9 @@ export function CreateAutomationForm({
   initialTemplate?: (typeof TEMPLATES)[0] | null;
 }) {
   const promptRef = useRef<HTMLTextAreaElement>(null);
-  const createTool = useCallTool<string>("create");
-  const runTool = useCallTool<string>("run");
-  const updateTool = useCallTool<string>("update");
+  const createTool = useTool<string>("create");
+  const runTool = useTool<string>("run");
+  const updateTool = useTool<string>("update");
 
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");

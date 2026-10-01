@@ -1,4 +1,3 @@
-import { useCallTool } from "@nimblebrain/synapse/react";
 import { useEffect, useState } from "react";
 import { BackArrowIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
@@ -9,6 +8,7 @@ import type {
   RunFileRef,
   RunToolCall,
 } from "../types.ts";
+import { useTool } from "../useTool.ts";
 import { formatDuration, formatTokens, relativeTime, statusDotClass } from "../utils.ts";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -41,7 +41,7 @@ export function ReaderPane({
   /** Return to the rail (used at narrow widths where rail and reader stack). */
   onBack?: () => void;
 }) {
-  const runResultTool = useCallTool<AutomationRunResult>("run_result");
+  const runResultTool = useTool<AutomationRunResult>("run_result");
   const [copied, setCopied] = useState(false);
   const [result, setResult] = useState<AutomationRunResult | null>(null);
 

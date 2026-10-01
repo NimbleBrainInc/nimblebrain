@@ -362,32 +362,38 @@ export const UiResourceResultError = Type.Object({
 });
 export type UiResourceResultError = Static<typeof UiResourceResultError>;
 
+/**
+ * An MCP `CallToolResult`. A tool execution error is one of these with
+ * `isError: true`, its `structuredContent` intact; only a call that never ran
+ * is a JSON-RPC error (`UiToolResultError`).
+ */
+const CallToolResultShape = Type.Object(
+  {
+    content: Type.Array(ToolResultContent),
+    structuredContent: Type.Optional(UnknownRecord),
+    isError: Type.Optional(Type.Boolean()),
+    _meta: Type.Optional(UnknownRecord),
+  },
+  { additionalProperties: true },
+);
+
 export const UiToolResultResponse = Type.Object({
   jsonrpc: JsonRpcVersion,
   id: RequestId,
-  result: Type.Object({
-    content: Type.Array(ToolResultContent),
-    structuredContent: Type.Optional(UnknownRecord),
-  }),
+  result: CallToolResultShape,
 });
 export type UiToolResultResponse = Static<typeof UiToolResultResponse>;
 
 export const UiToolResultError = Type.Object({
   jsonrpc: JsonRpcVersion,
   id: RequestId,
-  error: Type.Object({ code: Type.Number(), message: Type.String() }),
-});
-export type UiToolResultError = Static<typeof UiToolResultError>;
-
-export const UiToolResultMessage = Type.Object({
-  jsonrpc: JsonRpcVersion,
-  method: Type.Literal("ui/notifications/tool-result"),
-  params: Type.Object({
-    content: Type.Array(ToolResultContent),
-    structuredContent: Type.Optional(UnknownRecord),
+  error: Type.Object({
+    code: Type.Number(),
+    message: Type.String(),
+    data: Type.Optional(Type.Unknown()),
   }),
 });
-export type UiToolResultMessage = Static<typeof UiToolResultMessage>;
+export type UiToolResultError = Static<typeof UiToolResultError>;
 
 export const ExtAppsInitializeResponse = Type.Object({
   jsonrpc: JsonRpcVersion,
@@ -423,10 +429,7 @@ export type ExtAppsToolInputNotification = Static<typeof ExtAppsToolInputNotific
 export const ExtAppsToolResultNotification = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal("ui/notifications/tool-result"),
-  params: Type.Object({
-    content: Type.Array(ToolResultContent),
-    structuredContent: Type.Optional(UnknownRecord),
-  }),
+  params: CallToolResultShape,
 });
 export type ExtAppsToolResultNotification = Static<typeof ExtAppsToolResultNotification>;
 
@@ -458,7 +461,6 @@ export type RelayedServerNotification = Static<typeof RelayedServerNotification>
 export const HostToAppMessage = Type.Union([
   UiToolResultResponse,
   UiToolResultError,
-  UiToolResultMessage,
   UiResourceResultResponse,
   UiResourceResultError,
   ExtAppsInitializeResponse,
