@@ -108,8 +108,8 @@
       "enabled": false
     },
     {
-      "description": "bun is pinned as a binary (Dockerfile ARG, workflow setup-bun) and as an image (web/Dockerfile), and test/unit/build-pins.test.ts requires them equal, so they move in one PR.",
-      "matchPackageNames": ["oven-sh/bun", "oven/bun"],
+      "description": "bun is pinned as a binary (Dockerfile ARG, workflow setup-bun), as an image (web/Dockerfile), and as every package.json's packageManager, which is the bun Renovate itself runs to regenerate lock files. test/unit/build-pins.test.ts requires them equal, so they move in one PR.",
+      "matchPackageNames": ["oven-sh/bun", "oven/bun", "bun"],
       "groupName": "bun"
     },
     {

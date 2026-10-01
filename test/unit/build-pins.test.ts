@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // A rebuild of the same commit must pull the same external images and the same
 // toolchain CI tested, or the image can change while nothing in the repo did.
-// This guards this repo's two Dockerfiles and the workflows' bun.
+// This guards this repo's two Dockerfiles, the workflows' bun, and the bun
+// every package.json names for Renovate.
 
 const root = join(import.meta.dir, "../..");
 const read = (path: string) => readFileSync(join(root, path), "utf8");
@@ -54,5 +55,25 @@ describe("build inputs are pinned", () => {
       "docs-ci.yml": ci,
       "docs-pages.yml": ci,
     });
+  });
+
+  // Renovate regenerates lock files with the bun named in packageManager, or
+  // the newest bun when there is none, and a newer bun can write a lockfile
+  // version CI's bun cannot read.
+  test("every package.json names CI's bun as its packageManager", () => {
+    const ci = read(".github/workflows/ci.yml").match(/^\s*BUN_VERSION:\s*"([^"]+)"/m)?.[1];
+    expect(ci).toBeDefined();
+    const manifests = [
+      "package.json",
+      "web/package.json",
+      "docs/package.json",
+      ...readdirSync(join(root, "src/platform"))
+        .map((app) => `src/platform/${app}/ui/package.json`)
+        .filter((path) => existsSync(join(root, path))),
+    ];
+    const pins = Object.fromEntries(
+      manifests.map((path) => [path, JSON.parse(read(path)).packageManager]),
+    );
+    expect(pins).toEqual(Object.fromEntries(manifests.map((path) => [path, `bun@${ci}`])));
   });
 });
