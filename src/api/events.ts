@@ -110,19 +110,6 @@ const SSE_ROUTES: { [K in WorkspaceStreamEngineEvent]?: SseRoute<K> } = {
   // Org-level config (model preferences, feature flags). Affects every
   // workspace; broadcast to all.
   "config.changed": { scope: "global" },
-  // Skills library — global state shared across workspaces.
-  "skill.created": { scope: "global" },
-  "skill.updated": { scope: "global" },
-  "skill.deleted": { scope: "global" },
-  // Bridge tool call/done — a tool call an iframe made, as opposed to one the
-  // agent's run loop made (`tool.done`). Audit only: no view refreshes on it.
-  // A UI door's traffic is mostly READS, and a read that triggers a refresh
-  // triggers a read. A write made from an iframe reaches the app's views when
-  // its server announces it, through `server.notification` above — the server
-  // says so only for a real change, so a read cannot start one.
-  // Field name is `workspaceId` (not `wsId`) — see handlers.ts emit sites.
-  "bridge.tool.call": { scope: "workspace", wsIdField: "workspaceId" },
-  "bridge.tool.done": { scope: "workspace", wsIdField: "workspaceId" },
   // Inbox — workspace-scoped on `workspaceId`, the field the notification
   // store stamps. A connector's notification is readable by whoever can reach
   // that connector's tools, so fanning one out without its workspace would
