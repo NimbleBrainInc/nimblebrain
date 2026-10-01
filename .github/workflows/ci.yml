@@ -5,11 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The merge queue tests each queued PR on top of main plus the entries ahead of
+  # it; the required checks below must report on that commit or the queue stalls.
+  merge_group:
+    types: [checks_requested]
 
 # Cancel superseded runs on a PR branch (new push kills the old run), but never
-# cancel a push to main: each main commit must complete so its SHA-tagged image
-# lands in ECR (see build-and-push). On push events head_ref is empty, so the
-# group falls back to the unique run_id — making every main run its own group.
+# cancel a push to main or a merge-queue run: each main commit must complete so
+# its SHA-tagged image lands in ECR (see build-and-push), and the queue decides
+# for itself when a group is obsolete. On push and merge_group events head_ref is
+# empty, so the group falls back to the unique run_id: every such run is its own
+# group.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -54,16 +60,17 @@ env:
 # `test-unit-bare-deps` — its isolation is about which packages get LINKED, and
 # widening `path:` to cover a `node_modules` tree would be what breaks it.
 jobs:
-  # On a push to main, the four check jobs below usually re-test a tree they have
-  # already passed: main requires a PR to be up to date before it merges, so its
-  # last pull_request run tested exactly the tree the merge produced. They skip
-  # when all three of these hold. Anything short of that, including an API error,
-  # runs them:
-  #   - the PR merged as this commit has a head whose tree IS this commit's tree
-  #   - main before this push is an ancestor of that head, so the PR run's test
-  #     merge (the head onto a base no newer than that) was this same tree
-  #   - the latest pull_request run of this workflow on that head succeeded
-  # On a pull_request this job is skipped, and the checks always run.
+  # On a push to main, the four check jobs below usually re-test a commit whose
+  # tree already passed. They skip when either proof holds; anything short of
+  # both, including an API error, runs them.
+  #   1. Merge queue: main advanced to the exact commit the queue tested, so the
+  #      latest merge_group run of this workflow on this SHA succeeded.
+  #   2. Up-to-date PR (a merge outside the queue): all three of
+  #      - the PR merged as this commit has a head whose tree IS this commit's tree
+  #      - main before this push is an ancestor of that head, so the PR run's test
+  #        merge (the head onto a base no newer than that) was this same tree
+  #      - the latest pull_request run of this workflow on that head succeeded
+  # On a pull_request or merge_group this job is skipped, and the checks always run.
   verified-on-pr:
     name: Already verified on its PR?
     runs-on: ubuntu-latest
@@ -84,10 +91,15 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           verified=false
+          queued=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&per_page=1" \
+            --jq '.workflow_runs[0].conclusion // empty') || queued=""
           tree=$(gh api "repos/$REPO/commits/$SHA" --jq .commit.tree.sha) || tree=""
           head=$(gh api "repos/$REPO/commits/$SHA/pulls" \
             --jq "[.[] | select(.merge_commit_sha == \"$SHA\")][0].head.sha // empty") || head=""
-          if [ -n "$tree" ] && [ -n "$head" ]; then
+          if [ "$queued" = "success" ]; then
+            echo "merge queue run on $SHA succeeded"
+            verified=true
+          elif [ -n "$tree" ] && [ -n "$head" ]; then
             head_tree=$(gh api "repos/$REPO/commits/$head" --jq .commit.tree.sha) || head_tree=""
             behind=$(gh api "repos/$REPO/compare/$BEFORE...$head" --jq .behind_by) || behind=""
             result=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$head&event=pull_request&per_page=1" \

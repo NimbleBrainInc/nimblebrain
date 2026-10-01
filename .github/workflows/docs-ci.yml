@@ -1,12 +1,15 @@
 name: Docs CI
 
-# Builds the docs site on PRs that touch docs/ or the runtime palette it themes
+# Builds the docs site on PRs (and merge-queue commits) that touch docs/ or the runtime palette it themes
 # from. The Astro build runs starlight-links-validator, so broken internal links
 # fail the check. The job always runs (so it can be a required status check) but
 # only does work when one of those changed.
 
 on:
   pull_request:
+  # A required check, so it must also report on merge-queue commits.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -24,10 +27,17 @@ jobs:
         id: changes
         env:
           BASE: ${{ github.base_ref }}
+          # A merge_group has no base_ref; it carries the main commit it builds on.
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
-          git fetch origin "$BASE" --depth=1 --quiet
+          if [ -n "$QUEUE_BASE" ]; then
+            range="$QUEUE_BASE...HEAD"
+          else
+            git fetch origin "$BASE" --depth=1 --quiet
+            range="origin/$BASE...HEAD"
+          fi
           # The docs theme is projected from the runtime palette, so a palette change rebuilds them.
-          if git diff --name-only "origin/$BASE...HEAD" | grep -qE '^(docs/|web/src/theme/palette\.ts$)'; then
+          if git diff --name-only "$range" | grep -qE '^(docs/|web/src/theme/palette\.ts$)'; then
             echo "docs=true" >> "$GITHUB_OUTPUT"
           else
             echo "docs=false" >> "$GITHUB_OUTPUT"
