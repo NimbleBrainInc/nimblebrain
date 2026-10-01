@@ -25,7 +25,6 @@ export function toolRoutes(ctx: AppContext) {
       requestRateLimit(ctx.toolCallLimiter),
       (c) =>
         handleToolCall(c.req.raw, ctx.runtime, ctx.features, {
-          sseManager: ctx.sseManager,
           eventSink: ctx.eventSink,
           identity: c.var.identity,
           workspaceId: c.var.workspaceId,
