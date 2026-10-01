@@ -1064,20 +1064,25 @@ export class AgentEngine {
     // began; one that reconnects mid-run is listed by `nb__search`, which
     // reads live. A promotion that misses re-reads the router, at most once
     // per iteration, so a hallucinated name cannot turn every add into a full
-    // listing (which may attempt connector starts). A failed re-read keeps
-    // the lookups the run already has.
-    let lookupsRefreshedAt = -1;
-    const refreshToolLookups = async (): Promise<void> => {
-      if (lookupsRefreshedAt === iteration) return;
-      lookupsRefreshedAt = iteration;
-      try {
-        mergeToolLookups(await this.tools.availableTools(), toolMeta, allToolSchemaMap);
-      } catch (err) {
-        log.debug(
-          "engine",
-          `tool lookup refresh failed; keeping the run's lookups — ${err instanceof Error ? err.message : String(err)}`,
-        );
+    // listing (which may attempt connector starts). The iteration's re-read is
+    // held as one promise, so concurrent misses (tool calls in one message run
+    // in parallel) all wait on the same listing. A failed re-read keeps the
+    // lookups the run already has.
+    let lookupsRefresh: { iteration: number; done: Promise<void> } | undefined;
+    const refreshToolLookups = (): Promise<void> => {
+      if (lookupsRefresh?.iteration !== iteration) {
+        lookupsRefresh = {
+          iteration,
+          done: this.tools.availableTools().then(
+            (fresh) => mergeToolLookups(fresh, toolMeta, allToolSchemaMap),
+            (err) =>
+              log.warn(
+                `[engine] tool lookup refresh failed; keeping the run's lookups — ${err instanceof Error ? err.message : String(err)}`,
+              ),
+          ),
+        };
       }
+      return lookupsRefresh.done;
     };
 
     const directTools = [...tools];

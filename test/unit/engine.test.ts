@@ -5594,6 +5594,41 @@ describe("AgentEngine — promotion after a connector comes up mid-run", () => {
     expect(run.executed).not.toContain(PANEL.name);
   });
 
+  it("shares one refresh between concurrent misses in an iteration", async () => {
+    const NEWS_B: ToolSchema = { ...NEWS, name: "newsapi__search" };
+    let listings = 0;
+    const router = {
+      availableTools: async () => {
+        listings++;
+        if (listings === 1) return [SEARCH, MANAGE];
+        // Slow enough that the second add arrives while the first waits.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return [SEARCH, MANAGE, NEWS, NEWS_B];
+      },
+    };
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) {
+        return {
+          content: [
+            ...toolCall("c1", "nb__manage_tools", { add: [NEWS.name] }).content,
+            ...toolCall("c2", "nb__manage_tools", { add: [NEWS_B.name] }).content,
+          ],
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return done;
+    });
+    const run = promotionRun(model, router, () => undefined);
+    await run.result;
+
+    expect(run.promotions.map((p) => p.ok)).toEqual([true, true]);
+    // The run-start listing plus one shared refresh.
+    expect(listings).toBe(2);
+  });
+
   it("keeps the run's lookups when a refresh fails", async () => {
     let listings = 0;
     const router = {
