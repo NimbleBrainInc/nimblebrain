@@ -7,10 +7,9 @@
  * which a caller can set to anything. That is tolerable there because both feed
  * a log line and neither decides whether a request is served. Nothing else may
  * join them: a security decision keyed on the left-most entry is a security
- * decision the caller makes for you. `middleware/rate-limit.ts` reaches the same
- * conclusion from the other side and refuses to read the header at all, which is
- * right for a route whose limiter has a better key available (an authenticated
- * identity).
+ * decision the caller makes for you. `requestRateLimit`
+ * (`middleware/rate-limit.ts`) never reads the header at all, which is right for
+ * a route whose limiter has a better key available (an authenticated identity).
  *
  * The hooks door has no better key. Its pre-token bucket runs before anything is
  * known about the caller, and the spec is explicit that keying it per source is

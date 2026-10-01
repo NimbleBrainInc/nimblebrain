@@ -16,7 +16,7 @@ import { ConversationEventManager } from "./conversation-events.ts";
 import { SseEventManager } from "./events.ts";
 import { McpServerHost } from "./mcp-server.ts";
 import { registerConnectorHealthGauge } from "./metrics.ts";
-import { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
+import { RequestRateLimiter } from "./rate-limiter.ts";
 import {
   HOOK_ANON_BUCKET_MAX,
   HOOK_BUCKET_WINDOW_MS,
@@ -137,10 +137,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     conversationEventManager.publishEvent(conversationId, event);
   };
 
-  // Login rate limiter — per-IP brute-force protection
-  const rateLimiter = new LoginRateLimiter();
-  rateLimiter.start();
-
   // Per-identity request rate limiters. The limit lives on the caller's
   // trust class, not "is it expensive":
   //   - `/mcp` (mcpLimiter) is the remote/untrusted surface — external MCP
@@ -217,7 +213,6 @@ export function startServer(options: ServerOptions): ServerHandle {
     workspaceStore: runtime.getWorkspaceStore(),
     sseManager,
     conversationEventManager,
-    rateLimiter,
     chatLimiter,
     hookAnonLimiter,
     hookWorkspaceLimiter,
@@ -255,7 +250,6 @@ export function startServer(options: ServerOptions): ServerHandle {
       return server.port as number;
     },
     stop(closeConnections = false) {
-      rateLimiter.stop();
       chatLimiter.stop();
       toolCallLimiter.stop();
       mcpLimiter.stop();

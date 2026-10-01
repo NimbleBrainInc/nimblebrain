@@ -1,88 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
-import { rateLimit, requestRateLimit } from "../../../src/api/middleware/rate-limit.ts";
-import { LoginRateLimiter, RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
+import { requestRateLimit } from "../../../src/api/middleware/rate-limit.ts";
+import { RequestRateLimiter } from "../../../src/api/rate-limiter.ts";
 import type { ApiErrorBody } from "../../../src/api/schemas/responses.ts";
 import type { AppEnv } from "../../../src/api/types.ts";
 import { readJson } from "../../helpers/http.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
-
-/**
- * Build a minimal Hono app with the rate-limit middleware protecting a
- * login-like endpoint that always returns 401 (to trigger recording).
- */
-function buildApp(limiter: LoginRateLimiter) {
-  const app = new Hono();
-  app.post("/login", rateLimit(limiter), (c) => {
-    return c.json({ error: "Invalid credentials" }, 401);
-  });
-  return app;
-}
-
-describe("rate-limit middleware", () => {
-  it("ignores X-Forwarded-For header for rate limit keying", async () => {
-    // maxAttempts=3 so we hit the limit quickly
-    const limiter = new LoginRateLimiter(3, 60_000, 100);
-    const app = buildApp(limiter);
-
-    // Send 3 requests with different X-Forwarded-For headers.
-    // If the middleware trusted the header, each would get its own bucket
-    // and none would be rate-limited.
-    for (let i = 0; i < 3; i++) {
-      const res = await app.request("/login", {
-        method: "POST",
-        headers: { "X-Forwarded-For": `10.0.0.${i}` },
-      });
-      expect(res.status).toBe(401);
-    }
-
-    // The 4th request should be rate-limited regardless of a new IP header
-    const res = await app.request("/login", {
-      method: "POST",
-      headers: { "X-Forwarded-For": "10.0.0.99" },
-    });
-    expect(res.status).toBe(429);
-  });
-
-  it("ignores X-Real-IP header for rate limit keying", async () => {
-    const limiter = new LoginRateLimiter(3, 60_000, 100);
-    const app = buildApp(limiter);
-
-    for (let i = 0; i < 3; i++) {
-      const res = await app.request("/login", {
-        method: "POST",
-        headers: { "X-Real-IP": `10.0.0.${i}` },
-      });
-      expect(res.status).toBe(401);
-    }
-
-    const res = await app.request("/login", {
-      method: "POST",
-      headers: { "X-Real-IP": "10.0.0.99" },
-    });
-    expect(res.status).toBe(429);
-  });
-
-  it("enforces global rate limit across all requests", async () => {
-    // Per-key limit is high (100), but global limit is low (3)
-    const limiter = new LoginRateLimiter(100, 60_000, 3);
-    const app = buildApp(limiter);
-
-    for (let i = 0; i < 3; i++) {
-      const res = await app.request("/login", { method: "POST" });
-      expect(res.status).toBe(401);
-    }
-
-    // Global limit reached — next request should get 429
-    const res = await app.request("/login", { method: "POST" });
-    expect(res.status).toBe(429);
-
-    const body = await readJson<ApiErrorBody>(res);
-    expect(body.error).toBe("rate_limited");
-    expect(body.message).toBe("Too many login attempts");
-    expect(res.headers.get("Retry-After")).toBe("60");
-  });
-});
 
 /** A workspace chat route, the kind of route requestRateLimit guards. */
 const CHAT_PATH = "/v1/workspaces/ws_a/chat";

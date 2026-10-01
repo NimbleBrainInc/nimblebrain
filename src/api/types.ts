@@ -7,7 +7,7 @@ import type { AuthMiddlewareOptions } from "./auth-middleware.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import type { McpServerHost } from "./mcp-server.ts";
-import type { LoginRateLimiter, RequestRateLimiter } from "./rate-limiter.ts";
+import type { RequestRateLimiter } from "./rate-limiter.ts";
 import type { ApiErrorBody } from "./schemas/responses.ts";
 
 // ---------------------------------------------------------------------------
@@ -78,7 +78,6 @@ export interface AppContext {
   workspaceStore: WorkspaceStore;
   sseManager: SseEventManager;
   conversationEventManager: ConversationEventManager;
-  rateLimiter: LoginRateLimiter;
   chatLimiter: RequestRateLimiter;
   toolCallLimiter: RequestRateLimiter;
   /** Per-identity limiter for the remote `/mcp` surface (external clients + connector iframes). */
