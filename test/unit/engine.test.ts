@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { LanguageModelV4, LanguageModelV4Message } from "@ai-sdk/provider";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { StaticToolRouter } from "../../src/adapters/static-router.ts";
+import { type ConfirmationGate, createPrivilegeHook } from "../../src/config/privilege.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type {
@@ -24,6 +25,20 @@ import {
 } from "../../src/runtime/request-context.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
+
+// Fixture schemas declare the arguments the tests send: the engine rejects a
+// key a closed `properties` list does not name.
+const MANAGE_TOOLS_INPUT = {
+  type: "object",
+  properties: {
+    add: { type: "array", items: { type: "string" } },
+    remove: { type: "array", items: { type: "string" } },
+  },
+};
+const SEARCH_INPUT = {
+  type: "object",
+  properties: { scope: { type: "string" }, query: { type: "string" } },
+};
 
 const defaultConfig: EngineConfig = {
   model: "test-model",
@@ -231,12 +246,12 @@ describe("AgentEngine", () => {
       {
         name: "nb__search",
         description: "Search tools",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: SEARCH_INPUT,
       },
       {
         name: "newsapi__get_top_headlines",
         description: "Get top headlines",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: { type: "object", properties: { country: { type: "string" } } },
       },
     ];
 
@@ -341,17 +356,17 @@ describe("AgentEngine", () => {
       {
         name: "nb__search",
         description: "Search tools",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: SEARCH_INPUT,
       },
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       {
         name: "newsapi__get_top_headlines",
         description: "Get top headlines",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: { type: "object", properties: { country: { type: "string" } } },
       },
     ];
 
@@ -473,7 +488,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       { name: "a__one", description: "Tool A", inputSchema: { type: "object", properties: {} } },
       { name: "b__two", description: "Tool B", inputSchema: { type: "object", properties: {} } },
@@ -563,7 +578,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       {
         name: "app__public",
@@ -725,7 +740,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       {
         name: "nb__manage_users",
@@ -814,12 +829,12 @@ describe("AgentEngine", () => {
       {
         name: "nb__search",
         description: "Search tools",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: SEARCH_INPUT,
       },
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
     ];
 
@@ -875,7 +890,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       { name: "app__a", description: "A", inputSchema: { type: "object", properties: {} } },
       { name: "app__b", description: "B", inputSchema: { type: "object", properties: {} } },
@@ -957,7 +972,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       {
         name: "initial__a",
@@ -1070,7 +1085,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       { name: "app__a", description: "A", inputSchema: { type: "object", properties: {} } },
       { name: "app__b", description: "B", inputSchema: { type: "object", properties: {} } },
@@ -1185,7 +1200,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       { name: "init__a", description: "A", inputSchema: { type: "object", properties: {} } },
       { name: "init__b", description: "B", inputSchema: { type: "object", properties: {} } },
@@ -1304,7 +1319,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       {
         name: "spawn_child",
@@ -1326,7 +1341,7 @@ describe("AgentEngine", () => {
       {
         name: "nb__manage_tools",
         description: "Patch tool list",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: MANAGE_TOOLS_INPUT,
       },
       {
         name: "inner__discovered",
@@ -4159,6 +4174,369 @@ describe("malformed tool call input", () => {
 
       expect(result.toolCalls[0]!.output).toContain("name");
       expect(result.toolCalls[0]!.output).toContain("string");
+    });
+  });
+
+  describe("unknown tool arguments", () => {
+    // The shape FastMCP generates from a Python signature: declared
+    // properties, no `additionalProperties`, so JSON Schema alone admits any key.
+    const settingsSchema: ToolSchema = {
+      name: "acme__update_settings",
+      description: "Update workspace settings",
+      inputSchema: {
+        type: "object",
+        properties: {
+          domain_purchasing: { type: "boolean", description: "Allow buying domains" },
+          mail_provider: { type: "string", enum: ["smtp", "ses"] },
+          tags: { type: "array", items: { type: "string" } },
+        },
+        required: ["domain_purchasing"],
+      },
+    };
+
+    /** Run one model call to `schema.name` with `input`; report whether the handler ran. */
+    async function callOnce(schema: ToolSchema, input: Record<string, unknown>) {
+      let executed = false;
+      const model = createEchoModel({
+        responses: [
+          {
+            toolCalls: [
+              { toolCallId: "call_1", toolName: schema.name, input: JSON.stringify(input) },
+            ],
+          },
+          { text: "done" },
+        ],
+      });
+      const engine = makeEngine(model, {
+        schemas: [schema],
+        handler: () => {
+          executed = true;
+          return { content: textContent("ok"), isError: false };
+        },
+      });
+      const result = await engine.run(
+        defaultConfig,
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        [schema],
+      );
+      return { executed, call: result.toolCalls[0]! };
+    }
+
+    it("rejects an undeclared key, naming it first and then every declared argument", async () => {
+      const lines: Array<{ msg: string; fields: unknown }> = [];
+      const original = log.info;
+      (log as { info: (m: string, f?: unknown) => void }).info = (msg, fields) =>
+        lines.push({ msg, fields });
+      let outcome: Awaited<ReturnType<typeof callOnce>>;
+      try {
+        outcome = await callOnce(settingsSchema, {
+          buy_domains_enabled: true,
+          email_provider: "ses",
+        });
+      } finally {
+        (log as { info: typeof original }).info = original;
+      }
+
+      expect(outcome.executed).toBe(false);
+      expect(outcome.call.ok).toBe(false);
+      const output = outcome.call.output;
+      expect(output).toContain('"buy_domains_enabled", "email_provider"');
+      expect(output.indexOf("buy_domains_enabled")).toBeLessThan(output.indexOf("Valid arguments"));
+      expect(output).toContain("- domain_purchasing (boolean, required): Allow buying domains");
+      expect(output).toContain('- mail_provider (string, one of "smtp", "ses")');
+      expect(output).toContain("- tags (array of string)");
+      expect(lines).toContainEqual({
+        msg: "[engine] invalid_input.unknown_keys",
+        fields: { tool: "acme__update_settings", keys: ["buy_domains_enabled", "email_provider"] },
+      });
+    });
+
+    it("dispatches a call that uses only declared keys", async () => {
+      const outcome = await callOnce(settingsSchema, { domain_purchasing: true });
+      expect(outcome.executed).toBe(true);
+      expect(outcome.call.ok).toBe(true);
+    });
+
+    it("says so when the tool declares no arguments", async () => {
+      const outcome = await callOnce(
+        {
+          name: "acme__ping",
+          description: "Ping",
+          inputSchema: { type: "object", properties: {} },
+        },
+        { verbose: true },
+      );
+      expect(outcome.executed).toBe(false);
+      expect(outcome.call.output).toContain("This tool takes no arguments.");
+    });
+
+    const openSchemas: Array<[string, Record<string, unknown>]> = [
+      ["additionalProperties: true", { additionalProperties: true }],
+      ["an additionalProperties schema", { additionalProperties: { type: "string" } }],
+      ["patternProperties", { patternProperties: { "^x_": { type: "string" } } }],
+      ["unevaluatedProperties: true", { unevaluatedProperties: true }],
+      [
+        "if/then",
+        // biome-ignore lint/suspicious/noThenProperty: `then` is a JSON Schema keyword here, not a thenable.
+        { if: { required: ["a"] }, then: { properties: { x_extra: { type: "string" } } } },
+      ],
+      [
+        "dependentSchemas",
+        { dependentSchemas: { a: { properties: { x_extra: { type: "string" } } } } },
+      ],
+      ["dependencies", { dependencies: { a: { properties: { x_extra: { type: "string" } } } } }],
+      [
+        "a $ref inside an allOf branch",
+        { allOf: [{ $ref: "#/$defs/extra" }], $defs: { extra: {} } },
+      ],
+    ];
+    for (const [label, opener] of openSchemas) {
+      it(`passes an undeclared key when the schema opens the key set with ${label}`, async () => {
+        const outcome = await callOnce(
+          {
+            name: "acme__open",
+            description: "Open",
+            inputSchema: { type: "object", properties: { a: { type: "string" } }, ...opener },
+          },
+          { a: "1", x_extra: "2" },
+        );
+        expect(outcome.executed).toBe(true);
+      });
+    }
+
+    it("accepts a key declared only in an allOf branch", async () => {
+      const outcome = await callOnce(
+        {
+          name: "acme__composed",
+          description: "Composed",
+          inputSchema: {
+            type: "object",
+            properties: { a: { type: "string" } },
+            allOf: [{ properties: { b: { type: "string" } }, required: ["b"] }],
+          },
+        },
+        { a: "1", b: "2" },
+      );
+      expect(outcome.executed).toBe(true);
+    });
+
+    it("accepts a key declared in an anyOf branch of a root-composed schema", async () => {
+      const outcome = await callOnce(
+        {
+          name: "acme__either",
+          description: "Either",
+          inputSchema: {
+            type: "object",
+            anyOf: [
+              { properties: { id: { type: "string" } }, required: ["id"] },
+              { properties: { slug: { type: "string" } }, required: ["slug"] },
+            ],
+          },
+        },
+        { slug: "s" },
+      );
+      expect(outcome.executed).toBe(true);
+    });
+
+    it("accepts a key declared only in a oneOf branch, and refuses one no branch declares", async () => {
+      const schema = {
+        name: "acme__oneof",
+        description: "One of",
+        inputSchema: {
+          type: "object",
+          oneOf: [
+            { properties: { id: { type: "string" } }, required: ["id"] },
+            { properties: { slug: { type: "string" } }, required: ["slug"] },
+          ],
+        },
+      };
+      expect((await callOnce(schema, { id: "i" })).executed).toBe(true);
+      const refused = await callOnce(schema, { name: "n" });
+      expect(refused.executed).toBe(false);
+      expect(refused.call.output).toContain('no argument named "name"');
+    });
+
+    it("leaves a root $ref schema to plain validation", async () => {
+      const outcome = await callOnce(
+        {
+          name: "acme__ref",
+          description: "Ref",
+          inputSchema: {
+            $ref: "#/$defs/Args",
+            $defs: { Args: { type: "object", properties: { a: { type: "string" } } } },
+          },
+        },
+        { a: "1", other: 2 },
+      );
+      expect(outcome.executed).toBe(true);
+    });
+
+    it("validates a tool called in the same message that promotes it", async () => {
+      const promoted: ToolSchema = { ...settingsSchema, name: "acme__promoted" };
+      const manageTools: ToolSchema = {
+        name: "nb__manage_tools",
+        description: "Patch tool list",
+        inputSchema: MANAGE_TOOLS_INPUT,
+      };
+      const model = createEchoModel({
+        responses: [
+          {
+            toolCalls: [
+              {
+                toolCallId: "call_manage",
+                toolName: "nb__manage_tools",
+                input: JSON.stringify({ add: ["acme__promoted"] }),
+              },
+              {
+                toolCallId: "call_promoted",
+                toolName: "acme__promoted",
+                input: JSON.stringify({ buy_domains_enabled: true }),
+              },
+            ],
+          },
+          { text: "done" },
+        ],
+      });
+      let activeControls: ToolPromotionControls | null = null;
+      const executed: string[] = [];
+      const engine = makeEngine(model, {
+        schemas: [manageTools, promoted],
+        handler: (call) => {
+          executed.push(call.name);
+          if (call.name === "nb__manage_tools") {
+            for (const name of (call.input.add as string[]) ?? []) activeControls?.addTool(name);
+          }
+          return { content: textContent("ok"), isError: false };
+        },
+      });
+
+      const result = await engine.run(
+        {
+          ...defaultConfig,
+          toolPromotion: {
+            isToolEligible: () => true,
+            registerControls: (controls) => {
+              activeControls = controls;
+              return () => {
+                activeControls = null;
+              };
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        [manageTools],
+      );
+
+      expect(executed).toEqual(["nb__manage_tools"]);
+      const promotedCall = result.toolCalls.find((c) => c.name === "acme__promoted")!;
+      expect(promotedCall.ok).toBe(false);
+      expect(promotedCall.output).toContain('"buy_domains_enabled"');
+      expect(promotedCall.output).toContain("domain_purchasing (boolean, required)");
+    });
+  });
+
+  describe("input validation precedes the confirmation gate", () => {
+    // A privileged tool: the privilege hook asks the gate before it runs.
+    const createSkill: ToolSchema = {
+      name: "skills__create",
+      description: "Create a skill",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          scope: { type: "string", enum: ["workspace", "platform"] },
+          triggers: { type: "array", items: { type: "string" } },
+        },
+        required: ["name", "scope"],
+      },
+    };
+
+    /** One model call to skills__create through the privilege hook; records what the gate was asked and what ran. */
+    async function callThroughGate(
+      input: Record<string, unknown>,
+      opts: { rewrite?: (call: ToolCall) => ToolCall } = {},
+    ) {
+      const confirmed: Array<Record<string, unknown>> = [];
+      const gate: ConfirmationGate = {
+        supportsInteraction: true,
+        confirm: async (_description, details) => {
+          confirmed.push(details);
+          return true;
+        },
+      };
+      const privilegeHook = createPrivilegeHook(gate, new NoopEventSink());
+      const executed: Array<Record<string, unknown>> = [];
+      const model = createEchoModel({
+        responses: [
+          {
+            toolCalls: [
+              { toolCallId: "call_1", toolName: createSkill.name, input: JSON.stringify(input) },
+            ],
+          },
+          { text: "done" },
+        ],
+      });
+      const engine = makeEngine(model, {
+        schemas: [createSkill],
+        handler: (call) => {
+          executed.push(call.input);
+          return { content: textContent("ok"), isError: false };
+        },
+      });
+      const result = await engine.run(
+        {
+          ...defaultConfig,
+          hooks: {
+            beforeToolCall: async (call) => {
+              const gated = await privilegeHook(call);
+              return gated && opts.rewrite ? opts.rewrite(gated) : gated;
+            },
+          },
+        },
+        "",
+        [{ role: "user", content: [{ type: "text", text: "Go" }] }],
+        [createSkill],
+      );
+      return { confirmed, executed, call: result.toolCalls[0]! };
+    }
+
+    it("never asks to confirm a call with an undeclared argument", async () => {
+      const outcome = await callThroughGate({ name: "n", scope: "workspace", owner: "x" });
+      expect(outcome.confirmed).toEqual([]);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.ok).toBe(false);
+      expect(outcome.call.output).toContain('has no argument named "owner"');
+    });
+
+    it("never asks to confirm a call that fails schema validation", async () => {
+      const outcome = await callThroughGate({ name: "n", scope: "everywhere" });
+      expect(outcome.confirmed).toEqual([]);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.output).toContain("Invalid tool input");
+    });
+
+    it("asks to confirm a valid call with the coerced input, and dispatches that input", async () => {
+      const outcome = await callThroughGate({
+        name: "n",
+        scope: "workspace",
+        triggers: JSON.stringify(["a", "b"]),
+      });
+      const coerced = { name: "n", scope: "workspace", triggers: ["a", "b"] };
+      expect(outcome.confirmed).toEqual([coerced]);
+      expect(outcome.executed).toEqual([coerced]);
+      expect(outcome.call.ok).toBe(true);
+    });
+
+    it("checks a call the hook rewrites before dispatching it", async () => {
+      const outcome = await callThroughGate(
+        { name: "n", scope: "workspace" },
+        { rewrite: (call) => ({ ...call, input: { ...call.input, owner: "x" } }) },
+      );
+      expect(outcome.confirmed).toHaveLength(1);
+      expect(outcome.executed).toEqual([]);
+      expect(outcome.call.output).toContain('has no argument named "owner"');
     });
   });
 

@@ -79,6 +79,23 @@ describe("detached turns (server-authoritative streaming)", () => {
     expect(Number.isFinite(done.usage.costUsd)).toBe(true);
   });
 
+  it("buffers only the events a viewer reads: no system prompt, no run accounting", async () => {
+    const { conversationId } = await runtime.startTurn({
+      identity: DEV_IDENTITY,
+      message: "What reaches the viewer?",
+      workspaceId: TEST_WORKSPACE_ID,
+    });
+
+    const { events, status } = await awaitTurn(conversationId);
+    expect(status).toBe("done");
+    const types = new Set(events.map((e) => e.type));
+    // `run.start` carries the assembled system prompt; it never leaves the server.
+    expect(types.has("run.start")).toBe(false);
+    expect(types.has("run.done")).toBe(false);
+    expect(types.has("chat.start")).toBe(true);
+    expect(types.has("text.delta")).toBe(true);
+  });
+
   it("announces the owner's conversations once the run has ended", async () => {
     // A conversations list reads `active` from the RunBus on each fetch, so the
     // view must hear about the run ending after the RunBus has moved — the

@@ -313,7 +313,12 @@ export interface EngineHooks {
     opts?: { overflowAttempt?: number },
   ) => LanguageModelV4Message[];
 
-  /** Gate or modify tool calls before execution. Return null to skip the tool. */
+  /**
+   * Gate or modify a model tool call before execution. Return null to skip the
+   * tool. Called only with a call the engine has already coerced and validated
+   * against the tool's schema, so a call the engine would refuse never reaches
+   * it; whatever it returns is checked the same way again before dispatch.
+   */
   beforeToolCall?: (call: ToolCall) => ToolCall | null | Promise<ToolCall | null>;
 
   /** Modify or log tool results after execution. */

@@ -1132,16 +1132,17 @@ export function createChatStore(): ChatStore {
     closeConnection(slice);
   }
 
-  // Per-type reducers. Unlisted types (and `tool.preparing.done`) are
-  // intentional no-ops — the same fall-through the switch had.
-  const STREAM_EVENT_HANDLERS: Record<string, (slice: ConversationSlice, data: unknown) => void> = {
+  // Per-type reducers, keyed by the stream's catalog. Unlisted types
+  // (`subscribed`, `heartbeat`) are intentional no-ops.
+  const STREAM_EVENT_HANDLERS: Partial<
+    Record<keyof ConversationStreamEvents, (slice: ConversationSlice, data: unknown) => void>
+  > = {
     "user.message": handleUserMessage,
     "chat.start": handleChatStart,
     "skills.loaded": handleSkillsLoaded,
     "text.delta": handleTextDelta,
     "reasoning.delta": handleReasoningDelta,
     "tool.preparing": handleToolPreparing,
-    "tool.preparing.done": () => {},
     "tool.start": handleToolStart,
     "tool.done": handleToolDone,
     "llm.done": handleLlmDone,
@@ -1154,7 +1155,7 @@ export function createChatStore(): ChatStore {
     // Own-key guard so an inherited name (constructor/toString/__proto__) can't
     // resolve to an Object.prototype member; unknown types no-op as the switch did.
     if (Object.hasOwn(STREAM_EVENT_HANDLERS, type)) {
-      STREAM_EVENT_HANDLERS[type]?.(slice, data);
+      STREAM_EVENT_HANDLERS[type as keyof ConversationStreamEvents]?.(slice, data);
     }
   }
 

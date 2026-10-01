@@ -73,6 +73,7 @@ import {
   type ToolRouter,
   type ToolSchema,
 } from "./types.ts";
+import { formatUnknownArgumentsError, unknownArgumentNames } from "./unknown-tool-args.ts";
 
 /** Default when the env knob is unset or unusable. */
 const DEFAULT_MAX_PARALLEL_TOOL_CALLS = 6;
@@ -733,12 +734,15 @@ function parseToolCallInput(input: LanguageModelV4ToolCall["input"]): Record<str
 }
 
 /**
- * Coerce a tool call's input against its declared schema, then validate it.
+ * Coerce a model tool call's input against its declared schema, then validate it.
  * Coerce first: models occasionally emit nested object/array values as
  * JSON-encoded strings (`{ manifest: "{...}" }`); the coerce pass uses the
  * schema as a parsing oracle to recover those one-level misencodings before
- * validation. Returns the (possibly coerced) input plus an isError result when
- * validation fails. With no schema the input passes through unchanged.
+ * validation. An argument name the schema does not declare is rejected with
+ * the declared arguments listed (see unknown-tool-args.ts); the check runs
+ * against the tool's own schema, not the LLM-flattened one. Returns the
+ * (possibly coerced) input plus an isError result when validation fails. With
+ * no schema the input passes through unchanged.
  */
 function coerceAndValidateToolInput(
   input: Record<string, unknown>,
@@ -747,6 +751,17 @@ function coerceAndValidateToolInput(
   if (!toolSchema?.inputSchema) return { input };
   const schema = toolSchema.inputSchema as Record<string, unknown>;
   const coerced = coerceInputForSchema(input, schema);
+  const unknown = unknownArgumentNames(coerced, schema);
+  if (unknown.length > 0) {
+    log.info("[engine] invalid_input.unknown_keys", { tool: toolSchema.name, keys: unknown });
+    return {
+      input: coerced,
+      errorResult: {
+        content: textContent(formatUnknownArgumentsError(toolSchema.name, unknown, schema)),
+        isError: true,
+      },
+    };
+  }
   const validation = validateToolInput(coerced, schema);
   if (!validation.valid) {
     return {
@@ -758,6 +773,33 @@ function coerceAndValidateToolInput(
     };
   }
   return { input: coerced };
+}
+
+/**
+ * The schema a model call is checked against. The iteration map lacks a tool
+ * promoted by `nb__manage_tools` in this same assistant message, so fall back
+ * to the router-wide map for it.
+ */
+function toolSchemaFor(ctx: ToolExecContext, name: string): ToolSchema | undefined {
+  return ctx.toolSchemaMap.get(name) ?? ctx.allToolSchemaMap.get(name);
+}
+
+/**
+ * Refusal for a call naming a tool without "model" in its `ui.visibility`.
+ * Such a tool is withheld from every list the model sees, and that alone does
+ * not stop a model that names it: an injected instruction can carry the name.
+ * The engine is the host on this door, so the refusal is enforced at the call.
+ */
+function notAvailableToAgent(toolCall: LanguageModelV4ToolCall, call: ToolCall): ToolExecResult {
+  return {
+    toolCall,
+    gatedCall: call,
+    result: {
+      content: textContent(`${call.name} is not available to the agent.`),
+      isError: true,
+    } as ToolResult,
+    ms: 0,
+  };
 }
 
 /**
@@ -931,6 +973,8 @@ interface ToolExecContext {
   /** Surfaced overlays whose bodies are still being fetched; settled before the drain. */
   pendingOverlayFetches: PendingOverlayFetch[];
   toolSchemaMap: Map<string, ToolSchema>;
+  /** Every router tool's schema: validates a call to a tool promoted in the same message. */
+  allToolSchemaMap: Map<string, ToolSchema>;
   promotedLastUsed: Map<string, number>;
   bumpUseCounter: () => number;
   supervisor: RunSupervisor;
@@ -1386,6 +1430,7 @@ export class AgentEngine {
           pendingOverlayDeliveries,
           pendingOverlayFetches,
           toolSchemaMap,
+          allToolSchemaMap,
           promotedLastUsed,
           bumpUseCounter,
           supervisor,
@@ -1991,9 +2036,59 @@ export class AgentEngine {
   }
 
   /**
-   * Run one tool call end-to-end: gate (beforeToolCall) → coerce/validate →
-   * execute → bound → afterToolCall → supervisor → emit. Returns the record the
-   * loop needs to build history and telemetry. Called concurrently (up to the
+   * Check a model call, then put it through the beforeToolCall gate. The call
+   * is checked first (visibility, coerce, validate) so a person is asked to
+   * approve only a call the engine would dispatch, and approves the coerced
+   * input that is sent. An invalid call skips the gate and carries its error
+   * result. Whatever the hook returns is checked the same way again: a hook
+   * may rewrite the call, and the engine dispatches only what it checked.
+   * `refused` is a call that ends here, before tool.start.
+   */
+  private async checkAndGate(
+    toolCall: LanguageModelV4ToolCall,
+    parsedInput: Record<string, unknown>,
+    ctx: ToolExecContext,
+  ): Promise<{ refused: ToolExecResult } | { gatedCall: ToolCall; result?: ToolResult }> {
+    const offered: ToolCall = {
+      id: toolCall.toolCallId,
+      name: toolCall.toolName,
+      input: parsedInput,
+    };
+    if (!isModelVisible({ meta: ctx.toolMeta.get(offered.name) })) {
+      return { refused: notAvailableToAgent(toolCall, offered) };
+    }
+    const checked = coerceAndValidateToolInput(parsedInput, toolSchemaFor(ctx, offered.name));
+    const validated: ToolCall = { ...offered, input: checked.input };
+    const beforeToolCall = ctx.config.hooks?.beforeToolCall;
+    if (checked.errorResult || !beforeToolCall) {
+      return { gatedCall: validated, result: checked.errorResult };
+    }
+
+    const hooked = await beforeToolCall(validated);
+    if (hooked === null) {
+      return {
+        refused: {
+          toolCall,
+          gatedCall: validated,
+          result: {
+            content: textContent("Tool call was denied by policy."),
+            isError: true,
+          } as ToolResult,
+          ms: 0,
+        },
+      };
+    }
+    if (!isModelVisible({ meta: ctx.toolMeta.get(hooked.name) })) {
+      return { refused: notAvailableToAgent(toolCall, hooked) };
+    }
+    const rechecked = coerceAndValidateToolInput(hooked.input, toolSchemaFor(ctx, hooked.name));
+    return { gatedCall: { ...hooked, input: rechecked.input }, result: rechecked.errorResult };
+  }
+
+  /**
+   * Run one tool call end-to-end: check and gate (checkAndGate) → execute →
+   * bound → afterToolCall → supervisor → emit. Returns the record the loop
+   * needs to build history and telemetry. Called concurrently (up to the
    * per-source cap) from the iteration's bounded dispatch above.
    */
   private async executeToolCall(
@@ -2019,56 +2114,20 @@ export class AgentEngine {
       };
     }
 
-    const gatedCall = ctx.config.hooks?.beforeToolCall
-      ? await ctx.config.hooks.beforeToolCall({
-          id: toolCall.toolCallId,
-          name: toolCall.toolName,
-          input: parsedInput,
-        })
-      : { id: toolCall.toolCallId, name: toolCall.toolName, input: parsedInput };
-
-    if (gatedCall === null) {
-      return {
-        toolCall,
-        gatedCall: {
-          id: toolCall.toolCallId,
-          name: toolCall.toolName,
-          input: parsedInput,
-        },
-        result: {
-          content: textContent("Tool call was denied by policy."),
-          isError: true,
-        } as ToolResult,
-        ms: 0,
-      };
-    }
-
-    // A tool without "model" in its `ui.visibility` is withheld from every list
-    // the model sees, and that alone does not stop a model that names it: an
-    // injected instruction can carry the name. The engine is the host on this
-    // door, so the refusal is enforced here, at the call.
-    const meta = ctx.toolMeta.get(gatedCall.name);
-    if (!isModelVisible({ meta })) {
-      return {
-        toolCall,
-        gatedCall,
-        result: {
-          content: textContent(`${gatedCall.name} is not available to the agent.`),
-          isError: true,
-        } as ToolResult,
-        ms: 0,
-      };
-    }
+    const checked = await this.checkAndGate(toolCall, parsedInput, ctx);
+    if ("refused" in checked) return checked.refused;
+    const { gatedCall } = checked;
+    let result = checked.result;
 
     // Extract UI resourceUri from the tool's `_meta` if present
+    const meta = ctx.toolMeta.get(gatedCall.name);
     const uiMeta = meta?.ui as Record<string, unknown> | undefined;
     const resourceUri = typeof uiMeta?.resourceUri === "string" ? uiMeta.resourceUri : undefined;
 
-    // tool.start fires with the *pre-coercion* input on purpose:
-    // audit/telemetry should see the raw model emission so we can
-    // observe when models string-encode nested objects (the very
-    // misbehavior coerceInputForSchema below recovers from). Do
-    // not move this emit after the coerce step.
+    // tool.start fires with the model's raw input on purpose: audit and
+    // telemetry should see what the model emitted, so we can observe when
+    // models string-encode nested objects (the misbehavior
+    // coerceInputForSchema recovers from). Do not emit the coerced input here.
     this.events.emit({
       type: "tool.start",
       data: {
@@ -2076,7 +2135,7 @@ export class AgentEngine {
         name: gatedCall.name,
         id: gatedCall.id,
         resourceUri,
-        input: gatedCall.input,
+        input: parsedInput,
       },
     });
 
@@ -2090,12 +2149,6 @@ export class AgentEngine {
     );
 
     const start = performance.now();
-
-    // Validate + coerce tool input against the declared schema before execution.
-    const toolSchema = ctx.toolSchemaMap.get(gatedCall.name);
-    const coercion = coerceAndValidateToolInput(gatedCall.input, toolSchema);
-    gatedCall.input = coercion.input;
-    let result: ToolResult | undefined = coercion.errorResult;
 
     if (!result) {
       try {

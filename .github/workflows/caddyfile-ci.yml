@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "web/Caddyfile"
+      - "web/Dockerfile"
       - ".github/workflows/caddyfile-ci.yml"
   push:
     branches: [main]
     paths:
       - "web/Caddyfile"
+      - "web/Dockerfile"
       - ".github/workflows/caddyfile-ci.yml"
 
 concurrency:
@@ -22,11 +24,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Validate with the Caddy the web image ships, read from its pinned FROM, so
+      # CI and the image cannot run different Caddy builds.
+      - name: Resolve the shipped Caddy image
+        run: |
+          image=$(sed -n 's/^FROM \(caddy:[^ ]*\).*/\1/p' web/Dockerfile)
+          [ -n "$image" ] || { echo "FAIL: no caddy FROM in web/Dockerfile"; exit 1; }
+          echo "CADDY_IMAGE=$image" >> "$GITHUB_ENV"
       - name: Validate web/Caddyfile
         run: |
           docker run --rm \
             -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2-alpine \
+            "$CADDY_IMAGE" \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
       # Embedded apps run in an OPAQUE origin (srcdoc iframe without
@@ -44,7 +53,7 @@ jobs:
           docker run -d --name caddy-cors \
             -v "$PWD/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
             -v "$PWD/srv:/srv:ro" \
-            -p 8080:8080 caddy:2-alpine
+            -p 8080:8080 "$CADDY_IMAGE"
           # `|| sleep 1` makes each iteration succeed, so `set -e` cannot see a
           # loop that never came up — it would fall through and fail below as
           # "fonts lack ACAO", blaming the Caddyfile for a container that never

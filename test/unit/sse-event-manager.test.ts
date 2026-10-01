@@ -210,12 +210,11 @@ describe("SseEventManager — routing table", () => {
     released.push(wsA.release, wsB.release, noWs.release);
 
     mgr.emit(engineEvent("config.changed", { fields: ["models.default"] }));
-    mgr.emit(engineEvent("skill.created", { id: "/skills/x", name: "x", scope: "user" }));
     await flush();
 
-    expect(wsA.events).toEqual(["config.changed", "skill.created"]);
-    expect(wsB.events).toEqual(["config.changed", "skill.created"]);
-    expect(noWs.events).toEqual(["config.changed", "skill.created"]);
+    expect(wsA.events).toEqual(["config.changed"]);
+    expect(wsB.events).toEqual(["config.changed"]);
+    expect(noWs.events).toEqual(["config.changed"]);
   });
 
   test("unrouted event types (tool.progress, tool.task_status, connector.health) are dropped", async () => {
@@ -240,27 +239,23 @@ describe("SseEventManager — routing table", () => {
     expect(ws.events).toEqual([]);
   });
 
-  test("bridge.tool.* events scope by workspaceId (not wsId)", async () => {
-    // Bridge events from handlers.ts use `workspaceId` as the field name —
-    // pre-existing payload shape, codified in the routing table.
-    const wsA = collect(mgr.addClient("ws_a"));
-    const wsB = collect(mgr.addClient("ws_b"));
-    released.push(wsA.release, wsB.release);
+  test("events no client reads (skill.*, bridge.tool.*) are not sent", async () => {
+    const ws = collect(mgr.addClient("ws_a"));
+    released.push(ws.release);
 
-    mgr.emit({
-      type: "bridge.tool.call",
-      data: {
+    mgr.emit(engineEvent("skill.created", { id: "/skills/x", name: "x", scope: "user" }));
+    mgr.emit(
+      engineEvent("bridge.tool.call", {
         name: "x__y",
         id: "api_1",
         server: "x",
         userId: null,
         workspaceId: "ws_a",
-      },
-    });
+      }),
+    );
     await flush();
 
-    expect(wsA.events).toContain("bridge.tool.call");
-    expect(wsB.events).not.toContain("bridge.tool.call");
+    expect(ws.events).toEqual([]);
   });
 });
 
