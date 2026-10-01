@@ -55,33 +55,58 @@ export interface HealthMonitorOptions {
  * a deliberate teardown (`isStopped()`) is terminal.
  */
 export class HealthMonitor {
-  private records: ConnectorRecord[];
+  /** One record per live source object, keyed by identity: the same bundle in
+   *  two workspaces is two sources with one name, each healed on its own. */
+  private records = new Map<McpSource, ConnectorRecord>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private checkIntervalMs: number;
   private baseDelayMs: number;
   private cooldownMs: number;
 
+  /**
+   * `sources` is read on every check and status read, not once: the set of
+   * live sources changes after boot (a connector installed, a workspace created,
+   * a source rebuilt by a reconnect), and a source the monitor does not see is
+   * never healed and never counted in `nb_connector_unhealthy`.
+   */
   constructor(
-    sources: McpSource[],
+    private sources: () => readonly McpSource[],
     private eventSink: EventSink,
     opts: HealthMonitorOptions = {},
   ) {
     this.checkIntervalMs = opts.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
     this.baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
-    this.records = sources.map((source) => ({
-      source,
-      // Seed from the source, not an optimistic constant. A source can be
-      // registered and already down before the monitor ever sees it — a boot
-      // start that failed. Assuming `healthy` made those read healthy, and kept
-      // them out of `nb_connector_unhealthy`, until the first sweep a full interval
-      // later. (A source awaiting interactive auth is NOT such a case: it parks
-      // with transport and client set, so `isAlive()` is true and it seeds
-      // healthy either way.)
-      state: (source.isAlive() ? "healthy" : "restarting") as ProcessLiveness,
-      restartCount: 0,
-      cooldownUntil: null,
-    }));
+    this.syncRecords();
+  }
+
+  /**
+   * Match `records` to the current sources: keep the record (and its backoff
+   * state) of a source still present, seed one for a new source, and drop the
+   * record of a source no longer listed, such as one uninstalled or replaced by
+   * a reconnect.
+   */
+  private syncRecords(): void {
+    const next = new Map<McpSource, ConnectorRecord>();
+    for (const source of this.sources()) {
+      next.set(
+        source,
+        this.records.get(source) ?? {
+          source,
+          // Seed from the source, not an optimistic constant. A source can be
+          // registered and already down before the monitor ever sees it — a boot
+          // start that failed. Assuming `healthy` made those read healthy, and kept
+          // them out of `nb_connector_unhealthy`, until the first sweep a full interval
+          // later. (A source awaiting interactive auth is NOT such a case: it parks
+          // with transport and client set, so `isAlive()` is true and it seeds
+          // healthy either way.)
+          state: source.isAlive() ? "healthy" : "restarting",
+          restartCount: 0,
+          cooldownUntil: null,
+        },
+      );
+    }
+    this.records = next;
   }
 
   /** Start the periodic health check loop. */
@@ -100,13 +125,14 @@ export class HealthMonitor {
 
   /** Run a single health check across all connectors. */
   async check(): Promise<void> {
-    const tasks = this.records.map((record) => this.checkOne(record));
-    await Promise.all(tasks);
+    this.syncRecords();
+    await Promise.all([...this.records.values()].map((record) => this.checkOne(record)));
   }
 
   /** Get per-connector health info. */
   getStatus(): ConnectorHealth[] {
-    return this.records.map((r) => ({
+    this.syncRecords();
+    return [...this.records.values()].map((r) => ({
       name: r.source.name,
       state: r.state,
       uptime: r.source.uptime(),
@@ -133,10 +159,10 @@ export class HealthMonitor {
     }
 
     // A source that was deliberately stopped via `stop()` (a teardown /
-    // disconnect — e.g. a user-initiated `startAuth` tears the boot source out
+    // disconnect — e.g. a user-initiated `startAuth` tears the old source out
     // of the registry and builds a fresh provider+source) is terminal for the
-    // monitor. This `records` set is a one-time boot snapshot and is never
-    // re-seeded, so the stopped instance lingers here as an orphan. Reconnecting
+    // monitor. Its record goes at the next sync once it leaves the registry, but
+    // a check can still reach it before then. Reconnecting
     // it would run its STALE provider's refresh, whose failure makes the SDK
     // delete the SHARED on-disk credentials (tokens/client/identity in the same
     // wsId/serverName dir) the fresh flow depends on, and flip the connection to

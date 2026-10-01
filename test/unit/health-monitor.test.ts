@@ -68,7 +68,10 @@ describe("HealthMonitor", () => {
   it("detects crashed subprocess and restarts it", async () => {
     const source = makeMockSource("test-connector");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Kill the subprocess
     source.alive = false;
@@ -95,7 +98,7 @@ describe("HealthMonitor", () => {
     const sink = makeEventCollector();
     // Large cooldown so the source stays in the cooling window across the checks
     // below; the self-heal-after-cooldown case is covered by its own test.
-    const monitor = new HealthMonitor([source], sink, {
+    const monitor = new HealthMonitor(() => [source], sink, {
       checkIntervalMs: 60_000,
       baseDelayMs: 1,
       cooldownMs: 60_000,
@@ -138,7 +141,7 @@ describe("HealthMonitor", () => {
     const source = makeMockSource("recoverable-connector");
     const sink = makeEventCollector();
     // Tiny cooldown so the window elapses within the test.
-    const monitor = new HealthMonitor([source], sink, {
+    const monitor = new HealthMonitor(() => [source], sink, {
       checkIntervalMs: 60_000,
       baseDelayMs: 1,
       cooldownMs: 5,
@@ -173,7 +176,7 @@ describe("HealthMonitor", () => {
   it("a deliberate stop while cooling goes terminal dead (not re-probed)", async () => {
     const source = makeMockSource("cooling-then-stopped");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, {
+    const monitor = new HealthMonitor(() => [source], sink, {
       checkIntervalMs: 60_000,
       baseDelayMs: 1,
       cooldownMs: 60_000,
@@ -209,7 +212,7 @@ describe("HealthMonitor", () => {
     // source would stay reported as `cooldown` for the whole window despite
     // being alive — a gauge false-positive. This asserts it recovers on the very
     // next tick.
-    const monitor = new HealthMonitor([source], sink, {
+    const monitor = new HealthMonitor(() => [source], sink, {
       checkIntervalMs: 60_000,
       baseDelayMs: 1,
       cooldownMs: 60_000,
@@ -236,7 +239,7 @@ describe("HealthMonitor", () => {
     const source = makeMockSource("flapping-connector");
     const sink = makeEventCollector();
     const checkIntervalMs = 1000;
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, { checkIntervalMs, baseDelayMs: 1 });
 
     // Eight independent drop episodes (> MAX_RESTARTS), each followed by a
     // SUSTAINED recovery: the source stays up beyond one full check interval
@@ -275,7 +278,7 @@ describe("HealthMonitor", () => {
     const source = makeMockSource("brief-flapper");
     const sink = makeEventCollector();
     const checkIntervalMs = 1000;
-    const monitor = new HealthMonitor([source], sink, {
+    const monitor = new HealthMonitor(() => [source], sink, {
       checkIntervalMs,
       baseDelayMs: 1,
       cooldownMs: 60_000,
@@ -307,7 +310,7 @@ describe("HealthMonitor", () => {
     const healthy = makeMockSource("healthy-one");
     const crashed = makeMockSource("crashed-one");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([healthy, crashed], sink, {
+    const monitor = new HealthMonitor(() => [healthy, crashed], sink, {
       checkIntervalMs: 60_000,
       baseDelayMs: 1,
     });
@@ -338,7 +341,10 @@ describe("HealthMonitor", () => {
   it("does not restart healthy connectors", async () => {
     const source = makeMockSource("stable-connector");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     await monitor.check();
 
@@ -356,7 +362,10 @@ describe("HealthMonitor", () => {
     const source = makeMockSource("interval-connector");
     const sink = makeEventCollector();
     // Use a very short interval
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 10, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 10,
+      baseDelayMs: 1,
+    });
 
     monitor.start();
     monitor.stop();
@@ -385,7 +394,7 @@ describe("HealthMonitor — initial state reflects the source, not an assumption
     down.alive = false;
     const up = makeMockSource("up-at-boot");
 
-    const monitor = new HealthMonitor([down, up], sink);
+    const monitor = new HealthMonitor(() => [down, up], sink);
     const status = monitor.getStatus();
 
     expect(status.find((s) => s.name === "down-at-boot")?.state).not.toBe("healthy");
@@ -396,12 +405,12 @@ describe("HealthMonitor — initial state reflects the source, not an assumption
 describe("HealthMonitor — same-named sources are distinct records", () => {
   it("monitors and restarts each instance independently", async () => {
     // Pins the invariant `Runtime.mcpSources()`'s identity de-dup depends on, and
-    // which lives in this file rather than that one: `records` is an ARRAY built
-    // by `sources.map(...)`, not a name-keyed map.
+    // which lives in this file rather than that one: `records` is keyed by source
+    // object, not by name.
     //
     // A URL connector's source name carries no workspace, so the same connector in N
     // workspaces yields N distinct McpSource objects under one name. If `records`
-    // ever became `Map<string, ConnectorRecord>`, the seed would collapse them again
+    // were ever keyed by name, the sync would collapse them again
     // and the sources this monitor exists to heal would go unmonitored — with the
     // rest of the suite green, because every other fixture here uses a distinct
     // name.
@@ -410,7 +419,7 @@ describe("HealthMonitor — same-named sources are distinct records", () => {
     down.alive = false;
     down.restartResult = false;
 
-    const monitor = new HealthMonitor([healthy, down], makeEventCollector(), {
+    const monitor = new HealthMonitor(() => [healthy, down], makeEventCollector(), {
       checkIntervalMs: 60_000,
       baseDelayMs: 1,
     });
@@ -421,6 +430,69 @@ describe("HealthMonitor — same-named sources are distinct records", () => {
       // Each instance is judged on its own liveness, not on its name's.
       expect(down.restartCalls).toBe(1);
       expect(healthy.restartCalls).toBe(0);
+    } finally {
+      monitor.stop();
+    }
+  });
+});
+
+describe("HealthMonitor — follows the live set of sources", () => {
+  it("test_source_added_after_construction_is_monitored_and_healed", async () => {
+    const boot = makeMockSource("boot");
+    const sources = [boot];
+    const monitor = new HealthMonitor(() => sources, makeEventCollector(), {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
+    try {
+      const installed = makeMockSource("installed-later");
+      installed.alive = false;
+      sources.push(installed);
+
+      expect(monitor.getStatus().map((s) => s.name)).toEqual(["boot", "installed-later"]);
+      await monitor.check();
+      expect(installed.restartCalls).toBe(1);
+      expect(monitor.getStatus().find((s) => s.name === "installed-later")?.state).toBe("healthy");
+    } finally {
+      monitor.stop();
+    }
+  });
+
+  it("test_source_removed_from_the_set_is_dropped", async () => {
+    const kept = makeMockSource("kept");
+    const replaced = makeMockSource("replaced");
+    let sources = [kept, replaced];
+    const monitor = new HealthMonitor(() => sources, makeEventCollector(), {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
+    try {
+      // A reconnect builds a fresh source and removes the old one.
+      const fresh = makeMockSource("replaced");
+      sources = [kept, fresh];
+      replaced.alive = false;
+
+      await monitor.check();
+      expect(monitor.getStatus()).toHaveLength(2);
+      expect(replaced.restartCalls).toBe(0);
+    } finally {
+      monitor.stop();
+    }
+  });
+
+  it("test_record_state_survives_a_sync", async () => {
+    const source = makeMockSource("flaky");
+    source.alive = false;
+    source.restartResult = false;
+    const monitor = new HealthMonitor(() => [source], makeEventCollector(), {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
+    try {
+      await monitor.check();
+      await monitor.check();
+      // The backoff counter is per outage, so a sync must not reset it.
+      expect(monitor.getStatus()[0]?.restartCount).toBe(2);
     } finally {
       monitor.stop();
     }

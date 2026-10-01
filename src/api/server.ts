@@ -91,8 +91,7 @@ export function startServer(options: ServerOptions): ServerHandle {
     ? new Set([...envAllowedOrigins, ...canonicalOrigins()])
     : null;
 
-  const mcpSources = runtime.mcpSources();
-  const healthMonitor = new HealthMonitor(mcpSources, runtime.getEventSink());
+  const healthMonitor = new HealthMonitor(() => runtime.mcpSources(), runtime.getEventSink());
   healthMonitor.start();
   // Expose currently-down connectors as the `nb_connector_unhealthy` gauge (read
   // through this provider at scrape time). The gauge stays asserted for the

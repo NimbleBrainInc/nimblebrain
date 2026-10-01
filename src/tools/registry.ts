@@ -358,9 +358,8 @@ export class ToolRegistry implements ToolRouter {
    *     a server rolling. The codebase treats this as routine (see
    *     `HealthMonitor.resetBackoffIfRecovered`): `reconnectOnDemand` and the
    *     next sweep heal it IN PLACE. Tearing it down and re-spawning instead is
-   *     destructive — it `stop()`s a working source and the replacement object
-   *     is absent from HealthMonitor's boot snapshot, so the connector silently
-   *     loses monitoring for the life of the process.
+   *     destructive — it `stop()`s a working source to build a replacement
+   *     that has to connect from scratch.
    *
    * `uptime()` separates them: `startedAt` is set only on a successful connect
    * and never reset, so `uptime() === null` is exactly "never connected".

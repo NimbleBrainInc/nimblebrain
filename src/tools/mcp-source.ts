@@ -1449,9 +1449,14 @@ export class McpSource implements ToolSource {
    * reconnecting an orphaned, registry-removed instance — see the field doc on
    * {@link stopped}. A self-dropped transport (idle close, network blip) leaves
    * this false, so it still reconnects.
+   *
+   * A restart in flight passes through `stop()`, which sets `stopped` until its
+   * `start()` clears it; that is not a teardown, so it reads false here. Read as
+   * true, a HealthMonitor check landing in that window would mark a live source
+   * dead for good.
    */
   isStopped(): boolean {
-    return this.stopped;
+    return this.stopped && this.restartInFlight === null;
   }
 
   /** Time (ms) since the source was last started, or null if never started. */
@@ -1525,8 +1530,7 @@ export class McpSource implements ToolSource {
    * While waiting it re-attempts the connection itself, at most once per
    * `retryMs` across all waiters (spaced from `lastReconnectFailedAt`, and
    * coalesced onto one stop()/start() by {@link tryRestart}). It cannot rely on
-   * HealthMonitor alone: that sweeps every 30s and tracks only the sources that
-   * existed at boot.
+   * HealthMonitor alone: that sweeps every 30s, longer than the wait.
    */
   private async awaitRestartingSource(signal?: AbortSignal): Promise<boolean> {
     const { waitMs, horizonMs, retryMs } = this.restartingSourceWait;
@@ -1540,9 +1544,7 @@ export class McpSource implements ToolSource {
         await settleWithin(null, Math.min(nextAttemptAt - Date.now(), remaining), signal);
         continue;
       }
-      // A restart in flight passes through stop(), which sets `stopped` until its
-      // start() clears it, so only a quiet `stopped` means a deliberate teardown.
-      if (!this.restartInFlight && this.isStopped()) return false;
+      if (this.isStopped()) return false;
       const attempt = this.tryRestart().then(() => {
         if (!this.client) this.lastReconnectFailedAt = Date.now();
       });

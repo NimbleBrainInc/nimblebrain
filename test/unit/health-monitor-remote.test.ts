@@ -130,7 +130,10 @@ describe("HealthMonitor — remote sources", () => {
   it("detects crashed remote source and reconnects via restart() (stop+start)", async () => {
     const source = makeMockRemoteSource("remote-connector");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Simulate remote disconnect
     source.alive = false;
@@ -163,7 +166,7 @@ describe("HealthMonitor — remote sources", () => {
   it("remote source backs off to cooldown after MAX_RESTARTS failures", async () => {
     const source = makeMockRemoteSource("flaky-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, {
+    const monitor = new HealthMonitor(() => [source], sink, {
       checkIntervalMs: 60_000,
       baseDelayMs: 1,
       cooldownMs: 60_000,
@@ -204,7 +207,10 @@ describe("HealthMonitor — remote sources", () => {
   it("remote source that recovers after reconnect transitions back to healthy", async () => {
     const source = makeMockRemoteSource("recoverable-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // First disconnect
     source.alive = false;
@@ -233,7 +239,10 @@ describe("HealthMonitor — remote sources", () => {
   it("remote source reconnect failure leaves state as restarting", async () => {
     const source = makeMockRemoteSource("failing-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Disconnect and make reconnect fail
     source.alive = false;
@@ -258,7 +267,10 @@ describe("HealthMonitor — remote sources", () => {
   it("in-process sources still work identically (no regression)", async () => {
     const source = makeMockLocalSource("local-connector");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     // Kill the source
     source.alive = false;
@@ -284,7 +296,7 @@ describe("HealthMonitor — remote sources", () => {
     const local = makeMockLocalSource("local-one");
     const sink = makeEventCollector();
     const monitor = new HealthMonitor(
-      [remote as unknown as McpSource, local as unknown as McpSource],
+      () => [remote as unknown as McpSource, local as unknown as McpSource],
       sink,
       { checkIntervalMs: 60_000, baseDelayMs: 1 },
     );
@@ -328,7 +340,10 @@ describe("HealthMonitor — remote sources", () => {
     // and clobber a live pending_auth. It must go terminal (dead) silently.
     const source = makeMockRemoteSource("stopped-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     source.alive = false;
     source.userStopped = true; // deliberate stop()
@@ -356,7 +371,10 @@ describe("HealthMonitor — remote sources", () => {
     // isStopped() false — it must STILL reconnect, unchanged from before.
     const source = makeMockRemoteSource("self-dropped-remote");
     const sink = makeEventCollector();
-    const monitor = new HealthMonitor([source], sink, { checkIntervalMs: 60_000, baseDelayMs: 1 });
+    const monitor = new HealthMonitor(() => [source], sink, {
+      checkIntervalMs: 60_000,
+      baseDelayMs: 1,
+    });
 
     source.alive = false; // dropped, but NOT via stop()
     expect(source.userStopped).toBe(false);

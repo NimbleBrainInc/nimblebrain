@@ -1070,9 +1070,9 @@ export class ConnectorLifecycleManager {
     // flow vs. fail fast to `reauth_required`; only a user-initiated reconnect
     // (a human is waiting) should arm it. Disarm once this start settles
     // (`.finally` below) so the flag never leaks into a later background start
-    // on the same provider — defensive hygiene: this fresh source isn't in the
-    // HealthMonitor boot snapshot, but a provider that ever is must never carry
-    // a stale armed flag into a liveness reconnect.
+    // on the same provider: once this fresh source is in the registry,
+    // HealthMonitor sweeps it, and a liveness reconnect must never carry a stale
+    // armed flag.
     provider.setInteractiveAuthAllowed(true);
 
     // Background start. The provider's callback resolves `authUrlPromise`
