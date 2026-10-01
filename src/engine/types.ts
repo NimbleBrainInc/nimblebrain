@@ -248,7 +248,12 @@ export interface ToolPromotionResult {
 }
 
 export interface ToolPromotionControls {
-  addTool(toolName: string): ToolPromotionResult;
+  /**
+   * Async because a name missing from the run's tool lookups triggers one
+   * re-read of the router: a connector that was restarting when the run began
+   * comes back mid-run, and `nb__search` (which reads live) can list its tools.
+   */
+  addTool(toolName: string): Promise<ToolPromotionResult>;
   removeTool(toolName: string): ToolPromotionResult;
 }
 

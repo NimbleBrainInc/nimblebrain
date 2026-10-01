@@ -650,6 +650,25 @@ function buildToolLookups(allRouterTools: ToolSchema[]): {
   return { toolMeta, allToolSchemaMap };
 }
 
+/**
+ * Fold a fresh router listing into the run's lookups in place (the tool
+ * controls and per-call contexts hold these same Map objects). Adds and
+ * overwrites, never removes: a connector that is down at refresh time is
+ * absent from the listing, and dropping its `toolMeta` entries would read its
+ * app-only tools as model-visible (absent meta defaults to visible).
+ */
+function mergeToolLookups(
+  fresh: ToolSchema[],
+  toolMeta: Map<string, Record<string, unknown>>,
+  allToolSchemaMap: Map<string, ToolSchema>,
+): void {
+  for (const t of fresh) {
+    allToolSchemaMap.set(t.name, t);
+    if (t.meta) toolMeta.set(t.name, t.meta);
+    else toolMeta.delete(t.name);
+  }
+}
+
 /** Throw the abort reason if the run's signal is already aborted. */
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -1041,6 +1060,25 @@ export class AgentEngine {
 
     const allRouterTools = await this.tools.availableTools();
     const { toolMeta, allToolSchemaMap } = buildToolLookups(allRouterTools);
+    // The listing above omits any connector that was not started when the run
+    // began; one that reconnects mid-run is listed by `nb__search`, which
+    // reads live. A promotion that misses re-reads the router, at most once
+    // per iteration, so a hallucinated name cannot turn every add into a full
+    // listing (which may attempt connector starts). A failed re-read keeps
+    // the lookups the run already has.
+    let lookupsRefreshedAt = -1;
+    const refreshToolLookups = async (): Promise<void> => {
+      if (lookupsRefreshedAt === iteration) return;
+      lookupsRefreshedAt = iteration;
+      try {
+        mergeToolLookups(await this.tools.availableTools(), toolMeta, allToolSchemaMap);
+      } catch (err) {
+        log.debug(
+          "engine",
+          `tool lookup refresh failed; keeping the run's lookups — ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
 
     const directTools = [...tools];
     const directToolNames = new Set(directTools.map((t) => t.name));
@@ -1058,7 +1096,12 @@ export class AgentEngine {
     // initial set just makes eviction soft (see evictPromotedToolsToCap).
 
     const toolControls = {
-      addTool: (toolName: string) => {
+      addTool: async (toolName: string) => {
+        // Refresh before the active-list check, so an add that interleaves
+        // with another add of the same name across the await still lands there.
+        if (!directToolNames.has(toolName) && !allToolSchemaMap.has(toolName)) {
+          await refreshToolLookups();
+        }
         if (directToolNames.has(toolName)) {
           // Already-active tool counts as a "use" — refresh LRU stamp so
           // re-promoting a recently-used tool doesn't make it look stale.
@@ -1079,7 +1122,7 @@ export class AgentEngine {
             toolName,
             changed: false,
             reason: "not_found",
-            message: `${toolName} was not found in the current tool registry.`,
+            message: `${toolName} was not found in the current tool registry. If its connector is starting, try again on a later step.`,
           };
         }
         if (!isModelVisible(schema)) {

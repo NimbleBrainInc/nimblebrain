@@ -843,8 +843,9 @@ export class Runtime {
       message: "Tool promotion tools can only be called during an active agent run.",
     });
     const toolPromotionCtx = {
-      addTool: (toolName: string) =>
-        getRequestContext()?.toolPromotion?.addTool(toolName) ?? noActiveToolPromotionRun(toolName),
+      addTool: async (toolName: string) =>
+        (await getRequestContext()?.toolPromotion?.addTool(toolName)) ??
+        noActiveToolPromotionRun(toolName),
       removeTool: (toolName: string) =>
         getRequestContext()?.toolPromotion?.removeTool(toolName) ??
         noActiveToolPromotionRun(toolName),

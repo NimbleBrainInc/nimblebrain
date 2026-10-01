@@ -122,7 +122,7 @@ describe("System Tools", () => {
     const registry = await makeRegistry();
     const added: string[] = [];
     const toolPromotionCtx: ToolPromotionContext = {
-      addTool: (name) => {
+      addTool: async (name) => {
         added.push(name);
         return { ok: true, toolName: name, changed: true, message: "active" };
       },
@@ -487,7 +487,7 @@ describe("System Tools", () => {
     const registry = await makeRegistry();
     const calls: string[] = [];
     const toolPromotionCtx: ToolPromotionContext = {
-      addTool(toolName) {
+      async addTool(toolName) {
         calls.push(`add:${toolName}`);
         return { ok: true, toolName, changed: true, message: `${toolName} added` };
       },
@@ -539,7 +539,7 @@ describe("System Tools", () => {
   it("manage_tools surfaces per-item failures in structuredContent without failing the call", async () => {
     const registry = await makeRegistry();
     const toolPromotionCtx: ToolPromotionContext = {
-      addTool(toolName) {
+      async addTool(toolName) {
         if (toolName === "internal__secret") {
           return {
             ok: false,
@@ -606,7 +606,7 @@ describe("System Tools", () => {
     registry.addSource(source);
     const calls: string[] = [];
     const toolPromotionCtx: ToolPromotionContext = {
-      addTool(toolName) {
+      async addTool(toolName) {
         calls.push(`add:${toolName}`);
         return { ok: true, toolName, changed: true, message: `${toolName} added` };
       },

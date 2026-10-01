@@ -65,7 +65,10 @@ export function createManageToolsToolDefs(
         // of unrelated promoted tools as collateral. Do not swap the order
         // without re-deriving the eviction interaction.
         const released = remove.map((toolName) => toolPromotionCtx.removeTool(toolName));
-        const promoted = add.map((toolName) => toolPromotionCtx.addTool(toolName));
+        // Sequential, not Promise.all: each add can evict the LRU promoted
+        // tool, so the adds must land in the order the model listed them.
+        const promoted: ToolPromotionResult[] = [];
+        for (const toolName of add) promoted.push(await toolPromotionCtx.addTool(toolName));
         const batch: BatchResult = { promoted, released };
         return {
           content: textContent(summarize(batch)),

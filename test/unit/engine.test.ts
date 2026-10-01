@@ -12,6 +12,7 @@ import type {
   EventSink,
   ToolCall,
   ToolPromotionControls,
+  ToolPromotionResult,
   ToolResult,
   ToolSchema,
 } from "../../src/engine/types.ts";
@@ -375,7 +376,7 @@ describe("AgentEngine", () => {
     let activeControls: ToolPromotionControls | null = null;
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__search") {
           return {
             content: textContent("Found newsapi__get_top_headlines"),
@@ -387,7 +388,8 @@ describe("AgentEngine", () => {
           expect(activeControls).not.toBeNull();
           const add = (call.input.add as string[] | undefined) ?? [];
           const remove = (call.input.remove as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           const released = remove.map((n) => activeControls!.removeTool(n));
           return {
             content: textContent("ok"),
@@ -500,12 +502,13 @@ describe("AgentEngine", () => {
     let activeControls: ToolPromotionControls | null = null;
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
           const add = (call.input.add as string[] | undefined) ?? [];
           const remove = (call.input.remove as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           const released = remove.map((n) => activeControls!.removeTool(n));
           return {
             content: textContent("ok"),
@@ -598,11 +601,12 @@ describe("AgentEngine", () => {
     let activeControls: ToolPromotionControls | null = null;
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -754,11 +758,12 @@ describe("AgentEngine", () => {
     let activeControls: ToolPromotionControls | null = null;
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           expect(activeControls).not.toBeNull();
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -925,10 +930,11 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -1022,10 +1028,11 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -1147,10 +1154,11 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -1237,10 +1245,11 @@ describe("AgentEngine", () => {
 
     const engine = new AgentEngine(
       model,
-      new StaticToolRouter(toolSchemas, (call) => {
+      new StaticToolRouter(toolSchemas, async (call) => {
         if (call.name === "nb__manage_tools") {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((n) => activeControls!.addTool(n));
+          const promoted: ToolPromotionResult[] = [];
+          for (const n of add) promoted.push(await activeControls!.addTool(n));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -1407,7 +1416,7 @@ describe("AgentEngine", () => {
     let activeInnerControls: ToolPromotionControls | null = null;
     const events: EngineEvent[] = [];
 
-    const innerRouter = new StaticToolRouter(innerSchemas, (call) => {
+    const innerRouter = new StaticToolRouter(innerSchemas, async (call) => {
       if (call.name === "nb__manage_tools") {
         const add = (call.input.add as string[] | undefined) ?? [];
         // Inner's manage_tools handler reaches the controls in reqCtx.
@@ -1418,7 +1427,8 @@ describe("AgentEngine", () => {
         if (!controls) {
           return { content: textContent("no controls"), isError: true };
         }
-        const promoted = add.map((n) => controls.addTool(n));
+        const promoted: ToolPromotionResult[] = [];
+        for (const n of add) promoted.push(await controls.addTool(n));
         return {
           content: textContent("ok"),
           structuredContent: { promoted, released: [] },
@@ -1435,7 +1445,8 @@ describe("AgentEngine", () => {
         const add = (call.input.add as string[] | undefined) ?? [];
         const controls = getRequestContext()?.toolPromotion;
         if (!controls) return { content: textContent("no controls"), isError: true };
-        const promoted = add.map((n) => controls.addTool(n));
+        const promoted: ToolPromotionResult[] = [];
+        for (const n of add) promoted.push(await controls.addTool(n));
         return {
           content: textContent("ok"),
           structuredContent: { promoted, released: [] },
@@ -4403,10 +4414,11 @@ describe("malformed tool call input", () => {
       const executed: string[] = [];
       const engine = makeEngine(model, {
         schemas: [manageTools, promoted],
-        handler: (call) => {
+        handler: async (call) => {
           executed.push(call.name);
           if (call.name === "nb__manage_tools") {
-            for (const name of (call.input.add as string[]) ?? []) activeControls?.addTool(name);
+            for (const name of (call.input.add as string[]) ?? [])
+              await activeControls?.addTool(name);
           }
           return { content: textContent("ok"), isError: false };
         },
@@ -5166,9 +5178,10 @@ describe("AgentEngine — connector skills bound by declared tool-affinity", () 
       model,
       {
         schemas,
-        handler: (call) => {
+        handler: async (call) => {
           const add = (call.input.add as string[] | undefined) ?? [];
-          const promoted = add.map((name) => controls!.addTool(name));
+          const promoted: ToolPromotionResult[] = [];
+          for (const name of add) promoted.push(await controls!.addTool(name));
           return {
             content: textContent("ok"),
             structuredContent: { promoted, released: [] },
@@ -5423,5 +5436,184 @@ describe("AgentEngine — skill activation (nb__use_skill `_meta` marker)", () =
     );
 
     expect(activated).toHaveLength(0);
+  });
+});
+
+describe("AgentEngine — promotion after a connector comes up mid-run", () => {
+  const SEARCH: ToolSchema = {
+    name: "nb__search",
+    description: "Search",
+    inputSchema: SEARCH_INPUT,
+  };
+  const MANAGE: ToolSchema = {
+    name: "nb__manage_tools",
+    description: "Patch tool list",
+    inputSchema: MANAGE_TOOLS_INPUT,
+  };
+  const NEWS: ToolSchema = {
+    name: "newsapi__get_top_headlines",
+    description: "Get top headlines",
+    inputSchema: { type: "object", properties: {} },
+  };
+
+  function toolCall(id: string, toolName: string, input: Record<string, unknown>) {
+    return {
+      content: [
+        { type: "tool-call" as const, toolCallId: id, toolName, input: JSON.stringify(input) },
+      ],
+      inputTokens: 10,
+      outputTokens: 5,
+    };
+  }
+  const done = {
+    content: [{ type: "text" as const, text: "Done" }],
+    inputTokens: 10,
+    outputTokens: 5,
+  };
+
+  /** A router over a mutable list, so a test can bring a connector up or down mid-run. */
+  function promotionRun(
+    model: LanguageModelV4,
+    router: { availableTools(): Promise<ToolSchema[]> },
+    onCall: (call: ToolCall) => ToolResult | undefined,
+  ) {
+    let controls: ToolPromotionControls | null = null;
+    const promotions: ToolPromotionResult[] = [];
+    const executed: string[] = [];
+    const engine = new AgentEngine(
+      model,
+      {
+        availableTools: () => router.availableTools(),
+        execute: async (call) => {
+          executed.push(call.name);
+          if (call.name === "nb__manage_tools") {
+            for (const n of (call.input.add as string[]) ?? []) {
+              promotions.push(await controls!.addTool(n));
+            }
+            return { content: textContent("ok"), isError: false };
+          }
+          return onCall(call) ?? { content: textContent("ok"), isError: false };
+        },
+      },
+      new NoopEventSink(),
+    );
+    const result = engine.run(
+      {
+        ...defaultConfig,
+        toolPromotion: {
+          isToolEligible: () => true,
+          registerControls: (c) => {
+            controls = c;
+            return () => {
+              controls = null;
+            };
+          },
+        },
+      },
+      "",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      [SEARCH, MANAGE],
+    );
+    return { result, promotions, executed };
+  }
+
+  it("promotes a tool whose connector came up after the run started", async () => {
+    const routerTools: ToolSchema[] = [SEARCH, MANAGE];
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) return toolCall("c1", "nb__search", { scope: "tools", query: "news" });
+      if (n === 2) return toolCall("c2", "nb__manage_tools", { add: [NEWS.name] });
+      if (n === 3) return toolCall("c3", NEWS.name, {});
+      return done;
+    });
+    const run = promotionRun(
+      model,
+      new StaticToolRouter(routerTools, () => ({ content: [], isError: false })),
+      (call) => {
+        // The connector finishes reconnecting while the search runs.
+        if (call.name === "nb__search") routerTools.push(NEWS);
+        return undefined;
+      },
+    );
+    await run.result;
+
+    expect(run.promotions.map((p) => p.ok)).toEqual([true]);
+    expect(run.executed).toContain(NEWS.name);
+  });
+
+  it("promotes a known tool name in the first iteration once its connector is up", async () => {
+    const routerTools: ToolSchema[] = [SEARCH, MANAGE];
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) {
+        // Up after the run's opening listing, before the first tool call.
+        routerTools.push(NEWS);
+        return toolCall("c1", "nb__manage_tools", { add: [NEWS.name] });
+      }
+      return done;
+    });
+    const run = promotionRun(
+      model,
+      new StaticToolRouter(routerTools, () => ({ content: [], isError: false })),
+      () => undefined,
+    );
+    await run.result;
+
+    expect(run.promotions.map((p) => p.ok)).toEqual([true]);
+  });
+
+  it("keeps an app-only tool refused after its connector drops out of a refresh", async () => {
+    const PANEL: ToolSchema = {
+      name: "crm__panel",
+      description: "App-only panel",
+      inputSchema: { type: "object", properties: {} },
+      meta: { ui: { visibility: ["app"] } },
+    };
+    const routerTools: ToolSchema[] = [SEARCH, MANAGE, PANEL];
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) {
+        routerTools.splice(routerTools.indexOf(PANEL), 1);
+        // A miss forces a refresh that no longer lists the panel's connector.
+        return toolCall("c1", "nb__manage_tools", { add: ["ghost__tool"] });
+      }
+      if (n === 2) return toolCall("c2", PANEL.name, {});
+      return done;
+    });
+    const run = promotionRun(
+      model,
+      new StaticToolRouter(routerTools, () => ({ content: [], isError: false })),
+      () => undefined,
+    );
+    await run.result;
+
+    expect(run.promotions.map((p) => p.reason)).toEqual(["not_found"]);
+    expect(run.executed).not.toContain(PANEL.name);
+  });
+
+  it("keeps the run's lookups when a refresh fails", async () => {
+    let listings = 0;
+    const router = {
+      availableTools: async () => {
+        listings++;
+        if (listings > 1) throw new Error("workspace store unavailable");
+        return [SEARCH, MANAGE, NEWS];
+      },
+    };
+    let n = 0;
+    const model = createMockModel(() => {
+      n++;
+      if (n === 1) return toolCall("c1", "nb__manage_tools", { add: ["ghost__tool"] });
+      if (n === 2) return toolCall("c2", "nb__manage_tools", { add: [NEWS.name] });
+      return done;
+    });
+    const run = promotionRun(model, router, () => undefined);
+    const result = await run.result;
+
+    expect(run.promotions.map((p) => p.ok)).toEqual([false, true]);
+    expect(result.stopReason).toBe("complete");
   });
 });
