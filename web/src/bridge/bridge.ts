@@ -812,10 +812,12 @@ function handleToolsCall(
 }
 
 /**
- * The JSON-RPC error for a `tools/call` that never ran. A server's refusal
- * (`McpError`: an unknown tool, a tool not callable from an app, a denied
- * workspace) keeps its code and `data`, so a view can read `data.reason`;
- * anything else (transport, session) is `-32000` with its message.
+ * The JSON-RPC error for a `tools/call` that returned no result. A server's
+ * refusal (`McpError`: an unknown tool, a tool not callable from an app, a
+ * denied workspace) keeps its code and `data`, so a view can read
+ * `data.reason`; so does the SDK's own `McpError` for a timeout (`-32001`) or
+ * a closed connection, after which the call may have run. Anything else
+ * (transport, session) is `-32000` with its message.
  */
 function toolCallError(err: unknown): UiToolResultError["error"] {
   if (err instanceof McpError) {
@@ -1062,8 +1064,9 @@ function handleRequestFile(
 //     CallToolResult / task results forwarded verbatim, never unwrapped).
 //   - A tool execution error is a result (`isError: true`, forwarded
 //     verbatim with its `structuredContent`), never a JSON-RPC error. A
-//     JSON-RPC error means the call never ran: a server's refusal keeps its
-//     code and `data`; a transport failure is `-32000`.
+//     JSON-RPC error means no result came back: a server's refusal keeps its
+//     code and `data`; a transport failure is `-32000`; a timeout (`-32001`)
+//     may follow a call that ran.
 //   - the target-source authz is handled at the call site — this helper
 //     receives the already-resolved server name.
 // ---------------------------------------------------------------------------

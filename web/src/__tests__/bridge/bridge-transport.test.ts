@@ -14,7 +14,7 @@
 //     the SDK's generic `request()` path so `CreateTaskResult` flows back
 //     to the iframe verbatim within the fast-path budget.
 //   - A tool execution error (`isError: true`) is a result, forwarded with
-//     its `structuredContent`. A call that never ran (a server's refusal, a
+//     its `structuredContent`. A call with no result (a server's refusal, a
 //     transport failure, a thrown `readResource`) is a JSON-RPC error; a
 //     server's refusal keeps its code and `data`.
 //

@@ -271,7 +271,7 @@ Call a tool on your app's MCP server. This is a JSON-RPC **request** — the res
 }
 ```
 
-**Error response.** A JSON-RPC error means the call never ran: the tool is not yours or not callable from an app, or the host could not reach your server. A refusal from your server keeps its code and `data`; a transport failure is `-32000`.
+**Error response.** A JSON-RPC error means no result came back. Usually the call never ran: the tool is not yours or not callable from an app, or the host could not reach your server. A refusal from your server keeps its code and `data`; a transport failure is `-32000`. A timeout (`-32001`) or a connection closed mid-call (`-32000`) means the answer was lost, and the call may have run, so do not blindly retry a call that writes.
 
 ```json
 {

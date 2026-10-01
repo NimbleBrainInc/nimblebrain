@@ -145,6 +145,7 @@
 
 ### Breaking
 
+- **A tool error reaches an app's view as a result, not a JSON-RPC error.** A view's `tools/call` answers the `CallToolResult` with `isError: true` and its `structuredContent`, so a connector's structured refusal arrives intact; a pushed `ui/notifications/tool-result` carries `isError` too. A JSON-RPC error means no result came back, and a server's refusal keeps its code and `data`. **Migration:** a view that reported tool failures from `catch` checks `result.isError`, or wraps `useCallTool` to throw on it ([docs](https://docs.nimblebrain.ai/apps/bridge/#toolscall)).
 - **The server does not start without `instance.json`.** A missing file never selects dev mode: dev is the `dev` adapter, chosen by name. **Migration:** a deployment that ran without the file writes `{"auth":{"adapter":"dev"}}` to `<workDir>/instance.json` to keep the single local user, or configures `oidc` / `workos`; `docker compose` now mounts `./instance.json`, and the dev launchers write the dev adapter themselves ([docs](https://docs.nimblebrain.ai/config/instance-json/), ADR-0040).
 - **`Runtime.start` refuses a workdir with no `instance.json` unless the caller passes `identityProvider`, and `chat` / `startTurn` / `executeTask` require `identity` and `workspaceId`.** There is no dev-user or default-workspace fallback for an in-process caller (ADR-0040).
 - **The personal-workspace contract is gone.** `422 personal_workspace_invariant` is no longer returned; `manage_workspaces list` and the MCP App `hostContext.workspace` no longer carry `isPersonal`; the `conversation.title` event carries `ownerId` instead of `wsId`. `GET /v1/bootstrap` no longer sends `workspaces[].isPersonal` — read `activeWorkspace`. A runtime request with no `workspaceId` throws. A connector installed in a former personal workspace blocks adding a personal connector of the same name, as a connector installed in any workspace does.
@@ -226,7 +227,6 @@
 
 ### Fixed
 
-- **A tool error reaches an app's view as a result, not a JSON-RPC error.** A view's `tools/call` answers the `CallToolResult` with `isError: true` and its `structuredContent`, so a connector's structured refusal arrives intact; a pushed `ui/notifications/tool-result` carries `isError` too. A JSON-RPC error now means the call never ran, and a server's refusal keeps its code and `data` ([docs](https://docs.nimblebrain.ai/apps/bridge/#toolscall)).
 - **An agent call naming an argument its tool's schema does not declare is refused before dispatch, with the valid arguments listed.** ([#1466](https://github.com/NimbleBrainInc/nimblebrain/issues/1466)).
 - **A remote OAuth connector whose server refuses `openid` signs in again.** A server that advertises OpenID Connect but answers `invalid_scope` to this client is asked once more with the connector's own scopes, and the row reads **Connected** with no account ([#1431](https://github.com/NimbleBrainInc/nimblebrain/issues/1431)).
 - **`tools/call` answers an unknown tool with a standard error body.** The `404 tool_not_found` now carries `message`, with `server` and `tool` under `details`, like every other REST error.

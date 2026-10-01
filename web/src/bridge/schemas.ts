@@ -364,8 +364,9 @@ export type UiResourceResultError = Static<typeof UiResourceResultError>;
 
 /**
  * An MCP `CallToolResult`. A tool execution error is one of these with
- * `isError: true`, its `structuredContent` intact; only a call that never ran
- * is a JSON-RPC error (`UiToolResultError`).
+ * `isError: true`, its `structuredContent` intact; only a call with no result
+ * (refused, unreachable, or timed out) is a JSON-RPC error
+ * (`UiToolResultError`).
  */
 const CallToolResultShape = Type.Object(
   {
