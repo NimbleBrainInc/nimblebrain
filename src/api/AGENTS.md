@@ -79,7 +79,7 @@ Two-layer state model for the 2025 leg of `/mcp`. Don't merge them.
 - **Transport map** (`McpServerHost.transports`): per-process LRU `Map<sessionId, TransportEntry>`. Owns the live `WebStandardStreamableHTTPServerTransport`, the SDK `Server` instance, in-flight JSON-RPC state, and `lastAccessedAt`. Process-bound — never serialize, never share across processes.
 - **`SessionRegistry`** (`src/api/session-store/`): pluggable cluster-shared metadata. Stores `{sessionId, identityId, workspaceId, createdAt, lastAccessedAt}` only; `workspaceId` is half the binding a session-miss answer compares before saying `unavailable`. **No pod / instance / owner fields** — adding any would leak deployment vocabulary into a metadata interface. Implementations: `InMemorySessionRegistry` (default) and `RedisSessionRegistry`.
 
-Routing requests to the process owning a session's transport is the **load balancer's** job (ALB `lb_cookie` stickiness or header-hash on `Mcp-Session-Id`). The registry doesn't route; it can't move transports.
+Routing requests to the process owning a session's transport is the **load balancer's** job (ALB `lb_cookie` stickiness; see "Running more than one replica" for why hashing on `Mcp-Session-Id` cannot do it). The registry doesn't route; it can't move transports.
 
 **Reclamation invariants** — see `mcp-server.ts` file header for the why:
 

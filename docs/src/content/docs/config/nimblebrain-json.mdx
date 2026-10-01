@@ -409,7 +409,7 @@ The MCP `/mcp` endpoint is stateful. Each session has two parts:
 - **Metadata** — `sessionId`, `identityId`, `workspaceId`, timestamps. Just data; lives in the session store.
 - **Live transport** — open HTTP response stream, SDK `Server` instance, registered request handlers, in-flight JSON-RPC state. Process-bound — holds open file descriptors and JS object references that cannot be serialized or moved.
 
-Metadata is shareable across processes; the live transport is not. Routing requests to the process that owns a session's transport is the **load balancer's** job (cookie stickiness, header-hash on `Mcp-Session-Id`), not the session store's. The session store is deliberately deployment-vocabulary-free — no notion of "which pod owns this" — so the same interface fits any deployment topology.
+Metadata is shareable across processes; the live transport is not. Routing requests to the process that owns a session's transport is the **load balancer's** job (cookie affinity; hashing the random `Mcp-Session-Id` cannot find the pod that created the session), not the session store's. The session store is deliberately deployment-vocabulary-free — no notion of "which pod owns this" — so the same interface fits any deployment topology.
 
 When a request arrives at a process that doesn't have the live transport for the requested session, the 404 carries `error.data.reason`:
 

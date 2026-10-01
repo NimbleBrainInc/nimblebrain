@@ -35,7 +35,7 @@
  *      touched, and which identity it's bound to. Deliberately deployment-
  *      vocabulary-free — no pod, no instance, no ownership. Routing
  *      requests to the process that owns a session's transport is the load
- *      balancer's job (cookie stickiness, header-hash), not the registry's.
+ *      balancer's job (cookie affinity), not the registry's.
  *
  * Reclamation policy on the transport map (the layer that holds the heap):
  *
