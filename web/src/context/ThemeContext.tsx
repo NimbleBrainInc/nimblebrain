@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 
 type ThemeMode = "light" | "dark";
 
@@ -96,7 +97,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "L") {
+      if (matchesShortcut(e, SHORTCUTS.theme)) {
         e.preventDefault();
         toggle();
       }

@@ -25,6 +25,8 @@ export const SHORTCUTS = {
   chatFullscreen: { key: "j", shift: true },
   /** Open or close the sidebar. */
   sidebar: { key: "b" },
+  /** Switch between light and dark mode. */
+  theme: { key: "l", shift: true },
 } as const satisfies Record<string, Shortcut>;
 
 /** True when the event is this chord: the platform modifier, Shift as declared, and the key. */
