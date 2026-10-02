@@ -5696,7 +5696,7 @@ async function seedWorkspaceConnectorInstances(
       // that `registerPlacements` dropped at install time would otherwise
       // re-register verbatim here on every restart. Same fail-closed guard.
       const safe = sanitizePlacements(instance.ui.placements);
-      if (safe.length > 0) placementRegistry.register(sn, safe, wsId);
+      if (safe.length > 0) placementRegistry.register(sn, safe, wsId, instance.ui.name);
     }
   }
 }

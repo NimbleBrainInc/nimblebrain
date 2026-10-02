@@ -1534,7 +1534,7 @@ export class ConnectorLifecycleManager {
 
     const safe = sanitizePlacements(ui.placements);
     if (safe.length > 0) {
-      this.placementRegistry.register(serverName, safe, wsId);
+      this.placementRegistry.register(serverName, safe, wsId, ui.name);
     }
   }
 

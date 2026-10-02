@@ -39,6 +39,12 @@ export interface PlacementDeclaration {
 /** Resolved placement entry — PlacementDeclaration + the server it belongs to. */
 export interface PlacementEntry extends PlacementDeclaration {
     serverName: string;
+    /**
+     * The display name the connector declared for itself (`ConnectorUiMeta.name`).
+     * A nav that lists a connector's several placements under one entry names that
+     * entry with it. Absent for a source that declares no name.
+     */
+    appName?: string;
     priority: number;
     /** Workspace ID this placement belongs to (undefined = global/protected). */
     wsId?: string;

@@ -361,12 +361,18 @@ describe("WorkspaceNav — app quick-list", () => {
 
   test("an app with several views lists them beneath it only while it is open", async () => {
     const people = [
-      appPlacement("people", { priority: 10, label: "Contacts", route: "people" }),
+      appPlacement("people", {
+        priority: 10,
+        label: "Contacts",
+        route: "people",
+        appName: "People",
+      }),
       appPlacement("people", {
         priority: 11,
         label: "Organizations",
         route: "people/organizations",
         resourceUri: "ui://people/organizations",
+        appName: "People",
       }),
     ];
     mounted = await mount({
@@ -382,6 +388,10 @@ describe("WorkspaceNav — app quick-list", () => {
       "/w/helix/app/people",
       "/w/helix/app/tasks",
     ]);
+    // Named by the connector, not by its first view, and in the first render:
+    // the name rides on the placement.
+    // The row's last child is its label; before it sits the letter avatar.
+    expect(closed.map((a) => a.lastElementChild?.textContent)).toEqual(["People", "tasks"]);
     expect(byTestId(mounted.container, "sidebar-workspace-app-view")).toHaveLength(0);
     mounted.unmount();
 

@@ -55,7 +55,7 @@ function WorkspaceViews({
   collapsed: boolean;
 }) {
   const shell = useShellContext();
-  const { iconFor, connectorCount, connectors } = useWorkspaceAppIcons();
+  const { iconFor, connectorCount } = useWorkspaceAppIcons();
   const { unread } = useNotifications();
   const slug = toSlug(workspace.id);
 
@@ -79,12 +79,6 @@ function WorkspaceViews({
   );
   const shownApps = collapsed ? apps : apps.slice(0, MAX_INLINE_APPS);
   const hasAppOverflow = apps.length > shownApps.length;
-  // An app with several views is named by its connector, which the installed
-  // list resolves; that list names the previous workspace until its refetch lands.
-  const appName = (serverName: string) =>
-    connectors?.workspaceId === workspace.id
-      ? connectors.installed.find((c) => c.serverName === serverName)?.displayName
-      : undefined;
 
   return (
     <div
@@ -126,7 +120,6 @@ function WorkspaceViews({
           key={app.serverName}
           app={app}
           slug={slug}
-          name={appName(app.serverName)}
           iconUrl={iconFor(app.serverName)}
           collapsed={collapsed}
         />
@@ -215,13 +208,11 @@ function ViewLink({
 function AppEntry({
   app,
   slug,
-  name,
   iconUrl,
   collapsed,
 }: {
   app: WorkspaceApp;
   slug: string;
-  name?: string;
   iconUrl?: string;
   collapsed: boolean;
 }) {
@@ -246,7 +237,9 @@ function AppEntry({
     <>
       <AppLink
         to={to(first)}
-        label={name ?? viewLabel(first)}
+        // The connector's own name arrives on the placement, so the entry is named
+        // in the same render that lists it.
+        label={first.appName ?? viewLabel(first)}
         iconUrl={iconUrl}
         serverName={app.serverName}
         collapsed={collapsed}

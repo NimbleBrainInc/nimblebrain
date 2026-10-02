@@ -6,7 +6,7 @@ import type { ChatResponse, PlacementEntry, TokenUsage, ToolCallResponse } from 
 /** Mirrors `ConnectionState` (`src/connectors/runtime/connection.ts`). */
 export type ConnectionState = "starting" | "running" | "crashed" | "dead" | "stopped" | "not_authenticated" | "pending_auth" | "reauth_required";
 /** Mirrors `PlacementDeclaration` (`src/connectors/runtime/types.ts`). */
-export type PlacementDeclaration = Omit<PlacementEntry, "serverName" | "priority" | "wsId"> & {
+export type PlacementDeclaration = Omit<PlacementEntry, "serverName" | "appName" | "priority" | "wsId"> & {
     priority?: number;
 };
 /** Mirrors `ConnectorUiMeta` (`src/connectors/runtime/types.ts`). */

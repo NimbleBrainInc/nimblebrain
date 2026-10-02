@@ -111,4 +111,27 @@ describe("PlacementRegistry", () => {
     const anyWs = reg.forWorkspace("ws_anything");
     expect(anyWs[0].wsId).toBeUndefined();
   });
+
+  test("register with an app name stamps it on every placement, and omits it otherwise", () => {
+    const reg = new PlacementRegistry();
+    // A nav lists a connector's several views under one entry and names that entry
+    // from the placement itself, so each one carries the name.
+    reg.register(
+      "people",
+      [
+        { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "Contacts" },
+        { slot: "sidebar.apps", resourceUri: "ui://people/organizations", label: "Organizations" },
+      ],
+      "ws_eng",
+      "People",
+    );
+    reg.register("tasks", [{ slot: "sidebar.apps", resourceUri: "ui://tasks/main" }], "ws_eng");
+
+    const eng = reg.forWorkspace("ws_eng");
+    expect(eng.filter((e) => e.serverName === "people").map((e) => e.appName)).toEqual([
+      "People",
+      "People",
+    ]);
+    expect("appName" in eng.find((e) => e.serverName === "tasks")!).toBe(false);
+  });
 });
