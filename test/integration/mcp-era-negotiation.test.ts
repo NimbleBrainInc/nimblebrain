@@ -213,38 +213,39 @@ describe("McpSource era fallback", () => {
     }
   });
 
-  it.each([
-    502, 503, 504,
-  ])("does not fall back to the 2025 era when a gateway answers the probe with %i", async (status) => {
-    // A 2026 server behind an edge whose upstream is restarting: the probe
-    // meets the gateway's error, and the next connect meets the server.
-    const modern = modernServer();
-    let gatewayDown = true;
-    const seen: string[] = [];
-    const served = serve(async (request) => {
-      const body = await bodyOf(request);
-      if (body?.method) seen.push(body.method);
-      if (gatewayDown && body?.method === "server/discover") {
-        return new Response("bad gateway", { status });
+  it.each([502, 503, 504])(
+    "does not fall back to the 2025 era when a gateway answers the probe with %i",
+    async (status) => {
+      // A 2026 server behind an edge whose upstream is restarting: the probe
+      // meets the gateway's error, and the next connect meets the server.
+      const modern = modernServer();
+      let gatewayDown = true;
+      const seen: string[] = [];
+      const served = serve(async (request) => {
+        const body = await bodyOf(request);
+        if (body?.method) seen.push(body.method);
+        if (gatewayDown && body?.method === "server/discover") {
+          return new Response("bad gateway", { status });
+        }
+        return modern(request);
+      });
+      const source = new McpSource(
+        "era",
+        { type: "remote", url: new URL(served.url), allowInsecure: true },
+        new NoopEventSink(),
+      );
+      try {
+        await expect(source.start()).rejects.toBeDefined();
+        expect(seen).not.toContain("initialize");
+        gatewayDown = false;
+        await source.start();
+        expect(source.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+      } finally {
+        await source.stop();
+        served.close();
       }
-      return modern(request);
-    });
-    const source = new McpSource(
-      "era",
-      { type: "remote", url: new URL(served.url), allowInsecure: true },
-      new NoopEventSink(),
-    );
-    try {
-      await expect(source.start()).rejects.toBeDefined();
-      expect(seen).not.toContain("initialize");
-      gatewayDown = false;
-      await source.start();
-      expect(source.getNegotiatedProtocolVersion()).toBe("2026-07-28");
-    } finally {
-      await source.stop();
-      served.close();
-    }
-  });
+    },
+  );
 
   it("does not retry on the 2025 era when the probe is refused for authorization", async () => {
     const legacy = legacyServer();
@@ -612,27 +613,26 @@ describe("/mcp/<wsId> on both eras", () => {
   it.each([
     { era: "modern", negotiate: true, version: "2026-07-28" },
     { era: "legacy", negotiate: false, version: "2025-11-25" },
-  ])("serves a $era client the workspace's bare tool names and routes a call by one", async ({
-    era,
-    negotiate,
-    version,
-  }) => {
-    const c = await client(negotiate);
-    try {
-      expect(c.getProtocolEra()).toBe(era as "modern" | "legacy");
-      expect(c.getNegotiatedProtocolVersion()).toBe(version);
-      const names = (await c.listTools()).tools.map((t) => t.name);
-      expect(names).toContain("fixture__greet");
-      const result = await c.callTool({ name: "fixture__greet", arguments: { name: "era" } });
-      expect(result.content).toEqual([{ type: "text", text: "hello era" }]);
-      // A retired `ws_<id>-` name addresses no workspace on either era.
-      await expect(
-        c.callTool({ name: `ws_${TEST_WORKSPACE_ID}-fixture__greet`, arguments: {} }),
-      ).rejects.toMatchObject({ code: -32602 });
-    } finally {
-      await c.close();
-    }
-  });
+  ])(
+    "serves a $era client the workspace's bare tool names and routes a call by one",
+    async ({ era, negotiate, version }) => {
+      const c = await client(negotiate);
+      try {
+        expect(c.getProtocolEra()).toBe(era as "modern" | "legacy");
+        expect(c.getNegotiatedProtocolVersion()).toBe(version);
+        const names = (await c.listTools()).tools.map((t) => t.name);
+        expect(names).toContain("fixture__greet");
+        const result = await c.callTool({ name: "fixture__greet", arguments: { name: "era" } });
+        expect(result.content).toEqual([{ type: "text", text: "hello era" }]);
+        // A retired `ws_<id>-` name addresses no workspace on either era.
+        await expect(
+          c.callTool({ name: `ws_${TEST_WORKSPACE_ID}-fixture__greet`, arguments: {} }),
+        ).rejects.toMatchObject({ code: -32602 });
+      } finally {
+        await c.close();
+      }
+    },
+  );
 
   // The door logs which era each kind of client arrives on, once per (era,
   // User-Agent), so production traffic shows who still needs the 2025 leg.

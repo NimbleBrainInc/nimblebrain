@@ -35,7 +35,7 @@ function okResult(payload: object): ToolResult {
 
 function parseFirst(result: ToolResult): unknown {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected text block");
+  if (first?.type !== "text") throw new Error("expected text block");
   return JSON.parse(first.text);
 }
 

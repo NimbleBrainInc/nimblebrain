@@ -284,8 +284,8 @@ describe("Synapse SDK ⇄ host bridge schema parity", () => {
     await flush();
 
     const env = lastEnvelopeWithMethod("ui/message");
-    expect(env, "SDK must emit ui/message after sendMessage").toBeDefined();
-    const content = (env?.params as { content: Array<Record<string, unknown>> }).content;
+    if (!env) throw new Error("SDK must emit ui/message after sendMessage");
+    const content = (env.params as { content: Array<Record<string, unknown>> }).content;
     expect(content.find((b) => b.type === "text")?.text).toBe("hello");
     const v = validateAppToHostMessage(env);
     expect(v.ok, `ui/message: ${v.reason}`).toBe(true);

@@ -192,7 +192,7 @@ function withRunIdInConversationField(
 
 function parseFirst(result: ToolResult): Record<string, unknown> {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected a text block");
+  if (first?.type !== "text") throw new Error("expected a text block");
   return JSON.parse(first.text) as Record<string, unknown>;
 }
 

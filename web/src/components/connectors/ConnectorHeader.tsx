@@ -71,7 +71,7 @@ export function ConnectorHeader({
   // The OAuth-app target for OperatorSetupModal, present only for a static-auth
   // entry that declares one. Null is also the "no Set up CTA" signal below.
   const operatorTarget = useMemo<OperatorSetupTarget | null>(() => {
-    if (!cat || cat.auth !== "static" || !cat.operatorSetup) return null;
+    if (cat?.auth !== "static" || !cat.operatorSetup) return null;
     return { id: cat.id, name: cat.name, operatorSetup: cat.operatorSetup };
   }, [cat]);
 

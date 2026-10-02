@@ -31,7 +31,7 @@ const WS_ID = "ws_user_usr_test";
 
 function parseFirst(result: ToolResult): unknown {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected text block");
+  if (first?.type !== "text") throw new Error("expected text block");
   return JSON.parse(first.text);
 }
 

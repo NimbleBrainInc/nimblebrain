@@ -625,7 +625,7 @@ async function loadCallbackCatalogEntry(
 ): Promise<ComposioCatalogEntry | Response> {
   const directory = ctx.runtime.getConnectorCatalog();
   const entry = await directory.catalogById(cid);
-  if (!entry || entry.auth !== "composio" || !entry.composio) {
+  if (entry?.auth !== "composio" || !entry.composio) {
     return c.text(`connector "${cid}" is not Composio-backed`, 400);
   }
   return entry as ComposioCatalogEntry;

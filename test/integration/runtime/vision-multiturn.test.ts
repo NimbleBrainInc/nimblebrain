@@ -186,7 +186,7 @@ describe("vision survives the multi-turn agent loop", () => {
       const prompt = recorded.prompts[turn]!;
       const userMsg = prompt.find((m) => m.role === "user");
       expect(userMsg).toBeDefined();
-      if (!userMsg || userMsg.role !== "user") return;
+      if (userMsg?.role !== "user") return;
 
       const filePart = userMsg.content.find((c): c is LanguageModelV4FilePart => c.type === "file");
       expect(filePart).toBeDefined();

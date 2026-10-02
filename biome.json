@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -9,9 +9,12 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "complexity": {
-        "noExcessiveCognitiveComplexity": { "level": "error", "options": { "maxAllowedComplexity": 15 } }
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": { "maxAllowedComplexity": 15 }
+        }
       },
       "style": {
         "noNonNullAssertion": "off"
@@ -45,7 +48,8 @@
       "test/**/*.ts",
       "test/**/*.tsx",
       "!**/dist/**",
-      "!web/src/_generated/**"
+      "!web/src/_generated/**",
+      "!web/src/assets/**"
     ]
   },
   "overrides": [

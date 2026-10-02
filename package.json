@@ -99,7 +99,7 @@
     "migrate:workspace-connectors": "bun run scripts/migrate-workspace-connectors.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.10",
+    "@biomejs/biome": "^2.5.14",
     "@nimblebrain/synapse": "0.21.1",
     "@types/bun": "latest",
     "happy-dom": "^20.0.0",

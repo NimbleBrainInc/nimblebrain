@@ -96,7 +96,7 @@ function exec(tool: string, args: Record<string, unknown>): Promise<ToolResult> 
 
 function messages(result: ToolResult): Array<Record<string, unknown>> {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected a text block");
+  if (first?.type !== "text") throw new Error("expected a text block");
   const data = JSON.parse(first.text) as { messages?: Array<Record<string, unknown>> };
   return data.messages ?? [];
 }

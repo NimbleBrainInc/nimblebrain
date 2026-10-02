@@ -30,11 +30,11 @@ export function OperatorOAuthSection({
 
   // What the setup modal needs of this connector — the catalog carries all three.
   const operatorTarget = useMemo<OperatorSetupTarget | null>(() => {
-    if (!cat || cat.auth !== "static" || !cat.operatorSetup) return null;
+    if (cat?.auth !== "static" || !cat.operatorSetup) return null;
     return { id: cat.id, name: cat.name, operatorSetup: cat.operatorSetup };
   }, [cat]);
 
-  if (!cat || cat.auth !== "static" || !op || !operatorTarget) return null;
+  if (cat?.auth !== "static" || !op || !operatorTarget) return null;
 
   return (
     <section className="space-y-2">

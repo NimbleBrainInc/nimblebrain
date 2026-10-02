@@ -98,7 +98,7 @@ function exec(
 
 function payload<T>(result: ToolResult): T {
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected a text block");
+  if (first?.type !== "text") throw new Error("expected a text block");
   return JSON.parse(first.text) as T;
 }
 

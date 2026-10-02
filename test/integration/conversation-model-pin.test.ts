@@ -201,20 +201,20 @@ describe("what the pin stores", () => {
   // A slot can be named either way (`parseModelSlotRef`); both must collapse to
   // the concrete model before it is stored, or moving the slot would retarget
   // the conversation — the bug the binding prevents.
-  test.each([
-    "alias:fast",
-    "fast",
-  ])("a slot reference (%s) is resolved before it is stored", async (slotRef) => {
-    runtime.updateConfig({ models: { default: MODEL_A, fast: FAST_MODEL } });
-    const conv = await runtime.chat({
-      message: "via slot",
-      model: slotRef,
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
+  test.each(["alias:fast", "fast"])(
+    "a slot reference (%s) is resolved before it is stored",
+    async (slotRef) => {
+      runtime.updateConfig({ models: { default: MODEL_A, fast: FAST_MODEL } });
+      const conv = await runtime.chat({
+        message: "via slot",
+        model: slotRef,
+        workspaceId: TEST_WORKSPACE_ID,
+        identity: USER,
+      });
 
-    expect(await pinOf(conv.conversationId)).toBe(FAST_MODEL);
-  });
+      expect(await pinOf(conv.conversationId)).toBe(FAST_MODEL);
+    },
+  );
 
   test("moving the aliased slot does not retarget an alias-created conversation", async () => {
     runtime.updateConfig({ models: { default: MODEL_A, fast: FAST_MODEL } });

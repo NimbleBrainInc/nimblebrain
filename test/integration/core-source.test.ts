@@ -1353,8 +1353,8 @@ describe("Core Source", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const tools = await source.tools();
       const setModelConfig = tools.find((t) => t.name === "nb__set_model_config");
-      expect(setModelConfig).toBeDefined();
-      const props = (setModelConfig?.inputSchema as { properties: Record<string, unknown> })
+      if (!setModelConfig) throw new Error("nb__set_model_config is not registered");
+      const props = (setModelConfig.inputSchema as { properties: Record<string, unknown> })
         .properties;
       const thinking = props.thinking as { type: unknown; enum: unknown };
       expect(thinking.type).toBe("string");

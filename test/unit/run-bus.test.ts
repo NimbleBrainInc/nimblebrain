@@ -121,7 +121,7 @@ describe("RunBus", () => {
     const overflow = bus.publish("c1", "text.delta", { text: "boom" });
     expect(overflow).not.toBeNull();
     expect(overflow?.type).toBe("error");
-    expect((overflow?.data as { error: string }).error).toBe("buffer_overflow");
+    expect(overflow?.data).toMatchObject({ error: "buffer_overflow" });
     expect(signal.aborted).toBe(true);
     expect(bus.getStatus("c1")).toBe("error");
     expect(bus.isActive("c1")).toBe(false);
@@ -146,9 +146,7 @@ describe("RunBus", () => {
     expect(bus.getStatus("c1")).toBe("error");
     const buffered = bus.bufferedSince("c1", 0);
     expect(buffered[buffered.length - 1]?.type).toBe("error");
-    expect((buffered[buffered.length - 1]?.data as { error: string }).error).toBe(
-      "buffer_overflow",
-    );
+    expect(buffered[buffered.length - 1]?.data).toMatchObject({ error: "buffer_overflow" });
   });
 
   it("evict(id, signal) drops only the run that owns that signal", () => {

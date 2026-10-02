@@ -76,7 +76,7 @@ describe("loadInstanceConfig", () => {
       clientId: "client_123",
       organizationId: "org_789",
     });
-    expect((result?.auth as { redirectUri?: string }).redirectUri).toBeUndefined();
+    expect((result?.auth as { redirectUri?: string } | undefined)?.redirectUri).toBeUndefined();
   });
 
   test("rejects workos auth with a non-string redirectUri", async () => {

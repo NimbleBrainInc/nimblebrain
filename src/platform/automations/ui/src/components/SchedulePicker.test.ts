@@ -99,19 +99,16 @@ describe("switching a cron-mode schedule to a structured mode", () => {
   // Classification alone is not enough: `parseTime` seeds the time input for
   // every spec, so an unrepresentable field reaches `emit` through state even
   // when the expression is displayed in `cron` mode.
-  test.each([
-    "0 12,17 * * 1-5",
-    "*/15 * * * *",
-    "0 9-17 * * *",
-    "15,45 * * * *",
-    "* * * * *",
-  ])("produces a valid expression from %s", (expression) => {
-    for (const mode of ["daily", "weekly"] as const) {
-      const out = switchTo(mode, cron(expression));
-      expect(out, `${mode} from ${expression}`).not.toContain("NaN");
-      expect(out, `${mode} from ${expression}`).toMatch(/^\d+ \d+ \* \* \S+$/);
-    }
-  });
+  test.each(["0 12,17 * * 1-5", "*/15 * * * *", "0 9-17 * * *", "15,45 * * * *", "* * * * *"])(
+    "produces a valid expression from %s",
+    (expression) => {
+      for (const mode of ["daily", "weekly"] as const) {
+        const out = switchTo(mode, cron(expression));
+        expect(out, `${mode} from ${expression}`).not.toContain("NaN");
+        expect(out, `${mode} from ${expression}`).toMatch(/^\d+ \d+ \* \* \S+$/);
+      }
+    },
+  );
 
   test("a six-field expression seeds the default, not a shifted time", () => {
     // The server's cron library accepts the seconds form, and these helpers read

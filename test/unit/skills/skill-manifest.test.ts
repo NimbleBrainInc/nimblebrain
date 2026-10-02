@@ -82,21 +82,19 @@ describe("validateFrontmatter", () => {
     expect(r.ok).toBe(false);
   });
 
-  test.each([
-    ["chat"],
-    ["admin"],
-    ["connector"],
-    ["import"],
-  ])("accepts a legitimate on-disk provenance origin: %s", (origin) => {
-    const r = validateFrontmatter({
-      name: "authored",
-      description: "x",
-      metadata: {
-        nimblebrain: { "loading-strategy": "dynamic", provenance: { origin } },
-      },
-    });
-    expect(r.ok).toBe(true);
-  });
+  test.each([["chat"], ["admin"], ["connector"], ["import"]])(
+    "accepts a legitimate on-disk provenance origin: %s",
+    (origin) => {
+      const r = validateFrontmatter({
+        name: "authored",
+        description: "x",
+        metadata: {
+          nimblebrain: { "loading-strategy": "dynamic", provenance: { origin } },
+        },
+      });
+      expect(r.ok).toBe(true);
+    },
+  );
 
   test("surfaces error paths for fail-soft logging", () => {
     const r = validateFrontmatter({ name: "Bad", description: "x" });

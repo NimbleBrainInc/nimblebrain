@@ -427,7 +427,7 @@ async function handleDelete(
     const data = { deleted: true, workspaceId, connectors };
     return {
       content: textContent(
-        `Deleted workspace ${workspaceId}.` + describeConnectorTeardown(connectors.length, failed),
+        `Deleted workspace ${workspaceId}.${describeConnectorTeardown(connectors.length, failed)}`,
       ),
       structuredContent: data,
       isError: false,

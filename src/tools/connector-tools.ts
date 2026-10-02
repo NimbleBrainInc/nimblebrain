@@ -1944,7 +1944,7 @@ async function validateRemoteOAuthInstall(
   }
   if (action.auth === "provider") {
     const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
-    if (!trusted || trusted.auth !== "provider" || !trusted.providerAuth) {
+    if (trusted?.auth !== "provider" || !trusted.providerAuth) {
       return {
         error: `"${entry.name}" is not a recognized platform connector — refusing a provider-auth install from an unverified entry.`,
       };
@@ -2585,7 +2585,7 @@ async function handleUninstall(
   const { secrets } = outcome;
   return {
     content: textContent(
-      `Uninstalled "${serverName}" from workspace.` + describeSecretOutcome(secrets, retainedKeys),
+      `Uninstalled "${serverName}" from workspace.${describeSecretOutcome(secrets, retainedKeys)}`,
     ),
     structuredContent: {
       ok: true,

@@ -59,50 +59,50 @@ const post = (route: string, body: Record<string, unknown>) =>
 // Both chat doors reach the same gate, so both must report it the same way —
 // `chat/start` is the route the web client uses, and a private copy of the
 // error mapping there would answer 500 for this class.
-describe.each([
-  ["chat"],
-  ["chat/start"],
-])("/v1/workspaces/:wsId/%s refuses a disallowed model", (route) => {
-  it("answers 400 model_not_allowed, naming the model and the configured providers", async () => {
-    const res = await post(route, { message: "hi", model: REFUSED });
-    expect(res.status).toBe(400);
+describe.each([["chat"], ["chat/start"]])(
+  "/v1/workspaces/:wsId/%s refuses a disallowed model",
+  (route) => {
+    it("answers 400 model_not_allowed, naming the model and the configured providers", async () => {
+      const res = await post(route, { message: "hi", model: REFUSED });
+      expect(res.status).toBe(400);
 
-    const body = await readJson<ModelNotAllowedBody>(res);
-    expect(body.error).toBe("model_not_allowed");
-    expect(body.details?.model).toBe(REFUSED);
-    expect(body.details?.configuredProviders).toContain("anthropic");
-  });
+      const body = await readJson<ModelNotAllowedBody>(res);
+      expect(body.error).toBe("model_not_allowed");
+      expect(body.details?.model).toBe(REFUSED);
+      expect(body.details?.configuredProviders).toContain("anthropic");
+    });
 
-  it("does not answer 400 for a model on the allowlist", async () => {
-    const res = await post(route, { message: "hi", model: ALLOWED });
-    expect(res.status).not.toBe(400);
-  });
-});
+    it("does not answer 400 for a model on the allowlist", async () => {
+      const res = await post(route, { message: "hi", model: ALLOWED });
+      expect(res.status).not.toBe(400);
+    });
+  },
+);
 
 // The gate skips a resume, because the pin wins and the request's model is
 // discarded. Both doors build their create options lazily to get that, and
 // both need holding: `chat` and `chat/start` reach it through different
 // methods, so a test on one leaves the other free to regress.
-describe.each([
-  ["chat"],
-  ["chat/start"],
-])("/v1/workspaces/:wsId/%s resumes a pinned conversation without gating the request model", (route) => {
-  it("does not answer model_not_allowed", async () => {
-    const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_OWNER);
-    const { id } = await store.create({
-      ownerId: DEV_OWNER,
-      workspaceId: TEST_WORKSPACE_ID,
-      model: ALLOWED,
+describe.each([["chat"], ["chat/start"]])(
+  "/v1/workspaces/:wsId/%s resumes a pinned conversation without gating the request model",
+  (route) => {
+    it("does not answer model_not_allowed", async () => {
+      const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_OWNER);
+      const { id } = await store.create({
+        ownerId: DEV_OWNER,
+        workspaceId: TEST_WORKSPACE_ID,
+        model: ALLOWED,
+      });
+
+      const res = await post(route, { message: "again", conversationId: id, model: REFUSED });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+
+      expect(body.error).not.toBe("model_not_allowed");
+      // Not a vacuous pass: the resume has to actually reach the turn, so an
+      // ownership or lookup refusal would be a different bug wearing the same
+      // green.
+      expect(res.status).not.toBe(403);
+      expect(res.status).not.toBe(404);
     });
-
-    const res = await post(route, { message: "again", conversationId: id, model: REFUSED });
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-
-    expect(body.error).not.toBe("model_not_allowed");
-    // Not a vacuous pass: the resume has to actually reach the turn, so an
-    // ownership or lookup refusal would be a different bug wearing the same
-    // green.
-    expect(res.status).not.toBe(403);
-    expect(res.status).not.toBe(404);
-  });
-});
+  },
+);

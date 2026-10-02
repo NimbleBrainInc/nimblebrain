@@ -9,22 +9,26 @@
  *
  * The renderer normally runs in an app iframe (where `window` and
  * `document` exist). Bun's unit test environment doesn't ship a DOM,
- * so we install happy-dom globals BEFORE importing the module — both
+ * so we install jsdom globals BEFORE importing the module — both
  * DOMPurify's import-time bootstrap and marked's renderer instantiation
  * need a live `window`. The dynamic import below is the seam that lets
  * the setup run first.
+ *
+ * jsdom, not happy-dom: a sanitizer test is only as good as its HTML
+ * parser, and happy-dom's diverges from the spec enough that DOMPurify
+ * both keeps `<script>` and drops allowed tags under it.
  */
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { Window } from "happy-dom";
+import { JSDOM } from "jsdom";
 
 let renderMarkdown: (text: string) => string;
 
 beforeAll(async () => {
-  const window = new Window({ url: "http://localhost" });
+  const { window } = new JSDOM("", { url: "http://localhost" });
   // Minimum globals DOMPurify needs to construct its hook tree at
-  // import time. Loosely typed because happy-dom's surface is wider
-  // than the lib.dom subset Bun ships.
+  // import time. Loosely typed because jsdom's window type differs
+  // from the lib.dom subset Bun ships.
   // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
   (globalThis as any).window = window;
   // biome-ignore lint/suspicious/noExplicitAny: test-only DOM shim
@@ -52,15 +56,13 @@ describe("renderMarkdown — sanitization contract", () => {
     expect(html).not.toMatch(/onload/i);
   });
 
-  test("strips <iframe>", () => {
-    // happy-dom's HTML parser leaves some void/legacy embed elements
-    // (`<object>`, `<embed>`) in place even with a strict ALLOWED_TAGS
-    // allowlist — a known parser limitation, NOT a production gap. The
-    // real browser DOM that the app runs against enforces the
-    // allowlist faithfully. `<iframe>` is the one parsers handle
-    // uniformly, so we use it as the canary for the allowlist.
-    const html = renderMarkdown('<iframe src="evil"></iframe>OK');
+  test("strips <iframe>, <object> and <embed>", () => {
+    const html = renderMarkdown(
+      '<iframe src="evil"></iframe><object data="evil"></object><embed src="evil">OK',
+    );
     expect(html).not.toMatch(/<iframe/i);
+    expect(html).not.toMatch(/<object/i);
+    expect(html).not.toMatch(/<embed/i);
   });
 
   test("strips javascript: URLs", () => {

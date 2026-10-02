@@ -72,7 +72,7 @@ async function list(): Promise<Array<{ id: string; active?: boolean }>> {
     () => source.execute("list", {}),
   );
   const first = result.content[0];
-  if (!first || first.type !== "text") throw new Error("expected a text block");
+  if (first?.type !== "text") throw new Error("expected a text block");
   return (JSON.parse(first.text) as { conversations: Array<{ id: string; active?: boolean }> })
     .conversations;
 }

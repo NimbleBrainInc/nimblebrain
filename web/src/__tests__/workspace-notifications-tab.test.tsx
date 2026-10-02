@@ -258,7 +258,8 @@ describe("saving routes", () => {
     await click(buttonLabelled(container, "Save routes"));
 
     const write = calls.find((c) => c.tool === "set_routes");
-    const sent = (write?.args.routes as Array<Record<string, unknown>>)[0];
+    if (!write) throw new Error("Save routes sent no set_routes call");
+    const sent = (write.args.routes as Array<Record<string, unknown>>)[0];
     expect(sent).toEqual({
       id: "rt_1",
       match: { source: "acme" },

@@ -61,7 +61,7 @@ export async function collectPollTargets(
   const targets: PollTarget[] = [];
   for (const instance of lifecycle.getInstances()) {
     const connection = instance.connections?.get(WORKSPACE_PRINCIPAL_ID);
-    if (!connection || connection.state !== "running") continue;
+    if (connection?.state !== "running") continue;
     const source = lifecycle.connectionSource(instance.serverName, instance.wsId);
     if (!source) continue;
     const declaration = await resolve(instance.serverName);

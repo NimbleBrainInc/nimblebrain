@@ -815,7 +815,7 @@ describe("ai.nimblebrain/request-file", () => {
     );
 
     expect(uploaded).toBe(false);
-    expect((reply.error?.data as { errors: string[] }).errors).toHaveLength(1);
+    expect(reply.error?.data).toMatchObject({ errors: [expect.any(String)] });
   });
 
   test("an app that sends no maxSize is held to the host's per-file limit", async () => {
@@ -832,9 +832,9 @@ describe("ai.nimblebrain/request-file", () => {
     );
 
     expect(uploaded).toBe(false);
-    expect((reply.error?.data as { errors: string[] }).errors).toEqual([
-      'File "big.bin" exceeds maximum size of 1.0 KB',
-    ]);
+    expect(reply.error?.data).toMatchObject({
+      errors: ['File "big.bin" exceeds maximum size of 1.0 KB'],
+    });
   });
 
   test("an app that sends no maxSize may pick up to a host limit above 25 MB", async () => {

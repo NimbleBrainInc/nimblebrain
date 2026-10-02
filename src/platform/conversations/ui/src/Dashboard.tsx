@@ -99,7 +99,6 @@ export function Dashboard() {
   // `workspaceId` is a CHANGE SIGNAL only; it is never sent to the server (see
   // `loadList`), so the first load is correctly scoped even on the render
   // before the host-context handshake resolves and this is still `undefined`.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is a refetch trigger, not an input to loadList; view/searchQuery are read at fire time
   useEffect(() => {
     // A switch to a different workspace also drops any open search: results are
     // snippets from the workspace we just left, and leaving them on screen is

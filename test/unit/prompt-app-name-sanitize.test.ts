@@ -93,15 +93,13 @@ describe("hostMetaToUiMeta bounds connector-authored display strings", () => {
   // (killing every entry, since `catalogEntries` has no per-entry try/catch), and
   // an array — which has its own `.slice` — survived projection to throw later
   // inside `sanitizeLineField` on the prompt path.
-  test.each([
-    [123],
-    [true],
-    [{ a: 1 }],
-    [["x"]],
-  ])("a truthy non-string name yields null rather than throwing: %p", (name) => {
-    expect(() => hostMetaToUiMeta({ name } as never)).not.toThrow();
-    expect(hostMetaToUiMeta({ name } as never)).toBeNull();
-  });
+  test.each([[123], [true], [{ a: 1 }], [["x"]]])(
+    "a truthy non-string name yields null rather than throwing: %p",
+    (name) => {
+      expect(() => hostMetaToUiMeta({ name } as never)).not.toThrow();
+      expect(hostMetaToUiMeta({ name } as never)).toBeNull();
+    },
+  );
 
   test("a non-string icon degrades to empty rather than throwing", () => {
     expect(() =>
@@ -125,16 +123,14 @@ describe("the prompt path tolerates a malformed persisted ui.name", () => {
   // guard never sees. Before `sanitizeLineField` coerced, these threw inside
   // `composeSystemPrompt`, i.e. every turn in the affected workspace; on the
   // pre-guard code they rendered inertly because the template stringified them.
-  test.each([
-    [123],
-    [true],
-    [{ a: 1 }],
-    [["x"]],
-  ])("a non-string ui.name renders instead of throwing: %p", (name) => {
-    const run = () => promptWith([{ name: "app", ui: { name } as never }]);
-    expect(run).not.toThrow();
-    expect(appBullets(run())).toHaveLength(1);
-  });
+  test.each([[123], [true], [{ a: 1 }], [["x"]]])(
+    "a non-string ui.name renders instead of throwing: %p",
+    (name) => {
+      const run = () => promptWith([{ name: "app", ui: { name } as never }]);
+      expect(run).not.toThrow();
+      expect(appBullets(run())).toHaveLength(1);
+    },
+  );
 
   test("a non-string app.name renders instead of throwing", () => {
     const run = () => promptWith([{ name: 123 as never, ui: null }]);

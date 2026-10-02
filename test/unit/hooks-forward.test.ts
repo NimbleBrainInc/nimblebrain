@@ -50,28 +50,23 @@ describe("what survives the forward", () => {
     expect(build({ [name]: "forged" }).get(name)).toBeNull();
   });
 
-  test.each([
-    "traceparent",
-    "tracestate",
-    "host",
-    "connection",
-    "transfer-encoding",
-  ])("an inbound %s is dropped as a hop header", (name) => {
-    expect(build({ [name]: "x" }).get(name)).toBeNull();
-  });
+  test.each(["traceparent", "tracestate", "host", "connection", "transfer-encoding"])(
+    "an inbound %s is dropped as a hop header",
+    (name) => {
+      expect(build({ [name]: "x" }).get(name)).toBeNull();
+    },
+  );
 
-  test.each([
-    "x-nb-hook-kid",
-    "x-nb-anything",
-    "x-nb-",
-    "X-NB-Upper",
-  ])("an inbound %s is stripped by the reserved-namespace rule", (name) => {
-    // `x-nb-*` is reserved: only the edge may place a header there, and it
-    // strips the whole prefix because it cannot tell a stamped member from a
-    // forged one. The runtime sits AHEAD of the edge, so the rule is only
-    // true if this hop refuses to pass one through too.
-    expect(build({ [name]: "forged" }).get(name)).toBeNull();
-  });
+  test.each(["x-nb-hook-kid", "x-nb-anything", "x-nb-", "X-NB-Upper"])(
+    "an inbound %s is stripped by the reserved-namespace rule",
+    (name) => {
+      // `x-nb-*` is reserved: only the edge may place a header there, and it
+      // strips the whole prefix because it cannot tell a stamped member from a
+      // forged one. The runtime sits AHEAD of the edge, so the rule is only
+      // true if this hop refuses to pass one through too.
+      expect(build({ [name]: "forged" }).get(name)).toBeNull();
+    },
+  );
 });
 
 describe("the kid does not travel", () => {

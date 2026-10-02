@@ -5867,7 +5867,7 @@ function prependRuntimeContextToLastUserMessage(
 ): boolean {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (!m || m.role !== "user") continue;
+    if (m?.role !== "user") continue;
     const headPart: LanguageModelV4TextPart = { type: "text", text: volatileHead };
     messages[i] = { ...m, content: [headPart, ...m.content] };
     return true;

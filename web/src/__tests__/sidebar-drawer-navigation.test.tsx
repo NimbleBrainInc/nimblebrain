@@ -67,7 +67,6 @@ function DrawerProbe({ openOnMount }: { openOnMount: boolean }) {
   probe.setDrawerOpen = setDrawerOpen;
   probe.navigate = useNavigate();
   probe.path = `${location.pathname}${location.search}`;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on mount
   React.useEffect(() => {
     if (openOnMount) setDrawerOpen(true);
   }, []);

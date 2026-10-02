@@ -41,16 +41,17 @@ describe("parseNotificationsDeclaration", () => {
     });
   });
 
-  test.each([
-    ...RESERVED_RESOURCE_SCHEMES,
-  ])("refuses an outbox declared under the reserved %s:// scheme", (scheme) => {
-    // One resource cannot mean two things to the same reader: the runtime
-    // would poll it as an outbox and resolve it as a skill / app surface /
-    // overlay, and whichever won would be an accident of ordering.
-    expect(
-      parseNotificationsDeclaration(metaWith({ resource: `${scheme}://acme/notifications` })),
-    ).toBeUndefined();
-  });
+  test.each([...RESERVED_RESOURCE_SCHEMES])(
+    "refuses an outbox declared under the reserved %s:// scheme",
+    (scheme) => {
+      // One resource cannot mean two things to the same reader: the runtime
+      // would poll it as an outbox and resolve it as a skill / app surface /
+      // overlay, and whichever won would be an accident of ordering.
+      expect(
+        parseNotificationsDeclaration(metaWith({ resource: `${scheme}://acme/notifications` })),
+      ).toBeUndefined();
+    },
+  );
 
   test("a bare string with no scheme is not a reserved one", () => {
     // `indexOf(":")` is -1 with no colon and `slice(0, -1)` would drop the last

@@ -98,7 +98,7 @@ async function callFilesTool(
 function extractStructured(body: unknown): unknown {
   const result = body as { content?: { type: string; text?: string }[] };
   const first = result.content?.[0];
-  if (!first || first.type !== "text" || !first.text) {
+  if (first?.type !== "text" || !first.text) {
     throw new Error(`unexpected tool-call body: ${JSON.stringify(body)}`);
   }
   return JSON.parse(first.text);

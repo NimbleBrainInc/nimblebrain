@@ -646,7 +646,7 @@ export class RouteDispatcher {
     // exists would deliver a message the stored rule does not ask for.
     const slot = route.deliver[entry.index];
     const target = slot ? resolveTarget(slot, entry.index) : undefined;
-    if (!target || target.kind !== "tool" || target.name !== entry.target) {
+    if (target?.kind !== "tool" || target.name !== entry.target) {
       this.#closeAbandoned(entry, item, "the route no longer delivers to this target");
       return;
     }

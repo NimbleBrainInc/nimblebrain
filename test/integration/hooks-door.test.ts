@@ -248,7 +248,9 @@ describe("a legitimate delivery", () => {
       headers: { cookie: "nb_session=user-session; nb_oauth_state=abc" },
     });
     expect(forwarded).toHaveLength(1);
-    expect((forwarded[0]?.init.headers as Headers).get("cookie")).toBeNull();
+    const [call] = forwarded;
+    if (!call) throw new Error("expected one forwarded request");
+    expect((call.init.headers as Headers).get("cookie")).toBeNull();
   });
 });
 
@@ -435,23 +437,21 @@ describe("every way a delivery is refused looks the same", () => {
 });
 
 describe("shape and size", () => {
-  test.each([
-    "GET",
-    "PUT",
-    "DELETE",
-    "PATCH",
-  ])("%s is refused with 405, not 404", async (method) => {
-    // 405 for a single-segment path under the prefix whatever the segment is,
-    // so the difference between "405 here" and "404 there" cannot map out which
-    // ids exist. A path of another shape 404s at the router, which reveals only
-    // the route table.
-    const res = await deliver(makeApp(), hookUrl("whatever"), {
-      method,
-      body: undefined,
-    });
-    expect(res.status).toBe(405);
-    expect(res.headers.get("Allow")).toBe("POST");
-  });
+  test.each(["GET", "PUT", "DELETE", "PATCH"])(
+    "%s is refused with 405, not 404",
+    async (method) => {
+      // 405 for a single-segment path under the prefix whatever the segment is,
+      // so the difference between "405 here" and "404 there" cannot map out which
+      // ids exist. A path of another shape 404s at the router, which reveals only
+      // the route table.
+      const res = await deliver(makeApp(), hookUrl("whatever"), {
+        method,
+        body: undefined,
+      });
+      expect(res.status).toBe(405);
+      expect(res.headers.get("Allow")).toBe("POST");
+    },
+  );
 
   test("a body over the cap is refused with 413 before the token is opened", async () => {
     const res = await deliver(makeApp(), hookUrl(), {
