@@ -18,6 +18,8 @@ interface Props {
   onSearchInput: (value: string) => void;
   onClearSearch: () => void;
   onUpload: () => void;
+  /** Show the view's own title. Off when the host shows the title. */
+  showTitle: boolean;
 }
 
 export function Header({
@@ -35,6 +37,7 @@ export function Header({
   onSearchInput,
   onClearSearch,
   onUpload,
+  showTitle,
 }: Props) {
   // For pill counts, scope to the tag-filtered set so the numbers reflect
   // what the user would see if they clicked. Mirrors the original logic.
@@ -47,7 +50,7 @@ export function Header({
       <div className="header">
         <div className="header-top">
           <div>
-            <div className="header-title">Files</div>
+            {showTitle && <div className="header-title">Files</div>}
             {!loading && totalCount > 0 && (
               <div className="header-lede">
                 {totalCount} file{totalCount === 1 ? "" : "s"} in workspace

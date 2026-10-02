@@ -5,7 +5,7 @@ description: NimbleBrain's ext-apps host implementation — the JSON-RPC protoco
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. Where the spec has no method for something the shell needs, NimbleBrain adds an [`ai.nimblebrain/` extension](/extensions/overview/#between-an-app-view-and-the-host): semantic actions, a file picker, and keyboard forwarding.
+The MCP App Bridge is NimbleBrain's implementation of the [ext-apps specification (2026-01-26)](https://apps.extensions.modelcontextprotocol.io/api/) — the standard protocol that enables [MCP Apps](/concepts/mcp-apps) to render inside host applications with bidirectional tool access. Where the spec has no method for something the shell needs, NimbleBrain adds an [`ai.nimblebrain/` extension](/extensions/overview/#between-an-app-view-and-the-host): semantic actions, a file picker, keyboard forwarding, and the app's location for the top bar.
 
 All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 
@@ -68,6 +68,8 @@ These have no spec equivalent. Each name is both the method and the identifier t
 | `ai.nimblebrain/action` | App → Host | Request a semantic action from the shell. |
 | `ai.nimblebrain/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#ainimblebrainrequest-file). |
 | `ai.nimblebrain/keydown` | App → Host | Forward keyboard shortcuts to the host. |
+| `ai.nimblebrain/location` | App → Host | Report the app's trail, root first, so the shell's top bar shows its title and a back control. See [below](#ainimblebrainlocation). |
+| `ai.nimblebrain/navigate` | Host → App | Go to one of the trail entries the app sent, when the user picks back. |
 
 ## Initialization handshake
 
@@ -112,7 +114,8 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
         "io.modelcontextprotocol/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
         "ai.nimblebrain/action": {},
         "ai.nimblebrain/request-file": {},
-        "ai.nimblebrain/keydown": {}
+        "ai.nimblebrain/keydown": {},
+        "ai.nimblebrain/location": {}
       }
     },
     "hostContext": {
@@ -632,6 +635,46 @@ Forward a keyboard shortcut to the shell. An iframe that has focus receives ever
 ```
 
 It is a notification and takes no answer. With `@nimblebrain/synapse`, pass `forwardKeys` to `connect()` to forward shortcuts, and the SDK sends only when the host declared `experimental["ai.nimblebrain/keydown"]`.
+
+### `ai.nimblebrain/location`
+
+Tell the shell where the app is, so its top bar shows the current view's title and, below the app's root, a back control. A sandboxed iframe's URL and history are invisible to the host, so only the app can say this. Send the **whole trail**, root first, on every navigation inside the app:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ai.nimblebrain/location",
+  "params": {
+    "trail": [
+      { "id": "people", "label": "People" },
+      { "id": "contact/dh-123", "label": "Dan Hoover" }
+    ]
+  }
+}
+```
+
+- **Each message replaces the last.** The host keeps no history of its own, so a message that never arrived corrects itself on the next, and a deep link straight to a detail view needs nothing special.
+- **`id` is the view's stable address.** Use the MCP resource URI of what the view shows when there is one (`people://contacts/123`), otherwise a path-like address of your own (`contacts/123`), never a value that changes between visits such as a list index. The host does not parse it; it hands it back in `ai.nimblebrain/navigate`, and the same address lets anything that knows the resource, such as the agent, open that view.
+- **`label`** is what the bar shows: 1 to 200 characters. A trail holds 1 to 32 entries. A message outside these bounds is dropped.
+- **Depth is the trail's length.** The bar shows the last entry's label, and when the trail has more than one entry, a back control that goes to the entry before it. Back moves up the app's structure, not through browser history.
+
+It is a notification and takes no answer. The host declares it as `experimental["ai.nimblebrain/location"]`, and the declaration also means **the host shows your title**: drop your view's own title and back link when it is present, and keep them on a host without it.
+
+A view that sends nothing still gets a title: the bar shows the name of the sidebar entry that opened it, with no back control.
+
+### `ai.nimblebrain/navigate`
+
+Sent by the host when the user picks back, naming the trail entry to go to by the `id` your last `ai.nimblebrain/location` gave it:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ai.nimblebrain/navigate",
+  "params": { "id": "people" }
+}
+```
+
+Navigate there, then send the new trail. The host sends it only to an app that has sent a trail, so it needs no declaration of its own.
 
 ## Security model
 

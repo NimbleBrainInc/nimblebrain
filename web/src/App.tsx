@@ -18,6 +18,7 @@ import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
 import { WorkspaceRouteGuard } from "./components/WorkspaceRouteGuard";
+import { AppLocationProvider } from "./context/AppLocationContext";
 import { ArtifactPanelProvider } from "./context/ArtifactPanelContext";
 import { ChatProvider, useChatConfigContext } from "./context/ChatContext";
 import { ChatPanelProvider, useChatPanelContext } from "./context/ChatPanelContext";
@@ -222,14 +223,16 @@ function BootstrappedShell({
               <ArtifactPanelProvider>
                 <PaletteProvider>
                   <FocusedAppProvider>
-                    <AuthenticatedAppContent
-                      token={token}
-                      forSlot={forSlot}
-                      mainRoutes={mainRoutes}
-                      shellWorkspaceId={shellWorkspaceId}
-                      refreshShell={refreshShell}
-                      onLogout={onLogout}
-                    />
+                    <AppLocationProvider>
+                      <AuthenticatedAppContent
+                        token={token}
+                        forSlot={forSlot}
+                        mainRoutes={mainRoutes}
+                        shellWorkspaceId={shellWorkspaceId}
+                        refreshShell={refreshShell}
+                        onLogout={onLogout}
+                      />
+                    </AppLocationProvider>
                   </FocusedAppProvider>
                 </PaletteProvider>
               </ArtifactPanelProvider>

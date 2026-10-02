@@ -13,7 +13,7 @@ import { useShellContext } from "../context/ShellContext";
 import { LEVEL_RANK } from "../lib/notification-levels";
 import { resolveNotificationLink } from "../lib/notification-link";
 import { cn } from "../lib/utils";
-import { EmptyState, InlineError, SettingsPageHeader } from "./settings/components";
+import { EmptyState, InlineError } from "./settings/components";
 
 /**
  * The inbox — what this workspace's connectors recorded without being asked.
@@ -103,17 +103,19 @@ export function NotificationsPage() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto p-6 space-y-6">
-        <SettingsPageHeader
-          title="Inbox"
-          description="Facts this workspace's connectors recorded without being asked — a domain went active, a reply landed. Everything here is content a connector wrote, not something the platform concluded."
-          action={
-            unread > 0 ? (
-              <Button variant="outline" size="sm" onClick={() => void markAllRead()}>
-                Mark all read
-              </Button>
-            ) : null
-          }
-        />
+        {/* The top bar names the page; this says what it holds. */}
+        <div className="flex items-start justify-between gap-4">
+          <p className="text-sm text-muted-foreground">
+            Facts this workspace's connectors recorded without being asked — a domain went active, a
+            reply landed. Everything here is content a connector wrote, not something the platform
+            concluded.
+          </p>
+          {unread > 0 && (
+            <Button variant="outline" size="sm" onClick={() => void markAllRead()}>
+              Mark all read
+            </Button>
+          )}
+        </div>
 
         {error ? <InlineError message={error} /> : null}
 
