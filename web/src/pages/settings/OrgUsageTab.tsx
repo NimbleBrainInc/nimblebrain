@@ -2,7 +2,12 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { UsageBreakdownEntry } from "../../_generated/platform-schemas/usage";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
-import { type ChartSeries, CostChart, type DayData } from "../../components/charts/CostChart";
+import {
+  type ChartSeries,
+  CostChart,
+  type DayData,
+  OVERFLOW_COLOR,
+} from "../../components/charts/CostChart";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
@@ -131,6 +136,10 @@ export function OrgUsageTab() {
     groupBy: "model",
   }));
   const [report, setReport] = useState<UsageReport | null>(null);
+  // The dimension `report` was fetched for. The body renders by this, not by
+  // the filter: a refetch keeps the last report on screen, and its breakdowns
+  // and day stacks are keyed by the dimension it was asked for.
+  const [reportGroupBy, setReportGroupBy] = useState<UsageDimension>("model");
   const [labels, setLabels] = useState<UsageLabels>({ users: new Map(), workspaces: new Map() });
   // The model list the filter offers. Taken from a report with no model
   // filter, so choosing a model does not shrink the list to that one model.
@@ -178,6 +187,7 @@ export function OrgUsageTab() {
         if (seq !== requestSeq.current) return;
         const next = parseToolResult<UsageReport>(res);
         setReport(next);
+        setReportGroupBy(args.stackBy);
         if (args.model === undefined) setModels(next.models.map((m) => m.model));
       })
       .catch((err: unknown) => {
@@ -203,7 +213,7 @@ export function OrgUsageTab() {
       loadingMessage="Loading usage data..."
       loadError={error}
     >
-      {report ? <OrgUsageBody report={report} labels={labels} groupBy={filters.groupBy} /> : null}
+      {report ? <OrgUsageBody report={report} labels={labels} groupBy={reportGroupBy} /> : null}
     </SettingsDashboardPage>
   );
 }
@@ -352,11 +362,13 @@ function FilterField({ label, id, children }: { label: string; id: string; child
 }
 
 /**
- * The chart's series for a dimension: the costliest keys each get a colour,
- * and any beyond {@link MAX_SERIES} fold into one "Other" so the legend stays
- * readable and no spend drops out of the bars.
+ * The chart's series for a dimension: the costliest keys each get a colour.
+ * Past {@link MAX_SERIES} keys, the top `MAX_SERIES - 1` keep theirs and the
+ * rest fold into one muted "Other", so the legend stays readable and no spend
+ * drops out of the bars. Exported for the test in
+ * web/src/__tests__/usage-totals-cards.test.tsx.
  */
-function seriesFor(
+export function seriesFor(
   dimension: UsageDimension,
   rows: UsageBreakdownEntry[],
   labels: UsageLabels,
@@ -373,6 +385,7 @@ function seriesFor(
     series.push({
       key: "__other__",
       label: "Other",
+      color: OVERFLOW_COLOR,
       value: (d: DayData) =>
         Object.entries(d.stack ?? {})
           .filter(([k]) => !namedKeys.has(k))

@@ -22,6 +22,8 @@ export interface ChartSeries {
   key: string;
   label: string;
   value: (d: DayData) => number;
+  /** Overrides the colour its position would assign, e.g. a muted "Other". */
+  color?: string;
 }
 
 interface CostChartProps {
@@ -41,8 +43,8 @@ const SERIES_COLORS = [
   "var(--chart-4)",
   "var(--chart-5)",
 ];
-/** Every series past the palette shares the muted tone; callers fold them into one "Other". */
-const OVERFLOW_COLOR = "var(--muted-foreground)";
+/** The muted tone for a remainder series ("Other"), and for any series past the palette. */
+export const OVERFLOW_COLOR = "var(--muted-foreground)";
 
 const COST_BUCKET_SERIES: ChartSeries[] = [
   { key: "input", label: "Input", value: (d) => d.cost.input },
@@ -91,7 +93,7 @@ export function CostChart({ data, series = COST_BUCKET_SERIES }: CostChartProps)
 
   const segments = series.map((s, i) => ({
     ...s,
-    color: SERIES_COLORS[i] ?? OVERFLOW_COLOR,
+    color: s.color ?? SERIES_COLORS[i] ?? OVERFLOW_COLOR,
   }));
   const labelEvery = Math.ceil(data.length / MAX_X_LABELS);
 

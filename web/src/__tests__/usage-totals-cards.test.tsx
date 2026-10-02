@@ -39,9 +39,10 @@ const { act } = await import("react");
 const { UsageTotalsCards, StatCard, resolveRangePreset } = await import(
   "../pages/settings/usage-shared"
 );
-const { OrgUsageBody, UsageFilterBar, reportArgs, rangeFor, labelFor } = await import(
+const { OrgUsageBody, UsageFilterBar, reportArgs, rangeFor, labelFor, seriesFor } = await import(
   "../pages/settings/OrgUsageTab"
 );
+const { OVERFLOW_COLOR } = await import("../components/charts/CostChart");
 type UsageFilterState = Parameters<typeof UsageFilterBar>[0]["filters"];
 const NO_LABELS = { users: new Map(), workspaces: new Map() };
 interface Mounted {
@@ -290,6 +291,34 @@ describe("the table follows the group-by dimension", () => {
     });
     expect(labelFor("workspace", "none", labels).name).toBe("No workspace");
     expect(labelFor("origin", "task", labels).name).toBe("Automation");
+  });
+});
+
+describe("the chart stacks the costliest keys and folds the rest", () => {
+  const day = {
+    key: "2026-05-01",
+    cost: { ...ZERO_COST, total: 21 },
+    llmCalls: 6,
+    stack: { a: 6, b: 5, c: 4, d: 3, e: 2, f: 1 },
+  };
+  const rows = (keys: string[]) =>
+    keys.map((k) => originRow(k, { cost: { ...ZERO_COST, total: day.stack[k as "a"] } }));
+
+  test("up to five keys each get their own series", () => {
+    const series = seriesFor("model", rows(["e", "a", "c", "b", "d"]), NO_LABELS);
+    expect(series.map((s) => s.key)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(series.some((s) => s.color !== undefined)).toBe(false);
+  });
+
+  test("past five, the top four stay and a muted Other carries the rest", () => {
+    const series = seriesFor("model", rows(["f", "e", "a", "c", "b", "d"]), NO_LABELS);
+    expect(series.map((s) => s.key)).toEqual(["a", "b", "c", "d", "__other__"]);
+    const other = series[4]!;
+    expect(other.label).toBe("Other");
+    expect(other.color).toBe(OVERFLOW_COLOR);
+    // e + f: no spend drops out of the bar.
+    expect(other.value(day)).toBe(3);
+    expect(series.reduce((sum, s) => sum + s.value(day), 0)).toBe(day.cost.total);
   });
 });
 
