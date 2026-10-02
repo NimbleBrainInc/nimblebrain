@@ -125,7 +125,8 @@ type DetailRow = [label: string, value: string];
  * is `invisible` rather than unmounted, so the card is always as large as the
  * larger face: opening it changes what it shows, never its size, and the row
  * of cards does not shift. `invisible` also takes the hidden face out of the
- * accessibility tree. The toggle is a real button stretched over the card, so
+ * accessibility tree. The headline face is centered in that height, since it
+ * is shorter than the detail list. The toggle is a real button stretched over the card, so
  * the whole card is the click target while the faces stay ordinary text in
  * reading order rather than becoming the button's name.
  */
@@ -158,10 +159,10 @@ export function StatCard({
         onClick={() => setOpen((o) => !o)}
         className="absolute inset-0 z-10 cursor-pointer rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset"
       />
-      <div className="grid p-3 [grid-template-areas:'face']">
+      <div className="grid flex-1 p-3 [grid-template-areas:'face']">
         <div
           className={cn(
-            "flex flex-col [grid-area:face] motion-safe:transition-opacity",
+            "flex flex-col justify-center [grid-area:face] motion-safe:transition-opacity",
             open && "invisible opacity-0",
           )}
         >
