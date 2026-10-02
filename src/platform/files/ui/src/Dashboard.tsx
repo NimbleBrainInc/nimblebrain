@@ -17,6 +17,10 @@ const SEARCH_DEBOUNCE_MS = 300;
 
 export function Dashboard() {
   const app = useApp();
+  // The host draws this view's title in its own chrome when it declares
+  // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
+  // twice. A host without it (any other MCP Apps host) gets the view's title.
+  const hostShowsTitle = "ai.nimblebrain/location" in (app.hostCapabilities.experimental ?? {});
   const { pickFiles } = useFileUpload();
   // The host's picker enforces these; the app only states them.
   const { uploads } = useHostContext<{ uploads?: UploadLimits }>();
@@ -179,6 +183,7 @@ export function Dashboard() {
   return (
     <>
       <Header
+        showTitle={!hostShowsTitle}
         totalCount={totalCount}
         loading={loading}
         files={files}

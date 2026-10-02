@@ -16,6 +16,8 @@
 //   - publishing the focused app to `FocusedAppContext`, so the globally
 //     mounted chat panel can stamp the same `AppContext` on messages
 //     typed into the main composer (not just the in-app channel).
+//   - publishing the app's trail (`ai.nimblebrain/location`) to
+//     `AppLocationContext`, so the top bar shows its title and back control.
 //   - First-page-load chat-store restoration. `getSavedConversationId`
 //     fires once per module evaluation (= per page load) and re-attaches
 //     to the last in-flight conversation so the SSE viewer reconnects.
@@ -23,6 +25,8 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
+import type { AppTrailEntry } from "../bridge/schemas";
+import { useAppLocation } from "../context/AppLocationContext";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
@@ -61,6 +65,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
   const chat = useChatContext();
   const isMobile = useIsMobile();
   const { setFocusedApp } = useFocusedApp();
+  const { setAppLocation } = useAppLocation();
   const location = useLocation();
 
   // Collapse fullscreen when navigating to a different route
@@ -118,6 +123,14 @@ export function AppWithChat({ placement }: AppWithChatProps) {
     return () => setFocusedApp(null);
   }, [appContext, setFocusedApp]);
 
+  // The routed app's trail. Cleared on unmount, so the bar never shows a trail
+  // the app on screen did not send; a new placement mounts a new AppWithChat.
+  const handleLocation = useCallback(
+    (trail: AppTrailEntry[], navigate: (id: string) => void) => setAppLocation({ trail, navigate }),
+    [setAppLocation],
+  );
+  useEffect(() => () => setAppLocation(null), [setAppLocation]);
+
   const handleChat = useCallback(
     (message: string) => {
       if (panelState === "closed") {
@@ -139,7 +152,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
   const coveredOnMobile = isMobile && isSidebar;
 
   return (
-    <div className="relative flex h-dvh w-full overflow-hidden">
+    <div className="relative flex h-full w-full overflow-hidden">
       {/* App area. marginRight (chat panel push-over) is handled at the
           shell level on <main>; AppWithChat keeps only the iframe-specific
           styling: opacity/blur when fullscreen chat covers the iframe, and
@@ -159,7 +172,12 @@ export function AppWithChat({ placement }: AppWithChatProps) {
             : `opacity ${TRANSITION_STANDARD}, transform ${TRANSITION_STANDARD}, filter ${TRANSITION_STANDARD}`,
         }}
       >
-        <SlotRenderer placements={[placement]} className="w-full h-full" onChat={handleChat} />
+        <SlotRenderer
+          placements={[placement]}
+          className="w-full h-full"
+          onChat={handleChat}
+          onLocation={handleLocation}
+        />
       </div>
     </div>
   );

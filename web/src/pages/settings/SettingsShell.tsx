@@ -6,9 +6,9 @@ import { cn } from "../../lib/utils";
 
 // ── Single-scope settings shell ──────────────────────────────────────
 //
-// Renders one scope's settings nav (a title + a flat list of sections,
-// optionally with nested sub-items) plus an `<Outlet/>` for the active
-// tab. Settings used to be one page grouped by scope (workspace vs org);
+// Renders one scope's settings nav (a flat list of sections, optionally
+// with nested sub-items) plus an `<Outlet/>` for the active tab. The scope's
+// name is the top bar's title, not repeated here. Settings used to be one page grouped by scope (workspace vs org);
 // each scope now owns its own URL subtree (`/w/:slug/settings`, `/org`)
 // so the shell is single-scope and the cross-scope grouping is gone.
 //
@@ -36,6 +36,7 @@ export interface SettingsNavItem {
 }
 
 export interface SettingsShellProps {
+  /** The scope's name; it labels the section nav for assistive tech. */
   title: string;
   items: SettingsNavItem[];
   /** Optional bottom-pinned link, exempt from role filtering (e.g. About). */
@@ -60,9 +61,8 @@ export function SettingsShell({ title, items, footer }: SettingsShellProps) {
         className="shrink-0 md:w-56 md:border-r border-b md:border-b-0 border-border flex md:flex-col overflow-x-auto md:overflow-x-visible md:overflow-y-auto"
         aria-label={`${title} sections`}
       >
-        <div className="hidden md:block px-4 pt-6 pb-3">
-          <h1 className="text-lg font-semibold tracking-tight text-foreground">{title}</h1>
-        </div>
+        {/* The page's name is in the top bar; the column starts with its sections. */}
+        <div aria-hidden="true" className="hidden md:block h-4" />
 
         {/* Mobile: single horizontal scroll row (no nesting) */}
         <div className="flex md:hidden gap-0.5 px-2 py-1">

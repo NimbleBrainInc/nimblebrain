@@ -10,6 +10,8 @@ interface HeaderProps {
   searchQuery: string;
   /** Display name of the focused workspace; absent until the host handshake lands. */
   workspaceName?: string;
+  /** Show the view's own title row. Off when the host shows the title. */
+  showTitle: boolean;
   onSelectFilter: (key: FilterKey) => void;
   onSearchInput: (value: string) => void;
   onSearchSubmit: () => void;
@@ -28,6 +30,7 @@ export function Header({
   isSearching,
   searchQuery,
   workspaceName,
+  showTitle,
   onSelectFilter,
   onSearchInput,
   onSearchSubmit,
@@ -37,12 +40,14 @@ export function Header({
 
   return (
     <div className="header">
-      <div className="header-top">
-        <div className="header-title">Conversations</div>
-        {/* The list is always scoped to the focused workspace; show its name
-            ambiently (no cross-workspace selector). */}
-        {workspaceName && <div className="workspace-label">{workspaceName}</div>}
-      </div>
+      {showTitle && (
+        <div className="header-top">
+          <div className="header-title">Conversations</div>
+          {/* The list is always scoped to the focused workspace; show its name
+              ambiently (no cross-workspace selector). */}
+          {workspaceName && <div className="workspace-label">{workspaceName}</div>}
+        </div>
+      )}
       {!loading && totalCount > 0 && (
         <div className="header-lede">
           You have {totalCount} conversation{totalCount === 1 ? "" : "s"}

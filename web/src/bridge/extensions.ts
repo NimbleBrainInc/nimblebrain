@@ -26,6 +26,27 @@ export const ACTION_METHOD = "ai.nimblebrain/action";
 export const REQUEST_FILE_METHOD = "ai.nimblebrain/request-file";
 /** App → host notification: a keyboard shortcut pressed inside the frame. */
 export const KEYDOWN_METHOD = "ai.nimblebrain/keydown";
+/**
+ * App → host notification: where the app is, as its whole trail from its root
+ * to the current view, `{ trail: [{ id, label }, …] }`, sent on every in-app
+ * navigation. Each one replaces the last, so the app stays the only owner of
+ * its location and a lost message corrects itself on the next. Declaring it
+ * also tells the app that the host shows its title and a back control, so the
+ * app drops its own.
+ */
+export const LOCATION_METHOD = "ai.nimblebrain/location";
+/**
+ * Host → app notification: go to the trail entry whose `id` is in the params,
+ * sent when the user picks back (the entry before the last). The `id` is the
+ * app's own, passed back unread. Sent only to an app that sent a trail, so it
+ * needs no declaration of its own.
+ */
+export const NAVIGATE_METHOD = "ai.nimblebrain/navigate";
 
 /** Every extension this host serves, and therefore declares. */
-export const NIMBLEBRAIN_EXTENSIONS = [ACTION_METHOD, REQUEST_FILE_METHOD, KEYDOWN_METHOD] as const;
+export const NIMBLEBRAIN_EXTENSIONS = [
+  ACTION_METHOD,
+  REQUEST_FILE_METHOD,
+  KEYDOWN_METHOD,
+  LOCATION_METHOD,
+] as const;

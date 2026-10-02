@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
-// ChatChrome — the chat panel chrome: floating toggle, sliding
-// sidebar/fullscreen panel, resize handle, keyboard shortcuts, unread
-// tracking, and deep-link open.
+// ChatChrome — the chat panel chrome: sliding sidebar/fullscreen panel,
+// resize handle, keyboard shortcuts, unread tracking, and deep-link open.
+// The control that opens it is the top bar's Chat button (`ChatToggle`);
+// this publishes the unread count it shows and returns focus to it.
 //
 // INVARIANT: mounted exactly once, globally, by ShellLayout. A second
 // mount renders a second panel. Nothing else may render it — every route
@@ -15,20 +16,17 @@
 // agent can't see the app's visible state (e.g. the open document).
 // ---------------------------------------------------------------------------
 
-import { MessageSquare } from "lucide-react";
-import type { Ref } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useChatContext } from "../context/ChatContext";
 import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
-import { ariaKeyShortcuts, matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
+import { matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 import type { ChatPanelRef } from "./ChatPanel";
 import { ChatPanel } from "./ChatPanel";
 import { ResizeHandle } from "./ResizeHandle";
-import { Tooltip } from "./ui/tooltip";
 
 const DEFAULT_WIDTH = 380;
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
@@ -58,50 +56,19 @@ function resolvePanelWidth({
   return panelWidth;
 }
 
-/** Floating chat toggle shown when the panel is closed; badges the unread assistant-message count. */
-function ChatToggleButton({
-  buttonRef,
-  visible,
-  unreadCount,
-  onOpen,
-}: {
-  buttonRef: Ref<HTMLButtonElement>;
-  visible: boolean;
-  unreadCount: number;
-  onOpen: () => void;
-}) {
-  return (
-    <Tooltip label="Chat" shortcut={SHORTCUTS.chat} side="left">
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={onOpen}
-        aria-label="Open chat"
-        aria-keyshortcuts={ariaKeyShortcuts(SHORTCUTS.chat)}
-        className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-all duration-200"
-        style={{
-          opacity: visible ? 1 : 0,
-          transition: "opacity 200ms ease-in, background-color 200ms",
-        }}
-        data-testid="chat-chrome-open-button"
-      >
-        <MessageSquare className="w-5 h-5" />
-        {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center">
-            {unreadCount}
-          </span>
-        )}
-      </button>
-    </Tooltip>
-  );
-}
-
 export function ChatChrome() {
-  const { panelState, panelWidth, setPanelWidth, openPanel, closePanel, toggleFullscreen } =
-    useChatPanelContext();
+  const {
+    panelState,
+    panelWidth,
+    setPanelWidth,
+    openPanel,
+    closePanel,
+    toggleFullscreen,
+    setUnreadCount,
+    toggleButtonRef,
+  } = useChatPanelContext();
   const panelRef = useRef<ChatPanelRef>(null);
   const panelElRef = useRef<HTMLDivElement>(null);
-  const toggleButtonRef = useRef<HTMLButtonElement>(null);
   const chat = useChatContext();
   const sidebar = useSidebar();
   const isMobile = useIsMobile();
@@ -150,7 +117,6 @@ export function ChatChrome() {
 
   // Unread tracking: count assistant messages added while panel is closed.
   const lastSeenAssistantCount = useRef(0);
-  const [buttonVisible, setButtonVisible] = useState(() => panelState === "closed");
 
   const assistantMessageCount = useMemo(
     () => chat.messages.filter((m) => m.role === "assistant").length,
@@ -168,14 +134,12 @@ export function ChatChrome() {
       ? Math.max(0, assistantMessageCount - lastSeenAssistantCount.current)
       : 0;
 
-  // Delayed entrance animation: fade in the button 300ms after panel closes.
+  // Published for the top bar's Chat button, which must not read ChatContext
+  // itself (it re-renders on every streamed token); this changes only when the
+  // count does.
   useEffect(() => {
-    if (panelState === "closed") {
-      const timer = setTimeout(() => setButtonVisible(true), 300);
-      return () => clearTimeout(timer);
-    }
-    setButtonVisible(false);
-  }, [panelState]);
+    setUnreadCount(unreadCount);
+  }, [unreadCount, setUnreadCount]);
 
   // Focus follows the panel. The closed panel is inert, so nothing in it can
   // take focus; this runs after the commit that clears `inert`, which is the
@@ -185,8 +149,8 @@ export function ChatChrome() {
   // even from an app iframe, which MessageInput's turn-ended refocus leaves
   // alone. On the phone layout the composer is not focused, since that raises
   // the on-screen keyboard over the conversation. On close, focus left inside
-  // the now-inert panel (Esc, Close, Back, ⌘J) moves to the floating toggle,
-  // the control that reopens it.
+  // the now-inert panel (Esc, Close, Back, ⌘J) moves to the top bar's Chat
+  // button, the control that reopens it.
   const isOpen = panelState !== "closed";
   const wasOpenRef = useRef(isOpen);
   useEffect(() => {
@@ -201,7 +165,7 @@ export function ChatChrome() {
     const stranded =
       active === null || active === document.body || panelElRef.current?.contains(active);
     if (stranded) toggleButtonRef.current?.focus({ preventScroll: true });
-  }, [isOpen, isMobile]);
+  }, [isOpen, isMobile, toggleButtonRef]);
 
   // Keyboard shortcuts — Esc closes, ⌘J toggles, ⌘⇧J toggles fullscreen.
   useEffect(() => {
@@ -282,16 +246,6 @@ export function ChatChrome() {
 
   return (
     <>
-      {/* Floating chat toggle — visible when panel is closed */}
-      {panelState === "closed" && (
-        <ChatToggleButton
-          buttonRef={toggleButtonRef}
-          visible={buttonVisible}
-          unreadCount={unreadCount}
-          onOpen={() => openPanel()}
-        />
-      )}
-
       {/* Chat panel — full-width on mobile, fixed sidebar on desktop. It stays
           mounted when closed so the slide plays and the chat keeps its state,
           and is inert + aria-hidden then: no focusable controls, not announced. */}

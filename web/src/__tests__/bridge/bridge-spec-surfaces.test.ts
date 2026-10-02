@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../../test/setup";
-import { REQUEST_FILE_METHOD } from "../../bridge/extensions";
+import { LOCATION_METHOD, NAVIGATE_METHOD, REQUEST_FILE_METHOD } from "../../bridge/extensions";
 import type { UploadLimits } from "../../bridge/host-extensions";
 
 /**
@@ -210,18 +210,20 @@ describe("ui/initialize — advertised capabilities", () => {
       "ai.nimblebrain/action": {},
       "ai.nimblebrain/request-file": {},
       "ai.nimblebrain/keydown": {},
+      "ai.nimblebrain/location": {},
     });
 
     // What the official `App` keeps: it stores the parsed result, not the raw
     // frame, so a key this parse strips is a key no app built on it can read.
     // `experimental` is the one slot in `hostCapabilities` that survives it,
-    // which is why all four travel there.
+    // which is why every one of them travels there.
     const parsed = McpUiInitializeResultSchema.parse(reply.result);
     expect(parsed.hostCapabilities.experimental).toEqual({
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
       "ai.nimblebrain/request-file": {},
       "ai.nimblebrain/keydown": {},
+      "ai.nimblebrain/location": {},
     });
   });
 });
@@ -879,5 +881,53 @@ describe("ai.nimblebrain/request-file", () => {
     expect(data.errors).toHaveLength(2);
     expect(data.errors[0]).toContain('"big-1.bin"');
     expect(data.errors[1]).toContain('"big-2.bin"');
+  });
+});
+
+describe("ai.nimblebrain/location and ai.nimblebrain/navigate", () => {
+  const TRAIL = [
+    { id: "people", label: "People" },
+    { id: "contact/dh-123", label: "Dan Hoover" },
+  ];
+
+  test("a trail reaches onLocation whole, root first", async () => {
+    const trails: unknown[] = [];
+    const frame = mount("people", { onLocation: (trail) => trails.push(trail) });
+    await handshake(frame);
+
+    frame.send({ jsonrpc: "2.0", method: LOCATION_METHOD, params: { trail: TRAIL } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(trails).toEqual([TRAIL]);
+  });
+
+  test("a malformed trail never reaches the shell", async () => {
+    const trails: unknown[] = [];
+    const frame = mount("people", { onLocation: (trail) => trails.push(trail) });
+    await handshake(frame);
+
+    // Empty, an empty label, and a missing id: each fails the schema.
+    for (const trail of [[], [{ id: "a", label: "" }], [{ label: "No id" }]]) {
+      frame.send({ jsonrpc: "2.0", method: LOCATION_METHOD, params: { trail } });
+    }
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(trails).toEqual([]);
+  });
+
+  test("navigate is held until the handshake completes, then delivered", async () => {
+    const frame = makeTestIframe();
+    const bridge = createBridge(frame.iframe, "people");
+    activeFrame = frame;
+    activeBridge = bridge;
+
+    bridge.navigate("people");
+    expect(frame.inbox).toEqual([]);
+
+    await handshake(frame);
+    frame.send({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    const sent = await frame.waitFor((m) => (m as { method?: string })?.method === NAVIGATE_METHOD);
+
+    expect(sent).toEqual({ jsonrpc: "2.0", method: NAVIGATE_METHOD, params: { id: "people" } });
   });
 });

@@ -29,7 +29,13 @@
 // ---------------------------------------------------------------------------
 
 import { type Static, Type } from "@sinclair/typebox";
-import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
+import {
+  ACTION_METHOD,
+  KEYDOWN_METHOD,
+  LOCATION_METHOD,
+  NAVIGATE_METHOD,
+  REQUEST_FILE_METHOD,
+} from "./extensions";
 
 // ── Shared building blocks ───────────────────────────────────────────────
 
@@ -315,6 +321,33 @@ export const UiKeydownMessage = Type.Object({
 });
 export type UiKeydownMessage = Static<typeof UiKeydownMessage>;
 
+/**
+ * One step of an app's trail: an `id` only the app reads (the host hands it
+ * back in `ai.nimblebrain/navigate`) and the label the host shows. Bounded so a
+ * page cannot push an unbounded string or list into the shell's chrome.
+ */
+export const AppTrailEntry = Type.Object({
+  id: Type.String({ maxLength: 512 }),
+  label: Type.String({ minLength: 1, maxLength: 200 }),
+});
+export type AppTrailEntry = Static<typeof AppTrailEntry>;
+
+export const UiLocationMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(LOCATION_METHOD),
+  params: Type.Object({
+    trail: Type.Array(AppTrailEntry, { minItems: 1, maxItems: 32 }),
+  }),
+});
+export type UiLocationMessage = Static<typeof UiLocationMessage>;
+
+export const UiNavigateNotification = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(NAVIGATE_METHOD),
+  params: Type.Object({ id: Type.String() }),
+});
+export type UiNavigateNotification = Static<typeof UiNavigateNotification>;
+
 /** Discriminated union of every App → Host envelope. */
 export const AppToHostMessage = Type.Union([
   ToolsCallMessage,
@@ -331,6 +364,7 @@ export const AppToHostMessage = Type.Union([
   LoggingMessageNotification,
   SynapseRequestFileMessage,
   UiKeydownMessage,
+  UiLocationMessage,
   ExtAppsInitializeRequest,
   ExtAppsInitializedNotification,
   ExtAppsRequestTeardownNotification,
@@ -469,5 +503,6 @@ export const HostToAppMessage = Type.Union([
   ExtAppsToolResultNotification,
   ExtAppsHostContextChangedNotification,
   RelayedServerNotification,
+  UiNavigateNotification,
 ]);
 export type HostToAppMessage = Static<typeof HostToAppMessage>;
