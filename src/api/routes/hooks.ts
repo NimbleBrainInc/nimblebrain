@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { serverNameFromRef } from "../../connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../../connectors/runtime/types.ts";
+import { HookRouteRefusedError } from "../../hooks/declaration.ts";
 import { forwardDelivery } from "../../hooks/forward.ts";
 import { isDeliveryIdAdmissible, listRegistrations } from "../../hooks/registrations.ts";
 import { HOOKS_PATH_PREFIX, type HookIdentity, readHookIdentity } from "../../hooks/token.ts";
@@ -324,6 +325,15 @@ async function forwardAdmitted(
       headers: passthroughResponseHeaders(upstream.headers),
     });
   } catch (err) {
+    if (err instanceof HookRouteRefusedError) {
+      // Thrown before the credential is resolved, so nothing was sent. A refusal,
+      // not a failure to deliver: the bare 404, counted with the others, and
+      // logged because this caller held a real delivery id and the record behind
+      // it is what an operator has to remove.
+      hooksReceivedTotal.inc({ outcome: "rejected" });
+      logDelivery(wsId, registration, "refused", undefined, startedAt, err);
+      return notFound();
+    }
     hooksForwardSeconds.observe((performance.now() - startedAt) / 1000);
     hooksReceivedTotal.inc({ outcome: "upstream_error" });
     logDelivery(wsId, registration, "upstream_error", undefined, startedAt, err);

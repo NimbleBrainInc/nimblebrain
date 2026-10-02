@@ -71,6 +71,13 @@ beforeEach(async () => {
   ({ workDir, cleanup } = makeTestWorkDir("hooks-singleflight"));
   store = new WorkspaceStore(workDir);
   wsId = (await store.create("Reconcile Test")).id;
+  // Installed, because the reconcile reads the connector's MCP endpoint from its ref.
+  await store.update(wsId, {
+    connectors: [CONNECTOR, "other-mcp"].map((serverName) => ({
+      url: `https://${serverName}.internal/mcp`,
+      serverName,
+    })),
+  });
   registered = [];
 });
 

@@ -1,3 +1,4 @@
+import { serverNameFromRef } from "../connectors/runtime/paths.ts";
 import { log } from "../observability/log.ts";
 import { type ConnectorPort, watchToolSurface } from "../tools/connector-surface.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -67,9 +68,9 @@ export interface EnsureHooksOptions {
  * Bring one connector's hooks in a workspace to their declared state.
  *
  * Silent no-op — not an error — when this runtime has no hooks door, when the
- * connector declares no hooks, or when its source is not running. All three are
- * ordinary states rather than failures, and a connector must install and work
- * normally in every one of them.
+ * connector declares no hooks, when it is not installed in the workspace, or
+ * when its source is not running. All are ordinary states rather than failures,
+ * and a connector must install and work normally in every one of them.
  *
  * A {@link HookContractError} propagates rather than being swallowed: a declared
  * `register_tool` that does not exist or does not accept `{vendor, url}` is a
@@ -91,9 +92,15 @@ export async function ensureHooks(
   let declarations = await deps.declarationsFor(connector);
   if (declarations.length === 0) return [];
 
+  const ws = await deps.workspaceStore.get(wsId);
+  if (!ws) return [];
+  // The installed ref is where the door forwards from, so it is also the MCP
+  // endpoint a declared route is checked against. A connector this workspace
+  // does not have installed has nowhere a delivery could reach.
+  const ref = (ws.connectors ?? []).find((r) => serverNameFromRef(r) === connector);
+  if (!ref) return [];
+
   if (opts.onlyMissing) {
-    const ws = await deps.workspaceStore.get(wsId);
-    if (!ws) return [];
     // MISSING MEANS UNADDRESSABLE, not merely unrecorded. A registration written
     // before the URL became an opaque id has a `kid` and no address, and the door
     // refuses it — so the stream is as dead as one that was never provisioned,
@@ -121,6 +128,7 @@ export async function ensureHooks(
       store: deps.workspaceStore,
       wsId,
       connector,
+      mcpUrl: ref.url,
       declarations,
       port,
       rotate: opts.rotate,

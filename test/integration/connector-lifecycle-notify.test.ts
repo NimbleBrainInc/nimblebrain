@@ -326,6 +326,10 @@ describe("uninstall", () => {
 describe("the two reconciles racing a fresh install", () => {
   test("hooks coalesce into one mint; the lifecycle calls do not coalesce at all", async () => {
     h = await buildHarness({ hooks: true });
+    // Installed, because the hook reconcile reads the connector's MCP endpoint from its ref.
+    await new WorkspaceStore(h.workDir).update(SHARED_WS, {
+      connectors: [{ url: "https://granola.internal/mcp", serverName: CONNECTOR }],
+    });
 
     // The connection-running observer's shape and the install handler's shape,
     // started together — the exact overlap `eagerStartRemoteSource` produces.

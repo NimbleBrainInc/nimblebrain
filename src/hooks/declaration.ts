@@ -207,6 +207,50 @@ export function isForwardablePath(route: string): boolean {
   return true;
 }
 
+/**
+ * Whether a route names the connector's own MCP endpoint: the endpoint path
+ * itself, or a path under it.
+ *
+ * The forward carries the connection's credential, so a route that lands on the
+ * MCP endpoint would let anyone holding the delivery URL post JSON-RPC to the
+ * server as the workspace, past every gate the runtime puts in front of a tool
+ * call. A hook route is never that endpoint.
+ *
+ * Compared on what the server will route on, not on the declared string: the
+ * route is resolved against the endpoint (which folds `.`, `..`, and their
+ * percent-encoded forms), the query is dropped, each path is percent-decoded, and
+ * a trailing slash is ignored. A path that cannot be decoded counts as naming the
+ * endpoint, so an undecidable route is refused rather than forwarded. An endpoint
+ * at the root is refused only exactly, since every path lies under `/` and a
+ * server mounted there serves its other routes beside it.
+ */
+export function routeNamesMcpEndpoint(route: string, mcpUrl: string): boolean {
+  let target: string | null;
+  let endpoint: string | null;
+  try {
+    const base = new URL(mcpUrl);
+    endpoint = canonicalPath(base.pathname);
+    target = canonicalPath(new URL(route, base).pathname);
+  } catch {
+    return true;
+  }
+  if (target === null || endpoint === null) return true;
+  if (endpoint === "/") return target === "/";
+  return target === endpoint || target.startsWith(`${endpoint}/`);
+}
+
+/** A URL path as a server routes on it: decoded, with no trailing slash. */
+function canonicalPath(pathname: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+  const trimmed = decoded.replace(/\/+$/, "");
+  return trimmed === "" ? "/" : trimmed;
+}
+
 /** Throwing form of {@link isForwardablePath}, for the install path where the
  *  operator should see which route was refused. */
 export function assertForwardablePath(route: string, context: string): void {
@@ -219,7 +263,7 @@ export function assertForwardablePath(route: string, context: string): void {
 
 /**
  * Resolve a declared route against a connector's base URL, refusing anything
- * that leaves that origin.
+ * that leaves that origin or names the connector's MCP endpoint.
  *
  * Belt and braces on top of `isForwardablePath`, and deliberately so: by
  * delivery time the route has been through the workspace record on disk, which
@@ -238,5 +282,21 @@ export function resolveForwardUrl(baseUrl: string, route: string): URL {
       `[hooks] route "${route}" resolves off the connector's origin (${target.origin} != ${base.origin})`,
     );
   }
+  if (routeNamesMcpEndpoint(route, baseUrl)) throw new HookRouteRefusedError(route);
   return target;
+}
+
+/**
+ * A stored route that names the connector's MCP endpoint, refused at delivery.
+ *
+ * Its own class because the door answers it differently from the other forward
+ * failures: those are the runtime failing to deliver a hook it owes, and answer
+ * 502 so the vendor retries; this one is a hook that must never have been
+ * minted, and answers the door's bare 404 like every other refusal.
+ */
+export class HookRouteRefusedError extends Error {
+  constructor(route: string) {
+    super(`[hooks] route "${route}" names the connector's MCP endpoint`);
+    this.name = "HookRouteRefusedError";
+  }
 }

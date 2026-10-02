@@ -182,6 +182,10 @@ beforeAll(async () => {
     const source = buildSource(wsId);
     await source.start();
     (await runtime.ensureWorkspaceRegistry(wsId)).addSource(source);
+    // Installed, because the hook reconcile reads the connector's MCP endpoint from its ref.
+    await wsStore.update(wsId, {
+      connectors: [{ url: "https://crm.acme.test/mcp", serverName: SERVER }],
+    });
   }
 
   handle = startServer({ runtime, port: 0 });

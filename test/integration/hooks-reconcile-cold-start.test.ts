@@ -153,6 +153,13 @@ beforeEach(async () => {
   ({ workDir, cleanup } = makeTestWorkDir("hooks-cold-start"));
   store = new WorkspaceStore(workDir);
   wsId = (await store.create("Cold Start")).id;
+  // Installed, because the reconcile reads the connector's MCP endpoint from its ref.
+  await store.update(wsId, {
+    connectors: [CONNECTOR, OTHER_CONNECTOR].map((serverName) => ({
+      url: `https://${serverName}.internal/mcp`,
+      serverName,
+    })),
+  });
 });
 
 afterEach(() => {
