@@ -110,11 +110,19 @@ export function mcpRoutes(ctx: AppContext) {
 
   // Rate limit the remote surface: external MCP clients + sandboxed connector
   // iframes (the bridge speaks `/mcp`). It runs after `requireMcpAuth`, so the
-  // per-identity key is populated. Bypassed in dev.
+  // identity and grant are populated. The bucket is per identity AND grant
+  // kind: the web shell's bridge (first-party session) and an external client
+  // signed in as the same user (resource token) are different callers, and one
+  // spending the whole budget must not refuse the other. Where a provider marks
+  // an external caller first-party (OIDC bearers, an operator-listed AuthKit
+  // client), that caller shares the shell's bucket.
   app.all(
     `${MCP_PATH_PREFIX}/:wsId`,
     requireMcpAuth(ctx),
-    requestRateLimit(ctx.mcpLimiter),
+    requestRateLimit<McpAuthEnv>(
+      ctx.mcpLimiter,
+      (c) => `${c.var.identity?.id ?? "anon"}:${c.var.grant?.kind ?? "none"}`,
+    ),
     bodyLimit(1_048_576),
     async (c) => {
       const features = ctx.runtime.getFeatures();

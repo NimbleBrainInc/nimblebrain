@@ -71,7 +71,7 @@ const WORKSPACES = new Map([
 /** What reached the MCP host, if anything. */
 let reached: McpSessionContext[] = [];
 
-function makeCtx(): AppContext {
+function makeCtx(mcpLimiter = new RequestRateLimiter(10_000, 60_000)): AppContext {
   const provider = {
     capabilities: {
       authCodeFlow: false,
@@ -104,13 +104,13 @@ function makeCtx(): AppContext {
         return Response.json({ ok: true });
       },
     },
-    // Generous enough that no test here meets the limit.
-    mcpLimiter: new RequestRateLimiter(10_000, 60_000),
+    // Generous by default, so no test here meets the limit unless it asks to.
+    mcpLimiter,
   } as unknown as AppContext;
 }
 
-function makeApp(): Hono {
-  const ctx = makeCtx();
+function makeApp(mcpLimiter?: RequestRateLimiter): Hono {
+  const ctx = makeCtx(mcpLimiter);
   const app = new Hono();
   app.route("/", mcpRoutes(ctx));
   // A REST route behind the same middleware every `/v1/*` group uses.
@@ -261,5 +261,19 @@ describe("a token is valid only for its resource", () => {
   it("still accepts the first-party token on REST", async () => {
     const res = await post(makeApp(), `/v1/workspaces/${WS_A}/tools/call`, "alice-first-party");
     expect(res.status).toBe(200);
+  });
+});
+
+describe("/mcp/<wsId> rate limit", () => {
+  it("gives an external client and the user's own session separate buckets", async () => {
+    const app = makeApp(new RequestRateLimiter(2, 60_000));
+    // An external client signed in as Alice spends its whole budget.
+    expect((await post(app, `/mcp/${WS_A}`, "alice-aud-exact")).status).toBe(200);
+    expect((await post(app, `/mcp/${WS_A}`, "alice-aud-exact")).status).toBe(200);
+    expect((await post(app, `/mcp/${WS_A}`, "alice-aud-exact")).status).toBe(429);
+    // Alice's browser, the same user on a first-party session, is still served.
+    expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(200);
+    expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(200);
+    expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(429);
   });
 });
