@@ -32,6 +32,7 @@ import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-proce
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const TEST_USER_ID = "usr_exec_task_test";
 const TEST_USER_DISPLAY = "Task Test User";
@@ -84,11 +85,11 @@ describe("runtime.executeTask", () => {
   async function provisionWorkspaces(r: Runtime) {
     const wsStore = r.getWorkspaceStore();
     // The owner's own workspace, created first so it is their default.
-    const ownWs = await wsStore.create("Own", undefined, {
+    const ownWs = await wsStore.create("Own", {
       members: [{ userId: TEST_USER_ID, role: "admin" }],
     });
     const defaultWsId = ownWs.id;
-    await wsStore.create("Shared", SHARED_WS_ID.slice(3));
+    await seedWorkspace(wsStore, SHARED_WS_ID, { name: "Shared" });
     await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
     return { defaultWsId, sharedWsId: SHARED_WS_ID };
   }

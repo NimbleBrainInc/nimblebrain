@@ -3,16 +3,18 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { User } from "../../../src/identity/user.ts";
 import { UserStore } from "../../../src/identity/user.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
-import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
+import { defineInProcessApp, type InProcessTool } from "../../../src/tools/in-process-app.ts";
 import {
   createManageWorkspacesTool,
   type ManageWorkspacesContext,
 } from "../../../src/tools/workspace-mgmt-tools.ts";
+import { GENERATED_WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 import { parseResult, resultText } from "../../helpers/tool-result.ts";
@@ -149,16 +151,47 @@ describe("nb__manage_workspaces", () => {
       expect(existsSync(join(wsDir, "skills", ".gitkeep"))).toBe(true);
     });
 
-    test("creates workspace with custom slug", async () => {
-      const result = await tool.handler({
-        action: "create",
-        name: "My Workspace",
-        slug: "custom_slug",
-      });
+    test("refuses a slug at the schema boundary and creates nothing", async () => {
+      // Served the way the runtime serves it: the in-process MCP server
+      // validates arguments against the tool's input schema before the
+      // handler runs. The id of a created workspace is always generated.
+      const source = defineInProcessApp(
+        { name: "nb", version: "1.0.0", tools: [tool] },
+        new NoopEventSink(),
+      );
+      await source.start();
+      try {
+        const refused = await source.execute("manage_workspaces", {
+          action: "create",
+          name: "My Workspace",
+          slug: "custom_slug",
+        });
+        expect(refused.isError).toBe(true);
+        const { error } = parseResult(refused) as { error: string };
+        expect(error).toContain('Invalid arguments for "manage_workspaces"');
+        expect(error).toContain("must NOT have additional properties");
+        expect(await store.list()).toEqual([]);
 
-      expect(result.isError).toBe(false);
-      const parsed = parseResult(result) as { workspace: { id: string } };
-      expect(parsed.workspace.id).toBe("ws_custom_slug");
+        const created = await source.execute("manage_workspaces", {
+          action: "create",
+          name: "My Workspace",
+        });
+        expect(created.isError).toBe(false);
+        const [ws] = await store.list();
+        expect(ws?.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+      } finally {
+        await source.stop();
+      }
+    });
+
+    test("declares no id or slug input", () => {
+      const schema = tool.inputSchema as {
+        properties: Record<string, unknown>;
+        additionalProperties?: boolean;
+      };
+      expect(schema.additionalProperties).toBe(false);
+      expect(Object.keys(schema.properties)).not.toContain("slug");
+      expect(Object.keys(schema.properties)).not.toContain("id");
     });
 
     test("creates workspace with connectors, reporting them by name", async () => {
@@ -187,15 +220,16 @@ describe("nb__manage_workspaces", () => {
       expect(resultText(result)).toContain("name is required");
     });
 
-    test("returns error for duplicate explicit slug", async () => {
-      // Opaque ids never collide on name, so two same-name creates now
-      // succeed with distinct ids. The conflict path is exercised via an
-      // explicit slug that targets an already-taken id.
-      await tool.handler({ action: "create", name: "Dupe", slug: "dupe_slug" });
-      const result = await tool.handler({ action: "create", name: "Dupe Two", slug: "dupe_slug" });
-
-      expect(result.isError).toBe(true);
-      expect(resultText(result)).toContain("already exists");
+    test("two creates with the same name get distinct generated ids", async () => {
+      const a = parseResult(await tool.handler({ action: "create", name: "Dupe" })) as {
+        workspace: { id: string };
+      };
+      const b = parseResult(await tool.handler({ action: "create", name: "Dupe" })) as {
+        workspace: { id: string };
+      };
+      expect(a.workspace.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+      expect(b.workspace.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+      expect(a.workspace.id).not.toBe(b.workspace.id);
     });
   });
 

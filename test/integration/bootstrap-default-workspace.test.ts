@@ -34,7 +34,7 @@ async function createInOrder(
 ): Promise<string[]> {
   const ids: string[] = [];
   for (const name of names) {
-    const ws = await runtime.getWorkspaceStore().create(name, undefined, {
+    const ws = await runtime.getWorkspaceStore().create(name, {
       members: [{ userId, role }],
     });
     ids.push(ws.id);

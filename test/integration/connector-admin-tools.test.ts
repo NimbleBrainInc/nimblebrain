@@ -42,6 +42,7 @@ import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts"
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN_WS = "ws_helix";
 const MEMBER_WS = "ws_orbit";
@@ -173,9 +174,9 @@ beforeAll(async () => {
   });
 
   const wsStore = runtime.getWorkspaceStore();
-  await wsStore.create("Helix", ADMIN_WS.slice(3));
+  await seedWorkspace(wsStore, ADMIN_WS, { name: "Helix" });
   await wsStore.addMember(ADMIN_WS, DEV_IDENTITY.id, "admin");
-  await wsStore.create("Orbit", MEMBER_WS.slice(3));
+  await seedWorkspace(wsStore, MEMBER_WS, { name: "Orbit" });
   await wsStore.addMember(MEMBER_WS, DEV_IDENTITY.id, "member");
 
   for (const wsId of [ADMIN_WS, MEMBER_WS]) {

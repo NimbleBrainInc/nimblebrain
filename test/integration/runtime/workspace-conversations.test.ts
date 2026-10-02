@@ -36,7 +36,7 @@ async function defaultWorkspaceId(runtime: Runtime, ownerId: string): Promise<st
   const store = runtime.getWorkspaceStore();
   const [ws] = await store.getWorkspacesForUser(ownerId);
   if (ws) return ws.id;
-  const created = await store.create("Home", undefined, {
+  const created = await store.create("Home", {
     members: [{ userId: ownerId, role: "admin" }],
   });
   await runtime.ensureWorkspaceRegistry(created.id);

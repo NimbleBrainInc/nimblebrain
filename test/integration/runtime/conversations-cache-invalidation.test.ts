@@ -31,7 +31,7 @@ beforeAll(async () => {
     workDir,
   });
   const wsStore = runtime.getWorkspaceStore();
-  const ws = await wsStore.create("Helix", "helix");
+  const ws = await wsStore.create("Helix");
   wsId = ws.id;
   await wsStore.addMember(wsId, ALICE.id, "admin");
 });

@@ -20,6 +20,7 @@ import type { EngineEvent, EngineEventOf } from "../../../src/engine/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
+import { seedWorkspace } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nb-request-workspace-${Date.now()}`);
 
@@ -94,7 +95,8 @@ describe("isPrincipalWorkspaceMember reads the member list", () => {
     const runtime = await startDev("membership");
     const store = runtime.getWorkspaceStore();
     // An id that looks like the old per-user form grants nothing by its shape.
-    const ws = await store.create("Looks personal", `user_${ALICE.id}`, {
+    const ws = await seedWorkspace(store, `ws_user_${ALICE.id}`, {
+      name: "Looks personal",
       members: [{ userId: "usr_bob", role: "admin" }],
     });
     expect(await runtime.isPrincipalWorkspaceMember(ws.id, ALICE.id)).toBe(false);
@@ -108,7 +110,7 @@ describe("a conversation's live title goes to its owner", () => {
   it("the runtime stamps conversation.title with ownerId, not a workspace", async () => {
     const events: EngineEvent[] = [];
     const runtime = await startDev("title", events);
-    const ws = await runtime.getWorkspaceStore().create("Alice's", undefined, {
+    const ws = await runtime.getWorkspaceStore().create("Alice's", {
       members: [{ userId: ALICE.id, role: "admin" }],
     });
     const res = await runtime.chat({

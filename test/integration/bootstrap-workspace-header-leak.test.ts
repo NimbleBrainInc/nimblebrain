@@ -118,11 +118,11 @@ describe("bootstrap ignores X-Workspace-Id", () => {
     defaultWs = provisioned[0]!.id;
     // A shared workspace Alice belongs to — a header naming it must not move
     // the active workspace.
-    const shared = await wsStore.create("Acme Corp", "acme_corp");
+    const shared = await wsStore.create("Acme Corp");
     await wsStore.addMember(shared.id, ALICE.id, "member");
     sharedWs = shared.id;
     // A workspace Alice is NOT a member of.
-    const foreign = await wsStore.create("Tenant A", "tenant_a");
+    const foreign = await wsStore.create("Tenant A");
     foreignWs = foreign.id;
 
     handle = startServer({

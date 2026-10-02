@@ -26,6 +26,7 @@ import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-proce
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const TEST_USER_ID = "usr_cfg";
 const SHARED_WS_ID = "ws_cfgshared00000";
@@ -95,13 +96,13 @@ it("a chat in a shared workspace uses THAT workspace's model overrides, not the 
   // The caller's own workspace — created first, so it is their default —
   // deliberately configured DIFFERENTLY. If the config source regressed to the
   // caller's default workspace, this value appears.
-  const ownWs = await wsStore.create("Own", undefined, {
+  const ownWs = await wsStore.create("Own", {
     members: [{ userId: TEST_USER_ID, role: "admin" }],
   });
   await wsStore.update(ownWs.id, { models: { fast: "anthropic:personal-fast-model" } });
 
   // The shared workspace the chat runs in — its config is the one that must apply.
-  await wsStore.create("Shared", SHARED_WS_ID.slice(3));
+  await seedWorkspace(wsStore, SHARED_WS_ID, { name: "Shared" });
   await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
   await wsStore.update(SHARED_WS_ID, { models: { fast: "anthropic:shared-fast-model" } });
 

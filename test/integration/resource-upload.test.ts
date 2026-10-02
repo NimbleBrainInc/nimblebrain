@@ -272,7 +272,7 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     // Provision a second workspace with no member added — DEV_IDENTITY is
     // not in its member list, so the workspace gate answers as if it did not exist.
     const wsStore = runtime.getWorkspaceStore();
-    const other = await wsStore.create("Other Workspace", "other");
+    const other = await wsStore.create("Other Workspace");
 
     const form = new FormData();
     form.append("file", new Blob(["nope"], { type: "text/plain" }), "nope.txt");

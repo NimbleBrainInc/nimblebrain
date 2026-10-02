@@ -34,3 +34,18 @@
 export const WORKSPACE_ID_PATTERN = "^ws_[a-z0-9_]{1,64}$";
 export const WORKSPACE_ID_FLAGS = "i";
 export const WORKSPACE_ID_RE = new RegExp(WORKSPACE_ID_PATTERN, WORKSPACE_ID_FLAGS);
+
+/**
+ * The shape of every id `WorkspaceStore.create` mints: `ws_` and 16 lowercase
+ * hex chars, case-sensitive.
+ *
+ * Narrower than `WORKSPACE_ID_PATTERN` on purpose. That pattern decides what
+ * the store will *load*, and existing workspaces carry other forms
+ * (`ws_<slug>`, `ws_user_<id>`), so it must still accept them. This one
+ * decides what the store will *create*: `create` asserts every new id against
+ * it, so a change to the generator that drifts from the opaque form fails at
+ * the first create instead of minting ids the loader cannot later be
+ * narrowed to. Server-only — the web tier parses ids, it never mints them.
+ */
+export const GENERATED_WORKSPACE_ID_PATTERN = "^ws_[a-f0-9]{16}$";
+export const GENERATED_WORKSPACE_ID_RE = new RegExp(GENERATED_WORKSPACE_ID_PATTERN);

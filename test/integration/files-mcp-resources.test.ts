@@ -58,7 +58,7 @@ beforeAll(async () => {
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
-  const devWs = await runtime.getWorkspaceStore().create("Dev's workspace", undefined, {
+  const devWs = await runtime.getWorkspaceStore().create("Dev's workspace", {
     members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
   });
   DEV_WS_ID = devWs.id;

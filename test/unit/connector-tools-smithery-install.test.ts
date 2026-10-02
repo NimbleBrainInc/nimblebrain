@@ -35,6 +35,7 @@ import {
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const BASSETHOUND_ID = "ai.bassethound/mcp";
 const SERVER = "nimblebrain/bassethound";
@@ -146,7 +147,7 @@ beforeEach(async () => {
   _resetConnectorsConfigForTest();
   stubConnectApi();
   h = buildHarness();
-  await h.workspaceStore.create("Test", h.wsId.slice(3));
+  await seedWorkspace(h.workspaceStore, h.wsId, { name: "Test" });
   await h.workspaceStore.addMember(h.wsId, ADMIN.id, "admin");
 });
 

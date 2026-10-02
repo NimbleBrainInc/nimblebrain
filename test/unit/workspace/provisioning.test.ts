@@ -41,7 +41,7 @@ describe("ensureUserWorkspace", () => {
   });
 
   test("returns existing memberships and creates nothing", async () => {
-    const team = await store.create("Team", undefined, {
+    const team = await store.create("Team", {
       members: [{ userId: "user_alice", role: "member" }],
     });
 
@@ -107,7 +107,7 @@ describe("ensureUserWorkspace", () => {
   test("does not touch preferences when the user already has a workspace", async () => {
     const users = new UserStore(workDir);
     await users.create({ id: "user_alice", email: "alice@example.com", displayName: "Alice" });
-    await store.create("Team", undefined, { members: [{ userId: "user_alice", role: "admin" }] });
+    await store.create("Team", { members: [{ userId: "user_alice", role: "admin" }] });
 
     await ensureUserWorkspace(store, { id: "user_alice" }, users);
 

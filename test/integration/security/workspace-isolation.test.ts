@@ -298,8 +298,8 @@ function makeFakeSource(name: string): ToolSource {
 describe("V6: getConnectorInstancesForWorkspace — two workspaces, same connector", () => {
   it("returns only the caller's instance", async () => {
     const wsStore = runtime.getWorkspaceStore();
-    const wsA = await wsStore.create("Isolation A", `iso_a_${Date.now()}`);
-    const wsB = await wsStore.create("Isolation B", `iso_b_${Date.now()}`);
+    const wsA = await wsStore.create("Isolation A");
+    const wsB = await wsStore.create("Isolation B");
     await runtime.ensureWorkspaceRegistry(wsA.id);
     await runtime.ensureWorkspaceRegistry(wsB.id);
 
@@ -342,7 +342,7 @@ describe("V6: getConnectorInstancesForWorkspace — two workspaces, same connect
 
   it("returns nothing for a workspace that has the connector in its lifecycle but not its registry", async () => {
     const wsStore = runtime.getWorkspaceStore();
-    const ws = await wsStore.create("Orphan", `orphan_${Date.now()}`);
+    const ws = await wsStore.create("Orphan");
     await runtime.ensureWorkspaceRegistry(ws.id);
 
     const serverName = `orphan_${Date.now()}`;
