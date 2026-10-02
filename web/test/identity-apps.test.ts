@@ -38,9 +38,9 @@ describe("identity-apps", () => {
   it("maps an identity app to its workspace-scoped view route", () => {
     // The view is workspace-scoped now (the slug = the focused workspace); the
     // tools still dispatch bare through the identity door.
-    expect(identityAppRoute("conversations", "helix")).toBe("/w/003eba8844413cd9/conversations");
-    expect(identityAppRoute("files", "user_u1")).toBe("/w/007dc0488ce56f9e/files");
-    expect(identityAppRoute("automations", "acme")).toBe("/w/000f7ed6658f9d30/automations");
+    expect(identityAppRoute("conversations", "003eba8844413cd9")).toBe("/w/003eba8844413cd9/conversations");
+    expect(identityAppRoute("files", "007dc0488ce56f9e")).toBe("/w/007dc0488ce56f9e/files");
+    expect(identityAppRoute("automations", "000f7ed6658f9d30")).toBe("/w/000f7ed6658f9d30/automations");
   });
 
   it("identity set is exactly { conversations, files, automations }", () => {
