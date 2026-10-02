@@ -17,8 +17,9 @@ export const MAX_INLINE_APPS = 4;
  * core nav (Conversations, Files, …) and `sidebar.bottom` is the utility
  * tray — neither is an app. This is the filter the workspace overview
  * page already used, lifted into one shared, tested helper so the
- * sidebar quick-list and the overview grid show the same set and the
- * "View all N apps" count matches the grid by construction.
+ * sidebar quick-list and the overview grid show the same set. The grid
+ * shows one card per placement; the sidebar and the "View all N apps"
+ * count group them into apps with `appsByConnector`.
  *
  * One entry per placement (not per app) — a route is a navigable
  * destination, so callers key by `resourceUri`. Sorted by priority

@@ -99,7 +99,9 @@ Under the focused workspace, the sidebar shows:
 
 1. **The host's views**: Conversations, Automations, Files, and the Inbox.
 2. **Apps**: `sidebar.<group>` placements, one entry per server, sorted by the priority of its first placement and capped at four with a **View all** link. A server's other placements list beneath its entry while it is open.
-3. **Connectors**: a link to the workspace's connectors.
+3. **Connectors without a sidebar placement**: one shared row after the apps, showing their icons and a count, that links to the workspace's installed connectors.
+
+The **Apps** heading carries a **+** that opens the connector catalog, shown to members who can change the workspace.
 
 The group name in `sidebar.<group>` is not shown as a heading; every group renders under **Apps**. A `main` placement never appears here. To give your app a nav entry, declare a `sidebar.apps` placement with a `route`.
 
