@@ -97,13 +97,16 @@ async function mount({
   placements = [],
   collapsed = false,
   installed,
+  installedFor = activeId,
 }: {
   workspaces: WorkspaceInfo[];
   activeId?: string;
   initialPath?: string;
   placements?: PlacementEntry[];
-  /** The installed connectors, read as belonging to `activeId`. */
+  /** The installed connectors, read as belonging to `installedFor`. */
   installed?: InstalledConnector[];
+  /** The workspace the installed list names; `activeId` unless a test stales it. */
+  installedFor?: string;
   collapsed?: boolean;
 }): Promise<Mounted> {
   const container = document.createElement("div");
@@ -120,7 +123,7 @@ async function mount({
               value={{
                 iconFor: () => undefined,
                 connectors:
-                  installed && activeId ? { workspaceId: activeId, installed } : undefined,
+                  installed && installedFor ? { workspaceId: installedFor, installed } : undefined,
               }}
             >
               <ShellProvider
@@ -595,6 +598,40 @@ describe("WorkspaceNav — connectors without a view", () => {
     expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
       "2 connected",
     );
+  });
+
+  test("an app past the inline cap is still an app, not counted in the row", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: ["collateral", "salesforce", "apollo", "gong", "knowledge"].map((name, i) =>
+        appPlacement(name, { priority: (i + 1) * 10 }),
+      ),
+      installed: [
+        ...["collateral", "salesforce", "apollo", "gong", "knowledge"].map((name) =>
+          installedConnector(name),
+        ),
+        installedConnector("gmail", "Gmail"),
+      ],
+    });
+
+    expect(byTestId(mounted.container, "sidebar-workspace-view-all")).toHaveLength(1);
+    expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
+      "Gmail",
+    );
+  });
+
+  test("no row while the installed list still names another workspace", async () => {
+    mounted = await mount({
+      workspaces: [HELIX, ACME],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      installed: [installedConnector("gmail", "Gmail")],
+      installedFor: ACME.id,
+    });
+
+    expect(byTestId(mounted.container, "sidebar-workspace-tools")).toHaveLength(0);
   });
 });
 
