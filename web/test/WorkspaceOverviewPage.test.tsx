@@ -164,7 +164,14 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     mounted = await mount(
       harness(WS.id, [
         appPlacement({ route: "crm", label: "CRM", resourceUri: "ui://crm/main" }),
-        appPlacement({ route: "todo", label: "Todo", resourceUri: "ui://todo/main" }),
+        // Its own connector: the header counts apps, and two placements of one
+        // connector are one app with two views.
+        appPlacement({
+          serverName: "todo",
+          route: "todo",
+          label: "Todo",
+          resourceUri: "ui://todo/main",
+        }),
       ]),
     );
 

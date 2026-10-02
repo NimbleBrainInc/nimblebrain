@@ -3,7 +3,8 @@ import { isIdentityApp } from "./identity-apps";
 
 /**
  * Max apps shown inline under the focused workspace in the sidebar
- * before the "View all N apps" overflow link takes over. Pinning /
+ * before the "View all N apps" overflow link takes over, counted in apps
+ * (see `appsByConnector`), not in the views an app places. Pinning /
  * recency are future work; for now this is a simple priority-ordered
  * top-N.
  */
@@ -30,6 +31,32 @@ export function workspaceApps(sidebarPlacements: PlacementEntry[]): PlacementEnt
   return sidebarPlacements
     .filter((p) => p.slot.startsWith("sidebar.") && !p.slot.startsWith("sidebar.bottom"))
     .sort((a, b) => a.priority - b.priority);
+}
+
+/** One app in the sidebar: a connector, and the views it placed there. */
+export interface WorkspaceApp {
+  serverName: string;
+  /** Its placements in priority order. The first is where the app opens. */
+  views: PlacementEntry[];
+}
+
+/**
+ * The workspace's apps, one per connector, from `workspaceApps()`'s placements.
+ *
+ * A connector that places several views (`sidebar.<group>` placements, each with
+ * its own route) is still one app: the nav lists it once and shows its views
+ * beneath it, and the cap and the "View all N apps" count are in apps. A
+ * connector with one placement is an app with one view, which renders as it
+ * always has. Apps keep the order of their first placement.
+ */
+export function appsByConnector(placements: PlacementEntry[]): WorkspaceApp[] {
+  const apps = new Map<string, WorkspaceApp>();
+  for (const placement of placements) {
+    const app = apps.get(placement.serverName);
+    if (app) app.views.push(placement);
+    else apps.set(placement.serverName, { serverName: placement.serverName, views: [placement] });
+  }
+  return [...apps.values()];
 }
 
 /**

@@ -359,6 +359,98 @@ describe("WorkspaceNav — app quick-list", () => {
     expect(apps.filter((a) => a.hasAttribute("aria-current"))).toHaveLength(1);
   });
 
+  test("an app with several views lists them beneath it only while it is open", async () => {
+    const people = [
+      appPlacement("people", { priority: 10, label: "Contacts", route: "people" }),
+      appPlacement("people", {
+        priority: 11,
+        label: "Organizations",
+        route: "people/organizations",
+        resourceUri: "ui://people/organizations",
+      }),
+    ];
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [...people, appPlacement("tasks", { priority: 20 })],
+    });
+
+    // Closed: one row per app, opening on the app's first view, and no views listed.
+    const closed = byTestId(mounted.container, "sidebar-workspace-app");
+    expect(closed.map((a) => a.getAttribute("href"))).toEqual([
+      "/w/helix/app/people",
+      "/w/helix/app/tasks",
+    ]);
+    expect(byTestId(mounted.container, "sidebar-workspace-app-view")).toHaveLength(0);
+    mounted.unmount();
+
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/app/people/organizations",
+      placements: [...people, appPlacement("tasks", { priority: 20 })],
+    });
+
+    // Open: its views list beneath it, and the view on screen is the current page.
+    // The app's own row is not: the page is one of its views.
+    const views = byTestId(mounted.container, "sidebar-workspace-app-view");
+    expect(views.map((v) => v.textContent)).toEqual(["Contacts", "Organizations"]);
+    expect(views.map((v) => v.getAttribute("aria-current"))).toEqual([null, "page"]);
+    const apps = byTestId(mounted.container, "sidebar-workspace-app");
+    expect(apps).toHaveLength(2);
+    expect(apps.filter((a) => a.hasAttribute("aria-current"))).toHaveLength(0);
+  });
+
+  test("the cap and the View-all count are in apps, not in the views they place", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [
+        appPlacement("people", { priority: 10, route: "people" }),
+        appPlacement("people", {
+          priority: 11,
+          route: "people/organizations",
+          resourceUri: "ui://people/organizations",
+        }),
+        appPlacement("people", {
+          priority: 12,
+          route: "people/opportunities",
+          resourceUri: "ui://people/opportunities",
+        }),
+        appPlacement("tasks", { priority: 20 }),
+        appPlacement("memory", { priority: 30 }),
+      ],
+    });
+
+    // Five placements, three apps: all three fit under the cap of four.
+    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(3);
+    expect(byTestId(mounted.container, "sidebar-workspace-view-all")).toHaveLength(0);
+  });
+
+  test("collapsed, an app with several views is one icon, marked when a view is open", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/app/people/organizations",
+      collapsed: true,
+      placements: [
+        appPlacement("people", { priority: 10, route: "people" }),
+        appPlacement("people", {
+          priority: 11,
+          route: "people/organizations",
+          resourceUri: "ui://people/organizations",
+        }),
+      ],
+    });
+
+    const apps = byTestId(mounted.container, "sidebar-workspace-app");
+    expect(apps).toHaveLength(1);
+    expect(apps[0]?.getAttribute("aria-current")).toBe("page");
+    expect(byTestId(mounted.container, "sidebar-workspace-app-view")).toHaveLength(0);
+  });
+
   test("no overflow link when apps fit within the cap", async () => {
     mounted = await mount({
       workspaces: [HELIX],

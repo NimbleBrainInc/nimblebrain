@@ -11,6 +11,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  appsByConnector,
   connectorSettingsPath,
   iconMapFromInstalled,
   MAX_INLINE_APPS,
@@ -106,5 +107,27 @@ describe("connectorSettingsPath", () => {
 
   test("an identity app has no workspace settings page -> null", () => {
     expect(connectorSettingsPath("acme", "conversations")).toBeNull();
+  });
+});
+
+describe("appsByConnector", () => {
+  test("a connector that places several views is one app holding them in order", () => {
+    const apps = appsByConnector(
+      workspaceApps([
+        p({ serverName: "tasks", slot: "sidebar.apps", priority: 50 }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 11, route: "people/orgs" }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 10, route: "people" }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 60, route: "people/deals" }),
+      ]),
+    );
+    // Apps keep the order of their first view, so a later view of an earlier app
+    // does not move it.
+    expect(apps.map((a) => a.serverName)).toEqual(["people", "tasks"]);
+    expect(apps[0]?.views.map((v) => v.route)).toEqual(["people", "people/orgs", "people/deals"]);
+    expect(apps[1]?.views).toHaveLength(1);
+  });
+
+  test("no placements, no apps", () => {
+    expect(appsByConnector([])).toEqual([]);
   });
 });

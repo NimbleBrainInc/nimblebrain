@@ -7,7 +7,8 @@
 //
 // Order: Overview, the identity views (Conversations / Automations / Files),
 // Inbox, then APPS (People, Tasks, … — capped with a View-all overflow), then
-// Connectors. Each routes into `/w/<slug>/…`. The identity views' TOOLS still
+// Connectors. Each routes into `/w/<slug>/…`. An app that places several views
+// is one entry; while it is open its views list beneath it. The identity views' TOOLS still
 // dispatch bare through the identity door (see lib/identity-apps); the slug
 // here is the focused workspace = view scope, not a tool namespace.
 //
@@ -25,7 +26,12 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../../context/Workspace
 import { resolveIcon } from "../../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../../lib/identity-apps";
 import { cn } from "../../lib/utils";
-import { MAX_INLINE_APPS, workspaceApps } from "../../lib/workspace-apps";
+import {
+  appsByConnector,
+  MAX_INLINE_APPS,
+  type WorkspaceApp,
+  workspaceApps,
+} from "../../lib/workspace-apps";
 import { toSlug } from "../../lib/workspace-slug";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Tooltip } from "../ui/tooltip";
@@ -49,7 +55,7 @@ function WorkspaceViews({
   collapsed: boolean;
 }) {
   const shell = useShellContext();
-  const { iconFor, connectorCount } = useWorkspaceAppIcons();
+  const { iconFor, connectorCount, connectors } = useWorkspaceAppIcons();
   const { unread } = useNotifications();
   const slug = toSlug(workspace.id);
 
@@ -68,11 +74,17 @@ function WorkspaceViews({
   // apps (mirrors the overview grid's readiness check).
   const ready = shell != null && shell.shellWorkspaceId === workspace.id;
   const apps = useMemo(
-    () => (ready && shell ? workspaceApps(shell.forSlot("sidebar")) : []),
+    () => (ready && shell ? appsByConnector(workspaceApps(shell.forSlot("sidebar"))) : []),
     [ready, shell],
   );
   const shownApps = collapsed ? apps : apps.slice(0, MAX_INLINE_APPS);
   const hasAppOverflow = apps.length > shownApps.length;
+  // An app with several views is named by its connector, which the installed
+  // list resolves; that list names the previous workspace until its refetch lands.
+  const appName = (serverName: string) =>
+    connectors?.workspaceId === workspace.id
+      ? connectors.installed.find((c) => c.serverName === serverName)?.displayName
+      : undefined;
 
   return (
     <div
@@ -109,13 +121,13 @@ function WorkspaceViews({
         ) : (
           <div className="px-2 pt-3 pb-1 text-2xs font-bold tracking-[0.08em] uppercase">Apps</div>
         ))}
-      {shownApps.map((p) => (
-        <AppLink
-          key={p.resourceUri}
-          to={`/w/${slug}/app/${p.route}`}
-          label={p.label ?? p.route ?? "App"}
-          iconUrl={iconFor(p.serverName)}
-          serverName={p.serverName}
+      {shownApps.map((app) => (
+        <AppEntry
+          key={app.serverName}
+          app={app}
+          slug={slug}
+          name={appName(app.serverName)}
+          iconUrl={iconFor(app.serverName)}
           collapsed={collapsed}
         />
       ))}
@@ -195,23 +207,93 @@ function ViewLink({
   );
 }
 
+// One app. With a single view it is that view's link. With several it is a row
+// that opens the first view, and while any of its views is on screen they list
+// beneath it: the views are the app's own navigation, so they appear when the
+// app is in use and stay out of the nav otherwise. The open view carries the
+// highlight and `aria-current`; the app row only reads as open.
+function AppEntry({
+  app,
+  slug,
+  name,
+  iconUrl,
+  collapsed,
+}: {
+  app: WorkspaceApp;
+  slug: string;
+  name?: string;
+  iconUrl?: string;
+  collapsed: boolean;
+}) {
+  const { pathname } = useLocation();
+  const [first] = app.views;
+  if (!first) return null;
+  const to = (view: WorkspaceApp["views"][number]) => `/w/${slug}/app/${view.route}`;
+  const viewLabel = (view: WorkspaceApp["views"][number]) => view.label ?? view.route ?? "App";
+  if (app.views.length === 1) {
+    return (
+      <AppLink
+        to={to(first)}
+        label={viewLabel(first)}
+        iconUrl={iconUrl}
+        serverName={app.serverName}
+        collapsed={collapsed}
+      />
+    );
+  }
+  const open = app.views.some((view) => pathname === to(view));
+  return (
+    <>
+      <AppLink
+        to={to(first)}
+        label={name ?? viewLabel(first)}
+        iconUrl={iconUrl}
+        serverName={app.serverName}
+        collapsed={collapsed}
+        open={open}
+      />
+      {open && !collapsed && (
+        <div className="flex flex-col gap-px" data-testid="sidebar-workspace-app-views">
+          {app.views.map((view) => (
+            <NavLink
+              key={view.resourceUri}
+              to={to(view)}
+              end
+              data-testid="sidebar-workspace-app-view"
+              className={({ isActive }) => cn(rowClass(isActive, false), "pl-[2.125rem]")}
+            >
+              <span className="flex-1 truncate">{viewLabel(view)}</span>
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 // A workspace app with a brand icon (letter-avatar fallback). Exact-match
 // active: app routes are leaf paths, so the URL maps to one placement (a
 // `startsWith` would mis-light `crm` when viewing a sibling `crm-archive`).
+// `open` is set by an app whose views list beneath it: the row then reads as
+// open rather than current, because the current page is one of its views.
 function AppLink({
   to,
   label,
   serverName,
   iconUrl,
   collapsed,
+  open,
 }: {
   to: string;
   label: string;
   serverName: string;
   iconUrl?: string;
   collapsed: boolean;
+  open?: boolean;
 }) {
-  const isActive = useLocation().pathname === to;
+  const exact = useLocation().pathname === to;
+  // Collapsed, the views are not listed, so the app's icon is what marks the page.
+  const isActive = open === undefined ? exact : open && collapsed;
   const link = (
     <Link
       to={to}
@@ -220,7 +302,7 @@ function AppLink({
       data-app-route={serverName}
       data-is-active={isActive ? "true" : "false"}
       aria-current={isActive ? "page" : undefined}
-      className={rowClass(isActive, collapsed)}
+      className={cn(rowClass(isActive, collapsed), open && "font-medium text-foreground")}
     >
       <ConnectorIcon name={label} iconUrl={iconUrl} className="size-4 rounded-xs text-3xs" />
       {!collapsed && <span className="flex-1 truncate">{label}</span>}

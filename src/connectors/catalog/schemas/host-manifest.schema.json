@@ -29,7 +29,7 @@
       "items": {
         "$ref": "#/$defs/PlacementDeclaration"
       },
-      "description": "Shell layout placement declarations."
+      "description": "Shell layout placement declarations. Several `sidebar.<group>` placements from one server are one app in the sidebar: it is listed once under `name`, opens its first placement by priority, and lists the placements beneath it by `label` while one is open."
     },
     "primaryView": {
       "type": "object",
