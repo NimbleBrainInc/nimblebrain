@@ -37,7 +37,6 @@ export function WorkspaceAppIconsProvider({
   children: ReactNode;
 }) {
   const [icons, setIcons] = useState<Map<string, string>>(() => new Map());
-  const [connectorCount, setConnectorCount] = useState<number | undefined>(undefined);
   const [connectors, setConnectors] = useState<WorkspaceConnectors | undefined>(undefined);
   // Monotonic request id: a response that resolves after a newer fetch (a
   // workspace switch, or an SSE refetch racing it) is dropped.
@@ -49,7 +48,6 @@ export function WorkspaceAppIconsProvider({
       const { installed } = await getInstalledConnectors({ scope: "workspace" });
       if (seq !== reqRef.current) return;
       setIcons(iconMapFromInstalled(installed));
-      setConnectorCount(installed.length);
       setConnectors({ workspaceId: wsId, installed });
     } catch {
       // Icons are decorative. On a failed fetch keep whatever we have and
@@ -98,10 +96,9 @@ export function WorkspaceAppIconsProvider({
   const value = useMemo<WorkspaceAppIconsValue>(
     () => ({
       iconFor: (serverName: string) => icons.get(serverName),
-      connectorCount,
       connectors,
     }),
-    [icons, connectorCount, connectors],
+    [icons, connectors],
   );
 
   return (

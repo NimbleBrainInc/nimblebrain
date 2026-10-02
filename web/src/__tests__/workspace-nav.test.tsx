@@ -4,11 +4,10 @@
 // Pins:
 //   1. The nav shows only the focused workspace, flat: Overview, its identity
 //      views (Conversations / Automations / Files) routed to `/w/<slug>/<view>`,
-//      Inbox, its apps routed to `/w/<slug>/app/<route>`, and a Connectors row
-//      to `/w/<slug>/settings/connectors`. No other workspace appears in it.
+//      Inbox, and its apps routed to `/w/<slug>/app/<route>`. No other
+//      workspace appears in it.
 //   2. The app quick-list caps at MAX_INLINE_APPS with a View-all overflow to
-//      the workspace overview. The Connectors count comes from the shared
-//      app-icons fetch.
+//      the workspace overview.
 //   3. The switcher's trigger names the focused workspace. Opened, it lists
 //      every workspace alphabetically with the focused one selected, and the
 //      filter box narrows the list.
@@ -18,6 +17,11 @@
 //   5. The footer opens the focused workspace's settings and the new-workspace
 //      page.
 //   6. Collapsed, the nav renders the same destinations icon-only.
+//   7. The APPS header carries a "+" to the connector catalog for a member
+//      who may write the workspace, even before any app is installed, and
+//      no "+" for anyone else.
+//   8. Installed connectors with no view share one row under the apps, to the
+//      installed list; one with a view is never counted there.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -59,6 +63,7 @@ const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsC
 const { WorkspaceNav } = await import("../components/shell/WorkspaceNav");
 const { WorkspaceSwitcher } = await import("../components/shell/WorkspaceSwitcher");
 
+import type { InstalledConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
 
@@ -91,14 +96,15 @@ async function mount({
   initialPath = "/",
   placements = [],
   collapsed = false,
-  connectorCount,
+  installed,
 }: {
   workspaces: WorkspaceInfo[];
   activeId?: string;
   initialPath?: string;
   placements?: PlacementEntry[];
+  /** The installed connectors, read as belonging to `activeId`. */
+  installed?: InstalledConnector[];
   collapsed?: boolean;
-  connectorCount?: number;
 }): Promise<Mounted> {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -110,7 +116,13 @@ async function mount({
         <MemoryRouter initialEntries={[initialPath]}>
           <WorkspaceProvider initialWorkspaces={workspaces} initialActiveId={activeId}>
             <NavigationProbe />
-            <WorkspaceAppIconsContext.Provider value={{ iconFor: () => undefined, connectorCount }}>
+            <WorkspaceAppIconsContext.Provider
+              value={{
+                iconFor: () => undefined,
+                connectors:
+                  installed && activeId ? { workspaceId: activeId, installed } : undefined,
+              }}
+            >
               <ShellProvider
                 value={{
                   forSlot: makeForSlot(placements),
@@ -193,6 +205,21 @@ function appPlacement(serverName: string, over: Partial<PlacementEntry> = {}): P
   };
 }
 
+function installedConnector(serverName: string, displayName = serverName): InstalledConnector {
+  return {
+    serverName,
+    connectorName: serverName,
+    displayName,
+    disconnectable: false,
+    version: "1.0.0",
+    state: "running",
+    scope: "workspace",
+    interactive: false,
+    toolCount: 1,
+    status: "ready",
+  };
+}
+
 const IDENTITY_PLACEMENTS: PlacementEntry[] = [
   identityPlacement("conversations", 1),
   identityPlacement("automations", 2),
@@ -270,7 +297,6 @@ describe("WorkspaceNav — the focused workspace only", () => {
       activeId: "ws_helix",
       initialPath: "/w/helix/",
       placements: [...IDENTITY_PLACEMENTS, appPlacement("people"), appPlacement("tasks")],
-      connectorCount: 4,
     });
 
     const nav = byTestId(mounted.container, "sidebar-workspace-nav");
@@ -284,17 +310,12 @@ describe("WorkspaceNav — the focused workspace only", () => {
       "/w/helix/automations",
       "/w/helix/files",
       "/w/helix/notifications",
+      "/w/helix/settings/connectors/browse",
       "/w/helix/app/people",
       "/w/helix/app/tasks",
-      "/w/helix/settings/connectors",
     ]);
     expect(nav[0]?.textContent).not.toContain("Acme");
     expect(nav[0]?.textContent).not.toContain("Mat's workspace");
-
-    // Connectors count badge reflects the focused workspace's installed count.
-    const badge = byTestId(mounted.container, "sidebar-workspace-count");
-    expect(badge).toHaveLength(1);
-    expect(badge[0]?.textContent).toBe("4");
   });
 
   test("Overview is the current page only on the overview", async () => {
@@ -474,6 +495,109 @@ describe("WorkspaceNav — app quick-list", () => {
   });
 });
 
+describe("WorkspaceNav — add a connector", () => {
+  test("the APPS header carries a + to the connector catalog", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [appPlacement("people")],
+    });
+
+    const add = byTestId(mounted.container, "sidebar-add-connector");
+    expect(add).toHaveLength(1);
+    expect(add[0]?.getAttribute("href")).toBe("/w/helix/settings/connectors/browse");
+    expect(add[0]?.getAttribute("aria-label")).toBe("Add apps and tools");
+    expect(add[0]?.parentElement?.textContent).toBe("Apps");
+  });
+
+  test("a workspace with no apps still shows APPS and its +", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+    });
+
+    expect(byTestId(mounted.container, "sidebar-add-connector")).toHaveLength(1);
+    expect(byTestId(mounted.container, "sidebar-workspace-nav")[0]?.textContent).toContain("Apps");
+  });
+
+  test("a member who cannot write the workspace gets no +", async () => {
+    mounted = await mount({
+      workspaces: [ws({ id: "ws_helix", name: "Helix", userRole: "member" })],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [appPlacement("people")],
+    });
+
+    expect(byTestId(mounted.container, "sidebar-add-connector")).toHaveLength(0);
+    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(1);
+  });
+
+  test("no connectors without a view, no shared row", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [appPlacement("people")],
+      installed: [installedConnector("people")],
+    });
+
+    expect(byTestId(mounted.container, "sidebar-workspace-tools")).toHaveLength(0);
+    expect(anchorHrefs(mounted.container)).not.toContain("/w/helix/settings/connectors");
+  });
+});
+
+describe("WorkspaceNav — connectors without a view", () => {
+  test("share one row after the apps, counting only those without a view", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      placements: [appPlacement("people")],
+      installed: [
+        installedConnector("people"),
+        installedConnector("gmail", "Gmail"),
+        installedConnector("granola", "Granola"),
+      ],
+    });
+
+    const row = byTestId(mounted.container, "sidebar-workspace-tools");
+    expect(row).toHaveLength(1);
+    expect(row[0]?.getAttribute("href")).toBe("/w/helix/settings/connectors");
+    expect(row[0]?.textContent).toContain("2 more connected");
+    expect(row[0]?.getAttribute("title")).toBe("Gmail, Granola");
+    // After the apps.
+    const hrefs = anchorHrefs(mounted.container);
+    expect(hrefs.indexOf("/w/helix/settings/connectors")).toBeGreaterThan(
+      hrefs.indexOf("/w/helix/app/people"),
+    );
+  });
+
+  test("a single one is named; with no apps the count drops 'more'", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      installed: [installedConnector("gmail", "Gmail")],
+    });
+    expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
+      "Gmail",
+    );
+    mounted.unmount();
+
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_helix",
+      initialPath: "/w/helix/",
+      installed: [installedConnector("gmail", "Gmail"), installedConnector("exa", "Exa")],
+    });
+    expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
+      "2 connected",
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // (3) The switcher lists and filters
 // ---------------------------------------------------------------------------
@@ -604,10 +728,10 @@ describe("WorkspaceNav — collapsed", () => {
       "Files",
       "Inbox",
       "people",
-      "Connectors",
+      "Add apps and tools",
     ]);
     // Icon-only: no visible labels in the rail.
-    for (const label of ["Overview", "Conversations", "Inbox", "Connectors"]) {
+    for (const label of ["Overview", "Conversations", "Inbox", "Apps"]) {
       expect(nav?.textContent).not.toContain(label);
     }
   });
