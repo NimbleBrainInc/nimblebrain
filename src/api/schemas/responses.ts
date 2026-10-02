@@ -93,8 +93,6 @@ export interface CatalogModel {
 /** Mirrors `PlacementEntry` (`src/connectors/runtime/types.ts`). */
 export interface PlacementEntry {
   serverName: string;
-  /** The display name the connector declared for itself; names an app that places several views. */
-  appName?: string;
   /** Which slot this UI fills (e.g. "sidebar", "main", "settings"). */
   slot: string;
   /** ui:// resource URI served by the server. */

@@ -36,10 +36,7 @@ export type ConnectionState =
   | "reauth_required";
 
 /** Mirrors `PlacementDeclaration` (`src/connectors/runtime/types.ts`). */
-export type PlacementDeclaration = Omit<
-  PlacementEntry,
-  "serverName" | "appName" | "priority" | "wsId"
-> & {
+export type PlacementDeclaration = Omit<PlacementEntry, "serverName" | "priority" | "wsId"> & {
   priority?: number;
 };
 

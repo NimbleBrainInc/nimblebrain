@@ -25,19 +25,13 @@ export class PlacementRegistry {
    * undefined. Without this scoping, re-seeding the same connector in a second
    * workspace would wipe out the first workspace's nav entries.
    */
-  register(
-    serverName: string,
-    placements: PlacementDeclaration[],
-    wsId?: string,
-    appName?: string,
-  ): void {
+  register(serverName: string, placements: PlacementDeclaration[], wsId?: string): void {
     this.unregister(serverName, wsId);
 
     for (const p of placements) {
       this.entries.push({
         ...p,
         serverName,
-        ...(appName ? { appName } : {}),
         priority: p.priority ?? 100,
         ...(wsId !== undefined ? { wsId } : {}),
       });

@@ -101,6 +101,11 @@ function WorkspaceViews({
     );
   }, [ready, connectors, workspace.id, apps]);
   const hasSection = shownApps.length > 0 || toolsOnly.length > 0 || canInstall;
+  // A connector's display name (its catalog title), from the same installed list.
+  const nameFor = (serverName: string) =>
+    connectors?.workspaceId === workspace.id
+      ? connectors.installed.find((c) => c.serverName === serverName)?.displayName
+      : undefined;
 
   return (
     <div
@@ -145,6 +150,7 @@ function WorkspaceViews({
           key={app.serverName}
           app={app}
           slug={slug}
+          name={nameFor(app.serverName)}
           iconUrl={iconFor(app.serverName)}
           collapsed={collapsed}
         />
@@ -310,11 +316,14 @@ function ViewLink({
 function AppEntry({
   app,
   slug,
+  name,
   iconUrl,
   collapsed,
 }: {
   app: WorkspaceApp;
   slug: string;
+  /** The connector's display name; until the installed list lands, the first view's label. */
+  name?: string;
   iconUrl?: string;
   collapsed: boolean;
 }) {
@@ -339,9 +348,7 @@ function AppEntry({
     <>
       <AppLink
         to={to(first)}
-        // The connector's own name arrives on the placement, so the entry is named
-        // in the same render that lists it.
-        label={first.appName ?? viewLabel(first)}
+        label={name ?? viewLabel(first)}
         iconUrl={iconUrl}
         serverName={app.serverName}
         collapsed={collapsed}
