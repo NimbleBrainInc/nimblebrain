@@ -978,8 +978,8 @@ describe("manage_connectors.install", () => {
 
   test("install into a shared workspace records wsId on the structuredContent (audit attribution)", async () => {
     // Audit attribution (Stage 1 lesson 2): every install event must
-    // surface the picked `wsId`, NOT the global header switcher's
-    // current value. We can't observe the persisted audit-log event
+    // surface the picked `wsId`, NOT the session's active
+    // workspace. We can't observe the persisted audit-log event
     // from the unit-test harness (NoopEventSink), but the
     // structuredContent IS the audit attribution surface — the
     // EventSink writer reads the same shape. Pinning `sc.wsId ===
