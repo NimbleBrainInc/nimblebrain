@@ -6,7 +6,9 @@
 //   2. An app trail one deep shows its label and no back control.
 //   3. A deeper trail shows its last label and a back control that asks the
 //      app (through the navigate it published) for the entry before the last.
-//   4. Chat sits in the bar on workspace routes only, where chat exists.
+//   4. The same trail's ancestors form a breadcrumb; each asks the app for its
+//      own entry. Past three ancestors the middle folds, root and parent stay.
+//   5. Chat sits in the bar on workspace routes only, where chat exists.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -91,6 +93,11 @@ const byTestId = (id: string) =>
     (el) => el.getAttribute("data-testid") === id,
   ) as HTMLElement | undefined;
 
+const crumbButtons = () =>
+  Array.from(container.getElementsByTagName("button")).filter(
+    (el) => el.getAttribute("data-testid") === "top-bar-crumb",
+  );
+
 beforeEach(() => {
   localStorage.setItem("nb:chatPanelState", "closed");
 });
@@ -124,7 +131,7 @@ describe("TopBar", () => {
       location.setAppLocation({
         trail: [
           { id: "people", label: "People" },
-          { id: "contact/dh", label: "Dan Hoover" },
+          { id: "contact/c-1", label: "Jane Doe" },
           { id: "company/acme", label: "Acme Corp" },
         ],
         navigate,
@@ -133,9 +140,48 @@ describe("TopBar", () => {
 
     expect(byTestId("top-bar-title")?.textContent).toBe("Acme Corp");
     const back = byTestId("top-bar-back");
-    expect(back?.getAttribute("aria-label")).toBe("Back to Dan Hoover");
+    expect(back?.getAttribute("aria-label")).toBe("Back to Jane Doe");
     await act(async () => back?.click());
-    expect(navigate.mock.calls).toEqual([["contact/dh"]]);
+    expect(navigate.mock.calls).toEqual([["contact/c-1"]]);
+  });
+
+  test("each breadcrumb entry asks the app for its own entry", async () => {
+    await mountBar("/w/acme/app/people");
+    const navigate = mock((_id: string) => {});
+    await act(async () =>
+      location.setAppLocation({
+        trail: [
+          { id: "people://contacts", label: "People" },
+          { id: "people://contacts/c-1", label: "Jane Doe" },
+          { id: "people://companies/acme", label: "Acme Corp" },
+        ],
+        navigate,
+      }),
+    );
+
+    expect(byTestId("top-bar-breadcrumb")?.getAttribute("aria-label")).toBe("Breadcrumb");
+    const crumbs = crumbButtons();
+    expect(crumbs.map((c) => c.textContent)).toEqual(["People", "Jane Doe"]);
+    await act(async () => crumbs[0].click());
+    expect(navigate.mock.calls).toEqual([["people://contacts"]]);
+  });
+
+  test("a trail one deep has no breadcrumb", async () => {
+    await mountBar("/w/acme/app/people");
+    await act(async () =>
+      location.setAppLocation({ trail: [{ id: "list", label: "Contacts" }], navigate: () => {} }),
+    );
+    expect(byTestId("top-bar-breadcrumb")).toBeUndefined();
+  });
+
+  test("past three ancestors, the middle folds and the root and parent stay", async () => {
+    await mountBar("/w/acme/app/people");
+    const trail = ["a", "b", "c", "d", "e"].map((id) => ({ id, label: id.toUpperCase() }));
+    await act(async () => location.setAppLocation({ trail, navigate: () => {} }));
+
+    expect(crumbButtons().map((c) => c.textContent)).toEqual(["A", "D"]);
+    expect(byTestId("top-bar-breadcrumb")?.textContent).toContain("…");
+    expect(byTestId("top-bar-title")?.textContent).toBe("E");
   });
 
   test("Chat is in the bar on workspace routes only", async () => {
