@@ -130,7 +130,7 @@ export function createBriefingCollector(deps: BriefingCollectorDeps): BriefingCo
     if (!source) return [];
     const facets = await discover(wsId, source, force);
     // One line of display text that reaches the model in the tool's text result.
-    const app = sanitizeLineField(titles.get(inst.serverName) ?? inst.connectorName);
+    const app = sanitizeLineField(titles.get(inst.serverName) ?? inst.serverName);
     const route = inst.ui?.placements?.[0]?.route ?? null;
     const readings = await Promise.allSettled(
       facets.map((facet) =>

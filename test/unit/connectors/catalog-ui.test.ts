@@ -3,6 +3,7 @@ import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/type
 import {
   catalogTitleByServerName,
   catalogUiByServerName,
+  namedUi,
   withCatalogUi,
 } from "../../../src/connectors/runtime/catalog-ui.ts";
 import { slugifyServerName } from "../../../src/connectors/runtime/paths.ts";
@@ -81,5 +82,26 @@ describe("a connector's display name comes from its catalog entry", () => {
     const first = { ...entry(ID), name: "Outbound" };
     const second = { ...entry(ID), name: "Shadow" };
     expect(catalogTitleByServerName([first, second])).toEqual(new Map([[SN, "Outbound"]]));
+  });
+});
+
+describe("the UI the system prompt names", () => {
+  const titles = new Map([[SN, "Outbound"]]);
+
+  it("is named by the catalog title, never a name stored on the ref", () => {
+    const stored = { ...atInstall, name: "Stored Name" } as ConnectorUiMeta;
+    expect(namedUi(SN, stored, titles)).toEqual({ name: "Outbound" });
+  });
+
+  it("falls back to the server name when no catalog entry names it", () => {
+    expect(namedUi("other", atInstall, titles)).toEqual({ name: "other" });
+  });
+
+  it("is absent when no placement survives registration", () => {
+    expect(namedUi(SN, null, titles)).toBeNull();
+    expect(namedUi(SN, { name: "Stored Name" } as ConnectorUiMeta, titles)).toBeNull();
+    expect(
+      namedUi(SN, { placements: [{ slot: "main", resourceUri: "https://x.test/" }] }, titles),
+    ).toBeNull();
   });
 });

@@ -21,6 +21,7 @@
  */
 
 import type { ConnectorCatalogEntry } from "../catalog/types.ts";
+import { sanitizePlacements } from "./defaults.ts";
 import { slugifyServerName } from "./paths.ts";
 import type { ConnectorRef, ConnectorUiMeta, LocalConnectorMeta } from "./types.ts";
 
@@ -51,6 +52,20 @@ export function catalogTitleByServerName(
     if (!out.has(slug)) out.set(slug, e.name);
   }
   return out;
+}
+
+/**
+ * The UI an installed connector shows, named for the system prompt: its
+ * catalog title, else its server name, or null when it has no placement that
+ * survives the check registration applies (so the shell renders nothing).
+ */
+export function namedUi(
+  serverName: string,
+  ui: ConnectorUiMeta | null | undefined,
+  titles: ReadonlyMap<string, string>,
+): { name: string } | null {
+  if (sanitizePlacements(ui?.placements).length === 0) return null;
+  return { name: titles.get(serverName) ?? serverName };
 }
 
 /**

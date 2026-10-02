@@ -24,6 +24,7 @@ The block has a published JSON Schema at
 ```yaml title="catalog/my-app.yaml"
 servers:
   - name: com.myorg/my-app
+    title: My App
     description: My NimbleBrain app
     version: "1.0.0"
     remotes:
@@ -32,8 +33,6 @@ servers:
     _meta:
       ai.nimblebrain/host:
         host_version: "1.0"
-        name: My App
-        icon: database
         placements:
           - slot: sidebar.apps
             resourceUri: ui://dashboard
@@ -50,14 +49,13 @@ servers:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `host_version` | `string` | Yes | Contract major version. Write `"1.0"`. It changes only on a breaking change: every field in this table is part of `1.0`, and a block is turned on by declaring it, not by the version. The host accepts any `1.x` and skips a catalog connector that declares another major. |
-| `name` | `string` | Recommended | Display name shown in the sidebar and app list. Without a `name` the host surfaces no UI for the connector, so it's required in practice for any app with a presence in the shell. |
-| `icon` | `string` | No | [Lucide icon](https://lucide.dev/icons) name in kebab-case (e.g., `"database"`, `"message-square"`, `"hand"`). Defaults to `""`. |
-| `category` | `string` | No | Reserved, free-form string. Not currently consumed by the host — declare it only as forward-looking metadata. |
 | `placements` | `PlacementDeclaration[]` | No | Shell layout placement declarations: sidebar items, main views, and the settings section. Shape [below](#placementdeclaration); behavior in [Placements & navigation](/extensions/placements/) and [Settings sections](/extensions/settings-sections/). |
 | `hooks` | `HookDeclaration[]` | No | Inbound event streams your server accepts from a vendor over plain HTTPS, one entry per vendor: `{ vendor, route, register_tool, description?, header_renames? }`. Read from a catalog entry only. See [Inbound webhooks](/extensions/webhooks/). |
 | `notifications` | `object` | No | The outbox your server exposes, one resource the host polls for facts nobody asked for: `{ resource, description? }`. See [Notifications](/extensions/notifications/). |
 | `lifecycle` | `object` | No | Tools on your server the host calls when your connector becomes reachable in a workspace and just before it is removed: `{ on_ready?, on_removing? }`. See [Lifecycle](/extensions/lifecycle/). |
 | `admin_tools` | `string[]` | No | Names of tools on your server that only a workspace admin may call, at most 64. Read from a catalog entry only. See [Admin-only tools](/extensions/admin-tools/). |
+
+`name`, `icon` and `category` are deprecated and ignored. The schema still accepts them so existing catalogs load. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label and icon are its placement's own `label` and `icon`.
 
 ### `PlacementDeclaration`
 
@@ -80,6 +78,7 @@ The smallest catalog entry that registers a UI view:
 ```yaml title="catalog/hello.yaml"
 servers:
   - name: com.myorg/hello
+    title: Hello
     description: Says hello
     version: "0.1.0"
     remotes:
@@ -88,8 +87,6 @@ servers:
     _meta:
       ai.nimblebrain/host:
         host_version: "1.0"
-        name: Hello
-        icon: hand
         placements:
           - slot: sidebar.apps
             resourceUri: ui://index

@@ -1409,7 +1409,7 @@ describe("Core Source", () => {
       expect(itemsA).toBe(JSON.stringify(b.structuredContent?.items));
       expect(a.structuredContent?.items).toEqual([
         {
-          app: "Facet App",
+          app: "facet_app",
           facet: "overdue",
           label: "Follow-ups overdue",
           count: 3,
@@ -1418,7 +1418,7 @@ describe("Core Source", () => {
           state: "ok",
         },
       ]);
-      expect(extractText(a.content)).toBe("3 Follow-ups overdue (Facet App)");
+      expect(extractText(a.content)).toBe("3 Follow-ups overdue (facet_app)");
       expect(JSON.stringify(b)).not.toContain("Alice");
     } finally {
       await facetSource?.stop();

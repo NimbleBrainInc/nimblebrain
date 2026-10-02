@@ -65,7 +65,7 @@ const counts: Record<string, string> = {
 };
 
 describe("the app name", () => {
-  it("is the catalog title, folded to one line, else the connector name", async () => {
+  it("is the catalog title, folded to one line, else the server name", async () => {
     const one = await serve("one", {
       resources: () => [facetEntry("drafts", "Drafts")],
       read: () => '{"count": 1}',

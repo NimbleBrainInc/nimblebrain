@@ -32,6 +32,7 @@ import { registerSmitheryCredentialProvider } from "../connectors/providers/smit
 import {
   catalogTitleByServerName,
   catalogUiByServerName,
+  namedUi,
   withCatalogUi,
 } from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
@@ -3302,12 +3303,7 @@ export class Runtime {
     registry: ToolRegistry | undefined,
     titles: ReadonlyMap<string, string>,
   ): Promise<PromptAppInfo> {
-    // "Has UI" means the shell renders it: a placement that survives the same
-    // check registration applies.
-    const ui: PromptAppInfo["ui"] =
-      sanitizePlacements(instance.ui?.placements).length > 0
-        ? { name: titles.get(instance.serverName) ?? instance.serverName }
-        : null;
+    const ui: PromptAppInfo["ui"] = namedUi(instance.serverName, instance.ui, titles);
 
     // Surface the MCP server's `initialize.instructions` (when set) so the
     // LLM sees per-connector guidance — typically a pointer to `skill://`
