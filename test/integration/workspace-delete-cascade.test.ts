@@ -34,6 +34,7 @@ import type { Tool, ToolResult, ToolSource } from "../../src/tools/types.ts";
 import { ARCHIVE_MARKER_FILENAME } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN = { id: "usr_admin", email: "admin@example.test" };
 const WS_ID = "ws_helix";
@@ -174,7 +175,7 @@ beforeEach(async () => {
     logging: { disabled: true },
     workDir,
   });
-  await runtime.getWorkspaceStore().create("Helix", "helix");
+  await seedWorkspace(runtime.getWorkspaceStore(), WS_ID, { name: "Helix" });
   await runtime.getWorkspaceStore().addMember(WS_ID, ADMIN.id, "admin");
 });
 

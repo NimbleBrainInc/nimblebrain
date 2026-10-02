@@ -278,6 +278,25 @@ test("another workspace's id does not reach this workspace's connector", async (
   expect(forwarded[0]?.url).toContain("/ingest/other");
 });
 
+describe("a registration whose route names the connector's MCP endpoint", () => {
+  test.each(["/mcp", "/mcp/messages", "/%6dcp"])(
+    "%s answers the bare 404 and forwards nothing",
+    async (route) => {
+      // The delivery id is real, so this reaches the forward; the forward would
+      // carry the connection's credential to the MCP endpoint. Provisioning
+      // refuses such a route, and this is what holds for one already on disk.
+      await seedWorkspace({
+        hooks: { [registrationKey(CONNECTOR, VENDOR)]: registration({ route }) },
+      });
+      await expectIndistinguishable404(
+        await deliver(makeApp(), hookUrl(), {
+          body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+        }),
+      );
+    },
+  );
+});
+
 describe("a registration written before delivery ids existed", () => {
   test("is inadmissible, and does not 500 a valid delivery to another workspace", async () => {
     // The door scans every workspace, so a record with no id sits on the path of

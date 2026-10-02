@@ -83,7 +83,7 @@
           "type": "string",
           "pattern": "^/(?!/).*$",
           "maxLength": 512,
-          "description": "Absolute path ON THIS SERVER that a delivery is forwarded to, e.g. \"/ingest/acme\". Resolved against this server's own base URL and refused if it resolves to a different origin, so it may not be protocol-relative (\"//host\"), contain \"..\", a backslash, a fragment, or control characters."
+          "description": "Absolute path ON THIS SERVER that a delivery is forwarded to, e.g. \"/ingest/acme\". Resolved against this server's own base URL and refused if it resolves to a different origin, so it may not be protocol-relative (\"//host\"), contain \"..\", a backslash, a fragment, or control characters. It may not be this server's MCP endpoint path or a path under it; such a hook is refused at install and at delivery."
         },
         "register_tool": {
           "type": "string",

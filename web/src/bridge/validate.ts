@@ -24,7 +24,7 @@
 
 import type { TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
+import { ACTION_METHOD, KEYDOWN_METHOD, LOCATION_METHOD, REQUEST_FILE_METHOD } from "./extensions";
 import {
   ExtAppsInitializedNotification,
   ExtAppsInitializeRequest,
@@ -38,6 +38,7 @@ import {
   UiActionMessage,
   UiDownloadFileSpecMessage,
   UiKeydownMessage,
+  UiLocationMessage,
   UiMessageMessage,
   UiOpenLinkMessage,
   UiRequestDisplayModeMessage,
@@ -69,6 +70,7 @@ export const SCHEMA_BY_METHOD: Record<string, TSchema> = {
   [ACTION_METHOD]: UiActionMessage,
   [REQUEST_FILE_METHOD]: SynapseRequestFileMessage,
   [KEYDOWN_METHOD]: UiKeydownMessage,
+  [LOCATION_METHOD]: UiLocationMessage,
 };
 
 export interface AppToHostValidationResult {

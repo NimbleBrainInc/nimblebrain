@@ -91,7 +91,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
-import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
+import { seedWorkspace, seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const POSTHOG_ID = "com.posthog/analytics";
 const GMAIL_ID = "com.google/gmail";
@@ -185,7 +185,7 @@ function buildHarness(): Harness {
 
 async function provision(h: Harness): Promise<void> {
   const store = h.runtime.getWorkspaceStore();
-  await store.create("Test", h.wsId.slice(3));
+  await seedWorkspace(store, h.wsId, { name: "Test" });
   await store.addMember(h.wsId, ADMIN.id, "admin");
 }
 

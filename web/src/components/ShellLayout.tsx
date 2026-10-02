@@ -10,11 +10,10 @@ import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 import { ArtifactPanel } from "./ArtifactPanel";
 import { ChatChrome } from "./ChatChrome";
-import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
 import { ReleaseUpdateBanner } from "./ReleaseUpdateBanner";
-import { SidebarToggle } from "./SidebarToggle";
 import { SidebarHeader } from "./shell/SidebarHeader";
+import { TopBar } from "./shell/TopBar";
 import { WorkspaceNav } from "./shell/WorkspaceNav";
 import { WorkspaceSwitcher } from "./shell/WorkspaceSwitcher";
 import { UserMenu } from "./UserMenu";
@@ -120,12 +119,7 @@ export const ShellLayout = memo(function ShellLayout({
           transition: `margin-right ${CHAT_TRANSITION_STANDARD}`,
         }}
       >
-        {isHidden && (
-          <header className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card shrink-0">
-            <SidebarToggle />
-            <Logo />
-          </header>
-        )}
+        <TopBar />
         <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
       </main>
 

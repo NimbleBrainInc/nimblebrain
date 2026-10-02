@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import type { UploadLimits } from "./host-extensions";
+import type { AppTrailEntry } from "./schemas";
 
 export type {
   // App → Host envelopes
@@ -57,6 +58,11 @@ export interface BridgeCallbacks {
   onAction?: (action: string, params: Record<string, unknown>) => void;
   /** Called when the iframe confirms handshake complete. */
   onInitialized?: () => void;
+  /**
+   * Called with the app's whole trail, root first, each time it sends
+   * `ai.nimblebrain/location`. Each call replaces the last.
+   */
+  onLocation?: (trail: AppTrailEntry[]) => void;
   /**
    * Provide NimbleBrain-specific extensions to merge into the ext-apps
    * `hostContext` at handshake time (e.g. `{ workspace: { id, name } }`).

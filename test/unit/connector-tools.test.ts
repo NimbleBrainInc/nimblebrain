@@ -21,6 +21,7 @@ import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /** Read metadata every store read now carries; the audit trail is asserted in credential-store.test.ts. */
 const TEST_READ = { caller: "test", purpose: "assert the store holds what the handler wrote" };
@@ -214,8 +215,7 @@ async function provisionWorkspace(
     { userId: NON_ADMIN_USER.id, role: "member" },
   ],
 ): Promise<void> {
-  const slug = h.wsId.startsWith("ws_") ? h.wsId.slice(3) : h.wsId;
-  await h.workspaceStore.create("Acme", slug);
+  await seedWorkspace(h.workspaceStore, h.wsId, { name: "Acme" });
   for (const m of members) {
     await h.workspaceStore.addMember(h.wsId, m.userId, m.role);
   }
@@ -938,7 +938,8 @@ describe("manage_connectors.install", () => {
     //     The "user" literal is gone (T008) and stays gone.
     //   - The slug-shaped serverName is unchanged.
     const adminPersonalWsId = "ws_admin_own";
-    await h.workspaceStore.create("Admin's workspace", adminPersonalWsId.slice(3), {
+    await seedWorkspace(h.workspaceStore, adminPersonalWsId, {
+      name: "Admin's workspace",
       members: [{ userId: ADMIN_USER.id, role: "admin" }],
     });
     const tool = buildTool(h, ADMIN_USER);
@@ -985,12 +986,12 @@ describe("manage_connectors.install", () => {
     // EventSink writer reads the same shape. Pinning `sc.wsId ===
     // <picked>` regardless of the harness's `h.wsId` rules out the
     // "ambient session leak" failure mode.
-    const ws2 = await h.workspaceStore.create("Helix", "helix");
+    const ws2 = await h.workspaceStore.create("Helix");
     await h.workspaceStore.addMember(ws2.id, ADMIN_USER.id, "admin");
     const tool = buildTool(h, ADMIN_USER, h.wsId); // session header says ws_acme
     const result = await tool.handler({
       action: "install",
-      wsId: ws2.id, // picker says ws_helix
+      wsId: ws2.id, // picker names the second workspace
       entry: {
         id: "com.canva/mcp",
         name: "Canva",
@@ -1427,7 +1428,8 @@ describe("manage_connectors.install — a single-member workspace admits any ins
   beforeEach(async () => {
     h = buildHarness();
     await provisionWorkspace(h); // shared ws_acme, ADMIN_USER is admin
-    await h.workspaceStore.create("Admin's workspace", OWN_WS.slice(3), {
+    await seedWorkspace(h.workspaceStore, OWN_WS, {
+      name: "Admin's workspace",
       members: [{ userId: ADMIN_USER.id, role: "admin" }],
     });
   });

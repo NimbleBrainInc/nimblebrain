@@ -18,6 +18,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { Tool, ToolSource } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
  * End-to-end coverage for the boundary the unit tests don't quite
@@ -100,7 +101,7 @@ async function buildHarness(): Promise<Harness> {
 
   // Provision workspace with an admin member so `set_permissions`'
   // workspace-admin gate passes.
-  await workspaceStore.create("Acme", wsId.slice(3));
+  await seedWorkspace(workspaceStore, wsId, { name: "Acme" });
   await workspaceStore.addMember(wsId, ADMIN.id, "admin");
 
   // Seed an instance for "mock" so `set_permissions`' installed-

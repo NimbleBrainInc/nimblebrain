@@ -1,0 +1,7 @@
+# Resolve only versions published at least 14 days ago, the window Renovate and
+# bunfig.toml apply to every other package in this repo.
+#
+# A relative span needs uv 0.9.17 or later. It lives here rather than under
+# [tool.uv] in pyproject.toml because uv skips a pyproject.toml it cannot parse
+# and re-resolves without the window, but stops on a uv.toml it cannot parse.
+exclude-newer = "14 days"

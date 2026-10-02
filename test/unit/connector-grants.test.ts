@@ -31,6 +31,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ALICE: UserIdentity = {
   id: "usr_alice",
@@ -75,12 +76,13 @@ async function buildHarness(opts: {
   installTestCredentialStore(workDir);
   const store = new PermissionStore(workDir);
   const workspaceStore = new WorkspaceStore(workDir);
-  await workspaceStore.create("Helix", SHARED_WS.slice(3));
+  await seedWorkspace(workspaceStore, SHARED_WS, { name: "Helix" });
   if (opts.memberOfShared !== false) {
     await workspaceStore.addMember(SHARED_WS, ALICE.id, "member");
   }
   // A workspace only the caller belongs to — just a workspace.
-  await workspaceStore.create("Alice's workspace", personalWs.slice(3), {
+  await seedWorkspace(workspaceStore, personalWs, {
+    name: "Alice's workspace",
     members: [{ userId: ALICE.id, role: "admin" }],
   });
 

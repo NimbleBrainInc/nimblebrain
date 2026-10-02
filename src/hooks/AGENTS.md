@@ -112,6 +112,18 @@ transition to `running`. A `register_tool` call that merely errors leaves the
 registration recorded (the connector is useful without its webhook, and a
 rotation or reinstall retries).
 
+**A hook route is never the MCP endpoint.** The forward carries the connection's
+credential, so a route at the connector's MCP endpoint path, or under it, would
+let anyone holding the delivery URL call the server's tools as the workspace,
+past `admin_tools` and every other runtime gate. `routeNamesMcpEndpoint` decides
+it against the installed ref's URL, on the resolved, percent-decoded, and
+case-folded path.
+Provisioning refuses it as a contract error, minting nothing; `resolveForwardUrl`
+refuses it again at delivery, before the credential is resolved, and the door
+answers its bare 404. The check is negative rather than a required prefix such
+as `/ingest/`, because the public contract cannot dictate a third-party server's
+layout.
+
 **The forward adds no header, and the `kid` does not travel.** The fleet edge
 strips the reserved `x-nb-*` namespace by RULE (it cannot tell a runtime-stamped
 member from a caller-forged one — this forward arrives under an ordinary

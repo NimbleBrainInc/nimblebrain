@@ -106,10 +106,9 @@ async function buildHarness(): Promise<Harness> {
   const workspaceRegistry = new ToolRegistry();
 
   // One shared workspace (admin) + a workspace the caller alone belongs to.
-  await workspaceStore.create("Helix", "helix");
-  const sharedWsId = "ws_helix";
+  const sharedWsId = (await workspaceStore.create("Helix")).id;
   await workspaceStore.addMember(sharedWsId, USER.id, "admin");
-  const ownWs = await workspaceStore.create("User's workspace", undefined, {
+  const ownWs = await workspaceStore.create("User's workspace", {
     members: [{ userId: USER.id, role: "admin" }],
   });
   const ownWsId = ownWs.id;

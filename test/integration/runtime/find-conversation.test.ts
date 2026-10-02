@@ -218,7 +218,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
     // The gate answers a non-member exactly as it answers an unknown
     // workspace, so a client cannot probe workspace ids by membership.
     const wsStore = runtime.getWorkspaceStore();
-    const otherWs = await wsStore.create("Other workspace", "ws_other_test");
+    const otherWs = await wsStore.create("Other workspace");
     const nonMember = await chatIn(otherWs.id);
     const unknown = await chatIn("ws_does_not_exist");
     expect(nonMember.status).toBe(404);

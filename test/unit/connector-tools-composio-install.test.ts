@@ -112,6 +112,7 @@ import {
   installTestCredentialStore,
   resetTestCredentialStore,
 } from "../helpers/credential-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 // ── Catalog fixture ─────────────────────────────────────────────────
 //
@@ -219,7 +220,7 @@ function buildHarness(): Harness {
 }
 
 async function provision(h: Harness): Promise<void> {
-  await h.workspaceStore.create("Test", h.wsId.slice(3));
+  await seedWorkspace(h.workspaceStore, h.wsId, { name: "Test" });
   await h.workspaceStore.addMember(h.wsId, ADMIN.id, "admin");
 }
 
@@ -677,7 +678,8 @@ describe("manage_connectors.install (composio-auth)", () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
     const personalWsId = "ws_admin_own";
-    await h.workspaceStore.create("Admin's workspace", personalWsId.slice(3), {
+    await seedWorkspace(h.workspaceStore, personalWsId, {
+      name: "Admin's workspace",
       members: [{ userId: ADMIN.id, role: "admin" }],
     });
 
@@ -710,7 +712,8 @@ describe("manage_connectors.install (composio-auth)", () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
     const personalWsId = "ws_admin_own";
-    await h.workspaceStore.create("Admin's workspace", personalWsId.slice(3), {
+    await seedWorkspace(h.workspaceStore, personalWsId, {
+      name: "Admin's workspace",
       members: [{ userId: ADMIN.id, role: "admin" }],
     });
 

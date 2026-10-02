@@ -55,7 +55,7 @@ describe("UC-W1: Private work with shared tools", () => {
     const kai = await userStore.create({ email: "kai@test.io", displayName: "Kai" });
 
     // Create workspace and add both
-    const eng = await wsStore.create("Engineering", "engineering");
+    const eng = await wsStore.create("Engineering");
     await wsStore.addMember(eng.id, mat.id, "admin");
     await wsStore.addMember(eng.id, kai.id, "member");
 
@@ -108,7 +108,7 @@ describe("UC-W2: Single-owner conversation (Stage 1)", () => {
     const mat = await userStore.create({ email: "mat@test.io", displayName: "Mat" });
     const kai = await userStore.create({ email: "kai@test.io", displayName: "Kai" });
 
-    const eng = await wsStore.create("Engineering", "engineering");
+    const eng = await wsStore.create("Engineering");
     await wsStore.addMember(eng.id, mat.id, "admin");
     await wsStore.addMember(eng.id, kai.id, "member");
 
@@ -209,8 +209,8 @@ describe("UC-W5: New user onboarding", () => {
     expect(sara.orgRole).toBe("member");
 
     // Create two workspaces
-    const eng = await wsStore.create("Engineering", "engineering");
-    const mkt = await wsStore.create("Marketing", "marketing");
+    const eng = await wsStore.create("Engineering");
+    const mkt = await wsStore.create("Marketing");
 
     // Add Sara to both
     await wsStore.addMember(eng.id, sara.id, "member");
@@ -242,7 +242,7 @@ describe("UC-W6: Workspace admin manages connectors", () => {
     const wsStore = new WorkspaceStore(workDir);
 
     // Admin creates workspace with no connectors
-    const eng = await wsStore.create("Engineering", "engineering");
+    const eng = await wsStore.create("Engineering");
     expect(eng.connectors).toHaveLength(0);
 
     // Initial inventory is empty
@@ -263,7 +263,7 @@ describe("UC-W6: Workspace admin manages connectors", () => {
     expect(inventory[0]!.wsId).toBe(eng.id);
 
     // Other workspace is unaffected
-    await wsStore.create("Marketing", "marketing");
+    await wsStore.create("Marketing");
     const allWorkspaces = await wsStore.list();
     expect(allWorkspaces).toHaveLength(2);
     inventory = buildProcessInventory(allWorkspaces, workDir);
@@ -380,7 +380,7 @@ describe("Dev mode", () => {
 
     // DevIdentityProvider no longer creates workspaces — the runtime does.
     // Verify we can create a workspace and add the dev user to it.
-    const ws = await wsStore.create("Test Workspace", "test");
+    const ws = await wsStore.create("Test Workspace");
     await wsStore.addMember(ws.id, "usr_default", "admin");
 
     const workspaces = await wsStore.list();
@@ -408,8 +408,8 @@ describe("Workspace addressing", () => {
     const wsStore = new WorkspaceStore(workDir);
 
     const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const eng = await wsStore.create("Engineering", "engineering");
-    const mkt = await wsStore.create("Marketing", "marketing");
+    const eng = await wsStore.create("Engineering");
+    const mkt = await wsStore.create("Marketing");
     await wsStore.addMember(eng.id, user.id, "member");
     await wsStore.addMember(mkt.id, user.id, "member");
 
@@ -424,7 +424,7 @@ describe("Workspace addressing", () => {
     const wsStore = new WorkspaceStore(workDir);
 
     const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const ws = await wsStore.create("Secret", "secret");
+    const ws = await wsStore.create("Secret");
     // Do NOT add user as member
 
     expect(await isAddressedWorkspaceMember(wsStore, ws.id, user.id)).toBe(false);
@@ -448,7 +448,7 @@ describe("Workspace addressing", () => {
     const wsStore = new WorkspaceStore(workDir);
 
     const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
-    const ws = await wsStore.create("Default", "default");
+    const ws = await wsStore.create("Default");
     await wsStore.addMember(ws.id, user.id, "member");
 
     let lookups = 0;
