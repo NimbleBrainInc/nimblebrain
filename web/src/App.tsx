@@ -41,7 +41,7 @@ import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
-import { platformFirst, routablePlacements } from "./lib/routable-placements";
+import { routablePlacements } from "./lib/routable-placements";
 import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
@@ -347,10 +347,7 @@ function AuthenticatedAppContent({
   const resolveAppRoute = useCallback(
     (name: string): string | null => {
       // Search ALL placements (not just mainRoutes) so sidebar.apps are included
-      // Platform placements first, so a connector's priority never wins a platform route.
-      const all = platformFirst(
-        forSlot("sidebar").concat(forSlot("main")).concat(forSlot("sidebar.bottom")),
-      );
+      const all = forSlot("sidebar").concat(forSlot("main")).concat(forSlot("sidebar.bottom"));
       // Exact route match first
       const exact = all.find((p) => p.route === name);
       if (exact) return exact.route!;

@@ -188,6 +188,15 @@ describe("PlacementRegistry route ownership", () => {
     });
   });
 
+  test("a connector sharing a platform source's name still cannot take its route", () => {
+    const reg = new PlacementRegistry();
+    reg.register("conversations", [conversations]);
+    reg.register("conversations", [app("conversations", "@nimblebraininc/conversations")], "ws_a");
+
+    expect(reg.forWorkspace("ws_a").map((e) => e.wsId)).toEqual([undefined]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
   test("the same route in two workspaces is no collision", () => {
     const reg = new PlacementRegistry();
     reg.register("tenant-a-crm", [app("tenant-a-crm", "@acme-corp/crm")], "ws_a");

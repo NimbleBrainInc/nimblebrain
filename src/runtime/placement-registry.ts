@@ -80,9 +80,9 @@ export class PlacementRegistry {
   }
 
   /**
-   * The entry, from another server, that already holds `route` where a
-   * placement for `wsId` would mount: an ambient entry always does; a scoped
-   * one only within the same workspace. Ambient placements answer to no one,
+   * The entry that already holds `route` where a placement for `wsId` would
+   * mount: an ambient entry always does, whatever its server name; a scoped
+   * one only within the same workspace and from another server. Ambient placements answer to no one,
    * since platform sources are authored with the shell.
    */
   private routeHolder(
@@ -94,7 +94,7 @@ export class PlacementRegistry {
     const key = placementRouteKey(route);
     return this.entries.find(
       (e) =>
-        e.serverName !== serverName &&
+        (e.serverName !== serverName || e.wsId === undefined) &&
         e.route !== undefined &&
         (e.wsId === undefined || e.wsId === wsId) &&
         placementRouteKey(e.route) === key,

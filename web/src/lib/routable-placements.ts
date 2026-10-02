@@ -22,8 +22,7 @@ export function placementRouteKey(route: string): string {
 
 /**
  * Platform placements (no `wsId`) ahead of connector ones, each group keeping
- * its order. A lookup that takes the first match then never lets a connector's
- * priority put it in front of a platform route.
+ * its order, so taking the first placement per route keeps a platform's.
  */
 export function platformFirst(placements: PlacementEntry[]): PlacementEntry[] {
   return [
@@ -34,8 +33,8 @@ export function platformFirst(placements: PlacementEntry[]): PlacementEntry[] {
 
 /**
  * The routable placements the router registers, one per route: every sidebar
- * placement with a route except the `sidebar.bottom` tray, then every `main`
- * route. A platform placement always keeps its route; between connectors the
+ * placement with a route except the `sidebar.bottom` tray, then every route in
+ * `main` (pass `mainRoutes()`, which brings the tray's routes in too). A platform placement always keeps its route; between connectors the
  * first in slot and priority order does. The server refuses such a collision
  * when it registers the placement, so this holds only if that check is bypassed.
  */
