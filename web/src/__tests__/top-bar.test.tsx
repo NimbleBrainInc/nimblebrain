@@ -174,6 +174,15 @@ describe("TopBar", () => {
     expect(byTestId("top-bar-breadcrumb")).toBeUndefined();
   });
 
+  test("three ancestors all show, unfolded", async () => {
+    await mountBar("/w/acme/app/people");
+    const trail = ["a", "b", "c", "d"].map((id) => ({ id, label: id.toUpperCase() }));
+    await act(async () => location.setAppLocation({ trail, navigate: () => {} }));
+
+    expect(crumbButtons().map((c) => c.textContent)).toEqual(["A", "B", "C"]);
+    expect(byTestId("top-bar-breadcrumb")?.textContent).not.toContain("…");
+  });
+
   test("past three ancestors, the middle folds and the root and parent stay", async () => {
     await mountBar("/w/acme/app/people");
     const trail = ["a", "b", "c", "d", "e"].map((id) => ({ id, label: id.toUpperCase() }));

@@ -84,8 +84,10 @@ export function TopBar() {
             >
               <ol className="flex min-w-0 items-center">
                 {visibleAncestors(ancestors).map((entry, i) => (
-                  <Fragment key={entry?.id ?? `gap-${i}`}>
-                    <li className="min-w-0">
+                  // Keyed by position: ids are the app's and need not be unique.
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the trail is replaced whole, never reordered
+                  <Fragment key={i}>
+                    <li className="min-w-0" aria-hidden={entry ? undefined : true}>
                       {entry ? (
                         <button
                           type="button"
@@ -96,9 +98,7 @@ export function TopBar() {
                           {entry.label}
                         </button>
                       ) : (
-                        <span aria-hidden="true" className="px-1 text-muted-foreground">
-                          …
-                        </span>
+                        <span className="px-1 text-muted-foreground">…</span>
                       )}
                     </li>
                     <li aria-hidden="true" className="shrink-0 text-muted-foreground">
@@ -111,10 +111,11 @@ export function TopBar() {
           </>
         )}
         {/* The page's heading: pages that lean on the bar for their name carry
-            none of their own. */}
+            none of their own. The floor keeps it readable beside a long
+            breadcrumb, which shrinks first. */}
         <h1
           data-testid="top-bar-title"
-          className="min-w-0 flex-1 truncate font-heading text-base font-medium text-foreground"
+          className="min-w-32 flex-1 truncate font-heading text-base font-medium text-foreground"
         >
           {title}
         </h1>
