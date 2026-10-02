@@ -63,7 +63,7 @@ The sidebar shows the first four apps under **Apps**, then a **View all** link t
 
 ### An app with several views
 
-A server that declares more than one `sidebar.<group>` placement is still one app. The sidebar lists it once, under the server's `name`, and that entry opens its first placement by priority. While any of its placements is open, they list beneath the entry by `label`, so the views are the app's own navigation: give each a `label`, its own `route`, and its own `resourceUri`. The four-app cap and the **View all** count are in apps, not in views.
+A server that declares more than one `sidebar.<group>` placement is still one app. The sidebar lists it once, under the connector's catalog `title`, and that entry opens its first placement by priority. While any of its placements is open, they list beneath the entry by `label`, so the views are the app's own navigation: give each a `label`, its own `route`, and its own `resourceUri`. The four-app cap and the **View all** count are in apps, not in views.
 
 ```json
 "placements": [
