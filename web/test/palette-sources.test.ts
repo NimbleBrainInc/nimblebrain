@@ -126,10 +126,10 @@ describe("actionsSource", () => {
   });
 
   test("org settings is gated at org_admin, and workspace admin does not reach it", () => {
-    // `ws_00126c8c86011dea` is the load-bearing case: an org admin is escalated to
-    // `ws_00126c8c86011dea` for every workspace, but the converse is not true, so a
+    // `ws_admin` is the load-bearing case: an org admin is escalated to
+    // `ws_admin` for every workspace, but the converse is not true, so a
     // workspace admin must not clear an org-scoped gate.
-    const denied: (ScopedRole | undefined)[] = [undefined, "none", "ws_00479acd635081b9", "ws_00126c8c86011dea"];
+    const denied: (ScopedRole | undefined)[] = [undefined, "none", "ws_member", "ws_admin"];
     for (const scopedRole of denied) {
       expect(
         actionsSource.getItems("org", { ...baseCtx, scopedRole }).map((i) => i.id),

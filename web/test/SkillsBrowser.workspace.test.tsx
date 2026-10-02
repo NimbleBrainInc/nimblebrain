@@ -887,7 +887,7 @@ describe("SkillsBrowser with surface='workspace' — the workspace-admin write g
     // The server never consults `orgRole` for workspace-scope writes
     // (`canWriteWorkspaceScoped`), so neither may the UI. Gating on
     // `useScopedRole` would escalate this identity to `org_admin`, pass
-    // `roleAtLeast(…, "ws_00126c8c86011dea")`, and hand them a Save that 403s.
+    // `roleAtLeast(…, "ws_admin")`, and hand them a Save that 403s.
     mounted = await mount(
       withWorkspaceRole(
         React.createElement(SkillsBrowser, { surface: "workspace" }),

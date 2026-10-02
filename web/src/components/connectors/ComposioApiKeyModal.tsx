@@ -7,7 +7,7 @@ import { type CredentialField, CredentialFieldsModal } from "./CredentialFieldsM
  * Instead of an OAuth round-trip, the user pastes the connector's declared
  * `fields` (e.g. a PostHog personal API key + region), which are handed to
  * Composio at connect time and never persisted by the platform. Used for both
- * first connect and reconnect/rotation (the rotation case is ws_00126c8c86011dea gated
+ * first connect and reconnect/rotation (the rotation case is ws_admin gated
  * server-side; the error surfaces inline).
  *
  * Form shape is driven entirely by `fields` so any API-key toolkit reuses it —

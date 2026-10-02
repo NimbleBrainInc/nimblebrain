@@ -4,7 +4,7 @@
 // Installing a connector is a workspace-scoped write: `workspaceInstallAdmission`
 // refuses a non-admin with "Workspace admin role required to install connectors."
 // The browse route carries no `RouteGuard` and its nav entry is `minRole:
-// "ws_00479acd635081b9"`, so any member reaches this page. The gate here is what stops
+// "ws_member"`, so any member reaches this page. The gate here is what stops
 // them clicking into that refusal, and it is the substantive behaviour change
 // on this page — so it gets pinned rather than resting on a render read.
 // ---------------------------------------------------------------------------

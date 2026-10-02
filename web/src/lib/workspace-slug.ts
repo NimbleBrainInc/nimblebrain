@@ -10,12 +10,12 @@
  * the `ws_` prefix for the URL.
  */
 
-/** Workspace id → URL slug: "ws_0008dee6ad8a6142" → "a1b2c3d4". */
+/** Workspace id → URL slug: "ws_0008dee6ad8a6142" → "0008dee6ad8a6142". */
 export function toSlug(wsId: string): string {
   return wsId.replace(/^ws_/, "");
 }
 
-/** URL slug → workspace id: "a1b2c3d4" → "ws_0008dee6ad8a6142". */
+/** URL slug → workspace id: "0008dee6ad8a6142" → "ws_0008dee6ad8a6142". */
 export function toWsId(slug: string): string {
   return slug.startsWith("ws_") ? slug : `ws_${slug}`;
 }

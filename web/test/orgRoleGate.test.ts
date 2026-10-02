@@ -47,15 +47,15 @@ describe("org-admin gate for /org/skills (and every other /org/* route)", () => 
     const session = makeSession("member");
     const wsAdmin: Partial<WorkspaceInfo> = { id: "ws_008bd230f095f38a", userRole: "admin" };
     const role = resolveScopedRole(session, wsAdmin as WorkspaceInfo);
-    expect(role).toBe("ws_00126c8c86011dea");
+    expect(role).toBe("ws_admin");
     expect(roleAtLeast(role, "org_admin")).toBe(false);
   });
 
-  it("rejects ws_00479acd635081b9 against org_admin minimum (Phase 1 /org/skills surface)", () => {
+  it("rejects ws_member against org_admin minimum (Phase 1 /org/skills surface)", () => {
     const session = makeSession("member");
     const wsMember: Partial<WorkspaceInfo> = { id: "ws_008bd230f095f38a", userRole: "member" };
     const role = resolveScopedRole(session, wsMember as WorkspaceInfo);
-    expect(role).toBe("ws_00479acd635081b9");
+    expect(role).toBe("ws_member");
     expect(roleAtLeast(role, "org_admin")).toBe(false);
   });
 
