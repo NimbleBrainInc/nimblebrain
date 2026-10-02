@@ -322,8 +322,9 @@ export const UiKeydownMessage = Type.Object({
 export type UiKeydownMessage = Static<typeof UiKeydownMessage>;
 
 /**
- * One step of an app's trail: an `id` only the app reads (the host hands it
- * back in `ai.nimblebrain/navigate`) and the label the host shows. Bounded so a
+ * One step of an app's trail: the view's stable address as `id` (its resource
+ * URI when it has one; the host never parses it and hands it back in
+ * `ai.nimblebrain/navigate`) and the label the host shows. Bounded so a
  * page cannot push an unbounded string or list into the shell's chrome.
  */
 export const AppTrailEntry = Type.Object({

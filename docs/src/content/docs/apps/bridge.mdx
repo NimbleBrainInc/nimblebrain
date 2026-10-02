@@ -654,7 +654,7 @@ Tell the shell where the app is, so its top bar shows the current view's title a
 ```
 
 - **Each message replaces the last.** The host keeps no history of its own, so a message that never arrived corrects itself on the next, and a deep link straight to a detail view needs nothing special.
-- **`id` is yours.** The host never reads it; it hands it back in `ai.nimblebrain/navigate`.
+- **`id` is the view's stable address.** Use the MCP resource URI of what the view shows when there is one (`people://contacts/123`), otherwise a path-like address of your own (`contacts/123`), never a value that changes between visits such as a list index. The host does not parse it; it hands it back in `ai.nimblebrain/navigate`, and the same address lets anything that knows the resource, such as the agent, open that view.
 - **`label`** is what the bar shows: 1 to 200 characters. A trail holds 1 to 32 entries. A message outside these bounds is dropped.
 - **Depth is the trail's length.** The bar shows the last entry's label, and when the trail has more than one entry, a back control that goes to the entry before it. Back moves up the app's structure, not through browser history.
 

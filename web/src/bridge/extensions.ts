@@ -29,7 +29,8 @@ export const KEYDOWN_METHOD = "ai.nimblebrain/keydown";
 /**
  * App → host notification: where the app is, as its whole trail from its root
  * to the current view, `{ trail: [{ id, label }, …] }`, sent on every in-app
- * navigation. Each one replaces the last, so the app stays the only owner of
+ * navigation. Each `id` is the view's stable address: the resource URI of what
+ * it shows when there is one, so the same value opens it from anywhere. Each one replaces the last, so the app stays the only owner of
  * its location and a lost message corrects itself on the next. Declaring it
  * also tells the app that the host shows its title and a back control, so the
  * app drops its own.
