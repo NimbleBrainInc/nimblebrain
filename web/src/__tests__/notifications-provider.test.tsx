@@ -10,6 +10,9 @@
 //   3. A reconnect refetches. The workspace stream has no `Last-Event-Id`
 //      replay, so everything that arrived during the gap is simply absent —
 //      without this an inbox left open through a deploy is silently stale.
+//   4. Every read and mark names the provider's workspace. The active
+//      workspace is a module variable other writers move, so a call addressed
+//      through it can answer for a workspace the provider never asked about.
 //
 // Drives the REAL events-client singleton through `setConnectorForTest`
 // rather than mocking `../hooks/useEvents`: a module mock is process-global
@@ -28,19 +31,28 @@ const WS = "ws_005b519ef7efc353";
 let listCalls = 0;
 let listed: Array<Record<string, unknown>> = [];
 let markReadArgs: unknown[] = [];
+let addressed: Array<string | undefined> = [];
 
 mock.module("../api/client", () => ({
   ...realClient,
-  callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
-    if (tool === "mark_read") {
-      markReadArgs.push(args);
-      return { content: [{ type: "text", text: JSON.stringify({ marked: [], skipped: [] }) }] };
-    }
-    listCalls += 1;
-    return {
-      content: [{ type: "text", text: JSON.stringify({ notifications: listed }) }],
-    };
-  }),
+  callTool: mock(
+    async (
+      _source: string,
+      tool: string,
+      args: Record<string, unknown>,
+      opts?: { workspaceId?: string },
+    ) => {
+      addressed.push(opts?.workspaceId);
+      if (tool === "mark_read") {
+        markReadArgs.push(args);
+        return { content: [{ type: "text", text: JSON.stringify({ marked: [], skipped: [] }) }] };
+      }
+      listCalls += 1;
+      return {
+        content: [{ type: "text", text: JSON.stringify({ notifications: listed }) }],
+      };
+    },
+  ),
 }));
 
 const React = await import("react");
@@ -106,6 +118,7 @@ beforeEach(() => {
   listCalls = 0;
   listed = [];
   markReadArgs = [];
+  addressed = [];
   lastOptions = null;
   __internal__.resetForTest();
   __internal__.setConnectorForTest((options: ConnectEventsOptions) => {
@@ -233,6 +246,24 @@ describe("marking read", () => {
     });
     expect(seen.unread).toBe(0);
     expect(markReadArgs).toEqual([{ ids: ["acme:evt_1"] }]);
+  });
+});
+
+describe("addressing", () => {
+  test("every read and mark names the provider's workspace", async () => {
+    listed = [notification()];
+    const seen = { unread: 0 };
+    await mount(seen);
+    await act(async () => {
+      lastOptions?.onReconnect?.();
+    });
+    await settle();
+    await act(async () => {
+      await markAll();
+    });
+
+    expect(addressed.length).toBe(3);
+    expect(addressed.every((wsId) => wsId === WS)).toBe(true);
   });
 });
 

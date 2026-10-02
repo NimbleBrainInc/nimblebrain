@@ -44,13 +44,19 @@ export type {
 
 export async function listNotifications(
   args: NotificationsListInput = {},
+  workspaceId?: string,
 ): Promise<NotificationsListOutput> {
-  return parseToolResult<NotificationsListOutput>(await callTool("notifications", "list", args));
+  return parseToolResult<NotificationsListOutput>(
+    await callTool("notifications", "list", args, { workspaceId }),
+  );
 }
 
-export async function markNotificationsRead(ids: string[]): Promise<NotificationsMarkReadOutput> {
+export async function markNotificationsRead(
+  ids: string[],
+  workspaceId?: string,
+): Promise<NotificationsMarkReadOutput> {
   return parseToolResult<NotificationsMarkReadOutput>(
-    await callTool("notifications", "mark_read", { ids }),
+    await callTool("notifications", "mark_read", { ids }, { workspaceId }),
   );
 }
 

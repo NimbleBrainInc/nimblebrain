@@ -3,7 +3,6 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from
 import {
   callTool,
   logout,
-  setActiveWorkspaceId,
   setAuthToken,
   setOnAuthError,
   setOnWorkspaceError,
@@ -685,12 +684,9 @@ export function App() {
       setAuthToken("__cookie__");
       // onAuthError fires only after silent token refresh has already failed
       setOnAuthError(handleLogout);
-
-      if (data.activeWorkspace) {
-        setActiveWorkspaceId(data.activeWorkspace);
-      } else if (data.workspaces.length > 0) {
-        setActiveWorkspaceId(data.workspaces[0].id);
-      }
+      // The active workspace is not set here: WorkspaceProvider seeds it on
+      // mount and the route guard projects the URL onto it. A write from here
+      // lands whenever bootstrap resolves, which can be after the guard's.
 
       setPlatformVersion(data.version, data.buildSha);
       setBootstrap(data);
@@ -703,10 +699,15 @@ export function App() {
   // Bootstrap carries no workspace hint — the focused workspace is owned by
   // the URL (`/w/:slug`), and login lands on `/` (the workspace-agnostic home).
   useEffect(() => {
+    let cancelled = false;
     tryBootstrap().then((data) => {
+      if (cancelled) return;
       if (data) initFromBootstrap(data);
       setChecking(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [initFromBootstrap]);
 
   if (checking) {

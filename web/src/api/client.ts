@@ -147,21 +147,27 @@ export function getActiveWorkspaceId(): string | null {
 }
 
 /**
- * The path of a workspace-scoped route in the active workspace:
- * `/v1/workspaces/<wsId><suffix>`. Read per request, so a switch takes effect
- * on the next call. Throws when no workspace is active: a workspace-scoped
- * request never goes out without one, and never falls back to a route that
- * names none.
+ * The path of a workspace-scoped route: `/v1/workspaces/<wsId><suffix>`, in
+ * `workspaceId` when given, else the active workspace, read per request so a
+ * switch takes effect on the next call. Throws when neither names one: a
+ * workspace-scoped request never goes out without one, and never falls back
+ * to a route that names none.
+ *
+ * A caller that labels its result with a workspace passes that workspace here.
+ * The active workspace is a module variable with more than one writer, so a
+ * read addressed through it can answer for a different workspace than the one
+ * its caller files the answer under.
  */
-export function workspacePath(suffix: string): string {
-  if (!activeWorkspaceId) {
+export function workspacePath(suffix: string, workspaceId?: string): string {
+  const wsId = workspaceId ?? activeWorkspaceId;
+  if (!wsId) {
     throw new ApiClientError(
       "no_active_workspace",
       `No active workspace; cannot call a workspace route (${suffix}).`,
       0,
     );
   }
-  return `/v1/workspaces/${encodeURIComponent(activeWorkspaceId)}${suffix}`;
+  return `/v1/workspaces/${encodeURIComponent(wsId)}${suffix}`;
 }
 
 /**
@@ -399,8 +405,9 @@ export async function callTool<S extends string, T extends string>(
   server: S,
   tool: T,
   args?: ToolInput<S, T>,
+  opts?: { workspaceId?: string },
 ): Promise<ToolCallResponse> {
-  return request<ToolCallResponse>(workspacePath("/tools/call"), {
+  return request<ToolCallResponse>(workspacePath("/tools/call", opts?.workspaceId), {
     method: "POST",
     body: JSON.stringify({ server, tool, arguments: args }),
   });
@@ -535,9 +542,9 @@ export async function cancelChatTurn(conversationId: string): Promise<void> {
 // Shell
 // ---------------------------------------------------------------------------
 
-/** Fetch the shell manifest (placement slots, endpoints). */
-export async function getShell(): Promise<ShellResponse> {
-  return request<ShellResponse>(workspacePath("/shell"));
+/** Fetch a workspace's shell manifest (placement slots, endpoints). */
+export async function getShell(workspaceId?: string): Promise<ShellResponse> {
+  return request<ShellResponse>(workspacePath("/shell", workspaceId));
 }
 
 /** Attempt to refresh the session using the refresh token cookie. Exposed for SSE modules. */
@@ -732,11 +739,14 @@ function unwrapStructured<T>(result: ToolCallResponse, what: string): T {
 
 export async function getInstalledConnectors(opts?: {
   scope?: "all" | "workspace";
+  workspaceId?: string;
 }): Promise<{ installed: InstalledConnector[] }> {
-  const result = await callTool("nb", "manage_connectors", {
-    action: "list_installed",
-    scope: opts?.scope ?? "all",
-  });
+  const result = await callTool(
+    "nb",
+    "manage_connectors",
+    { action: "list_installed", scope: opts?.scope ?? "all" },
+    { workspaceId: opts?.workspaceId },
+  );
   return unwrapStructured(result, "list_installed");
 }
 

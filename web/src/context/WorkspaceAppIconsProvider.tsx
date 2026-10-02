@@ -45,7 +45,7 @@ export function WorkspaceAppIconsProvider({
   const refresh = useCallback(async (wsId: string) => {
     const seq = ++reqRef.current;
     try {
-      const { installed } = await getInstalledConnectors({ scope: "workspace" });
+      const { installed } = await getInstalledConnectors({ scope: "workspace", workspaceId: wsId });
       if (seq !== reqRef.current) return;
       setIcons(iconMapFromInstalled(installed));
       setConnectors({ workspaceId: wsId, installed });

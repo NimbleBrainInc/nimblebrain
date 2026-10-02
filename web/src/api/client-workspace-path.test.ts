@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
 // api/client.ts — workspace-scoped routes name the workspace in the path
 //
-// Every workspace-scoped REST helper calls `/v1/workspaces/<active wsId>/…`,
-// built per request from the active workspace. With no active workspace the
-// helper throws before any request goes out: it never falls back to a route
-// that names none, and it never sends a workspace in a header.
+// Every workspace-scoped REST helper calls `/v1/workspaces/<wsId>/…`, built per
+// request from the workspace the caller names, else the active one. With
+// neither the helper throws before any request goes out: it never falls back
+// to a route that names none, and it never sends a workspace in a header.
 //
 // The assertions go through `workspacePath` and through helpers no other suite
 // replaces with `mock.module` (getShell, chat, startChatTurn), so they hold in
@@ -70,6 +70,13 @@ describe("workspacePath", () => {
     expect(workspacePath("/shell")).toBe("/v1/workspaces/ws_0073c806fc50dc07/shell");
   });
 
+  test("a named workspace wins over the active one", () => {
+    setActiveWorkspaceId("ws_000f7ed6658f9d30");
+    expect(workspacePath("/shell", "ws_0073c806fc50dc07")).toBe(
+      "/v1/workspaces/ws_0073c806fc50dc07/shell",
+    );
+  });
+
   test("throws when no workspace is active", () => {
     setActiveWorkspaceId(null);
     expect(() => workspacePath("/tools/call")).toThrow(ApiClientError);
@@ -93,6 +100,14 @@ describe("workspace-scoped helpers", () => {
       "/v1/workspaces/ws_000f7ed6658f9d30/chat/start",
     ]);
     for (const request of sent) expect(request.headers["x-workspace-id"]).toBeUndefined();
+  });
+
+  test("call the workspace they are given, whatever is active", async () => {
+    setActiveWorkspaceId("ws_000f7ed6658f9d30");
+    await getShell("ws_0073c806fc50dc07");
+    expect(sent.map((s) => new URL(s.url, "https://nb.example.com").pathname)).toEqual([
+      "/v1/workspaces/ws_0073c806fc50dc07/shell",
+    ]);
   });
 
   test("reject with no active workspace, and nothing goes out", async () => {

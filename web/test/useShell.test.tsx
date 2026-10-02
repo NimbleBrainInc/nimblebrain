@@ -9,7 +9,8 @@ import { realClient } from "./setup";
 // ---------------------------------------------------------------------------
 
 const mockGetShell = mock(
-  (): Promise<ShellResponse> => Promise.resolve({ placements: [], chatEndpoint: "", eventsEndpoint: "" }),
+  (_workspaceId?: string): Promise<ShellResponse> =>
+    Promise.resolve({ placements: [], chatEndpoint: "", eventsEndpoint: "" }),
 );
 
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
@@ -19,7 +20,7 @@ const mockGetShell = mock(
 // with "Export named 'getActiveWorkspaceId' not found".
 mock.module("../src/api/client", () => ({
   ...realClient,
-  getShell: () => mockGetShell(),
+  getShell: (workspaceId?: string) => mockGetShell(workspaceId),
 }));
 
 // ---------------------------------------------------------------------------
@@ -87,11 +88,12 @@ describe("useShell", () => {
       expect(result.current.shell).toBe(newShell);
     });
 
-    // Once the fetch lands, the shell reflects the new workspace.
+    // Once the fetch lands, the shell reflects the new workspace — the one
+    // the fetch named, not whichever the client's active workspace was.
     expect(result.current.shellWorkspaceId).toBe("ws-2");
     expect(result.current.loading).toBe(false);
     expect(result.current.error).toBeNull();
-    expect(mockGetShell).toHaveBeenCalled();
+    expect(mockGetShell.mock.calls).toEqual([["ws-2"]]);
   });
 
   it("fetches again when switching back to the original workspace", async () => {

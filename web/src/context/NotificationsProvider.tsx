@@ -60,7 +60,7 @@ export function NotificationsProvider({
   const read = useCallback(async (wsId: string) => {
     requestedFor.current = wsId;
     try {
-      const out = await listNotifications({ limit: INBOX_PAGE_SIZE });
+      const out = await listNotifications({ limit: INBOX_PAGE_SIZE }, wsId);
       if (requestedFor.current !== wsId) return;
       setItems(out.notifications);
       setError(null);
@@ -119,7 +119,7 @@ export function NotificationsProvider({
         ),
       );
       try {
-        await markNotificationsRead(ids);
+        await markNotificationsRead(ids, workspaceId);
       } catch {
         // The optimistic paint is wrong now. Re-read rather than reverting by
         // hand — the store is the only thing that knows what actually changed.
