@@ -240,7 +240,7 @@ export function UsageTotalsCards({
 
   return (
     <div className="@container">
-      <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2 @3xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 @3xl:grid-cols-4 @3xl:gap-4">
         <StatCard
           title="Total cost"
           value={formatUsd(cost.total)}

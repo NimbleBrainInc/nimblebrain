@@ -237,7 +237,7 @@ export function UsageFilterBar({
 
   return (
     <div className="@container">
-      <div className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 @3xl:grid-cols-5">
         <FilterField label="Workspace" id="usage-filter-workspace">
           <Select
             id="usage-filter-workspace"
@@ -308,7 +308,7 @@ export function UsageFilterBar({
         </FilterField>
       </div>
       {filters.range === "custom" ? (
-        <div className="mt-3 grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-5">
+        <div className="mt-3 grid grid-cols-2 gap-3 @3xl:grid-cols-5">
           <FilterField label="From (UTC)" id="usage-filter-from">
             <Input
               id="usage-filter-from"
@@ -330,7 +330,7 @@ export function UsageFilterBar({
             />
           </FilterField>
           {customInvalid ? (
-            <p role="alert" className="self-end text-xs text-destructive @md:col-span-2">
+            <p role="alert" className="col-span-2 self-end text-xs text-destructive">
               {customInvalid}
             </p>
           ) : null}
