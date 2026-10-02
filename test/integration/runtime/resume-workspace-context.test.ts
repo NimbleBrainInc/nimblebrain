@@ -29,13 +29,13 @@ afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 });
 
-const WORKSPACE_A = "ws_workspace_a";
+const WORKSPACE_A = "ws_00883d7b29214d57";
 const WORKSPACE_A_NAME = "Alpha Workspace";
-const WORKSPACE_B = "ws_workspace_b";
+const WORKSPACE_B = "ws_00894bbc98f921e5";
 const WORKSPACE_B_NAME = "Bravo Workspace";
 // Another workspace the owner belongs to, provisioned before WORKSPACE_A so it
 // is the owner's default: a dev-mode request that names no workspace runs here.
-const HOME = "ws_home";
+const HOME = "ws_003f694718dd468d";
 const HOME_NAME = "Home Workspace";
 
 const RESUME_MSG = "which workspace am I in";

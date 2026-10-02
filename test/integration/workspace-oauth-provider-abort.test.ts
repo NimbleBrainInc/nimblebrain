@@ -43,7 +43,7 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
     try {
       const controller = new AbortController();
       const provider = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: "ws_test" },
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "abort-test",
         workDir,
         callbackUrl: CALLBACK,
@@ -87,7 +87,7 @@ describe("WorkspaceOAuthProvider — abortSignal threading", () => {
     });
     try {
       const provider = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: "ws_test" },
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "no-abort",
         workDir,
         callbackUrl: CALLBACK,

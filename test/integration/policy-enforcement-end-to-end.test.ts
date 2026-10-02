@@ -89,7 +89,7 @@ interface Harness {
 
 async function buildHarness(): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-policy-e2e-"));
-  const wsId = "ws_acme";
+  const wsId = "ws_000f7ed6658f9d30";
   const workspaceStore = new WorkspaceStore(workDir);
   const credStore = installTestCredentialStore(workDir);
   const permissionStore = new PermissionStore(workDir);

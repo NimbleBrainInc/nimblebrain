@@ -182,7 +182,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-const OWNER: TaskOwnerContext = { workspaceId: "ws_1", identityId: "user_1" };
+const OWNER: TaskOwnerContext = { workspaceId: "ws_0002ee92e8791c13", identityId: "user_1" };
 
 // ──────────────────────────────────────────────────────────────────────
 // Existing agent-loop contract (callToolAsTask wrapper preserved)
@@ -677,7 +677,7 @@ describe("McpSource owner-context enforcement", () => {
 
   it("wrong workspaceId → getTaskStatus rejects with TaskNotFoundError", async () => {
     const { source, driver } = await startedSource();
-    const bogus: TaskOwnerContext = { workspaceId: "ws_other", identityId: "user_1" };
+    const bogus: TaskOwnerContext = { workspaceId: "ws_005820c54ca342ad", identityId: "user_1" };
     await expect(source.getTaskStatus("t1", { ownerContext: bogus })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
@@ -688,7 +688,10 @@ describe("McpSource owner-context enforcement", () => {
 
   it("wrong identityId → awaitToolTaskResult rejects with TaskNotFoundError", async () => {
     const { source, driver } = await startedSource();
-    const bogus: TaskOwnerContext = { workspaceId: "ws_1", identityId: "user_other" };
+    const bogus: TaskOwnerContext = {
+      workspaceId: "ws_0002ee92e8791c13",
+      identityId: "user_other",
+    };
     await expect(source.awaitToolTaskResult("t1", { ownerContext: bogus })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );
@@ -698,7 +701,7 @@ describe("McpSource owner-context enforcement", () => {
 
   it("wrong workspaceId → cancelTask rejects with TaskNotFoundError", async () => {
     const { source, driver } = await startedSource();
-    const bogus: TaskOwnerContext = { workspaceId: "ws_other" };
+    const bogus: TaskOwnerContext = { workspaceId: "ws_005820c54ca342ad" };
     await expect(source.cancelTask("t1", { ownerContext: bogus })).rejects.toBeInstanceOf(
       TaskNotFoundError,
     );

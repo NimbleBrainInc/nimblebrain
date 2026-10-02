@@ -27,7 +27,7 @@ import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
  *     reauth_required and fails fast instead of blocking on a browser flow.
  */
 
-const WS_ID = "ws_abc123";
+const WS_ID = "ws_000d299235755008";
 const SERVER = "com-test-mcp";
 const CURRENT_CALLBACK = "https://new.example.com/v1/mcp-auth/callback";
 const DRIFTED_REDIRECT = "https://old.example.com/v1/mcp-auth/callback";
@@ -40,7 +40,7 @@ const CLIENT_KEY = mcpOAuthKey(SERVER, "client");
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-oauth-provider-"));
-  seedWorkspaceRoot(workDir, "ws_abc123");
+  seedWorkspaceRoot(workDir, "ws_000d299235755008");
   store = installTestCredentialStore(workDir);
 });
 

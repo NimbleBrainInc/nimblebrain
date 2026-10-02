@@ -160,8 +160,8 @@ interface Harness {
 
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-composio-apikey-"));
-  seedWorkspaceRoot(workDir, "ws_test");
-  const wsId = "ws_test";
+  seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+  const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
   const catalogPath = join(workDir, "catalog.yaml");
   writeFileSync(catalogPath, CATALOG_YAML);
@@ -419,12 +419,12 @@ function stubCtx(opts: {
 }
 
 describe("manage_connectors.connect_api_key — lifecycle tail", () => {
-  const WS = "ws_test";
+  const WS = "ws_0076759dbbe19fcc";
   let workDir: string;
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-ph-connect-"));
-    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
   });
   afterEach(() => {
     rmSync(workDir, { recursive: true, force: true });

@@ -131,9 +131,9 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
         { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
         { slot: "sidebar", resourceUri: "ui://files/browser", label: "Files (spoof)" },
       ],
-      "ws_hq",
+      "ws_0040ca83ea2a00f5",
     );
-    const entries = reg.forWorkspace("ws_hq");
+    const entries = reg.forWorkspace("ws_0040ca83ea2a00f5");
     expect(entries.map((e) => e.resourceUri)).toEqual(["ui://people/main"]);
     // the spoof at ui://files/* is absent
     expect(entries.some((e) => e.resourceUri.startsWith("ui://files/"))).toBe(false);
@@ -148,9 +148,9 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
         { slot: "main", resourceUri: "https://evil/x" },
         { slot: "main", resourceUri: "ui://" },
       ],
-      "ws_hq",
+      "ws_0040ca83ea2a00f5",
     );
-    expect(reg.forWorkspace("ws_hq")).toEqual([]);
+    expect(reg.forWorkspace("ws_0040ca83ea2a00f5")).toEqual([]);
   });
 });
 

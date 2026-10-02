@@ -42,7 +42,7 @@ const TEST_HASH = "0".repeat(64);
 // owner partition, and the facade (`resolveConversationStore` /
 // `findConversation` / `listConversations`) reads them back through a real
 // `ConversationLocator` over `{workDir}/workspaces`.
-const SEED_WS_ID = "ws_test";
+const SEED_WS_ID = "ws_0076759dbbe19fcc";
 const SEED_OWNER_ID = "user_test";
 
 // ── Fake Runtime ─────────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ async function buildSource(): Promise<McpSource> {
 describe("skills__list", () => {
   test("returns Layer 1 vendored guide + Layer 3 overlay skills", async () => {
     // Stage one workspace skill via the conversation overlay.
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const skill = writeSkill(
       join(wsDir, "voice.md"),
@@ -246,7 +246,7 @@ describe("skills__list", () => {
     );
     skill.manifest.scope = "workspace";
     runtime.conversationOverlay = [skill];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -268,7 +268,7 @@ describe("skills__list", () => {
 
   test("layer filter narrows to Layer 1 only", async () => {
     runtime.conversationOverlay = [];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({ name: "list", arguments: { layer: 1 } });
@@ -279,7 +279,7 @@ describe("skills__list", () => {
   });
 
   test("scope filter narrows to a single tier", async () => {
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const ws = writeSkill(
       join(wsDir, "ws-only.md"),
@@ -288,7 +288,7 @@ describe("skills__list", () => {
     );
     ws.manifest.scope = "workspace";
     runtime.conversationOverlay = [ws];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -303,7 +303,7 @@ describe("skills__list", () => {
   });
 
   test("tool_affinity filter only returns skills whose applies_to_tools matches", async () => {
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const collateral = writeSkill(
       join(wsDir, "collateral.md"),
@@ -332,7 +332,7 @@ describe("skills__list", () => {
     );
     crm.manifest.scope = "workspace";
     runtime.conversationOverlay = [collateral, crm];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -348,7 +348,7 @@ describe("skills__list", () => {
   });
 
   test("empty tool_affinity matches nothing (does not silently match all wildcard skills)", async () => {
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     // A skill whose applies-to-tools = ["*"] would naively match an empty
     // target — verify the handler short-circuits before that.
@@ -366,7 +366,7 @@ describe("skills__list", () => {
     );
     wildcard.manifest.scope = "workspace";
     runtime.conversationOverlay = [wildcard];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -380,7 +380,7 @@ describe("skills__list", () => {
   });
 
   test("status filter excludes other statuses", async () => {
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const disabled = writeSkill(
       join(wsDir, "off.md"),
@@ -402,7 +402,7 @@ describe("skills__list", () => {
     );
     active.manifest.scope = "workspace";
     runtime.conversationOverlay = [disabled, active];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -415,7 +415,7 @@ describe("skills__list", () => {
   });
 
   test("modified_since filter excludes older skills", async () => {
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const skill = writeSkill(
       join(wsDir, "old.md"),
@@ -424,7 +424,7 @@ describe("skills__list", () => {
     );
     skill.manifest.scope = "workspace";
     runtime.conversationOverlay = [skill];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const future = "2099-01-01T00:00:00.000Z";
     const src = await buildSource();
@@ -441,7 +441,7 @@ describe("skills__list", () => {
   // ── loading-visibility field (issue #391) ───────────────────────────────
 
   test("dead type: skill (no strategy/triggers) reports loading.wouldLoad=false / mechanism=none", async () => {
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     // No loading-strategy, no triggers, no applies-to-tools → reaches no
     // loader path. This is the silently-inert population issue #391 targets.
@@ -452,7 +452,7 @@ describe("skills__list", () => {
     );
     dead.manifest.scope = "workspace";
     runtime.conversationOverlay = [dead];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -471,7 +471,7 @@ describe("skills__list", () => {
   });
 
   test("loadable skill reports loading.wouldLoad=true with the correct mechanism", async () => {
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const live = writeSkill(
       join(wsDir, "live.md"),
@@ -487,7 +487,7 @@ describe("skills__list", () => {
     );
     live.manifest.scope = "workspace";
     runtime.conversationOverlay = [live];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -505,7 +505,7 @@ describe("skills__list", () => {
   });
 
   test("trigger skill reports mechanism=trigger; vendored guide reports always", async () => {
-    const wsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(wsDir, { recursive: true });
     const trig = writeSkill(
       join(wsDir, "trig.md"),
@@ -521,7 +521,7 @@ describe("skills__list", () => {
     );
     trig.manifest.scope = "workspace";
     runtime.conversationOverlay = [trig];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -645,7 +645,7 @@ describe("skills__read", () => {
     // pointing at /etc/passwd. The lexical under-root check passes because
     // the link itself sits under an allowed root; the realpath check is
     // what catches the escape.
-    const skillsDir = join(workDir, "workspaces", "ws_a", "skills");
+    const skillsDir = join(workDir, "workspaces", "ws_00079598e311c160", "skills");
     mkdirSync(skillsDir, { recursive: true });
     // Write a real file outside the roots.
     const outsideDir = mkdtempSync(join(tmpdir(), "skills-outside-"));
@@ -675,7 +675,7 @@ describe("skills__read", () => {
     );
     skill.manifest.scope = "org";
     runtime.conversationOverlay = [skill];
-    runtime.wsId = "ws_a";
+    runtime.wsId = "ws_00079598e311c160";
 
     const src = await buildSource();
     const client = src.getClient()!;
@@ -907,7 +907,11 @@ describe("skills__loading_log", () => {
     // A conversation the same owner has in a DIFFERENT workspace. The scan
     // must not reach it: skills are workspace-tiered, so "which skills loaded"
     // is a question about the active workspace.
-    const otherDir = workspaceConversationsDir(runtime.getWorkDir(), "ws_other", SEED_OWNER_ID);
+    const otherDir = workspaceConversationsDir(
+      runtime.getWorkDir(),
+      "ws_005820c54ca342ad",
+      SEED_OWNER_ID,
+    );
     mkdirSync(otherDir, { recursive: true });
     const otherStore = new EventSourcedConversationStore({ dir: otherDir });
     const convOther = await otherStore.create({ ownerId: SEED_OWNER_ID });

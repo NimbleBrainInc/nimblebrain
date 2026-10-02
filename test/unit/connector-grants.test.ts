@@ -39,9 +39,9 @@ const ALICE: UserIdentity = {
   displayName: "Alice",
 } as UserIdentity;
 
-const SHARED_WS = "ws_helix";
+const SHARED_WS = "ws_003eba8844413cd9";
 /** A workspace only Alice belongs to. */
-const personalWs = "ws_alice_own";
+const personalWs = "ws_0015146e7514bc0c";
 
 interface Harness {
   workDir: string;

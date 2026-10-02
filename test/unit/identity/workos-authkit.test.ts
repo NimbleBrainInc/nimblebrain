@@ -394,23 +394,23 @@ describe("verifyRequest reports the token's grant", () => {
 
   it("reports an AuthKit token's string aud as a one-element resource audience", async () => {
     const { provider } = createProvider();
-    const token = await authkitToken({ aud: "https://nb.example.com/mcp/ws_a" });
+    const token = await authkitToken({ aud: "https://nb.example.com/mcp/ws_00079598e311c160" });
     const verified = await provider.verifyRequest(makeRequest(token));
     expect(verified?.grant).toEqual({
       kind: "resource",
-      audience: ["https://nb.example.com/mcp/ws_a"],
+      audience: ["https://nb.example.com/mcp/ws_00079598e311c160"],
     });
   });
 
   it("reports every string in an AuthKit token's aud array, verbatim", async () => {
     const { provider } = createProvider();
     const token = await authkitToken({
-      aud: ["client_test_0001", "https://NB.example.com/mcp/ws_a/", 7],
+      aud: ["client_test_0001", "https://NB.example.com/mcp/ws_00079598e311c160/", 7],
     });
     const verified = await provider.verifyRequest(makeRequest(token));
     expect(verified?.grant).toEqual({
       kind: "resource",
-      audience: ["client_test_0001", "https://NB.example.com/mcp/ws_a/"],
+      audience: ["client_test_0001", "https://NB.example.com/mcp/ws_00079598e311c160/"],
     });
   });
 
@@ -467,7 +467,7 @@ describe("verifyRequest reports the token's grant", () => {
     const { provider } = createProvider({ firstPartyClientIds: ["client_test_channels"] });
     const token = await authkitToken({
       client_id: "client_test_mcp",
-      aud: "https://nb.example.com/mcp/ws_a",
+      aud: "https://nb.example.com/mcp/ws_00079598e311c160",
       org_id: "org_other",
     });
     expect(await provider.verifyRequest(makeRequest(token))).toBeNull();
@@ -495,13 +495,13 @@ describe("verifyRequest reports the token's grant", () => {
       makeRequest(
         await authkitToken({
           client_id: "client_test_mcp",
-          aud: "https://nb.example.com/mcp/ws_a",
+          aud: "https://nb.example.com/mcp/ws_00079598e311c160",
         }),
       ),
     );
     expect(resource?.grant).toEqual({
       kind: "resource",
-      audience: ["https://nb.example.com/mcp/ws_a"],
+      audience: ["https://nb.example.com/mcp/ws_00079598e311c160"],
     });
   });
 
@@ -521,7 +521,7 @@ describe("verifyRequest reports the token's grant", () => {
         exp: nowSec + 3600,
         iat: nowSec,
         org_id: "org_test_authkit",
-        aud: "https://nb.example.com/mcp/ws_a",
+        aud: "https://nb.example.com/mcp/ws_00079598e311c160",
       },
       workosKey.privateKey,
       workosKey.kid,

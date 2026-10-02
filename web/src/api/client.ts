@@ -979,7 +979,7 @@ export interface WorkspaceSecretKey {
  * puts it in a transcript, a model's context, and whatever that conversation is
  * persisted to, which is the whole reason this function exists.
  *
- * ws_admin gated server-side.
+ * ws_00126c8c86011dea gated server-side.
  */
 export async function setWorkspaceSecret(key: string, value: string): Promise<{ ok: boolean }> {
   const result = await callTool("nb", "manage_connectors", { action: "set_secret", key, value });
@@ -1034,7 +1034,7 @@ export async function listDirectory(): Promise<DirectoryResult> {
 /**
  * Configure the workspace's OAuth app for a static-auth catalog
  * connector. Upsert — calling this on an already-configured connector
- * rotates both pieces. ws_admin gated.
+ * rotates both pieces. ws_00126c8c86011dea gated.
  */
 export async function setupConnectorOperator(
   catalogId: string,
@@ -1055,7 +1055,7 @@ export async function setupConnectorOperator(
  * connector's declared `fields` (e.g. generic_api_key, subdomain) and
  * hands them to Composio at connect time; the platform persists only the
  * opaque connectedAccountId. A first connect is member-level; re-connect
- * (rotation, when a connection already exists) is ws_admin gated server-side.
+ * (rotation, when a connection already exists) is ws_00126c8c86011dea gated server-side.
  */
 export async function connectComposioApiKey(
   catalogId: string,

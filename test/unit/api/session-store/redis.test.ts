@@ -110,7 +110,7 @@ describe("RedisSessionRegistry — provider specifics", () => {
       await reg.create({
         sessionId: "abc",
         identityId: null,
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         createdAt: 1,
         lastAccessedAt: 1,
       });

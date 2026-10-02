@@ -30,8 +30,8 @@ import {
 } from "../../../src/identity/provider.ts";
 
 const ORIGIN = "https://nb.example.com";
-const WS_A = "ws_a";
-const WS_B = "ws_b";
+const WS_A = "ws_00079598e311c160";
+const WS_B = "ws_001c32f121060ff3";
 const CANONICAL_A = `${ORIGIN}/mcp/${WS_A}`;
 const CLIENT_ID = "client_test_0001";
 
@@ -59,7 +59,7 @@ const TOKENS: Record<string, VerifiedIdentity> = {
   "alice-aud-uppercase-host": { ...ALICE, grant: resource(`https://NB.EXAMPLE.COM/mcp/${WS_A}`) },
   "alice-aud-other-workspace": { ...ALICE, grant: resource(`${ORIGIN}/mcp/${WS_B}`) },
   "alice-aud-none": { ...ALICE, grant: resource() },
-  "alice-aud-unknown-ws": { ...ALICE, grant: resource(`${ORIGIN}/mcp/ws_nosuchworkspace`) },
+  "alice-aud-unknown-ws": { ...ALICE, grant: resource(`${ORIGIN}/mcp/ws_0052529305537a66`) },
   "mallory-aud-exact": { ...MALLORY, grant: resource(CANONICAL_A) },
 };
 
@@ -204,7 +204,7 @@ describe("membership authorizes; the answer never reveals whether a workspace ex
   it("refuses an exact aud for a non-member exactly like an unknown workspace", async () => {
     const app = makeApp();
     const nonMember = await post(app, `/mcp/${WS_A}`, "mallory-aud-exact");
-    const unknown = await post(app, "/mcp/ws_nosuchworkspace", "alice-aud-unknown-ws");
+    const unknown = await post(app, "/mcp/ws_0052529305537a66", "alice-aud-unknown-ws");
 
     expect(nonMember.status).toBe(404);
     expect(unknown.status).toBe(404);
@@ -215,7 +215,7 @@ describe("membership authorizes; the answer never reveals whether a workspace ex
   it("refuses a first-party non-member exactly like an unknown workspace", async () => {
     const app = makeApp();
     const nonMember = await post(app, `/mcp/${WS_A}`, "mallory-first-party");
-    const unknown = await post(app, "/mcp/ws_nosuchworkspace", "alice-first-party");
+    const unknown = await post(app, "/mcp/ws_0052529305537a66", "alice-first-party");
     const malformed = await post(app, "/mcp/not-a-workspace", "alice-first-party");
 
     expect(nonMember.status).toBe(404);
@@ -227,7 +227,7 @@ describe("membership authorizes; the answer never reveals whether a workspace ex
   });
 
   it("refuses an id that differs from the stored workspace only by case", async () => {
-    // A case-insensitive filesystem can resolve `WS_A` to ws_a's record; the
+    // A case-insensitive filesystem can resolve `WS_A` to ws_00079598e311c160's record; the
     // stored id must match the URL's exactly.
     const app = makeApp();
     const res = await post(app, "/mcp/WS_A", "alice-first-party");

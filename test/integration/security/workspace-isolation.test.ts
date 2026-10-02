@@ -115,7 +115,7 @@ describe("V1: Admission of the workspace id in the path", () => {
   it("answers a well-formed unknown id exactly as a malformed one", async () => {
     // Shape is checked before lookup, but the caller cannot tell which check
     // refused: both answers are the same status and body.
-    const unknown = await chatAt("ws_valid_123");
+    const unknown = await chatAt("ws_0086fd4ccd1a2acf");
     const malformed = await chatAt("ws_..");
     expect(unknown.status).toBe(404);
     expect(malformed.status).toBe(unknown.status);
@@ -125,7 +125,7 @@ describe("V1: Admission of the workspace id in the path", () => {
   it("answers a workspace the caller does not belong to exactly as an unknown one", async () => {
     // The dev user is this workspace's only member, so under the dev provider,
     // where every request is the dev user, the request would be admitted.
-    const other = await provisionTestWorkspace(runtime, "ws_not_a_member");
+    const other = await provisionTestWorkspace(runtime, "ws_005344c2653be0d6");
     const nonMember = await chatAt(other);
     expect(nonMember.status).toBe(404);
     expect(await nonMember.json()).toEqual(WORKSPACE_NOT_FOUND);
@@ -183,14 +183,14 @@ describe("V5: SSE events scoped by workspace", () => {
   it("broadcast with wsId only reaches matching clients", async () => {
     const manager = new SseEventManager(60_000);
 
-    const streamA = manager.addClient("ws_alpha");
-    const streamB = manager.addClient("ws_beta");
+    const streamA = manager.addClient("ws_00164434d8dd7ffb");
+    const streamB = manager.addClient("ws_002038aa71ea4b8a");
     const readerA = streamA.getReader();
     const readerB = streamB.getReader();
     await Promise.all([readConnected(readerA), readConnected(readerB)]);
 
     // Broadcast to workspace alpha only
-    manager.broadcast("config.changed", { key: "model" }, "ws_alpha");
+    manager.broadcast("config.changed", { key: "model" }, "ws_00164434d8dd7ffb");
 
     // Client A should get the event
     const readA = readerA.read().then(({ value }) => {
@@ -218,8 +218,8 @@ describe("V5: SSE events scoped by workspace", () => {
   it("broadcast without wsId reaches all clients", async () => {
     const manager = new SseEventManager(60_000);
 
-    const streamA = manager.addClient("ws_alpha");
-    const streamB = manager.addClient("ws_beta");
+    const streamA = manager.addClient("ws_00164434d8dd7ffb");
+    const streamB = manager.addClient("ws_002038aa71ea4b8a");
     const readerA = streamA.getReader();
     const readerB = streamB.getReader();
     await Promise.all([readConnected(readerA), readConnected(readerB)]);
@@ -243,13 +243,13 @@ describe("V5: SSE events scoped by workspace", () => {
     const manager = new SseEventManager(60_000);
 
     const streamNoWs = manager.addClient(); // no workspace
-    const streamWs = manager.addClient("ws_alpha");
+    const streamWs = manager.addClient("ws_00164434d8dd7ffb");
     const readerNoWs = streamNoWs.getReader();
     const readerWs = streamWs.getReader();
     await Promise.all([readConnected(readerNoWs), readConnected(readerWs)]);
 
     // Broadcast to workspace alpha
-    manager.broadcast("config.changed", { key: "model" }, "ws_alpha");
+    manager.broadcast("config.changed", { key: "model" }, "ws_00164434d8dd7ffb");
 
     // Both should get it — the no-workspace client gets everything
     return Promise.all([readerNoWs.read(), readerWs.read()]).then(([rNoWs, rWs]) => {

@@ -105,13 +105,13 @@ describe("createDirectExecutor", () => {
 
     const getContext = (auto?: Automation): ExecutorContext => {
       receivedAutomation = auto;
-      return { workspaceId: "ws_test", identity: { id: "usr_owner" } };
+      return { workspaceId: "ws_0076759dbbe19fcc", identity: { id: "usr_owner" } };
     };
 
     const executor = createDirectExecutor(makeDirectTaskFn(), getContext);
     const automation = makeAutomation({
       ownerId: "usr_owner",
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
     });
 
     await executor(automation);
@@ -119,7 +119,7 @@ describe("createDirectExecutor", () => {
     expect(receivedAutomation).toBeDefined();
     expect(receivedAutomation!.id).toBe("daily-summary");
     expect(receivedAutomation!.ownerId).toBe("usr_owner");
-    expect(receivedAutomation!.workspaceId).toBe("ws_test");
+    expect(receivedAutomation!.workspaceId).toBe("ws_0076759dbbe19fcc");
   });
 
   test("forwards workspaceId and identity from context to task request", async () => {
@@ -139,14 +139,14 @@ describe("createDirectExecutor", () => {
     };
 
     const getContext = (): ExecutorContext => ({
-      workspaceId: "ws_eng",
+      workspaceId: "ws_002fbb9fda6654ca",
       identity: { id: "usr_alice" },
     });
 
     const executor = createDirectExecutor(taskFn, getContext);
     await executor(makeAutomation());
 
-    expect(capturedWsId).toBe("ws_eng");
+    expect(capturedWsId).toBe("ws_002fbb9fda6654ca");
     expect(capturedIdentity?.id).toBe("usr_alice");
   });
 
@@ -348,7 +348,7 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
       { id: "t1", name: "nb__search", input: {}, output: "ok", ok: true, ms: 20 },
       {
         id: "t2",
-        name: "ws_x-teams__send_message",
+        name: "ws_008bd230f095f38a-teams__send_message",
         input: {},
         output: "[orchestrator] no source …",
         ok: false,
@@ -358,14 +358,14 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
     ]);
     expect(run.status).toBe("failure");
     expect(run.error).toMatch(/Connector unavailable/);
-    expect(run.error).toMatch(/ws_x-teams__send_message/);
+    expect(run.error).toMatch(/ws_008bd230f095f38a-teams__send_message/);
   });
 
   test("complete + workspace_access_denied → failure", async () => {
     const run = await runWith([
       {
         id: "t1",
-        name: "ws_other-teams__send_message",
+        name: "ws_005820c54ca342ad-teams__send_message",
         input: {},
         output: "[orchestrator] not a member …",
         ok: false,
@@ -385,7 +385,7 @@ describe("createDirectExecutor — connector-unreachable de-masking", () => {
     const run = await runWith([
       {
         id: "t1",
-        name: "ws_founders-teams__send_message",
+        name: "ws_00380d1dd07d03da-teams__send_message",
         input: {},
         output: "teams needs to be reconnected — its authorization has expired",
         ok: false,
@@ -521,7 +521,7 @@ describe("createDirectExecutor — abandoned-tool de-masking", () => {
     const run = await runWith([
       {
         id: "t1",
-        name: "ws_x-teams__send_message",
+        name: "ws_008bd230f095f38a-teams__send_message",
         input: {},
         output: "[orchestrator] no source …",
         ok: false,
@@ -688,7 +688,9 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
   }
 
   test("wall-clock timeout records status=timeout with the real counters and runId; result is non-null", async () => {
-    const executor = createDirectExecutor(abortingTaskFn(), () => ({ workspaceId: "ws_test" }));
+    const executor = createDirectExecutor(abortingTaskFn(), () => ({
+      workspaceId: "ws_0076759dbbe19fcc",
+    }));
     const { run, result } = await executor(makeAutomation({ maxRunDurationMs: 30 }));
 
     expect(run.status).toBe("timeout");
@@ -712,7 +714,9 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
     // Already-aborted external signal → executor sets externallyAborted and
     // aborts the run controller immediately; the timer never fires.
     const externalSignal = AbortSignal.abort();
-    const executor = createDirectExecutor(abortingTaskFn(), () => ({ workspaceId: "ws_test" }));
+    const executor = createDirectExecutor(abortingTaskFn(), () => ({
+      workspaceId: "ws_0076759dbbe19fcc",
+    }));
     const { run, result } = await executor(
       makeAutomation({ maxRunDurationMs: 600_000 }),
       externalSignal,
@@ -741,7 +745,7 @@ describe("createDirectExecutor — aborted run preserves partial usage", () => {
 describe("createDirectExecutor — recursive-call guard", () => {
   test("refuses to run when allowedTools includes automations__create", async () => {
     const executor = createDirectExecutor(makeDirectTaskFn(), () => ({
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
       identity: { id: "u" },
     }));
     const automation = makeAutomation({
@@ -753,7 +757,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
 
   test("refuses to run when allowedTools includes automations__update", async () => {
     const executor = createDirectExecutor(makeDirectTaskFn(), () => ({
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
       identity: { id: "u" },
     }));
     const automation = makeAutomation({
@@ -770,7 +774,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
       return makeDirectTaskFn()(req);
     };
     const executor = createDirectExecutor(taskFn, () => ({
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
       identity: { id: "u" },
     }));
 
@@ -782,7 +786,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
 
   test("permits non-recursive allowedTools", async () => {
     const executor = createDirectExecutor(makeDirectTaskFn(), () => ({
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
       identity: { id: "u" },
     }));
     const automation = makeAutomation({
@@ -832,7 +836,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
     };
 
     const executor = createDirectExecutor(slowTaskFn, () => ({
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
     }));
     const automation = makeAutomation({ maxRunDurationMs: 50 });
 
@@ -861,7 +865,9 @@ describe("createDirectExecutor — recursive-call guard", () => {
       throw new DOMException("The operation was aborted.", "AbortError");
     };
 
-    const executor = createDirectExecutor(slowTaskFn, () => ({ workspaceId: "ws_test" }));
+    const executor = createDirectExecutor(slowTaskFn, () => ({
+      workspaceId: "ws_0076759dbbe19fcc",
+    }));
     const externalController = new AbortController();
     const automation = makeAutomation({ maxRunDurationMs: 10_000 });
 
@@ -889,7 +895,7 @@ describe("createDirectExecutor — recursive-call guard", () => {
       throw new DOMException("The operation was aborted.", "AbortError");
     };
 
-    const executor = createDirectExecutor(taskFn, () => ({ workspaceId: "ws_test" }));
+    const executor = createDirectExecutor(taskFn, () => ({ workspaceId: "ws_0076759dbbe19fcc" }));
     const externalController = new AbortController();
     // Make the timeout extremely tight so it fires very close to the
     // external cancel — exercises the race the flag is meant to

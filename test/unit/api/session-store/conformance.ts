@@ -29,7 +29,7 @@ export function registrySpec(factory: ConformanceFactory): void {
     return {
       sessionId: "11111111-2222-3333-4444-555555555555",
       identityId: "usr_42",
-      workspaceId: "ws_a",
+      workspaceId: "ws_00079598e311c160",
       // Use real wall-clock time so providers that compare against `Date.now()`
       // (the in-memory sweep, the Redis TTL) treat the entry as freshly-created.
       createdAt: now,

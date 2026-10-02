@@ -4,7 +4,7 @@
 // Installing a connector is a workspace-scoped write: `workspaceInstallAdmission`
 // refuses a non-admin with "Workspace admin role required to install connectors."
 // The browse route carries no `RouteGuard` and its nav entry is `minRole:
-// "ws_member"`, so any member reaches this page. The gate here is what stops
+// "ws_00479acd635081b9"`, so any member reaches this page. The gate here is what stops
 // them clicking into that refusal, and it is the substantive behaviour change
 // on this page — so it gets pinned rather than resting on a render read.
 // ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ describe("CardAction — an installed entry", () => {
         <CardAction
           busy={false}
           canManage={canManage}
-          configurePath="/w/acme/settings/connectors/acme"
+          configurePath="/w/000f7ed6658f9d30/settings/connectors/acme"
           isStaticAuth={false}
           operatorReady={true}
           onInstall={() => {}}
@@ -135,7 +135,7 @@ describe("CardAction — an installed entry", () => {
     expect(findButton(mounted.container, "Installed")?.disabled).toBe(true);
     expect(findButton(mounted.container, "Install")?.textContent).toContain("Installed");
     const link = mounted.container.querySelector("a");
-    expect(link?.getAttribute("href")).toBe("/w/acme/settings/connectors/acme");
+    expect(link?.getAttribute("href")).toBe("/w/000f7ed6658f9d30/settings/connectors/acme");
   });
 
   test("a member sees Installed too — it is a fact, not an action", async () => {

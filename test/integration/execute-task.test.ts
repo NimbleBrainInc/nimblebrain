@@ -36,7 +36,7 @@ import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const TEST_USER_ID = "usr_exec_task_test";
 const TEST_USER_DISPLAY = "Task Test User";
-const SHARED_WS_ID = "ws_shared_tasks";
+const SHARED_WS_ID = "ws_006d97122edd5258";
 
 function buildProbeSource() {
   const calls: Array<{ workspaceId?: string }> = [];

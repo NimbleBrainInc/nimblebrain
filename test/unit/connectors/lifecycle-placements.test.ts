@@ -20,7 +20,7 @@ import {
  * placement registration reads the ref, not the wire.
  */
 
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const URL = "https://echo.example.com/mcp";
 const SERVER = "echo";
 
@@ -167,7 +167,7 @@ describe("nb-core placements via PlacementRegistry", () => {
     ];
     pr.register("nb", NB_CORE_PLACEMENTS);
 
-    const all = pr.forWorkspace("ws_any");
+    const all = pr.forWorkspace("ws_001823913791bb9c");
     expect(all).toHaveLength(2);
     for (const entry of all) expect(entry.serverName).toBe("nb");
     expect(all.filter((e) => e.slot === "main")).toHaveLength(1);

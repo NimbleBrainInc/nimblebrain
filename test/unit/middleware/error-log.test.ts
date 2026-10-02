@@ -19,7 +19,7 @@ function appWith(sink: EventSink): Hono<AppEnv> {
       email: "a@b.com",
       displayName: "A",
     } as AppEnv["Variables"]["identity"]);
-    c.set("workspaceId", "ws_test");
+    c.set("workspaceId", "ws_0076759dbbe19fcc");
     await next();
   });
   app.use("*", errorLog({ eventSink: sink }));
@@ -30,11 +30,13 @@ describe("errorLog middleware", () => {
   it("emits an http.error record for a 400 response", async () => {
     const { events, sink } = collectingSink();
     const app = appWith(sink);
-    app.post("/v1/workspaces/ws_test/tools/call", (c) =>
+    app.post("/v1/workspaces/ws_0076759dbbe19fcc/tools/call", (c) =>
       c.json({ error: "invalid_input", message: "/description: must be string" }, 400),
     );
 
-    const res = await app.request("/v1/workspaces/ws_test/tools/call", { method: "POST" });
+    const res = await app.request("/v1/workspaces/ws_0076759dbbe19fcc/tools/call", {
+      method: "POST",
+    });
     expect(res.status).toBe(400);
 
     expect(events).toHaveLength(1);
@@ -42,11 +44,11 @@ describe("errorLog middleware", () => {
     expect(record.event).toBe("http.error");
     expect(record.status).toBe(400);
     expect(record.method).toBe("POST");
-    expect(record.path).toBe("/v1/workspaces/ws_test/tools/call");
+    expect(record.path).toBe("/v1/workspaces/ws_0076759dbbe19fcc/tools/call");
     expect(record.error).toBe("invalid_input");
     expect(record.message).toBe("/description: must be string");
     expect(record.userId).toBe("usr_1");
-    expect(record.workspaceId).toBe("ws_test");
+    expect(record.workspaceId).toBe("ws_0076759dbbe19fcc");
     expect(record.ts).toBeDefined();
   });
 

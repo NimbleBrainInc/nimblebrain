@@ -35,12 +35,12 @@ afterAll(() => {
 });
 
 // The conversation's workspace (a focused workspace, the chat is born here).
-const WORKSPACE_A = "ws_workspace_a";
+const WORKSPACE_A = "ws_00883d7b29214d57";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
 // Another workspace the owner belongs to, provisioned before WORKSPACE_A so it
 // is the owner's default: a dev-mode request that names no workspace runs here.
-const HOME = "ws_home";
+const HOME = "ws_003f694718dd468d";
 
 // The resume message — distinct from the born message so the model adapter can
 // tell the two turns apart and only emit the tool call on the resume.

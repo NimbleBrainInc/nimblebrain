@@ -27,7 +27,7 @@ import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 /** The owner and focused workspace every handler call in this file runs as. */
 const OWNER_ID = "usr_test";
-const WS_ID = "ws_user_usr_test";
+const WS_ID = "ws_00859aff6f095b0e";
 
 function parseFirst(result: ToolResult): unknown {
   const first = result.content[0];

@@ -282,11 +282,13 @@ describe("the table follows the group-by dimension", () => {
   test("workspace rows resolve names from the roster, and unknown ids read as deleted", () => {
     const labels = {
       users: new Map(),
-      workspaces: new Map([["ws_example", { id: "ws_example", name: "Acme Ops" }]]),
+      workspaces: new Map([
+        ["ws_003335b14591adb0", { id: "ws_003335b14591adb0", name: "Acme Ops" }],
+      ]),
     };
-    expect(labelFor("workspace", "ws_example", labels).name).toBe("Acme Ops");
-    expect(labelFor("workspace", "ws_gone", labels)).toEqual({
-      name: "ws_gone",
+    expect(labelFor("workspace", "ws_003335b14591adb0", labels).name).toBe("Acme Ops");
+    expect(labelFor("workspace", "ws_003bdf4cf2ed3a6e", labels)).toEqual({
+      name: "ws_003bdf4cf2ed3a6e",
       detail: "Deleted workspace",
     });
     expect(labelFor("workspace", "none", labels).name).toBe("No workspace");
@@ -382,10 +384,15 @@ describe("filters become report arguments", () => {
       stackBy: "model",
     });
     const args = reportArgs(
-      filterState({ workspaceId: "ws_example", userId: "usr_a", model: "m", groupBy: "origin" }),
+      filterState({
+        workspaceId: "ws_003335b14591adb0",
+        userId: "usr_a",
+        model: "m",
+        groupBy: "origin",
+      }),
       range,
     );
-    expect(args).toMatchObject({ workspaceId: "ws_example", userId: "usr_a", model: "m" });
+    expect(args).toMatchObject({ workspaceId: "ws_003335b14591adb0", userId: "usr_a", model: "m" });
     // `origin` is asked for once, not twice.
     expect(args.groupBy).toEqual(["origin", "day"]);
   });
@@ -404,7 +411,7 @@ describe("filters become report arguments", () => {
 describe("the filter bar", () => {
   const labels = {
     users: new Map([["usr_a", { id: "usr_a", email: "a@example.com", displayName: "Ada" }]]),
-    workspaces: new Map([["ws_example", { id: "ws_example", name: "Acme Ops" }]]),
+    workspaces: new Map([["ws_003335b14591adb0", { id: "ws_003335b14591adb0", name: "Acme Ops" }]]),
   };
 
   function bar(filters: UsageFilterState, onChange: (f: UsageFilterState) => void = () => {}) {
@@ -482,9 +489,9 @@ describe("the filter bar", () => {
     const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
     const WindowEvent = (window as unknown as { Event: typeof Event }).Event;
     act(() => {
-      setValue?.call(select, "ws_example");
+      setValue?.call(select, "ws_003335b14591adb0");
       select.dispatchEvent(new WindowEvent("change", { bubbles: true }));
     });
-    expect((next as UsageFilterState | null)?.workspaceId).toBe("ws_example");
+    expect((next as UsageFilterState | null)?.workspaceId).toBe("ws_003335b14591adb0");
   });
 });

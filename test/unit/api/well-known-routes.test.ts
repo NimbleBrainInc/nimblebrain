@@ -87,12 +87,12 @@ describe("GET /.well-known/oauth-protected-resource/mcp/:wsId", () => {
   it("returns the workspace's canonical resource URL and the authorization server", async () => {
     const app = createApp("auth.example.com");
     const res = await app.request(
-      "http://api.example.com/.well-known/oauth-protected-resource/mcp/ws_a",
+      "http://api.example.com/.well-known/oauth-protected-resource/mcp/ws_00079598e311c160",
     );
 
     expect(res.status).toBe(200);
     const body = await readJson<ProtectedResourceMetadata>(res);
-    expect(body.resource).toBe(`${ORIGIN}/mcp/ws_a`);
+    expect(body.resource).toBe(`${ORIGIN}/mcp/ws_00079598e311c160`);
     expect(body.authorization_servers).toEqual(["https://auth.example.com"]);
     expect(body.bearer_methods_supported).toEqual(["header"]);
   });
@@ -100,23 +100,25 @@ describe("GET /.well-known/oauth-protected-resource/mcp/:wsId", () => {
   it("builds the resource from the public origin, never the request's host or forwarded headers", async () => {
     const app = createApp("auth.example.com");
     const res = await app.request(
-      "http://ATTACKER.example.net/.well-known/oauth-protected-resource/mcp/ws_a",
+      "http://ATTACKER.example.net/.well-known/oauth-protected-resource/mcp/ws_00079598e311c160",
       { headers: { "X-Forwarded-Proto": "http", "X-Forwarded-Host": "attacker.example.net" } },
     );
 
     expect(res.status).toBe(200);
-    expect((await readJson<ProtectedResourceMetadata>(res)).resource).toBe(`${ORIGIN}/mcp/ws_a`);
+    expect((await readJson<ProtectedResourceMetadata>(res)).resource).toBe(
+      `${ORIGIN}/mcp/ws_00079598e311c160`,
+    );
   });
 
   it("answers for any well-formed id without looking the workspace up", async () => {
     // The context has no workspace store at all: the document cannot disclose
     // whether a workspace exists, because it never asks.
     const app = createApp("auth.example.com");
-    const res = await app.request("/.well-known/oauth-protected-resource/mcp/ws_nosuchworkspace");
+    const res = await app.request("/.well-known/oauth-protected-resource/mcp/ws_0052529305537a66");
 
     expect(res.status).toBe(200);
     expect((await readJson<ProtectedResourceMetadata>(res)).resource).toBe(
-      `${ORIGIN}/mcp/ws_nosuchworkspace`,
+      `${ORIGIN}/mcp/ws_0052529305537a66`,
     );
   });
 
@@ -128,7 +130,7 @@ describe("GET /.well-known/oauth-protected-resource/mcp/:wsId", () => {
 
   it("returns 404 when the provider declares no authorization server", async () => {
     const app = createApp(undefined);
-    const res = await app.request("/.well-known/oauth-protected-resource/mcp/ws_a");
+    const res = await app.request("/.well-known/oauth-protected-resource/mcp/ws_00079598e311c160");
 
     expect(res.status).toBe(404);
     const body = await readJson<WellKnownErrorBody>(res);
@@ -149,7 +151,7 @@ describe("GET /.well-known/oauth-protected-resource", () => {
 
   it("is absent under the metadata path for bare /mcp and every other non-workspace path", async () => {
     const app = createApp("auth.example.com");
-    for (const suffix of ["/mcp", "/mcp/", "/mcp/ws_a/extra", "/v1"]) {
+    for (const suffix of ["/mcp", "/mcp/", "/mcp/ws_00079598e311c160/extra", "/v1"]) {
       const res = await app.request(`/.well-known/oauth-protected-resource${suffix}`);
 
       expect(res.status).toBe(404);
@@ -257,7 +259,7 @@ describe("GET /.well-known/oauth-authorization-server", () => {
       const app = createApp("myapp.example.com", { metadataUrl: false });
 
       const discovery = await app.request(
-        "http://api.example.com/.well-known/oauth-protected-resource/mcp/ws_a",
+        "http://api.example.com/.well-known/oauth-protected-resource/mcp/ws_00079598e311c160",
       );
       expect(discovery.status).toBe(200);
       expect((await readJson<ProtectedResourceMetadata>(discovery)).authorization_servers).toEqual([

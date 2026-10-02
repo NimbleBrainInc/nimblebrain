@@ -29,7 +29,7 @@ export interface SettingsNavItem {
   label: string;
   to: string;
   end?: boolean;
-  /** Minimum role required to see this entry. Default: `ws_member`. */
+  /** Minimum role required to see this entry. Default: `ws_00479acd635081b9`. */
   minRole?: ScopedRole;
   /** Nested links rendered under this item (e.g. per-app settings panels). */
   children?: SettingsNavSubItem[];
@@ -53,7 +53,7 @@ const navItemClass = (isActive: boolean) =>
 
 export function SettingsShell({ title, items, footer }: SettingsShellProps) {
   const role = useScopedRole();
-  const visible = items.filter((s) => roleAtLeast(role, s.minRole ?? "ws_member"));
+  const visible = items.filter((s) => roleAtLeast(role, s.minRole ?? "ws_00479acd635081b9"));
 
   return (
     <div className="flex flex-col md:flex-row h-full overflow-hidden">

@@ -20,7 +20,7 @@ const KEY_A = Buffer.alloc(32, 0x11);
 const KEY_B = Buffer.alloc(32, 0x22);
 const KEY_C = Buffer.alloc(32, 0x33);
 
-const WS = "workspace:ws_test";
+const WS = "workspace:ws_0076759dbbe19fcc";
 const INSTANCE = "instance";
 
 function sealerFor(...keys: Buffer[]) {
@@ -233,7 +233,9 @@ describe("the scope and key are bound into the value", () => {
     const s = sealerFor(KEY_A);
     const sealed = s.seal(WS, "acme.db_url", "workspace-value");
     expect(() => s.open(INSTANCE, "acme.db_url", sealed)).toThrow(CredentialSealError);
-    expect(() => s.open("workspace:ws_other", "acme.db_url", sealed)).toThrow(CredentialSealError);
+    expect(() => s.open("workspace:ws_005820c54ca342ad", "acme.db_url", sealed)).toThrow(
+      CredentialSealError,
+    );
     expect(() => s.open("user:usr_alex01", "acme.db_url", sealed)).toThrow(CredentialSealError);
   });
 

@@ -14,7 +14,7 @@ import {
   createManageWorkspacesTool,
   type ManageWorkspacesContext,
 } from "../../../src/tools/workspace-mgmt-tools.ts";
-import { GENERATED_WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
+import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 import { parseResult, resultText } from "../../helpers/tool-result.ts";
@@ -178,7 +178,7 @@ describe("nb__manage_workspaces", () => {
         });
         expect(created.isError).toBe(false);
         const [ws] = await store.list();
-        expect(ws?.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+        expect(ws?.id).toMatch(WORKSPACE_ID_RE);
       } finally {
         await source.stop();
       }
@@ -227,8 +227,8 @@ describe("nb__manage_workspaces", () => {
       const b = parseResult(await tool.handler({ action: "create", name: "Dupe" })) as {
         workspace: { id: string };
       };
-      expect(a.workspace.id).toMatch(GENERATED_WORKSPACE_ID_RE);
-      expect(b.workspace.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+      expect(a.workspace.id).toMatch(WORKSPACE_ID_RE);
+      expect(b.workspace.id).toMatch(WORKSPACE_ID_RE);
       expect(a.workspace.id).not.toBe(b.workspace.id);
     });
   });
@@ -428,7 +428,7 @@ describe("nb__manage_workspaces", () => {
     test("returns error for non-existent workspace", async () => {
       const result = await tool.handler({
         action: "update",
-        workspaceId: "ws_nonexistent",
+        workspaceId: "ws_004f1f715b791487",
         name: "Ghost",
       });
 
@@ -529,7 +529,7 @@ describe("nb__manage_workspaces", () => {
     test("returns error for non-existent workspace", async () => {
       const result = await tool.handler({
         action: "delete",
-        workspaceId: "ws_nonexistent",
+        workspaceId: "ws_004f1f715b791487",
       });
 
       expect(result.isError).toBe(true);
@@ -695,7 +695,7 @@ describe("nb__manage_workspaces", () => {
 
     test("list_archives shows a deleted workspace, and an archive with no workspace.json as unknown", async () => {
       const id = await deleteViaTool("Gone");
-      await mkdir(join(store.getArchivedDir(), "ws_orphan"), { recursive: true });
+      await mkdir(join(store.getArchivedDir(), "ws_0057ae5b54fe4216"), { recursive: true });
 
       const result = await tool.handler({ action: "list_archives" });
 
@@ -704,7 +704,7 @@ describe("nb__manage_workspaces", () => {
         archives: Array<{ name: string; workspaceId: string | null; workspaceName: string | null }>;
       };
       expect(archives.find((a) => a.name === id)?.workspaceName).toBe("Gone");
-      const orphan = archives.find((a) => a.name === "ws_orphan");
+      const orphan = archives.find((a) => a.name === "ws_0057ae5b54fe4216");
       expect(orphan?.workspaceId).toBeNull();
       expect(orphan?.workspaceName).toBeNull();
     });
@@ -715,7 +715,7 @@ describe("nb__manage_workspaces", () => {
       tool = createManageWorkspacesTool(makeCtx());
 
       for (const action of ["list_archives", "purge_archive"]) {
-        const result = await tool.handler({ action, archive: "ws_anything" });
+        const result = await tool.handler({ action, archive: "ws_00194decd292a0f6" });
         expect(result.structuredContent).toBeUndefined();
         expect(resultText(result)).toContain("You don't have permission to manage workspaces");
       }

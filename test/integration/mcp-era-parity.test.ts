@@ -216,7 +216,7 @@ let workDir: string;
 let jobs: JobsSource;
 
 /** A second workspace the dev identity belongs to, with a source of the same name. */
-const OTHER_WORKSPACE_ID = "ws_parity_other";
+const OTHER_WORKSPACE_ID = "ws_005c47492e176e75";
 
 function mcpUrl(wsId: string = TEST_WORKSPACE_ID): URL {
   return new URL(`http://localhost:${handle.port}/mcp/${wsId}`);

@@ -83,7 +83,7 @@ describe("reconcileConnectorSkills", () => {
     // A pre-URL registry row as it sits on disk; ConnectorRef no longer admits it.
     const registry = { name: "@nimblebraininc/synapse-crm" } as unknown as ConnectorRef;
     const { deps, cap } = buildDeps(
-      [{ id: "ws_a", connectors: [stale, current, registry] }],
+      [{ id: "ws_00079598e311c160", connectors: [stale, current, registry] }],
       (identity) => [lock(identity, PIN)],
     );
 
@@ -91,7 +91,7 @@ describe("reconcileConnectorSkills", () => {
 
     // Only the stale connector synced — reusing its authoritative lock identity.
     expect(cap.syncCalls).toEqual([
-      { identity: "outlook", serverName: "com-outlook-mcp", wsId: "ws_a" },
+      { identity: "outlook", serverName: "com-outlook-mcp", wsId: "ws_00079598e311c160" },
     ]);
     expect(result).toEqual({ workspacesScanned: 1, connectorsRefreshed: 1 });
     expect(cap.persisted).toHaveLength(1);
@@ -109,7 +109,7 @@ describe("reconcileConnectorSkills", () => {
 
   it("is a no-op (no sync, no persist) when every connector is already at the pin", async () => {
     const current = connector({ serverName: "com-gmail-mcp", skillsLock: [lock("gmail", PIN)] });
-    const { deps, cap } = buildDeps([{ id: "ws_a", connectors: [current] }], () => [
+    const { deps, cap } = buildDeps([{ id: "ws_00079598e311c160", connectors: [current] }], () => [
       lock("gmail", PIN),
     ]);
 
@@ -123,7 +123,7 @@ describe("reconcileConnectorSkills", () => {
   it("first-binds a DCR connector (no lock), deriving the identity from the canonical catalog name", async () => {
     const dcr = connector({ url: "https://api.dropbox.test/mcp", serverName: "com-dropbox-mcp" });
     const { deps, cap } = buildDeps(
-      [{ id: "ws_a", connectors: [dcr] }],
+      [{ id: "ws_00079598e311c160", connectors: [dcr] }],
       (identity) => (identity === "dropbox" ? [lock("dropbox", PIN)] : []),
       { byUrl: catalog({ "https://api.dropbox.test/mcp": { id: "com.dropbox/mcp" } }) },
     );
@@ -143,7 +143,7 @@ describe("reconcileConnectorSkills", () => {
       composio: { connectorId: "com.microsoft/outlook" },
     });
     const { deps, cap } = buildDeps(
-      [{ id: "ws_a", connectors: [composio] }],
+      [{ id: "ws_00079598e311c160", connectors: [composio] }],
       (identity) => (identity === "outlook" ? [lock("outlook", PIN)] : []),
       {
         byId: catalog({
@@ -175,7 +175,7 @@ describe("reconcileConnectorSkills", () => {
       },
     });
     const { deps, cap } = buildDeps(
-      [{ id: "ws_a", connectors: [smithery] }],
+      [{ id: "ws_00079598e311c160", connectors: [smithery] }],
       (identity) => (identity === "bassethound" ? [lock("bassethound", PIN)] : []),
       { byId: catalog({ "ai.bassethound/mcp": { id: "ai.bassethound/mcp" } }) },
     );
@@ -187,7 +187,7 @@ describe("reconcileConnectorSkills", () => {
 
   it("leaves a connector untouched and does not persist when the fetch returns nothing", async () => {
     const stale = connector({ serverName: "com-x-mcp", skillsLock: [lock("x", "v0.2.0")] });
-    const { deps, cap } = buildDeps([{ id: "ws_a", connectors: [stale] }], () => []); // 404 / transient
+    const { deps, cap } = buildDeps([{ id: "ws_00079598e311c160", connectors: [stale] }], () => []); // 404 / transient
 
     const result = await reconcileConnectorSkills(deps);
 

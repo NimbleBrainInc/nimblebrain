@@ -88,7 +88,7 @@ const { buildHostContext, buildHostExtensions } = await import("../bridge/host-e
 
 function workspace(userRole?: "admin" | "member"): WorkspaceInfo {
   return {
-    id: "ws_team",
+    id: "ws_0071a5bbf40116e6",
     name: "Team",
     memberCount: 3,
     connectorCount: 0,
@@ -181,7 +181,7 @@ async function mountPage(
           <ShellProvider
             value={{ forSlot: forSlotOver(placements), mainRoutes: () => [], shellWorkspaceId }}
           >
-            <MemoryRouter initialEntries={[`/w/team/settings/connectors/${SERVER}`]}>
+            <MemoryRouter initialEntries={[`/w/0071a5bbf40116e6/settings/connectors/${SERVER}`]}>
               <Routes>
                 <Route
                   path="/w/:slug/settings/connectors/:serverName"
@@ -310,7 +310,7 @@ describe("ConnectorDetailPage — the connector's settings section", () => {
 
   test("renders nothing while the shell still holds another workspace's placements", async () => {
     const { container } = await mountPage(workspace("admin"), [placement({})], {
-      shellWorkspaceId: "ws_previous",
+      shellWorkspaceId: "ws_005f3141d5f33168",
     });
 
     expect(container.getElementsByTagName("iframe").length).toBe(0);
@@ -364,7 +364,7 @@ describe("ConnectorDetailPage — the manage flag", () => {
     const pushed = lastHostContextChange(app);
     expect(pushed?.connector).toEqual({ canManage: true });
     // The workspace extension rides the same live push.
-    expect(pushed?.workspace).toMatchObject({ id: "ws_team" });
+    expect(pushed?.workspace).toMatchObject({ id: "ws_0071a5bbf40116e6" });
     expect(getResources).toHaveBeenCalledTimes(1);
   });
 });
@@ -379,7 +379,10 @@ describe("SlotRenderer — canManage", () => {
     }
     const { container } = await render(
       <ThemeProvider>
-        <WorkspaceProvider initialWorkspaces={[workspace("admin")]} initialActiveId="ws_team">
+        <WorkspaceProvider
+          initialWorkspaces={[workspace("admin")]}
+          initialActiveId="ws_0071a5bbf40116e6"
+        >
           <Harness />
         </WorkspaceProvider>
       </ThemeProvider>,
@@ -399,7 +402,10 @@ describe("SlotRenderer — canManage", () => {
   test("fitContent sizes the iframe to the height its content reports", async () => {
     const { container } = await render(
       <ThemeProvider>
-        <WorkspaceProvider initialWorkspaces={[workspace("admin")]} initialActiveId="ws_team">
+        <WorkspaceProvider
+          initialWorkspaces={[workspace("admin")]}
+          initialActiveId="ws_0071a5bbf40116e6"
+        >
           <SlotRenderer placements={[placement({})]} canManage={false} fitContent />
         </WorkspaceProvider>
       </ThemeProvider>,
@@ -429,7 +435,10 @@ describe("host context for other placements", () => {
   test("a SlotRenderer without canManage sends no connector key, at handshake or live", async () => {
     const { container } = await render(
       <ThemeProvider>
-        <WorkspaceProvider initialWorkspaces={[workspace("admin")]} initialActiveId="ws_team">
+        <WorkspaceProvider
+          initialWorkspaces={[workspace("admin")]}
+          initialActiveId="ws_0071a5bbf40116e6"
+        >
           <CaptureSetter />
           <SlotRenderer
             placements={[placement({ slot: "sidebar.apps", resourceUri: `ui://${SERVER}/main` })]}
@@ -440,7 +449,7 @@ describe("host context for other placements", () => {
     const app = appSide(container);
     const ctx = await handshake(app);
     expect(ctx).not.toHaveProperty("connector");
-    expect(ctx.workspace).toMatchObject({ id: "ws_team" });
+    expect(ctx.workspace).toMatchObject({ id: "ws_0071a5bbf40116e6" });
 
     await act(async () => {
       setWorkspace?.({ ...workspace("admin"), name: "Renamed" });
@@ -452,12 +461,12 @@ describe("host context for other placements", () => {
   });
 
   test("the builders add `connector` only when it is supplied", () => {
-    const ws = { id: "ws_team", name: "Team" };
+    const ws = { id: "ws_0071a5bbf40116e6", name: "Team" };
     expect(buildHostExtensions(ws)).toEqual({
-      workspace: { id: "ws_team", name: "Team" },
+      workspace: { id: "ws_0071a5bbf40116e6", name: "Team" },
     });
     expect(buildHostExtensions(ws, { canManage: false })).toEqual({
-      workspace: { id: "ws_team", name: "Team" },
+      workspace: { id: "ws_0071a5bbf40116e6", name: "Team" },
       connector: { canManage: false },
     });
     expect(buildHostContext("light", ws)).not.toHaveProperty("connector");
@@ -485,7 +494,7 @@ describe("workspace settings navigation", () => {
               shellWorkspaceId: ws.id,
             }}
           >
-            <MemoryRouter initialEntries={["/w/team/settings/general"]}>
+            <MemoryRouter initialEntries={["/w/0071a5bbf40116e6/settings/general"]}>
               <Routes>
                 <Route path="/w/:slug/settings/*" element={<WorkspaceSettingsPage />} />
               </Routes>

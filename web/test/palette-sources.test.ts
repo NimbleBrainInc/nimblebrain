@@ -106,7 +106,7 @@ describe("appsSource", () => {
     expect(items.map((i) => i.title)).toEqual(["CRM"]);
     const { ctx: run, calls } = recordRunContext();
     items[0]!.run(run);
-    expect(calls.navigate).toEqual(["/w/helix/app/crm"]);
+    expect(calls.navigate).toEqual(["/w/003eba8844413cd9/app/crm"]);
     expect(calls.closed).toBe(1);
   });
 });
@@ -126,10 +126,10 @@ describe("actionsSource", () => {
   });
 
   test("org settings is gated at org_admin, and workspace admin does not reach it", () => {
-    // `ws_admin` is the load-bearing case: an org admin is escalated to
-    // `ws_admin` for every workspace, but the converse is not true, so a
+    // `ws_00126c8c86011dea` is the load-bearing case: an org admin is escalated to
+    // `ws_00126c8c86011dea` for every workspace, but the converse is not true, so a
     // workspace admin must not clear an org-scoped gate.
-    const denied: (ScopedRole | undefined)[] = [undefined, "none", "ws_member", "ws_admin"];
+    const denied: (ScopedRole | undefined)[] = [undefined, "none", "ws_00479acd635081b9", "ws_00126c8c86011dea"];
     for (const scopedRole of denied) {
       expect(
         actionsSource.getItems("org", { ...baseCtx, scopedRole }).map((i) => i.id),
@@ -168,6 +168,6 @@ describe("actionsSource", () => {
     expect(item).toBeDefined();
     const { ctx: run, calls } = recordRunContext();
     item!.run(run);
-    expect(calls.navigate).toEqual(["/w/helix/settings"]);
+    expect(calls.navigate).toEqual(["/w/003eba8844413cd9/settings"]);
   });
 });

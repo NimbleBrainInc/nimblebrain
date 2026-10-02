@@ -529,7 +529,7 @@ describe("Bridge — ext-apps dual protocol", () => {
   it("posts nothing before the app's ui/initialize request, and answers it first", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app", {
-      getHostExtensions: () => ({ workspace: { id: "ws_1", name: "One" } }),
+      getHostExtensions: () => ({ workspace: { id: "ws_0002ee92e8791c13", name: "One" } }),
     });
 
     // Everything the host can push on its own, before the app has spoken.
@@ -780,7 +780,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
   it("merges getHostExtensions() into hostContext alongside spec fields", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app", {
-      getHostExtensions: () => ({ workspace: { id: "ws_a", name: "Alpha" } }),
+      getHostExtensions: () => ({ workspace: { id: "ws_00079598e311c160", name: "Alpha" } }),
     });
 
     simulatePostMessage(iframe, {
@@ -792,7 +792,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
 
     const response = findInitResponse(posted);
     expect(response?.result.hostContext).toMatchObject({
-      workspace: { id: "ws_a", name: "Alpha" },
+      workspace: { id: "ws_00079598e311c160", name: "Alpha" },
       theme: expect.anything(),
       styles: expect.anything(),
     });
@@ -805,7 +805,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
     const handle = createBridge(iframe, "test-app", {
       getHostExtensions: () => {
         calls++;
-        return { workspace: { id: "ws_a", name: "Alpha" } };
+        return { workspace: { id: "ws_00079598e311c160", name: "Alpha" } };
       },
     });
 
@@ -827,7 +827,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
         // Adversarial caller tries to override a spec field — bridge must ignore.
         theme: "WRONG",
         styles: { variables: { "--evil": "true" } },
-        workspace: { id: "ws_a", name: "Alpha" },
+        workspace: { id: "ws_00079598e311c160", name: "Alpha" },
       }),
     });
 
@@ -844,7 +844,7 @@ describe("Bridge — ui/initialize hostContext extensions", () => {
     expect((ctx.styles as Record<string, unknown>).variables).not.toMatchObject({
       "--evil": "true",
     });
-    expect(ctx.workspace).toEqual({ id: "ws_a", name: "Alpha" });
+    expect(ctx.workspace).toEqual({ id: "ws_00079598e311c160", name: "Alpha" });
     handle.destroy();
   });
 

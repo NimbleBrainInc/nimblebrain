@@ -118,12 +118,12 @@ describe("conversations__get", () => {
   });
 
   it("surfaces the conversation's workspaceId in metadata (drives the panel re-scope)", async () => {
-    writeConversation(dir, "conv-ws", { workspaceId: "ws_alpha" });
+    writeConversation(dir, "conv-ws", { workspaceId: "ws_00164434d8dd7ffb" });
     await index.build(dir);
 
     const result = await handleGet({ id: "conv-ws", expand: "metadata" }, index);
 
-    expect(result.metadata.workspaceId).toBe("ws_alpha");
+    expect(result.metadata.workspaceId).toBe("ws_00164434d8dd7ffb");
   });
 
   it("omits workspaceId for a legacy record that has none (absence ⇒ don't reconcile)", async () => {

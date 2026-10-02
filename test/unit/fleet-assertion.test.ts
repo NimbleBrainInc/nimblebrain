@@ -109,7 +109,7 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
 
   function provider(fleetAuthorizerIssuer?: string) {
     return new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "fleet-srv",
       workDir,
       callbackUrl: "http://localhost:27247/v1/mcp-auth/callback",
@@ -187,7 +187,7 @@ describe("fleet hook — SDK client-auth parity (step 1)", () => {
 
   function hookWithStaticClient(staticClient: { clientId: string; clientSecret?: string }) {
     const provider = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "fleet-srv",
       workDir,
       callbackUrl: "http://localhost:27247/v1/mcp-auth/callback",

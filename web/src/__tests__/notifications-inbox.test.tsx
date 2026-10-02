@@ -105,7 +105,7 @@ async function mount(
             value: {
               forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
               mainRoutes: () => [],
-              shellWorkspaceId: "ws_outbound",
+              shellWorkspaceId: "ws_005b519ef7efc353",
             },
           },
           React.createElement(

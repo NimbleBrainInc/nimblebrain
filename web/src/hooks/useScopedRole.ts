@@ -6,12 +6,12 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceCon
  * The signed-in user's effective role across the platform's three scopes.
  *
  *   none       — not signed in (or session not yet loaded)
- *   ws_member  — member of the active workspace, no admin powers
- *   ws_admin   — workspace admin OR org admin/owner (effective workspace-level *reach* — see the note below; this is NOT edit rights)
+ *   ws_00479acd635081b9  — member of the active workspace, no admin powers
+ *   ws_00126c8c86011dea   — workspace admin OR org admin/owner (effective workspace-level *reach* — see the note below; this is NOT edit rights)
  *   org_admin  — org admin (manage all users, all workspaces)
  *   org_owner  — org owner (superset of org_admin)
  *
- * Org owners and admins are always treated as ws_admin for any workspace.
+ * Org owners and admins are always treated as ws_00126c8c86011dea for any workspace.
  * The hook returns the *highest* role that applies — gates check `>=` against
  * a required minimum, not equality, so org owners pass workspace-admin checks
  * automatically.
@@ -23,12 +23,23 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceCon
  * (`src/workspace/authz.ts`) requires membership with `role === "admin"` and
  * never consults `orgRole`. Gate writes with `canWriteWorkspace` below — read
  * its doc before picking a form, because which workspace you are asking about
- * matters; `roleAtLeast(role, "ws_admin")` would offer controls the server
+ * matters; `roleAtLeast(role, "ws_00126c8c86011dea")` would offer controls the server
  * refuses.
  */
-export type ScopedRole = "none" | "ws_member" | "ws_admin" | "org_admin" | "org_owner";
+export type ScopedRole =
+  | "none"
+  | "ws_00479acd635081b9"
+  | "ws_00126c8c86011dea"
+  | "org_admin"
+  | "org_owner";
 
-const ROLE_ORDER: ScopedRole[] = ["none", "ws_member", "ws_admin", "org_admin", "org_owner"];
+const ROLE_ORDER: ScopedRole[] = [
+  "none",
+  "ws_00479acd635081b9",
+  "ws_00126c8c86011dea",
+  "org_admin",
+  "org_owner",
+];
 
 /** True when `role` meets or exceeds `required`. */
 export function roleAtLeast(role: ScopedRole, required: ScopedRole): boolean {
@@ -53,8 +64,8 @@ export function resolveScopedRole(
   // active workspace. `userRole` comes from the extended workspace list
   // payload; `undefined` means the user isn't a member of this workspace.
   const wsRole = activeWorkspace?.userRole;
-  if (wsRole === "admin") return "ws_admin";
-  if (wsRole === "member") return "ws_member";
+  if (wsRole === "admin") return "ws_00126c8c86011dea";
+  if (wsRole === "member") return "ws_00479acd635081b9";
 
   return "none";
 }

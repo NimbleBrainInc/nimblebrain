@@ -9,14 +9,14 @@ describe("PlacementRegistry", () => {
       { slot: "sidebar", resourceUri: "ui://core/home", priority: 10 },
       { slot: "sidebar", resourceUri: "ui://core/conversations", priority: 20 },
     ]);
-    // Scoped — a connector installed in ws_eng.
+    // Scoped — a connector installed in ws_002fbb9fda6654ca.
     reg.register(
       "tasks",
       [{ slot: "sidebar.apps", resourceUri: "ui://tasks/nav", priority: 50 }],
-      "ws_eng",
+      "ws_002fbb9fda6654ca",
     );
 
-    const eng = reg.forWorkspace("ws_eng");
+    const eng = reg.forWorkspace("ws_002fbb9fda6654ca");
     expect(eng).toHaveLength(3);
     // Sorted by slot then priority — sidebar (ambient) before sidebar.apps (scoped).
     expect(eng[0].resourceUri).toBe("ui://core/home");
@@ -27,11 +27,11 @@ describe("PlacementRegistry", () => {
   test("forWorkspace isolates scoped entries across workspaces", () => {
     const reg = new PlacementRegistry();
     reg.register("nb", [{ slot: "sidebar", resourceUri: "ui://core/home" }]);
-    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks" }], "ws_eng");
-    reg.register("crm", [{ slot: "main", resourceUri: "ui://crm" }], "ws_sales");
+    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks" }], "ws_002fbb9fda6654ca");
+    reg.register("crm", [{ slot: "main", resourceUri: "ui://crm" }], "ws_006a3c0eb78706fc");
 
-    const eng = reg.forWorkspace("ws_eng");
-    const sales = reg.forWorkspace("ws_sales");
+    const eng = reg.forWorkspace("ws_002fbb9fda6654ca");
+    const sales = reg.forWorkspace("ws_006a3c0eb78706fc");
 
     // Each workspace sees ambient + its own scoped entries, never the other's.
     // Sort is slot-alphabetical: "main" before "sidebar".
@@ -43,40 +43,40 @@ describe("PlacementRegistry", () => {
     const reg = new PlacementRegistry();
     reg.register("nb", [{ slot: "sidebar", resourceUri: "ui://core/home" }]);
 
-    const entries = reg.forWorkspace("ws_new");
+    const entries = reg.forWorkspace("ws_004dbf07470f1e9d");
     expect(entries).toHaveLength(1);
     expect(entries[0].resourceUri).toBe("ui://core/home");
   });
 
   test("unregister scoped to (serverName, wsId) leaves other workspaces untouched", () => {
     const reg = new PlacementRegistry();
-    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks" }], "ws_eng");
-    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks" }], "ws_sales");
+    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks" }], "ws_002fbb9fda6654ca");
+    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks" }], "ws_006a3c0eb78706fc");
 
-    reg.unregister("tasks", "ws_eng");
+    reg.unregister("tasks", "ws_002fbb9fda6654ca");
 
-    expect(reg.forWorkspace("ws_eng")).toHaveLength(0);
-    expect(reg.forWorkspace("ws_sales")).toHaveLength(1);
+    expect(reg.forWorkspace("ws_002fbb9fda6654ca")).toHaveLength(0);
+    expect(reg.forWorkspace("ws_006a3c0eb78706fc")).toHaveLength(1);
   });
 
   test("unregister without wsId removes only ambient entries", () => {
     const reg = new PlacementRegistry();
     reg.register("nb", [{ slot: "sidebar", resourceUri: "ui://core/home" }]);
-    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks" }], "ws_eng");
+    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks" }], "ws_002fbb9fda6654ca");
 
     reg.unregister("nb"); // ambient
 
-    const eng = reg.forWorkspace("ws_eng");
+    const eng = reg.forWorkspace("ws_002fbb9fda6654ca");
     expect(eng).toHaveLength(1);
     expect(eng[0].resourceUri).toBe("ui://tasks");
   });
 
   test("duplicate register replaces prior entries for the same (serverName, wsId)", () => {
     const reg = new PlacementRegistry();
-    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks/v1" }], "ws_eng");
-    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks/v2" }], "ws_eng");
+    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks/v1" }], "ws_002fbb9fda6654ca");
+    reg.register("tasks", [{ slot: "main", resourceUri: "ui://tasks/v2" }], "ws_002fbb9fda6654ca");
 
-    const eng = reg.forWorkspace("ws_eng");
+    const eng = reg.forWorkspace("ws_002fbb9fda6654ca");
     expect(eng).toHaveLength(1);
     expect(eng[0].resourceUri).toBe("ui://tasks/v2");
   });
@@ -85,7 +85,7 @@ describe("PlacementRegistry", () => {
     const reg = new PlacementRegistry();
     reg.register("nb", [{ slot: "main", resourceUri: "ui://core/page" }]);
 
-    expect(reg.forWorkspace("ws_any")[0].priority).toBe(100);
+    expect(reg.forWorkspace("ws_001823913791bb9c")[0].priority).toBe(100);
   });
 
   test("register with wsId sets wsId on every inserted entry", () => {
@@ -96,19 +96,19 @@ describe("PlacementRegistry", () => {
         { slot: "sidebar.apps", resourceUri: "ui://echo/nav" },
         { slot: "main", resourceUri: "ui://echo/page" },
       ],
-      "ws_eng",
+      "ws_002fbb9fda6654ca",
     );
 
-    const eng = reg.forWorkspace("ws_eng");
+    const eng = reg.forWorkspace("ws_002fbb9fda6654ca");
     expect(eng).toHaveLength(2);
-    expect(eng.every((e) => e.wsId === "ws_eng")).toBe(true);
+    expect(eng.every((e) => e.wsId === "ws_002fbb9fda6654ca")).toBe(true);
   });
 
   test("register without wsId leaves wsId undefined (ambient)", () => {
     const reg = new PlacementRegistry();
     reg.register("bash", [{ slot: "sidebar", resourceUri: "ui://bash/nav" }]);
 
-    const anyWs = reg.forWorkspace("ws_anything");
+    const anyWs = reg.forWorkspace("ws_00194decd292a0f6");
     expect(anyWs[0].wsId).toBeUndefined();
   });
 });

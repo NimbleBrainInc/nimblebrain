@@ -31,7 +31,7 @@ import {
 } from "../../../src/platform/automations/paths.ts";
 
 const OWNER = "user_01ABC";
-const WS = "ws_test0001";
+const WS = "ws_00775c942f0fead1";
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "nb-backfill-"));

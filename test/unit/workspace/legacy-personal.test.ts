@@ -58,14 +58,14 @@ describe("retireLegacyPersonalWorkspaces", () => {
   test("removes the legacy fields from every record, personal and shared, keeping ids", async () => {
     await addUser("user_alice", "Alice Smith");
     await writeRaw({
-      id: "ws_user_user_alice",
+      id: "ws_0080a032f327d468",
       name: "Alice Smith's Workspace",
       members: [{ userId: "user_alice", role: "admin" }],
       isPersonal: true,
       ownerUserId: "user_alice",
     });
     await writeRaw({
-      id: "ws_team0000000000001",
+      id: "ws_0072ba21c553903d",
       name: "Team",
       members: [{ userId: "user_alice", role: "member" }],
       isPersonal: false,
@@ -73,20 +73,20 @@ describe("retireLegacyPersonalWorkspaces", () => {
 
     await retireLegacyPersonalWorkspaces(store, users);
 
-    for (const id of ["ws_user_user_alice", "ws_team0000000000001"]) {
+    for (const id of ["ws_0080a032f327d468", "ws_0072ba21c553903d"]) {
       const raw = await readRaw(id);
       expect(raw.id).toBe(id);
       expect("isPersonal" in raw).toBe(false);
       expect("ownerUserId" in raw).toBe(false);
     }
-    expect((await readRaw("ws_team0000000000001")).name).toBe("Team");
+    expect((await readRaw("ws_0072ba21c553903d")).name).toBe("Team");
     expect(await store.listLegacyPersonal()).toEqual([]);
   });
 
   test("sets the owner's default when unset", async () => {
     await addUser("user_alice", "Alice");
     await writeRaw({
-      id: "ws_user_user_alice",
+      id: "ws_0080a032f327d468",
       name: "Alice's Workspace",
       members: [{ userId: "user_alice", role: "admin" }],
       isPersonal: true,
@@ -96,14 +96,14 @@ describe("retireLegacyPersonalWorkspaces", () => {
     await retireLegacyPersonalWorkspaces(store, users);
 
     expect((await users.get("user_alice"))?.preferences.defaultWorkspaceId).toBe(
-      "ws_user_user_alice",
+      "ws_0080a032f327d468",
     );
   });
 
   test("keeps an owner's default that is already set", async () => {
-    await addUser("user_alice", "Alice", "ws_chosen0000000001");
+    await addUser("user_alice", "Alice", "ws_00278e0e46f42da3");
     await writeRaw({
-      id: "ws_user_user_alice",
+      id: "ws_0080a032f327d468",
       name: "Alice's Workspace",
       members: [{ userId: "user_alice", role: "admin" }],
       isPersonal: true,
@@ -113,7 +113,7 @@ describe("retireLegacyPersonalWorkspaces", () => {
     await retireLegacyPersonalWorkspaces(store, users);
 
     expect((await users.get("user_alice"))?.preferences.defaultWorkspaceId).toBe(
-      "ws_chosen0000000001",
+      "ws_00278e0e46f42da3",
     );
   });
 
@@ -121,14 +121,14 @@ describe("retireLegacyPersonalWorkspaces", () => {
     await addUser("user_alice", "Alice Smith");
     await addUser("user_bob", "Bob Jones");
     await writeRaw({
-      id: "ws_user_user_alice",
+      id: "ws_0080a032f327d468",
       name: "Alice Smith's Workspace",
       members: [{ userId: "user_alice", role: "admin" }],
       isPersonal: true,
       ownerUserId: "user_alice",
     });
     await writeRaw({
-      id: "ws_user_user_bob",
+      id: "ws_0081779c0a07fdd7",
       name: "Bob's lab",
       members: [{ userId: "user_bob", role: "admin" }],
       isPersonal: true,
@@ -137,13 +137,13 @@ describe("retireLegacyPersonalWorkspaces", () => {
 
     await retireLegacyPersonalWorkspaces(store, users);
 
-    expect((await readRaw("ws_user_user_alice")).name).toBe("Alice's workspace");
-    expect((await readRaw("ws_user_user_bob")).name).toBe("Bob's lab");
+    expect((await readRaw("ws_0080a032f327d468")).name).toBe("Alice's workspace");
+    expect((await readRaw("ws_0081779c0a07fdd7")).name).toBe("Bob's lab");
   });
 
   test("an owner with no profile record: fields still retired, name kept, owner seated", async () => {
     await writeRaw({
-      id: "ws_user_user_ghost",
+      id: "ws_0082c9bdd3a5e814",
       name: "Ghost's Workspace",
       members: [],
       isPersonal: true,
@@ -152,7 +152,7 @@ describe("retireLegacyPersonalWorkspaces", () => {
 
     await retireLegacyPersonalWorkspaces(store, users);
 
-    const raw = await readRaw("ws_user_user_ghost");
+    const raw = await readRaw("ws_0082c9bdd3a5e814");
     expect("isPersonal" in raw).toBe(false);
     expect("ownerUserId" in raw).toBe(false);
     expect(raw.name).toBe("Ghost's Workspace");
@@ -162,7 +162,7 @@ describe("retireLegacyPersonalWorkspaces", () => {
   test("seats an owner missing from the member list as admin", async () => {
     await addUser("user_alice", "Alice");
     await writeRaw({
-      id: "ws_user_user_alice",
+      id: "ws_0080a032f327d468",
       name: "Alice's Workspace",
       members: [{ userId: "user_other", role: "member" }],
       isPersonal: true,
@@ -171,7 +171,7 @@ describe("retireLegacyPersonalWorkspaces", () => {
 
     await retireLegacyPersonalWorkspaces(store, users);
 
-    const raw = await readRaw("ws_user_user_alice");
+    const raw = await readRaw("ws_0080a032f327d468");
     expect(raw.members).toEqual([
       { userId: "user_other", role: "member" },
       { userId: "user_alice", role: "admin" },
@@ -183,7 +183,7 @@ describe("retireLegacyPersonalWorkspaces", () => {
   test("leaves an owner already in the member list untouched, whatever their role", async () => {
     await addUser("user_alice", "Alice");
     await writeRaw({
-      id: "ws_user_user_alice",
+      id: "ws_0080a032f327d468",
       name: "Alice's Workspace",
       members: [
         { userId: "user_alice", role: "member" },
@@ -195,7 +195,7 @@ describe("retireLegacyPersonalWorkspaces", () => {
 
     await retireLegacyPersonalWorkspaces(store, users);
 
-    expect((await readRaw("ws_user_user_alice")).members).toEqual([
+    expect((await readRaw("ws_0080a032f327d468")).members).toEqual([
       { userId: "user_alice", role: "member" },
       { userId: "user_bob", role: "admin" },
     ]);
@@ -204,7 +204,7 @@ describe("retireLegacyPersonalWorkspaces", () => {
   test("a second run is a no-op", async () => {
     await addUser("user_alice", "Alice");
     await writeRaw({
-      id: "ws_user_user_alice",
+      id: "ws_0080a032f327d468",
       name: "Alice's Workspace",
       members: [{ userId: "user_alice", role: "admin" }],
       isPersonal: true,
@@ -212,12 +212,12 @@ describe("retireLegacyPersonalWorkspaces", () => {
     });
 
     await retireLegacyPersonalWorkspaces(store, users);
-    const afterFirst = await readFile(recordPath("ws_user_user_alice"), "utf-8");
+    const afterFirst = await readFile(recordPath("ws_0080a032f327d468"), "utf-8");
     const profileAfterFirst = await users.get("user_alice");
 
     await retireLegacyPersonalWorkspaces(store, users);
 
-    expect(await readFile(recordPath("ws_user_user_alice"), "utf-8")).toBe(afterFirst);
+    expect(await readFile(recordPath("ws_0080a032f327d468"), "utf-8")).toBe(afterFirst);
     expect(await users.get("user_alice")).toEqual(profileAfterFirst);
   });
 });

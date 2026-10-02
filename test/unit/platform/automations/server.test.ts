@@ -29,7 +29,7 @@ import {
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 
 /** Load this test's single workspace+owner automations. */
@@ -1347,7 +1347,7 @@ describe("automation ownership", () => {
   });
 
   test("handleCreate sets workspaceId from context", () => {
-    const ctx = makeCtx({ currentWorkspaceId: "ws_engineering" });
+    const ctx = makeCtx({ currentWorkspaceId: "ws_0030a37f450693bf" });
     const result = handleCreate(
       createArgs("Workspace Automation", "do something", {
         type: "interval",
@@ -1357,13 +1357,13 @@ describe("automation ownership", () => {
     );
 
     expect(result.created).toBe(true);
-    expect(result.automation.workspaceId).toBe("ws_engineering");
+    expect(result.automation.workspaceId).toBe("ws_0030a37f450693bf");
   });
 
   test("handleCreate sets both ownerId and workspaceId", () => {
     const ctx = makeCtx({
       currentUserId: "usr_bob",
-      currentWorkspaceId: "ws_ops",
+      currentWorkspaceId: "ws_0055880db5dd7ef1",
     });
     const result = handleCreate(
       createArgs("Full Context Automation", "do something", {
@@ -1375,7 +1375,7 @@ describe("automation ownership", () => {
 
     expect(result.created).toBe(true);
     expect(result.automation.ownerId).toBe("usr_bob");
-    expect(result.automation.workspaceId).toBe("ws_ops");
+    expect(result.automation.workspaceId).toBe("ws_0055880db5dd7ef1");
   });
 
   test("create without an explicit context still binds owner+workspace from the store path", () => {

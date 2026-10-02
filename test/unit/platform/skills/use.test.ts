@@ -31,7 +31,7 @@ import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 // ── Fake Runtime ─────────────────────────────────────────────────────────
 
 class FakeRuntime {
-  wsId: string | null = "ws_test";
+  wsId: string | null = "ws_0076759dbbe19fcc";
   identity: { id: string } | null = { id: "user_test" };
   activatable: ActivatableSkill[] = [];
   conversationEvents: ConversationEvent[] | null = null;
@@ -156,12 +156,12 @@ describe("nb__use_skill — delivery", () => {
   });
 
   test("resolves the activatable set for the request's own workspace", async () => {
-    runtime.wsId = "ws_bound";
+    runtime.wsId = "ws_0022cd3c854f9812";
     runtime.activatable = [RUNBOOK];
     const src = await buildSource();
 
     await src.execute("use_skill", { name: "invoice-runbook" });
-    expect(runtime.listCalls).toEqual([{ wsId: "ws_bound", userId: "user_test" }]);
+    expect(runtime.listCalls).toEqual([{ wsId: "ws_0022cd3c854f9812", userId: "user_test" }]);
   });
 
   test("errors when no workspace is in scope", async () => {

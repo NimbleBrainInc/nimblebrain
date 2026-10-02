@@ -220,7 +220,7 @@ describe("provisionHooks", () => {
             return ws;
           },
         },
-        wsId: "ws_outbound",
+        wsId: "ws_005b519ef7efc353",
         connector: "acme-mcp",
         mcpUrl: "https://acme.internal/mcp",
         declarations: [DECL],

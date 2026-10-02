@@ -54,7 +54,7 @@ function legacyRefWithMarker(): ConnectorRef {
 }
 
 function targetOf(ref: ConnectorRef): ProbeTarget {
-  return { serverName: "ai-bassethound-mcp", wsId: "ws_01abc", principalId: "u_1", ref };
+  return { serverName: "ai-bassethound-mcp", wsId: "ws_0001f3ac8053ce11", principalId: "u_1", ref };
 }
 
 function stubFetch(status: number, body: unknown): void {

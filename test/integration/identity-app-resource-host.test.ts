@@ -21,7 +21,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nb-identity-resource-host-${Date.now()}`);
-const OTHER_WORKSPACE_ID = "ws_other";
+const OTHER_WORKSPACE_ID = "ws_005820c54ca342ad";
 let runtime: Runtime;
 
 beforeAll(async () => {

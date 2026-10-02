@@ -70,7 +70,7 @@ async function mountBar(path: string): Promise<void> {
                 value={{
                   forSlot: (slot) => (slot === "sidebar" ? [PEOPLE] : []),
                   mainRoutes: () => [],
-                  shellWorkspaceId: "ws_a",
+                  shellWorkspaceId: "ws_00079598e311c160",
                 }}
               >
                 <AppLocationProvider>
@@ -103,13 +103,13 @@ afterEach(() => {
 
 describe("TopBar", () => {
   test("with no app trail, the title is the route's own name", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     expect(byTestId("top-bar-title")?.textContent).toBe("People");
     expect(byTestId("top-bar-back")).toBeUndefined();
   });
 
   test("a trail one deep shows its label and no back control", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     await act(async () =>
       location.setAppLocation({ trail: [{ id: "list", label: "Contacts" }], navigate: () => {} }),
     );
@@ -118,7 +118,7 @@ describe("TopBar", () => {
   });
 
   test("a deeper trail shows its last label, and back asks the app for the entry before it", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     const navigate = mock((_id: string) => {});
     await act(async () =>
       location.setAppLocation({
@@ -139,7 +139,7 @@ describe("TopBar", () => {
   });
 
   test("Chat is in the bar on workspace routes only", async () => {
-    await mountBar("/w/acme/");
+    await mountBar("/w/000f7ed6658f9d30/");
     expect(byTestId("chat-chrome-open-button")).toBeDefined();
     act(() => root.unmount());
     container.remove();

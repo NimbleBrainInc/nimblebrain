@@ -22,7 +22,7 @@
  *      Throws `UnknownToolSource` if the source prefix isn't registered.
  *
  * Design rules:
- *   - **Strict invariants over defensive defaults.** No `wsId ?? "ws_default"`,
+ *   - **Strict invariants over defensive defaults.** No `wsId ?? DEFAULT_WS_ID`,
  *     no fallback to "current workspace." Every failure throws a structured
  *     error the caller can map.
  *   - **Derive don't cast.** Types flow from `WorkspaceContext` / `ToolSource`.

@@ -34,14 +34,14 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 const KEY_A = Buffer.alloc(32, 0x11);
 const KEY_B = Buffer.alloc(32, 0x22);
 
-const WS: CredentialScope = { kind: "workspace", wsId: "ws_test" };
+const WS: CredentialScope = { kind: "workspace", wsId: "ws_0076759dbbe19fcc" };
 const INSTANCE: CredentialScope = { kind: "instance" };
 const USER: CredentialScope = { kind: "user", userId: "usr_alex01" };
 const READ = { caller: "test", purpose: "unit test" };
 
 function fresh(sealer?: CredentialSealer) {
   const dir = mkdtempSync(join(tmpdir(), "nb-reseal-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   // The audit stream only: the sweep also announces its outcome, and these tests
   // assert on what an operator reads back from the log.
   const events: EngineEvent[] = [];
@@ -54,7 +54,7 @@ function fresh(sealer?: CredentialSealer) {
 
 const SCOPE_DIRS: [CredentialScope, string[]][] = [
   [INSTANCE, ["credentials", "secrets"]],
-  [WS, ["workspaces", "ws_test", "credentials", "secrets"]],
+  [WS, ["workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets"]],
   [USER, ["users", "usr_alex01", "credentials", "secrets"]],
 ];
 
@@ -75,7 +75,12 @@ function seed(dir: string, segments: string[], key: string, contents: string): s
  * store refuses to start, which is its own section below.
  */
 function seedCurrent(dir: string, segments: string[], key: string): void {
-  seed(dir, segments, key, createCredentialSealer([KEY_A]).seal("workspace:ws_test", key, "ok"));
+  seed(
+    dir,
+    segments,
+    key,
+    createCredentialSealer([KEY_A]).seal("workspace:ws_0076759dbbe19fcc", key, "ok"),
+  );
 }
 
 function readRaw(dir: string, segments: string[], key: string): string {
@@ -106,7 +111,12 @@ describe("the sweep converts what is already there", () => {
     const rotated = createCredentialSealer([KEY_A, KEY_B]);
     const { store, dir, cleanup } = fresh(rotated);
     try {
-      seed(dir, SCOPE_DIRS[1][1], "acme.key", outgoing.seal("workspace:ws_test", "acme.key", "v"));
+      seed(
+        dir,
+        SCOPE_DIRS[1][1],
+        "acme.key",
+        outgoing.seal("workspace:ws_0076759dbbe19fcc", "acme.key", "v"),
+      );
       await store.reconcile?.();
       const raw = readRaw(dir, SCOPE_DIRS[1][1], "acme.key");
       expect(parseSealedValue(raw)?.kid).toBe(rotated.sealingKid);
@@ -221,7 +231,7 @@ describe("mtime survives the sweep", () => {
         dir,
         SCOPE_DIRS[1][1],
         "acme.key",
-        outgoing.seal("workspace:ws_test", "acme.key", "v"),
+        outgoing.seal("workspace:ws_0076759dbbe19fcc", "acme.key", "v"),
       );
       utimesSync(path, LONG_AGO, LONG_AGO);
       await store.reconcile?.();
@@ -245,7 +255,7 @@ describe("one bad secret does not take the tenant down", () => {
         dir,
         SCOPE_DIRS[1][1],
         "bad.one",
-        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
+        createCredentialSealer([KEY_B]).seal("workspace:ws_0076759dbbe19fcc", "bad.one", "x"),
       );
       seed(dir, SCOPE_DIRS[1][1], "good.two", "v2");
 
@@ -263,7 +273,11 @@ describe("one bad secret does not take the tenant down", () => {
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
       seedCurrent(dir, SCOPE_DIRS[1][1], "current.one");
-      const stranded = createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x");
+      const stranded = createCredentialSealer([KEY_B]).seal(
+        "workspace:ws_0076759dbbe19fcc",
+        "bad.one",
+        "x",
+      );
       const path = seed(dir, SCOPE_DIRS[1][1], "bad.one", stranded);
       await store.reconcile?.();
       expect(readFileSync(path, "utf-8")).toBe(stranded);
@@ -280,13 +294,16 @@ describe("one bad secret does not take the tenant down", () => {
         dir,
         SCOPE_DIRS[1][1],
         "bad.one",
-        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
+        createCredentialSealer([KEY_B]).seal("workspace:ws_0076759dbbe19fcc", "bad.one", "x"),
       );
       await store.reconcile?.();
       expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
         "reseal_skipped",
       ]);
-      expect(events[0]?.data).toMatchObject({ scope: "workspace:ws_test", key: "bad.one" });
+      expect(events[0]?.data).toMatchObject({
+        scope: "workspace:ws_0076759dbbe19fcc",
+        key: "bad.one",
+      });
     } finally {
       cleanup();
     }
@@ -333,7 +350,7 @@ describe("only what may be plaintext holds strict mode off", () => {
         dir,
         SCOPE_DIRS[1][1],
         "stray.key",
-        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "stray.key", "x"),
+        createCredentialSealer([KEY_B]).seal("workspace:ws_0076759dbbe19fcc", "stray.key", "x"),
       );
       await store.reconcile?.();
       seed(dir, SCOPE_DIRS[1][1], "injected.key", "attacker-chosen");
@@ -370,7 +387,10 @@ describe("only what may be plaintext holds strict mode off", () => {
       expect(payloadsOf(events, "audit.credential_seal_failure").map((d) => d.reason)).toEqual([
         "reseal_skipped",
       ]);
-      expect(events[0]?.data).toMatchObject({ scope: "workspace:ws_test", key: "planted.key" });
+      expect(events[0]?.data).toMatchObject({
+        scope: "workspace:ws_0076759dbbe19fcc",
+        key: "planted.key",
+      });
       const got = await store.get(WS, "planted.key", READ);
       expect(() => got?.reveal()).toThrow();
     } finally {
@@ -409,7 +429,7 @@ describe("a ring that recognizes none of the sealed secrets refuses to start", (
   // anything written meanwhile is sealed under the wrong key — stranded the
   // moment the right one comes back.
   const sealedUnder = (key: Buffer, name: string, value = "v") =>
-    createCredentialSealer([key]).seal("workspace:ws_test", name, value);
+    createCredentialSealer([key]).seal("workspace:ws_0076759dbbe19fcc", name, value);
 
   test("sealed under A, ring [B]: throws, naming both key ids", async () => {
     const a = createCredentialSealer([KEY_A]);

@@ -29,12 +29,12 @@ afterAll(() => {
 });
 
 // The conversation's workspace (a focused workspace, the chat is born here).
-const WORKSPACE_A = "ws_workspace_a";
+const WORKSPACE_A = "ws_00883d7b29214d57";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
 // Another workspace the owner belongs to, provisioned before WORKSPACE_A so it
 // is the owner's default: a dev-mode request that names no workspace runs here.
-const HOME = "ws_home";
+const HOME = "ws_003f694718dd468d";
 
 describe("a resume rehydrates files from the workspace it runs in", () => {
   it("a file attached in workspace A is found on a resume in A, and a resume from elsewhere reads nothing", async () => {
@@ -51,7 +51,7 @@ describe("a resume rehydrates files from the workspace it runs in", () => {
     await provisionTestWorkspace(runtime, WORKSPACE_A);
 
     // 1) Born in workspace A (focused on WORKSPACE_A) — the conversation lives
-    //    under workspaces/ws_workspace_a/conversations/<owner>/.
+    //    under workspaces/ws_00883d7b29214d57/conversations/<owner>/.
     const born = await runtime.chat({
       identity: DEV_IDENTITY,
       message: "hello from workspace A",

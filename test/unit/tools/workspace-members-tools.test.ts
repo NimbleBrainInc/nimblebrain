@@ -488,7 +488,7 @@ describe("nb__manage_members", () => {
       // indistinguishable from one the requester can't manage — both deny.
       const result = await tool.handler({
         action: "list",
-        workspaceId: "ws_nonexistent",
+        workspaceId: "ws_004f1f715b791487",
       });
 
       expect(resultText(result)).toContain("don't have permission");

@@ -10,7 +10,7 @@ import {
   takeScopeFallback,
 } from "../../src/tools/oauth-flow-registry.ts";
 
-const WS = { kind: "workspace", wsId: "ws_test" } as const;
+const WS = { kind: "workspace", wsId: "ws_0076759dbbe19fcc" } as const;
 
 describe("oauth-flow-registry", () => {
   beforeEach(() => {
@@ -31,8 +31,8 @@ describe("oauth-flow-registry", () => {
     // The callback peeks the owner to build the return URL before it resolves
     // (which deletes the flow). Peek must be read-only: the subsequent resolve
     // still finds the flow.
-    const p = register("state-peek", { kind: "workspace", wsId: "ws_acme" }, "srv");
-    expect(peekFlowOwner("state-peek")).toEqual({ kind: "workspace", wsId: "ws_acme" });
+    const p = register("state-peek", { kind: "workspace", wsId: "ws_000f7ed6658f9d30" }, "srv");
+    expect(peekFlowOwner("state-peek")).toEqual({ kind: "workspace", wsId: "ws_000f7ed6658f9d30" });
     // Still resolvable — peek didn't consume the flow.
     expect(resolveWithCode("state-peek", "code")).toBe(true);
     await expect(p).resolves.toBe("code");

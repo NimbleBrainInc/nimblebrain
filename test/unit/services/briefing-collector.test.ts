@@ -16,7 +16,7 @@ import {
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 import { facetEntry, startFacetsSource } from "../../helpers/facets-server.ts";
 
-const WS = "ws_facets";
+const WS = "ws_0035e6c51e90e60f";
 
 function instance(serverName: string, route: string | null = "@acme/app"): ConnectorInstance {
   return {

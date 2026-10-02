@@ -13,7 +13,7 @@ import { createHooksSource } from "../../../../src/platform/hooks/source.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
 
-const WS = "ws_outbound";
+const WS = "ws_005b519ef7efc353";
 const USER = "usr_admin";
 const DELIVERY_ID = "a-delivery-id-that-is-the-whole-capability";
 

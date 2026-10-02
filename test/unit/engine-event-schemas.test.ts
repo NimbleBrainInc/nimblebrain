@@ -117,7 +117,7 @@ describe("event schemas — accept representative payloads", () => {
   test("audit.unattended_dispatch — full payload, and without the optional classification", () => {
     const denied = {
       principalId: "usr_route_author",
-      workspaceId: "ws_helix",
+      workspaceId: "ws_003eba8844413cd9",
       tool: "slack__send_message",
       reason: "route:rt_outbound_slack",
       outcome: "denied" as const,
@@ -138,7 +138,7 @@ describe("event schemas — reject malformed payloads", () => {
     expect(
       Value.Check(UnattendedDispatchPayload, {
         principalId: "usr_1",
-        workspaceId: "ws_helix",
+        workspaceId: "ws_003eba8844413cd9",
         tool: "crm__search",
         reason: "route:rt_1",
         outcome: "retried",

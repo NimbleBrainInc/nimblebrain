@@ -140,7 +140,7 @@ function makeRecordingSource(name: string): RecordingSource {
   };
 }
 
-const WS_ID = "ws_helix";
+const WS_ID = "ws_003eba8844413cd9";
 const USER_ID = "u1";
 
 /**

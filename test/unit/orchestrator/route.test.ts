@@ -138,8 +138,8 @@ function makeStubRuntime(opts: StubRuntimeOpts): StubRuntime {
 
 // ── Test scaffolding ──────────────────────────────────────────────
 
-const SHARED_WS = "ws_helix";
-const OTHER_WS = "ws_acme";
+const SHARED_WS = "ws_003eba8844413cd9";
+const OTHER_WS = "ws_000f7ed6658f9d30";
 const USER_ID = "u1";
 /** A workspace only the caller belongs to. */
 const PERSONAL_WS = "ws_0000000000000001";

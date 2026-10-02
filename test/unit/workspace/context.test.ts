@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 
-const WS_A = "ws_alpha";
-const WS_B = "ws_beta";
+const WS_A = "ws_00164434d8dd7ffb";
+const WS_B = "ws_002038aa71ea4b8a";
 
 let workDir: string;
 
@@ -50,7 +50,7 @@ describe("WorkspaceContext constructor", () => {
 describe("WorkspaceContext.getRoot / getDataPath", () => {
   test("getRoot returns workspaces/{wsId} under workDir", () => {
     const ctx = new WorkspaceContext({ wsId: WS_A, workDir: "/tmp/nb" });
-    expect(ctx.getRoot()).toBe("/tmp/nb/workspaces/ws_alpha");
+    expect(ctx.getRoot()).toBe("/tmp/nb/workspaces/ws_00164434d8dd7ffb");
   });
 
   test("getDataPath('root') is identical to getRoot()", () => {
@@ -60,30 +60,34 @@ describe("WorkspaceContext.getRoot / getDataPath", () => {
 
   test("getDataPath(scope) builds workspaces/{wsId}/{scope}", () => {
     const ctx = new WorkspaceContext({ wsId: WS_A, workDir: "/tmp/nb" });
-    expect(ctx.getDataPath("conversations")).toBe("/tmp/nb/workspaces/ws_alpha/conversations");
-    expect(ctx.getDataPath("data")).toBe("/tmp/nb/workspaces/ws_alpha/data");
-    expect(ctx.getDataPath("skills")).toBe("/tmp/nb/workspaces/ws_alpha/skills");
-    expect(ctx.getDataPath("files")).toBe("/tmp/nb/workspaces/ws_alpha/files");
-    expect(ctx.getDataPath("credentials")).toBe("/tmp/nb/workspaces/ws_alpha/credentials");
+    expect(ctx.getDataPath("conversations")).toBe(
+      "/tmp/nb/workspaces/ws_00164434d8dd7ffb/conversations",
+    );
+    expect(ctx.getDataPath("data")).toBe("/tmp/nb/workspaces/ws_00164434d8dd7ffb/data");
+    expect(ctx.getDataPath("skills")).toBe("/tmp/nb/workspaces/ws_00164434d8dd7ffb/skills");
+    expect(ctx.getDataPath("files")).toBe("/tmp/nb/workspaces/ws_00164434d8dd7ffb/files");
+    expect(ctx.getDataPath("credentials")).toBe(
+      "/tmp/nb/workspaces/ws_00164434d8dd7ffb/credentials",
+    );
   });
 
   test("getDataPath accepts safe subpath segments", () => {
     const ctx = new WorkspaceContext({ wsId: WS_A, workDir: "/tmp/nb" });
     expect(ctx.getDataPath("credentials", "mcp-oauth", "google")).toBe(
-      "/tmp/nb/workspaces/ws_alpha/credentials/mcp-oauth/google",
+      "/tmp/nb/workspaces/ws_00164434d8dd7ffb/credentials/mcp-oauth/google",
     );
     expect(ctx.getDataPath("credentials", "secrets")).toBe(
-      "/tmp/nb/workspaces/ws_alpha/credentials/secrets",
+      "/tmp/nb/workspaces/ws_00164434d8dd7ffb/credentials/secrets",
     );
     expect(ctx.getDataPath("data", "@scope-connector-slug")).toBe(
-      "/tmp/nb/workspaces/ws_alpha/data/@scope-connector-slug",
+      "/tmp/nb/workspaces/ws_00164434d8dd7ffb/data/@scope-connector-slug",
     );
   });
 
   test("getDataPath('root', subpath) builds under the workspace root", () => {
     const ctx = new WorkspaceContext({ wsId: WS_A, workDir: "/tmp/nb" });
     expect(ctx.getDataPath("root", "workspace.json")).toBe(
-      "/tmp/nb/workspaces/ws_alpha/workspace.json",
+      "/tmp/nb/workspaces/ws_00164434d8dd7ffb/workspace.json",
     );
   });
 
@@ -157,12 +161,12 @@ describe("Stage 0 isolation invariants", () => {
   test("getDataPath rejects a foreign-wsId-shaped subpath via the traversal guard", () => {
     // The most plausible bypass attempt at runtime is smuggling a
     // foreign wsId into a `getDataPath` call as a subpath segment
-    // (`ctx.getDataPath("credentials", "../ws_beta")`). The variadic
+    // (`ctx.getDataPath("credentials", "../ws_002038aa71ea4b8a")`). The variadic
     // string signature would let that compile, so the subpath
     // validator is the load-bearing defense — it rejects `..`
     // components before they reach the filesystem.
     const ctx = new WorkspaceContext({ wsId: WS_A, workDir });
-    expect(() => ctx.getDataPath("credentials", "../ws_beta")).toThrow(/traversal/);
+    expect(() => ctx.getDataPath("credentials", "../ws_002038aa71ea4b8a")).toThrow(/traversal/);
   });
 
   test("workspaceId getter is read-only — no rebinding through the public surface", () => {

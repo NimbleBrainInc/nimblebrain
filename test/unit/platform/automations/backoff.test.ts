@@ -34,7 +34,7 @@ let tmpDir: string;
 // `{workDir}/workspaces/<wsId>/automations/<ownerId>/`. `makeTmpDir` returns the
 // workDir root handed straight to the Scheduler; `seedDefs`/`loadDefs` write/read
 // the per-automation store; `defOf` looks up the composite-keyed definitions.
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 
 function makeTmpDir(): string {

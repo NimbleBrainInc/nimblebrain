@@ -71,7 +71,7 @@ function makeConfigWithMetadata(): EngineConfig {
             reason: "loading_strategy: always",
           },
           {
-            id: "/work/workspaces/ws_demo/skills/proposal-followup.md",
+            id: "/work/workspaces/ws_002afe1142297ff4/skills/proposal-followup.md",
             layer: 3,
             scope: "workspace",
             version: "2026-04-26T00:00:00.000Z",

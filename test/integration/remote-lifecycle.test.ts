@@ -129,7 +129,7 @@ describe("startConnectorSource — remote url entries", () => {
 
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
       allowInsecureRemotes: true,
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
     });
 
     expect(meta).not.toBeNull();
@@ -152,7 +152,7 @@ describe("startConnectorSource — remote url entries", () => {
 
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
       allowInsecureRemotes: true,
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
     });
     expect(meta).not.toBeNull();
 
@@ -174,7 +174,7 @@ describe("startConnectorSource — remote url entries", () => {
     const results = await Promise.allSettled([
       startConnectorSource(ref, registry, new NoopEventSink(), {
         allowInsecureRemotes: true,
-        wsId: "ws_test",
+        wsId: "ws_0076759dbbe19fcc",
       }),
     ]);
 
@@ -182,9 +182,9 @@ describe("startConnectorSource — remote url entries", () => {
     expect(registry.hasSource("bad-remote")).toBe(false);
   }, 20_000);
 
-  it("url connector without static auth + missing wsId throws (no silent ws_default fallback)", async () => {
+  it("url connector without static auth + missing wsId throws (no silent ws_00299f642c763af7 fallback)", async () => {
     // Credential-boundary guard: URL connectors that will open an OAuth flow
-    // must be workspace-scoped. A silent `?? "ws_default"` fallback would
+    // must be workspace-scoped. A silent `?? "ws_00299f642c763af7"` fallback would
     // pool OAuth tokens across workspaces, so startConnectorSource hard-errors
     // instead. If someone refactors and weakens the check to a default,
     // this test fails — which is the whole point.

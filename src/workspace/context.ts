@@ -129,7 +129,7 @@ export class WorkspaceContext {
   constructor(opts: { wsId: string; workDir: string }) {
     if (typeof opts.wsId !== "string" || !WORKSPACE_ID_RE.test(opts.wsId)) {
       throw new Error(
-        `[workspace-context] invalid wsId: "${opts.wsId}". Must match /^ws_[a-z0-9_]{1,64}$/i.`,
+        `[workspace-context] invalid wsId: "${opts.wsId}". Must match ${WORKSPACE_ID_RE}.`,
       );
     }
     if (typeof opts.workDir !== "string" || opts.workDir.length === 0) {
@@ -165,8 +165,8 @@ export class WorkspaceContext {
   /**
    * Absolute path to a workspace-scoped directory or file.
    *
-   *   ctx.getDataPath("root")                                  → workspaces/ws_x
-   *   ctx.getDataPath("conversations")                          → workspaces/ws_x/conversations
+   *   ctx.getDataPath("root")                                  → workspaces/ws_008bd230f095f38a
+   *   ctx.getDataPath("conversations")                          → workspaces/ws_008bd230f095f38a/conversations
    *   ctx.getDataPath("credentials", "secrets")                 → .../credentials/secrets
    *   ctx.getDataPath("data", deriveConnectorDataDir(name))        → .../data/{slug}
    *

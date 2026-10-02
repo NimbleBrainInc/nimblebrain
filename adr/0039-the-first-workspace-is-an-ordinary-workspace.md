@@ -1,6 +1,6 @@
 # 0039. The first workspace is an ordinary workspace
 
-- Status: Accepted
+- Status: Accepted; the id-retention rule superseded by ADR-0042
 - Date: 2026-09-27
 - Serves: secure RBAC
 
@@ -35,8 +35,9 @@ members can be added to it like any other.
   It is ignored while they are not a member.
 - A conversation's live title is delivered to its owner, not to the members of
   its workspace.
-- Workspaces created as personal ones keep their ids. The legacy fields are
-  retired at boot: the owner's default is set to that workspace, a name still
+- *Superseded by ADR-0042:* workspaces created as personal ones keep their
+  ids.
+- The legacy fields are retired at boot: the owner's default is set to that workspace, a name still
   equal to the one provisioning gave it is renamed to the new form, and
   `isPersonal` / `ownerUserId` are removed.
 
@@ -50,9 +51,9 @@ members can be added to it like any other.
 - Admin rules are the same everywhere. An admin the owner adds can remove the
   owner, and a workspace left with no admin is recovered by an org admin
   seating an admin with `add_member`.
-- A workspace provisioned before this keeps a `ws_user_<userId>` id. It is in
-  URLs, `/mcp/<wsId>` endpoints configured in external clients, and on-disk
-  paths, and ids are opaque, so it stays.
+- *Superseded by ADR-0042:* a workspace provisioned before this keeps a
+  `ws_user_<userId>` id. It is in URLs, `/mcp/<wsId>` endpoints configured in
+  external clients, and on-disk paths, and ids are opaque, so it stays.
 - A bootstrap client reads `activeWorkspace` for the default. `isPersonal`
   remains in the bootstrap payload, true for the default workspace, only until
   its last reader moves off it.

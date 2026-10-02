@@ -25,7 +25,7 @@ describe("resolveWorkspaceDisplayName", () => {
   });
 
   it("returns undefined for an unknown workspace (caller falls back to the id)", async () => {
-    expect(await resolveWorkspaceDisplayName(workDir, "ws_does_not_exist")).toBeUndefined();
+    expect(await resolveWorkspaceDisplayName(workDir, "ws_002cbcedbb32d4b3")).toBeUndefined();
   });
 
   it("returns undefined for a malformed workspace id rather than throwing", async () => {

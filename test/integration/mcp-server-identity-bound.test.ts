@@ -110,14 +110,14 @@ let strangerSource: ReturnType<typeof buildCounterSource>;
 
 const testDir = join(tmpdir(), `nb-mcp-identity-bound-${Date.now()}`);
 
-const SHARED_WS_ID = "ws_helix";
+const SHARED_WS_ID = "ws_003eba8844413cd9";
 const SHARED_SOURCE_NAME = "crm";
 const SHARED_TOOL_BARE = "search";
 const PERSONAL_SOURCE_NAME = "gmail";
 const PERSONAL_TOOL_BARE = "send";
 // A workspace the dev identity is NOT a member of — used to assert the
 // fail-closed path (a non-member header must not grant any reach).
-const STRANGER_WS_ID = "ws_stranger";
+const STRANGER_WS_ID = "ws_00704c286674d105";
 const STRANGER_SOURCE_NAME = "vault";
 const STRANGER_TOOL_BARE = "open";
 // Each workspace source also serves one resource, so the resource wall (the
@@ -442,7 +442,7 @@ describe("/mcp/<wsId> for a non-member", () => {
       });
 
     const stranger = await initialize(STRANGER_WS_ID);
-    const unknown = await initialize("ws_nosuchworkspace");
+    const unknown = await initialize("ws_0052529305537a66");
     expect(stranger.status).toBe(404);
     expect(unknown.status).toBe(404);
     expect(await stranger.text()).toBe(await unknown.text());

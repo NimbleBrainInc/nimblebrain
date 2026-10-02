@@ -58,10 +58,10 @@ describe("beforeBreadcrumb", () => {
   test("strips query strings from fetch/xhr/navigation URLs", () => {
     const crumb: Breadcrumb = {
       category: "fetch",
-      data: { url: "https://app.example/w/ws_abc?conversation=conv_secret&q=hi" },
+      data: { url: "https://app.example/w/ws_000c657279042abe?conversation=conv_secret&q=hi" },
     };
     const out = beforeBreadcrumb(crumb);
-    expect(out?.data?.url).toBe("https://app.example/w/ws_abc");
+    expect(out?.data?.url).toBe("https://app.example/w/ws_000c657279042abe");
   });
 
   test("passes through a URL with no query string unchanged", () => {

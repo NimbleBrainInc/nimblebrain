@@ -41,14 +41,14 @@ describe("StructuredLogSink identity context", () => {
     const sink = new StructuredLogSink({
       dir: logDir,
       userId: "user_abc",
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
     });
     sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.close();
 
     const records = readLogRecords(logDir);
     expect(records[0]!.uid).toBe("user_abc");
-    expect(records[0]!.wsId).toBe("ws_test");
+    expect(records[0]!.wsId).toBe("ws_0076759dbbe19fcc");
   });
 
   it("omits uid and wsId when not set", () => {
@@ -65,7 +65,7 @@ describe("StructuredLogSink identity context", () => {
     const sink = new StructuredLogSink({ dir: logDir });
     sink.emit(engineEvent("run.start", runStartPayload({ runId: "r1" })));
     sink.setUserId("user_xyz");
-    sink.setWorkspaceId("ws_prod");
+    sink.setWorkspaceId("ws_0061a3cbd4f78051");
     sink.emit(
       engineEvent("run.done", { runId: "r1", stopReason: "complete", iterations: 1, totalMs: 0 }),
     );
@@ -74,7 +74,7 @@ describe("StructuredLogSink identity context", () => {
     const records = readLogRecords(logDir);
     expect(records[0]!.uid).toBeUndefined();
     expect(records[1]!.uid).toBe("user_xyz");
-    expect(records[1]!.wsId).toBe("ws_prod");
+    expect(records[1]!.wsId).toBe("ws_0061a3cbd4f78051");
   });
 });
 
@@ -145,7 +145,7 @@ describe("WorkspaceLogSink audit events", () => {
     const sink = new WorkspaceLogSink({ dir });
     sink.emit({
       type: "audit.auth_failure",
-      data: { ip: "192.168.1.1", method: "POST", path: "/v1/workspaces/ws_a/chat" },
+      data: { ip: "192.168.1.1", method: "POST", path: "/v1/workspaces/ws_00079598e311c160/chat" },
     });
 
     const records = readLogRecords(join(dir, "workspace"));
@@ -153,7 +153,7 @@ describe("WorkspaceLogSink audit events", () => {
     expect(records[0]!.event).toBe("audit.auth_failure");
     expect(records[0]!.ip).toBe("192.168.1.1");
     expect(records[0]!.method).toBe("POST");
-    expect(records[0]!.path).toBe("/v1/workspaces/ws_a/chat");
+    expect(records[0]!.path).toBe("/v1/workspaces/ws_00079598e311c160/chat");
   });
 
   it("persists audit.permission_denied events", () => {
@@ -179,7 +179,7 @@ describe("WorkspaceLogSink audit events", () => {
       type: "audit.unattended_dispatch",
       data: {
         principalId: "usr_route_author",
-        workspaceId: "ws_helix",
+        workspaceId: "ws_003eba8844413cd9",
         tool: "slack__send_message",
         reason: "route:rt_outbound_slack",
         outcome: "denied",

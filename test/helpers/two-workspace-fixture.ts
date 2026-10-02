@@ -3,13 +3,13 @@
  * contract.
  *
  * Boots a `Runtime` with two workspaces visible to a single identity:
- *   1. A shared workspace (default id `ws_helix`).
+ *   1. A shared workspace (default id `ws_003eba8844413cd9`).
  *   2. A workspace the identity alone belongs to (the `personal` handle),
  *      created first so it is the identity's default workspace.
  *
  * Each workspace gets its own in-process MCP source with a single counter-
  * incrementing echo tool. Tests can read the per-source counters to verify
- * dispatch topology (e.g. that a `ws_helix/...` tool call did NOT land in
+ * dispatch topology (e.g. that a `ws_003eba8844413cd9/...` tool call did NOT land in
  * the identity's own workspace's source).
  *
  * Reuse: T011's smoke variant imports this fixture to drive an external MCP
@@ -51,7 +51,7 @@ export interface TwoWorkspaceFixtureOptions {
    */
   identity?: UserIdentity;
   /**
-   * Shared workspace id. Defaults to `ws_helix`. Must satisfy the loading
+   * Shared workspace id. Defaults to `ws_003eba8844413cd9`. Must satisfy the loading
    * pattern; the workspace is seeded with it as an existing workspace.
    */
   sharedWorkspaceId?: string;
@@ -96,7 +96,7 @@ export interface TwoWorkspaceFixtureOptions {
  *    here.
  */
 export interface WorkspaceHandle {
-  /** Canonical workspace id, e.g. `ws_helix` or an opaque `ws_<16-hex>`. */
+  /** Canonical workspace id, e.g. `ws_003eba8844413cd9` or an opaque `ws_<16-hex>`. */
   id: string;
   /** Human display name. */
   name: string;
@@ -189,7 +189,7 @@ const DEFAULT_IDENTITY: UserIdentity = {
   preferences: {},
 };
 
-const DEFAULT_SHARED_WS_ID = "ws_helix";
+const DEFAULT_SHARED_WS_ID = "ws_003eba8844413cd9";
 const DEFAULT_SHARED_WS_NAME = "Helix";
 
 const SHARED_SOURCE_NAME = "crm";
@@ -360,7 +360,7 @@ export async function createTwoWorkspaceFixture(
   const personalRegistry = await runtime.ensureWorkspaceRegistry(personalWorkspaceId);
 
   // Build per-workspace sources. Each closes over its own counter — the
-  // topology assertion in the test reads these to verify a `ws_helix/...`
+  // topology assertion in the test reads these to verify a `ws_003eba8844413cd9/...`
   // call did NOT land in the identity's own workspace's source.
   const sharedSource = buildCounterSource(SHARED_SOURCE_NAME, sharedToolBareName, sink);
   const personalSource = buildCounterSource(PERSONAL_SOURCE_NAME, personalToolBareName, sink);

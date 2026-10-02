@@ -13,7 +13,7 @@
  * so those fixtures are unaffected by it.
  *
  * **Separator: `-`.** Workspace ids match
- * `WORKSPACE_ID_PATTERN = ^ws_[a-z0-9_]{1,64}$` (no `-`), so the first
+ * `WORKSPACE_ID_PATTERN = ^ws_[a-f0-9]{16}$` (no `-`), so the first
  * `-` is unambiguously the workspace/tool boundary. We chose `-` over
  * `/` because LLM provider tool-name validators (OpenAI, Anthropic,
  * etc.) constrain names to `[a-zA-Z0-9_-]{1,128}` — `/` is rejected
@@ -35,8 +35,8 @@
  * 3. **First-`-` split** when parsing. Tool names may contain `-`
  *    themselves (e.g. `crm-tool__search`); the first `-` is the
  *    workspace boundary, the rest is the tool name verbatim.
- *    `parseNamespacedToolName("ws_helix-foo-bar")` returns
- *    `{ wsId: "ws_helix", toolName: "foo-bar" }`. Asserted in
+ *    `parseNamespacedToolName("ws_3f9a1c7e0b2d4856-foo-bar")` returns
+ *    `{ wsId: "ws_3f9a1c7e0b2d4856", toolName: "foo-bar" }`. Asserted in
  *    `test/unit/tools/namespace.test.ts`.
  * 4. **No `as unknown as T` casts.** Pure string functions; type flow
  *    is direct.
@@ -120,9 +120,9 @@ export class UnknownNamespacedToolName extends Error {
  * Grammar:
  *   - `ws_<id>-<toolName>` → `{ kind: "workspace", wsId }`, toolName is the
  *     remainder after the first `-`. Workspace ids can't contain `-`
- *     (`^ws_[a-z0-9_]{1,64}$`), so the first `-` is the workspace boundary;
+ *     (`^ws_[a-f0-9]{16}$`), so the first `-` is the workspace boundary;
  *     tool names may contain `-` and round-trip cleanly
- *     (`ws_helix-foo-bar` → wsId `ws_helix`, toolName `foo-bar`).
+ *     (`ws_3f9a1c7e0b2d4856-foo-bar` → wsId `ws_3f9a1c7e0b2d4856`, toolName `foo-bar`).
  *   - **bare** `<toolName>` (anything not matching the above) →
  *     `{ kind: "identity" }`, toolName is the WHOLE input (no prefix to
  *     strip). Platform tools (`nb__search`) and the user's own entity-app
@@ -137,7 +137,7 @@ export class UnknownNamespacedToolName extends Error {
  *
  * Throws `UnknownNamespacedToolName` only on:
  *   - Input not a string, or empty.
- *   - A `ws_<id>-` workspace prefix with an EMPTY tool name (`"ws_helix-"`).
+ *   - A `ws_<id>-` workspace prefix with an EMPTY tool name (`"ws_3f9a1c7e0b2d4856-"`).
  *   - A leading segment that starts with `ws_` (a workspace attempt) but
  *     fails `WORKSPACE_ID_RE` — a malformed/hostile workspace id, surfaced
  *     rather than silently treated as a (bare) identity name.

@@ -54,7 +54,7 @@ function freshRegistry(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-perm-gate-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   const registry = new ToolRegistry();
   const source = new MockSource("mock");
   registry.addSource(source);
@@ -82,7 +82,7 @@ describe("ToolRegistry.execute permission gate", () => {
   test("with permission context but no policies set, calls pass through (default-allow)", async () => {
     const { registry, source, permStore, cleanup } = freshRegistry();
     try {
-      registry.setPermissionContext("ws_test", permStore);
+      registry.setPermissionContext("ws_0076759dbbe19fcc", permStore);
       const result = await registry.execute({ id: "call-86", name: "mock__readonly", input: {} });
       expect(result.isError).toBe(false);
       expect(source.callCount).toBe(1);
@@ -94,8 +94,8 @@ describe("ToolRegistry.execute permission gate", () => {
   test("disallowed tool returns tool_permission_denied without invoking source", async () => {
     const { registry, source, permStore, cleanup } = freshRegistry();
     try {
-      registry.setPermissionContext("ws_test", permStore);
-      await permStore.setConnector({ scope: "workspace", wsId: "ws_test" }, "mock", {
+      registry.setPermissionContext("ws_0076759dbbe19fcc", permStore);
+      await permStore.setConnector({ scope: "workspace", wsId: "ws_0076759dbbe19fcc" }, "mock", {
         destructive: "disallow",
       });
       const result = await registry.execute({
@@ -119,8 +119,8 @@ describe("ToolRegistry.execute permission gate", () => {
   test("explicit allow policy permits the call", async () => {
     const { registry, source, permStore, cleanup } = freshRegistry();
     try {
-      registry.setPermissionContext("ws_test", permStore);
-      await permStore.setConnector({ scope: "workspace", wsId: "ws_test" }, "mock", {
+      registry.setPermissionContext("ws_0076759dbbe19fcc", permStore);
+      await permStore.setConnector({ scope: "workspace", wsId: "ws_0076759dbbe19fcc" }, "mock", {
         readonly: "allow",
       });
       const result = await registry.execute({ id: "call-122", name: "mock__readonly", input: {} });
@@ -136,8 +136,8 @@ describe("ToolRegistry.execute permission gate", () => {
     try {
       const sourceB = new MockSource("other");
       registry.addSource(sourceB);
-      registry.setPermissionContext("ws_test", permStore);
-      await permStore.setConnector({ scope: "workspace", wsId: "ws_test" }, "mock", {
+      registry.setPermissionContext("ws_0076759dbbe19fcc", permStore);
+      await permStore.setConnector({ scope: "workspace", wsId: "ws_0076759dbbe19fcc" }, "mock", {
         readonly: "disallow",
       });
       // Same tool name on different connector — should not be blocked.

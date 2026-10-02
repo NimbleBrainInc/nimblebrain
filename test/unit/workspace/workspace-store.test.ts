@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, statSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseNamespacedToolName } from "../../../src/tools/namespace.ts";
-import type { Workspace } from "../../../src/workspace/types.ts";
 import {
-  GENERATED_WORKSPACE_ID_RE,
-  WORKSPACE_ID_RE,
-} from "../../../src/workspace/workspace-id-pattern.ts";
+  assertWorkspaceIdsConform,
+  NonConformingWorkspaceIdError,
+} from "../../../src/workspace/migration-guard.ts";
+import type { Workspace } from "../../../src/workspace/types.ts";
+import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
 import {
   generateWorkspaceId,
   MemberConflictError,
@@ -62,32 +63,82 @@ describe("generateWorkspaceId", () => {
 
 // ── Id patterns ────────────────────────────────────────────────────
 
-describe("GENERATED_WORKSPACE_ID_RE", () => {
+describe("WORKSPACE_ID_RE", () => {
   test("accepts exactly ws_ and 16 lowercase hex chars", () => {
-    expect(GENERATED_WORKSPACE_ID_RE.test("ws_3f9a1c7e0b2d4856")).toBe(true);
+    expect(WORKSPACE_ID_RE.test("ws_3f9a1c7e0b2d4856")).toBe(true);
     for (const id of [
-      "ws_3F9A1C7E0B2D4856", // case-sensitive
+      "ws_3F9A1C7E0B2D4856", // uppercase hex: case-sensitive
+      "ws_3f9a1C7e0b2d4856", // one uppercase char
       "ws_3f9a1c7e0b2d485", // 15 chars
       "ws_3f9a1c7e0b2d48567", // 17 chars
       "ws_3f9a1c7e0b2d485g", // not hex
+      "WS_3f9a1c7e0b2d4856", // uppercase prefix
+      "ws_acme_corp", // a slug
+      "ws_user_usr_alice", // a user-derived id
+      "ws_3f9a1c7e0b2d4856-crm", // carries the tool separator
+      "ws_3f9a1c7e/0b2d4856", // path separator
+      "",
+    ]) {
+      expect(WORKSPACE_ID_RE.test(id)).toBe(false);
+    }
+  });
+
+  test("every generated id satisfies it", () => {
+    for (let i = 0; i < 100; i++) {
+      expect(WORKSPACE_ID_RE.test(generateWorkspaceId())).toBe(true);
+    }
+  });
+});
+
+// ── Non-conforming directories ─────────────────────────────────────
+
+describe("a workspace directory whose name is not a workspace id", () => {
+  async function placeLegacy(id: string): Promise<void> {
+    const dir = join(workDir, "workspaces", id);
+    await mkdir(dir, { recursive: true });
+    const record = { id, name: id, members: [], connectors: [], createdAt: "", updatedAt: "" };
+    await writeFile(join(dir, "workspace.json"), JSON.stringify(record));
+  }
+
+  test("listNonConformingIds names each one that holds a workspace.json, sorted", async () => {
+    await placeLegacy("ws_user_usr_alice");
+    await placeLegacy("ws_acme_corp");
+    await placeLegacy("ws_ABCDEF0123456789");
+    // A ws_ directory with no workspace.json is not a workspace.
+    await mkdir(join(workDir, "workspaces", "ws_scratch"), { recursive: true });
+    await seedWorkspace(store, "ws_3f9a1c7e0b2d4856");
+    expect(await store.listNonConformingIds()).toEqual([
+      "ws_ABCDEF0123456789",
       "ws_acme_corp",
       "ws_user_usr_alice",
-    ]) {
-      expect(GENERATED_WORKSPACE_ID_RE.test(id)).toBe(false);
-    }
+    ]);
   });
 
-  test("every generated id also satisfies the loading pattern", () => {
-    for (let i = 0; i < 100; i++) {
-      const id = generateWorkspaceId();
-      expect(GENERATED_WORKSPACE_ID_RE.test(id)).toBe(true);
-      expect(WORKSPACE_ID_RE.test(id)).toBe(true);
-    }
+  test("get refuses its id, and list skips it", async () => {
+    await placeLegacy("ws_acme_corp");
+    const ws = await seedWorkspace(store, "ws_3f9a1c7e0b2d4856");
+    expect(await store.get("ws_acme_corp")).toBeNull();
+    expect((await store.list()).map((w) => w.id)).toEqual([ws.id]);
   });
 
-  test("the loading pattern still accepts the legacy forms", () => {
-    expect(WORKSPACE_ID_RE.test("ws_acme_corp")).toBe(true);
-    expect(WORKSPACE_ID_RE.test("ws_user_usr_alice")).toBe(true);
+  test("assertWorkspaceIdsConform refuses, naming every offending id", async () => {
+    await placeLegacy("ws_acme_corp");
+    await placeLegacy("ws_user_usr_alice");
+    const err = await assertWorkspaceIdsConform(store).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NonConformingWorkspaceIdError);
+    expect((err as NonConformingWorkspaceIdError).wsIds).toEqual([
+      "ws_acme_corp",
+      "ws_user_usr_alice",
+    ]);
+    expect((err as Error).message).toContain("ws_acme_corp, ws_user_usr_alice");
+    expect((err as Error).message).toContain("renamed to a generated id");
+  });
+
+  test("assertWorkspaceIdsConform passes when every workspace has a generated id", async () => {
+    await seedWorkspace(store, "ws_3f9a1c7e0b2d4856");
+    await store.create("Generated");
+    await mkdir(join(workDir, "workspaces", "ws_scratch"), { recursive: true });
+    await expect(assertWorkspaceIdsConform(store)).resolves.toBeUndefined();
   });
 });
 
@@ -98,7 +149,6 @@ describe("WorkspaceStore CRUD", () => {
     const ws = await store.create("Engineering Team");
     // The id is opaque — NOT derived from the name.
     expect(ws.id).toMatch(/^ws_[0-9a-f]{16}$/);
-    expect(ws.id).not.toBe("ws_engineering_team");
     expect(ws.name).toBe("Engineering Team");
     expect(ws.members).toEqual([]);
     expect(ws.connectors).toEqual([]);
@@ -120,7 +170,7 @@ describe("WorkspaceStore CRUD", () => {
   test("every created id matches the generated pattern", async () => {
     for (let i = 0; i < 20; i++) {
       const ws = await store.create(`Workspace ${i}`);
-      expect(ws.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+      expect(ws.id).toMatch(WORKSPACE_ID_RE);
     }
   });
 
@@ -129,7 +179,7 @@ describe("WorkspaceStore CRUD", () => {
     // untyped script) lands it in the options slot, where it names nothing.
     const createUntyped = store.create.bind(store) as (...args: unknown[]) => Promise<Workspace>;
     const ws = await createUntyped("My Workspace", "custom_slug");
-    expect(ws.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+    expect(ws.id).toMatch(WORKSPACE_ID_RE);
     expect(existsSync(join(workDir, "workspaces", "ws_custom_slug"))).toBe(false);
   });
 
@@ -146,27 +196,6 @@ describe("WorkspaceStore CRUD", () => {
     expect(await store.list()).toEqual([]);
   });
 
-  test("a workspace already on disk with a legacy id still loads", async () => {
-    // Existing workspaces carry `ws_<slug>` and `ws_user_<id>` ids. `create`
-    // never mints them, but `get` and `list` must keep reading them.
-    await seedWorkspace(store, "ws_acme_corp", { name: "Acme" });
-    await seedWorkspace(store, "ws_user_usr_alice", {
-      name: "Alice",
-      members: [{ userId: "usr_alice", role: "admin" }],
-    });
-    expect((await store.get("ws_acme_corp"))?.name).toBe("Acme");
-    expect((await store.get("ws_user_usr_alice"))?.members).toEqual([
-      { userId: "usr_alice", role: "admin" },
-    ]);
-    expect((await store.list()).map((w) => w.id).sort()).toEqual([
-      "ws_acme_corp",
-      "ws_user_usr_alice",
-    ]);
-    expect((await store.getWorkspacesForUser("usr_alice")).map((w) => w.id)).toEqual([
-      "ws_user_usr_alice",
-    ]);
-  });
-
   test("get returns workspace by ID", async () => {
     const created = await store.create("Test WS");
     const fetched = await store.get(created.id);
@@ -176,7 +205,7 @@ describe("WorkspaceStore CRUD", () => {
   });
 
   test("get returns null for non-existent workspace", async () => {
-    const result = await store.get("ws_nonexistent");
+    const result = await store.get("ws_004f1f715b791487");
     expect(result).toBeNull();
   });
 
@@ -216,7 +245,7 @@ describe("WorkspaceStore CRUD", () => {
   });
 
   test("update returns null for non-existent workspace", async () => {
-    const result = await store.update("ws_nope", { name: "X" });
+    const result = await store.update("ws_00506a9e01e56180", { name: "X" });
     expect(result).toBeNull();
   });
 
@@ -231,7 +260,7 @@ describe("WorkspaceStore CRUD", () => {
   });
 
   test("delete returns false for non-existent workspace", async () => {
-    const result = await store.delete("ws_ghost");
+    const result = await store.delete("ws_003aae10ff9ed0f1");
     expect(result).toBe(false);
   });
 
@@ -403,7 +432,7 @@ describe("WorkspaceStore.update", () => {
     // The dir under the original opaque id is untouched; no new dir
     // derived from the new name appeared.
     expect(existsSync(dirPath)).toBe(true);
-    expect(existsSync(join(workDir, "workspaces", "ws_completely_different_name"))).toBe(false);
+    expect(existsSync(join(workDir, "workspaces", "ws_0028e69ef09b1b70"))).toBe(false);
 
     // The renamed workspace is still reachable by its original id.
     const reread = await store.get(originalId);

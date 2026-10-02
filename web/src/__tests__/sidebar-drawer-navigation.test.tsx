@@ -84,14 +84,14 @@ function DrawerProbe({ openOnMount }: { openOnMount: boolean }) {
 
 const WORKSPACES: WorkspaceInfo[] = [
   {
-    id: "ws_team",
+    id: "ws_0071a5bbf40116e6",
     name: "Team",
     connectorCount: 0,
     memberCount: 2,
     userRole: "admin",
   },
   {
-    id: "ws_other",
+    id: "ws_005820c54ca342ad",
     name: "Other",
     connectorCount: 0,
     memberCount: 2,
@@ -130,12 +130,12 @@ async function mount({
     root!.render(
       <React.StrictMode>
         <MemoryRouter initialEntries={[initialPath]}>
-          <WorkspaceProvider initialWorkspaces={WORKSPACES} initialActiveId="ws_team">
+          <WorkspaceProvider initialWorkspaces={WORKSPACES} initialActiveId="ws_0071a5bbf40116e6">
             <SidebarProvider>
               <DrawerProbe openOnMount={openOnMount} />
               <WorkspaceAppIconsContext.Provider value={{ iconFor: () => undefined }}>
                 <ShellProvider
-                  value={{ forSlot, mainRoutes: () => [], shellWorkspaceId: "ws_team" }}
+                  value={{ forSlot, mainRoutes: () => [], shellWorkspaceId: "ws_0071a5bbf40116e6" }}
                 >
                   <Routes>
                     <Route
@@ -216,69 +216,69 @@ afterEach(() => {
 
 describe("mobile drawer — a navigation closes it", () => {
   test("a route change closes the open drawer", async () => {
-    await mount({ initialPath: "/w/team/" });
+    await mount({ initialPath: "/w/0071a5bbf40116e6/" });
     await openDrawer();
 
-    await act(async () => probe.navigate("/w/team/automations"));
+    await act(async () => probe.navigate("/w/0071a5bbf40116e6/automations"));
 
-    expect(probe.path).toBe("/w/team/automations");
+    expect(probe.path).toBe("/w/0071a5bbf40116e6/automations");
     expect(probe.isDrawerOpen).toBe(false);
   });
 
   test("a WorkspaceNav link closes the open drawer", async () => {
-    const c = await mount({ initialPath: "/w/team/" });
+    const c = await mount({ initialPath: "/w/0071a5bbf40116e6/" });
     await openDrawer();
 
-    await click(linkTo(c, "/w/team/conversations"));
+    await click(linkTo(c, "/w/0071a5bbf40116e6/conversations"));
 
-    expect(probe.path).toBe("/w/team/conversations");
+    expect(probe.path).toBe("/w/0071a5bbf40116e6/conversations");
     expect(probe.isDrawerOpen).toBe(false);
   });
 
   test("tapping the page already open closes the drawer", async () => {
-    const c = await mount({ initialPath: "/w/team/conversations" });
+    const c = await mount({ initialPath: "/w/0071a5bbf40116e6/conversations" });
     await openDrawer();
 
-    await click(linkTo(c, "/w/team/conversations"));
+    await click(linkTo(c, "/w/0071a5bbf40116e6/conversations"));
 
-    expect(probe.path).toBe("/w/team/conversations");
+    expect(probe.path).toBe("/w/0071a5bbf40116e6/conversations");
     expect(probe.isDrawerOpen).toBe(false);
   });
 
   test("a search-only change closes the drawer", async () => {
-    await mount({ initialPath: "/w/team/notifications?item=a" });
+    await mount({ initialPath: "/w/0071a5bbf40116e6/notifications?item=a" });
     await openDrawer();
 
-    await act(async () => probe.navigate("/w/team/notifications"));
+    await act(async () => probe.navigate("/w/0071a5bbf40116e6/notifications"));
 
     expect(probe.isDrawerOpen).toBe(false);
   });
 
   test("switching workspaces lands on the new overview and closes the drawer", async () => {
-    const c = await mount({ initialPath: "/w/team/conversations" });
+    const c = await mount({ initialPath: "/w/0071a5bbf40116e6/conversations" });
     await openDrawer();
 
-    await switchTo(c, "ws_other");
+    await switchTo(c, "ws_005820c54ca342ad");
 
-    expect(probe.path).toBe("/w/other/");
+    expect(probe.path).toBe("/w/005820c54ca342ad/");
     expect(probe.isDrawerOpen).toBe(false);
   });
 
   test("going back closes the drawer", async () => {
-    const c = await mount({ initialPath: "/w/team/" });
-    await click(linkTo(c, "/w/team/conversations"));
+    const c = await mount({ initialPath: "/w/0071a5bbf40116e6/" });
+    await click(linkTo(c, "/w/0071a5bbf40116e6/conversations"));
     await openDrawer();
 
     await act(async () => probe.navigate(-1));
 
-    expect(probe.path).toBe("/w/team/");
+    expect(probe.path).toBe("/w/0071a5bbf40116e6/");
     expect(probe.isDrawerOpen).toBe(false);
   });
 });
 
 describe("mobile drawer — what leaves it open", () => {
   test("the first render does not close it", async () => {
-    await mount({ initialPath: "/w/team/", openOnMount: true });
+    await mount({ initialPath: "/w/0071a5bbf40116e6/", openOnMount: true });
 
     expect(probe.isDrawerOpen).toBe(true);
   });

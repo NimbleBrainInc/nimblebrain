@@ -51,9 +51,9 @@ describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
 
     const got = runtimeWith(
       new Map([
-        ["ws_a", wsA],
-        ["ws_b", wsB],
-        ["ws_c", wsC],
+        ["ws_00079598e311c160", wsA],
+        ["ws_001c32f121060ff3", wsB],
+        ["ws_002444caec819fe3", wsC],
       ]),
     ).mcpSources();
 
@@ -73,8 +73,8 @@ describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
 
     const got = runtimeWith(
       new Map([
-        ["ws_a", wsA],
-        ["ws_b", wsB],
+        ["ws_00079598e311c160", wsA],
+        ["ws_001c32f121060ff3", wsB],
       ]),
     ).mcpSources();
 
@@ -98,8 +98,8 @@ describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
 
     const got = runtimeWith(
       new Map([
-        ["ws_a", wsA],
-        ["ws_b", wsB],
+        ["ws_00079598e311c160", wsA],
+        ["ws_001c32f121060ff3", wsB],
       ]),
     ).mcpSources();
 

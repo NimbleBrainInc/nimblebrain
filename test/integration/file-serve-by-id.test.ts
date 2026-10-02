@@ -30,7 +30,7 @@ import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nb-file-serve-by-id-${Date.now()}`);
 
-const WORKSPACE_A = "ws_workspace_a";
+const WORKSPACE_A = "ws_00883d7b29214d57";
 const OWNER = DEV_IDENTITY.id;
 
 let runtime: Runtime;
@@ -111,7 +111,7 @@ describe("GET /v1/files resolves the workspace from the file id", () => {
     const fileId: string = (await readJson<UploadResourceResponse>(upload)).files[0].id;
 
     // Poison the cache: claim the file lives somewhere it doesn't.
-    runtime.getFileLocator().remember(OWNER, fileId, "ws_does_not_exist");
+    runtime.getFileLocator().remember(OWNER, fileId, "ws_002cbcedbb32d4b3");
 
     const res = await fetch(`${baseUrl}/v1/files/${fileId}`);
     expect(res.status).toBe(200);

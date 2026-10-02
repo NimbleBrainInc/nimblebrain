@@ -95,9 +95,11 @@ describe("iconMapFromInstalled", () => {
 describe("connectorSettingsPath", () => {
   test("a connector's settings page in the workspace, its name encoded", () => {
     expect(connectorSettingsPath("acme", "com-acme-tasks")).toBe(
-      "/w/acme/settings/connectors/com-acme-tasks",
+      "/w/000f7ed6658f9d30/settings/connectors/com-acme-tasks",
     );
-    expect(connectorSettingsPath("acme", "a/b")).toBe("/w/acme/settings/connectors/a%2Fb");
+    expect(connectorSettingsPath("acme", "a/b")).toBe(
+      "/w/000f7ed6658f9d30/settings/connectors/a%2Fb",
+    );
   });
 
   test("no workspace -> null", () => {

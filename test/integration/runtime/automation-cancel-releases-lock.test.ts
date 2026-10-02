@@ -26,7 +26,7 @@ import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
-const WS = "ws_cancel_lock";
+const WS = "ws_0025f3a141043b58";
 const workDir = mkdtempSync(join(tmpdir(), "nb-cancel-lock-"));
 
 afterAll(() => {

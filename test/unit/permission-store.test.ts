@@ -72,9 +72,9 @@ describe("PermissionStore", () => {
         send_email: "disallow",
       });
       // Workspace scope at the same name should not see the user's policy.
-      expect(await store.get({ scope: "workspace", wsId: "ws_one" }, "gmail", "send_email")).toBe(
-        "allow",
-      );
+      expect(
+        await store.get({ scope: "workspace", wsId: "ws_00547d5d5b3d95e2" }, "gmail", "send_email"),
+      ).toBe("allow");
     } finally {
       cleanup();
     }
@@ -122,8 +122,8 @@ describe("PermissionStore", () => {
 });
 
 describe("PermissionStore — personal-connector grants", () => {
-  const WS = "ws_helix";
-  const WS2 = "ws_acme";
+  const WS = "ws_003eba8844413cd9";
+  const WS2 = "ws_000f7ed6658f9d30";
 
   test("isConnectorGranted is false (deny) with no grant recorded", async () => {
     const { store, cleanup } = freshStore();

@@ -23,7 +23,7 @@ import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 
 const OWNER_ID = "usr_test";
-const WS_ID = "ws_ambient00000000";
+const WS_ID = "ws_0017179cea048c8e";
 /** The conversation the agent is running inside. */
 const CURRENT_ID = "conv_aaaaaaaaaaaaaaaa";
 /** Another of the caller's conversations, named explicitly. */

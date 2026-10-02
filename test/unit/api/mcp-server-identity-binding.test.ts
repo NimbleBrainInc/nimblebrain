@@ -37,8 +37,8 @@ function identity(id: string): UserIdentity {
 const ALICE = identity("usr_alice");
 const MALLORY = identity("usr_mallory");
 
-const WS_A = "ws_a";
-const WS_B = "ws_b";
+const WS_A = "ws_00079598e311c160";
+const WS_B = "ws_001c32f121060ff3";
 
 /** The (identity, workspace, grant) a request addresses: who, at which `/mcp/<wsId>`. */
 function at(who: UserIdentity, workspaceId: string = WS_A) {
@@ -136,7 +136,7 @@ describe("McpServerHost — /mcp session binding", () => {
     expect(res.status).not.toBe(404);
   });
 
-  it("refuses a session id from ws_a at ws_b exactly like an unknown one, session untouched", async () => {
+  it("refuses a session id from ws_00079598e311c160 at ws_001c32f121060ff3 exactly like an unknown one, session untouched", async () => {
     const sid = await initAs(ALICE);
 
     const res = await host.handle(reuseRequest(sid, "POST"), FAKE_FEATURES, at(ALICE, WS_B));
@@ -155,7 +155,7 @@ describe("McpServerHost — /mcp session binding", () => {
     expect(await unknown.json()).toEqual(body);
   });
 
-  it("refuses DELETE of a ws_a session at ws_b and preserves the session", async () => {
+  it("refuses DELETE of a ws_00079598e311c160 session at ws_001c32f121060ff3 and preserves the session", async () => {
     const sid = await initAs(ALICE);
     const res = await host.handle(reuseRequest(sid, "DELETE"), FAKE_FEATURES, at(ALICE, WS_B));
     expect(res.status).toBe(404);

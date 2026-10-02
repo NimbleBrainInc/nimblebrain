@@ -46,7 +46,7 @@ const appState: AppStateInfo = {
   updatedAt: "2026-06-22T00:00:00Z",
 };
 const focusedApp: FocusedAppInfo = { name: "synapse-crm", tools: [] };
-const ws: WorkspaceContext = { id: "ws_test", name: "Test" };
+const ws: WorkspaceContext = { id: "ws_0076759dbbe19fcc", name: "Test" };
 const layer3: Layer3SkillEntry[] = [
   { name: "guide", body: "L3 body.", scope: "workspace", loadedBy: "always", reason: "always" },
 ];
