@@ -85,6 +85,13 @@ A placement with a `route` registers a URL inside the workspace, under `/w/<slug
 
 Clicking the app in the sidebar opens that URL and loads the placement's `resourceUri` in the main area, beside the docked chat.
 
+A route belongs to one server. The host compares routes ignoring case, percent-encoding, and repeated, leading or trailing slashes. A placement is dropped, and the runtime logs a warning naming the route and who holds it, when its route is:
+
+- one of the host's own views (for example `@nimblebraininc/conversations`), whatever the placement's `priority`;
+- already registered by another connector in the same workspace, in which case the connector registered first keeps it.
+
+The connector's other placements still register. Name routes after your own server, as in `crm` and `crm/companies` above, so they stay clear of the host and of other connectors.
+
 ### The `primary` view
 
 The virtual `primary` resource path resolves to the **first declared placement's** `resourceUri`, so the shell can load your main view without knowing its URI ahead of time. See [UI Resources](/apps/ui-resources) for how `primary` resolves.

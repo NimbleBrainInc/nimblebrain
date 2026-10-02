@@ -166,7 +166,7 @@
         },
         "route": {
           "type": "string",
-          "description": "Route path. Registers as /app/<path>."
+          "description": "Route path. Registers as /app/<path>. A route belongs to one server, compared ignoring case, percent-encoding and repeated, leading or trailing slashes: a placement whose route is one of the host's own views, or one another connector in the workspace registered first, is dropped with a logged warning."
         },
         "size": {
           "type": "string",

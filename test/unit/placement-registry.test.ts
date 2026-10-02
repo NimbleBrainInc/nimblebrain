@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { PlacementRegistry } from "../../src/runtime/placement-registry.ts";
+import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from "bun:test";
+import type { PlacementDeclaration } from "../../src/connectors/runtime/types.ts";
+import { log } from "../../src/observability/log.ts";
+import { PlacementRegistry, placementRouteKey } from "../../src/runtime/placement-registry.ts";
 
 describe("PlacementRegistry", () => {
   test("forWorkspace returns ambient entries merged with scoped ones", () => {
@@ -110,5 +112,111 @@ describe("PlacementRegistry", () => {
 
     const anyWs = reg.forWorkspace("ws_anything");
     expect(anyWs[0].wsId).toBeUndefined();
+  });
+});
+
+describe("PlacementRegistry route ownership", () => {
+  // The platform's Conversations placement, as `src/platform/conversations` declares it.
+  const conversations: PlacementDeclaration = {
+    slot: "sidebar",
+    resourceUri: "ui://conversations/browser",
+    route: "@nimblebraininc/conversations",
+    label: "Conversations",
+    priority: 1,
+  };
+
+  function app(name: string, route: string, priority = 0): PlacementDeclaration {
+    return { slot: "sidebar.apps", resourceUri: `ui://${name}/main`, route, label: name, priority };
+  }
+
+  let warn: Mock<typeof log.warn>;
+  beforeEach(() => {
+    warn = spyOn(log, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  test("a connector placement on a platform route is refused, with a warning", () => {
+    const reg = new PlacementRegistry();
+    reg.register("conversations", [conversations]);
+    reg.register(
+      "acme-corp",
+      [app("acme-corp", "@nimblebraininc/conversations"), app("acme-corp", "@acme-corp/home")],
+      "ws_a",
+    );
+
+    const routes = reg.forWorkspace("ws_a").map((e) => `${e.serverName} ${e.route}`);
+    expect(routes).toEqual([
+      "conversations @nimblebraininc/conversations",
+      "acme-corp @acme-corp/home",
+    ]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toEqual({
+      serverName: "acme-corp",
+      wsId: "ws_a",
+      route: "@nimblebraininc/conversations",
+      heldBy: "conversations",
+    });
+  });
+
+  test("a platform source registered after a connector takes its route back", () => {
+    const reg = new PlacementRegistry();
+    reg.register("acme-corp", [app("acme-corp", "@NimbleBrainInc/Conversations/")], "ws_a");
+    reg.register("conversations", [conversations]);
+
+    expect(reg.forWorkspace("ws_a").map((e) => e.serverName)).toEqual(["conversations"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({
+      serverName: "acme-corp",
+      heldBy: "conversations",
+    });
+  });
+
+  test("between connectors in one workspace, the first registered keeps the route", () => {
+    const reg = new PlacementRegistry();
+    reg.register("tenant-a-crm", [app("tenant-a-crm", "@acme-corp/crm", 50)], "ws_a");
+    reg.register("tenant-b-crm", [app("tenant-b-crm", "@acme-corp/crm", 0)], "ws_a");
+    // Re-registering the holder (a reconnect) keeps it; the loser stays out.
+    reg.register("tenant-a-crm", [app("tenant-a-crm", "@acme-corp/crm", 50)], "ws_a");
+
+    expect(reg.forWorkspace("ws_a").map((e) => e.serverName)).toEqual(["tenant-a-crm"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({
+      serverName: "tenant-b-crm",
+      heldBy: "tenant-a-crm",
+    });
+  });
+
+  test("the same route in two workspaces is no collision", () => {
+    const reg = new PlacementRegistry();
+    reg.register("tenant-a-crm", [app("tenant-a-crm", "@acme-corp/crm")], "ws_a");
+    reg.register("tenant-b-crm", [app("tenant-b-crm", "@acme-corp/crm")], "ws_b");
+
+    expect(reg.forWorkspace("ws_a").map((e) => e.serverName)).toEqual(["tenant-a-crm"]);
+    expect(reg.forWorkspace("ws_b").map((e) => e.serverName)).toEqual(["tenant-b-crm"]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  test("distinct routes and placements without a route are unaffected", () => {
+    const reg = new PlacementRegistry();
+    reg.register("conversations", [conversations]);
+    reg.register(
+      "tasks",
+      [
+        app("tasks", "@nimblebraininc/tasks"),
+        { slot: "settings", resourceUri: "ui://tasks/settings" },
+      ],
+      "ws_a",
+    );
+    reg.register("people", [app("people", "@nimblebraininc/people")], "ws_a");
+
+    expect(reg.forWorkspace("ws_a")).toHaveLength(4);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  test("placementRouteKey folds case, escapes, and repeated or edge slashes", () => {
+    expect(placementRouteKey("/%40Acme-Corp//CRM/")).toBe("@acme-corp/crm");
+    expect(placementRouteKey("%E0%A4%A")).toBe("%e0%a4%a");
   });
 });
