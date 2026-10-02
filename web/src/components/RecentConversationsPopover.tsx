@@ -5,6 +5,7 @@ import { callTool } from "../api/client";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import { parseToolResponse } from "../lib/tool-response";
 import { toSlug } from "../lib/workspace-slug";
+import { Tooltip } from "./ui/tooltip";
 
 // Mirror of the fields this popover reads from the `conversations__list`
 // result (server shape: ListResult / IndexEntry in
@@ -121,20 +122,21 @@ export function RecentConversationsPopover({
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        type="button"
-        aria-label="Recent conversations"
-        aria-expanded={open}
-        title="Recent conversations"
-        className={`p-1.5 rounded-sm transition-all ${
-          open
-            ? "bg-primary/10 text-primary"
-            : "hover:bg-muted text-muted-foreground hover:text-foreground"
-        }`}
-      >
-        <History style={{ width: 16, height: 16 }} />
-      </button>
+      <Tooltip label="Recent conversations">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          type="button"
+          aria-label="Recent conversations"
+          aria-expanded={open}
+          className={`p-1.5 rounded-sm transition-all ${
+            open
+              ? "bg-primary/10 text-primary"
+              : "hover:bg-muted text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <History style={{ width: 16, height: 16 }} />
+        </button>
+      </Tooltip>
 
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-sm border bg-popover text-popover-foreground shadow-md">

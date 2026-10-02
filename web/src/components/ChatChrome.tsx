@@ -24,9 +24,11 @@ import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { useSidebar } from "../context/SidebarContext";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
+import { ariaKeyShortcuts, matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 import type { ChatPanelRef } from "./ChatPanel";
 import { ChatPanel } from "./ChatPanel";
 import { ResizeHandle } from "./ResizeHandle";
+import { Tooltip } from "./ui/tooltip";
 
 const DEFAULT_WIDTH = 380;
 const TRANSITION_STANDARD = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
@@ -69,25 +71,28 @@ function ChatToggleButton({
   onOpen: () => void;
 }) {
   return (
-    <button
-      ref={buttonRef}
-      type="button"
-      onClick={onOpen}
-      className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-all duration-200"
-      style={{
-        opacity: visible ? 1 : 0,
-        transition: "opacity 200ms ease-in, background-color 200ms",
-      }}
-      title="Chat (⌘J)"
-      data-testid="chat-chrome-open-button"
-    >
-      <MessageSquare className="w-5 h-5" />
-      {unreadCount > 0 && (
-        <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center">
-          {unreadCount}
-        </span>
-      )}
-    </button>
+    <Tooltip label="Chat" shortcut={SHORTCUTS.chat} side="left">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={onOpen}
+        aria-label="Open chat"
+        aria-keyshortcuts={ariaKeyShortcuts(SHORTCUTS.chat)}
+        className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-all duration-200"
+        style={{
+          opacity: visible ? 1 : 0,
+          transition: "opacity 200ms ease-in, background-color 200ms",
+        }}
+        data-testid="chat-chrome-open-button"
+      >
+        <MessageSquare className="w-5 h-5" />
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center">
+            {unreadCount}
+          </span>
+        )}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -229,20 +234,18 @@ export function ChatChrome() {
     }
 
     function handleKeyDown(e: KeyboardEvent) {
-      const mod = e.metaKey || e.ctrlKey;
-
       if (e.key === "Escape") {
         handleEscape(e);
         return;
       }
 
-      if (mod && e.shiftKey && (e.key === "J" || e.key === "j")) {
+      if (matchesShortcut(e, SHORTCUTS.chatFullscreen)) {
         e.preventDefault();
         toggleFullscreenShortcut();
         return;
       }
 
-      if (mod && e.key === "j") {
+      if (matchesShortcut(e, SHORTCUTS.chat)) {
         e.preventDefault();
         togglePanelShortcut();
         return;

@@ -105,6 +105,10 @@ export const colors = {
   "sidebar-foreground": ["#5c5c66", "#9b9ba4"],
   "sidebar-border": ["#e4e4e7", "#232326"],
   "sidebar-hover": ["#f4f4f5", "#0e0e10"],
+  // The tooltip pill (`components/ui/tooltip.tsx`): a dark chip in both modes,
+  // lifted off the black ground in dark mode so it still reads as a surface.
+  tooltip: ["#18181b", "#2e2e33"],
+  "tooltip-foreground": ["#fafafa", "#fafafa"],
 } as const satisfies Record<string, Pair>;
 
 /**

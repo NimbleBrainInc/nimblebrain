@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useChatConfigContext, useChatContext } from "../context/ChatContext";
 import type { ChatMessage } from "../hooks/useChat";
+import { ariaKeyShortcuts, SHORTCUTS } from "../lib/shortcuts";
 import type { DisplayDetail } from "../lib/tool-display";
 import { InContextPopover } from "./InContextPopover";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
@@ -17,6 +18,7 @@ import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { toPickerModels } from "./ModelPicker";
 import { RecentConversationsPopover } from "./RecentConversationsPopover";
+import { Tooltip, TooltipProvider } from "./ui/tooltip";
 
 export interface ChatPanelProps {
   messages: ChatMessage[];
@@ -130,53 +132,65 @@ function ChatHeader({
       </div>
       {/* Grouped by altitude: conversation actions · skills · window controls.
           Learn-once shortcuts live on the composer's "?" footer, not here. */}
-      <div className="flex items-center gap-2 shrink-0">
-        <div className="flex items-center gap-0.5">
-          <RecentConversationsPopover
-            activeConversationId={conversationId}
-            onOpen={onOpenConversation}
-          />
-          <button
-            onClick={onNewChat}
-            type="button"
-            disabled={isStreaming}
-            aria-label="New chat"
-            title="New chat"
-            className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <SquarePen style={{ width: 16, height: 16 }} />
-          </button>
-        </div>
-        <InContextPopover conversationId={conversationId} />
-        {(onFullscreen || onClose) && (
+      <TooltipProvider>
+        <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-0.5">
-            {onFullscreen && (
+            <RecentConversationsPopover
+              activeConversationId={conversationId}
+              onOpen={onOpenConversation}
+            />
+            <Tooltip label="New chat">
               <button
-                onClick={onFullscreen}
+                onClick={onNewChat}
                 type="button"
-                aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-                className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
+                disabled={isStreaming}
+                aria-label="New chat"
+                className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isFullscreen ? (
-                  <Minimize2 style={{ width: 16, height: 16 }} />
-                ) : (
-                  <Maximize2 style={{ width: 16, height: 16 }} />
-                )}
+                <SquarePen style={{ width: 16, height: 16 }} />
               </button>
-            )}
-            {onClose && (
-              <button
-                onClick={onClose}
-                type="button"
-                aria-label="Close"
-                className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
-              >
-                <X style={{ width: 16, height: 16 }} />
-              </button>
-            )}
+            </Tooltip>
           </div>
-        )}
-      </div>
+          <InContextPopover conversationId={conversationId} />
+          {(onFullscreen || onClose) && (
+            <div className="flex items-center gap-0.5">
+              {onFullscreen && (
+                <Tooltip
+                  label={isFullscreen ? "Exit full screen" : "Full screen"}
+                  shortcut={SHORTCUTS.chatFullscreen}
+                >
+                  <button
+                    onClick={onFullscreen}
+                    type="button"
+                    aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                    aria-keyshortcuts={ariaKeyShortcuts(SHORTCUTS.chatFullscreen)}
+                    className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 style={{ width: 16, height: 16 }} />
+                    ) : (
+                      <Maximize2 style={{ width: 16, height: 16 }} />
+                    )}
+                  </button>
+                </Tooltip>
+              )}
+              {onClose && (
+                <Tooltip label="Close chat" shortcut={SHORTCUTS.chat}>
+                  <button
+                    onClick={onClose}
+                    type="button"
+                    aria-label="Close"
+                    aria-keyshortcuts={ariaKeyShortcuts(SHORTCUTS.chat)}
+                    className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
+                  >
+                    <X style={{ width: 16, height: 16 }} />
+                  </button>
+                </Tooltip>
+              )}
+            </div>
+          )}
+        </div>
+      </TooltipProvider>
     </header>
   );
 }

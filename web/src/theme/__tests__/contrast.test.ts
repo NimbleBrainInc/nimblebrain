@@ -183,14 +183,15 @@ describe("palette contrast — WCAG 2.2", () => {
     }
   }
 
-  describe("tooltip — text on its own inverted pill", () => {
-    // `components/ui/tooltip.tsx`: an inverted pill (`bg-foreground`,
-    // `text-background`) whose shortcut chip is `bg-background/20` over it.
+  describe("tooltip — the shortcut chip inside the pill", () => {
+    // `components/ui/tooltip.tsx`: the chip is `bg-tooltip-foreground/20` over
+    // `bg-tooltip`, carrying `text-tooltip-foreground`. The pill itself is the
+    // derived `<x>-foreground` on `<x>` pair above.
     for (const mode of ["light", "dark"] as const) {
-      test(`${mode}: the shortcut chip keeps its label above ${AA_TEXT}:1`, () => {
-        const pill = token("foreground", mode);
-        const chip = over(token("background", mode), pill, 20);
-        expect(contrastRatio(token("background", mode), chip)).toBeGreaterThanOrEqual(AA_TEXT);
+      test(`${mode}: the chip keeps its label above ${AA_TEXT}:1`, () => {
+        const text = token("tooltip-foreground", mode);
+        const chip = over(text, token("tooltip", mode), 20);
+        expect(contrastRatio(text, chip)).toBeGreaterThanOrEqual(AA_TEXT);
       });
     }
   });

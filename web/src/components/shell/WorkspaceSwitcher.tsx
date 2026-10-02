@@ -110,7 +110,13 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
 
   return (
     <Popover.Root open={open} onOpenChange={handleOpenChange}>
-      {collapsed ? <Tooltip label={label}>{trigger}</Tooltip> : trigger}
+      {collapsed ? (
+        <Tooltip label={label} side="right">
+          {trigger}
+        </Tooltip>
+      ) : (
+        trigger
+      )}
       <Popover.Portal>
         <Popover.Positioner
           side={collapsed ? "right" : "bottom"}

@@ -2,6 +2,7 @@ import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useComposerDraft } from "../hooks/useChat";
 import { attachmentLimitHint, attachmentLimitProblem } from "../lib/attachment-limits";
+import { SHORTCUTS, shortcutLabel } from "../lib/shortcuts";
 import type { FileLimits } from "../types";
 import { FileAttachmentChips } from "./FileAttachmentChips";
 import { ModelPicker, type PickerModel } from "./ModelPicker";
@@ -362,7 +363,7 @@ export function MessageInput({
             )}
             <span>
               <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
-                ⌘J
+                {shortcutLabel(SHORTCUTS.chat)}
               </kbd>{" "}
               close
             </span>

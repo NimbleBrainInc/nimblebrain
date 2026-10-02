@@ -23,6 +23,7 @@ import { isMarkdownMime, normalizeMime } from "../lib/artifact-kind";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import type { ResourceContents } from "../types";
+import { Tooltip } from "./ui/tooltip";
 
 const TRANSITION = "300ms cubic-bezier(0.33, 1, 0.68, 1)";
 const PANEL_WIDTH = 720; // px — comfortable reading measure on desktop.
@@ -326,15 +327,17 @@ function ArtifactHeader({
         <Download className="h-3.5 w-3.5" />
         Download
       </button>
-      <button
-        ref={closeButtonRef}
-        type="button"
-        onClick={onClose}
-        className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-        aria-label="Close document panel"
-      >
-        <X className="h-4 w-4" />
-      </button>
+      <Tooltip label="Close">
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={onClose}
+          className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          aria-label="Close document panel"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </Tooltip>
     </header>
   );
 }

@@ -6,8 +6,8 @@
 // keyboard listener lives here (not in the sidebar) so the shortcut works
 // even when the sidebar is collapsed or hidden — the palette is global.
 //
-// Trigger is ⌘K (Ctrl+K elsewhere), the command-palette convention. Chat
-// takes ⌘J (ChatChrome).
+// Trigger is ⌘K (Ctrl+K elsewhere), the command-palette convention; every
+// shell chord is defined once in `lib/shortcuts`.
 //
 // The listener runs in the CAPTURE phase. Ctrl+K is a browser accelerator
 // (it focuses the search bar in Firefox and Chrome on Windows/Linux); a
@@ -19,7 +19,7 @@
 
 import type { ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { isPaletteToggleChord } from "../lib/palette-shortcut";
+import { matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 
 export interface PaletteContextValue {
   open: boolean;
@@ -49,7 +49,7 @@ export function PaletteProvider({ children }: { children: ReactNode }) {
     function onKey(e: KeyboardEvent) {
       // ⌘K / Ctrl+K toggles the palette. preventDefault (in capture phase, see
       // file header) so the browser's own binding never steals the shortcut.
-      if (isPaletteToggleChord(e)) {
+      if (matchesShortcut(e, SHORTCUTS.search)) {
         e.preventDefault();
         e.stopPropagation();
         setOpen((prev) => {

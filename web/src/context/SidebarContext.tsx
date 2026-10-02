@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { useLocation } from "react-router-dom";
+import { matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 
 type SidebarState = "expanded" | "collapsed" | "hidden";
 
@@ -93,7 +94,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+      if (matchesShortcut(e, SHORTCUTS.sidebar)) {
         e.preventDefault();
         toggle();
       }

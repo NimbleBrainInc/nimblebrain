@@ -15,6 +15,7 @@ import { PanelLeft, PanelLeftOpen, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePalette } from "../../context/PaletteContext";
 import { useSidebar } from "../../context/SidebarContext";
+import { ariaKeyShortcuts, SHORTCUTS } from "../../lib/shortcuts";
 import { Logo } from "../Logo";
 import { Tooltip } from "../ui/tooltip";
 
@@ -26,12 +27,12 @@ export function SidebarHeader({ collapsed = false }: { collapsed?: boolean }) {
   const { openPalette } = usePalette();
 
   const search = (
-    <Tooltip label="Search" shortcut="⌘K" side={collapsed ? "right" : "bottom"}>
+    <Tooltip label="Search" shortcut={SHORTCUTS.search} side={collapsed ? "right" : "bottom"}>
       <button
         type="button"
         onClick={() => openPalette()}
         aria-label="Search"
-        aria-keyshortcuts="Meta+K Control+K"
+        aria-keyshortcuts={ariaKeyShortcuts(SHORTCUTS.search)}
         data-testid="sidebar-search"
         className={iconButton}
       >
@@ -43,12 +44,12 @@ export function SidebarHeader({ collapsed = false }: { collapsed?: boolean }) {
   if (collapsed) {
     return (
       <div className="flex shrink-0 flex-col items-center gap-1 pt-3 pb-1">
-        <Tooltip label="Open sidebar" shortcut="⌘B">
+        <Tooltip label="Open sidebar" shortcut={SHORTCUTS.sidebar} side="right">
           <button
             type="button"
             onClick={toggle}
             aria-label="Open sidebar"
-            aria-keyshortcuts="Meta+B Control+B"
+            aria-keyshortcuts={ariaKeyShortcuts(SHORTCUTS.sidebar)}
             data-testid="sidebar-toggle"
             className="group/logo mb-1 flex size-10 items-center justify-center rounded-md transition-colors hover:bg-sidebar-foreground/10 hover:text-foreground focus-visible:bg-sidebar-foreground/10"
           >
@@ -75,12 +76,12 @@ export function SidebarHeader({ collapsed = false }: { collapsed?: boolean }) {
       </Link>
       <div className="flex items-center gap-0.5">
         {search}
-        <Tooltip label="Close sidebar" shortcut="⌘B" side="bottom">
+        <Tooltip label="Close sidebar" shortcut={SHORTCUTS.sidebar}>
           <button
             type="button"
             onClick={toggle}
             aria-label="Close sidebar"
-            aria-keyshortcuts="Meta+B Control+B"
+            aria-keyshortcuts={ariaKeyShortcuts(SHORTCUTS.sidebar)}
             data-testid="sidebar-toggle"
             className={iconButton}
           >

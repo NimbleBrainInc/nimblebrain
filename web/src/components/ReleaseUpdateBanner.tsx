@@ -2,6 +2,7 @@ import { RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 import { useReleaseCheck } from "../hooks/useReleaseCheck";
 import { Button } from "./ui/button";
+import { Tooltip } from "./ui/tooltip";
 
 /**
  * Ambient, dismissible "a new version is available" prompt, pinned to the
@@ -31,17 +32,18 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
   if (collapsed) {
     return (
       <div className="flex shrink-0 justify-center py-2">
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          title="A new version is available — reload"
-          aria-label="A new version is available — reload"
-          onClick={() => window.location.reload()}
-          className="relative text-primary hover:text-primary"
-        >
-          <RefreshCw />
-          <span className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />
-        </Button>
+        <Tooltip label="New version available. Reload" side="right">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="A new version is available — reload"
+            onClick={() => window.location.reload()}
+            className="relative text-primary hover:text-primary"
+          >
+            <RefreshCw />
+            <span className="absolute top-1 right-1 size-1.5 rounded-full bg-primary" />
+          </Button>
+        </Tooltip>
       </div>
     );
   }
@@ -53,14 +55,16 @@ export function ReleaseUpdateBanner({ collapsed = false }: { collapsed?: boolean
     >
       <div className="flex items-center justify-between gap-1">
         <span className="font-medium">New version available</span>
-        <button
-          type="button"
-          aria-label="Dismiss update notice"
-          onClick={() => setDismissed(true)}
-          className="-mr-0.5 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <X className="size-3.5" />
-        </button>
+        <Tooltip label="Dismiss">
+          <button
+            type="button"
+            aria-label="Dismiss update notice"
+            onClick={() => setDismissed(true)}
+            className="-mr-0.5 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        </Tooltip>
       </div>
       <Button
         size="sm"

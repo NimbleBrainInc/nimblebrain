@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { SHORTCUTS, shortcutKeys } from "../lib/shortcuts";
 
 interface ShortcutItem {
   keys: string[];
@@ -15,19 +16,19 @@ interface ShortcutGroup {
 const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Navigation",
-    shortcuts: [{ keys: ["⌘", "K"], description: "Search and run commands" }],
+    shortcuts: [{ keys: shortcutKeys(SHORTCUTS.search), description: "Search and run commands" }],
   },
   {
     title: "Chat",
     shortcuts: [
-      { keys: ["⌘", "J"], description: "Open / close chat" },
-      { keys: ["⌘", "⇧", "J"], description: "Expand / collapse" },
+      { keys: shortcutKeys(SHORTCUTS.chat), description: "Open / close chat" },
+      { keys: shortcutKeys(SHORTCUTS.chatFullscreen), description: "Expand / collapse" },
       { keys: ["Esc"], description: "Close chat" },
     ],
   },
   {
     title: "Sidebar",
-    shortcuts: [{ keys: ["⌘", "B"], description: "Toggle sidebar" }],
+    shortcuts: [{ keys: shortcutKeys(SHORTCUTS.sidebar), description: "Toggle sidebar" }],
   },
   {
     title: "Input",

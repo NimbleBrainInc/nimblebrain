@@ -40,6 +40,8 @@
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar: var(--sidebar);
     --color-sidebar-hover: var(--sidebar-hover);
+    --color-tooltip: var(--tooltip);
+    --color-tooltip-foreground: var(--tooltip-foreground);
     --sidebar-width: var(--sidebar-width);
     --sidebar-width-collapsed: var(--sidebar-width-collapsed);
     --color-ring: var(--ring);

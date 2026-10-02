@@ -18,6 +18,7 @@ import {
 } from "../lib/skill-display";
 import { parseToolResponse } from "../lib/tool-response";
 import { toSlug } from "../lib/workspace-slug";
+import { Tooltip } from "./ui/tooltip";
 
 /**
  * Header affordance — the aggregated projection of the Context Ledger. Answers
@@ -97,17 +98,18 @@ export function InContextPopover({ conversationId }: { conversationId: string | 
 
   return (
     <div ref={containerRef} className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => setOpen((v) => !v)}
-        type="button"
-        aria-label="In context"
-        aria-expanded={open}
-        title="What's equipping this conversation"
-        className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
-      >
-        <Layers style={{ width: 16, height: 16 }} />
-      </button>
+      <Tooltip label="In context">
+        <button
+          ref={buttonRef}
+          onClick={() => setOpen((v) => !v)}
+          type="button"
+          aria-label="In context"
+          aria-expanded={open}
+          className="p-1.5 hover:bg-muted rounded-sm transition-all text-muted-foreground hover:text-foreground"
+        >
+          <Layers style={{ width: 16, height: 16 }} />
+        </button>
+      </Tooltip>
 
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-sm border bg-popover text-popover-foreground shadow-md overflow-hidden">

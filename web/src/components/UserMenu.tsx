@@ -279,7 +279,13 @@ export const UserMenu = memo(function UserMenu({ collapsed, onLogout }: UserMenu
 
   return (
     <div ref={containerRef} className="relative shrink-0 mx-2">
-      {collapsed ? <Tooltip label={label}>{trigger}</Tooltip> : trigger}
+      {collapsed ? (
+        <Tooltip label={label} side="right">
+          {trigger}
+        </Tooltip>
+      ) : (
+        trigger
+      )}
 
       {open && (
         <AccountDropdown

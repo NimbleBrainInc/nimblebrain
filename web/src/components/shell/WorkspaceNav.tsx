@@ -186,7 +186,13 @@ function ViewLink({
       )}
     </NavLink>
   );
-  return collapsed ? <Tooltip label={label}>{link}</Tooltip> : link;
+  return collapsed ? (
+    <Tooltip label={label} side="right">
+      {link}
+    </Tooltip>
+  ) : (
+    link
+  );
 }
 
 // A workspace app with a brand icon (letter-avatar fallback). Exact-match
@@ -220,7 +226,13 @@ function AppLink({
       {!collapsed && <span className="flex-1 truncate">{label}</span>}
     </Link>
   );
-  return collapsed ? <Tooltip label={label}>{link}</Tooltip> : link;
+  return collapsed ? (
+    <Tooltip label={label} side="right">
+      {link}
+    </Tooltip>
+  ) : (
+    link
+  );
 }
 
 // A right-aligned muted count. Renders nothing for undefined / zero — an empty
