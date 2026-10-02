@@ -4181,10 +4181,16 @@ export class Runtime {
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
   ): Promise<ConnectorAdmission> {
-    const [ws, declared] = await Promise.all([
-      principal ? this._workspaceStore.get(wsId) : null,
-      this.catalogGatesByServer(),
-    ]);
+    return this.admissionWith(wsId, principal, await this.catalogGatesByServer());
+  }
+
+  /** {@link connectorAdmission} against gates the caller already resolved. */
+  private async admissionWith(
+    wsId: string,
+    principal: Pick<UserIdentity, "id"> | null | undefined,
+    declared: Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>,
+  ): Promise<ConnectorAdmission> {
+    const ws = principal ? await this._workspaceStore.get(wsId) : null;
     const isAdmin = canWriteWorkspaceScoped(principal, ws).allowed;
     const gates = [...declared.values()];
     const anyHostOnly = gates.some((g) => g.lifecycle !== undefined);
@@ -4222,18 +4228,15 @@ export class Runtime {
     if (isHostOnlyTool(declared.get(serverName)?.lifecycle, toolName)) {
       return hostOnlyToolDenial(serverName, toolName);
     }
-    const admission = await this.connectorAdmission(wsId, principal);
+    const admission = await this.admissionWith(wsId, principal, declared);
     const admitted = admission.admits(serverName, toolName);
-    await this.auditAdminToolCall(wsId, principal, serverName, toolName, call, admitted);
+    if (isDeclaredAdminTool(declared.get(serverName)?.adminTools, toolName)) {
+      await this.auditAdminToolCall(wsId, principal, serverName, toolName, call, admitted);
+    }
     return admitted ? null : adminToolDenial(serverName, toolName);
   }
 
-  /**
-   * Write `audit.admin_tool_call` when the catalog declares `toolName` an admin
-   * tool, whoever called. An admin's admission skips the catalog, so the
-   * declaration is read here; it is the same cached read a member's every call
-   * already makes.
-   */
+  /** Write `audit.admin_tool_call` for a call to a declared admin tool, whoever called. */
   private async auditAdminToolCall(
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
@@ -4242,8 +4245,6 @@ export class Runtime {
     call: AdminToolCall,
     admitted: boolean,
   ): Promise<void> {
-    const declared = await this.catalogGatesByServer();
-    if (!isDeclaredAdminTool(declared.get(serverName)?.adminTools, toolName)) return;
     const ctx = getRequestContext();
     this.defaultEvents.emit({
       type: "audit.admin_tool_call",
