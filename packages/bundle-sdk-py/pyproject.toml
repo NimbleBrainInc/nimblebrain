@@ -72,12 +72,6 @@ dev = [
     "pytest-asyncio>=0.24.0",
 ]
 
-[tool.uv]
-# Resolve only versions published at least 14 days ago, the window Renovate and
-# bunfig.toml apply to every other package in this repo. A relative span needs
-# uv 0.9 or later to resolve; older uv still reads the lock file.
-exclude-newer = "14 days"
-
 [tool.ruff]
 target-version = "py311"
 line-length = 100

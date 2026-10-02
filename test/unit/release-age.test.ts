@@ -45,11 +45,11 @@ describe("every lock file is resolved under Renovate's release-age window", () =
   }
 
   for (const dir of lockDirs("uv.lock")) {
-    test(`${dir}/pyproject.toml holds new versions for the window`, () => {
-      const config = Bun.TOML.parse(read(join(dir, "pyproject.toml"))) as {
-        tool?: { uv?: { "exclude-newer"?: string } };
-      };
-      expect(config.tool?.uv?.["exclude-newer"]).toBe(`${renovateDays} days`);
+    test(`${dir}/uv.toml holds new versions for the window`, () => {
+      const path = join(dir, "uv.toml");
+      expect(existsSync(join(root, path))).toBe(true);
+      const config = Bun.TOML.parse(read(path)) as { "exclude-newer"?: string };
+      expect(config["exclude-newer"]).toBe(`${renovateDays} days`);
     });
   }
 });

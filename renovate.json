@@ -9,7 +9,7 @@
   "prHourlyLimit": 2,
   "minimumReleaseAge": "14 days",
   "lockFileMaintenance": {
-    "description": "The package managers pick a refresh's versions, so the 14-day window is enforced there (each bunfig.toml, and exclude-newer in pyproject.toml). Renovate's own check cannot judge a refresh, which has no single release date, and would hold its status pending forever.",
+    "description": "The package managers pick a refresh's versions, so the 14-day window is enforced there (each bunfig.toml, and exclude-newer in uv.toml). Renovate's own check cannot judge a refresh, which has no single release date, and would hold its status pending forever.",
     "enabled": true,
     "schedule": ["before 6am on the first day of the month"],
     "minimumReleaseAge": null
