@@ -32,6 +32,11 @@
   --scope-workspace: #0e7490;
   --scope-user: #7c3aed;
   --scope-connector: #a13d0f;
+  --chart-1: #2f5fd0;
+  --chart-2: #0e7c86;
+  --chart-3: #b45309;
+  --chart-4: #7c3aed;
+  --chart-5: #be185d;
   --sidebar: #fafafa;
   --sidebar-foreground: #5c5c66;
   --sidebar-border: #e4e4e7;
@@ -107,6 +112,11 @@
   --scope-workspace: #4dd0e1;
   --scope-user: #b79bfc;
   --scope-connector: #f0894f;
+  --chart-1: #6f93e8;
+  --chart-2: #3cc4cf;
+  --chart-3: #f0a24a;
+  --chart-4: #b39afb;
+  --chart-5: #f27aa8;
   --sidebar: #08080a;
   --sidebar-foreground: #9b9ba4;
   --sidebar-border: #232326;

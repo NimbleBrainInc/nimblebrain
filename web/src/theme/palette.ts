@@ -101,6 +101,17 @@ export const colors = {
   "scope-workspace": ["#0e7490", "#4dd0e1"],
   "scope-user": ["#7c3aed", "#b79bfc"],
   "scope-connector": ["#a13d0f", "#f0894f"],
+  // Categorical chart series, in assignment order. A chart that splits a value
+  // by a dimension (usage cost by model, workspace, user) paints its series
+  // 1..N from these and the remainder in `muted-foreground`; a legend names
+  // every series, so colour never carries the distinction alone. Each clears
+  // 4.5:1 against `card` in both modes, and they stay perceptually distinct
+  // from each other — `contrast.test.ts` asserts both.
+  "chart-1": ["#2f5fd0", "#6f93e8"],
+  "chart-2": ["#0e7c86", "#3cc4cf"],
+  "chart-3": ["#b45309", "#f0a24a"],
+  "chart-4": ["#7c3aed", "#b39afb"],
+  "chart-5": ["#be185d", "#f27aa8"],
   sidebar: ["#fafafa", "#08080a"],
   "sidebar-foreground": ["#5c5c66", "#9b9ba4"],
   "sidebar-border": ["#e4e4e7", "#232326"],

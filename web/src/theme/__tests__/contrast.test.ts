@@ -105,6 +105,13 @@ const TEXT_PAIRS: [fg: TokenName, bg: TokenName, where: string][] = [
   ["scope-workspace", "card", "workspace scope label"],
   ["scope-user", "card", "user scope label"],
   ["scope-connector", "card", "connector scope label"],
+  // Chart series are non-text marks (1.4.11 asks 3:1), held to the text bar
+  // anyway for the reason the scope tiers are: it is strictly stricter.
+  ["chart-1", "card", "chart series"],
+  ["chart-2", "card", "chart series"],
+  ["chart-3", "card", "chart series"],
+  ["chart-4", "card", "chart series"],
+  ["chart-5", "card", "chart series"],
 ];
 
 describe("palette contrast — derived <x>-foreground on <x>", () => {
@@ -252,6 +259,22 @@ describe("palette contrast — WCAG 2.2", () => {
     expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 1);
     expect(contrastRatio("#ffffff", "#ffffff")).toBeCloseTo(1, 5);
   });
+});
+
+describe("palette — chart series", () => {
+  // Series in one chart are told apart by hue (the legend names them), so two
+  // that collapse perceptually make a stacked bar unreadable.
+  const SERIES: TokenName[] = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"];
+  for (const mode of ["light", "dark"] as const) {
+    test(`${mode}: the chart series are distinct from each other`, () => {
+      for (const [i, series] of SERIES.entries()) {
+        for (const other of SERIES.slice(i + 1)) {
+          const d = deltaEOk(token(series, mode), token(other, mode));
+          expect(d, `${series} vs ${other}: ΔE-OK ${d.toFixed(4)}`).toBeGreaterThan(JND_OK);
+        }
+      }
+    });
+  }
 });
 /**
  * The two translucent tints in the palette are 10% alpha over their source
