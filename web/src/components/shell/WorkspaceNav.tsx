@@ -1,348 +1,53 @@
 // ---------------------------------------------------------------------------
-// WorkspaceNav — the workspace tree (the whole left-nav body).
+// WorkspaceNav — the focused workspace's views (the left-nav body).
 //
-// A single labelled WORKSPACES list. Each workspace is a disclosure row; the
-// FOCUSED workspace is expanded and the rest collapse to one row. Single-expand
-// is the point — it mirrors the runtime, which walls every session to exactly
-// one workspace at a time, so exactly one workspace is ever open here. The way
-// to "see another workspace's stuff" is to focus it (the accordion swings over).
+// One workspace at a time, flat: the runtime walls every session to exactly
+// one workspace, so the nav shows only that one's views, and the way to see
+// another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
-// Pinned workspaces sort first, then the rest, each by name (pins are per
-// browser — see lib/pinned-workspaces). The focused workspace's subtree nests its identity views (Conversations / Automations / Files), then
-// its APPS (People, Tasks, … — capped with a View-all overflow), then a
-// CONNECTORS row — each routed into `/w/<slug>/…`. The identity views' TOOLS
-// still dispatch bare through the identity door (see lib/identity-apps); the
-// slug here is the focused workspace = view scope, not a tool namespace.
+// Order: Overview, the identity views (Conversations / Automations / Files),
+// Inbox, then APPS (People, Tasks, … — capped with a View-all overflow), then
+// Connectors. Each routes into `/w/<slug>/…`. The identity views' TOOLS still
+// dispatch bare through the identity door (see lib/identity-apps); the slug
+// here is the focused workspace = view scope, not a tool namespace.
 //
-// This replaces the previous "Conversations / Automations / Files are global
-// top-level nav, workspaces are a sibling category" arrangement: those views
-// are workspace-scoped now (the runtime walls each session to one workspace and
-// there is no cross-workspace list), so the UI nests them under the workspace.
+// Collapsed (icon rail) renders the same destinations as icon buttons, each
+// named by a tooltip.
 // ---------------------------------------------------------------------------
 
-import { ArrowRight, ChevronRight, Pin, Plus } from "lucide-react";
-import { useCallback, useMemo } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { ArrowRight, LayoutGrid } from "lucide-react";
+import { useMemo } from "react";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { useNotifications } from "../../context/NotificationsContext";
 import { useShellContext } from "../../context/ShellContext";
-import { KEEP_DRAWER_OPEN } from "../../context/SidebarContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
 import { resolveIcon } from "../../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../../lib/identity-apps";
-import { usePinnedWorkspaces } from "../../lib/pinned-workspaces";
 import { cn } from "../../lib/utils";
 import { MAX_INLINE_APPS, workspaceApps } from "../../lib/workspace-apps";
-import { getWorkspaceAvatar } from "../../lib/workspace-avatar";
-import { orderWorkspacesForSidebar } from "../../lib/workspace-order";
 import { toSlug } from "../../lib/workspace-slug";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
+import { Tooltip } from "../ui/tooltip";
 
 interface WorkspaceNavProps {
-  /**
-   * Collapsed sidebar = icon-only mode. We render workspace avatars only (no
-   * header, no `+`, no expansion): nested rows have no room for labels and an
-   * icon-only tree reads as noise. Click an avatar to focus that workspace.
-   */
+  /** Icon rail: every destination as an icon button with a tooltip. */
   collapsed?: boolean;
 }
 
 export function WorkspaceNav({ collapsed = false }: WorkspaceNavProps) {
-  const wsCtx = useWorkspaceContext();
-  const navigate = useNavigate();
-
-  const { pinned, toggle: togglePin } = usePinnedWorkspaces();
-  const ordered = useMemo(
-    () => orderWorkspacesForSidebar(wsCtx.workspaces, pinned),
-    [wsCtx.workspaces, pinned],
-  );
-  const focusedId = wsCtx.activeWorkspace?.id;
-
-  const handleSelect = useCallback(
-    (ws: WorkspaceInfo) => {
-      // React-layer equality guard mirrors the api/client setter's T009
-      // invariant: re-focusing the active workspace is a no-op for
-      // setActiveWorkspaceId (it must not fire the bridge reset hook).
-      const switching = wsCtx.activeWorkspace?.id !== ws.id;
-      if (switching) wsCtx.setActiveWorkspace(ws);
-      // Every workspace opens its own overview, not a detour through the
-      // global landing grid. A switch keeps the mobile drawer open: it expands
-      // the new workspace's views, and the user picks one of them next.
-      navigate(`/w/${toSlug(ws.id)}/`, switching ? { state: KEEP_DRAWER_OPEN } : undefined);
-    },
-    [wsCtx, navigate],
-  );
-
-  const handleAdd = useCallback(() => navigate("/org/workspaces"), [navigate]);
-
-  if (collapsed) {
-    return (
-      <div
-        className="flex flex-col mt-2"
-        data-testid="sidebar-workspace-nav"
-        data-workspace-count={ordered.length}
-        data-collapsed="true"
-      >
-        {ordered.map((ws) => (
-          <WorkspaceAvatarButton
-            key={ws.id}
-            workspace={ws}
-            focused={ws.id === focusedId}
-            onSelect={() => handleSelect(ws)}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="flex flex-col mt-3"
-      data-testid="sidebar-workspace-nav"
-      data-workspace-count={ordered.length}
-      data-collapsed="false"
-    >
-      <div className="flex items-center justify-between px-4 pt-1 pb-1">
-        <div className="text-2xs font-bold tracking-[0.08em] uppercase">Workspaces</div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          aria-label="New workspace"
-          title="New workspace"
-          data-testid="sidebar-workspace-add"
-          className="p-1 rounded-sm hover:bg-sidebar-foreground/10 transition-colors"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
-
-      {ordered.length === 0 ? (
-        <div className="px-4 py-2 text-xs italic" data-testid="sidebar-workspace-nav-empty">
-          No workspaces
-        </div>
-      ) : (
-        ordered.map((ws) => (
-          <WorkspaceTreeNode
-            key={ws.id}
-            workspace={ws}
-            focused={ws.id === focusedId}
-            pinned={pinned.has(ws.id)}
-            onSelect={() => handleSelect(ws)}
-            onTogglePin={() => togglePin(ws.id)}
-          />
-        ))
-      )}
-    </div>
-  );
+  const { activeWorkspace } = useWorkspaceContext();
+  if (!activeWorkspace) return null;
+  return <WorkspaceViews workspace={activeWorkspace} collapsed={collapsed} />;
 }
 
-// A workspace disclosure node: the header row (chevron + avatar + name) and its
-// nested contents. The contents stay mounted whether or not the node is focused
-// so that BOTH expand and collapse animate — the wrapper transitions its height
-// (grid-rows 0fr↔1fr, the pure-CSS route to/from `auto`) plus a fade. On a
-// switch the leaving node collapses while the entering node expands, in sync.
-function WorkspaceTreeNode({
+function WorkspaceViews({
   workspace,
-  focused,
-  pinned,
-  onSelect,
-  onTogglePin,
+  collapsed,
 }: {
   workspace: WorkspaceInfo;
-  focused: boolean;
-  pinned: boolean;
-  onSelect: () => void;
-  onTogglePin: () => void;
+  collapsed: boolean;
 }) {
-  return (
-    <div
-      className="flex flex-col"
-      data-testid="sidebar-workspace-node"
-      data-workspace-id={workspace.id}
-    >
-      <WorkspaceHeaderRow
-        workspace={workspace}
-        focused={focused}
-        pinned={pinned}
-        onSelect={onSelect}
-        onTogglePin={onTogglePin}
-      />
-      <div
-        // grid-rows 0fr→1fr animates height to/from content size; the inner
-        // `overflow-hidden` + `min-h-0` clips during the transition. This is an
-        // in-place disclosure (no slide/parallax), so it plays even under
-        // prefers-reduced-motion — that setting targets large-scale motion, and
-        // suppressing this would leave the chevron rotating while the panel
-        // snapped, which reads as broken.
-        className={cn(
-          "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
-          focused ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
-        )}
-        data-testid="sidebar-workspace-contents"
-        data-workspace-id={workspace.id}
-        data-expanded={focused ? "true" : "false"}
-        // Collapsed contents are inert — removed from tab order + the
-        // accessibility tree, so only the focused node's views are reachable.
-        inert={focused ? undefined : true}
-      >
-        <div className="min-h-0 overflow-hidden">
-          <WorkspaceContents workspace={workspace} focused={focused} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// The clickable workspace header row: a disclosure chevron, the avatar, and
-// the name. The whole row focuses the workspace —
-// the chevron is a state indicator, not a separate toggle, since exactly one
-// workspace (the focused one) is ever expanded. The pin toggle is a sibling
-// button laid over the row's right edge (a button cannot nest in a button):
-// shown on hover or keyboard focus (always, on a touch screen), and kept
-// visible while pinned so a pinned workspace reads as pinned at rest.
-function WorkspaceHeaderRow({
-  workspace,
-  focused,
-  pinned,
-  onSelect,
-  onTogglePin,
-}: {
-  workspace: WorkspaceInfo;
-  focused: boolean;
-  pinned: boolean;
-  onSelect: () => void;
-  onTogglePin: () => void;
-}) {
-  const label = workspace.name;
-  const pinLabel = pinned ? `Unpin ${label}` : `Pin ${label} to the top`;
-  return (
-    <div className="group/ws relative flex">
-      <WorkspaceHeaderButton
-        workspace={workspace}
-        focused={focused}
-        reservePinSpace={pinned}
-        onSelect={onSelect}
-      />
-      <button
-        type="button"
-        onClick={onTogglePin}
-        aria-label={pinLabel}
-        aria-pressed={pinned}
-        title={pinned ? "Unpin" : "Pin to top"}
-        data-testid="sidebar-workspace-pin"
-        data-workspace-id={workspace.id}
-        className={cn(
-          "absolute right-5 top-1/2 -translate-y-1/2 p-1 rounded-sm transition-opacity",
-          // A touch screen has no hover, so the pin shows there at rest; an
-          // invisible pin would still take the tap meant for the row.
-          "hover:bg-sidebar-foreground/10 focus-visible:opacity-100 group-hover/ws:opacity-100 [@media(pointer:coarse)]:opacity-100",
-          pinned ? "opacity-60" : "opacity-0",
-        )}
-      >
-        <Pin className={cn("size-3.5", pinned && "fill-current")} aria-hidden="true" />
-      </button>
-    </div>
-  );
-}
-
-function WorkspaceHeaderButton({
-  workspace,
-  focused,
-  reservePinSpace,
-  onSelect,
-}: {
-  workspace: WorkspaceInfo;
-  focused: boolean;
-  /** Keep room for the pin at rest; otherwise the room opens only on hover. */
-  reservePinSpace: boolean;
-  onSelect: () => void;
-}) {
-  const label = workspace.name;
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      // The focused workspace is a location indicator, not the active route —
-      // the nested NavLink carries aria-current="page" for the actual view.
-      aria-current={focused ? "location" : undefined}
-      aria-expanded={focused}
-      title={label}
-      data-testid="sidebar-workspace-header"
-      data-workspace-id={workspace.id}
-      data-focused={focused ? "true" : "false"}
-      className={cn(
-        // Right padding leaves room for the pin toggle laid over the row, only
-        // while it shows, so an unpinned name is not truncated at rest.
-        "group flex flex-1 min-w-0 items-center gap-1.5 text-sm transition-colors text-left rounded-sm mx-2 my-px pl-1.5 py-1.5",
-        reservePinSpace
-          ? "pr-9"
-          : "pr-1.5 group-hover/ws:pr-9 group-focus-within/ws:pr-9 [@media(pointer:coarse)]:pr-9",
-        focused
-          ? "bg-sidebar-foreground/10 font-medium text-foreground"
-          : "font-normal hover:bg-sidebar-foreground/5",
-      )}
-    >
-      <ChevronRight
-        aria-hidden="true"
-        className={cn("size-3.5 shrink-0 transition-transform", focused && "rotate-90")}
-      />
-      <WorkspaceGlyph workspace={workspace} />
-      <span className="flex-1 truncate">{label}</span>
-    </button>
-  );
-}
-
-// The avatar slot: the workspace's deterministic letter+color avatar.
-function WorkspaceGlyph({ workspace }: { workspace: WorkspaceInfo }) {
-  const avatar = getWorkspaceAvatar(workspace);
-  return (
-    <span
-      aria-hidden="true"
-      data-testid="workspace-avatar"
-      className="size-[18px] shrink-0 flex items-center justify-center rounded-sm text-white text-3xs font-semibold"
-      style={{ backgroundColor: avatar.color }}
-    >
-      {avatar.letter}
-    </span>
-  );
-}
-
-// Avatar-only button for the collapsed (icon-only) sidebar.
-function WorkspaceAvatarButton({
-  workspace,
-  focused,
-  onSelect,
-}: {
-  workspace: WorkspaceInfo;
-  focused: boolean;
-  onSelect: () => void;
-}) {
-  const label = workspace.name;
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-label={label}
-      aria-current={focused ? "location" : undefined}
-      title={label}
-      data-testid="sidebar-workspace-header"
-      data-workspace-id={workspace.id}
-      data-focused={focused ? "true" : "false"}
-      className={cn(
-        "flex items-center justify-center p-1.5 mx-2 my-px rounded-sm transition-colors",
-        focused ? "bg-sidebar-foreground/10" : "hover:bg-sidebar-foreground/5",
-      )}
-    >
-      <WorkspaceGlyph workspace={workspace} />
-    </button>
-  );
-}
-
-// A workspace's subtree: identity views, then APPS, then CONNECTORS. Indented
-// under the header with a connecting rule (Notion/Linear tree look). Rendered
-// for every node (so collapse animates), but only the focused node shows its
-// apps + a live connector count — a collapsed node is mid-transition and hidden.
-function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; focused: boolean }) {
   const shell = useShellContext();
   const { iconFor, connectorCount } = useWorkspaceAppIcons();
   const { unread } = useNotifications();
@@ -366,154 +71,156 @@ function WorkspaceContents({ workspace, focused }: { workspace: WorkspaceInfo; f
     () => (ready && shell ? workspaceApps(shell.forSlot("sidebar")) : []),
     [ready, shell],
   );
-  const shownApps = apps.slice(0, MAX_INLINE_APPS);
+  const shownApps = collapsed ? apps : apps.slice(0, MAX_INLINE_APPS);
   const hasAppOverflow = apps.length > shownApps.length;
 
   return (
-    <div className="ml-[18px] mr-2 mb-1 mt-px flex flex-col border-l border-sidebar-foreground/10 pl-2">
+    <div
+      className={cn("flex flex-col gap-px", collapsed ? "items-center px-3" : "px-2")}
+      data-testid="sidebar-workspace-nav"
+      data-workspace-id={workspace.id}
+      data-collapsed={collapsed ? "true" : "false"}
+    >
+      <ViewLink to={`/w/${slug}/`} icon={LayoutGrid} label="Overview" end collapsed={collapsed} />
       {identityViews.map((p) => (
-        <NestedNavLink
+        <ViewLink
           key={p.resourceUri}
           to={identityAppRoute(p.serverName, slug)}
-          icon={p.icon}
+          icon={resolveIcon(p.icon)}
           label={p.label ?? p.serverName}
           end
+          collapsed={collapsed}
         />
       ))}
 
       {/* The inbox sits with the identity views, not under Apps: it belongs to
-          the workspace rather than to any connector, and the count is the
-          FOCUSED workspace's unread — a collapsed node omits it so one
-          workspace's number never appears on another's row mid-collapse. */}
-      <NestedNavLink
+          the workspace rather than to any connector. */}
+      <ViewLink
         to={`/w/${slug}/notifications`}
-        icon="bell"
+        icon={resolveIcon("bell")}
         label="Inbox"
-        count={focused ? unread : undefined}
+        count={unread}
+        collapsed={collapsed}
       />
 
-      {shownApps.length > 0 && (
-        <>
-          <SubLabel>Apps</SubLabel>
-          {shownApps.map((p) => (
-            <NestedAppLink
-              key={p.resourceUri}
-              to={`/w/${slug}/app/${p.route}`}
-              label={p.label ?? p.route ?? "App"}
-              serverName={p.serverName}
-              iconUrl={iconFor(p.serverName)}
-            />
-          ))}
-          {hasAppOverflow && (
-            <Link
-              to={`/w/${slug}/`}
-              data-testid="sidebar-workspace-view-all"
-              className="flex items-center gap-1.5 px-2 py-1 rounded-sm text-xs hover:bg-sidebar-foreground/5 transition-colors"
-            >
-              <ArrowRight className="size-3 shrink-0" />
-              <span className="truncate">View all {apps.length} apps</span>
-            </Link>
-          )}
-        </>
+      {shownApps.length > 0 &&
+        (collapsed ? (
+          <div aria-hidden="true" className="my-1.5 h-px w-6 bg-sidebar-border" />
+        ) : (
+          <div className="px-2 pt-3 pb-1 text-2xs font-bold tracking-[0.08em] uppercase">Apps</div>
+        ))}
+      {shownApps.map((p) => (
+        <AppLink
+          key={p.resourceUri}
+          to={`/w/${slug}/app/${p.route}`}
+          label={p.label ?? p.route ?? "App"}
+          iconUrl={iconFor(p.serverName)}
+          serverName={p.serverName}
+          collapsed={collapsed}
+        />
+      ))}
+      {hasAppOverflow && (
+        <Link
+          to={`/w/${slug}/`}
+          data-testid="sidebar-workspace-view-all"
+          className="flex items-center gap-2.5 rounded-sm px-2 py-1 text-xs transition-colors hover:bg-sidebar-foreground/5"
+        >
+          <ArrowRight className="size-3 shrink-0" />
+          <span className="truncate">View all {apps.length} apps</span>
+        </Link>
       )}
 
-      {/* Connectors — the workspace's installed tools. No sub-label: a heading
-          over its one row would only repeat it. Routes to its settings
-          tab; sub-routes (browse, detail) keep it lit, so not `end`. The count
-          is the focused workspace's installed connectors (the provider holds
-          one workspace's set); a collapsed node omits it to avoid showing the
-          focused workspace's number on a different row mid-collapse. */}
-      <NestedNavLink
+      {/* Connectors — the workspace's installed tools. Routes to its settings
+          tab; sub-routes (browse, detail) keep it lit, so not `end`. */}
+      {!collapsed && <div aria-hidden="true" className="h-2" />}
+      <ViewLink
         to={`/w/${slug}/settings/connectors`}
-        icon="plug"
+        icon={resolveIcon("plug")}
         label="Connectors"
-        count={focused ? connectorCount : undefined}
+        count={connectorCount}
+        collapsed={collapsed}
       />
     </div>
   );
 }
 
-function SubLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="px-2 pt-2 pb-0.5 text-2xs font-bold tracking-[0.08em] uppercase">
-      {children}
-    </div>
+const rowClass = (isActive: boolean, collapsed: boolean) =>
+  cn(
+    "flex items-center rounded-sm text-sm transition-colors",
+    collapsed ? "size-9 justify-center" : "gap-2.5 px-2 min-h-8",
+    isActive
+      ? "bg-sidebar-foreground/10 font-medium text-foreground"
+      : "font-normal hover:bg-sidebar-foreground/5 hover:text-foreground",
   );
-}
 
-// A nested workspace view with a lucide icon — identity views + Connectors.
-// Optional trailing count badge (right-aligned, muted).
-function NestedNavLink({
+// A workspace view with a lucide icon, and an optional trailing count.
+function ViewLink({
   to,
-  icon,
+  icon: Icon,
   label,
   end,
   count,
+  collapsed,
 }: {
   to: string;
-  icon?: string;
+  icon: React.ComponentType<{ className?: string }>;
   label: string;
   end?: boolean;
   count?: number;
+  collapsed: boolean;
 }) {
-  const Icon = resolveIcon(icon);
-  return (
+  const link = (
     <NavLink
       to={to}
       end={end}
-      title={label}
+      aria-label={collapsed ? label : undefined}
       data-testid="sidebar-workspace-view"
-      className={({ isActive }) =>
-        cn(
-          "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
-          isActive
-            ? "bg-sidebar-foreground/10 font-medium text-foreground"
-            : "font-normal hover:bg-sidebar-foreground/5",
-        )
-      }
+      className={({ isActive }) => rowClass(isActive, collapsed)}
     >
-      <Icon className="size-[18px] shrink-0" />
-      <span className="flex-1 truncate">{label}</span>
-      <CountBadge count={count} />
+      <Icon className="size-4 shrink-0" />
+      {!collapsed && (
+        <>
+          <span className="flex-1 truncate">{label}</span>
+          <CountBadge count={count} />
+        </>
+      )}
     </NavLink>
   );
+  return collapsed ? <Tooltip label={label}>{link}</Tooltip> : link;
 }
 
-// A nested workspace app with a brand icon (letter-avatar fallback). Exact-match
+// A workspace app with a brand icon (letter-avatar fallback). Exact-match
 // active: app routes are leaf paths, so the URL maps to one placement (a
 // `startsWith` would mis-light `crm` when viewing a sibling `crm-archive`).
-function NestedAppLink({
+function AppLink({
   to,
   label,
   serverName,
   iconUrl,
+  collapsed,
 }: {
   to: string;
   label: string;
   serverName: string;
   iconUrl?: string;
+  collapsed: boolean;
 }) {
-  const location = useLocation();
-  const isActive = location.pathname === to;
-  return (
+  const isActive = useLocation().pathname === to;
+  const link = (
     <Link
       to={to}
-      title={label}
+      aria-label={collapsed ? label : undefined}
       data-testid="sidebar-workspace-app"
       data-app-route={serverName}
       data-is-active={isActive ? "true" : "false"}
       aria-current={isActive ? "page" : undefined}
-      className={cn(
-        "flex items-center gap-2 text-sm transition-colors rounded-sm px-2 py-1",
-        isActive
-          ? "bg-sidebar-foreground/10 font-medium text-foreground"
-          : "font-normal hover:bg-sidebar-foreground/5",
-      )}
+      className={rowClass(isActive, collapsed)}
     >
-      <ConnectorIcon name={label} iconUrl={iconUrl} className="size-[18px] rounded-xs text-3xs" />
-      <span className="flex-1 truncate">{label}</span>
+      <ConnectorIcon name={label} iconUrl={iconUrl} className="size-4 rounded-xs text-3xs" />
+      {!collapsed && <span className="flex-1 truncate">{label}</span>}
     </Link>
   );
+  return collapsed ? <Tooltip label={label}>{link}</Tooltip> : link;
 }
 
 // A right-aligned muted count. Renders nothing for undefined / zero — an empty

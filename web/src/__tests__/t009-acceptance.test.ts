@@ -7,11 +7,8 @@
 //      /v1/workspaces/<wsId>/chat/stream) has NO `workspaceId` field — matches T006's identity-bound session
 //      contract. A type-level mutual-extends assertion catches future
 //      widening at compile time.
-//   2. `WorkspaceSwitcher` / `WorkspaceSelector` (the header switcher Q1
-//      deletes) is gone from `web/src/` — no source file imports or
-//      mentions either name. A "moved to a different file" interpretation
-//      of Q1 would still leave matches behind.
-//   3. `setActiveWorkspaceId` is exported (T013 calls it from the sidebar).
+//   2. `setActiveWorkspaceId` is exported (the sidebar's workspace switcher
+//      calls it).
 //
 // Runtime fetch contracts are pinned elsewhere to keep this file free of
 // `globalThis.fetch` stubbing (which is fragile across the suite's
@@ -31,9 +28,6 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, mock, test } from "bun:test";
-import type { Dirent } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 // Real exports under test — asserted as values/types below.
 import {
@@ -125,86 +119,3 @@ describe("errorFromResponse → onWorkspaceError recovery hook", () => {
     expect(fired).toHaveBeenCalledTimes(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Switcher fully deleted (Q1, locked 2026-05-22)
-// ---------------------------------------------------------------------------
-
-describe("WorkspaceSwitcher / WorkspaceSelector teardown", () => {
-  test("no source file imports or names the deleted component", async () => {
-    // Walk web/src/ and assert neither `WorkspaceSwitcher` (the name
-    // the task spec uses) nor `WorkspaceSelector` (the name it had
-    // pre-T009) appears in any source file. A "moved to a different
-    // file" interpretation of Q1 would still leave matches behind.
-    //
-    // This very test file contains the strings as documentation —
-    // skip `__tests__` and `_generated`.
-    const webSrc = join(import.meta.dir, "..");
-    const offenders = await findOffenders(
-      webSrc,
-      ["WorkspaceSwitcher", "WorkspaceSelector"],
-      ["__tests__", "_generated"],
-    );
-    expect(offenders).toEqual([]);
-  });
-});
-
-/** True for a TypeScript source filename (`.ts` / `.tsx`). */
-function isSourceFile(name: string): boolean {
-  return /\.(ts|tsx)$/.test(name);
-}
-
-/** The first needle contained in `body`, or `null` when none match. */
-function firstNeedleIn(body: string, needles: string[]): string | null {
-  for (const needle of needles) {
-    if (body.includes(needle)) return needle;
-  }
-  return null;
-}
-
-/** Route one directory entry: push sub-dirs to `stack` (minus `skipDirNames`), source files to `files`. */
-function visitEntry(
-  ent: Dirent,
-  dir: string,
-  stack: string[],
-  files: string[],
-  skipDirNames: string[],
-): void {
-  const path = join(dir, ent.name);
-  if (ent.isDirectory()) {
-    if (!skipDirNames.includes(ent.name)) stack.push(path);
-    return;
-  }
-  if (!ent.isFile()) return;
-  if (isSourceFile(ent.name)) files.push(path);
-}
-
-/** All `.ts`/`.tsx` files under `root`, skipping directories named in `skipDirNames`. */
-async function collectSourceFiles(root: string, skipDirNames: string[]): Promise<string[]> {
-  const files: string[] = [];
-  const stack = [root];
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    if (!dir) continue;
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const ent of entries) {
-      visitEntry(ent, dir, stack, files, skipDirNames);
-    }
-  }
-  return files;
-}
-
-/** Source files under `root` that contain any of `needles`, one message per offending file. */
-async function findOffenders(
-  root: string,
-  needles: string[],
-  skipDirNames: string[],
-): Promise<string[]> {
-  const offenders: string[] = [];
-  for (const path of await collectSourceFiles(root, skipDirNames)) {
-    const body = await readFile(path, "utf-8");
-    const hit = firstNeedleIn(body, needles);
-    if (hit) offenders.push(`${path}: contains "${hit}"`);
-  }
-  return offenders;
-}

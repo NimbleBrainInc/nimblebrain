@@ -183,12 +183,23 @@ describe("palette contrast — WCAG 2.2", () => {
     }
   }
 
+  describe("tooltip — text on its own inverted pill", () => {
+    // `components/ui/tooltip.tsx`: an inverted pill (`bg-foreground`,
+    // `text-background`) whose shortcut chip is `bg-background/20` over it.
+    for (const mode of ["light", "dark"] as const) {
+      test(`${mode}: the shortcut chip keeps its label above ${AA_TEXT}:1`, () => {
+        const pill = token("foreground", mode);
+        const chip = over(token("background", mode), pill, 20);
+        expect(contrastRatio(token("background", mode), chip)).toBeGreaterThanOrEqual(AA_TEXT);
+      });
+    }
+  });
+
   describe("sidebar tints — text on a tint of itself", () => {
     // The sidebar's own tint family. `bg-sidebar-foreground/N` over `bg-sidebar`
     // is what carries hover and the active row throughout the shell, and it is a
     // tint of the text colour itself — the same mechanism as TINTED above, so it
-    // moves the same way when the palette does. The `kbd` in SidebarSearch is the
-    // floor: a /10 chip inside the trigger's own /5 fill, two tints deep.
+    // moves the same way when the palette does.
     for (const mode of ["light", "dark"] as const) {
       const ground = token("sidebar", mode);
       const text = token("sidebar-foreground", mode);
@@ -197,7 +208,6 @@ describe("palette contrast — WCAG 2.2", () => {
       for (const [label, fill] of [
         ["hover, sidebar-foreground/5", hover],
         ["active, sidebar-foreground/10", over(text, ground, 10)],
-        ["the search kbd, /10 over the trigger's /5", over(text, hover, 10)],
       ] as const) {
         test(`${mode}: sidebar text on ${label} clears ${AA_TEXT}:1`, () => {
           expect(contrastRatio(text, fill)).toBeGreaterThanOrEqual(AA_TEXT);

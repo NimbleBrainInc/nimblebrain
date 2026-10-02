@@ -393,7 +393,7 @@ function AuthenticatedAppContent({
         resolveAppRoute={resolveAppRoute}
         activeSlug={activeSlug}
       />
-      {/* Command palette (⌘P) — global surface, sibling of the shell layout
+      {/* Command palette (⌘K) — global surface, sibling of the shell layout
           and chat chrome, so it's reachable from any route. */}
       <CommandPalette onLogout={onLogout} />
       <ShellLayout forSlot={forSlot} onLogout={onLogout}>

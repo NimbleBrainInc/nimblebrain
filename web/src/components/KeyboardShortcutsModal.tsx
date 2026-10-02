@@ -15,13 +15,13 @@ interface ShortcutGroup {
 const shortcutGroups: ShortcutGroup[] = [
   {
     title: "Navigation",
-    shortcuts: [{ keys: ["⌘", "P"], description: "Open command palette" }],
+    shortcuts: [{ keys: ["⌘", "K"], description: "Search and run commands" }],
   },
   {
     title: "Chat",
     shortcuts: [
-      { keys: ["⌘", "K"], description: "Open / close chat" },
-      { keys: ["⌘", "⇧", "K"], description: "Expand / collapse" },
+      { keys: ["⌘", "J"], description: "Open / close chat" },
+      { keys: ["⌘", "⇧", "J"], description: "Expand / collapse" },
       { keys: ["Esc"], description: "Close chat" },
     ],
   },

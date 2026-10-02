@@ -1,4 +1,3 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { memo, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useChatPanelContext } from "../context/ChatPanelContext";
@@ -15,9 +14,11 @@ import { Logo } from "./Logo";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
 import { ReleaseUpdateBanner } from "./ReleaseUpdateBanner";
 import { SidebarToggle } from "./SidebarToggle";
-import { SidebarSearch } from "./shell/SidebarSearch";
+import { SidebarHeader } from "./shell/SidebarHeader";
 import { WorkspaceNav } from "./shell/WorkspaceNav";
+import { WorkspaceSwitcher } from "./shell/WorkspaceSwitcher";
 import { UserMenu } from "./UserMenu";
+import { TooltipProvider } from "./ui/tooltip";
 
 interface ShellLayoutProps {
   forSlot: (slot: string) => PlacementEntry[];
@@ -34,14 +35,12 @@ interface ShellLayoutProps {
  * - Hidden (<768px): mobile drawer
  *
  * Sidebar zones (top → bottom):
- *   1. Identity (UserMenu)
- *   2. Search stub (⌘P)
- *   3. WORKSPACES tree (`WorkspaceNav`) — the workspace you're in is the
- *      parent of its contents. The focused workspace expands to its
- *      Conversations / Automations / Files, its apps, and Connectors; the
- *      other workspaces collapse to one row each. Switching focus swings the
- *      accordion. This is the whole nav body — there is no separate global
- *      core-nav row, because those views are workspace-scoped now.
+ *   1. Header (`SidebarHeader`) — logo, search (⌘K), sidebar toggle (⌘B).
+ *   2. Workspace (`WorkspaceSwitcher`) — names the workspace you're in and
+ *      switches to another.
+ *   3. That workspace's views (`WorkspaceNav`) — the whole nav body. There is
+ *      no global core-nav row, because those views are workspace-scoped.
+ *   4. Account (`UserMenu`) — who you are, at the foot.
  */
 // Chat panel transition timings — kept in lockstep with `ChatChrome` so
 // the main content's marginRight slides in sync with the panel itself.
@@ -98,40 +97,13 @@ export const ShellLayout = memo(function ShellLayout({
       {/* Desktop / tablet sidebar */}
       {!isHidden && (
         <nav
+          aria-label="Workspace"
           className={cn(
-            // `relative` anchors the half-overflow edge toggle below.
-            "relative shrink-0 h-dvh flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-[width] duration-200",
+            "shrink-0 h-dvh flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-[width] duration-200",
             isCollapsed ? "w-16" : "w-60",
           )}
         >
-          {/* Identity (top-left) — anchors the sidebar; dropdown opens
-              downward over the rest of the sidebar. */}
-          <div className="shrink-0 py-2">
-            <UserMenu collapsed={isCollapsed} onLogout={onLogout} />
-          </div>
-
-          {/* Search stub (⌘P focuses; palette behavior lands in a later
-              session). Hidden when the sidebar is collapsed to icon-only. */}
-          {!isCollapsed && <SidebarSearch />}
-
-          {/* Scrolling region. Must NOT remount on a workspace switch (no
-              `key={wsSlug}`): a switch swings the accordion + the routed hrefs
-              in place; remounting flashed the whole left nav. The fade-in runs
-              once, on initial mount. */}
-          <div className="flex-1 overflow-y-auto py-1 sidebar-scroll sidebar-nav-fade">
-            <WorkspaceNav collapsed={isCollapsed} />
-          </div>
-
-          {/* New-build-available prompt — pinned to the bottom-left rail,
-              below the scrolling nav. Renders nothing until detected. */}
-          <ReleaseUpdateBanner collapsed={isCollapsed} />
-
-          {/*
-            Edge collapse toggle — anchored to the sidebar's right border,
-            half-overflowing. Always visible (rather than hover-only) so
-            it's reachable on touch and discoverable for first-time users.
-          */}
-          <SidebarEdgeToggle isCollapsed={isCollapsed} />
+          <SidebarBody collapsed={isCollapsed} onLogout={onLogout} />
         </nav>
       )}
 
@@ -174,41 +146,29 @@ export const ShellLayout = memo(function ShellLayout({
       {isHidden && (
         <MobileSidebarDrawer>
           <div className="flex flex-col h-full">
-            {/* Identity at top */}
-            <div className="shrink-0 py-2">
-              <UserMenu
-                collapsed={false}
-                onLogout={() => {
-                  setDrawerOpen(false);
-                  onLogout();
-                }}
-              />
-            </div>
-
-            {/* Search stub */}
-            <SidebarSearch />
-
-            <div className="flex-1 overflow-y-auto py-1 sidebar-scroll">
-              {/* The workspace tree — same component as desktop. */}
-              <WorkspaceNav />
-            </div>
-
-            {/* Bottom pinned items (sidebar.bottom placements;
-                settings is accessed via the UserMenu dropdown). */}
-            {sidebarBottom.length > 0 && (
-              <div className="shrink-0 border-t border-sidebar-border py-2">
-                {sidebarBottom.map((p) => (
-                  <MobileNavItem
-                    key={p.resourceUri}
-                    to={resolveRoute(p, wsSlug)}
-                    icon={p.icon}
-                    label={p.label ?? "Settings"}
-                  />
-                ))}
-              </div>
-            )}
-
-            <ReleaseUpdateBanner />
+            <SidebarBody
+              collapsed={false}
+              onLogout={() => {
+                setDrawerOpen(false);
+                onLogout();
+              }}
+              // Bottom pinned items (sidebar.bottom placements; settings is
+              // reached from the workspace switcher).
+              tray={
+                sidebarBottom.length > 0 && (
+                  <div className="shrink-0 border-t border-sidebar-border py-2">
+                    {sidebarBottom.map((p) => (
+                      <MobileNavItem
+                        key={p.resourceUri}
+                        to={resolveRoute(p, wsSlug)}
+                        icon={p.icon}
+                        label={p.label ?? "Settings"}
+                      />
+                    ))}
+                  </div>
+                )
+              }
+            />
           </div>
         </MobileSidebarDrawer>
       )}
@@ -242,45 +202,44 @@ function NavIcon({ name }: { name: string }) {
 }
 
 /**
- * Edge-overflow collapse toggle.
- *
- * Anchored to the sidebar's right border, vertically centered;
- * half-overflows so the click target lives in the seam between sidebar
- * and main content. Doesn't occupy any in-sidebar real estate — sidebar
- * nav, workspace selector, and UserMenu are all unaffected.
- *
- * Vertical center is the right anchor: the dense zones at top (workspace
- * selector) and bottom (UserMenu) are claimed; centering reads as "this
- * controls the whole sidebar" rather than belonging to either zone.
- *
- * Always visible (not hover-required) so it's reachable on touch and
- * discoverable for first-time users.
+ * The sidebar's contents, shared by the desktop sidebar and the mobile drawer
+ * so both read the same top to bottom.
  */
-const SidebarEdgeToggle = memo(function SidebarEdgeToggle({
-  isCollapsed,
+function SidebarBody({
+  collapsed,
+  onLogout,
+  tray,
 }: {
-  isCollapsed: boolean;
+  collapsed: boolean;
+  onLogout: () => void;
+  tray?: React.ReactNode;
 }) {
-  const { toggle } = useSidebar();
-  const Icon = isCollapsed ? ChevronRight : ChevronLeft;
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-      title={`${isCollapsed ? "Expand sidebar" : "Collapse sidebar"} (⌘B)`}
-      className={cn(
-        "absolute top-1/2 -translate-y-1/2 -right-3 z-30 w-6 h-6 rounded-full",
-        "flex items-center justify-center",
-        "bg-sidebar border border-sidebar-border shadow-sm",
-        "hover:bg-sidebar-foreground/10",
-        "transition-colors",
-      )}
-    >
-      <Icon className="w-3.5 h-3.5" />
-    </button>
+    <TooltipProvider>
+      <SidebarHeader collapsed={collapsed} />
+      <div className={cn("shrink-0", collapsed ? "pb-1" : "pb-3")}>
+        <WorkspaceSwitcher collapsed={collapsed} />
+      </div>
+
+      {/* Scrolling region. Must NOT remount on a workspace switch (no
+          `key={wsSlug}`): a switch swaps the routed hrefs in place, and
+          remounting flashed the whole left nav. The fade-in runs once, on
+          initial mount. */}
+      <div className="flex-1 overflow-y-auto pb-2 sidebar-scroll sidebar-nav-fade">
+        <WorkspaceNav collapsed={collapsed} />
+      </div>
+
+      {tray}
+
+      {/* New-build-available prompt — renders nothing until detected. */}
+      <ReleaseUpdateBanner collapsed={collapsed} />
+
+      <div className="shrink-0 border-t border-sidebar-border py-2">
+        <UserMenu collapsed={collapsed} onLogout={onLogout} />
+      </div>
+    </TooltipProvider>
   );
-});
+}
 
 function MobileNavItem({
   to,

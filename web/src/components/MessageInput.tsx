@@ -362,7 +362,7 @@ export function MessageInput({
             )}
             <span>
               <kbd className="px-1 py-0.5 font-mono bg-muted rounded border border-border text-3xs">
-                ⌘K
+                ⌘J
               </kbd>{" "}
               close
             </span>

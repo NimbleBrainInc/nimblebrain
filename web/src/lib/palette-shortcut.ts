@@ -6,7 +6,7 @@
 // stays unit-testable on its own.
 // ---------------------------------------------------------------------------
 
-/** True for the ⌘P / Ctrl+P toggle chord (and not ⌘⇧P, which stays reserved). */
+/** True for the ⌘K / Ctrl+K toggle chord (and not ⌘⇧K, which stays reserved). */
 export function isPaletteToggleChord(e: {
   metaKey: boolean;
   ctrlKey: boolean;
@@ -14,5 +14,5 @@ export function isPaletteToggleChord(e: {
   key: string;
 }): boolean {
   const mod = e.metaKey || e.ctrlKey;
-  return mod && !e.shiftKey && (e.key === "p" || e.key === "P");
+  return mod && !e.shiftKey && (e.key === "k" || e.key === "K");
 }

@@ -4,18 +4,26 @@
 // Pins:
 //   1. With the drawer open, any navigation closes it: a programmatic route
 //      change, a WorkspaceNav link, a tap on the page already open (a same-URL
-//      replace), and a search-only change.
+//      replace), a search-only change, and a workspace switch (which lands on
+//      the new workspace's overview).
 //   2. The drawer does not close on the provider's first render.
-//   3. Switching workspaces in the tree keeps it open (KEEP_DRAWER_OPEN): the
-//      switch expands the new workspace's views for the user to pick from.
-//      Re-selecting the focused workspace opens its overview and closes it,
-//      and so does going back or forward to a switch's history entry.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// happy-dom builds its selector-parse errors from `window.SyntaxError`, which
+// its Window does not define, and Base UI's popover probes selectors on open.
+// Same shim as confirm-dialog.test.tsx.
+{
+  const win = (globalThis as unknown as { window: Record<string, unknown> }).window;
+  if (win) {
+    win.SyntaxError ??= SyntaxError;
+    win.TypeError ??= TypeError;
+  }
+}
 
 let mockedActiveId: string | null = null;
 
@@ -37,6 +45,7 @@ const { ShellProvider } = await import("../context/ShellContext");
 const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsContext");
 const { SidebarProvider, useSidebar } = await import("../context/SidebarContext");
 const { WorkspaceNav } = await import("../components/shell/WorkspaceNav");
+const { WorkspaceSwitcher } = await import("../components/shell/WorkspaceSwitcher");
 
 import type { NavigateFunction } from "react-router-dom";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
@@ -130,7 +139,15 @@ async function mount({
                   value={{ forSlot, mainRoutes: () => [], shellWorkspaceId: "ws_team" }}
                 >
                   <Routes>
-                    <Route path="*" element={<WorkspaceNav />} />
+                    <Route
+                      path="*"
+                      element={
+                        <>
+                          <WorkspaceSwitcher />
+                          <WorkspaceNav />
+                        </>
+                      }
+                    />
                   </Routes>
                 </ShellProvider>
               </WorkspaceAppIconsContext.Provider>
@@ -160,14 +177,22 @@ function linkTo(root: HTMLElement, href: string): HTMLElement {
   return link;
 }
 
-function workspaceHeader(root: HTMLElement, id: string): HTMLElement {
-  const header = Array.from(root.getElementsByTagName("button")).find(
-    (b) =>
-      b.getAttribute("data-testid") === "sidebar-workspace-header" &&
-      b.getAttribute("data-workspace-id") === id,
+// Open the switcher and pick a workspace. The list renders in a portal, so it
+// is found on the document, not under the mount.
+async function switchTo(root: HTMLElement, id: string) {
+  await click(buttonBy(root, (b) => b.dataset.testid === "workspace-switcher-trigger"));
+  await click(
+    buttonBy(
+      document.body,
+      (b) => b.dataset.testid === "workspace-switcher-option" && b.dataset.workspaceId === id,
+    ),
   );
-  if (!header) throw new Error(`no header for ${id}`);
-  return header;
+}
+
+function buttonBy(root: HTMLElement, match: (b: HTMLElement) => boolean): HTMLElement {
+  const button = Array.from(root.getElementsByTagName("button")).find(match);
+  if (!button) throw new Error("no matching button");
+  return button;
 }
 
 // The drawer exists only below the md breakpoint, and SidebarProvider closes
@@ -230,27 +255,24 @@ describe("mobile drawer — a navigation closes it", () => {
     expect(probe.isDrawerOpen).toBe(false);
   });
 
-  test("re-selecting the focused workspace opens its overview and closes the drawer", async () => {
+  test("switching workspaces lands on the new overview and closes the drawer", async () => {
     const c = await mount({ initialPath: "/w/team/conversations" });
     await openDrawer();
 
-    await click(workspaceHeader(c, "ws_team"));
+    await switchTo(c, "ws_other");
 
-    expect(probe.path).toBe("/w/team/");
+    expect(probe.path).toBe("/w/other/");
     expect(probe.isDrawerOpen).toBe(false);
   });
 
-  test("going back to a workspace switch closes the drawer", async () => {
+  test("going back closes the drawer", async () => {
     const c = await mount({ initialPath: "/w/team/" });
-    await openDrawer();
-    await click(workspaceHeader(c, "ws_other"));
-    await click(linkTo(c, "/w/other/conversations"));
+    await click(linkTo(c, "/w/team/conversations"));
     await openDrawer();
 
-    // The switch's history entry still carries KEEP_DRAWER_OPEN.
     await act(async () => probe.navigate(-1));
 
-    expect(probe.path).toBe("/w/other/");
+    expect(probe.path).toBe("/w/team/");
     expect(probe.isDrawerOpen).toBe(false);
   });
 });
@@ -259,16 +281,6 @@ describe("mobile drawer — what leaves it open", () => {
   test("the first render does not close it", async () => {
     await mount({ initialPath: "/w/team/", openOnMount: true });
 
-    expect(probe.isDrawerOpen).toBe(true);
-  });
-
-  test("switching workspaces in the tree keeps it open on the new workspace", async () => {
-    const c = await mount({ initialPath: "/w/team/" });
-    await openDrawer();
-
-    await click(workspaceHeader(c, "ws_other"));
-
-    expect(probe.path).toBe("/w/other/");
     expect(probe.isDrawerOpen).toBe(true);
   });
 });

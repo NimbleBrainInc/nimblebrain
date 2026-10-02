@@ -609,7 +609,7 @@ Both re-render automatically when the theme changes.
 
 ## Keyboard forwarding
 
-When an iframe has focus, keyboard events fire on the iframe's document, not the host's. Synapse automatically forwards Ctrl/Cmd combos and Escape to the host so global shortcuts (like Ctrl+K to open the chat panel) still work.
+When an iframe has focus, keyboard events fire on the iframe's document, not the host's. Synapse automatically forwards Ctrl/Cmd combos and Escape to the host so global shortcuts (like Ctrl+J to open the chat panel) still work.
 
 Customize which keys are forwarded (via the legacy `createSynapse` API):
 
@@ -618,7 +618,7 @@ const synapse = createSynapse({
   name: 'my-app',
   version: '1.0.0',
   forwardKeys: [
-    { key: 'k', ctrl: true },   // Ctrl+K
+    { key: 'j', ctrl: true },   // Ctrl+J
     { key: '/', ctrl: true },   // Ctrl+/
     { key: 'Escape' },
   ],

@@ -170,9 +170,9 @@ describe("opening the chat panel", () => {
     expect(document.activeElement).toBe(textarea());
   });
 
-  test("with ⌘K clears inert and focuses the composer", async () => {
+  test("with ⌘J clears inert and focuses the composer", async () => {
     await mountChrome();
-    await press("k", { metaKey: true });
+    await press("j", { metaKey: true });
     expectOpen();
     expect(document.activeElement).toBe(textarea());
   });
@@ -199,7 +199,7 @@ describe("opening the chat panel", () => {
 describe("closing the chat panel with focus inside it", () => {
   test("with Esc moves focus to the floating toggle", async () => {
     await mountChrome();
-    await press("k", { metaKey: true });
+    await press("j", { metaKey: true });
     expect(document.activeElement).toBe(textarea());
 
     await press("Escape");
@@ -210,7 +210,7 @@ describe("closing the chat panel with focus inside it", () => {
 
   test("with the Close button moves focus to the floating toggle", async () => {
     await mountChrome();
-    await press("k", { metaKey: true });
+    await press("j", { metaKey: true });
     const close = panel().querySelector<HTMLButtonElement>('button[aria-label="Close"]');
     if (!close) throw new Error("Close button not rendered");
     act(() => close.focus());
@@ -225,7 +225,7 @@ describe("closing the chat panel with focus inside it", () => {
 describe("closing the chat panel with focus outside it", () => {
   test("leaves focus where the user put it", async () => {
     await mountChrome();
-    await press("k", { metaKey: true });
+    await press("j", { metaKey: true });
     const outside = document.createElement("button");
     document.body.appendChild(outside);
     try {

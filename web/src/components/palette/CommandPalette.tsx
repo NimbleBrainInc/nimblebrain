@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// CommandPalette — the ⌘P overlay.
+// CommandPalette — the ⌘K overlay.
 //
 // Mounts once at shell level (sibling of ChatChrome) so it's reachable from any
 // route. Runs the enabled CommandSources against the query, renders grouped

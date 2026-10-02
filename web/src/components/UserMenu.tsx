@@ -1,9 +1,10 @@
-import { Building2, ChevronUp, LogOut, UserCog } from "lucide-react";
+import { Building2, ChevronsUpDown, LogOut, UserCog } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "../context/SessionContext";
 import { roleAtLeast, useScopedRole } from "../hooks/useScopedRole";
 import { cn } from "../lib/utils";
+import { Tooltip } from "./ui/tooltip";
 
 // ---------------------------------------------------------------------------
 // Avatar palette. The user gets a deterministic index hashed from
@@ -47,12 +48,6 @@ function initials(displayName: string, email: string): string {
 interface UserMenuProps {
   collapsed: boolean;
   onLogout: () => void;
-  /**
-   * Direction the dropdown opens relative to its trigger. `"down"` for
-   * top-anchored placements (current sidebar layout); `"up"` for
-   * legacy bottom-anchored callers. Defaults to `"down"`.
-   */
-  dropdownDirection?: "up" | "down";
 }
 
 /** Colored initials chip standing in for the user's avatar. */
@@ -80,17 +75,15 @@ function Avatar({
   );
 }
 
-/** Name/email lines plus the open/close chevron, shown when the sidebar is expanded. */
+/** Name/email lines plus the menu affordance, shown when the sidebar is expanded. */
 function TriggerDetails({
   label,
   displayName,
   email,
-  open,
 }: {
   label: string;
   displayName: string;
   email: string;
-  open: boolean;
 }) {
   return (
     <>
@@ -100,25 +93,19 @@ function TriggerDetails({
           <div className="truncate text-2xs leading-tight">{email}</div>
         )}
       </div>
-      <ChevronUp
-        className={cn(
-          "shrink-0 w-4 h-4 transition-transform duration-200",
-          open ? "rotate-0" : "rotate-180",
-        )}
-      />
+      <ChevronsUpDown aria-hidden="true" className="shrink-0 size-3.5" />
     </>
   );
 }
 
-/** Absolute-position classes for the popover given collapse state and open direction. */
-function dropdownPositionClass(collapsed: boolean, dropdownDirection: "up" | "down"): string {
-  if (collapsed) {
-    return cn("left-full ml-2 w-56", dropdownDirection === "up" ? "bottom-0" : "top-0");
-  }
-  return cn(
-    "left-0 right-0 w-full min-w-[200px]",
-    dropdownDirection === "up" ? "bottom-full mb-1" : "top-full mt-1",
-  );
+/**
+ * Absolute-position classes for the popover. The menu sits at the foot of the
+ * sidebar, so it opens upward over the nav; on the icon rail, out to the right.
+ */
+function dropdownPositionClass(collapsed: boolean): string {
+  return collapsed
+    ? "left-full ml-2 bottom-0 w-56"
+    : "left-0 right-0 bottom-full mb-1 min-w-[200px]";
 }
 
 /** Identity header at the top of the popover (collapsed only — expanded shows it in the trigger). */
@@ -178,7 +165,6 @@ function DropdownActions({
 /** The account popover: optional identity header stacked over the action list. */
 function AccountDropdown({
   collapsed,
-  dropdownDirection,
   label,
   email,
   isOrgAdmin,
@@ -187,7 +173,6 @@ function AccountDropdown({
   onSignOut,
 }: {
   collapsed: boolean;
-  dropdownDirection: "up" | "down";
   label: string;
   email: string;
   isOrgAdmin: boolean;
@@ -199,7 +184,7 @@ function AccountDropdown({
     <div
       className={cn(
         "absolute z-50 rounded-sm border border-sidebar-border bg-sidebar shadow-lg ws-dropdown-enter",
-        dropdownPositionClass(collapsed, dropdownDirection),
+        dropdownPositionClass(collapsed),
       )}
     >
       {collapsed && <DropdownIdentityHeader label={label} email={email} />}
@@ -214,22 +199,14 @@ function AccountDropdown({
 }
 
 /**
- * Identity-bound menu at the top-left of the shell sidebar.
+ * Identity-bound menu at the foot of the shell sidebar.
  *
- * Identity sits at the top as a constant-across-session anchor; the
- * workspace+apps navigator (T013) sits below it. Click reveals a
- * popover with profile settings and sign out — the user's
- * always-available account surface, regardless of which page they're on.
- *
- * `dropdownDirection` toggles whether the popover opens below
- * (top-anchored — default) or above (bottom-anchored — kept for any
- * legacy mount points).
+ * The top of the sidebar is about where you are (the workspace); the foot is
+ * about who you are. Click reveals a popover with profile settings,
+ * organization (admins), and sign out — the user's always-available account
+ * surface, regardless of which page they're on.
  */
-export const UserMenu = memo(function UserMenu({
-  collapsed,
-  onLogout,
-  dropdownDirection = "down",
-}: UserMenuProps) {
+export const UserMenu = memo(function UserMenu({ collapsed, onLogout }: UserMenuProps) {
   const session = useSession();
   const navigate = useNavigate();
   const isOrgAdmin = roleAtLeast(useScopedRole(), "org_admin");
@@ -280,30 +257,33 @@ export const UserMenu = memo(function UserMenu({
   const [bg, fg] = AVATAR_PALETTE[colorIndex(seed)];
   const label = displayName || email;
 
+  const trigger = (
+    <button
+      type="button"
+      onClick={() => setOpen((o) => !o)}
+      aria-label={`Account: ${label}`}
+      aria-expanded={open}
+      aria-haspopup="menu"
+      data-testid="user-menu-trigger"
+      className={cn(
+        "flex items-center w-full rounded-sm transition-all duration-150 text-sm",
+        "hover:bg-sidebar-foreground/5",
+        open && "bg-sidebar-foreground/5",
+        collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-2",
+      )}
+    >
+      <Avatar displayName={displayName} email={email} bg={bg} fg={fg} />
+      {!collapsed && <TriggerDetails label={label} displayName={displayName} email={email} />}
+    </button>
+  );
+
   return (
     <div ref={containerRef} className="relative shrink-0 mx-2">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-label={`Account: ${label}`}
-        aria-expanded={open}
-        className={cn(
-          "flex items-center w-full rounded-sm transition-all duration-150 text-sm",
-          "hover:bg-sidebar-foreground/5",
-          open && "bg-sidebar-foreground/5",
-          collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-2",
-        )}
-      >
-        <Avatar displayName={displayName} email={email} bg={bg} fg={fg} />
-        {!collapsed && (
-          <TriggerDetails label={label} displayName={displayName} email={email} open={open} />
-        )}
-      </button>
+      {collapsed ? <Tooltip label={label}>{trigger}</Tooltip> : trigger}
 
       {open && (
         <AccountDropdown
           collapsed={collapsed}
-          dropdownDirection={dropdownDirection}
           label={label}
           email={email}
           isOrgAdmin={isOrgAdmin}

@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation, useNavigationType } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 
 type SidebarState = "expanded" | "collapsed" | "hidden";
 
@@ -19,23 +19,6 @@ interface SidebarContextValue {
 }
 
 const SidebarContext = createContext<SidebarContextValue | null>(null);
-
-/**
- * Navigation state that keeps the mobile drawer open across the navigation
- * that carries it. For a control inside the drawer whose navigation is a step
- * within the drawer rather than a choice of destination: switching workspaces
- * in the tree swings the accordion to the new workspace's views, which the
- * user still has to pick from.
- */
-export const KEEP_DRAWER_OPEN = { keepDrawerOpen: true } as const;
-
-function keepsDrawerOpen(state: unknown): boolean {
-  return (
-    typeof state === "object" &&
-    state !== null &&
-    (state as { keepDrawerOpen?: unknown }).keepDrawerOpen === true
-  );
-}
 
 const LS_KEY = "nb:sidebarState";
 const BREAKPOINT_LG = "(min-width: 1024px)";
@@ -83,23 +66,20 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Every navigation closes the drawer, whatever caused it: a link in the
-  // tree, the bottom tray, the user menu, the palette, browser back. The
-  // drawer is modal, so a navigation while it is open is the user choosing
-  // where to go, and the destination must not stay covered. Keyed on
+  // Every navigation closes the drawer, whatever caused it: a nav link, the
+  // workspace switcher, the bottom tray, the user menu, the palette, browser
+  // back. The drawer is modal, so a navigation while it is open is the user
+  // choosing where to go, and the destination must not stay covered. Keyed on
   // `location.key`, which changes on every navigation — a tap on the page
   // already open (a same-URL replace) and a search-only change included —
-  // and not on the first render. KEEP_DRAWER_OPEN is honored only on the
-  // navigation that carries it: history restores an entry's state on back and
-  // forward, and those still close the drawer.
+  // and not on the first render.
   const location = useLocation();
-  const navigationType = useNavigationType();
   const lastKeyRef = useRef(location.key);
   useEffect(() => {
     if (location.key === lastKeyRef.current) return;
     lastKeyRef.current = location.key;
-    if (navigationType === "POP" || !keepsDrawerOpen(location.state)) setDrawerOpen(false);
-  }, [location, navigationType]);
+    setDrawerOpen(false);
+  }, [location.key]);
 
   const toggle = useCallback(() => {
     if (state === "hidden") {

@@ -78,7 +78,7 @@ function ChatToggleButton({
         opacity: visible ? 1 : 0,
         transition: "opacity 200ms ease-in, background-color 200ms",
       }}
-      title="Chat (⌘K)"
+      title="Chat (⌘J)"
       data-testid="chat-chrome-open-button"
     >
       <MessageSquare className="w-5 h-5" />
@@ -175,12 +175,12 @@ export function ChatChrome() {
   // Focus follows the panel. The closed panel is inert, so nothing in it can
   // take focus; this runs after the commit that clears `inert`, which is the
   // earliest the composer can accept it. Every open path lands here — the
-  // toggle, ⌘K, ⌘⇧K, `?chat=` deep links, and `openPanel` from an app or the
+  // toggle, ⌘J, ⌘⇧J, `?chat=` deep links, and `openPanel` from an app or the
   // command palette. Opening is an explicit move to the chat, so it takes focus
   // even from an app iframe, which MessageInput's turn-ended refocus leaves
   // alone. On the phone layout the composer is not focused, since that raises
   // the on-screen keyboard over the conversation. On close, focus left inside
-  // the now-inert panel (Esc, Close, Back, ⌘K) moves to the floating toggle,
+  // the now-inert panel (Esc, Close, Back, ⌘J) moves to the floating toggle,
   // the control that reopens it.
   const isOpen = panelState !== "closed";
   const wasOpenRef = useRef(isOpen);
@@ -198,7 +198,7 @@ export function ChatChrome() {
     if (stranded) toggleButtonRef.current?.focus({ preventScroll: true });
   }, [isOpen, isMobile]);
 
-  // Keyboard shortcuts — Esc closes, ⌘K toggles, ⌘⇧K toggles fullscreen.
+  // Keyboard shortcuts — Esc closes, ⌘J toggles, ⌘⇧J toggles fullscreen.
   useEffect(() => {
     // Esc — close the panel when it's open; left to the browser when already closed.
     function handleEscape(e: KeyboardEvent) {
@@ -207,7 +207,7 @@ export function ChatChrome() {
       closePanel();
     }
 
-    // ⌘⇧K — toggle fullscreen, opening the panel first when it's closed, then
+    // ⌘⇧J — toggle fullscreen, opening the panel first when it's closed, then
     // focus the composer (the focus effect above does it on open).
     function toggleFullscreenShortcut() {
       if (panelState === "closed") {
@@ -219,7 +219,7 @@ export function ChatChrome() {
       }
     }
 
-    // ⌘K — open the panel (the focus effect above focuses the composer) or close it.
+    // ⌘J — open the panel (the focus effect above focuses the composer) or close it.
     function togglePanelShortcut() {
       if (panelState === "closed") {
         openPanel();
@@ -236,13 +236,13 @@ export function ChatChrome() {
         return;
       }
 
-      if (mod && e.shiftKey && (e.key === "K" || e.key === "k")) {
+      if (mod && e.shiftKey && (e.key === "J" || e.key === "j")) {
         e.preventDefault();
         toggleFullscreenShortcut();
         return;
       }
 
-      if (mod && e.key === "k") {
+      if (mod && e.key === "j") {
         e.preventDefault();
         togglePanelShortcut();
         return;

@@ -820,10 +820,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Workspace selector dropdown entrance */
+/* Sidebar popover entrance (workspace switcher, account menu) */
 .ws-dropdown-enter {
   animation: ws-dropdown-in 150ms ease-out;
   transform-origin: top left;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-dropdown-enter {
+    animation: none;
+  }
 }
 
 @keyframes ws-dropdown-in {
