@@ -6,23 +6,31 @@
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
 // Order: Overview, the identity views (Conversations / Automations / Files),
-// Inbox, then APPS (People, Tasks, … — capped with a View-all overflow), then
-// Connectors. Each routes into `/w/<slug>/…`. An app that places several views
-// is one entry; while it is open its views list beneath it. The identity views' TOOLS still
+// Inbox, then APPS (People, Tasks, … — capped with a View-all overflow). Each
+// routes into `/w/<slug>/…`. An app that places several views is one entry;
+// while it is open its views list beneath it.
+//
+// APPS holds everything installed. A connector with a view gets a row; the
+// ones without (tools the agent uses, with nothing to open) share one row,
+// their icons and a count, that opens the installed list where each is
+// configured. So every install shows up, and screen-less ones cost one row.
+// The header's "+" opens the catalog. The identity views' TOOLS still
 // dispatch bare through the identity door (see lib/identity-apps); the slug
 // here is the focused workspace = view scope, not a tool namespace.
 //
 // Collapsed (icon rail) renders the same destinations as icon buttons, each
-// named by a tooltip.
+// named by a tooltip, with the "+" last.
 // ---------------------------------------------------------------------------
 
-import { ArrowRight, LayoutGrid } from "lucide-react";
+import { ArrowRight, LayoutGrid, Plus } from "lucide-react";
 import { useMemo } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
+import type { InstalledConnector } from "../../api/client";
 import { useNotifications } from "../../context/NotificationsContext";
 import { useShellContext } from "../../context/ShellContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
+import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { resolveIcon } from "../../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../../lib/identity-apps";
 import { cn } from "../../lib/utils";
@@ -55,7 +63,9 @@ function WorkspaceViews({
   collapsed: boolean;
 }) {
   const shell = useShellContext();
-  const { iconFor, connectorCount } = useWorkspaceAppIcons();
+  const { iconFor, connectors } = useWorkspaceAppIcons();
+  // Installing writes the workspace, so only a member who may write it gets the "+".
+  const canInstall = useCanWriteActiveWorkspace();
   const { unread } = useNotifications();
   const slug = toSlug(workspace.id);
 
@@ -80,9 +90,21 @@ function WorkspaceViews({
   const shownApps = collapsed ? apps : apps.slice(0, MAX_INLINE_APPS);
   const hasAppOverflow = apps.length > shownApps.length;
 
+  // Installed connectors with no view of their own. Anything installed that is
+  // not an app above lands here, so each install appears exactly once. Read
+  // only once the list names this workspace (it lags a switch, like the shell).
+  const toolsOnly = useMemo(() => {
+    if (!ready || connectors?.workspaceId !== workspace.id) return [];
+    const withViews = new Set(apps.map((app) => app.serverName));
+    return connectors.installed.filter(
+      (c) => !withViews.has(c.serverName) && !isIdentityApp(c.serverName),
+    );
+  }, [ready, connectors, workspace.id, apps]);
+  const hasSection = shownApps.length > 0 || toolsOnly.length > 0 || canInstall;
+
   return (
     <div
-      className={cn("flex flex-col gap-px", collapsed ? "items-center px-3" : "px-2")}
+      className={cn("group/nav flex flex-col gap-px", collapsed ? "items-center px-3" : "px-2")}
       data-testid="sidebar-workspace-nav"
       data-workspace-id={workspace.id}
       data-collapsed={collapsed ? "true" : "false"}
@@ -109,11 +131,14 @@ function WorkspaceViews({
         collapsed={collapsed}
       />
 
-      {shownApps.length > 0 &&
+      {hasSection &&
         (collapsed ? (
           <div aria-hidden="true" className="my-1.5 h-px w-6 bg-sidebar-border" />
         ) : (
-          <div className="px-2 pt-3 pb-1 text-2xs font-bold tracking-[0.08em] uppercase">Apps</div>
+          <div className="flex items-center justify-between pt-3 pr-1 pb-1 pl-2">
+            <span className="text-2xs font-bold tracking-[0.08em] uppercase">Apps</span>
+            {canInstall && <AddLink slug={slug} collapsed={false} />}
+          </div>
         ))}
       {shownApps.map((app) => (
         <AppEntry
@@ -135,17 +160,94 @@ function WorkspaceViews({
         </Link>
       )}
 
-      {/* Connectors — the workspace's installed tools. Routes to its settings
-          tab; sub-routes (browse, detail) keep it lit, so not `end`. */}
-      {!collapsed && <div aria-hidden="true" className="h-2" />}
-      <ViewLink
-        to={`/w/${slug}/settings/connectors`}
-        icon={resolveIcon("plug")}
-        label="Connectors"
-        count={connectorCount}
-        collapsed={collapsed}
-      />
+      {toolsOnly.length > 0 && (
+        <ToolsOnlyLink
+          to={`/w/${slug}/settings/connectors`}
+          connectors={toolsOnly}
+          afterApps={shownApps.length > 0}
+          collapsed={collapsed}
+        />
+      )}
+      {collapsed && canInstall && <AddLink slug={slug} collapsed />}
     </div>
+  );
+}
+
+// The "+" that opens the connector catalog. Beside the APPS header it shows
+// while the pointer is over the nav or it has keyboard focus; `hover:` applies
+// only on devices that hover, so a touch screen shows it at rest. In the rail
+// it is an icon button like the rows above it.
+function AddLink({ slug, collapsed }: { slug: string; collapsed: boolean }) {
+  const label = "Add apps and tools";
+  return (
+    <Tooltip label={label} side="right">
+      <Link
+        to={`/w/${slug}/settings/connectors/browse`}
+        aria-label={label}
+        data-testid="sidebar-add-connector"
+        className={cn(
+          "flex items-center justify-center rounded-sm transition-colors hover:bg-sidebar-foreground/10 hover:text-foreground",
+          collapsed
+            ? "size-9"
+            : "size-5 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/nav:opacity-100 focus-visible:opacity-100",
+        )}
+      >
+        <Plus className={collapsed ? "size-4" : "size-3.5"} />
+      </Link>
+    </Tooltip>
+  );
+}
+
+// The installed connectors with no view, as one row: up to three of their
+// icons, overlapped, and a count (or the name, when there is one). Lit on the
+// installed list and its sub-pages, so not `end`.
+const STACKED_ICONS = 3;
+
+function ToolsOnlyLink({
+  to,
+  connectors,
+  afterApps,
+  collapsed,
+}: {
+  to: string;
+  connectors: InstalledConnector[];
+  afterApps: boolean;
+  collapsed: boolean;
+}) {
+  const names = connectors.map((c) => c.displayName).join(", ");
+  const [only] = connectors;
+  const label =
+    connectors.length === 1 && only
+      ? only.displayName
+      : `${connectors.length} ${afterApps ? "more " : ""}connected`;
+  const shown = connectors.slice(0, collapsed ? 1 : STACKED_ICONS);
+  const link = (
+    <NavLink
+      to={to}
+      aria-label={collapsed ? `${label}: ${names}` : undefined}
+      title={collapsed ? undefined : names}
+      data-testid="sidebar-workspace-tools"
+      className={({ isActive }) => rowClass(isActive, collapsed)}
+    >
+      <span className="flex shrink-0 -space-x-1">
+        {shown.map((c) => (
+          <ConnectorIcon
+            key={c.serverName}
+            name={c.displayName}
+            iconUrl={c.iconUrl}
+            className="size-4 rounded-xs text-3xs ring-2 ring-sidebar"
+          />
+        ))}
+      </span>
+      {!collapsed && <span className="flex-1 truncate">{label}</span>}
+    </NavLink>
+  );
+  return collapsed ? (
+    <Tooltip label={names} side="right">
+      {link}
+    </Tooltip>
+  ) : (
+    link
   );
 }
 
