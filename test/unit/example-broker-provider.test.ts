@@ -42,6 +42,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const PROVIDER_ID = "example-broker";
 const CONNECTOR_ID = "com.example/widgets";
@@ -227,7 +228,7 @@ describe("example-broker — install", () => {
   beforeEach(async () => {
     calls = noCalls();
     h = buildHarness(exampleBroker(calls));
-    await h.workspaceStore.create("Test", h.wsId.slice(3));
+    await seedWorkspace(h.workspaceStore, h.wsId, { name: "Test" });
     await h.workspaceStore.addMember(h.wsId, ADMIN.id, "admin");
   });
 
@@ -274,7 +275,7 @@ describe("example-broker — install", () => {
   test("refuses when no provider is registered for the kind", async () => {
     const bare = buildHarness({ ...exampleBroker(calls), id: "some-other-broker" });
     try {
-      await bare.workspaceStore.create("Test", bare.wsId.slice(3));
+      await seedWorkspace(bare.workspaceStore, bare.wsId, { name: "Test" });
       await bare.workspaceStore.addMember(bare.wsId, ADMIN.id, "admin");
       const result = await buildTool(bare).handler({
         action: "install",
@@ -323,7 +324,7 @@ describe("example-broker — cleanup on uninstall", () => {
   beforeEach(async () => {
     calls = noCalls();
     h = buildHarness(exampleBroker(calls));
-    await h.workspaceStore.create("Test", h.wsId.slice(3));
+    await seedWorkspace(h.workspaceStore, h.wsId, { name: "Test" });
     await h.workspaceStore.addMember(h.wsId, ADMIN.id, "admin");
   });
 

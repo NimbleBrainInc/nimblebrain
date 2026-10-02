@@ -5,7 +5,7 @@ import { log } from "../observability/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { scaffoldWorkspace } from "./scaffold.ts";
 import type { Workspace, WorkspaceMember, WorkspaceRole } from "./types.ts";
-import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
+import { GENERATED_WORKSPACE_ID_RE, WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
 
 // Re-export so existing `import { WORKSPACE_ID_RE } from ".../workspace-store.ts"`
 // call sites keep working. The literal source string + flags live in
@@ -63,15 +63,16 @@ export type MembershipChangeHandler = (userId: string) => void;
 /**
  * Generate an opaque, name-independent workspace id.
  *
- * **Why opaque.** A workspace id is a stable handle, not a label. The
- * pre-opaque scheme derived the id from the name (`ws_<slugify(name)>`)
- * and froze it at create time — so renaming a workspace left its URL
- * (`/w/<old-name-slug>`) and on-disk dir permanently stamped with the
- * original name. Decoupling the id from the name makes the name a freely
- * editable field that never moves the id, the dir, or the URL.
+ * **Why opaque.** A workspace id is a stable handle, not a label. An id
+ * derived from the name would freeze the name at create time into the URL
+ * and the on-disk dir, so a rename could never reach them. Keeping the id
+ * independent of the name makes the name a freely editable field that never
+ * moves the id, the dir, or the URL. It is also the only way an id is made:
+ * `WorkspaceStore.create` takes no caller-chosen id.
  *
- * **Alphabet.** The id MUST match `WORKSPACE_ID_PATTERN`
- * (`^ws_[a-z0-9_]{1,64}$`) — no hyphens, because `-` is the
+ * **Alphabet.** The id MUST match `GENERATED_WORKSPACE_ID_PATTERN`
+ * (`^ws_[a-f0-9]{16}$`), which `create` asserts, and so the wider loading
+ * pattern `WORKSPACE_ID_PATTERN` too — no hyphens, because `-` is the
  * workspace/tool separator in `ws_<id>-<tool>` (see `src/tools/namespace.ts`).
  * Lowercase hex (`[a-f0-9]`) is a strict subset of `[a-z0-9_]`, so it
  * round-trips through `parseNamespacedToolName` cleanly. This mirrors the
@@ -84,23 +85,6 @@ export type MembershipChangeHandler = (userId: string) => void;
  */
 export function generateWorkspaceId(): string {
   return `ws_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
-}
-
-// ── Slugification ──────────────────────────────────────────────────
-
-/**
- * Derive a workspace slug from a human-readable name.
- *
- * Only used for the **explicit slug-override** path of
- * `WorkspaceStore.create` (a caller passing `slug` deliberately). The default,
- * no-slug create path produces an opaque id via `generateWorkspaceId` —
- * the name is NOT derived into the id. See `generateWorkspaceId` for why.
- */
-export function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_")
-    .replace(/[^a-z0-9_]/g, "");
 }
 
 /**
@@ -258,38 +242,24 @@ export class WorkspaceStore {
   }
 
   /**
-   * Resolve the id for a new workspace. Two paths:
-   *   1. Explicit `slug` supplied → `ws_<slug>`. Deliberate caller intent:
-   *      an operator or test that wants a chosen id. Validated against
-   *      WORKSPACE_ID_RE.
-   *   2. No `slug` → opaque, name-independent id via
-   *      `generateUniqueWorkspaceId`. The name never lands in the id, so a
-   *      later rename leaves the id / dir / URL untouched.
-   */
-  private async resolveNewWorkspaceId(slug: string | undefined): Promise<string> {
-    if (slug !== undefined) {
-      const id = `ws_${slug}`;
-      if (!WORKSPACE_ID_RE.test(id)) {
-        throw new Error(`Invalid workspace ID format: "${id}"`);
-      }
-      return id;
-    }
-    return this.generateUniqueWorkspaceId();
-  }
-
-  /**
    * Generate an opaque, collision-free workspace id.
    *
    * 64 bits of entropy makes a collision astronomically unlikely; the
    * bounded retry is defense-in-depth so the rare case self-heals instead
-   * of surfacing a confusing conflict to the operator. The generator's
-   * alphabet is guaranteed to satisfy WORKSPACE_ID_RE, so there's no
-   * per-iteration revalidation.
+   * of surfacing a confusing conflict to the operator. Every candidate is
+   * asserted against GENERATED_WORKSPACE_ID_RE before it is used, so a
+   * generator that drifts from the opaque form throws here rather than
+   * minting an id of a shape the loader would have to keep accepting.
    */
   private async generateUniqueWorkspaceId(): Promise<string> {
     const MAX_ID_ATTEMPTS = 5;
     for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
       const candidate = generateWorkspaceId();
+      if (!GENERATED_WORKSPACE_ID_RE.test(candidate)) {
+        throw new Error(
+          `[workspace-store] create: generated workspace id "${candidate}" does not match ${GENERATED_WORKSPACE_ID_RE}`,
+        );
+      }
       if (!(await this.get(candidate))) return candidate;
     }
     throw new Error(
@@ -297,9 +267,14 @@ export class WorkspaceStore {
     );
   }
 
+  /**
+   * Create a workspace. Its id is always generated (`ws_<16-hex>`, see
+   * `generateWorkspaceId`); no caller chooses it, so no id can encode a name,
+   * a user, or a tenant, and every id the store mints has the one shape the
+   * loading pattern will eventually be narrowed to.
+   */
   async create(
     name: string,
-    slug?: string,
     opts?: {
       /** Short human-readable description; defaults to `null`. */
       about?: string | null;
@@ -310,14 +285,12 @@ export class WorkspaceStore {
       members?: WorkspaceMember[];
     },
   ): Promise<Workspace> {
-    const id = await this.resolveNewWorkspaceId(slug);
+    const id = await this.generateUniqueWorkspaceId();
 
     const members = opts?.members ?? [];
 
-    // Id collision detection. For the explicit-slug path this is the
-    // only collision guard (two `create(name, "team_a")` calls conflict).
-    // For the opaque path `resolveNewWorkspaceId` already retried past
-    // collisions, so this is a redundant-but-cheap final assertion.
+    // `generateUniqueWorkspaceId` already retried past collisions; this is
+    // a cheap final assertion against a create racing in between.
     const existing = await this.get(id);
     if (existing) {
       throw new WorkspaceConflictError(id);
@@ -409,7 +382,8 @@ export class WorkspaceStore {
    * Returns `false` (idempotent no-op) when no such workspace dir exists.
    *
    * `archiveSuffix` disambiguates a same-id re-archive — rare, since new ids
-   * are random; an explicit-slug workspace re-created after a delete. When
+   * are random; it takes a record with the same id placed on disk again
+   * after a delete (a restore, or a test fixture). When
    * `archived/<wsId>/` is already occupied the suffix is appended
    * (`archived/<wsId>-<suffix>/`); absent a suffix the store probes a
    * deterministic incrementing counter (`-1`, `-2`, …). The path carries

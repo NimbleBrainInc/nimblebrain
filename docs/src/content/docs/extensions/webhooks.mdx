@@ -37,7 +37,7 @@ from metadata the operator published.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `vendor` | `string` | Yes | Slug for the vendor, lowercase alphanumeric with internal hyphens. One entry per vendor; a duplicate is dropped. |
-| `route` | `string` | Yes | Absolute path **on your own server** that deliveries are forwarded to. Must stay on your origin: no `//host`, no `..`, no backslash, no fragment, no scheme. |
+| `route` | `string` | Yes | Absolute path **on your own server** that deliveries are forwarded to. Must stay on your origin: no `//host`, no `..`, no backslash, no fragment, no scheme. May not be your MCP endpoint's path or a path under it: the forward carries the workspace's credential, so a route there would let anyone holding the URL call your tools. |
 | `register_tool` | `string` | Yes | A tool on your server that the host calls with `{ vendor, url }`, both strings, to hand you the minted URL. |
 | `description` | `string` | No | What the stream carries. Shown to operators; the host never acts on it. |
 | `header_renames` | `object` | No | `{ from: to }` header renames applied before the forward. See [signature headers](#signature-headers) below. |

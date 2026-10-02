@@ -125,8 +125,8 @@ describe("conversation access after the owner is removed from its workspace", ()
 
     // Two shared workspaces; Alice is admin of both.
     const wsStore = runtime.getWorkspaceStore();
-    const a = await wsStore.create("Shared A", "shared_a");
-    const b = await wsStore.create("Shared B", "shared_b");
+    const a = await wsStore.create("Shared A");
+    const b = await wsStore.create("Shared B");
     sharedA = a.id;
     sharedB = b.id;
     await wsStore.addMember(sharedA, ALICE.id, "admin");

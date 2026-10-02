@@ -34,6 +34,7 @@ import type { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "./dev-provider.ts";
 import { createEchoModel, type EchoModelOptions } from "./echo-model.ts";
 import { namespacedToolName } from "./namespaced-tool-name.ts";
+import { seedWorkspace } from "./test-workspace.ts";
 
 // ── Public option / handle shapes ──────────────────────────────────
 
@@ -50,8 +51,8 @@ export interface TwoWorkspaceFixtureOptions {
    */
   identity?: UserIdentity;
   /**
-   * Shared workspace id. Defaults to `ws_helix`. Must be a valid `ws_*`
-   * id; `WorkspaceStore.create` re-prefixes the slug.
+   * Shared workspace id. Defaults to `ws_helix`. Must satisfy the loading
+   * pattern; the workspace is seeded with it as an existing workspace.
    */
   sharedWorkspaceId?: string;
   /**
@@ -271,8 +272,9 @@ function buildCounterSource(
 
 /**
  * Provision the shared workspace and add `identity` as an admin member.
- * The shared workspace is created via the public `WorkspaceStore` API so
- * the fixture matches the production code path (membership + invariants).
+ * The workspace is seeded with its fixed id as an existing workspace
+ * (`seedWorkspace`), since `WorkspaceStore.create` only mints generated
+ * ids; membership goes through the public `addMember`.
  */
 async function provisionSharedWorkspace(
   store: WorkspaceStore,
@@ -285,10 +287,9 @@ async function provisionSharedWorkspace(
       `[two-workspace-fixture] shared workspace id must start with "ws_"; got "${wsId}"`,
     );
   }
-  const slug = wsId.slice(3);
   const existing = await store.get(wsId);
   if (!existing) {
-    await store.create(name, slug);
+    await seedWorkspace(store, wsId, { name });
   }
   await store.addMember(wsId, userId, "admin");
 }
@@ -345,7 +346,7 @@ export async function createTwoWorkspaceFixture(
   // request that names none runs in (`defaultWorkspaceFor`).
   const wsStore = runtime.getWorkspaceStore();
   const personalWorkspaceName = `${identity.displayName}'s workspace`;
-  const personalWorkspace = await wsStore.create(personalWorkspaceName, undefined, {
+  const personalWorkspace = await wsStore.create(personalWorkspaceName, {
     members: [{ userId: identity.id, role: "admin" }],
   });
   await provisionSharedWorkspace(wsStore, sharedWorkspaceId, sharedWorkspaceName, identity.id);

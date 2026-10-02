@@ -33,6 +33,7 @@ import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-proce
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 // ── In-process counter source ─────────────────────────────────────
 
@@ -137,18 +138,18 @@ beforeAll(async () => {
 
   // Shared workspace + dev membership.
   const wsStore = runtime.getWorkspaceStore();
-  await wsStore.create("Helix", SHARED_WS_ID.slice(3));
+  await seedWorkspace(wsStore, SHARED_WS_ID, { name: "Helix" });
   await wsStore.addMember(SHARED_WS_ID, DEV_IDENTITY.id, "admin");
 
   // A workspace the dev identity alone belongs to.
-  const ownWs = await wsStore.create("Dev's workspace", undefined, {
+  const ownWs = await wsStore.create("Dev's workspace", {
     members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
   });
   ownWsId = ownWs.id;
 
   // Stranger workspace — exists, has a source, but the dev identity is NOT a
   // member. Membership is deliberately not granted.
-  await wsStore.create("Stranger", STRANGER_WS_ID.slice(3));
+  await seedWorkspace(wsStore, STRANGER_WS_ID, { name: "Stranger" });
 
   // Per-workspace registries + counter sources.
   const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);

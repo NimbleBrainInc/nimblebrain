@@ -75,7 +75,7 @@ describe("executeTask requires current membership of the automation's provenance
 
   it("does not gate a sole member's task, and refuses a task naming no workspace", async () => {
     const runtime = await startRuntime("own");
-    const own = await runtime.getWorkspaceStore().create("Own", undefined, {
+    const own = await runtime.getWorkspaceStore().create("Own", {
       members: [{ userId: OWNER, role: "admin" }],
     });
     const ownRun = await runtime.executeTask({

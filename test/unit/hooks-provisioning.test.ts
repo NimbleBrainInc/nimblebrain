@@ -222,6 +222,7 @@ describe("provisionHooks", () => {
         },
         wsId: "ws_outbound",
         connector: "acme-mcp",
+        mcpUrl: "https://acme.internal/mcp",
         declarations: [DECL],
         port: {
           tools: async () => [tool()],
@@ -312,5 +313,18 @@ describe("provisionHooks", () => {
     expect(h.registrations[0]?.deliveryId).toBe("an-existing-delivery-id");
     expect(h.registrations[0]?.kid).toBe("hk_live");
     expect(h.handed[0]?.url).toBe(buildHookUrl("an-existing-delivery-id"));
+  });
+
+  test("refuses a route that names the MCP endpoint, and mints nothing", async () => {
+    // The forward would carry the workspace's credential to the endpoint, so no
+    // URL may exist for this stream, not even one the door would later refuse.
+    const h = harness();
+    const ok = { ...DECL, vendor: "other", route: "/ingest/other" };
+    h.opts.declarations = [ok, { ...DECL, route: "/mcp/" }];
+
+    await expect(provisionHooks(h.opts)).rejects.toThrow(HookContractError);
+    await expect(provisionHooks(h.opts)).rejects.toThrow(/"\/mcp\/".*MCP endpoint/);
+    expect(h.registrations).toHaveLength(0);
+    expect(h.handed).toHaveLength(0);
   });
 });

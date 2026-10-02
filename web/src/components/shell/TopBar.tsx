@@ -55,12 +55,14 @@ export function TopBar() {
             </button>
           </Tooltip>
         )}
-        <div
+        {/* The page's heading: pages that lean on the bar for their name carry
+            none of their own. */}
+        <h1
           data-testid="top-bar-title"
           className="min-w-0 flex-1 truncate font-heading text-base font-medium text-foreground"
         >
           {title}
-        </div>
+        </h1>
         {pathname.startsWith("/w/") && <ChatToggle />}
       </header>
     </TooltipProvider>

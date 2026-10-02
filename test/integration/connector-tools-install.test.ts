@@ -18,6 +18,7 @@ import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
  * Integration coverage for T010's `manage_connectors.install` contract:
@@ -84,9 +85,9 @@ async function buildHarness(
   // Two workspaces, ADMIN admin of both:
   //   - shared — ADMIN plus (conceptually) others
   //   - own — ADMIN alone, the kind provisioning gives a new user
-  await workspaceStore.create("Helix", "helix");
+  await seedWorkspace(workspaceStore, sharedWsId, { name: "Helix" });
   await workspaceStore.addMember(sharedWsId, ADMIN.id, "admin");
-  const ownWs = await workspaceStore.create("Admin's workspace", undefined, {
+  const ownWs = await workspaceStore.create("Admin's workspace", {
     members: [{ userId: ADMIN.id, role: "admin" }],
   });
   const personalWsId = ownWs.id;

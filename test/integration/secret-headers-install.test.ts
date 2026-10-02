@@ -46,6 +46,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const CATALOG_DIR = join(import.meta.dir, "..", "fixtures", "connectors-secret-headers");
 const ENTRY_ID = "com.acme/db-query";
@@ -230,12 +231,14 @@ beforeEach(async () => {
   registerStubMintedProvider();
 
   workspaceStore = new WorkspaceStore(workDir);
-  for (const [name, slug] of [
-    ["Tenant A", "tenanta"],
-    ["Tenant B", "tenantb"],
+  for (const [name, id] of [
+    ["Tenant A", "ws_tenanta"],
+    ["Tenant B", "ws_tenantb"],
   ] as const) {
-    await workspaceStore.create(name, slug);
-    await workspaceStore.addMember(`ws_${slug}`, ADMIN.id, "admin");
+    await seedWorkspace(workspaceStore, id, {
+      name,
+      members: [{ userId: ADMIN.id, role: "admin" }],
+    });
   }
 
   originalFetch = globalThis.fetch;

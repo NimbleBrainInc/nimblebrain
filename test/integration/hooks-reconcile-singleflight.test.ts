@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { HookContractError } from "../../src/hooks/provisioning.ts";
 import { ensureHooks, type HookReconcileDeps } from "../../src/hooks/reconcile.ts";
 import { listRegistrations } from "../../src/hooks/registrations.ts";
 import type { HookIdentity } from "../../src/hooks/token.ts";
@@ -71,6 +72,13 @@ beforeEach(async () => {
   ({ workDir, cleanup } = makeTestWorkDir("hooks-singleflight"));
   store = new WorkspaceStore(workDir);
   wsId = (await store.create("Reconcile Test")).id;
+  // Installed, because the reconcile reads the connector's MCP endpoint from its ref.
+  await store.update(wsId, {
+    connectors: [CONNECTOR, "other-mcp"].map((serverName) => ({
+      url: `https://${serverName}.internal/mcp`,
+      serverName,
+    })),
+  });
   registered = [];
 });
 
@@ -207,6 +215,17 @@ describe("a manifest that breaks the hook contract", () => {
       }),
     });
     await expect(ensureHooks(deps, wsId, CONNECTOR)).rejects.toThrow(/set_webhook_url/);
+    expect(registered).toHaveLength(0);
+    expect(listRegistrations((await store.get(wsId)) ?? {})).toEqual([]);
+  });
+
+  test("refuses a route under the installed connector's MCP endpoint", async () => {
+    // The endpoint comes from the installed ref (`.../mcp`), not the declaration,
+    // so this is the wiring between the workspace record and the check.
+    const deps = makeDeps({
+      declarationsFor: async () => [{ ...DECL, route: "/mcp/x" }],
+    });
+    await expect(ensureHooks(deps, wsId, CONNECTOR)).rejects.toThrow(HookContractError);
     expect(registered).toHaveLength(0);
     expect(listRegistrations((await store.get(wsId)) ?? {})).toEqual([]);
   });

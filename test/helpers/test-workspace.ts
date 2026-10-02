@@ -2,7 +2,15 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
+import { writeJsonAtomic } from "../../src/util/atomic-json.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
+import { scaffoldWorkspace } from "../../src/workspace/scaffold.ts";
+import type { Workspace, WorkspaceMember } from "../../src/workspace/types.ts";
+import { WORKSPACE_ID_RE } from "../../src/workspace/workspace-id-pattern.ts";
+import {
+  WorkspaceConflictError,
+  type WorkspaceStore,
+} from "../../src/workspace/workspace-store.ts";
 
 /**
  * Default workspace ID for integration tests.
@@ -32,6 +40,45 @@ export function makeTestWorkspaceContext(
 }
 
 /**
+ * Place a workspace with a chosen id on disk, as one that already exists.
+ *
+ * `WorkspaceStore.create` only mints generated ids, so a fixture that needs a
+ * stable id — a constant shared across a file, a tool name built from it —
+ * seeds the record the store loads instead: `workspace.json` plus the scaffold
+ * `create` lays down. This is the load path, the one existing workspaces take
+ * at boot, so the id must satisfy the loading pattern (`WORKSPACE_ID_RE`), not
+ * the generated one. Members are seated through `addMember`, so membership-
+ * change subscribers fire as they would for a create.
+ *
+ * Throws `WorkspaceConflictError` when the id is taken, like `create`.
+ */
+export async function seedWorkspace(
+  store: WorkspaceStore,
+  id: string,
+  opts: { name?: string; about?: string | null; members?: readonly WorkspaceMember[] } = {},
+): Promise<Workspace> {
+  if (!WORKSPACE_ID_RE.test(id)) throw new Error(`seedWorkspace: invalid workspace id "${id}"`);
+  if (await store.get(id)) throw new WorkspaceConflictError(id);
+  const now = new Date().toISOString();
+  const record: Workspace = {
+    id,
+    name: opts.name ?? id,
+    members: [],
+    connectors: [],
+    createdAt: now,
+    updatedAt: now,
+    about: opts.about ?? null,
+  };
+  const dir = join(store.getWorkspacesDir(), id);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  await writeJsonAtomic(join(dir, "workspace.json"), record);
+  await scaffoldWorkspace(dir);
+  let ws = record;
+  for (const m of opts.members ?? []) ws = await store.addMember(id, m.userId, m.role);
+  return ws;
+}
+
+/**
  * Provision a workspace for integration tests.
  * Creates the workspace in the store, seats `memberIds` as admins, and
  * ensures a registry exists. The default seats the dev user (usr_default), the
@@ -50,10 +97,10 @@ export async function provisionTestWorkspace(
   const wsStore = runtime.getWorkspaceStore();
   const existing = await wsStore.get(wsId);
   if (!existing) {
-    // Strip the ws_ prefix to get the slug — WorkspaceStore.create prefixes it back
-    const slug = wsId.startsWith("ws_") ? wsId.slice(3) : wsId;
-    const ws = await wsStore.create(name, slug);
-    for (const userId of memberIds) await wsStore.addMember(ws.id, userId, "admin");
+    await seedWorkspace(wsStore, wsId, {
+      name,
+      members: memberIds.map((userId) => ({ userId, role: "admin" as const })),
+    });
   }
   await runtime.ensureWorkspaceRegistry(wsId);
   return wsId;

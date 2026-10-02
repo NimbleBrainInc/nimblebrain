@@ -386,8 +386,8 @@ jobs:
           tags: ${{ steps.ecr.outputs.registry }}/nimblebrain/nimblebrain-web:${{ steps.tag.outputs.sha }}
 
   # Roll the staging "edge" channel onto this build. Fires a single
-  # repository_dispatch into the private deploy-config repo, whose bump workflow
-  # rewrites the edge image tag in git; Argo then auto-syncs every staging tenant.
+  # repository_dispatch into the private deploy-config repo, whose staging
+  # reconciler writes the edge image tag in git; Argo then auto-syncs every staging tenant.
   # GitOps stays intact — the image ref is recorded in git, not pushed to the
   # cluster from here. Production is NOT touched (it promotes deliberately by tag).
   #

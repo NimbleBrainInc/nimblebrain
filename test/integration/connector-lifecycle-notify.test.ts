@@ -30,6 +30,7 @@ import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
  * The kernel's two lifecycle calls, driven through the install and uninstall
@@ -121,7 +122,7 @@ async function buildHarness(
   const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
   const workspaceRegistry = new ToolRegistry();
 
-  await workspaceStore.create("Helix", "helix");
+  await seedWorkspace(workspaceStore, SHARED_WS, { name: "Helix" });
   await workspaceStore.addMember(SHARED_WS, ADMIN.id, "admin");
 
   const calls: { tool: string; input: Record<string, unknown> }[] = [];
@@ -326,6 +327,10 @@ describe("uninstall", () => {
 describe("the two reconciles racing a fresh install", () => {
   test("hooks coalesce into one mint; the lifecycle calls do not coalesce at all", async () => {
     h = await buildHarness({ hooks: true });
+    // Installed, because the hook reconcile reads the connector's MCP endpoint from its ref.
+    await new WorkspaceStore(h.workDir).update(SHARED_WS, {
+      connectors: [{ url: "https://granola.internal/mcp", serverName: CONNECTOR }],
+    });
 
     // The connection-running observer's shape and the install handler's shape,
     // started together — the exact overlap `eagerStartRemoteSource` produces.

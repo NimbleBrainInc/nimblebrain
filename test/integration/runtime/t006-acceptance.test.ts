@@ -10,7 +10,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
-
+import { seedWorkspace } from "../../helpers/test-workspace.ts";
 import {
   createTwoWorkspaceFixture,
   type TwoWorkspaceFixture,
@@ -113,7 +113,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
     // in `test/unit/orchestrator/route-error-mapping.test.ts`.
     fixture = await createTwoWorkspaceFixture();
     const wsStore = fixture.runtime.getWorkspaceStore();
-    const stranger = await wsStore.create("Stranger Workspace", "stranger");
+    const stranger = await wsStore.create("Stranger Workspace");
     await fixture.cleanup();
 
     // Re-fixture with a scripted model targeting the stranger workspace.
@@ -134,7 +134,9 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
     // The second fixture create()s a fresh workspace store under a new
     // temp workDir; ensure the stranger workspace exists in the live
     // fixture's store too (same id).
-    await fixture.runtime.getWorkspaceStore().create("Stranger Workspace", stranger.id.slice(3));
+    await seedWorkspace(fixture.runtime.getWorkspaceStore(), stranger.id, {
+      name: "Stranger Workspace",
+    });
 
     const result = await fixture.runtime.chat(
       fixture.buildChatRequest({ message: "trigger workspace_access_denied" }),

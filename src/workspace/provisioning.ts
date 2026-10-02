@@ -56,7 +56,7 @@ async function provision(
   const memberships = await store.getWorkspacesForUser(identity.id);
   if (memberships.length > 0) return memberships;
 
-  const workspace = await store.create(provisionedWorkspaceName(identity.displayName), undefined, {
+  const workspace = await store.create(provisionedWorkspaceName(identity.displayName), {
     members: [{ userId: identity.id, role: "admin" }],
   });
   if (users) {

@@ -1,18 +1,20 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, statSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseNamespacedToolName } from "../../../src/tools/namespace.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
-import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
+import {
+  GENERATED_WORKSPACE_ID_RE,
+  WORKSPACE_ID_RE,
+} from "../../../src/workspace/workspace-id-pattern.ts";
 import {
   generateWorkspaceId,
   MemberConflictError,
-  slugify,
-  WorkspaceConflictError,
   WorkspaceStore,
 } from "../../../src/workspace/workspace-store.ts";
+import { seedWorkspace } from "../../helpers/test-workspace.ts";
 
 let workDir: string;
 let store: WorkspaceStore;
@@ -58,22 +60,34 @@ describe("generateWorkspaceId", () => {
   });
 });
 
-// ── Slugification ──────────────────────────────────────────────────
+// ── Id patterns ────────────────────────────────────────────────────
 
-// `slugify` is retained for the explicit-slug-override path of `create`.
-// The default, no-slug create path produces an OPAQUE id (see
-// `generateWorkspaceId` tests above) — the name is not derived into the id.
-describe("slugify", () => {
-  test("converts spaces to underscores and lowercases", () => {
-    expect(slugify("Engineering Team")).toBe("engineering_team");
+describe("GENERATED_WORKSPACE_ID_RE", () => {
+  test("accepts exactly ws_ and 16 lowercase hex chars", () => {
+    expect(GENERATED_WORKSPACE_ID_RE.test("ws_3f9a1c7e0b2d4856")).toBe(true);
+    for (const id of [
+      "ws_3F9A1C7E0B2D4856", // case-sensitive
+      "ws_3f9a1c7e0b2d485", // 15 chars
+      "ws_3f9a1c7e0b2d48567", // 17 chars
+      "ws_3f9a1c7e0b2d485g", // not hex
+      "ws_acme_corp",
+      "ws_user_usr_alice",
+    ]) {
+      expect(GENERATED_WORKSPACE_ID_RE.test(id)).toBe(false);
+    }
   });
 
-  test("converts hyphens to underscores", () => {
-    expect(slugify("my-workspace")).toBe("my_workspace");
+  test("every generated id also satisfies the loading pattern", () => {
+    for (let i = 0; i < 100; i++) {
+      const id = generateWorkspaceId();
+      expect(GENERATED_WORKSPACE_ID_RE.test(id)).toBe(true);
+      expect(WORKSPACE_ID_RE.test(id)).toBe(true);
+    }
   });
 
-  test("strips non-alphanumeric characters", () => {
-    expect(slugify("Hello World! #1")).toBe("hello_world_1");
+  test("the loading pattern still accepts the legacy forms", () => {
+    expect(WORKSPACE_ID_RE.test("ws_acme_corp")).toBe(true);
+    expect(WORKSPACE_ID_RE.test("ws_user_usr_alice")).toBe(true);
   });
 });
 
@@ -103,9 +117,54 @@ describe("WorkspaceStore CRUD", () => {
     expect(a.name).toBe(b.name);
   });
 
-  test("create with explicit slug uses ws_<slug> (deliberate-override path)", async () => {
-    const ws = await store.create("My Workspace", "custom_slug");
-    expect(ws.id).toBe("ws_custom_slug");
+  test("every created id matches the generated pattern", async () => {
+    for (let i = 0; i < 20; i++) {
+      const ws = await store.create(`Workspace ${i}`);
+      expect(ws.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+    }
+  });
+
+  test("a stray slug argument cannot choose the id", async () => {
+    // `create` takes no id. A caller still passing one (a stale call site, an
+    // untyped script) lands it in the options slot, where it names nothing.
+    const createUntyped = store.create.bind(store) as (...args: unknown[]) => Promise<Workspace>;
+    const ws = await createUntyped("My Workspace", "custom_slug");
+    expect(ws.id).toMatch(GENERATED_WORKSPACE_ID_RE);
+    expect(existsSync(join(workDir, "workspaces", "ws_custom_slug"))).toBe(false);
+  });
+
+  test("create refuses an id the generator mints off the generated pattern", async () => {
+    // Stands in for a future generator change that drifts from `ws_<16-hex>`.
+    const uuid = spyOn(crypto, "randomUUID").mockReturnValue(
+      "ABCDEF01-2345-6789-ABCD-EF0123456789",
+    );
+    try {
+      await expect(store.create("Drifted")).rejects.toThrow(/does not match/);
+    } finally {
+      uuid.mockRestore();
+    }
+    expect(await store.list()).toEqual([]);
+  });
+
+  test("a workspace already on disk with a legacy id still loads", async () => {
+    // Existing workspaces carry `ws_<slug>` and `ws_user_<id>` ids. `create`
+    // never mints them, but `get` and `list` must keep reading them.
+    await seedWorkspace(store, "ws_acme_corp", { name: "Acme" });
+    await seedWorkspace(store, "ws_user_usr_alice", {
+      name: "Alice",
+      members: [{ userId: "usr_alice", role: "admin" }],
+    });
+    expect((await store.get("ws_acme_corp"))?.name).toBe("Acme");
+    expect((await store.get("ws_user_usr_alice"))?.members).toEqual([
+      { userId: "usr_alice", role: "admin" },
+    ]);
+    expect((await store.list()).map((w) => w.id).sort()).toEqual([
+      "ws_acme_corp",
+      "ws_user_usr_alice",
+    ]);
+    expect((await store.getWorkspacesForUser("usr_alice")).map((w) => w.id)).toEqual([
+      "ws_user_usr_alice",
+    ]);
   });
 
   test("get returns workspace by ID", async () => {
@@ -176,11 +235,25 @@ describe("WorkspaceStore CRUD", () => {
     expect(result).toBe(false);
   });
 
-  test("duplicate explicit slug on create throws conflict error", async () => {
-    // Opaque ids never collide on name, so the conflict path is exercised
-    // via the explicit-slug override (two creates targeting the same id).
-    await store.create("First", "duplicate_slug");
-    await expect(store.create("Second", "duplicate_slug")).rejects.toThrow(WorkspaceConflictError);
+  test("create retries past an id that is already taken", async () => {
+    // Force the first candidate onto an existing workspace's id; the second
+    // candidate is fresh, so create lands there instead of conflicting.
+    const taken = await store.create("First");
+    const takenHex = taken.id.slice(3);
+    const fresh = "0123456789abcdef";
+    const uuids = [
+      `${takenHex}-0000-0000-0000-000000000000`,
+      `${fresh}-0000-0000-0000-000000000000`,
+    ];
+    const uuid = spyOn(crypto, "randomUUID").mockImplementation(
+      () => uuids.shift() as ReturnType<typeof crypto.randomUUID>,
+    );
+    try {
+      const second = await store.create("Second");
+      expect(second.id).toBe(`ws_${fresh}`);
+    } finally {
+      uuid.mockRestore();
+    }
   });
 });
 
@@ -217,9 +290,9 @@ describe("WorkspaceStore member management", () => {
   });
 
   test("getWorkspacesForUser returns only workspaces containing that user", async () => {
-    const ws1 = await store.create("Team A", "team_a");
-    const ws2 = await store.create("Team B", "team_b");
-    await store.create("Team C", "team_c");
+    const ws1 = await store.create("Team A");
+    const ws2 = await store.create("Team B");
+    await store.create("Team C");
 
     await store.addMember(ws1.id, "usr_target", "member");
     await store.addMember(ws2.id, "usr_target", "admin");
@@ -228,8 +301,8 @@ describe("WorkspaceStore member management", () => {
     const result = await store.getWorkspacesForUser("usr_target");
     expect(result).toHaveLength(2);
     const ids = result.map((w) => w.id);
-    expect(ids).toContain("ws_team_a");
-    expect(ids).toContain("ws_team_b");
+    expect(ids).toContain(ws1.id);
+    expect(ids).toContain(ws2.id);
   });
 
   test("getWorkspacesForUser returns empty for unknown user", async () => {
@@ -307,8 +380,8 @@ describe("WorkspaceStore.create", () => {
   });
 
   test("persists about when supplied; defaults to null otherwise", async () => {
-    const a = await store.create("With About", "with_about", { about: "Hello" });
-    const b = await store.create("Without About", "without_about");
+    const a = await store.create("With About", { about: "Hello" });
+    const b = await store.create("Without About");
     expect(a.about).toBe("Hello");
     expect(b.about).toBeNull();
   });
@@ -338,13 +411,13 @@ describe("WorkspaceStore.update", () => {
   });
 
   test("allows patching about", async () => {
-    const ws = await store.create("Patch", "patch");
+    const ws = await store.create("Patch");
     const updated = await store.update(ws.id, { about: "new description" });
     expect(updated?.about).toBe("new description");
   });
 
   test("drops legacy isPersonal/ownerUserId from the record it writes", async () => {
-    const ws = await store.create("Mat's workspace", "legacy_own", {
+    const ws = await store.create("Mat's workspace", {
       members: [{ userId: "user_alice", role: "admin" }],
     });
     const file = join(workDir, "workspaces", ws.id, "workspace.json");
@@ -365,7 +438,7 @@ describe("WorkspaceStore.update", () => {
   });
 
   test("ignores a members patch (membership changes go through the member operations)", async () => {
-    const ws = await store.create("Team", undefined, {
+    const ws = await store.create("Team", {
       members: [{ userId: "user_alice", role: "admin" }],
     });
     // Cast past the Pick<> — the runtime must strip it too.
@@ -381,7 +454,7 @@ describe("WorkspaceStore.update", () => {
 
 describe("member operations apply to every workspace", () => {
   test("a workspace created for one user can gain, re-role, and lose members", async () => {
-    const ws = await store.create("Mat's workspace", undefined, {
+    const ws = await store.create("Mat's workspace", {
       members: [{ userId: "user_mat", role: "admin" }],
     });
 
@@ -405,7 +478,7 @@ describe("onMembershipChanged", () => {
     const seen: string[] = [];
     store.onMembershipChanged((userId) => seen.push(userId));
 
-    await store.create("Team", undefined, {
+    await store.create("Team", {
       members: [
         { userId: "usr_alice", role: "admin" },
         { userId: "usr_bob", role: "member" },
@@ -426,7 +499,7 @@ describe("onMembershipChanged", () => {
   });
 
   test("does not fire on addMember conflict (already a member)", async () => {
-    const ws = await store.create("Team", undefined, {
+    const ws = await store.create("Team", {
       members: [{ userId: "usr_alice", role: "admin" }],
     });
     const seen: string[] = [];
@@ -439,7 +512,7 @@ describe("onMembershipChanged", () => {
   });
 
   test("fires on removeMember only when the user was actually a member", async () => {
-    const ws = await store.create("Team", undefined, {
+    const ws = await store.create("Team", {
       members: [{ userId: "usr_alice", role: "admin" }],
     });
     const seen: string[] = [];
@@ -457,7 +530,7 @@ describe("onMembershipChanged", () => {
   });
 
   test("fires on delete for every former member", async () => {
-    const ws = await store.create("Team", undefined, {
+    const ws = await store.create("Team", {
       members: [
         { userId: "usr_alice", role: "admin" },
         { userId: "usr_bob", role: "member" },
@@ -472,7 +545,7 @@ describe("onMembershipChanged", () => {
   });
 
   test("does not fire on updateMemberRole (role changes don't affect set membership)", async () => {
-    const ws = await store.create("Team", undefined, {
+    const ws = await store.create("Team", {
       members: [{ userId: "usr_alice", role: "member" }],
     });
     const seen: string[] = [];

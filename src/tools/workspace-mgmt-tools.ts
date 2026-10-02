@@ -120,12 +120,8 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
         },
         name: {
           type: "string",
-          description: "Workspace name (required for create, optional for update).",
-        },
-        slug: {
-          type: "string",
           description:
-            "Optional explicit id slug (for create), producing id 'ws_<slug>'. Omit to get an opaque, name-independent id (the default and recommended path — the workspace name stays freely editable without changing the id or URL).",
+            "Workspace name (required for create, optional for update). The id of a created workspace is generated and never derived from the name.",
         },
         workspaceId: {
           type: "string",
@@ -160,6 +156,11 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
         },
       },
       required: ["action"],
+      // Closed so an argument the tool does not take is refused at the
+      // schema boundary rather than silently dropped. The id of a created
+      // workspace is always generated; a caller passing `slug` or `id`
+      // learns that from the error instead of from the id it gets back.
+      additionalProperties: false,
     },
     handler: async (input): Promise<ToolResult> => {
       const action = String(input.action);
@@ -253,11 +254,10 @@ async function handleCreate(
     };
   }
 
-  const slug = input.slug ? String(input.slug) : undefined;
   const connectors = input.connectors as Array<Record<string, unknown>> | undefined;
 
   try {
-    let workspace = await ctx.workspaceStore.create(name, slug);
+    let workspace = await ctx.workspaceStore.create(name);
 
     // Seat the creator as an `admin` member. `WorkspaceStore.create`
     // intentionally leaves `members: []`, so a freshly created shared

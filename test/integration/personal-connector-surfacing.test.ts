@@ -31,6 +31,7 @@ import {
   type FakeConnectorServer,
   startFakeConnectorServer,
 } from "../helpers/fake-connector-server.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nb-pc-surfacing-${Date.now()}`);
 const SHARED_WS = "ws_helix";
@@ -86,10 +87,10 @@ beforeAll(async () => {
   });
 
   const wsStore = runtime.getWorkspaceStore();
-  await wsStore.create("Helix", SHARED_WS.slice(3));
+  await seedWorkspace(wsStore, SHARED_WS, { name: "Helix" });
   await wsStore.addMember(SHARED_WS, DEV_IDENTITY.id, "admin");
   personalWs = (
-    await wsStore.create("Own", undefined, {
+    await wsStore.create("Own", {
       members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
     })
   ).id;
