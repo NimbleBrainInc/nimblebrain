@@ -52,6 +52,11 @@ Both are optional; declare either alone. Nothing else is in the block, and
 nothing else is planned: the host says *you were installed*, and what that means
 is yours.
 
+**Only the host calls them.** A lifecycle event means the host did something, so
+the tools you name are hidden from the model and from every other client,
+workspace admins included, and a direct call to one is refused with the
+structured error `host_only_tool`. Your other tools are unaffected.
+
 ## The two events
 
 | Field | Called | Arguments |

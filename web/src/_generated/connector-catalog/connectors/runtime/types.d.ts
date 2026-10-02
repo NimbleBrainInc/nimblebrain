@@ -313,6 +313,10 @@ export interface HostManifestMeta {
      * tenancy, release one, nothing at all — is the bundle's business. A block
      * describing what to provision would be a vendor taxonomy in the kernel.
      *
+     * The named tools are host-only: the kernel removes them from every listing
+     * and refuses a direct call on every door, for every caller (see
+     * `src/permissions/host-only-tools.ts`).
+     *
      * See `src/lifecycle/types.ts`.
      */
     lifecycle?: LifecycleDeclaration;

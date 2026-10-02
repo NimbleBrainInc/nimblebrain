@@ -1444,8 +1444,9 @@ async function executeWorkspaceToolCall(
 
 /**
  * The connector gates a workspace tool call passes before it runs: the
- * operator's permission policy, then the `admin_tools` role gate against the
- * workspace this URL is bound to and the session's identity.
+ * operator's permission policy, then the connector gate (`lifecycle` handlers,
+ * `admin_tools`) against the workspace this URL is bound to and the session's
+ * identity.
  */
 async function connectorGateDenial(
   runtime: Runtime,
@@ -1672,9 +1673,10 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  * routing would still reach a source whose listing failed (it reconnects on
  * demand), so letting it through would skip the check rather than the call.
  *
- * Returns the connector role gate's refusal when a tool is unlisted because
- * the caller is not admitted to it (`admin_tools`), so an app's call is refused
- * with the same `workspace_admin_required` every other door returns.
+ * Returns the connector gate's refusal when a tool is unlisted because the
+ * caller is not admitted to it (a `lifecycle` handler, or `admin_tools`), so an
+ * app's call is refused with the same `host_only_tool` or
+ * `workspace_admin_required` every other door returns.
  */
 async function assertAppMayCall(
   name: string,

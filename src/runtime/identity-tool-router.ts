@@ -267,8 +267,8 @@ export class IdentityToolRouter implements ToolRouter {
   }
 
   /**
-   * Connector role gate (`admin_tools`), beside the `disallow` gate. Only a
-   * workspace route is checked: a personal connector acts on its owner's own
+   * Connector gate (`lifecycle` handlers, `admin_tools`), beside the
+   * `disallow` gate. Only a workspace route is checked: a personal connector acts on its owner's own
    * account, and a kernel identity source keeps its own gates.
    *
    * The principal is the router's own `identityId` — the chat user, an

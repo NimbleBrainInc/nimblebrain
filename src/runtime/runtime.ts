@@ -19,7 +19,7 @@ import {
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
-import type { AdminToolsDeclaration, ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
+import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
 import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
@@ -140,6 +140,7 @@ import {
   isAdminToolAllowed,
   isDeclaredAdminTool,
 } from "../permissions/admin-tools.ts";
+import { hostOnlyToolDenial, isHostOnlyTool } from "../permissions/host-only-tools.ts";
 import {
   isDisallowed,
   type PermissionOwner,
@@ -4163,13 +4164,14 @@ export class Runtime {
 
   /**
    * `principal`'s admission to the connector tools of `wsId`: which declared
-   * `admin_tools` it may list and call.
+   * `admin_tools` it may list and call, minus every declared lifecycle handler,
+   * which only the host calls (`isHostOnlyTool`) and which no principal is
+   * admitted to, admins included.
    *
-   * A workspace admin is admitted to everything without reading the catalog, so
-   * the common admin path costs one workspace read. Anyone else pays one catalog
-   * read per listing and per connector tool call. No principal
-   * means no admin, so declared tools are refused, as `canWriteWorkspaceScoped`
-   * refuses.
+   * Every caller pays one catalog read (cached) per listing and per connector
+   * tool call. A workspace admin of a workspace whose catalog declares no
+   * lifecycle handler is admitted to everything. No principal means no admin,
+   * so declared admin tools are refused, as `canWriteWorkspaceScoped` refuses.
    *
    * Kernel identity sources and personal connectors are not in the workspace
    * registry and never reach this: a personal connector acts on its owner's
@@ -4179,24 +4181,35 @@ export class Runtime {
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
   ): Promise<ConnectorAdmission> {
-    const ws = principal ? await this._workspaceStore.get(wsId) : null;
-    if (canWriteWorkspaceScoped(principal, ws).allowed) return ADMIT_ALL;
-    const declared = await this.adminToolsByServer();
-    if (declared.size === 0) return ADMIT_ALL;
+    const [ws, declared] = await Promise.all([
+      principal ? this._workspaceStore.get(wsId) : null,
+      this.catalogGatesByServer(),
+    ]);
+    const isAdmin = canWriteWorkspaceScoped(principal, ws).allowed;
+    const gates = [...declared.values()];
+    const anyHostOnly = gates.some((g) => g.lifecycle !== undefined);
+    const anyAdminTools = gates.some((g) => g.adminTools !== undefined);
+    if (!anyHostOnly && (isAdmin || !anyAdminTools)) return ADMIT_ALL;
     return {
-      admits: (serverName, toolName) =>
-        isAdminToolAllowed(principal, ws, declared.get(serverName), toolName),
+      admits: (serverName, toolName) => {
+        const gate = declared.get(serverName);
+        if (isHostOnlyTool(gate?.lifecycle, toolName)) return false;
+        return isAdminToolAllowed(principal, ws, gate?.adminTools, toolName);
+      },
     };
   }
 
   /**
-   * The `workspace_admin_required` refusal for one call, or `null` when
-   * `principal` may make it. Every dispatch door runs this beside
-   * `assertToolAllowed` for a workspace connector tool, once per call.
+   * The refusal for one call, or `null` when `principal` may make it: the
+   * `host_only_tool` refusal for a declared lifecycle handler, whoever calls,
+   * else the `workspace_admin_required` refusal for a declared admin tool a
+   * non-admin calls. Every dispatch door runs this beside `assertToolAllowed`
+   * for a workspace connector tool, once per call.
    *
    * It is also where a call to a declared admin tool is audited, admitted or
    * refused: every door already passes through here, so the line cannot be
-   * forgotten by a door or a connector.
+   * forgotten by a door or a connector. A host-only refusal is not an admin
+   * tool call and writes no line.
    */
   async connectorAdminDenial(
     wsId: string,
@@ -4205,6 +4218,10 @@ export class Runtime {
     toolName: string,
     call: AdminToolCall,
   ): Promise<ToolResult | null> {
+    const declared = await this.catalogGatesByServer();
+    if (isHostOnlyTool(declared.get(serverName)?.lifecycle, toolName)) {
+      return hostOnlyToolDenial(serverName, toolName);
+    }
     const admission = await this.connectorAdmission(wsId, principal);
     const admitted = admission.admits(serverName, toolName);
     await this.auditAdminToolCall(wsId, principal, serverName, toolName, call, admitted);
@@ -4225,8 +4242,8 @@ export class Runtime {
     call: AdminToolCall,
     admitted: boolean,
   ): Promise<void> {
-    const declared = await this.adminToolsByServer();
-    if (!isDeclaredAdminTool(declared.get(serverName), toolName)) return;
+    const declared = await this.catalogGatesByServer();
+    if (!isDeclaredAdminTool(declared.get(serverName)?.adminTools, toolName)) return;
     const ctx = getRequestContext();
     this.defaultEvents.emit({
       type: "audit.admin_tool_call",
@@ -4290,18 +4307,27 @@ export class Runtime {
     });
   }
 
-  /** Declared `admin_tools` by installed source name, from the trusted catalog,
-   *  by the same slug rule {@link trustedCatalogEntryFor} uses. */
-  private async adminToolsByServer(): Promise<Map<string, AdminToolsDeclaration>> {
+  /** The gating declarations (`admin_tools`, `lifecycle`) by installed source
+   *  name, from the trusted catalog, by the same slug rule
+   *  {@link trustedCatalogEntryFor} uses. A connector that declares neither is
+   *  absent. */
+  private async catalogGatesByServer(): Promise<
+    Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>
+  > {
     const entries = await this.getConnectorCatalog().catalogEntries();
     const seen = new Set<string>();
-    const out = new Map<string, AdminToolsDeclaration>();
+    const out = new Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>();
     for (const e of entries) {
       // First entry per slug wins, declaring or not, as in `trustedCatalogEntryFor`.
       const slug = slugifyServerName(e.id);
       if (seen.has(slug)) continue;
       seen.add(slug);
-      if (e.adminTools) out.set(slug, e.adminTools);
+      if (e.adminTools || e.lifecycle) {
+        out.set(slug, {
+          ...(e.adminTools ? { adminTools: e.adminTools } : {}),
+          ...(e.lifecycle ? { lifecycle: e.lifecycle } : {}),
+        });
+      }
     }
     return out;
   }

@@ -250,7 +250,9 @@ export function adminToolDenial(serverName: string, toolName: string): ToolResul
  * - A name that is also a lifecycle handler or a hooks `register_tool` is one
  *   the kernel calls itself. Those calls reach the source directly and are not
  *   checked, so the kernel's call still works, but the declaration mixes two
- *   contracts and is worth a look.
+ *   contracts and is worth a look. A lifecycle handler is host-only
+ *   (`./host-only-tools.ts`) and refused to everyone, so `admin_tools` adds
+ *   nothing to it.
  *
  * `tools` is the source's advertised list, or `undefined` when the source is
  * not running yet; the unadvertised check is skipped then rather than
@@ -275,11 +277,11 @@ export function adminToolsContractWarnings(opts: {
   const kernelCalled = kernelCalledTools(opts.lifecycle, opts.hooks);
   const warnings: string[] = [];
   for (const name of adminTools) {
-    const role = kernelCalled.get(name);
-    if (!role) continue;
+    const called = kernelCalled.get(name);
+    if (!called) continue;
     warnings.push(
-      `Connector "${connector}" declares "${name}" in admin_tools and as its ${role}. ` +
-        `The runtime's own call is not checked; a member calling it directly is refused.`,
+      `Connector "${connector}" declares "${name}" in admin_tools and as its ${called.role}. ` +
+        `The runtime's own call is not checked; ${called.direct}`,
     );
   }
   if (!tools || tools.length === 0) return warnings;
@@ -296,18 +298,28 @@ export function adminToolsContractWarnings(opts: {
 }
 
 /** The tools the kernel itself calls on a connector, each with the role it
- *  plays, for the overlap warning. */
+ *  plays and what a direct call to it meets, for the overlap warning. */
 function kernelCalledTools(
   lifecycle: LifecycleDeclaration | undefined,
   hooks: readonly HookDeclaration[] | undefined,
-): Map<string, string> {
-  const out = new Map<string, string>();
+): Map<string, { role: string; direct: string }> {
+  const out = new Map<string, { role: string; direct: string }>();
+  for (const decl of hooks ?? []) {
+    out.set(decl.register_tool, {
+      role: `hook "${decl.vendor}" register_tool`,
+      direct: "a member calling it directly is refused.",
+    });
+  }
+  // After hooks, so a name that is both is reported as the stricter role.
   for (const event of LIFECYCLE_EVENTS) {
     const name = lifecycle?.[event];
-    if (name) out.set(name, `lifecycle "${event}"`);
-  }
-  for (const decl of hooks ?? []) {
-    out.set(decl.register_tool, `hook "${decl.vendor}" register_tool`);
+    if (name) {
+      out.set(name, {
+        role: `lifecycle "${event}"`,
+        direct:
+          "a lifecycle handler is refused to every direct caller, so admin_tools adds nothing.",
+      });
+    }
   }
   return out;
 }
