@@ -70,7 +70,7 @@ describe("workspaceApps", () => {
 
   test("MAX_INLINE_APPS is a small positive cap", () => {
     expect(MAX_INLINE_APPS).toBeGreaterThan(0);
-    expect(MAX_INLINE_APPS).toBeLessThanOrEqual(6);
+    expect(MAX_INLINE_APPS).toBeLessThanOrEqual(10);
   });
 });
 

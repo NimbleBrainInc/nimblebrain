@@ -62,6 +62,7 @@ const { ShellProvider } = await import("../context/ShellContext");
 const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsContext");
 const { WorkspaceNav } = await import("../components/shell/WorkspaceNav");
 const { WorkspaceSwitcher } = await import("../components/shell/WorkspaceSwitcher");
+const { MAX_INLINE_APPS } = await import("../lib/workspace-apps");
 
 import type { InstalledConnector } from "../api/client";
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
@@ -346,20 +347,16 @@ describe("WorkspaceNav — app quick-list", () => {
       workspaces: [HELIX],
       activeId: "ws_helix",
       initialPath: "/w/helix/",
-      placements: [
-        appPlacement("collateral", { priority: 10 }),
-        appPlacement("salesforce", { priority: 20 }),
-        appPlacement("apollo", { priority: 30 }),
-        appPlacement("gong", { priority: 40 }),
-        appPlacement("knowledge", { priority: 50 }),
-      ],
+      placements: Array.from({ length: MAX_INLINE_APPS + 1 }, (_, i) =>
+        appPlacement(`app-${i}`, { priority: (i + 1) * 10 }),
+      ),
     });
 
-    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(4);
+    expect(byTestId(mounted.container, "sidebar-workspace-app")).toHaveLength(MAX_INLINE_APPS);
 
     const viewAll = byTestId(mounted.container, "sidebar-workspace-view-all");
     expect(viewAll).toHaveLength(1);
-    expect(viewAll[0]?.textContent).toContain("View all 5 apps");
+    expect(viewAll[0]?.textContent).toContain(`View all ${MAX_INLINE_APPS + 1} apps`);
     expect(viewAll[0]?.getAttribute("href")).toBe("/w/helix/");
   });
 
@@ -638,17 +635,14 @@ describe("WorkspaceNav — connectors without a view", () => {
   });
 
   test("an app past the inline cap is still an app, not counted in the row", async () => {
+    const appNames = Array.from({ length: MAX_INLINE_APPS + 1 }, (_, i) => `app-${i}`);
     mounted = await mount({
       workspaces: [HELIX],
       activeId: "ws_helix",
       initialPath: "/w/helix/",
-      placements: ["collateral", "salesforce", "apollo", "gong", "knowledge"].map((name, i) =>
-        appPlacement(name, { priority: (i + 1) * 10 }),
-      ),
+      placements: appNames.map((name, i) => appPlacement(name, { priority: (i + 1) * 10 })),
       installed: [
-        ...["collateral", "salesforce", "apollo", "gong", "knowledge"].map((name) =>
-          installedConnector(name),
-        ),
+        ...appNames.map((name) => installedConnector(name)),
         installedConnector("gmail", "Gmail"),
       ],
     });

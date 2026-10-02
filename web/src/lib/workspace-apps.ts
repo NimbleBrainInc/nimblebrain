@@ -8,7 +8,7 @@ import { isIdentityApp } from "./identity-apps";
  * recency are future work; for now this is a simple priority-ordered
  * top-N.
  */
-export const MAX_INLINE_APPS = 4;
+export const MAX_INLINE_APPS = 10;
 
 /**
  * The app placements for the focused workspace, derived from the shell
