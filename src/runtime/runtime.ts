@@ -29,7 +29,11 @@ import {
   type ManagedConnectorRegistry,
 } from "../connectors/providers/registry.ts";
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
-import { catalogUiByServerName, withCatalogUi } from "../connectors/runtime/catalog-ui.ts";
+import {
+  catalogTitleByServerName,
+  catalogUiByServerName,
+  withCatalogUi,
+} from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
@@ -3261,12 +3265,31 @@ export class Runtime {
   async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
     const instances = this.getConnectorInstancesForWorkspace(workspaceId);
     const registry = this._workspaceRegistries.get(workspaceId);
+    const titles = await this.connectorTitles();
 
     const apps: PromptAppInfo[] = [];
     for (const instance of instances) {
-      apps.push(await this.buildAppInfo(instance, registry));
+      apps.push(await this.buildAppInfo(instance, registry, titles));
     }
     return apps;
+  }
+
+  /**
+   * Each installed connector's display name by server name: the trusted catalog
+   * entry's core `title ?? name`, by the same slug rule
+   * {@link trustedCatalogEntryFor} uses. A connector the catalog does not name
+   * is absent, and callers show its server name. A catalog read that fails
+   * yields no titles rather than failing the caller, which only displays them.
+   */
+  async connectorTitles(): Promise<ReadonlyMap<string, string>> {
+    try {
+      return catalogTitleByServerName(await this.getConnectorCatalog().catalogEntries());
+    } catch (err) {
+      log.warn("[runtime] connector titles unavailable; showing server names", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return new Map();
+    }
   }
 
   /**
@@ -3277,8 +3300,14 @@ export class Runtime {
   private async buildAppInfo(
     instance: ConnectorInstance,
     registry: ToolRegistry | undefined,
+    titles: ReadonlyMap<string, string>,
   ): Promise<PromptAppInfo> {
-    const ui: PromptAppInfo["ui"] = instance.ui ? { name: instance.ui.name } : null;
+    // "Has UI" means the shell renders it: a placement that survives the same
+    // check registration applies.
+    const ui: PromptAppInfo["ui"] =
+      sanitizePlacements(instance.ui?.placements).length > 0
+        ? { name: titles.get(instance.serverName) ?? instance.serverName }
+        : null;
 
     // Surface the MCP server's `initialize.instructions` (when set) so the
     // LLM sees per-connector guidance — typically a pointer to `skill://`

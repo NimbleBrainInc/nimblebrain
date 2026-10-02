@@ -1,6 +1,6 @@
 import type { ConnectorUiMeta, HostManifestMeta, PlacementDeclaration } from "./types.ts";
 
-/** Max length for a connector-authored display string (host `name`/`icon`, placement `label`/`icon`). */
+/** Max length for a connector-authored display string (placement `label`/`icon`). */
 const DISPLAY_STRING_MAX = 128;
 
 /**
@@ -8,23 +8,20 @@ const DISPLAY_STRING_MAX = 128;
  * The single source of truth for this projection — used by every install path
  * (the curated catalog and the fleet-connector `ServerDetail._meta`), so
  * "an MCP server is an MCP server" holds at the `_meta` interface. Returns
- * null unless a `name` is present (the host needs a label to surface anything).
+ * null unless the block declares at least one valid placement.
+ *
+ * The block's `name`, `icon` and `category` are not read. A connector's display
+ * name is its catalog entry's core `title ?? name`, and its icon the entry's
+ * core `icons`, where the MCP Registry `ServerDetail` puts them.
  */
 export function hostMetaToUiMeta(hostMeta: HostManifestMeta | undefined): ConnectorUiMeta | null {
   // `hostMeta` is an unchecked cast over registry JSON (`getNimbleBrainHostMeta`),
-  // so every field here is `unknown` in practice and only the schema-gated
-  // install path has validated it. Type-check before touching, exactly as
-  // `sanitizePlacementFields` does below — a truthy non-string `name` would
-  // otherwise throw out of catalog projection and take the whole catalog with it.
-  if (typeof hostMeta?.name !== "string" || hostMeta.name === "") return null;
-  const ui: ConnectorUiMeta = {
-    name: hostMeta.name.slice(0, DISPLAY_STRING_MAX),
-    icon: typeof hostMeta.icon === "string" ? hostMeta.icon.slice(0, DISPLAY_STRING_MAX) : "",
-  };
-  if (Array.isArray(hostMeta.placements) && hostMeta.placements.length > 0) {
-    ui.placements = hostMeta.placements;
-  }
-  return ui;
+  // so `placements` is `unknown` in practice; `sanitizePlacements` type-checks
+  // every field before touching it. The raw list is kept: it is re-sanitized
+  // where it registers.
+  const placements = hostMeta?.placements;
+  if (!Array.isArray(placements) || sanitizePlacements(placements).length === 0) return null;
+  return { placements };
 }
 
 /** Validate a placement's slot and `ui://` resourceUri; return its authority, or null if malformed. */

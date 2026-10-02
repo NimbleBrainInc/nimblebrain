@@ -43,8 +43,6 @@ async function seedFacetApp(runtime: Runtime): Promise<McpSource> {
     {
       version: "1.0.0",
       ui: {
-        name: "Facet App",
-        icon: "",
         placements: [
           { slot: "sidebar.apps", resourceUri: "ui://facet_app/main", route: "@acme/facet-app" },
         ],

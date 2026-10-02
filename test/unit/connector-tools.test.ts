@@ -1155,7 +1155,7 @@ describe("manage_connectors.get_installed", () => {
 
 describe("manage_connectors installed entry — displayName", () => {
   // Every surface shows the name the server resolved, so the rule lives here once:
-  // catalog name, else the connector's declared host name, else the server name.
+  // the catalog entry's name (its core `title ?? name`), else the server name.
   let h: Harness;
 
   beforeEach(async () => {
@@ -1175,15 +1175,18 @@ describe("manage_connectors installed entry — displayName", () => {
     return (one.structuredContent as { installed: { displayName?: string } }).installed.displayName;
   };
 
-  test("uses the name the connector declares for its host UI when no catalog entry names it", async () => {
+  test("ignores a host UI name stored on an installed ref", async () => {
+    // Installs made before the host block's `name` was deprecated persisted it
+    // in the ref's `ui` snapshot. Nothing reads it.
+    const ui = { name: "Spoofed", icon: "" } as never;
     await h.lifecycle.seedInstance(
       STUB_SERVER_NAME,
       STUB_URL,
-      { url: STUB_URL, serverName: STUB_SERVER_NAME, ui: { name: "IP Info", icon: "" } },
-      { manifestName: STUB_SERVER_NAME, version: "1.0.0", ui: { name: "IP Info", icon: "" } },
+      { url: STUB_URL, serverName: STUB_SERVER_NAME, ui },
+      { manifestName: STUB_SERVER_NAME, version: "1.0.0", ui },
       h.wsId,
     );
-    expect(await displayNameOf()).toBe("IP Info");
+    expect(await displayNameOf()).toBe(STUB_SERVER_NAME);
   });
 
   test("falls back to the server name when nothing names it", async () => {

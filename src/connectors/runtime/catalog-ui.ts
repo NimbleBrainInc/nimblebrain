@@ -1,5 +1,5 @@
 /**
- * An installed connector's host UI (name, icon, placements) comes from the
+ * An installed connector's host UI (its placements) comes from the
  * operator catalog at boot, not from the copy its install stored.
  *
  * Install copies the catalog entry's `ui` onto the persisted `ConnectorRef`, and
@@ -32,6 +32,23 @@ export function catalogUiByServerName(
   for (const e of entries) {
     const slug = slugifyServerName(e.id);
     if (!out.has(slug)) out.set(slug, e.ui ?? null);
+  }
+  return out;
+}
+
+/**
+ * Each catalog entry's display name (its core `title ?? name`, projected as
+ * `ConnectorCatalogEntry.name`) by the server name its install uses. First
+ * entry per slug wins. A connector no entry names has no title here; callers
+ * fall back to its server name.
+ */
+export function catalogTitleByServerName(
+  entries: readonly ConnectorCatalogEntry[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const e of entries) {
+    const slug = slugifyServerName(e.id);
+    if (!out.has(slug)) out.set(slug, e.name);
   }
   return out;
 }

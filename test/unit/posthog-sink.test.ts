@@ -170,7 +170,7 @@ describe("PostHogEventSink", () => {
       placements: null,
     };
     sink.emit(engineEvent("connector.installed", { ...installed, ui: null }));
-    sink.emit(engineEvent("connector.installed", { ...installed, ui: { name: "UI", icon: "" } }));
+    sink.emit(engineEvent("connector.installed", { ...installed, ui: { placements: [] } }));
 
     const installs = mock.events.filter((e) => e.event === "connector.installed");
     expect(installs).toHaveLength(2);

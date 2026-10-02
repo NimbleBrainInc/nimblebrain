@@ -897,7 +897,7 @@ async function buildInstalledEntry(
   const entry: InstalledEntry = {
     serverName: instance.serverName,
     connectorName: instance.connectorName,
-    displayName: cat?.name || instance.ui?.name || instance.serverName,
+    displayName: cat?.name || instance.serverName,
     disconnectable: deps.ctx.runtime.getLifecycle().isDisconnectable(instance.ref),
     version: instance.version,
     ...(handshakeVersion ? { handshakeVersion } : {}),

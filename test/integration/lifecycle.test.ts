@@ -266,7 +266,7 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
       {
         url: "https://ipinfo.example.com/mcp",
         serverName: "ipinfo",
-        ui: { name: "IPInfo", icon: "globe" },
+        ui: { placements: [{ slot: "sidebar.apps", resourceUri: "ui://ipinfo/main" }] },
       },
       undefined,
       "ws_test",
@@ -274,7 +274,7 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
 
     const instance = lifecycle.getInstance("ipinfo", "ws_test")!;
     expect(instance).toBeDefined();
-    expect(instance.ui?.name).toBe("IPInfo");
+    expect(instance.ui?.placements?.[0]?.resourceUri).toBe("ui://ipinfo/main");
     // No credential on the ref and no persisted tokens: the connector is
     // installed but not connected, and the seeded state says so.
     expect(instance.state).toBe("not_authenticated");

@@ -484,7 +484,7 @@ async function connectorDescriber(
   return (ref) => {
     const serverName = serverNameFromRef(ref) ?? ref.url;
     const entry = catalogEntryForRef(ref, byUrl, byId);
-    const name = entry?.name ?? ref.ui?.name ?? serverName;
+    const name = entry?.name ?? serverName;
     return { serverName, name, ...(entry?.iconUrl ? { iconUrl: entry.iconUrl } : {}) };
   };
 }

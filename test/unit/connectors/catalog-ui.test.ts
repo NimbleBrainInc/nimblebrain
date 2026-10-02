@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import {
+  catalogTitleByServerName,
   catalogUiByServerName,
   withCatalogUi,
 } from "../../../src/connectors/runtime/catalog-ui.ts";
@@ -15,8 +16,6 @@ const ID = "ai.example.outbound/mcp";
 const SN = slugifyServerName(ID);
 
 const atInstall: ConnectorUiMeta = {
-  name: "Outbound",
-  icon: "crosshair",
   placements: [{ slot: "sidebar.apps", resourceUri: "ui://outbound/main", route: "outbound" }],
 };
 const now: ConnectorUiMeta = {
@@ -74,5 +73,13 @@ describe("installed connectors take their host UI from the catalog at boot", () 
   it("matches by the install's slug rule, first entry per slug winning", () => {
     const map = catalogUiByServerName([entry(ID, now), entry(ID, atInstall)]);
     expect(map.get(SN)).toEqual(now);
+  });
+});
+
+describe("a connector's display name comes from its catalog entry", () => {
+  it("maps each entry's name by the server name its install uses, first entry winning", () => {
+    const first = { ...entry(ID), name: "Outbound" };
+    const second = { ...entry(ID), name: "Shadow" };
+    expect(catalogTitleByServerName([first, second])).toEqual(new Map([[SN, "Outbound"]]));
   });
 });

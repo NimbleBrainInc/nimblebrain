@@ -602,7 +602,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
       brokered: { provider: "composio", connectorId: GMAIL_ID },
-      ui: { name: "Gmail", icon: "", placements: [] },
+      ui: { placements: [] },
     };
     await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
 
@@ -625,8 +625,6 @@ describe("manage_connectors.install (composio-auth)", () => {
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
       ui: {
-        name: "Uncatalogued",
-        icon: "",
         placements: [{ slot: "settings", resourceUri: "ui://uncatalogued/settings" }],
       },
     };

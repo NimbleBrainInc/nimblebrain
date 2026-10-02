@@ -88,7 +88,7 @@ const connectorFields = {
 const connectorInstalled = engineEvent("connector.installed", {
   ...connectorFields,
   version: "1.2.3",
-  ui: { name: "Tasks", icon: "tasks" },
+  ui: { placements: [] },
   placements: null,
 });
 const connectorUninstalled = engineEvent("connector.uninstalled", connectorFields);

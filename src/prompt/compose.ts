@@ -173,7 +173,7 @@ const VOLATILE_KINDS: ReadonlySet<TracedLayerKind> = new Set([
  * record inert instead of throwing out of `composeSystemPrompt` on every turn.
  * Identity on strings, so the common path is unchanged.
  */
-function sanitizeLineField(value: string): string {
+export function sanitizeLineField(value: string): string {
   return (
     String(value)
       // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — stripping control chars is the security mitigation
@@ -854,9 +854,9 @@ function formatAppsSection(apps: PromptAppInfo[], hasProxiedTools?: boolean): st
   const lines = ["## Installed Apps"];
   for (const app of apps) {
     // Both names land on one `- ` bullet, so an unescaped newline in either
-    // forges a sibling entry. `ui.name` is connector-authored and is the one that
-    // can carry one; `app.name` is a slug unless an operator hand-sets
-    // `ref.serverName`. Sanitized together because the line is shared.
+    // forges a sibling entry. `ui.name` is the catalog entry's title, and
+    // `app.name` is a slug unless an operator hand-sets `ref.serverName`.
+    // Sanitized together because the line is shared.
     const uiLabel = app.ui ? `has UI: ${sanitizeLineField(app.ui.name)}` : "no UI";
     lines.push(`- ${sanitizeLineField(app.name)} (${uiLabel})`);
     if (app.description) {

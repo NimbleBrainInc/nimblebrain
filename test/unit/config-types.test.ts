@@ -107,11 +107,9 @@ describe("HostManifestMeta type", () => {
   it("matches manifest _meta structure", () => {
     const meta: HostManifestMeta = {
       host_version: "1.0",
-      name: "Tasks",
-      icon: "✓",
       primaryView: { resourceUri: "ui://tasks/board" },
     };
-    expect(meta.name).toBe("Tasks");
+    expect(meta.host_version).toBe("1.0");
     expect(meta.primaryView?.resourceUri).toBe("ui://tasks/board");
   });
 });

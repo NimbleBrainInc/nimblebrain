@@ -14,15 +14,18 @@
     },
     "name": {
       "type": "string",
-      "description": "Display name shown in the sidebar and app list."
+      "deprecated": true,
+      "description": "DEPRECATED and ignored. Accepted so existing catalogs load. A connector's display name is its catalog entry's core `title` (or `name`); a sidebar entry's label is its placement's own `label`."
     },
     "icon": {
       "type": "string",
-      "description": "Lucide icon name in kebab-case (e.g., \"database\", \"message-square\")."
+      "deprecated": true,
+      "description": "DEPRECATED and ignored. Accepted so existing catalogs load. A connector's icon is its catalog entry's core `icons`; a sidebar entry's icon is its placement's own `icon`."
     },
     "category": {
       "type": "string",
-      "description": "RESERVED — not currently consumed by the host (grouping is not wired to it). Free-form string, tolerated for back-compat; do not rely on it. Slated for removal — see nimblebrain#503."
+      "deprecated": true,
+      "description": "DEPRECATED and ignored. Accepted so existing catalogs load."
     },
     "placements": {
       "type": "array",

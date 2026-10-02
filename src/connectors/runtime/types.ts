@@ -42,10 +42,8 @@ export interface PlacementEntry extends PlacementDeclaration {
   wsId?: string;
 }
 
-/** UI metadata stored on a connector entry (from manifest at install time). */
+/** UI metadata stored on a connector entry (from the catalog's host block). */
 export interface ConnectorUiMeta {
-  name: string;
-  icon: string;
   placements?: PlacementDeclaration[];
 }
 
@@ -265,12 +263,9 @@ export interface HostManifestMeta {
    * is major 1.
    */
   host_version: string;
-  name?: string;
-  icon?: string;
-  /**
-   * RESERVED — not consumed by the host (grouping is not wired to it). Tolerated for back-compat; slated for removal (nimblebrain#503).
-   */
-  category?: string;
+  // `name`, `icon` and `category` are deprecated and ignored: the schema still
+  // accepts them so existing catalogs load, and nothing reads them. A
+  // connector's display identity is its catalog entry's core fields.
   placements?: PlacementDeclaration[];
   primaryView?: { resourceUri: string };
   /**
