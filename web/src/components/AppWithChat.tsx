@@ -32,6 +32,7 @@ import { useChatPanelContext } from "../context/ChatPanelContext";
 import { useFocusedApp } from "../context/FocusedAppContext";
 import { getSavedConversationId, setSavedConversationId } from "../lib/active-conversation-storage";
 import { useIsMobile } from "../lib/hooks/use-is-mobile";
+import { appTargetFrom } from "../lib/open-app";
 import { cn } from "../lib/utils";
 import type { AppContext, PlacementEntry } from "../types";
 import { SlotRenderer } from "./SlotRenderer";
@@ -123,6 +124,14 @@ export function AppWithChat({ placement }: AppWithChatProps) {
     return () => setFocusedApp(null);
   }, [appContext, setFocusedApp]);
 
+  // A view to open inside the app, carried by `openApp` in the router state.
+  // Keyed by the navigation, so asking for the same view again re-sends it.
+  const targetId = appTargetFrom(location.state);
+  const target = useMemo(
+    () => (targetId ? { id: targetId, key: location.key } : undefined),
+    [targetId, location.key],
+  );
+
   // The routed app's trail. Cleared on unmount, so the bar never shows a trail
   // the app on screen did not send; a new placement mounts a new AppWithChat.
   const handleLocation = useCallback(
@@ -177,6 +186,7 @@ export function AppWithChat({ placement }: AppWithChatProps) {
           className="w-full h-full"
           onChat={handleChat}
           onLocation={handleLocation}
+          target={target}
         />
       </div>
     </div>

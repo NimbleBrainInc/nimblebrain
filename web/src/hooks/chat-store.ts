@@ -240,6 +240,12 @@ interface ConversationSlice {
   /** First `subscribed` frame of a resume should trim a stale in-flight turn
    *  from disk history (the replay rebuilds it). */
   resumeOnSubscribe: boolean;
+  /** The open connection watches a turn this tab sent (`sendTurn`), not one it
+   *  re-attached to. Only such a turn announces finished tool calls. */
+  watchingOwnTurn: boolean;
+  /** Tool calls already announced to `onToolDone` listeners, so a replayed
+   *  `tool.done` never announces a call twice. */
+  announcedToolIds: Set<string>;
   /** A resume already refetched this transcript to try to complete a partial
    *  tail. The refetch is a bet that the server has since persisted the
    *  terminal event; if the tail comes back pending anyway, the bet lost and
@@ -462,6 +468,16 @@ export function isDraftKey(key: string): boolean {
 
 const MAX_SLICES = 30;
 
+/** A tool call that finished in a turn this tab sent, as `onToolDone` reports it. */
+export interface FinishedToolCall {
+  id: string;
+  /** The tool's wire name, e.g. `nb__open_app`. */
+  name: string;
+  ok: boolean;
+  /** The arguments the agent called it with. */
+  input: Record<string, unknown>;
+}
+
 export interface ChatStore {
   ensureSlice(key: string, opts?: { conversationId?: string | null }): void;
   getSnapshot(key: string): ChatSnapshot;
@@ -501,6 +517,12 @@ export interface ChatStore {
    *  {@link closeAllConnections}. */
   reattachStreaming(): void;
   sliceCount(): number;
+  /**
+   * Hear each tool call that finishes in a turn this tab sent and is watching
+   * live: never one from history, a resumed stream, or another tab. For host
+   * UI driven by the agent (`nb__open_app`). Returns the unsubscribe.
+   */
+  onToolDone(listener: (call: FinishedToolCall) => void): () => void;
 }
 
 export function createChatStore(): ChatStore {
@@ -509,6 +531,7 @@ export function createChatStore(): ChatStore {
   const listeners = new Map<string, Set<() => void>>();
   const draftListeners = new Map<string, Set<() => void>>();
   const activeCounts = new Map<string, number>();
+  const toolDoneListeners = new Set<(call: FinishedToolCall) => void>();
 
   // -- snapshot + notification --
 
@@ -609,6 +632,8 @@ export function createChatStore(): ChatStore {
       pendingEcho: false,
       cancelRequested: false,
       resumeOnSubscribe: false,
+      watchingOwnTurn: false,
+      announcedToolIds: new Set(),
       resumeRefetched: false,
       // A fresh draft is fully "loaded" (empty IS its full history); a slice
       // keyed by a real conversation id starts unhydrated until fetched.
@@ -814,6 +839,7 @@ export function createChatStore(): ChatStore {
   function openConnection(slice: ConversationSlice, conversationId: string, resume: boolean): void {
     closeConnection(slice);
     slice.resumeOnSubscribe = resume;
+    slice.watchingOwnTurn = !resume;
     // A fresh turn is a new bet: whatever stranded the previous tail says
     // nothing about this one, so the one-refetch allowance resets with it.
     if (!resume) slice.resumeRefetched = false;
@@ -1055,6 +1081,24 @@ export function createChatStore(): ChatStore {
     const anyRunning = slice.toolCalls.some((tc) => tc.status === "running");
     slice.streamingState = anyRunning ? "working" : "analyzing";
     flush(slice);
+    announceToolDone(slice, evt);
+  }
+
+  // A finished tool call reaches `onToolDone` listeners only from a turn this
+  // tab sent and is watching live, and only once. A conversation loaded from
+  // history never runs these reducers; one re-attached after a reload or from
+  // another tab is a resume, and a replayed frame repeats an announced id.
+  function announceToolDone(slice: ConversationSlice, evt: ToolDoneEvent): void {
+    if (!slice.watchingOwnTurn || slice.announcedToolIds.has(evt.id)) return;
+    slice.announcedToolIds.add(evt.id);
+    const tool = slice.toolCalls.find((tc) => tc.id === evt.id);
+    const done: FinishedToolCall = {
+      id: evt.id,
+      name: evt.name,
+      ok: evt.ok,
+      input: tool?.input ?? {},
+    };
+    for (const listener of toolDoneListeners) listener(done);
   }
 
   function handleLlmDone(slice: ConversationSlice, data: unknown): void {
@@ -1399,6 +1443,12 @@ export function createChatStore(): ChatStore {
 
   return {
     ensureSlice,
+    onToolDone(listener) {
+      toolDoneListeners.add(listener);
+      return () => {
+        toolDoneListeners.delete(listener);
+      };
+    },
     getSnapshot(key) {
       return byKey.get(key)?.snapshot ?? EMPTY_SNAPSHOT;
     },

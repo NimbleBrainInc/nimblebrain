@@ -41,6 +41,7 @@ import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
+import { type AppRouteState, isOpenAppCall, resolveAppRouteIn } from "./lib/open-app";
 import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
@@ -329,33 +330,31 @@ function AuthenticatedAppContent({
   }, [wsCtx, navigate]);
 
   const handleNavigate = useCallback(
-    (route: string) => {
+    (route: string, state?: AppRouteState) => {
       if (route.startsWith("/")) {
-        navigate(route);
+        navigate(route, { state });
       } else {
         // App routes get workspace prefix: /w/<slug>/app/<route>
         const prefix = activeSlug ? `/w/${activeSlug}` : "";
-        navigate(`${prefix}/app/${route}`);
+        navigate(`${prefix}/app/${route}`, { state });
       }
     },
     [navigate, activeSlug],
   );
 
-  // Resolve an app name to its placement route. Apps emit just a name (e.g. "typst-pdf");
-  // the shell owns the route mapping (e.g. "@nimblebraininc/typst-pdf").
+  // Resolve an app name to where it renders. Apps emit just a name (e.g. "typst-pdf"),
+  // the agent's `nb__open_app` a name or sidebar label; the shell owns the route
+  // mapping (e.g. "@nimblebraininc/typst-pdf"). The forms match the server's
+  // `findOpenableApp`, so whatever the tool accepts, this opens.
   const resolveAppRoute = useCallback(
-    (name: string): string | null => {
+    (name: string): string | null =>
       // Search ALL placements (not just mainRoutes) so sidebar.apps are included
-      const all = forSlot("sidebar").concat(forSlot("main")).concat(forSlot("sidebar.bottom"));
-      // Exact route match first
-      const exact = all.find((p) => p.route === name);
-      if (exact) return exact.route!;
-      // Match by serverName (what connectors know themselves as)
-      const byServer = all.find((p) => p.serverName === name);
-      if (byServer?.route) return byServer.route;
-      return null;
-    },
-    [forSlot],
+      resolveAppRouteIn(
+        forSlot("sidebar").concat(forSlot("main")).concat(forSlot("sidebar.bottom")),
+        name,
+        activeSlug,
+      ),
+    [forSlot, activeSlug],
   );
 
   // Collect all routable placements from main + sidebar (deduplicated by route).
@@ -575,7 +574,7 @@ function ActionBridge({
   resolveAppRoute,
   activeSlug,
 }: {
-  handleNavigate: (route: string) => void;
+  handleNavigate: (route: string, state?: AppRouteState) => void;
   resolveAppRoute: (name: string) => string | null;
   activeSlug: string | null;
 }) {
@@ -601,11 +600,15 @@ function ActionBridge({
       openConversation(params) {
         if (params.id) chatPanelRef.current.openPanel(params.id as string);
       },
+      // `target` is a view inside the app (its stable address); the routed
+      // app view hands it to the app as `ai.nimblebrain/navigate`.
       openApp(params) {
         const name = params.name as string | undefined;
         if (!name) return;
         const route = resolveRef.current(name);
-        if (route) navigateRef.current(route);
+        if (!route) return;
+        const target = typeof params.target === "string" ? params.target : undefined;
+        navigateRef.current(route, target ? { appTarget: target } : undefined);
       },
       // The sending connector's own settings page. The connector is the one the
       // bridge names, never a param, so an app can open only its own. Identity
@@ -630,7 +633,20 @@ function ActionBridge({
     };
 
     window.addEventListener("nb:action", handler);
-    return () => window.removeEventListener("nb:action", handler);
+
+    // The agent's `nb__open_app`, once it finishes in a turn this tab sent: the
+    // same `openApp` an app asks for. The store never reports a call from
+    // history, a resumed stream, or another tab, so only the screen of the
+    // person who asked moves.
+    const offToolDone = chatStore.onToolDone((call) => {
+      if (!call.ok || !isOpenAppCall(call.name)) return;
+      actions.openApp?.({ name: call.input.app, target: call.input.target });
+    });
+
+    return () => {
+      window.removeEventListener("nb:action", handler);
+      offToolDone();
+    };
   }, []); // Stable — all dependencies are refs
 
   return null;

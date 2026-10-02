@@ -31,6 +31,14 @@ interface SlotRendererProps {
    */
   onLocation?: (trail: AppTrailEntry[], navigate: (id: string) => void) => void;
   /**
+   * A view to open inside the placement, by its stable address, sent as
+   * `ai.nimblebrain/navigate`: to a placement as it mounts (the bridge holds it
+   * until the app's handshake), and again whenever `key` changes on a placement
+   * already mounted. `key` identifies the request, so the same address asked
+   * for twice is sent twice.
+   */
+  target?: { id: string; key: string };
+  /**
    * Whether the viewer can manage the connector these placements belong to.
    * Set only by the connector settings page; when set, it reaches the app as
    * the `connector` host-context extension. Every other mount leaves it unset.
@@ -151,12 +159,24 @@ function mountPlacement(
   return bridge;
 }
 
+/** Send `target` to each placement's app, recording its key as sent. */
+function sendTarget(
+  bridges: readonly BridgeHandle[],
+  target: SlotRendererProps["target"],
+  sent: { current: string | null },
+): void {
+  if (!target) return;
+  for (const bridge of bridges) bridge.navigate(target.id);
+  sent.current = target.key;
+}
+
 export function SlotRenderer({
   placements,
   className,
   routeFilter,
   onChat,
   onLocation,
+  target,
   canManage,
   fitContent = false,
 }: SlotRendererProps) {
@@ -190,6 +210,11 @@ export function SlotRenderer({
   onChatRef.current = onChat;
   const onLocationRef = useRef(onLocation);
   onLocationRef.current = onLocation;
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  // The `key` of the last target sent, so a target is sent once whether the
+  // mount or the key change delivers it.
+  const sentTargetKeyRef = useRef<string | null>(null);
 
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
@@ -251,6 +276,7 @@ export function SlotRenderer({
         if (bridge) bridges.push(bridge);
       }
       bridgesRef.current = bridges;
+      if (!cancelled) sendTarget(bridges, targetRef.current, sentTargetKeyRef);
     }
 
     renderPlacements();
@@ -265,6 +291,14 @@ export function SlotRenderer({
     // Only re-mount iframes when placements change, not when callbacks change.
     // Callbacks are accessed via refs so bridges always call the latest version.
   }, [placementKey]);
+
+  // A new target for placements already mounted. One that arrives before the
+  // mount finishes is sent by the mount instead, as `sentTargetKeyRef` records.
+  useEffect(() => {
+    if (!target || target.key === sentTargetKeyRef.current) return;
+    if (bridgesRef.current.length === 0) return;
+    sendTarget(bridgesRef.current, target, sentTargetKeyRef);
+  }, [target]);
 
   // Propagate host-context changes (theme, workspace, manage flag) to mounted
   // iframes via the ext-apps `host-context-changed` notification. Iframes stay

@@ -48,8 +48,11 @@ The agent has access to:
 |------|---------|
 | `nb__search` | Search installed tools (`scope: "tools"`) or the connector catalog (`scope: "catalog"`) |
 | `nb__status` | Platform status; `scope: "connectors"` for per-connector health, `scope: "skills"` for loaded skills |
+| `nb__open_app` | Open an app on your screen, optionally at a record inside it ("open People and find Chris") |
 
 The agent also has identity-level tools for managing your apps, connectors, conversations, files, and automations. It uses these when you ask it to install a capability or set up a scheduled run.
+
+When you ask the agent to open or show something, it can move your screen: it finds the record with the app's own tools, then opens the app at that record. Only the tab you asked from moves, and only while the reply is coming in. Reopening the conversation later, or watching it from another tab, never moves your screen.
 
 <Aside type="tip">
   When more than 30 tools are available, NimbleBrain uses tiered tool surfacing. Only system tools and matched skill tools are surfaced directly; the agent uses `nb__search` to find other tools as needed.

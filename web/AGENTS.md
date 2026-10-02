@@ -14,6 +14,7 @@ Scope: the first-party React shell under `web/` (a separate package). Layout, ty
 
 - `SlotRenderer` effect depends only on `placementKey` (callbacks via refs, not deps)
 - Shell components must not consume `ChatContext` (use `ChatConfigContext` instead)
+- **The agent moves the screen only from a turn this tab sent and is watching live.** Host UI driven by a tool call (`nb__open_app` → the `openApp` action) listens through `chatStore.onToolDone`, which reports a finished call only on a connection `sendTurn` opened, once per call. Never drive UI from a rendered transcript or a resumed stream: history loads, reload re-attaches and other tabs replay the same calls, and each would move someone's screen again.
 - `setAuthToken` in `web/src/api/client.ts` fires a registered lifecycle handler on real changes only (equality-guarded). The bridge MCP client registers `resetMcpBridgeClient` here at module load to drop its identity-bound session on logout. `setActiveWorkspaceId` is also equality-guarded and fires the separate workspace lifecycle handlers (`addWorkspaceLifecycleHandler`), never the auth ones; the bridge registers `resetMcpBridgeClient` there too, because its session is bound to the workspace whose `/mcp/<wsId>` it opened. `getMcpBridgeClient` also keys its cache by the active workspace, so a request for workspace B never rides A's session even mid-switch. Stateless callers (REST helpers) read the current values per-request and need no hook.
 
 ## The chat panel's workspace scope

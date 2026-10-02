@@ -20,6 +20,7 @@ import { isModelSlot, MODEL_SLOTS } from "../model/slots.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
+import { createOpenAppTool } from "./open-app.ts";
 import { SharedSourceRef } from "./registry.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
@@ -956,6 +957,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
         }
       },
     },
+    createOpenAppTool(runtime),
   ];
 
   return toolDefs;
