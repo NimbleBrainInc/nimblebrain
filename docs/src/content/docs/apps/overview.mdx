@@ -56,6 +56,7 @@ is just a name, a description, and where it runs:
 ```yaml title="catalog/weather.yaml"
 servers:
   - name: com.myorg/weather
+    title: Weather
     description: Current conditions and forecasts
     version: "1.0.0"
     remotes:
@@ -70,6 +71,7 @@ Add `_meta["ai.nimblebrain/host"]` to give your app a presence in the shell:
 ```yaml title="catalog/weather.yaml"
 servers:
   - name: com.myorg/weather
+    title: Weather
     description: Current conditions and forecasts
     version: "1.0.0"
     remotes:
@@ -78,8 +80,6 @@ servers:
     _meta:
       ai.nimblebrain/host:
         host_version: "1.0"
-        name: Weather
-        icon: cloud-sun
         placements:
           - slot: sidebar.apps
             resourceUri: ui://dashboard

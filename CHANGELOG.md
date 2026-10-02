@@ -146,6 +146,7 @@
 
 ### Breaking
 
+- **`ConnectorUiMeta` has no `name` or `icon`.** The exported type and the `connector.installed` event's `ui` carry only `placements`; read a connector's display name from its catalog entry. See Changed.
 - **A tool error reaches an app's view as a result, not a JSON-RPC error.** A view's `tools/call` answers the `CallToolResult` with `isError: true` and its `structuredContent`, so a connector's structured refusal arrives intact; a pushed `ui/notifications/tool-result` carries `isError` too. A JSON-RPC error means no result came back, and a server's refusal keeps its code and `data`. **Migration:** a view that reported tool failures from `catch` checks `result.isError`, or wraps `useCallTool` to throw on it ([docs](https://docs.nimblebrain.ai/apps/bridge/#toolscall)).
 - **The server does not start without `instance.json`.** A missing file never selects dev mode: dev is the `dev` adapter, chosen by name. **Migration:** a deployment that ran without the file writes `{"auth":{"adapter":"dev"}}` to `<workDir>/instance.json` to keep the single local user, or configures `oidc` / `workos`; `docker compose` now mounts `./instance.json`, and the dev launchers write the dev adapter themselves ([docs](https://docs.nimblebrain.ai/config/instance-json/), ADR-0040).
 - **`Runtime.start` refuses a workdir with no `instance.json` unless the caller passes `identityProvider`, and `chat` / `startTurn` / `executeTask` require `identity` and `workspaceId`.** There is no dev-user or default-workspace fallback for an in-process caller (ADR-0040).
