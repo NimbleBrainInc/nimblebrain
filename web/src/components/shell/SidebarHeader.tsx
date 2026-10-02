@@ -2,8 +2,8 @@
 // SidebarHeader — the sidebar's top row: the logo, search, and the sidebar
 // toggle.
 //
-// Expanded: the logo (home) on the left; search (opens the command palette)
-// and close-sidebar on the right.
+// Expanded: the full logo (home) on the left; search (opens the command
+// palette) and close-sidebar on the right.
 //
 // Collapsed (icon rail): the logo IS the open-sidebar control. At rest it
 // shows the mark; on hover or keyboard focus it turns into the open-sidebar
@@ -70,8 +70,8 @@ export function SidebarHeader({ collapsed = false }: { collapsed?: boolean }) {
 
   return (
     <div className="flex h-14 shrink-0 items-center justify-between pr-2.5 pl-3">
-      <Link to="/" aria-label="NimbleBrain home" className="flex rounded-md">
-        <Logo variant="icon" height={28} />
+      <Link to="/" aria-label="NimbleBrain home" className="flex min-w-0 rounded-md">
+        <Logo variant="full" height={24} />
       </Link>
       <div className="flex items-center gap-0.5">
         {search}
