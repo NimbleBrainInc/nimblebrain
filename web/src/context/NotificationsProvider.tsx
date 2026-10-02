@@ -11,7 +11,7 @@ import { NotificationsContext, type NotificationsValue } from "./NotificationsCo
 /**
  * Holds the focused workspace's inbox for the whole shell.
  *
- * One read serves the left-nav unread badge and the inbox view, the way
+ * One read serves the top bar's bell and the inbox view, the way
  * `WorkspaceAppIconsProvider` serves the sidebar and the overview grid — two
  * consumers of the same fact should not be two fetches of it.
  *

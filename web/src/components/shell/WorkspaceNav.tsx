@@ -6,9 +6,10 @@
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
 // Order: Overview, the identity views (Conversations / Automations / Files),
-// Inbox, then APPS (People, Tasks, … — capped with a View-all overflow). Each
-// routes into `/w/<slug>/…`. An app that places several views is one entry;
-// while it is open its views list beneath it.
+// then APPS (People, Tasks, … — capped with a View-all overflow). Each routes
+// into `/w/<slug>/…`. An app that places several views is one entry; while it
+// is open its views list beneath it. The inbox is not here: it is the top
+// bar's bell (InboxToggle).
 //
 // APPS holds everything installed. A connector with a view gets a row; the
 // ones without (tools the agent uses, with nothing to open) share one row,
@@ -26,7 +27,6 @@ import { ArrowRight, LayoutGrid, Plus } from "lucide-react";
 import { useMemo } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import type { InstalledConnector } from "../../api/client";
-import { useNotifications } from "../../context/NotificationsContext";
 import { useShellContext } from "../../context/ShellContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
@@ -66,7 +66,6 @@ function WorkspaceViews({
   const { iconFor, connectors } = useWorkspaceAppIcons();
   // Installing writes the workspace, so only a member who may write it gets the "+".
   const canInstall = useCanWriteActiveWorkspace();
-  const { unread } = useNotifications();
   const slug = toSlug(workspace.id);
 
   // Identity views (Conversations / Automations / Files): the bare-"sidebar"
@@ -125,16 +124,6 @@ function WorkspaceViews({
           collapsed={collapsed}
         />
       ))}
-
-      {/* The inbox sits with the identity views, not under Apps: it belongs to
-          the workspace rather than to any connector. */}
-      <ViewLink
-        to={`/w/${slug}/notifications`}
-        icon={resolveIcon("bell")}
-        label="Inbox"
-        count={unread}
-        collapsed={collapsed}
-      />
 
       {hasSection &&
         (collapsed ? (
@@ -266,20 +255,18 @@ const rowClass = (isActive: boolean, collapsed: boolean) =>
       : "font-normal hover:bg-sidebar-foreground/5 hover:text-foreground",
   );
 
-// A workspace view with a lucide icon, and an optional trailing count.
+// A workspace view with a lucide icon.
 function ViewLink({
   to,
   icon: Icon,
   label,
   end,
-  count,
   collapsed,
 }: {
   to: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   end?: boolean;
-  count?: number;
   collapsed: boolean;
 }) {
   const link = (
@@ -291,12 +278,7 @@ function ViewLink({
       className={({ isActive }) => rowClass(isActive, collapsed)}
     >
       <Icon className="size-4 shrink-0" />
-      {!collapsed && (
-        <>
-          <span className="flex-1 truncate">{label}</span>
-          <CountBadge count={count} />
-        </>
-      )}
+      {!collapsed && <span className="flex-1 truncate">{label}</span>}
     </NavLink>
   );
   return collapsed ? (
@@ -416,16 +398,5 @@ function AppLink({
     </Tooltip>
   ) : (
     link
-  );
-}
-
-// A right-aligned muted count. Renders nothing for undefined / zero — an empty
-// list shows no badge rather than a "0".
-function CountBadge({ count }: { count?: number }) {
-  if (count === undefined || count <= 0) return null;
-  return (
-    <span data-testid="sidebar-workspace-count" className="shrink-0 text-2xs tabular-nums">
-      {count}
-    </span>
   );
 }

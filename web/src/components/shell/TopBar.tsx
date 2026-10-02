@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// TopBar — the main area's header: what page this is, the way back up, and Chat.
+// TopBar — the main area's header: what page this is, the way back up, the
+// inbox, and Chat.
 //
 // Left: the page's title. When the routed app reports a trail deeper than its
 // root (`ai.nimblebrain/location`, via `AppLocationContext`), the entries above
@@ -10,7 +11,7 @@
 // (`lib/page-title`), with neither. On a phone, the menu button that opens the
 // nav drawer leads the row.
 //
-// Right: Chat, on workspace routes, where chat exists.
+// Right, on workspace routes: the inbox's bell, then Chat, which stays last.
 //
 // Height is the chat panel header's (`h-14`, border included), so the two
 // bottom borders run on the same pixel row and meet at the resize handle.
@@ -28,6 +29,7 @@ import { pageTitle } from "../../lib/page-title";
 import { SidebarToggle } from "../SidebarToggle";
 import { Tooltip, TooltipProvider } from "../ui/tooltip";
 import { ChatToggle } from "./ChatToggle";
+import { InboxToggle } from "./InboxToggle";
 
 /** Above this many ancestors, the middle ones fold into an ellipsis. */
 const MAX_ANCESTORS = 3;
@@ -119,7 +121,12 @@ export function TopBar() {
         >
           {title}
         </h1>
-        {pathname.startsWith("/w/") && <ChatToggle />}
+        {pathname.startsWith("/w/") && (
+          <>
+            <InboxToggle />
+            <ChatToggle />
+          </>
+        )}
       </header>
     </TooltipProvider>
   );

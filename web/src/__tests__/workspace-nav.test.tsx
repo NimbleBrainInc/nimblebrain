@@ -4,7 +4,7 @@
 // Pins:
 //   1. The nav shows only the focused workspace, flat: Overview, its identity
 //      views (Conversations / Automations / Files) routed to `/w/<slug>/<view>`,
-//      Inbox, and its apps routed to `/w/<slug>/app/<route>`. No other
+//      and its apps routed to `/w/<slug>/app/<route>`. No other
 //      workspace appears in it.
 //   2. The app quick-list caps at MAX_INLINE_APPS with a View-all overflow to
 //      the workspace overview.
@@ -313,7 +313,6 @@ describe("WorkspaceNav — the focused workspace only", () => {
       "/w/helix/conversations",
       "/w/helix/automations",
       "/w/helix/files",
-      "/w/helix/notifications",
       "/w/helix/settings/connectors/browse",
       "/w/helix/app/people",
       "/w/helix/app/tasks",
@@ -794,12 +793,11 @@ describe("WorkspaceNav — collapsed", () => {
       "Conversations",
       "Automations",
       "Files",
-      "Inbox",
       "people",
       "Add apps and tools",
     ]);
     // Icon-only: no visible labels in the rail.
-    for (const label of ["Overview", "Conversations", "Inbox", "Apps"]) {
+    for (const label of ["Overview", "Conversations", "Apps"]) {
       expect(nav?.textContent).not.toContain(label);
     }
   });

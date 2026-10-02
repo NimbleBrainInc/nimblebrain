@@ -9,6 +9,9 @@
 //   4. The same trail's ancestors form a breadcrumb; each asks the app for its
 //      own entry. Past three ancestors the middle folds, root and parent stay.
 //   5. Chat sits in the bar on workspace routes only, where chat exists.
+//   6. The inbox's bell sits left of Chat on workspace routes, links to the
+//      focused workspace's inbox, and shows a dot only while something is
+//      unread, the count in its accessible name.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -31,11 +34,15 @@ const { MemoryRouter } = await import("react-router-dom");
 const { AppLocationProvider, useAppLocation } = await import("../context/AppLocationContext");
 const { ChatProvider } = await import("../context/ChatContext");
 const { ChatPanelProvider } = await import("../context/ChatPanelContext");
+const { NotificationsContext } = await import("../context/NotificationsContext");
 const { ShellProvider } = await import("../context/ShellContext");
 const { SidebarProvider } = await import("../context/SidebarContext");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { TopBar } = await import("../components/shell/TopBar");
 
 import type { AppLocationContextValue } from "../context/AppLocationContext";
+import type { NotificationsValue } from "../context/NotificationsContext";
+import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
 
 const PEOPLE: PlacementEntry = {
@@ -58,31 +65,56 @@ function LocationProbe() {
 let container: HTMLDivElement;
 let root: ReturnType<typeof ReactDOMClient.createRoot>;
 
-async function mountBar(path: string): Promise<void> {
+const ACME: WorkspaceInfo = {
+  id: "ws_acme",
+  name: "Acme",
+  connectorCount: 0,
+  memberCount: 1,
+  userRole: "admin",
+};
+
+function inbox(unread: number): NotificationsValue {
+  return {
+    items: [],
+    unread,
+    loading: false,
+    error: null,
+    atPageLimit: false,
+    refresh: () => {},
+    markRead: async () => {},
+    markAllRead: async () => {},
+  };
+}
+
+async function mountBar(path: string, unread = 0): Promise<void> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[path]}>
-        <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
-          <ChatPanelProvider>
-            <SidebarProvider>
-              <ShellProvider
-                value={{
-                  forSlot: (slot) => (slot === "sidebar" ? [PEOPLE] : []),
-                  mainRoutes: () => [],
-                  shellWorkspaceId: "ws_a",
-                }}
-              >
-                <AppLocationProvider>
-                  <LocationProbe />
-                  <TopBar />
-                </AppLocationProvider>
-              </ShellProvider>
-            </SidebarProvider>
-          </ChatPanelProvider>
-        </ChatProvider>
+        <WorkspaceProvider initialWorkspaces={[ACME]} initialActiveId="ws_acme">
+          <NotificationsContext.Provider value={inbox(unread)}>
+            <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
+              <ChatPanelProvider>
+                <SidebarProvider>
+                  <ShellProvider
+                    value={{
+                      forSlot: (slot) => (slot === "sidebar" ? [PEOPLE] : []),
+                      mainRoutes: () => [],
+                      shellWorkspaceId: "ws_a",
+                    }}
+                  >
+                    <AppLocationProvider>
+                      <LocationProbe />
+                      <TopBar />
+                    </AppLocationProvider>
+                  </ShellProvider>
+                </SidebarProvider>
+              </ChatPanelProvider>
+            </ChatProvider>
+          </NotificationsContext.Provider>
+        </WorkspaceProvider>
       </MemoryRouter>,
     );
   });
@@ -202,5 +234,34 @@ describe("TopBar", () => {
     await mountBar("/profile/general");
     expect(byTestId("top-bar-title")?.textContent).toBe("Profile");
     expect(byTestId("chat-chrome-open-button")).toBeUndefined();
+  });
+
+  test("the bell sits left of Chat and links to the focused workspace's inbox", async () => {
+    await mountBar("/w/acme/");
+    const bell = byTestId("top-bar-inbox");
+    expect(bell?.getAttribute("href")).toBe("/w/acme/notifications");
+    expect(bell?.getAttribute("aria-label")).toBe("Inbox");
+    expect(bell?.getAttribute("aria-current")).toBeNull();
+    expect(byTestId("top-bar-inbox-dot")).toBeUndefined();
+    const chat = byTestId("chat-chrome-open-button");
+    expect(bell && chat && bell.compareDocumentPosition(chat)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    act(() => root.unmount());
+    container.remove();
+
+    await mountBar("/profile/general");
+    expect(byTestId("top-bar-inbox")).toBeUndefined();
+  });
+
+  test("the bell shows a dot while something is unread, and the count in its name", async () => {
+    await mountBar("/w/acme/", 3);
+    expect(byTestId("top-bar-inbox-dot")).toBeDefined();
+    expect(byTestId("top-bar-inbox")?.getAttribute("aria-label")).toBe("Inbox, 3 unread");
+  });
+
+  test("on the inbox, the bell is the current page", async () => {
+    await mountBar("/w/acme/notifications");
+    expect(byTestId("top-bar-inbox")?.getAttribute("aria-current")).toBe("page");
   });
 });
