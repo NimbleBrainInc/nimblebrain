@@ -118,6 +118,9 @@ describe("routeNamesMcpEndpoint", () => {
     ["a mixed dot-dot segment", "/ingest/.%2E/mcp"],
     ["a dot segment", "/./mcp"],
     ["an undecodable escape", "/ingest/%zz"],
+    ["a case variant of the endpoint", "/MCP"],
+    ["a case variant under the endpoint", "/Mcp/x"],
+    ["a dot-dot segment that appears only once decoded", "/x/%2e%2e%2fmcp"],
   ])("refuses %s", (_label, route) => {
     expect(routeNamesMcpEndpoint(route, MCP)).toBe(true);
   });

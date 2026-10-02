@@ -218,11 +218,13 @@ export function isForwardablePath(route: string): boolean {
  *
  * Compared on what the server will route on, not on the declared string: the
  * route is resolved against the endpoint (which folds `.`, `..`, and their
- * percent-encoded forms), the query is dropped, each path is percent-decoded, and
- * a trailing slash is ignored. A path that cannot be decoded counts as naming the
- * endpoint, so an undecidable route is refused rather than forwarded. An endpoint
- * at the root is refused only exactly, since every path lies under `/` and a
- * server mounted there serves its other routes beside it.
+ * percent-encoded forms), the query is dropped, each path is percent-decoded and
+ * case-folded, and a trailing slash is ignored. Case-folded because a common
+ * server router (Express's default) matches paths case-insensitively. A path
+ * that cannot be decoded, or that has a `.` or `..` segment only once decoded,
+ * counts as naming the endpoint, so an undecidable route is refused rather than
+ * forwarded. An endpoint at the root is refused only exactly, since every path
+ * lies under `/` and a server mounted there serves its other routes beside it.
  */
 export function routeNamesMcpEndpoint(route: string, mcpUrl: string): boolean {
   let target: string | null;
@@ -239,14 +241,18 @@ export function routeNamesMcpEndpoint(route: string, mcpUrl: string): boolean {
   return target === endpoint || target.startsWith(`${endpoint}/`);
 }
 
-/** A URL path as a server routes on it: decoded, with no trailing slash. */
+/** A URL path as a server routes on it: decoded, lowercased, with no trailing
+ *  slash. `null` when that is undecidable. */
 function canonicalPath(pathname: string): string | null {
   let decoded: string;
   try {
-    decoded = decodeURIComponent(pathname);
+    decoded = decodeURIComponent(pathname).toLowerCase();
   } catch {
     return null;
   }
+  // A dot segment left after decoding (`%2e%2e%2f`) resolves differently on a
+  // server that decodes before it normalizes.
+  if (decoded.split("/").some((seg) => seg === "." || seg === "..")) return null;
   const trimmed = decoded.replace(/\/+$/, "");
   return trimmed === "" ? "/" : trimmed;
 }

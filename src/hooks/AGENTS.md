@@ -116,7 +116,8 @@ rotation or reinstall retries).
 credential, so a route at the connector's MCP endpoint path, or under it, would
 let anyone holding the delivery URL call the server's tools as the workspace,
 past `admin_tools` and every other runtime gate. `routeNamesMcpEndpoint` decides
-it against the installed ref's URL, on the resolved and percent-decoded path.
+it against the installed ref's URL, on the resolved, percent-decoded, and
+case-folded path.
 Provisioning refuses it as a contract error, minting nothing; `resolveForwardUrl`
 refuses it again at delivery, before the credential is resolved, and the door
 answers its bare 404. The check is negative rather than a required prefix such
