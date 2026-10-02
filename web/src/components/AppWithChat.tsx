@@ -123,13 +123,16 @@ export function AppWithChat({ placement }: AppWithChatProps) {
     return () => setFocusedApp(null);
   }, [appContext, setFocusedApp]);
 
-  // The routed app's trail. Cleared on unmount, so the bar never shows a trail
-  // the app on screen did not send; a new placement mounts a new AppWithChat.
+  // The routed app's trail, cleared whenever the app on screen changes so the
+  // bar never shows a trail that app did not send. That is a new placement as
+  // well as an unmount: sibling app routes render this same element, so React
+  // Router reuses the instance across app-to-app navigation.
   const handleLocation = useCallback(
     (trail: AppTrailEntry[], navigate: (id: string) => void) => setAppLocation({ trail, navigate }),
     [setAppLocation],
   );
-  useEffect(() => () => setAppLocation(null), [setAppLocation]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the placement is the trigger, not a value read
+  useEffect(() => () => setAppLocation(null), [setAppLocation, placement.resourceUri]);
 
   const handleChat = useCallback(
     (message: string) => {
