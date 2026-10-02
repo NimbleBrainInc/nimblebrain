@@ -15,6 +15,10 @@ function errorMessage(err: unknown, fallback: string): string {
 
 export function Dashboard() {
   const app = useApp();
+  // The host draws this view's title in its own chrome when it declares
+  // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
+  // twice. A host without it (any other MCP Apps host) gets the view's title.
+  const hostShowsTitle = "ai.nimblebrain/location" in (app.hostCapabilities.experimental ?? {});
   const action = useAction();
   // Pushed by the host via hostContext: the workspace the shell is focused on —
   // used here ONLY as a change signal (refetch when the user switches
@@ -188,6 +192,7 @@ export function Dashboard() {
         isSearching={isSearching}
         searchQuery={searchQuery}
         workspaceName={workspace?.name}
+        showTitle={!hostShowsTitle}
         onSelectFilter={handleSelectFilter}
         onSearchInput={handleSearchInput}
         onSearchSubmit={handleSearchSubmit}

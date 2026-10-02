@@ -8,6 +8,7 @@ import {
   type ArchiveMarker,
   WorkspaceStore,
 } from "../../src/workspace/workspace-store.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 // Archive-then-cascade delete (SPEC-permission-boundaries §2.3): deleting a
 // workspace must tombstone its data subtree under `archived/<wsId>/` —
@@ -78,15 +79,14 @@ describe("WorkspaceStore.delete — archive-then-cascade", () => {
   });
 
   test("disambiguates a same-id re-archive via a deterministic counter", async () => {
-    // Explicit slug → deterministic id, so the re-created workspace reuses
-    // the same id (an operator re-creating a workspace at a chosen id after
-    // deleting it).
-    const slug = "user_alice";
-    const first = await store.create("Alice", slug);
+    // A record placed on disk again at the same id after a delete (a
+    // restore) archives to the same base path a second time.
+    const id = "ws_user_alice";
+    const first = await seedWorkspace(store, id, { name: "Alice" });
     await store.delete(first.id);
     expect(existsSync(archiveDirPath(first.id))).toBe(true);
 
-    const second = await store.create("Alice Again", slug);
+    const second = await seedWorkspace(store, id, { name: "Alice Again" });
     expect(second.id).toBe(first.id);
     await store.delete(second.id);
 
@@ -100,11 +100,11 @@ describe("WorkspaceStore.delete — archive-then-cascade", () => {
   });
 
   test("honors a caller-supplied archiveSuffix on collision", async () => {
-    const slug = "user_bob";
-    const first = await store.create("Bob", slug);
+    const id = "ws_user_bob";
+    const first = await seedWorkspace(store, id, { name: "Bob" });
     await store.delete(first.id);
 
-    const second = await store.create("Bob Again", slug);
+    const second = await seedWorkspace(store, id, { name: "Bob Again" });
     await store.delete(second.id, { archiveSuffix: "v2" });
 
     expect(existsSync(join(workDir, "archived", `${first.id}-v2`))).toBe(true);

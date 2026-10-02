@@ -19,7 +19,7 @@ import {
   catalogPath,
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
-import type { AdminToolsDeclaration, ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
+import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
 import { registerComposioCredentialProvider } from "../connectors/providers/composio/transport-credential.ts";
@@ -29,7 +29,12 @@ import {
   type ManagedConnectorRegistry,
 } from "../connectors/providers/registry.ts";
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
-import { catalogUiByServerName, withCatalogUi } from "../connectors/runtime/catalog-ui.ts";
+import {
+  catalogTitleByServerName,
+  catalogUiByServerName,
+  namedUi,
+  withCatalogUi,
+} from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
@@ -140,6 +145,7 @@ import {
   isAdminToolAllowed,
   isDeclaredAdminTool,
 } from "../permissions/admin-tools.ts";
+import { hostOnlyToolDenial, isHostOnlyTool } from "../permissions/host-only-tools.ts";
 import {
   isDisallowed,
   type PermissionOwner,
@@ -3260,12 +3266,31 @@ export class Runtime {
   async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
     const instances = this.getConnectorInstancesForWorkspace(workspaceId);
     const registry = this._workspaceRegistries.get(workspaceId);
+    const titles = await this.connectorTitles();
 
     const apps: PromptAppInfo[] = [];
     for (const instance of instances) {
-      apps.push(await this.buildAppInfo(instance, registry));
+      apps.push(await this.buildAppInfo(instance, registry, titles));
     }
     return apps;
+  }
+
+  /**
+   * Each installed connector's display name by server name: the trusted catalog
+   * entry's core `title ?? name`, by the same slug rule
+   * {@link trustedCatalogEntryFor} uses. A connector the catalog does not name
+   * is absent, and callers show its server name. A catalog read that fails
+   * yields no titles rather than failing the caller, which only displays them.
+   */
+  async connectorTitles(): Promise<ReadonlyMap<string, string>> {
+    try {
+      return catalogTitleByServerName(await this.getConnectorCatalog().catalogEntries());
+    } catch (err) {
+      log.warn("[runtime] connector titles unavailable; showing server names", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return new Map();
+    }
   }
 
   /**
@@ -3276,8 +3301,9 @@ export class Runtime {
   private async buildAppInfo(
     instance: ConnectorInstance,
     registry: ToolRegistry | undefined,
+    titles: ReadonlyMap<string, string>,
   ): Promise<PromptAppInfo> {
-    const ui: PromptAppInfo["ui"] = instance.ui ? { name: instance.ui.name } : null;
+    const ui: PromptAppInfo["ui"] = namedUi(instance.serverName, instance.ui, titles);
 
     // Surface the MCP server's `initialize.instructions` (when set) so the
     // LLM sees per-connector guidance — typically a pointer to `skill://`
@@ -4163,13 +4189,14 @@ export class Runtime {
 
   /**
    * `principal`'s admission to the connector tools of `wsId`: which declared
-   * `admin_tools` it may list and call.
+   * `admin_tools` it may list and call, minus every declared lifecycle handler,
+   * which only the host calls (`isHostOnlyTool`) and which no principal is
+   * admitted to, admins included.
    *
-   * A workspace admin is admitted to everything without reading the catalog, so
-   * the common admin path costs one workspace read. Anyone else pays one catalog
-   * read per listing and per connector tool call. No principal
-   * means no admin, so declared tools are refused, as `canWriteWorkspaceScoped`
-   * refuses.
+   * Every caller pays one catalog read (cached) per listing and per connector
+   * tool call. A workspace admin of a workspace whose catalog declares no
+   * lifecycle handler is admitted to everything. No principal means no admin,
+   * so declared admin tools are refused, as `canWriteWorkspaceScoped` refuses.
    *
    * Kernel identity sources and personal connectors are not in the workspace
    * registry and never reach this: a personal connector acts on its owner's
@@ -4179,24 +4206,41 @@ export class Runtime {
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
   ): Promise<ConnectorAdmission> {
+    return this.admissionWith(wsId, principal, await this.catalogGatesByServer());
+  }
+
+  /** {@link connectorAdmission} against gates the caller already resolved. */
+  private async admissionWith(
+    wsId: string,
+    principal: Pick<UserIdentity, "id"> | null | undefined,
+    declared: Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>,
+  ): Promise<ConnectorAdmission> {
     const ws = principal ? await this._workspaceStore.get(wsId) : null;
-    if (canWriteWorkspaceScoped(principal, ws).allowed) return ADMIT_ALL;
-    const declared = await this.adminToolsByServer();
-    if (declared.size === 0) return ADMIT_ALL;
+    const isAdmin = canWriteWorkspaceScoped(principal, ws).allowed;
+    const gates = [...declared.values()];
+    const anyHostOnly = gates.some((g) => g.lifecycle !== undefined);
+    const anyAdminTools = gates.some((g) => g.adminTools !== undefined);
+    if (!anyHostOnly && (isAdmin || !anyAdminTools)) return ADMIT_ALL;
     return {
-      admits: (serverName, toolName) =>
-        isAdminToolAllowed(principal, ws, declared.get(serverName), toolName),
+      admits: (serverName, toolName) => {
+        const gate = declared.get(serverName);
+        if (isHostOnlyTool(gate?.lifecycle, toolName)) return false;
+        return isAdminToolAllowed(principal, ws, gate?.adminTools, toolName);
+      },
     };
   }
 
   /**
-   * The `workspace_admin_required` refusal for one call, or `null` when
-   * `principal` may make it. Every dispatch door runs this beside
-   * `assertToolAllowed` for a workspace connector tool, once per call.
+   * The refusal for one call, or `null` when `principal` may make it: the
+   * `host_only_tool` refusal for a declared lifecycle handler, whoever calls,
+   * else the `workspace_admin_required` refusal for a declared admin tool a
+   * non-admin calls. Every dispatch door runs this beside `assertToolAllowed`
+   * for a workspace connector tool, once per call.
    *
    * It is also where a call to a declared admin tool is audited, admitted or
    * refused: every door already passes through here, so the line cannot be
-   * forgotten by a door or a connector.
+   * forgotten by a door or a connector. A host-only refusal is not an admin
+   * tool call and writes no line.
    */
   async connectorAdminDenial(
     wsId: string,
@@ -4205,18 +4249,19 @@ export class Runtime {
     toolName: string,
     call: AdminToolCall,
   ): Promise<ToolResult | null> {
-    const admission = await this.connectorAdmission(wsId, principal);
+    const declared = await this.catalogGatesByServer();
+    if (isHostOnlyTool(declared.get(serverName)?.lifecycle, toolName)) {
+      return hostOnlyToolDenial(serverName, toolName);
+    }
+    const admission = await this.admissionWith(wsId, principal, declared);
     const admitted = admission.admits(serverName, toolName);
-    await this.auditAdminToolCall(wsId, principal, serverName, toolName, call, admitted);
+    if (isDeclaredAdminTool(declared.get(serverName)?.adminTools, toolName)) {
+      await this.auditAdminToolCall(wsId, principal, serverName, toolName, call, admitted);
+    }
     return admitted ? null : adminToolDenial(serverName, toolName);
   }
 
-  /**
-   * Write `audit.admin_tool_call` when the catalog declares `toolName` an admin
-   * tool, whoever called. An admin's admission skips the catalog, so the
-   * declaration is read here; it is the same cached read a member's every call
-   * already makes.
-   */
+  /** Write `audit.admin_tool_call` for a call to a declared admin tool, whoever called. */
   private async auditAdminToolCall(
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
@@ -4225,8 +4270,6 @@ export class Runtime {
     call: AdminToolCall,
     admitted: boolean,
   ): Promise<void> {
-    const declared = await this.adminToolsByServer();
-    if (!isDeclaredAdminTool(declared.get(serverName), toolName)) return;
     const ctx = getRequestContext();
     this.defaultEvents.emit({
       type: "audit.admin_tool_call",
@@ -4290,18 +4333,27 @@ export class Runtime {
     });
   }
 
-  /** Declared `admin_tools` by installed source name, from the trusted catalog,
-   *  by the same slug rule {@link trustedCatalogEntryFor} uses. */
-  private async adminToolsByServer(): Promise<Map<string, AdminToolsDeclaration>> {
+  /** The gating declarations (`admin_tools`, `lifecycle`) by installed source
+   *  name, from the trusted catalog, by the same slug rule
+   *  {@link trustedCatalogEntryFor} uses. A connector that declares neither is
+   *  absent. */
+  private async catalogGatesByServer(): Promise<
+    Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>
+  > {
     const entries = await this.getConnectorCatalog().catalogEntries();
     const seen = new Set<string>();
-    const out = new Map<string, AdminToolsDeclaration>();
+    const out = new Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>();
     for (const e of entries) {
       // First entry per slug wins, declaring or not, as in `trustedCatalogEntryFor`.
       const slug = slugifyServerName(e.id);
       if (seen.has(slug)) continue;
       seen.add(slug);
-      if (e.adminTools) out.set(slug, e.adminTools);
+      if (e.adminTools || e.lifecycle) {
+        out.set(slug, {
+          ...(e.adminTools ? { adminTools: e.adminTools } : {}),
+          ...(e.lifecycle ? { lifecycle: e.lifecycle } : {}),
+        });
+      }
     }
     return out;
   }

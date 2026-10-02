@@ -29,6 +29,7 @@ import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-proce
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const TEST_USER_ID = "usr_amb_ctx_test";
 const TEST_USER_DISPLAY = "Ambient Test";
@@ -124,11 +125,11 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     // Provision the user's own workspace (their default, created first) and
     // the shared workspace.
     const wsStore = runtime.getWorkspaceStore();
-    const ownWs = await wsStore.create("Own", undefined, {
+    const ownWs = await wsStore.create("Own", {
       members: [{ userId: TEST_USER_ID, role: "admin" }],
     });
     const ownWsId = ownWs.id;
-    await wsStore.create("Helix", SHARED_WS_ID.slice(3));
+    await seedWorkspace(wsStore, SHARED_WS_ID, { name: "Helix" });
     await wsStore.addMember(SHARED_WS_ID, TEST_USER_ID, "admin");
 
     // Register the probe source in BOTH workspaces' registries.

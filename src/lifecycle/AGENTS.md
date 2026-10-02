@@ -48,6 +48,14 @@ Three rules that are load-bearing rather than stylistic:
   a bundle that leaks a third-party resource without it is relying on a call
   nothing guarantees.
 
+**Declared handlers are host-only** (`src/permissions/host-only-tools.ts`):
+absent from every listing and refused on every door, for every principal,
+admins included, through the same `Runtime.connectorAdmission` /
+`connectorAdminDenial` pair `admin_tools` uses. The kernel's own calls reach the
+source through `connectorPortForSource` and pass no door, so they need no
+exemption; never add one by caller name.
+`test/integration/connector-lifecycle-host-only.test.ts` pins both.
+
 The contract check (`verifyLifecycleTools`) mirrors `verifyRegisterTool` with a
 weaker predicate — the tool exists and takes no *required* argument — and
 deliberately does **not** require `reason` in the schema. The runtime sends an

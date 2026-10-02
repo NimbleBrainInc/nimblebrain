@@ -17,8 +17,9 @@ import { isDisallowed, type PermissionOwner, type PermissionStore } from "./perm
  * home). `serverName` is the connector/source prefix; `toolName` is the bare
  * local tool (no source prefix).
  *
- * The role gate is its sibling, not part of it: a workspace-routed connector
- * tool also passes `Runtime.connectorAdminDenial` (the catalog's `admin_tools`,
+ * The connector gate is its sibling, not part of it: a workspace-routed
+ * connector tool also passes `Runtime.connectorAdminDenial` (the catalog's
+ * `lifecycle` handlers, `./host-only-tools.ts`, and `admin_tools`,
  * `./admin-tools.ts`) at each of these doors. The two take different inputs —
  * a policy owner here, membership and the catalog there — and the personal
  * arm, which this gate also serves, has no workspace role to check.

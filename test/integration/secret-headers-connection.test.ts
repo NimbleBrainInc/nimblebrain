@@ -46,6 +46,7 @@ import {
   type FakeConnectorServer,
   startFakeConnectorServer,
 } from "../helpers/fake-connector-server.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ENTRY_ID = "com.acme/db-query";
 const SERVER_NAME = "com-acme-db-query";
@@ -184,7 +185,7 @@ beforeEach(async () => {
   lifecycle.bindWorkspaceRegistries(() => registries);
 
   workspaceStore = new WorkspaceStore(workDir);
-  await workspaceStore.create("Tenant A", "tenanta");
+  await seedWorkspace(workspaceStore, WS, { name: "Tenant A" });
   await workspaceStore.addMember(WS, ADMIN.id, "admin");
 });
 

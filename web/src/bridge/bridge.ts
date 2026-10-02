@@ -23,7 +23,8 @@
 //     relay in hooks/useServerNotificationRelay.ts
 //
 // NimbleBrain extensions (ai.nimblebrain/ namespace — no spec equivalent):
-//   ai.nimblebrain/action, ai.nimblebrain/keydown, ai.nimblebrain/request-file
+//   ai.nimblebrain/action, ai.nimblebrain/keydown, ai.nimblebrain/request-file,
+//   ai.nimblebrain/location (in) and ai.nimblebrain/navigate (out)
 //   Each is served only because it is declared: see host-capabilities.ts.
 // ---------------------------------------------------------------------------
 
@@ -47,7 +48,13 @@ import { appNameFromToolName } from "../lib/namespaced-tool";
 import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
 import type { FileEntry } from "../types";
 import { openAppChannel } from "./app-channel";
-import { ACTION_METHOD, KEYDOWN_METHOD, REQUEST_FILE_METHOD } from "./extensions";
+import {
+  ACTION_METHOD,
+  KEYDOWN_METHOD,
+  LOCATION_METHOD,
+  NAVIGATE_METHOD,
+  REQUEST_FILE_METHOD,
+} from "./extensions";
 import { buildHostCapabilities } from "./host-capabilities";
 import { buildHostStyles, type UploadLimits } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
@@ -128,6 +135,8 @@ export interface BridgeHandle {
   setHostContext(context: Record<string, unknown>): void;
   /** Send ui/notifications/tool-input (ext-apps spec). */
   sendToolInput(params: { arguments: Record<string, unknown> }): void;
+  /** Send ai.nimblebrain/navigate: ask the app to go to one of its trail entries. */
+  navigate(id: string): void;
   /** Remove all event listeners and clean up. */
   destroy(): void;
 }
@@ -396,6 +405,13 @@ export function createBridge(
         break;
 
       // -----------------------------------------------------------------
+      // Extension: ai.nimblebrain/location — the app's trail, root first
+      // -----------------------------------------------------------------
+      case LOCATION_METHOD:
+        callbacks?.onLocation?.(msg.params.trail);
+        break;
+
+      // -----------------------------------------------------------------
       // Extension: ai.nimblebrain/request-file — native file picker
       // -----------------------------------------------------------------
       case REQUEST_FILE_METHOD:
@@ -514,6 +530,10 @@ export function createBridge(
         params,
       };
       postToIframe(msg);
+    },
+
+    navigate(id: string): void {
+      postToIframe({ jsonrpc: "2.0", method: NAVIGATE_METHOD, params: { id } });
     },
 
     destroy(): void {

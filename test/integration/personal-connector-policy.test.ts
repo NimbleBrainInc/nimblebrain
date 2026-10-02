@@ -14,6 +14,7 @@ import {
   type FakeConnectorServer,
   startFakeConnectorServer,
 } from "../helpers/fake-connector-server.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 /**
  * Integration: a personal connector is an IDENTITY-owned source, resolved by
@@ -67,10 +68,10 @@ beforeAll(async () => {
   });
 
   const wsStore = runtime.getWorkspaceStore();
-  await wsStore.create("Helix", SHARED_WS.slice(3));
+  await seedWorkspace(wsStore, SHARED_WS, { name: "Helix" });
   await wsStore.addMember(SHARED_WS, DEV_IDENTITY.id, "admin");
   personalWs = (
-    await wsStore.create("Own", undefined, {
+    await wsStore.create("Own", {
       members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
     })
   ).id;

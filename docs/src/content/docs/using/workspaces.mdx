@@ -17,7 +17,7 @@ A workspace is an isolated environment within a NimbleBrain instance. It contain
 When you send a chat message, it runs in the context of your focused workspace, and the agent's active tool set is scoped to the apps installed there. **Conversations are partitioned by workspace** — each one is stored under the workspace it ran in and authorized by its owner. See [Conversations](/using/conversations) for how ownership and storage work.
 
 <Aside type="note">
-Workspace IDs are opaque tokens, usually of the form `ws_<16-hex>` (for example `ws_3f9a1c7e0b2d4856`); some have the form `ws_user_<id>`. The ID is assigned once at creation and never derived from the name — renaming a workspace does not change its ID or its URL. Treat every ID as opaque, whatever its form: never parse it for meaning.
+Workspace IDs are opaque tokens. Every new workspace gets a generated ID of the form `ws_<16-hex>` (for example `ws_3f9a1c7e0b2d4856`); you cannot choose one. Some older workspaces carry another form, such as `ws_user_<id>`. The ID is assigned once at creation and never derived from the name — renaming a workspace does not change its ID or its URL. Treat every ID as opaque, whatever its form: never parse it for meaning.
 </Aside>
 
 ## Roles
@@ -47,7 +47,7 @@ The agent can create workspaces through the `nb__manage_workspaces` tool. Ask it
 Create a workspace called "Engineering" for our dev team
 ```
 
-The agent uses `nb__manage_workspaces` with `action: "create"` to set it up. The new workspace gets an opaque `ws_<hex>` ID; the name you give it is a freely editable label.
+The agent uses `nb__manage_workspaces` with `action: "create"` to set it up. The new workspace gets a generated `ws_<16-hex>` ID; the tool takes no ID or slug and refuses one. The name you give it is a freely editable label.
 
 ## Managing members
 

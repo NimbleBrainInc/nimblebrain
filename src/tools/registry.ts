@@ -81,8 +81,9 @@ export class SharedSourceRef implements ToolSource {
  * Routes execute() calls by prefix: "sourceName__toolName".
  */
 /**
- * The connector role gate for one call, bound by the Runtime to a workspace and
- * the ambient caller: the `workspace_admin_required` refusal, or `null`.
+ * The connector gate for one call, bound by the Runtime to a workspace and the
+ * ambient caller: the `host_only_tool` or `workspace_admin_required` refusal,
+ * or `null`.
  */
 export type ConnectorAdminDenial = (
   serverName: string,
@@ -106,7 +107,8 @@ export class ToolRegistry implements ToolRouter {
    */
   private invalidationListener: (() => void) | null = null;
   /**
-   * The connector role gate (`admin_tools`), run beside `assertToolAllowed`.
+   * The connector gate (`lifecycle` handlers, `admin_tools`), run beside
+   * `assertToolAllowed`.
    * The Runtime binds it to this workspace and the ambient caller; null for
    * registries built outside it.
    */

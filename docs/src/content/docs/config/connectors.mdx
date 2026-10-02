@@ -54,8 +54,6 @@ The `ui` field is populated automatically when you install a connector whose cat
 ```json
 {
   "ui": {
-    "name": "Tasks",
-    "icon": "clipboard",
     "placements": [
       { "slot": "main", "resourceUri": "ui://tasks/index.html" }
     ]
@@ -65,8 +63,6 @@ The `ui` field is populated automatically when you install a connector whose cat
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ui.name` | `string` | Human-readable app name shown in the sidebar. |
-| `ui.icon` | `string` | Emoji or icon identifier. |
 | `ui.placements` | `array` | Placement declarations (each a `slot` plus a `ui://` resource URI) that register the app's views. Re-validated at every registration, so a malformed one is dropped rather than rendered. |
 
 ## Remote transport configuration

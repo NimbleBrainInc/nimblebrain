@@ -47,7 +47,7 @@ function refWithUi(placements?: PlacementDeclaration[]): ConnectorRef {
   return {
     url: URL,
     serverName: SERVER,
-    ui: { name: "Echo App", icon: "echo-icon", ...(placements ? { placements } : {}) },
+    ui: { ...(placements ? { placements } : {}) },
   };
 }
 

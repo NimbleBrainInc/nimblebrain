@@ -217,7 +217,7 @@ describe("Workspace security: DevIdentityProvider populates workspace connectors
     const adapter = new DevIdentityProvider(workDir, userStore);
     await adapter.verifyRequest(new Request("http://localhost/v1/bootstrap"));
 
-    const ws = await wsStore.create("Test Workspace", "test");
+    const ws = await wsStore.create("Test Workspace");
     await wsStore.addMember(ws.id, "usr_default", "admin");
 
     console.warn = originalWarn;

@@ -58,6 +58,8 @@ const { ChatPanelProvider, useChatPanelContext } = await import("../context/Chat
 const { ThemeProvider } = await import("../context/ThemeContext");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { AppWithChat } = await import("../components/AppWithChat");
+const { AppLocationProvider, useAppLocation } = await import("../context/AppLocationContext");
+const { LOCATION_METHOD } = await import("../bridge/extensions");
 const { getAppState } = realBridge;
 
 import type { ChatPanelContextValue } from "../context/ChatPanelContext";
@@ -231,5 +233,88 @@ describe("AppWithChat — the mobile sidebar covers the app without unmounting i
     expect(appArea().hasAttribute("inert")).toBe(false);
     expect(appArea().getAttribute("aria-hidden")).toBeNull();
     expect(appArea().className).not.toContain("invisible");
+  });
+});
+
+describe("AppWithChat — the top bar's trail belongs to the app on screen", () => {
+  // Sibling app routes render this same element, so React Router keeps one
+  // instance and hands it the next placement. This renders it the same way.
+  const PLACEMENT_B = {
+    ...PLACEMENT,
+    serverName: `${APP}-b`,
+    resourceUri: `ui://${APP}-b/main`,
+    route: "tasks",
+  } as unknown as PlacementEntry;
+
+  let location: ReturnType<typeof useAppLocation>;
+  function LocationProbe() {
+    location = useAppLocation();
+    return null;
+  }
+
+  function tree(placement: PlacementEntry) {
+    return React.createElement(
+      MemoryRouter,
+      { initialEntries: ["/w/a/app/notes"] },
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS_A],
+          initialActiveId: "ws_a",
+          children: React.createElement(ChatProvider, {
+            currentUserId: "u1",
+            initialConfig: { configuredProviders: ["anthropic"] },
+            children: React.createElement(
+              ChatPanelProvider,
+              null,
+              React.createElement(
+                AppLocationProvider,
+                null,
+                React.createElement(LocationProbe),
+                React.createElement(AppWithChat, { placement }),
+              ),
+            ),
+          }),
+        }),
+      ),
+    );
+  }
+
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  }
+
+  test("switching to another app clears the previous app's trail", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = ReactDOMClient.createRoot(container);
+    await act(async () => root.render(tree(PLACEMENT)));
+    await settle();
+
+    const frame = iframe();
+    if (!frame) throw new Error("no iframe");
+    const event = new happyWindow.MessageEvent("message", {
+      data: {
+        jsonrpc: "2.0",
+        method: LOCATION_METHOD,
+        params: {
+          trail: [
+            { id: "notes", label: "Notes" },
+            { id: "notes/1", label: "Note one" },
+          ],
+        },
+      },
+    });
+    Object.defineProperty(event, "source", { configurable: true, get: () => frame.contentWindow });
+    await act(async () => window.dispatchEvent(event));
+    expect(location.appLocation?.trail.map((e) => e.label)).toEqual(["Notes", "Note one"]);
+
+    await act(async () => root.render(tree(PLACEMENT_B)));
+    await settle();
+
+    expect(location.appLocation).toBeNull();
   });
 });

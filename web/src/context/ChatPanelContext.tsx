@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { useChatContext } from "./ChatContext";
 
@@ -17,6 +17,14 @@ export interface ChatPanelContextValue {
   toggleFullscreen: () => void;
   /** Set panel width (for resize handle). */
   setPanelWidth: (width: number) => void;
+  /** Assistant replies that arrived while the panel was closed. Kept by `ChatChrome`. */
+  unreadCount: number;
+  setUnreadCount: (count: number) => void;
+  /**
+   * The control that opens the panel (the top bar's Chat button). Focus left
+   * inside the panel when it closes returns here.
+   */
+  toggleButtonRef: RefObject<HTMLButtonElement | null>;
 }
 
 const LS_STATE_KEY = "nb:chatPanelState";
@@ -51,6 +59,8 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
   const chat = useChatContext();
   const [panelState, setPanelStateRaw] = useState<PanelState>(readState);
   const [panelWidth, setPanelWidthRaw] = useState<number>(readWidth);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const toggleButtonRef = useRef<HTMLButtonElement | null>(null);
 
   // Use a ref for openConversation so openPanel's identity doesn't change
   // when the chat context value changes during streaming.
@@ -98,8 +108,20 @@ export function ChatPanelProvider({ children }: ChatPanelProviderProps) {
       togglePanel,
       toggleFullscreen,
       setPanelWidth,
+      unreadCount,
+      setUnreadCount,
+      toggleButtonRef,
     }),
-    [panelState, panelWidth, openPanel, closePanel, togglePanel, toggleFullscreen, setPanelWidth],
+    [
+      panelState,
+      panelWidth,
+      openPanel,
+      closePanel,
+      togglePanel,
+      toggleFullscreen,
+      setPanelWidth,
+      unreadCount,
+    ],
   );
 
   return <ChatPanelContext value={value}>{children}</ChatPanelContext>;

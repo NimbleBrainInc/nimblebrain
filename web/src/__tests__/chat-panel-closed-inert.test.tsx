@@ -5,7 +5,7 @@
 // its state, which means its controls are still in the DOM. It must be inert
 // and aria-hidden then, so nothing in it takes focus or is announced; opening
 // it clears both and puts the cursor in the composer, and closing it with
-// focus inside moves focus out. This mounts the real chrome over the real
+// focus inside moves focus to the top bar's Chat button. This mounts the real chrome over the real
 // providers and drives it the way a person does.
 // ---------------------------------------------------------------------------
 
@@ -43,6 +43,7 @@ const { FocusedAppProvider } = await import("../context/FocusedAppContext");
 const { SidebarProvider } = await import("../context/SidebarContext");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { ChatChrome } = await import("../components/ChatChrome");
+const { ChatToggle } = await import("../components/shell/ChatToggle");
 const { chatStore } = await import("../hooks/chat-store");
 
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
@@ -82,7 +83,13 @@ async function mountChrome(): Promise<void> {
               React.createElement(
                 SidebarProvider,
                 null,
-                React.createElement(FocusedAppProvider, null, React.createElement(ChatChrome)),
+                React.createElement(
+                  FocusedAppProvider,
+                  null,
+                  // The top bar's Chat button, which focus returns to on close.
+                  React.createElement(ChatToggle),
+                  React.createElement(ChatChrome),
+                ),
               ),
             ),
           }),
@@ -163,7 +170,7 @@ describe("the closed chat panel", () => {
 });
 
 describe("opening the chat panel", () => {
-  test("from the floating toggle clears inert and focuses the composer", async () => {
+  test("from the Chat button clears inert and focuses the composer", async () => {
     await mountChrome();
     await act(async () => toggleButton()?.click());
     expectOpen();
@@ -197,7 +204,7 @@ describe("opening the chat panel", () => {
 });
 
 describe("closing the chat panel with focus inside it", () => {
-  test("with Esc moves focus to the floating toggle", async () => {
+  test("with Esc moves focus to the Chat button", async () => {
     await mountChrome();
     await press("j", { metaKey: true });
     expect(document.activeElement).toBe(textarea());
@@ -208,7 +215,7 @@ describe("closing the chat panel with focus inside it", () => {
     expect(document.activeElement).toBe(toggleButton());
   });
 
-  test("with the Close button moves focus to the floating toggle", async () => {
+  test("with the Close button moves focus to the Chat button", async () => {
     await mountChrome();
     await press("j", { metaKey: true });
     const close = panel().querySelector<HTMLButtonElement>('button[aria-label="Close"]');

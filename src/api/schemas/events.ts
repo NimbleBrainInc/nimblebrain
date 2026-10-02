@@ -45,8 +45,6 @@ export type PlacementDeclaration = Omit<
 
 /** Mirrors `ConnectorUiMeta` (`src/connectors/runtime/types.ts`). */
 export interface ConnectorUiMeta {
-  name: string;
-  icon: string;
   placements?: PlacementDeclaration[];
 }
 

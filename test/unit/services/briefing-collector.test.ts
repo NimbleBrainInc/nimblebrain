@@ -25,7 +25,6 @@ function instance(serverName: string, route: string | null = "@acme/app"): Conne
     version: "1.0.0",
     state: "running",
     ui: {
-      name: `App ${serverName}`,
       placements: route ? [{ slot: "sidebar.apps", resourceUri: "ui://x/main", route }] : [],
     },
     wsId: WS,
@@ -45,11 +44,17 @@ async function serve(name: string, opts: Parameters<typeof startFacetsSource>[1]
 
 function collectorFor(
   sources: McpSource[],
-  extra: { now?: () => number; readTimeoutMs?: number } = {},
+  extra: {
+    now?: () => number;
+    readTimeoutMs?: number;
+    titles?: ReadonlyMap<string, string>;
+  } = {},
 ) {
+  const { titles, ...rest } = extra;
   return createBriefingCollector({
     resolveSource: (_wsId, serverName) => sources.find((s) => s.name === serverName) ?? null,
-    ...extra,
+    connectorTitles: async () => titles ?? new Map(sources.map((s) => [s.name, `App ${s.name}`])),
+    ...rest,
   });
 }
 
@@ -58,6 +63,27 @@ const counts: Record<string, string> = {
   "test://facets/blocked": '{"count": 2, "extra": "ignored"}',
   "test://facets/zero": '{"count": 0}',
 };
+
+describe("the app name", () => {
+  it("is the catalog title, folded to one line, else the server name", async () => {
+    const one = await serve("one", {
+      resources: () => [facetEntry("drafts", "Drafts")],
+      read: () => '{"count": 1}',
+    });
+    const two = await serve("two", {
+      resources: () => [facetEntry("drafts", "Drafts")],
+      read: () => '{"count": 1}',
+    });
+    const titles = new Map([["one", "Title\n- forged"]]);
+
+    const items = await collectorFor([one.source, two.source], { titles }).collect(WS, [
+      instance("one"),
+      instance("two"),
+    ]);
+
+    expect(items.map((i) => i.app)).toEqual(["Title - forged", "two"]);
+  });
+});
 
 describe("discovery", () => {
   it("takes the marked resources of a server that advertises the extension", async () => {

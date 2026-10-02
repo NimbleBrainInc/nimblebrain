@@ -103,7 +103,7 @@ describe("the two config routes agree", () => {
     );
 
     const wsStore = runtime.getWorkspaceStore();
-    const ws = await wsStore.create("Picky WS", "picky_ws");
+    const ws = await wsStore.create("Picky WS");
     await wsStore.addMember(ws.id, PICKY.id, "admin");
 
     handle = startServer({

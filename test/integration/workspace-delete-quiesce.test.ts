@@ -34,6 +34,7 @@ import type { TaskRequest, TaskResult } from "../../src/runtime/types.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
+import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const WS_ID = "ws_quiesce";
 const AUTOMATION_ID = "daily-digest";
@@ -97,7 +98,7 @@ beforeEach(async () => {
     logging: { disabled: true },
     workDir,
   });
-  await runtime.getWorkspaceStore().create("Quiesce", "quiesce");
+  await seedWorkspace(runtime.getWorkspaceStore(), WS_ID, { name: "Quiesce" });
   await runtime.getWorkspaceStore().addMember(WS_ID, OWNER, "admin");
 
   // Stand in for the agent run. The automations source closed over

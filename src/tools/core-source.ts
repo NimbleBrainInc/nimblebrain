@@ -491,6 +491,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
   // workspace, server and facet, never by the member who asked.
   const briefingCollector = createBriefingCollector({
     resolveSource: (wsId, serverName) => workspaceMcpSource(runtime, wsId, serverName),
+    connectorTitles: () => runtime.connectorTitles(),
   });
 
   const toolDefs: InProcessTool[] = [

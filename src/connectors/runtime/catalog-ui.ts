@@ -1,5 +1,5 @@
 /**
- * An installed connector's host UI (name, icon, placements) comes from the
+ * An installed connector's host UI (its placements) comes from the
  * operator catalog at boot, not from the copy its install stored.
  *
  * Install copies the catalog entry's `ui` onto the persisted `ConnectorRef`, and
@@ -21,6 +21,7 @@
  */
 
 import type { ConnectorCatalogEntry } from "../catalog/types.ts";
+import { sanitizePlacements } from "./defaults.ts";
 import { slugifyServerName } from "./paths.ts";
 import type { ConnectorRef, ConnectorUiMeta, LocalConnectorMeta } from "./types.ts";
 
@@ -34,6 +35,37 @@ export function catalogUiByServerName(
     if (!out.has(slug)) out.set(slug, e.ui ?? null);
   }
   return out;
+}
+
+/**
+ * Each catalog entry's display name (its core `title ?? name`, projected as
+ * `ConnectorCatalogEntry.name`) by the server name its install uses. First
+ * entry per slug wins. A connector no entry names has no title here; callers
+ * fall back to its server name.
+ */
+export function catalogTitleByServerName(
+  entries: readonly ConnectorCatalogEntry[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const e of entries) {
+    const slug = slugifyServerName(e.id);
+    if (!out.has(slug)) out.set(slug, e.name);
+  }
+  return out;
+}
+
+/**
+ * The UI an installed connector shows, named for the system prompt: its
+ * catalog title, else its server name, or null when it has no placement that
+ * survives the check registration applies (so the shell renders nothing).
+ */
+export function namedUi(
+  serverName: string,
+  ui: ConnectorUiMeta | null | undefined,
+  titles: ReadonlyMap<string, string>,
+): { name: string } | null {
+  if (sanitizePlacements(ui?.placements).length === 0) return null;
+  return { name: titles.get(serverName) ?? serverName };
 }
 
 /**

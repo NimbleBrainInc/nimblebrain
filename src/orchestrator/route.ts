@@ -243,9 +243,11 @@ export interface OrchestratorRuntime {
   getPermissionStore?(): PermissionStore;
 
   /**
-   * The connector role gate: the `workspace_admin_required` refusal when
-   * `principal` is not a workspace admin of `wsId` and the connector declares
-   * `toolName` in its catalog `admin_tools`, else `null`. Callers run it beside
+   * The connector gate: the `host_only_tool` refusal when the connector's
+   * catalog `lifecycle` block names `toolName`, whoever calls; the
+   * `workspace_admin_required` refusal when `principal` is not a workspace
+   * admin of `wsId` and the connector declares `toolName` in its catalog
+   * `admin_tools`; else `null`. Callers run it beside
    * `assertToolAllowed` for a workspace-routed tool. Optional on the same terms
    * as {@link getPermissionStore}: the production `Runtime` always provides it.
    */

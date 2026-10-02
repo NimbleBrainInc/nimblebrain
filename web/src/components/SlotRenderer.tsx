@@ -10,6 +10,7 @@ import {
 } from "../bridge/host-extensions";
 import type { CreateIframeOptions } from "../bridge/iframe";
 import { createAppIframe } from "../bridge/iframe";
+import type { AppTrailEntry } from "../bridge/schemas";
 import type { BridgeCallbacks } from "../bridge/types";
 import { useFileLimits } from "../context/ChatContext";
 import { useTheme } from "../context/ThemeContext";
@@ -23,6 +24,12 @@ interface SlotRendererProps {
   /** If set, only show the placement matching this route */
   routeFilter?: string;
   onChat?: (message: string) => void;
+  /**
+   * Called with a placement's trail each time it sends
+   * `ai.nimblebrain/location`, and a `navigate` that asks that same placement
+   * to go to one of its trail entries.
+   */
+  onLocation?: (trail: AppTrailEntry[], navigate: (id: string) => void) => void;
   /**
    * Whether the viewer can manage the connector these placements belong to.
    * Set only by the connector settings page; when set, it reaches the app as
@@ -98,8 +105,9 @@ function mountPlacement(
   entry: PlacementEntry,
   resource: { html: string; metaUi?: McpUiResourceMeta },
   themeMode: CreateIframeOptions["themeMode"],
-  callbacks: BridgeCallbacks,
+  shared: BridgeCallbacks,
   fitContent: boolean,
+  onLocation: SlotRendererProps["onLocation"],
 ): BridgeHandle {
   const { html, metaUi } = resource;
   const iframe = createAppIframe(fitContent ? buildSizedHtml(html) : html, entry.serverName, {
@@ -123,16 +131,24 @@ function mountPlacement(
     iframe.style.opacity = "1";
   });
 
-  if (!fitContent) return createBridge(iframe, entry.serverName, callbacks);
-  return createBridge(iframe, entry.serverName, {
-    ...callbacks,
+  // The trail's `navigate` must reach this placement's own bridge, which
+  // exists only once `createBridge` returns; the app cannot send a location
+  // before its handshake, so the binding is in place by the time it is read.
+  let bridge: BridgeHandle | null = null;
+  const callbacks: BridgeCallbacks = {
+    ...shared,
+    onLocation: (trail) => onLocation?.(trail, (id) => bridge?.navigate(id)),
+  };
+  if (fitContent) {
     // A non-positive report comes from an app whose root has not rendered yet;
     // keep the current height until it reports real content.
-    onResize: (reported) => {
+    callbacks.onResize = (reported) => {
       const h = Math.min(reported, RUNAWAY_HEIGHT_GUARD);
       if (h > 0) iframe.style.height = `${h}px`;
-    },
-  });
+    };
+  }
+  bridge = createBridge(iframe, entry.serverName, callbacks);
+  return bridge;
 }
 
 export function SlotRenderer({
@@ -140,6 +156,7 @@ export function SlotRenderer({
   className,
   routeFilter,
   onChat,
+  onLocation,
   canManage,
   fitContent = false,
 }: SlotRendererProps) {
@@ -171,6 +188,8 @@ export function SlotRenderer({
   // when callback identity changes (e.g. during chat streaming).
   const onChatRef = useRef(onChat);
   onChatRef.current = onChat;
+  const onLocationRef = useRef(onLocation);
+  onLocationRef.current = onLocation;
 
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
@@ -213,6 +232,7 @@ export function SlotRenderer({
           modeRef.current,
           bridgeCallbacks,
           fitContent,
+          (trail, navigate) => onLocationRef.current?.(trail, navigate),
         );
       } catch (err) {
         console.warn(`Failed to load placement ${entry.resourceUri}:`, err);
