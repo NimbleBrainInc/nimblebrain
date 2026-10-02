@@ -140,8 +140,14 @@ export function buildThemeStyleBlock(mode: ThemeMode): string {
     .map(([key, value]) => `  ${key}: ${value};`)
     .join("\n");
 
+  // `color-scheme` is what the browser draws its own parts with: scrollbars, form
+  // controls, the canvas behind a transparent body. Without it an app in dark mode
+  // gets a dark page with light scrollbars. It is set here, at parse time, because
+  // the document has to start in the host's mode; a later mode change is the app
+  // SDK's to follow, as it is for the variables.
   return `<style>
 :root {
+  color-scheme: ${mode};
 ${declarations}
 }
 *, *::before, *::after {

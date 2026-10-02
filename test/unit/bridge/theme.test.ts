@@ -59,6 +59,13 @@ describe("buildThemeStyleBlock", () => {
     expect(block).toContain("color: var(--color-text-primary);");
   });
 
+  test("the document starts in the host's color scheme", () => {
+    // What the browser draws its own parts with. Without it a dark app gets light
+    // scrollbars and form controls, whatever its variables say.
+    expect(buildThemeStyleBlock("dark")).toContain("color-scheme: dark;");
+    expect(buildThemeStyleBlock("light")).toContain("color-scheme: light;");
+  });
+
   test("includes box-sizing reset", () => {
     const block = buildThemeStyleBlock("light");
     expect(block).toContain("box-sizing: border-box;");
