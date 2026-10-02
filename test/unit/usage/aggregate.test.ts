@@ -545,16 +545,26 @@ describe("resolveDateRange", () => {
     expect(range.to).toBe("2026-01-15");
   });
 
-  it("'week' range subtracts exactly 7 days", () => {
+  it("'week' range is seven UTC days counting the end day", () => {
     const range = resolveDateRange("week", undefined, "2026-04-30");
-    expect(range.from).toBe("2026-04-23");
+    expect(range.from).toBe("2026-04-24");
     expect(range.to).toBe("2026-04-30");
   });
 
   it("'week' range across month boundary", () => {
     const range = resolveDateRange("week", undefined, "2026-05-03");
-    expect(range.from).toBe("2026-04-26");
+    expect(range.from).toBe("2026-04-27");
     expect(range.to).toBe("2026-05-03");
+  });
+
+  it("'week' zero-fills exactly seven day rows", async () => {
+    // The day count is what a "last 7 days" chart shows, so pin it through
+    // the aggregation rather than only through the range arithmetic.
+    const dir = makeTmpDir();
+    const report = await aggregateUsage(dir, "week", "day", { to: "2026-05-03" });
+    expect(report.breakdown).toHaveLength(7);
+    expect(report.breakdown[0]?.key).toBe("2026-04-27");
+    expect(report.breakdown[6]?.key).toBe("2026-05-03");
   });
 
   it("'day' range returns same date for from and to", () => {
@@ -884,5 +894,142 @@ describe("the breakdown row cap", () => {
     const report = await aggregateUsage(dir, "all", "day");
     expect(report.breakdowns.day).toHaveLength(days);
     expect(report.truncatedBreakdowns?.day).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace grouping, filters, and the per-day stack
+// ---------------------------------------------------------------------------
+
+describe("workspace grouping and filters", () => {
+  /**
+   * Four calls across two users, two workspaces (plus one bound to none), two
+   * models, and both origins. Input tokens are distinct powers of ten so any
+   * subset's total names exactly which calls it holds.
+   */
+  function seed(dir: string): void {
+    writeRecord(dir, {
+      userId: "usr_a",
+      workspaceId: "ws_alpha",
+      conversationId: "conv_1",
+      model: "anthropic:claude-sonnet-4-5-20250929",
+      usage: { inputTokens: 1, outputTokens: 0 },
+      ts: "2026-04-10T12:00:00Z",
+    });
+    writeRecord(dir, {
+      userId: "usr_a",
+      workspaceId: "ws_beta",
+      origin: "task",
+      taskRunId: "run_1",
+      model: "anthropic:claude-haiku-4-5-20251001",
+      usage: { inputTokens: 10, outputTokens: 0 },
+      ts: "2026-04-10T13:00:00Z",
+    });
+    writeRecord(dir, {
+      userId: "usr_b",
+      workspaceId: "ws_alpha",
+      conversationId: "conv_2",
+      model: "anthropic:claude-haiku-4-5-20251001",
+      usage: { inputTokens: 100, outputTokens: 0 },
+      ts: "2026-04-11T12:00:00Z",
+    });
+    writeRecord(dir, {
+      origin: "system",
+      model: "anthropic:claude-haiku-4-5-20251001",
+      usage: { inputTokens: 1000, outputTokens: 0 },
+      ts: "2026-04-11T13:00:00Z",
+    });
+  }
+
+  it("groupBy:workspace buckets by workspaceId, with unbound calls under none", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const report = await aggregateUsage(dir, "all", "workspace");
+    const byKey = Object.fromEntries(report.breakdown.map((r) => [r.key, r.tokens.input]));
+    expect(byKey).toEqual({ none: 1000, ws_alpha: 101, ws_beta: 10 });
+  });
+
+  it("filters by workspace, and 'none' selects the unbound calls", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const alpha = await aggregateUsage(dir, "all", "day", { filters: { workspaceId: "ws_alpha" } });
+    expect(alpha.totals.tokens.input).toBe(101);
+    const none = await aggregateUsage(dir, "all", "day", { filters: { workspaceId: "none" } });
+    expect(none.totals.tokens.input).toBe(1000);
+  });
+
+  it("filters by user, excluding lines with no userId", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const report = await aggregateUsage(dir, "all", "day", { filters: { userId: "usr_a" } });
+    expect(report.totals.tokens.input).toBe(11);
+    expect(report.totals.llmCalls).toBe(2);
+  });
+
+  it("filters by model, by short name or qualified string", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const short = await aggregateUsage(dir, "all", "day", {
+      filters: { model: "claude-haiku-4-5" },
+    });
+    expect(short.totals.tokens.input).toBe(1110);
+    expect(short.models.map((m) => m.model)).toEqual(["claude-haiku-4-5"]);
+    const qualified = await aggregateUsage(dir, "all", "day", {
+      filters: { model: "anthropic:claude-sonnet-4-5-20250929" },
+    });
+    expect(qualified.totals.tokens.input).toBe(1);
+  });
+
+  it("filters by origin", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const task = await aggregateUsage(dir, "all", "day", { filters: { origin: "task" } });
+    expect(task.totals.tokens.input).toBe(10);
+    expect(task.totals.runs).toBe(1);
+    expect(task.totals.conversations).toBe(0);
+  });
+
+  it("ANDs filters with each other and with ownerFilter", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const both = await aggregateUsage(dir, "all", "day", {
+      filters: { workspaceId: "ws_alpha", model: "claude-haiku-4-5" },
+    });
+    expect(both.totals.tokens.input).toBe(100);
+    // A userId filter naming someone other than the owner cannot widen the read.
+    const crossed = await aggregateUsage(dir, "all", "day", {
+      ownerFilter: "usr_a",
+      filters: { userId: "usr_b" },
+    });
+    expect(crossed.totals.llmCalls).toBe(0);
+  });
+
+  it("stackBy splits each day row's cost by the dimension, and the split sums to the row", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const report = await aggregateUsage(dir, "all", ["day", "workspace"], {
+      from: "2026-04-10",
+      to: "2026-04-12",
+      stackBy: "workspace",
+    });
+    const days = report.breakdowns.day ?? [];
+    expect(days.map((d) => d.key)).toEqual(["2026-04-10", "2026-04-11", "2026-04-12"]);
+    expect(Object.keys(days[0]?.stack ?? {}).sort()).toEqual(["ws_alpha", "ws_beta"]);
+    expect(Object.keys(days[1]?.stack ?? {}).sort()).toEqual(["none", "ws_alpha"]);
+    for (const day of days.slice(0, 2)) {
+      const sum = Object.values(day.stack ?? {}).reduce((a, b) => a + b, 0);
+      expect(sum).toBeCloseTo(day.cost.total, 12);
+    }
+    // A zero-filled day has no spend to split.
+    expect(days[2]?.stack).toBeUndefined();
+    // Only `day` rows carry it.
+    expect(report.breakdowns.workspace?.[0]?.stack).toBeUndefined();
+  });
+
+  it("omits stack when stackBy is not requested", async () => {
+    const dir = makeTmpDir();
+    seed(dir);
+    const report = await aggregateUsage(dir, "all", "day");
+    expect(report.breakdown.every((d) => d.stack === undefined)).toBe(true);
   });
 });

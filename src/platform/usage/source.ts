@@ -26,7 +26,13 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { aggregateUsage } from "../../usage/aggregate.ts";
-import { type UsageGroupBy, UsageReportInput, type UsageReportOutput } from "../schemas/usage.ts";
+import {
+  type UsageGroupBy,
+  type UsageOrigin,
+  UsageReportInput,
+  type UsageReportOutput,
+  type UsageStackBy,
+} from "../schemas/usage.ts";
 
 interface UsageReportArgs {
   scope?: "user" | "org";
@@ -34,13 +40,19 @@ interface UsageReportArgs {
   groupBy?: UsageGroupBy | UsageGroupBy[];
   from?: string;
   to?: string;
+  stackBy?: UsageStackBy;
+  workspaceId?: string;
+  userId?: string;
+  model?: string;
+  origin?: UsageOrigin;
 }
 
 const USAGE_REPORT_DESCRIPTION =
   "Get aggregated usage (tokens, cost, LLM calls) recorded at the point of spend. " +
   'Defaults to `scope: "user"` — only your own spend. ' +
   '`scope: "org"` reports every user\'s usage and requires org admin/owner; ' +
-  'pair it with `groupBy: "user"` for a per-user breakdown.';
+  'pair it with `groupBy: "user"` for a per-user breakdown. ' +
+  "`workspaceId`, `userId`, `model`, and `origin` narrow the calls counted.";
 
 /**
  * Resolve the owner filter and scope for a request, enforcing the org-admin
@@ -87,6 +99,20 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
           if ("error" in resolved) {
             return { content: textContent(resolved.error), isError: true };
           }
+          // A user-scope caller may name only themselves. Refused rather than
+          // returned empty, so asking for a peer's spend reads as not allowed
+          // instead of as "they spent nothing". The aggregator ANDs this with
+          // `ownerFilter` regardless, so it could not widen the read anyway.
+          if (
+            resolved.ownerFilter !== undefined &&
+            args.userId !== undefined &&
+            args.userId !== resolved.ownerFilter
+          ) {
+            return {
+              content: textContent('Filtering by another user requires scope: "org".'),
+              isError: true,
+            };
+          }
 
           const period = args.period ?? "month";
           const groupBy = args.groupBy ?? "day";
@@ -98,6 +124,13 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
             from: args.from,
             to: args.to,
             ownerFilter: resolved.ownerFilter,
+            stackBy: args.stackBy,
+            filters: {
+              workspaceId: args.workspaceId,
+              userId: args.userId,
+              model: args.model,
+              origin: args.origin,
+            },
           });
 
           const out: UsageReportOutput = { scope: resolved.scope, ...report };

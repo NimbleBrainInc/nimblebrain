@@ -22,7 +22,12 @@
 import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { USAGE_GROUP_BYS, type UsageGroupBy } from "../platform/schemas/usage.ts";
+import {
+  USAGE_GROUP_BYS,
+  type UsageGroupBy,
+  type UsageOrigin,
+  type UsageStackBy,
+} from "../platform/schemas/usage.ts";
 import { costBreakdown } from "./cost.ts";
 import { isBackfillShard, usageMonthDir, usageMonthsInRange } from "./paths.ts";
 import type { UsageLedgerEntry } from "./types.ts";
@@ -124,6 +129,11 @@ export interface BreakdownEntry {
   unpricedCalls?: number;
   /** Input-side cache-hit rate (0–1). See `computeCacheHitRate`. */
   cacheHitRate?: number;
+  /**
+   * Cost total per key of the `stackBy` dimension, on `day` rows when it was
+   * requested. Keys with no spend that day are absent.
+   */
+  stack?: Record<string, number>;
 }
 
 /**
@@ -168,6 +178,8 @@ interface BreakdownAccumulator {
   sids: Set<string>;
   runIds: Set<string>;
   unpricedCalls: number;
+  /** Cost per `stackBy` key. Created only on `day` rows when `stackBy` is set. */
+  stack?: Map<string, number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +341,11 @@ function groupKeyFor(record: LlmCallRecord, groupBy: UsageGroupBy, modelKey: str
       return record.origin;
     case "provider":
       return providerOf(record.model);
+    case "workspace":
+      // A call made outside any workspace (a detached background call) has no
+      // binding, and groups under "none" — the same word the id-keyed
+      // dimensions use for an absent id.
+      return record.workspaceId ?? "none";
     case "day":
       return record.ts.slice(0, 10);
   }
@@ -420,6 +437,7 @@ function finalizeBreakdown(
       ...(data.runIds.size > 0 ? { runs: data.runIds.size } : {}),
       ...(data.unpricedCalls > 0 ? { unpricedCalls: data.unpricedCalls } : {}),
       cacheHitRate: computeCacheHitRate(data.tokens),
+      ...(data.stack ? { stack: Object.fromEntries(data.stack) } : {}),
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
 
@@ -496,8 +514,9 @@ export function resolveDateRange(
     case "day":
       return { from: toDate, to: toDate };
     case "week": {
+      // Seven UTC days counting `to` itself, so the range is `to - 6 .. to`.
       const d = new Date(`${toDate}T00:00:00Z`);
-      d.setUTCDate(d.getUTCDate() - 7);
+      d.setUTCDate(d.getUTCDate() - 6);
       return { from: d.toISOString().slice(0, 10), to: toDate };
     }
     case "all":
@@ -535,6 +554,47 @@ export interface AggregateUsageOptions {
    * spend into another's view on exactly the lines whose owner is unknown.
    */
   ownerFilter?: string;
+  /**
+   * Narrow the records before aggregation, so totals, rows and models all
+   * describe the same subset. Each is ANDed with the others and with
+   * `ownerFilter`, so none of them can widen an owner-filtered read.
+   */
+  filters?: UsageFilters;
+  /** Split each `day` row's cost by this dimension. See `BreakdownEntry.stack`. */
+  stackBy?: UsageStackBy;
+}
+
+export interface UsageFilters {
+  /** Only calls bound to this workspace; `"none"` selects calls bound to none. */
+  workspaceId?: string;
+  /** Only calls made by this user. Fails closed like `ownerFilter`. */
+  userId?: string;
+  /** Only calls to this model, matched as the qualified string or its short name. */
+  model?: string;
+  origin?: UsageOrigin;
+}
+
+/**
+ * Whether a record passes every set filter.
+ *
+ * Each filter reads the field through the same derivation its `groupBy`
+ * dimension uses, so selecting a row's key as a filter returns exactly that
+ * row's records: a call with no workspace is `"none"` to both, and a model
+ * matches by the short name the `models` rows carry.
+ */
+function matchesFilters(record: LlmCallRecord, filters: UsageFilters): boolean {
+  if (filters.workspaceId !== undefined) {
+    if ((record.workspaceId ?? "none") !== filters.workspaceId) return false;
+  }
+  // Fails closed, like `ownerFilter`: a line with no `userId` never matches.
+  if (filters.userId !== undefined && record.userId !== filters.userId) return false;
+  if (filters.model !== undefined) {
+    if (record.model !== filters.model && normalizeModel(record.model) !== filters.model) {
+      return false;
+    }
+  }
+  if (filters.origin !== undefined && record.origin !== filters.origin) return false;
+  return true;
 }
 
 /** Parse one shard's lines into the records in range the caller may see. */
@@ -542,6 +602,7 @@ function parseShard(
   text: string,
   range: { from: string; to: string },
   ownerFilter?: string,
+  filters: UsageFilters = {},
 ): LlmCallRecord[] {
   const out: LlmCallRecord[] = [];
   for (const line of text.split("\n")) {
@@ -557,6 +618,7 @@ function parseShard(
     // Fails closed: a line with no `userId` is excluded from a filtered read,
     // never included. See `AggregateUsageOptions.ownerFilter`.
     if (ownerFilter !== undefined && entry.userId !== ownerFilter) continue;
+    if (!matchesFilters(entry, filters)) continue;
     out.push(entry);
   }
   return out;
@@ -587,13 +649,16 @@ async function readLedger(
   workDir: string,
   range: { from: string; to: string },
   ownerFilter?: string,
+  filters?: UsageFilters,
 ): Promise<LlmCallRecord[]> {
   const records: LlmCallRecord[] = [];
   for (const month of usageMonthsInRange(range.from, range.to)) {
     const dir = usageMonthDir(workDir, month);
     for (const shard of shardsForMonth(dir)) {
       try {
-        records.push(...parseShard(await readFile(join(dir, shard), "utf-8"), range, ownerFilter));
+        records.push(
+          ...parseShard(await readFile(join(dir, shard), "utf-8"), range, ownerFilter, filters),
+        );
       } catch {
         // Shard vanished between listing and read (retention sweep); skip it.
       }
@@ -611,6 +676,7 @@ interface AggregationSink {
   modelMap: Map<string, ModelUsage>;
   breakdownMaps: Map<UsageGroupBy, Map<string, BreakdownAccumulator>>;
   groupBys: UsageGroupBy[];
+  stackBy?: UsageStackBy;
 }
 
 /** Get or create the per-model accumulator for `modelKey`. */
@@ -666,14 +732,24 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     if (conversationId) bucket.sids.add(conversationId);
     if (taskRunId) bucket.runIds.add(taskRunId);
     if (!priced) bucket.unpricedCalls++;
+    if (dimension === "day" && sink.stackBy) {
+      addToStack(bucket, groupKeyFor(record, sink.stackBy, modelKey), cost.total);
+    }
   }
+}
+
+/** Add one record's cost to a day row's `stackBy` split. */
+function addToStack(bucket: BreakdownAccumulator, key: string, cost: number): void {
+  bucket.stack ??= new Map();
+  bucket.stack.set(key, (bucket.stack.get(key) ?? 0) + cost);
 }
 
 /**
  * Aggregate tenant spend from the durable usage ledger under `workDir`.
  *
  * 1. Read the shards for every month the range spans, dropping out-of-range
- *    lines and — when `ownerFilter` is set — anyone else's
+ *    lines, lines failing `filters`, and — when `ownerFilter` is set — anyone
+ *    else's
  * 2. Derive totals, splitting chat conversations from task runs and counting
  *    the calls no price could be found for
  * 3. Derive per-model and per-dimension breakdowns, which make the same split
@@ -684,11 +760,11 @@ export async function aggregateUsage(
   groupBy: string | string[],
   options: AggregateUsageOptions = {},
 ): Promise<UsageReport> {
-  const { from, to, ownerFilter } = options;
+  const { from, to, ownerFilter, filters, stackBy } = options;
   const range = resolveDateRange(period, from, to);
   const groupBys = normalizeGroupBys(groupBy);
 
-  const records = await readLedger(workDir, range, ownerFilter);
+  const records = await readLedger(workDir, range, ownerFilter, filters);
   // Derive totals
   const totals: UsageTotals = {
     tokens: createTokenBreakdown(),
@@ -705,6 +781,7 @@ export async function aggregateUsage(
     modelMap: new Map<string, ModelUsage>(),
     breakdownMaps: new Map<UsageGroupBy, Map<string, BreakdownAccumulator>>(),
     groupBys,
+    stackBy,
   };
   for (const dimension of groupBys) sink.breakdownMaps.set(dimension, new Map());
 

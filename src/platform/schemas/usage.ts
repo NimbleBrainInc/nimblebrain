@@ -15,7 +15,19 @@ export const USAGE_GROUP_BYS = [
   "user",
   "origin",
   "provider",
+  "workspace",
 ] as const;
+
+/**
+ * The dimensions a `day` row can be split by (`stackBy`). Only the
+ * low-cardinality ones: a day row carries one entry per key, so an id-keyed
+ * dimension (`conversation`, `turn`) would multiply the row count by the
+ * tenant's whole history.
+ */
+export const USAGE_STACK_BYS = ["model", "user", "origin", "provider", "workspace"] as const;
+
+/** Who a call was for. Mirrors `LlmCallOrigin` in `src/usage/types.ts`. */
+export const USAGE_ORIGINS = ["chat", "task", "system"] as const;
 
 const UsageGroupBy = StringEnum(USAGE_GROUP_BYS, {
   description:
@@ -23,7 +35,8 @@ const UsageGroupBy = StringEnum(USAGE_GROUP_BYS, {
     "`origin` splits interactive chat from automation runs; `turn` buckets by a single " +
     "assistant turn and is the finest grain here, so narrow the period before reaching for " +
     "it; `provider` buckets by " +
-    "the model string's provider prefix.",
+    "the model string's provider prefix; `workspace` buckets by the workspace the call was " +
+    'bound to (`"none"` for a call bound to none).',
 });
 
 export const UsageReportInput = Type.Object({
@@ -37,7 +50,9 @@ export const UsageReportInput = Type.Object({
   ),
   period: Type.Optional(
     StringEnum(["day", "week", "month", "all"] as const, {
-      description: "Time period. Default: month.",
+      description:
+        "Time period, in UTC days ending today. `day` is today, `week` the last 7 days " +
+        "including today, `month` the month to date. Default: month.",
     }),
   ),
   from: Type.Optional(Type.String({ description: "Start date (YYYY-MM-DD). Overrides period." })),
@@ -52,10 +67,45 @@ export const UsageReportInput = Type.Object({
       }),
     ]),
   ),
+  stackBy: Type.Optional(
+    StringEnum(USAGE_STACK_BYS, {
+      description:
+        "With `day` in `groupBy`, also split each day row's cost by this dimension, " +
+        "returned as `stack` on the row. For a stacked daily chart.",
+    }),
+  ),
+  workspaceId: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description: 'Only calls bound to this workspace. `"none"` selects calls bound to none.',
+    }),
+  ),
+  userId: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description:
+        'Only calls made by this user. Requires `scope: "org"` for anyone but the caller.',
+    }),
+  ),
+  model: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description:
+        "Only calls to this model: either the qualified string or the short name the " +
+        "report's `models` rows use.",
+    }),
+  ),
+  origin: Type.Optional(
+    StringEnum(USAGE_ORIGINS, {
+      description: "Only calls with this origin: `chat`, `task` (automation runs), or `system`.",
+    }),
+  ),
 });
 export type UsageReportInput = Static<typeof UsageReportInput>;
 
 export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
+export type UsageStackBy = (typeof USAGE_STACK_BYS)[number];
+export type UsageOrigin = (typeof USAGE_ORIGINS)[number];
 
 // ── Output types (§2.1) ────────────────────────────────────────────────
 //
@@ -103,6 +153,11 @@ export interface UsageBreakdownEntry {
   unpricedCalls?: number;
   /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
   cacheHitRate?: number;
+  /**
+   * Cost total (USD) per key of the requested `stackBy` dimension. On `day`
+   * rows only, only when `stackBy` was set, and only keys with spend that day.
+   */
+  stack?: Record<string, number>;
 }
 
 export interface UsageReportOutput {

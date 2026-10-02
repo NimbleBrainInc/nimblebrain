@@ -9,16 +9,32 @@ import { type Static } from "@sinclair/typebox";
  * guard (`src/usage/aggregate.ts`) all derive from this array
  * so a new dimension is added in exactly one place.
  */
-export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "turn", "model", "user", "origin", "provider"];
+export declare const USAGE_GROUP_BYS: readonly ["day", "conversation", "turn", "model", "user", "origin", "provider", "workspace"];
+/**
+ * The dimensions a `day` row can be split by (`stackBy`). Only the
+ * low-cardinality ones: a day row carries one entry per key, so an id-keyed
+ * dimension (`conversation`, `turn`) would multiply the row count by the
+ * tenant's whole history.
+ */
+export declare const USAGE_STACK_BYS: readonly ["model", "user", "origin", "provider", "workspace"];
+/** Who a call was for. Mirrors `LlmCallOrigin` in `src/usage/types.ts`. */
+export declare const USAGE_ORIGINS: readonly ["chat", "task", "system"];
 export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
     from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "day" | "conversation" | "turn" | "origin" | "provider">>]>>;
+    groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "workspace" | "day" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "workspace" | "day" | "conversation" | "turn" | "origin" | "provider">>]>>;
+    stackBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"model" | "user" | "workspace" | "origin" | "provider">>;
+    workspaceId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    userId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    origin: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"chat" | "task" | "system">>;
 }>;
 export type UsageReportInput = Static<typeof UsageReportInput>;
 export type UsageGroupBy = (typeof USAGE_GROUP_BYS)[number];
+export type UsageStackBy = (typeof USAGE_STACK_BYS)[number];
+export type UsageOrigin = (typeof USAGE_ORIGINS)[number];
 export interface UsageTokenBreakdown {
     input: number;
     output: number;
@@ -53,6 +69,11 @@ export interface UsageBreakdownEntry {
     unpricedCalls?: number;
     /** Input-side cache-hit rate (0–1). See `computeCacheHitRate` in the aggregator. */
     cacheHitRate?: number;
+    /**
+     * Cost total (USD) per key of the requested `stackBy` dimension. On `day`
+     * rows only, only when `stackBy` was set, and only keys with spend that day.
+     */
+    stack?: Record<string, number>;
 }
 export interface UsageReportOutput {
     /** Echoes the resolved scope so consumers know whether this is a self or org view. */

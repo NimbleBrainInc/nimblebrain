@@ -249,3 +249,78 @@ describe("usage source — the dev user", () => {
     expect(result.isError).toBe(true);
   });
 });
+
+describe("usage source — filters", () => {
+  test("a member filtering by another user is refused, not shown an empty report", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_alice", orgRole: "member" };
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "report",
+      arguments: { period: "all", userId: "usr_bob" },
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  test("a member filtering by themselves gets their own spend", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_alice", orgRole: "member" };
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "report",
+      arguments: { period: "all", userId: "usr_alice" },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = parse(result as { content?: Array<{ type: string; text?: string }> });
+    expect(data.totals.tokens.input).toBe(100);
+  });
+
+  test("a member's workspace filter still sees only their own spend", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_alice", orgRole: "member" };
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "report",
+      arguments: { period: "all", workspaceId: "ws_bob" },
+    });
+    const data = parse(result as { content?: Array<{ type: string; text?: string }> });
+    expect(data.totals.llmCalls).toBe(0);
+  });
+
+  test("org scope narrows by workspace and user, and groups by workspace", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_admin", orgRole: "admin" };
+
+    const client = src.getClient()!;
+    const byWorkspace = parse(
+      (await client.callTool({
+        name: "report",
+        arguments: { scope: "org", period: "all", groupBy: "workspace" },
+      })) as { content?: Array<{ type: string; text?: string }> },
+    );
+    expect(byWorkspace.breakdown.map((b) => b.key).sort()).toEqual(["ws_alice", "ws_bob"]);
+
+    const filtered = parse(
+      (await client.callTool({
+        name: "report",
+        arguments: { scope: "org", period: "all", workspaceId: "ws_bob", userId: "usr_bob" },
+      })) as { content?: Array<{ type: string; text?: string }> },
+    );
+    expect(filtered.totals.tokens.input).toBe(400);
+  });
+
+  test("the schema rejects an origin outside the enum", async () => {
+    const src = await buildSource();
+    runtime.identity = { id: "usr_admin", orgRole: "admin" };
+
+    const client = src.getClient()!;
+    const result = await client.callTool({
+      name: "report",
+      arguments: { scope: "org", period: "all", origin: "batch" },
+    });
+    expect(result.isError).toBe(true);
+  });
+});
