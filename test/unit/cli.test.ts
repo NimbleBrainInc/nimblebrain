@@ -58,6 +58,55 @@ describe("loadConfig", () => {
     });
   });
 
+  it("carries every top-level schema key through to the runtime config", () => {
+    // A key the schema accepts but loadConfig does not copy is validated and
+    // then silently ignored. Every schema key needs a row here; `$schema` and
+    // `version` describe the file and configure nothing.
+    const schema = JSON.parse(
+      require("node:fs").readFileSync(
+        join(import.meta.dir, "../../src/config/nimblebrain-config.schema.json"),
+        "utf-8",
+      ),
+    ) as { properties: Record<string, unknown> };
+    const samples: Record<string, unknown> = {
+      model: { provider: "anthropic" },
+      providers: {},
+      allowInsecureRemotes: true,
+      models: {},
+      modelPolicy: {},
+      defaultModel: "claude-opus-4-6",
+      maxIterations: 5,
+      maxInputTokens: 1000,
+      maxOutputTokens: 1000,
+      thinking: "off",
+      thinkingEffort: "low",
+      thinkingBudgetTokens: 2048,
+      maxToolResultSize: 1000,
+      logging: {},
+      http: {},
+      workDir: testDir,
+      usage: { ledger: { retentionMonths: 6 } },
+      sessionStore: { type: "memory", ttlSeconds: 60 },
+      secrets: {},
+      telemetry: {},
+      features: {},
+      connectors: {},
+      notifications: { poll: { intervalMs: 30000 } },
+      automations: {},
+      files: {},
+    };
+    const fileOnly = new Set(["$schema", "version"]);
+    const configurable = Object.keys(schema.properties).filter((k) => !fileOnly.has(k));
+    expect(configurable.filter((k) => !(k in samples))).toEqual([]);
+
+    const configPath = writeTestConfig("every-key.json", samples);
+    const config = loadConfig({ config: configPath }) as unknown as Record<string, unknown>;
+    expect(configurable.filter((k) => config[k] === undefined)).toEqual([]);
+    expect(config.usage).toEqual({ ledger: { retentionMonths: 6 } });
+    expect(config.sessionStore).toEqual({ type: "memory", ttlSeconds: 60 });
+    expect(config.notifications).toEqual({ poll: { intervalMs: 30000 } });
+  });
+
   it("strips workspace-owned fields from config", () => {
     const configPath = writeTestConfig("strip-workspace.json", {
       model: { provider: "anthropic" },
