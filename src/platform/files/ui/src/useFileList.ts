@@ -109,3 +109,32 @@ async function fetchAtLeast(
   }
   return { ...first, files };
 }
+
+/**
+ * The kind and source counts for `params` alone, for the chips while the view
+ * is a plain folder listing: choosing a chip searches the folder and everything
+ * below it, so its count must describe that, not the folder's own files.
+ * `null` asks for nothing.
+ */
+export function useFacets(params: Record<string, unknown> | null): ListResult["facets"] | null {
+  const app = useApp();
+  const [facets, setFacets] = useState<ListResult["facets"] | null>(null);
+  const key = params === null ? null : JSON.stringify(params);
+  const seq = useRef(0);
+
+  const load = useCallback(async () => {
+    if (key === null) return;
+    const mine = ++seq.current;
+    const res = await app.callTool<ListResult>("list", { ...JSON.parse(key), limit: 1 });
+    if (mine === seq.current && !res.isError) setFacets(res.data.facets);
+  }, [app, key]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+  useDataSync(() => {
+    load();
+  });
+
+  return key === null ? null : facets;
+}

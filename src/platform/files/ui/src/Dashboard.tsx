@@ -10,7 +10,7 @@ import { UploadRefusals } from "./UploadRefusals";
 import { type UploadLimits, uploadLimitHint } from "./upload";
 import { useBrowseState } from "./useBrowseState";
 import { useFileActions } from "./useFileActions";
-import { useFileList } from "./useFileList";
+import { useFacets, useFileList } from "./useFileList";
 import { useSelection } from "./useSelection";
 
 /** The trail's root: the view's own placement, as the host knows it. */
@@ -38,6 +38,11 @@ export function Dashboard() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
 
   const breadcrumb = useBreadcrumb(list.result, browse.searching, browse.folderId);
+  // While browsing, the chips count what choosing one would search: this
+  // folder and everything below it, or everything at the top level.
+  const browseFacets = useFacets(
+    browse.searching ? null : browse.inFolder ? { folderId: browse.folderId, recursive: true } : {},
+  );
   const folders = list.result?.folders ?? [];
   const files = list.result?.files ?? [];
   const rowIds = useMemo(() => [...folders, ...files].map((r) => r.id), [folders, files]);
@@ -129,7 +134,7 @@ export function Dashboard() {
         onToggleSource={browse.toggleSource}
         since={browse.since}
         onSelectSince={browse.setSince}
-        facets={list.result?.facets ?? null}
+        facets={browseFacets ?? list.result?.facets ?? null}
         hasFilter={browse.hasFilter}
         onClearFilters={browse.clearFilters}
         uploading={actions.uploading}
