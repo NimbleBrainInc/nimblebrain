@@ -10,6 +10,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseNotificationEnvelope } from "../../../../src/notifications/envelope.ts";
 import type { Notification } from "../../../../src/notifications/types.ts";
 import {
@@ -20,8 +23,14 @@ import {
   type RunOutcome,
   renderEventBlock,
 } from "../../../../src/platform/automations/event-trigger.ts";
-import type { RunInput } from "../../../../src/platform/automations/scheduler.ts";
+import {
+  type Executor,
+  type RunInput,
+  Scheduler,
+} from "../../../../src/platform/automations/scheduler.ts";
+import { saveAutomation } from "../../../../src/platform/automations/store.ts";
 import type { Automation, ScheduleSpec } from "../../../../src/platform/automations/types.ts";
+import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_0002ee92e8791c13";
 const OWNER = "usr_admin";
@@ -264,6 +273,74 @@ describe("batching", () => {
       reason: "owner is no longer a member of this workspace",
     });
     expect(one.settled[0]?.runId).toBeUndefined();
+  });
+
+  /**
+   * Against the real scheduler: a batch whose run waited in the queue and was
+   * cancelled there never reached an agent run, so it must not settle as
+   * delivered with the cancelled record's id.
+   */
+  test("a queued run cancelled before it started leaves the batch undelivered", async () => {
+    const workDir = mkdtempSync(join(tmpdir(), "event-trigger-queue-"));
+    try {
+      seedWorkspaceRoot(workDir, WS);
+      saveAutomation(workDir, WS, OWNER, automation());
+      saveAutomation(
+        workDir,
+        WS,
+        OWNER,
+        automation(
+          {},
+          { id: "holder", enabled: false, schedule: { type: "interval", intervalMs: 60_000 } },
+        ),
+      );
+      let release!: () => void;
+      const held = new Promise<void>((r) => {
+        release = r;
+      });
+      const executor: Executor = async (auto) => {
+        await held;
+        const now = new Date().toISOString();
+        return {
+          run: {
+            id: `run_${auto.id}`,
+            automationId: auto.id,
+            startedAt: now,
+            completedAt: now,
+            status: "success",
+            inputTokens: 0,
+            outputTokens: 0,
+            toolCalls: 0,
+            iterations: 1,
+          },
+          result: null,
+        };
+      };
+      const scheduler = new Scheduler(executor, { workDir, maxConcurrentRuns: 1 });
+      scheduler.start();
+      expect(scheduler.requestRunNow(WS, OWNER, "holder")?.state).toBe("started");
+
+      const h = harness({
+        run: (ws, owner, id, input) => scheduler.runFromEvent(ws, owner, id, input),
+      });
+      const one = offer(h, item());
+      await settleWindow();
+      expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/${ID}`]);
+
+      expect(scheduler.cancelRun(WS, OWNER, ID)).toBe(true);
+      await settleWindow();
+      expect(one.settled[0]).toMatchObject({
+        outcome: "skipped",
+        classification: "run_not_started",
+      });
+      expect(one.settled[0]?.runId).toBeUndefined();
+      expect(one.settled[0]?.reason).toContain("Cancelled by user while queued");
+
+      release();
+      scheduler.stop();
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
   test("a run that started and then failed is still a delivery", async () => {

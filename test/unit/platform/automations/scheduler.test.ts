@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { automationRunsTotal } from "../../../../src/api/metrics.ts";
 import { resolveAutomationsConfig } from "../../../../src/config/automations.ts";
 import {
+  type AutomationRunTrigger,
   backoffDelay,
   computeBudgetResetAt,
   computeNextRunAt,
+  countsAsEventFire,
   type Executor,
   isDue,
   isInBackoff,
@@ -2234,7 +2236,10 @@ describe("Scheduler — run queue", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  /** Executor whose runs stay open until released one by one, oldest first. */
+  /**
+   * Executor whose runs stay open until released one by one, oldest first.
+   * Each record carries the run's trigger, as the real executor's does.
+   */
   function createSlotExecutor(): {
     executor: Executor;
     started: string[];
@@ -2243,12 +2248,17 @@ describe("Scheduler — run queue", () => {
   } {
     const pending: Array<{ id: string; resolve: () => void }> = [];
     const started: string[] = [];
-    const executor: Executor = mock(async (auto: Automation) => {
-      started.push(auto.id);
-      return new Promise<{ run: AutomationRun; result: null }>((resolve) => {
-        pending.push({ id: auto.id, resolve: () => resolve(execOk(makeSuccessRun(auto.id))) });
-      });
-    }) as Executor;
+    const executor: Executor = mock(
+      async (auto: Automation, _signal: AbortSignal, trigger: AutomationRunTrigger) => {
+        started.push(auto.id);
+        return new Promise<{ run: AutomationRun; result: null }>((resolve) => {
+          pending.push({
+            id: auto.id,
+            resolve: () => resolve(execOk({ ...makeSuccessRun(auto.id), trigger })),
+          });
+        });
+      },
+    ) as Executor;
     return {
       executor,
       started,
@@ -2381,7 +2391,8 @@ describe("Scheduler — run queue", () => {
     if (refused?.state !== "refused") throw new Error("expected refused");
     expect(refused.run.status).toBe("skipped");
     expect(refused.run.error).toContain("Run queue full");
-    expect(refused.run.trigger).toBe("manual");
+    // A run that never started carries no trigger: `trigger` means it ran.
+    expect(refused.run.trigger).toBeUndefined();
     expect(readRuns(tmpDir, WS, OWNER, "c").map((r) => r.error)).toEqual([refused.run.error]);
     await tick();
     expect(started).toEqual(["a"]);
@@ -2514,10 +2525,188 @@ describe("Scheduler — run queue", () => {
     scheduler.requestRunNow(WS, OWNER, "a");
     const outcome = await scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
     expect(outcome).toMatchObject({ skipped: expect.stringContaining("run queue was full") });
-    expect(readRuns(tmpDir, WS, OWNER, "ev").map((r) => r.trigger)).toEqual(["event"]);
+    const rows = readRuns(tmpDir, WS, OWNER, "ev");
+    expect(rows.map((r) => r.status)).toEqual(["skipped"]);
+    expect(rows.filter(countsAsEventFire)).toEqual([]);
 
     releaseAll();
     scheduler.stop();
+  });
+
+  /** An enabled event automation `ev`, plus idle automations that hold slots and queue places. */
+  function seedEventAnd(idle: string[]): void {
+    seedDefs(
+      tmpDir,
+      new Map<string, Automation>([
+        ...idle.map((id): [string, Automation] => [id, makeAutomation({ id, enabled: false })]),
+        ["ev", makeAutomation({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
+      ]),
+    );
+  }
+
+  it("refused event fires do not count toward the fire ceiling; started ones do", async () => {
+    seedEventAnd(["a", "b"]);
+    const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      maxConcurrentRuns: 1,
+      maxQueuedRuns: 1,
+    });
+    scheduler.start();
+    const input = { preamble: "x" };
+
+    // One fire that runs, and one refused while it is in flight.
+    const first = scheduler.runFromEvent(WS, OWNER, "ev", input);
+    expect(await scheduler.runFromEvent(WS, OWNER, "ev", input)).toMatchObject({
+      skipped: expect.stringContaining("still in flight"),
+    });
+    releaseOne();
+    expect(await first).toMatchObject({ run: { status: "success" } });
+
+    // Refused because the queue is full.
+    scheduler.requestRunNow(WS, OWNER, "a");
+    scheduler.requestRunNow(WS, OWNER, "b");
+    expect(await scheduler.runFromEvent(WS, OWNER, "ev", input)).toMatchObject({
+      skipped: expect.stringContaining("run queue was full"),
+    });
+    scheduler.cancelRun(WS, OWNER, "b");
+
+    // Queued, then cancelled before it started.
+    const cancelled = scheduler.runFromEvent(WS, OWNER, "ev", input);
+    expect(scheduler.cancelRun(WS, OWNER, "ev")).toBe(true);
+    expect(await cancelled).toEqual({ skipped: "Cancelled by user while queued" });
+
+    releaseAll();
+    await tick();
+    expect(started).toEqual(["ev", "a"]);
+    const rows = readRuns(tmpDir, WS, OWNER, "ev");
+    expect(rows.map((r) => r.status).sort()).toEqual([
+      "cancelled",
+      "skipped",
+      "skipped",
+      "success",
+    ]);
+    expect(rows.filter(countsAsEventFire).map((r) => r.status)).toEqual(["success"]);
+    scheduler.stop();
+  });
+
+  it("a started event run that is then cancelled still counts as a fire", () => {
+    const run = {
+      ...makeSuccessRun("ev"),
+      status: "cancelled" as const,
+      trigger: "event" as const,
+    };
+    expect(countsAsEventFire(run)).toBe(true);
+    // The runtime refusing a dispatched run at the door did no work.
+    expect(countsAsEventFire({ ...run, status: "skipped" })).toBe(false);
+  });
+
+  it("an event run disabled while queued does not start, and answers skipped", async () => {
+    seedEventAnd(["a"]);
+    const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    const outcome = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
+    expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/ev`]);
+    defOf(scheduler, "ev")!.enabled = false;
+
+    releaseOne(); // "a" ends; the queue drains into the re-check
+    expect(await outcome).toEqual({ skipped: "Disabled while queued (event)" });
+    await tick();
+    expect(started).toEqual(["a"]);
+    const rows = readRuns(tmpDir, WS, OWNER, "ev");
+    expect(rows.map((r) => [r.status, r.error])).toEqual([
+      ["skipped", "Disabled while queued (event)"],
+    ]);
+    expect(rows.filter(countsAsEventFire)).toEqual([]);
+
+    releaseAll();
+    scheduler.stop();
+  });
+
+  it("a queued Run now whose token budget is spent while it waits is refused as it leaves the queue", async () => {
+    seedDefs(
+      tmpDir,
+      new Map([
+        ["a", makeAutomation({ id: "a", enabled: false })],
+        [
+          "x",
+          makeAutomation({
+            id: "x",
+            enabled: false,
+            tokenBudget: { maxInputTokens: 5000, period: "daily" },
+            budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+          }),
+        ],
+      ]),
+    );
+    const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    const queued = scheduler.requestRunNow(WS, OWNER, "x");
+    if (queued?.state !== "queued") throw new Error("expected queued");
+    // The window fills while the run waits.
+    defOf(scheduler, "x")!.cumulativeInputTokens = 9000;
+
+    releaseOne();
+    const run = await queued.run;
+    expect(run.status).toBe("skipped");
+    expect(run.error).toContain("Token budget exceeded");
+    await tick();
+    expect(started).toEqual(["a"]);
+    expect(readRuns(tmpDir, WS, OWNER, "x").map((r) => r.status)).toEqual(["skipped"]);
+
+    releaseAll();
+    scheduler.stop();
+  });
+
+  it("dropWorkspace resolves the workspace's queued runs as not started, writing nothing", async () => {
+    seedEventAnd(["a", "b"]);
+    const { executor, started, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    const manual = scheduler.requestRunNow(WS, OWNER, "b");
+    if (manual?.state !== "queued") throw new Error("expected queued");
+    const event = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
+    expect(scheduler.getQueuedRunIds()).toHaveLength(2);
+
+    scheduler.dropWorkspace(WS);
+    expect(scheduler.getQueuedRunIds()).toEqual([]);
+    const run = await manual.run;
+    expect(run.status).toBe("skipped");
+    expect(run.error).toBe("the workspace was deleted");
+    expect(await event).toEqual({ skipped: "the workspace was deleted" });
+    expect(readRuns(tmpDir, WS, OWNER, "b")).toEqual([]);
+    expect(readRuns(tmpDir, WS, OWNER, "ev")).toEqual([]);
+
+    releaseAll();
+    await tick();
+    expect(started).toEqual(["a"]);
+    scheduler.stop();
+  });
+
+  it("refuses Run now and event runs once stopped, instead of queueing what nothing drains", async () => {
+    seedEventAnd(["a"]);
+    const { executor, started } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+    scheduler.stop();
+
+    const ticket = scheduler.requestRunNow(WS, OWNER, "a");
+    if (ticket?.state !== "refused") throw new Error(`expected refused, got ${ticket?.state}`);
+    expect(ticket.run.status).toBe("skipped");
+    expect(ticket.run.error).toBe("the scheduler is stopped");
+    expect(await scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" })).toEqual({
+      skipped: "the scheduler is stopped",
+    });
+    expect(scheduler.getQueuedRunIds()).toEqual([]);
+    expect(started).toEqual([]);
   });
 });
 

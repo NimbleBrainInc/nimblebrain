@@ -10,7 +10,7 @@ import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-a
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { AutomationEventTrigger } from "./event-trigger.ts";
 import { createDirectExecutor, type ExecutorContext } from "./executor.ts";
-import { Scheduler } from "./scheduler.ts";
+import { countsAsEventFire, Scheduler } from "./scheduler.ts";
 import { TOOL_SCHEMAS } from "./schemas.ts";
 import {
   handleCancel,
@@ -157,7 +157,7 @@ export async function createAutomationsSource(
     automation: (wsId, owner, id) => loadAutomation(workDir, wsId, owner, id) ?? undefined,
     eventRunsSince: (wsId, owner, id, since) =>
       readRuns(workDir, wsId, owner, id, { since: new Date(since).toISOString() }).filter(
-        (run) => run.trigger === "event",
+        countsAsEventFire,
       ).length,
     run: (wsId, owner, id, input) => scheduler.runFromEvent(wsId, owner, id, input),
     disable: (wsId, owner, id, reason) => {
