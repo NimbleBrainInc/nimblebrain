@@ -174,6 +174,13 @@ describe("list", () => {
     });
   });
 
+  test("a `since` that is not an instant is refused, not read as no filter", async () => {
+    seed(WS_A, "acme", "e1");
+    const result = await exec("list", { since: "last tuesday" }, WS_A);
+    expect(result.isError).toBe(true);
+    expect(payload<{ error: string }>(result).error).toContain("since");
+  });
+
   test("an empty inbox returns no cursor", async () => {
     const out = payload<NotificationsListOutput>(await exec("list", {}, WS_A));
     expect(out.notifications).toEqual([]);

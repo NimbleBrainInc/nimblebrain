@@ -103,6 +103,17 @@ function hasFilters(f: InboxFilters): boolean {
   return f.unreadOnly || !!f.level || !!f.app || !!f.within || !!f.q;
 }
 
+/** The filters as `notifications__list` arguments, leaving out what is "any". */
+function listArgsFrom(filters: InboxFilters): NotificationsListInput {
+  const args: NotificationsListInput = { limit: INBOX_PAGE_SIZE };
+  if (filters.unreadOnly) args.unreadOnly = true;
+  if (filters.level) args.level = filters.level;
+  if (filters.app) args.source = filters.app;
+  if (filters.within) args.since = new Date(Date.now() - WITHIN[filters.within].ms).toISOString();
+  if (filters.q) args.query = filters.q;
+  return args;
+}
+
 /**
  * The page's own read of the inbox, filtered. Re-read when the filters change
  * and when the shell's inbox `revision` moves, which is how a live item lands
@@ -110,28 +121,43 @@ function hasFilters(f: InboxFilters): boolean {
  *
  * Addressed to `workspaceId` explicitly, and a response that lands after a
  * newer read was issued is dropped.
+ *
+ * **A row read here stays here until the view changes.** Marking a row read
+ * moves `revision`, and under a filter that excludes read items (Unread) the
+ * re-read no longer returns it — so the row someone just opened would vanish
+ * under them. Rows marked through `markLocally` are held across re-reads of
+ * the same filters and workspace, and let go when either changes.
  */
 function useInboxList(workspaceId: string | undefined, filters: InboxFilters, revision: number) {
   const [items, setItems] = useState<NotificationView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
+  const kept = useRef(new Set<string>());
+  const scope = useRef<{ workspaceId?: string; key?: string }>({});
   const key = JSON.stringify(filters);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `filters`, and `revision` is the re-read signal
   useEffect(() => {
     if (!workspaceId) return;
+    if (scope.current.workspaceId !== workspaceId || scope.current.key !== key) {
+      kept.current.clear();
+      // Another workspace's rows must not sit under this one's name while
+      // its read is in flight. A filter change keeps the rows until it lands.
+      if (scope.current.workspaceId !== workspaceId) setItems([]);
+      scope.current = { workspaceId, key };
+    }
     const mine = ++seq.current;
-    const args: NotificationsListInput = { limit: INBOX_PAGE_SIZE };
-    if (filters.unreadOnly) args.unreadOnly = true;
-    if (filters.level) args.level = filters.level;
-    if (filters.app) args.source = filters.app;
-    if (filters.within) args.since = new Date(Date.now() - WITHIN[filters.within].ms).toISOString();
-    if (filters.q) args.query = filters.q;
-    listNotifications(args, workspaceId)
+    listNotifications(listArgsFrom(filters), workspaceId)
       .then((out) => {
         if (mine !== seq.current) return;
-        setItems(out.notifications);
+        setItems((current) => {
+          const returned = new Set(out.notifications.map((item) => item.id));
+          const held = current.filter(
+            (item) => kept.current.has(item.id) && !returned.has(item.id),
+          );
+          return [...out.notifications, ...held];
+        });
         setError(null);
       })
       .catch((err: unknown) => {
@@ -143,7 +169,16 @@ function useInboxList(workspaceId: string | undefined, filters: InboxFilters, re
       });
   }, [workspaceId, key, revision]);
 
-  return { items, setItems, loading, error };
+  /** Paint these rows read, and hold them through re-reads of this view. */
+  const markLocally = useCallback((ids: string[]) => {
+    const readAt = new Date().toISOString();
+    for (const id of ids) kept.current.add(id);
+    setItems((current) =>
+      current.map((item) => (ids.includes(item.id) && !item.readAt ? { ...item, readAt } : item)),
+    );
+  }, []);
+
+  return { items, markLocally, loading, error };
 }
 
 export function NotificationsPage() {
@@ -160,7 +195,11 @@ export function NotificationsPage() {
   const [open, setOpen] = useState<Set<string>>(() => new Set(focusId ? [focusId] : []));
   const filters = readFilters(searchParams);
   const filtered = hasFilters(filters);
-  const { items, setItems, loading, error } = useInboxList(activeWorkspace?.id, filters, revision);
+  const { items, markLocally, loading, error } = useInboxList(
+    activeWorkspace?.id,
+    filters,
+    revision,
+  );
 
   const placements = useMemo(
     () => (shell ? [...shell.forSlot("sidebar"), ...shell.forSlot("main")] : []),
@@ -199,13 +238,10 @@ export function NotificationsPage() {
   const markIds = useCallback(
     (ids: string[]) => {
       if (ids.length === 0) return;
-      const readAt = new Date().toISOString();
-      setItems((current) =>
-        current.map((item) => (ids.includes(item.id) && !item.readAt ? { ...item, readAt } : item)),
-      );
+      markLocally(ids);
       void markRead(ids).catch(() => {});
     },
-    [markRead, setItems],
+    [markRead, markLocally],
   );
 
   const toggle = useCallback(
@@ -248,7 +284,8 @@ export function NotificationsPage() {
           </span>
           {shownUnread.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => markIds(shownUnread)}>
-              {filtered ? "Mark shown read" : "Mark all read"}
+              {/* "All" only when the rows on screen are all of it. */}
+              {filtered || unread > shownUnread.length ? "Mark shown read" : "Mark all read"}
             </Button>
           )}
         </div>
