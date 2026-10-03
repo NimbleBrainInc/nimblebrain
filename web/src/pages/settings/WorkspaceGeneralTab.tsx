@@ -3,9 +3,11 @@ import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { useFlashState } from "../../hooks/useFlashState";
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import {
+  AutosaveStatus,
   RequireActiveWorkspace,
   Section,
   SettingsFormPage,
+  useWorkspaceInstructions,
   WorkspaceInstructions,
 } from "./components";
 
@@ -25,32 +27,47 @@ import {
 export function WorkspaceGeneralTab() {
   return (
     <RequireActiveWorkspace>
-      <Inner />
+      <ForActiveWorkspace />
     </RequireActiveWorkspace>
   );
 }
 
-function Inner() {
+/**
+ * Keyed by the workspace, so a switch starts a fresh form: the route keeps this
+ * element mounted across `/w/:slug` changes, and one workspace's draft must
+ * never stand in for another's.
+ */
+function ForActiveWorkspace() {
   const { activeWorkspace } = useWorkspaceContext();
+  // RequireActiveWorkspace guarantees activeWorkspace is non-null here.
+  const ws = activeWorkspace!;
+  return <Inner key={ws.id} wsId={ws.id} />;
+}
+
+function Inner({ wsId }: { wsId: string }) {
   // The instructions editor writes workspace-owned state, gated server-side by
   // `canWriteWorkspaceScoped` — membership admin, no org bypass.
   const canEdit = useCanWriteActiveWorkspace();
-
-  // RequireActiveWorkspace guarantees activeWorkspace is non-null here.
-  const ws = activeWorkspace!;
+  const instructions = useWorkspaceInstructions(wsId);
+  const ready = !instructions.loading && !instructions.loadError;
 
   return (
     <SettingsFormPage
       title="General"
       description="Changes here affect everyone in this workspace."
-      action={<WorkspaceIdChip workspaceId={ws.id} />}
+      action={
+        <div className="flex flex-col items-end gap-1">
+          {ready && canEdit ? <AutosaveStatus status={instructions.form.status} /> : null}
+          <WorkspaceIdChip workspaceId={wsId} />
+        </div>
+      }
     >
       <Section
         flush
         title="Workspace instructions"
         description="Guidance the assistant follows in every conversation in this workspace, on top of your organization's. Everyone here can see it."
       >
-        <WorkspaceInstructions wsId={ws.id} canEdit={canEdit} />
+        <WorkspaceInstructions wsId={wsId} canEdit={canEdit} instructions={instructions} />
       </Section>
     </SettingsFormPage>
   );
