@@ -28,7 +28,7 @@ export function ChatToggle() {
         aria-pressed={open}
         aria-keyshortcuts={ariaKeyShortcuts(SHORTCUTS.chat)}
         data-testid="chat-chrome-open-button"
-        className="relative flex h-8 shrink-0 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 aria-pressed:bg-foreground/10"
+        className="relative flex h-8 shrink-0 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5"
       >
         <MessageSquare aria-hidden="true" className="size-4" />
         Chat

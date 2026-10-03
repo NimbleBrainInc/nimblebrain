@@ -15,7 +15,6 @@ import { Bell } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useNotifications } from "../../context/NotificationsContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { cn } from "../../lib/utils";
 import { toSlug } from "../../lib/workspace-slug";
 import { Tooltip } from "../ui/tooltip";
 
@@ -36,10 +35,7 @@ export function InboxToggle() {
         aria-label={label}
         aria-current={current ? "page" : undefined}
         data-testid="top-bar-inbox"
-        className={cn(
-          "relative flex size-8 shrink-0 items-center justify-center rounded-md text-foreground transition-colors hover:bg-foreground/10",
-          current && "bg-foreground/10",
-        )}
+        className="relative flex size-8 shrink-0 items-center justify-center rounded-md text-foreground transition-colors hover:bg-foreground/10"
       >
         <Bell aria-hidden="true" className="size-[18px]" />
         {unread > 0 && (

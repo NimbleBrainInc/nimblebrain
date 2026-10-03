@@ -1354,6 +1354,7 @@ export async function handleBootstrap(
       // The workspace's MCP endpoint in canonical form (the configured public
       // origin, never the request's host), for the settings page to show.
       mcpUrl: mcpResourceUrl(ws.id),
+      unread: runtime.getNotificationStore(ws.id).unreadCount(),
     })),
     activeWorkspace,
     shell: {

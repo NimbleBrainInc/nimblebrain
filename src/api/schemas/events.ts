@@ -147,6 +147,17 @@ export interface NotificationCreatedEvent {
   title: string;
   subject?: string;
   receivedAt: string;
+  /** Items unread in this workspace's inbox once this one landed. */
+  unread: number;
+}
+
+/** Items in a workspace's inbox were marked read. */
+export interface NotificationReadEvent {
+  workspaceId: string;
+  /** The wire ids this mark changed. */
+  ids: string[];
+  /** Items unread in this workspace's inbox after the mark. */
+  unread: number;
 }
 
 /** A notification route target delivered. */
@@ -176,6 +187,7 @@ export interface WorkspaceStreamEvents {
   "conversation.title": ConversationTitleEvent;
   "config.changed": ConfigChangedEvent;
   "notification.created": NotificationCreatedEvent;
+  "notification.read": NotificationReadEvent;
   "notification.delivered": NotificationDeliveredEvent;
   "notification.delivery_failed": NotificationDeliveryFailedEvent;
 }

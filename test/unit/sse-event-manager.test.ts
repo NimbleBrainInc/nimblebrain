@@ -158,11 +158,27 @@ describe("SseEventManager — routing table", () => {
         level: "attention",
         title: "acme-outreach.test is active",
         receivedAt: "2026-09-01T18:42:11.000Z",
+        unread: 1,
       },
     });
     await flush();
 
     expect(wsA.events).toEqual(["notification.created"]);
+    expect(wsB.events).toEqual([]);
+  });
+
+  test("notification.read reaches the item's workspace only", async () => {
+    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
+    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
+    released.push(wsA.release, wsB.release);
+
+    mgr.emit({
+      type: "notification.read",
+      data: { workspaceId: "ws_00079598e311c160", ids: ["acme:evt_01"], unread: 0 },
+    });
+    await flush();
+
+    expect(wsA.events).toEqual(["notification.read"]);
     expect(wsB.events).toEqual([]);
   });
 
@@ -183,6 +199,7 @@ describe("SseEventManager — routing table", () => {
         name: "domain.active",
         level: "info",
         title: "t",
+        unread: 1,
         receivedAt: "2026-09-01T18:42:11.000Z",
       }),
     );

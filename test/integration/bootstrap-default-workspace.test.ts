@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleBootstrap } from "../../src/api/handlers.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
+import { parseNotificationEnvelope } from "../../src/notifications/envelope.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -202,5 +203,28 @@ describe("bootstrap — attachment limits", () => {
     const res = await handleBootstrap(runtime, identity, resolveFeatures({ fileContext: false }));
     const body = await readJson<BootstrapResponse>(res);
     expect(body.config.files).toBeUndefined();
+  });
+});
+
+describe("bootstrap — each workspace carries its unread count", () => {
+  test("counts each inbox separately, read items excluded", async () => {
+    await createUser("user_mat", "Mat Goldsborough");
+    const [quiet, busy] = await createInOrder(["Quiet", "Busy"], "user_mat");
+    const store = runtime.getNotificationStore(busy!);
+    for (const eventId of ["e1", "e2", "e3"]) {
+      const envelope = parseNotificationEnvelope({
+        eventId,
+        name: "domain.active",
+        timestamp: "2026-09-01T18:42:10Z",
+        data: {},
+      });
+      if (!envelope) throw new Error("fixture did not parse");
+      store.append("acme", envelope);
+    }
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+
+    const body = await bootstrapFor("user_mat", "Mat Goldsborough");
+    const unread = Object.fromEntries(body.workspaces.map((w) => [w.id, w.unread]));
+    expect(unread).toEqual({ [quiet!]: 0, [busy!]: 2 });
   });
 });

@@ -34,6 +34,7 @@ import {
   type WorkspaceInfo,
   WorkspaceProvider,
 } from "./context/WorkspaceContext";
+import { WorkspaceUnreadProvider } from "./context/WorkspaceUnreadContext";
 import { chatStore } from "./hooks/chat-store";
 import { useEvents } from "./hooks/useEvents";
 import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
@@ -148,13 +149,15 @@ function AuthenticatedApp({
           initialWorkspaces={initialWorkspaces}
           initialActiveId={bootstrap.activeWorkspace ?? undefined}
         >
-          <BootstrappedShell
-            token={token}
-            initialShell={initialShell}
-            initialConfig={initialConfig}
-            currentUserId={bootstrap.user.id}
-            onLogout={onLogout}
-          />
+          <WorkspaceUnreadProvider token={token} workspaces={bootstrap.workspaces}>
+            <BootstrappedShell
+              token={token}
+              initialShell={initialShell}
+              initialConfig={initialConfig}
+              currentUserId={bootstrap.user.id}
+              onLogout={onLogout}
+            />
+          </WorkspaceUnreadProvider>
         </WorkspaceProvider>
       </SessionProvider>
     </ThemeProvider>

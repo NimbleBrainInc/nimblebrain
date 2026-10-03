@@ -13,6 +13,7 @@ export type {
   NotificationCreatedEvent,
   NotificationDeliveredEvent,
   NotificationDeliveryFailedEvent,
+  NotificationReadEvent,
   ServerNotificationEvent,
   StreamErrorEvent,
   TextDeltaEvent,

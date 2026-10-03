@@ -88,6 +88,7 @@ export function NotificationsProvider({
 
   useEvents(token, workspaceId, {
     onNotificationCreated: refresh,
+    onNotificationRead: refresh,
     onNotificationDelivery: refresh,
     onReconnect: refresh,
   });

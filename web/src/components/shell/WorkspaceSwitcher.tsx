@@ -8,6 +8,10 @@
 // focused one checked. Its footer holds the two workspace-level actions:
 // the focused workspace's settings, and creating a new one.
 //
+// A dot marks a workspace with unread notifications, on its row and, when it
+// is a workspace other than this one, on the trigger: the trigger is the way
+// there, so it is where the dot pulls.
+//
 // Switching mirrors the api/client setter's equality guard — re-picking the
 // focused workspace never calls setActiveWorkspace — and always lands on the
 // workspace's overview, so a view the new workspace lacks can't strand you.
@@ -18,16 +22,20 @@ import { Check, ChevronsUpDown, Plus, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
+import { useWorkspaceUnread } from "../../context/WorkspaceUnreadContext";
 import { cn } from "../../lib/utils";
 import { getWorkspaceAvatar } from "../../lib/workspace-avatar";
 import { orderWorkspacesForSidebar } from "../../lib/workspace-order";
 import { toSlug } from "../../lib/workspace-slug";
 import { Tooltip } from "../ui/tooltip";
+import { UnreadDot } from "./UnreadDot";
 
 export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }) {
   const wsCtx = useWorkspaceContext();
   const navigate = useNavigate();
   const focused = wsCtx.activeWorkspace;
+  const { unreadFor } = useWorkspaceUnread();
+  const elsewhere = wsCtx.workspaces.some((ws) => ws.id !== focused?.id && unreadFor(ws.id) > 0);
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -88,22 +96,27 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
   }
 
   const label = focused?.name ?? "Choose a workspace";
+  const triggerLabel = `Workspace: ${label}. Switch workspace${
+    elsewhere ? ". Another workspace has unread notifications" : ""
+  }`;
   const trigger = collapsed ? (
     <Popover.Trigger
-      aria-label={`Workspace: ${label}. Switch workspace`}
+      aria-label={triggerLabel}
       data-testid="workspace-switcher-trigger"
-      className="mx-auto my-1 flex size-10 items-center justify-center rounded-md transition-colors hover:bg-sidebar-foreground/10 data-[popup-open]:bg-sidebar-foreground/10"
+      className="relative mx-auto my-1 flex size-10 items-center justify-center rounded-md transition-colors hover:bg-sidebar-foreground/10 data-[popup-open]:bg-sidebar-foreground/10"
     >
       {focused && <WorkspaceGlyph workspace={focused} size="lg" />}
+      {elsewhere && <UnreadDot className="absolute top-1 right-1 ring-2 ring-sidebar" />}
     </Popover.Trigger>
   ) : (
     <Popover.Trigger
-      aria-label={`Workspace: ${label}. Switch workspace`}
+      aria-label={triggerLabel}
       data-testid="workspace-switcher-trigger"
       className="mx-2 flex h-9 w-[calc(100%-1rem)] items-center gap-2.5 rounded-md border border-sidebar-border bg-background px-2 text-left transition-colors hover:border-sidebar-foreground/20 data-[popup-open]:border-sidebar-foreground/20"
     >
       {focused && <WorkspaceGlyph workspace={focused} />}
       <span className="flex-1 truncate text-sm font-semibold text-foreground">{label}</span>
+      {elsewhere && <UnreadDot />}
       <ChevronsUpDown aria-hidden="true" className="size-3.5 shrink-0" />
     </Popover.Trigger>
   );
@@ -162,6 +175,7 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
             >
               {matches.map((ws, i) => {
                 const current = ws.id === focused?.id;
+                const unread = unreadFor(ws.id) > 0;
                 return (
                   <button
                     key={ws.id}
@@ -178,7 +192,11 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
                     className="flex min-h-8 items-center gap-2.5 rounded-sm px-2 text-left text-sm text-foreground data-[highlighted]:bg-foreground/10"
                   >
                     <WorkspaceGlyph workspace={ws} />
-                    <span className="flex-1 truncate">{ws.name}</span>
+                    <span className="flex-1 truncate">
+                      {ws.name}
+                      {unread && <span className="sr-only">, unread notifications</span>}
+                    </span>
+                    {unread && <UnreadDot />}
                     {current && <Check aria-hidden="true" className="size-3.5 shrink-0" />}
                   </button>
                 );

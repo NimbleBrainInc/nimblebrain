@@ -214,8 +214,20 @@ export const NotificationCreatedPayload = Type.Object({
   }),
   subject: Type.Optional(Type.String({ description: "What the item is about, for grouping." })),
   receivedAt: Type.String({ description: "ISO 8601 instant the runtime wrote the item." }),
+  unread: Type.Number({
+    description: "Items unread in this workspace's inbox once this one landed.",
+  }),
 });
 export type NotificationCreatedPayload = Static<typeof NotificationCreatedPayload>;
+
+export const NotificationReadPayload = Type.Object({
+  workspaceId: Type.String({
+    description: "The workspace whose inbox changed. Scopes the SSE fan-out.",
+  }),
+  ids: Type.Array(Type.String(), { description: "The wire ids this mark changed." }),
+  unread: Type.Number({ description: "Items unread in this workspace's inbox after the mark." }),
+});
+export type NotificationReadPayload = Static<typeof NotificationReadPayload>;
 
 export const UnattendedDispatchPayload = Type.Object({
   principalId: Type.String({
@@ -729,9 +741,16 @@ export interface EngineEventPayloads {
    * A notification a connector emitted reached a workspace's inbox. Emitted
    * once per item, after the durable write — the inbox is the guarantee and
    * everything downstream of it is best-effort. Payload:
-   * { workspaceId, id, seq, source, name, level, title, subject?, receivedAt }.
+   * { workspaceId, id, seq, source, name, level, title, subject?, receivedAt, unread }.
    */
   "notification.created": NotificationCreatedPayload;
+  /**
+   * Items were marked read. Read state is shared across the workspace, so
+   * every member's count moves when one member reads; without this a bell
+   * keeps its dot after a teammate cleared the inbox. Emitted only when the
+   * mark changed something. Payload: { workspaceId, ids, unread }.
+   */
+  "notification.read": NotificationReadPayload;
   /**
    * A route target delivered. The ledger row on the item changed after
    * `notification.created` announced it, so without this a browser holding

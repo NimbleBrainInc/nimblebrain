@@ -7,6 +7,7 @@ import type {
   NotificationCreatedEvent,
   NotificationDeliveredEvent,
   NotificationDeliveryFailedEvent,
+  NotificationReadEvent,
   ServerNotificationEvent,
 } from "../types";
 
@@ -32,6 +33,11 @@ export interface UseEventsOptions {
    * rather than rendering from it.
    */
   onNotificationCreated?: (event: NotificationCreatedEvent) => void;
+  /**
+   * Called when items in a workspace inbox this identity can see were marked
+   * read, by anyone: read state is shared across the workspace.
+   */
+  onNotificationRead?: (event: NotificationReadEvent) => void;
   /**
    * Called when a route target for a notification reached a terminal outcome —
    * delivered, or given up on. Both wire to the same refetch as
@@ -85,6 +91,8 @@ export function useEvents(
   onConnectorLifecycleChangedRef.current = options?.onConnectorLifecycleChanged;
   const onNotificationCreatedRef = useRef(options?.onNotificationCreated);
   onNotificationCreatedRef.current = options?.onNotificationCreated;
+  const onNotificationReadRef = useRef(options?.onNotificationRead);
+  onNotificationReadRef.current = options?.onNotificationRead;
   const onNotificationDeliveryRef = useRef(options?.onNotificationDelivery);
   onNotificationDeliveryRef.current = options?.onNotificationDelivery;
   const onReconnectRef = useRef(options?.onReconnect);
@@ -129,6 +137,11 @@ export function useEvents(
     unsubs.push(
       subscribe("notification.created", (data) => {
         onNotificationCreatedRef.current?.(data);
+      }),
+    );
+    unsubs.push(
+      subscribe("notification.read", (data) => {
+        onNotificationReadRef.current?.(data);
       }),
     );
     unsubs.push(

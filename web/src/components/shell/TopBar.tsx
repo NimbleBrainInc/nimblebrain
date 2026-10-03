@@ -12,6 +12,9 @@
 // nav drawer leads the row.
 //
 // Right, on workspace routes: the inbox's bell, then Chat, which stays last.
+// Neither holds a fill while its panel or page is open: they are ways in, not
+// tabs, and a held fill reads as stuck. `aria-pressed` / `aria-current` carry
+// the state for assistive tech.
 //
 // Height is the chat panel header's (`h-14`, border included), so the two
 // bottom borders run on the same pixel row and meet at the resize handle.

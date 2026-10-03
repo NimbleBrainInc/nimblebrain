@@ -116,6 +116,7 @@ const SSE_ROUTES: { [K in WorkspaceStreamEngineEvent]?: SseRoute<K> } = {
   // hand one workspace's business to its neighbours. Missing the field drops
   // the event at the boundary below, which is the fail-closed answer.
   "notification.created": { scope: "workspace", wsIdField: "workspaceId" },
+  "notification.read": { scope: "workspace", wsIdField: "workspaceId" },
   "notification.delivered": { scope: "workspace", wsIdField: "workspaceId" },
   "notification.delivery_failed": { scope: "workspace", wsIdField: "workspaceId" },
 };

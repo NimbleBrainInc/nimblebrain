@@ -194,6 +194,12 @@ export interface BootstrapWorkspace {
   connectorCount: number;
   /** The workspace's MCP endpoint, canonical form: `<publicOrigin>/mcp/<wsId>`. */
   mcpUrl: string;
+  /**
+   * Items nobody has read in this workspace's inbox. A count, not content:
+   * the caller is a member of every workspace listed here, and the live
+   * `notification.created` / `notification.read` frames carry it forward.
+   */
+  unread: number;
 }
 
 export interface BootstrapResponse {

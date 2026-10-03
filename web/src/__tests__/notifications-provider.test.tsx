@@ -173,6 +173,7 @@ describe("a live frame", () => {
         level: "urgent",
         title: "from the frame",
         receivedAt: "2026-09-01T18:43:00.000Z",
+        unread: 1,
       });
     });
     await settle();
@@ -197,6 +198,7 @@ describe("a live frame", () => {
           level: "info",
           title: `t${i}`,
           receivedAt: "2026-09-01T18:43:00.000Z",
+          unread: 1,
         });
       }
     });

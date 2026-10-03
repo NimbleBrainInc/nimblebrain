@@ -11,8 +11,10 @@
 
 import { Pin, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
+import { UnreadDot } from "../components/shell/UnreadDot";
 import { useSession } from "../context/SessionContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
+import { useWorkspaceUnread } from "../context/WorkspaceUnreadContext";
 import { getGreeting } from "../lib/greeting";
 import { usePinnedWorkspaces } from "../lib/pinned-workspaces";
 import { cn } from "../lib/utils";
@@ -109,6 +111,7 @@ function WorkspaceTileLink({
   workspace: WorkspaceInfo;
   avatar: ReturnType<typeof getWorkspaceAvatar>;
 }) {
+  const unread = useWorkspaceUnread().unreadFor(workspace.id) > 0;
   return (
     <Link
       to={`/w/${toSlug(workspace.id)}/`}
@@ -128,7 +131,15 @@ function WorkspaceTileLink({
         {avatar.letter}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-foreground">{workspace.name}</div>
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium text-foreground">{workspace.name}</span>
+          {unread && (
+            <>
+              <UnreadDot />
+              <span className="sr-only">Unread notifications</span>
+            </>
+          )}
+        </div>
         {/* Only an exception is worth a line: most tiles are the viewer's own
             workspaces, where "admin" on every tile says nothing. */}
         {workspace.userRole && workspace.userRole !== "admin" && (

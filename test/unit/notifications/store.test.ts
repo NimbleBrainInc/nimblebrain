@@ -13,7 +13,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "@sinclair/typebox/value";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { NotificationCreatedPayload } from "../../../src/engine/schemas/events.ts";
+import {
+  NotificationCreatedPayload,
+  NotificationReadPayload,
+} from "../../../src/engine/schemas/events.ts";
 import type { EngineEvent, EventSink } from "../../../src/engine/types.ts";
 import { parseNotificationEnvelope } from "../../../src/notifications/envelope.ts";
 import { NotificationStore } from "../../../src/notifications/store.ts";
@@ -484,5 +487,38 @@ describe("notification.created", () => {
     storeFor(WS_A, sink).append("acme", envelope());
     const event = sink.events.find((e) => e.type === "notification.created");
     expect(Value.Check(NotificationCreatedPayload, event?.data)).toBe(true);
+  });
+  test("carries the inbox's unread count once the item landed", () => {
+    const sink = new CapturingSink();
+    const store = storeFor(WS_A, sink);
+    store.append("acme", envelope({ eventId: "e1" }));
+    store.append("acme", envelope({ eventId: "e2" }));
+    const counts = sink.events
+      .filter((e) => e.type === "notification.created")
+      .map((e) => (e.data as { unread: number }).unread);
+    expect(counts).toEqual([1, 2]);
+  });
+});
+
+describe("notification.read", () => {
+  test("names what changed and the count after, and matches its schema", () => {
+    const sink = new CapturingSink();
+    const store = storeFor(WS_A, sink);
+    store.append("acme", envelope({ eventId: "e1" }));
+    store.append("acme", envelope({ eventId: "e2" }));
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    const event = sink.events.find((e) => e.type === "notification.read");
+    expect(event?.data).toEqual({ workspaceId: WS_A, ids: ["acme:e1"], unread: 1 });
+    expect(Value.Check(NotificationReadPayload, event?.data)).toBe(true);
+  });
+
+  test("a mark that changes nothing emits nothing", () => {
+    const sink = new CapturingSink();
+    const store = storeFor(WS_A, sink);
+    store.append("acme", envelope({ eventId: "e1" }));
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    store.markRead([{ source: "acme", eventId: "nope" }]);
+    expect(sink.events.filter((e) => e.type === "notification.read").length).toBe(1);
   });
 });

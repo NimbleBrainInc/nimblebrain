@@ -194,6 +194,7 @@ export class NotificationStore {
         title: presentation.title,
         ...(presentation.subject ? { subject: presentation.subject } : {}),
         receivedAt: item.receivedAt,
+        unread: this.unreadCount(),
       },
     });
 
@@ -268,6 +269,7 @@ export class NotificationStore {
       }
       if (dirty) this.#rewriteDayFile(day, items);
     }
+    this.#announceRead(changed);
     return changed;
   }
 
@@ -363,6 +365,23 @@ export class NotificationStore {
   }
 
   // -- internals ---------------------------------------------------------
+
+  /**
+   * `notification.read`, after the rewrite. Read state is shared across the
+   * workspace, so every member's count moves; the frame carries the count so
+   * nobody has to re-read to learn it. A mark that changed nothing says nothing.
+   */
+  #announceRead(changed: readonly Notification[]): void {
+    if (changed.length === 0) return;
+    this.#eventSink.emit({
+      type: "notification.read",
+      data: {
+        workspaceId: this.#wsId,
+        ids: changed.map((item) => notificationId(item)),
+        unread: this.unreadCount(),
+      },
+    });
+  }
 
   #dayFile(day: string): string {
     return join(this.#dir, `${day}.jsonl`);
