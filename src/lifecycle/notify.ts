@@ -44,7 +44,8 @@ export interface ReadyOutcome {
    * handler answered without an error.
    *
    * `false` means **defer** — the source is not up, or is up and advertises no
-   * tools yet, or the handler failed. All three are answered the same way: try
+   * tools yet, or the handler failed, or the host rejected the server's marked
+   * `ready` handler. All four are answered the same way: try
    * again on the next transition or tool-surface change. It is what gates the
    * observer's dedupe, so a failed call is retried and a succeeded one is not.
    */

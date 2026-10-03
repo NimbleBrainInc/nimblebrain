@@ -268,7 +268,7 @@ round-trip makes the install feel broken and the uninstall feel stuck.
 
 | | |
 |---|---|
-| An undeclared handler (marked twice, a required property, task support required) or an unknown `event` | **A warning on a successful install.** The connector installs and works, and no call is made for that event. The host re-reads your handlers on every reconnect and every `notifications/tools/list_changed`, so fixing the server is enough: no reinstall. A `ready` call skipped this way is made once the fixed handler is listed. |
+| An undeclared handler (marked twice, a required property, task support required) or an unknown `event` | **A warning on a successful install.** The connector installs and works, and no call is made for that event. The host re-reads your handlers on every reconnect and every `notifications/tools/list_changed`, so fixing the server is enough: no reinstall. A `ready` call skipped for a rejected handler is made once the fixed handler is listed. A marker with an unknown `event` names no event the host can attribute, so a `ready` call it was meant for is not made again until the host restarts or the connector is reinstalled. |
 | `ready` fails or errors | **Never fails the install.** Retried on the next reconnect, and on your next `notifications/tools/list_changed`. |
 | `removing` fails, errors, or cannot be reached | **Never fails the uninstall.** The uninstall waits for the call for a few seconds and then proceeds without it. Not retried; the connector is gone. |
 | Your server lists no tools yet | Not an error. The host waits for your tool list and calls then. |
