@@ -54,7 +54,7 @@ servers:
 | `lifecycle` | `object` | No | Tools on your server the host calls when your connector becomes reachable in a workspace and just before it is removed: `{ on_ready?, on_removing? }`. See [Lifecycle](/extensions/lifecycle/). |
 | `admin_tools` | `string[]` | No | Names of tools on your server that only a workspace admin may call, at most 64. Read from a catalog entry only. See [Admin-only tools](/extensions/admin-tools/). |
 
-The block has no `name`, `icon` or `category`; a block that still declares them loads, and the host ignores them like any unknown key. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label is its placement's own `label`.
+The block has no `name`, `icon`, `category` or `primaryView`; a block that still declares them loads, and the host ignores them like any unknown key. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label is its placement's own `label`.
 
 ### `PlacementDeclaration`
 

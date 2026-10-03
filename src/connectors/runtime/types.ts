@@ -263,11 +263,11 @@ export interface HostManifestMeta {
    * is major 1.
    */
   host_version: string;
-  // No `name`, `icon` or `category`: a connector's display identity is its
-  // catalog entry's core `title` and `icons`. A block that still carries them
-  // validates (unknown keys are ignored) and nothing reads them.
+  // No `name`, `icon`, `category` or `primaryView`: a connector's display
+  // identity is its catalog entry's core `title` and `icons`, and its views are
+  // its placements. A block that still carries them validates (unknown keys are
+  // ignored) and nothing reads them.
   placements?: PlacementDeclaration[];
-  primaryView?: { resourceUri: string };
   /**
    * Inbound event streams this server accepts, one per vendor. The runtime
    * mints a capability URL per `(workspace, connector, vendor)` at install and

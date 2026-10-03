@@ -262,9 +262,6 @@ export interface HostManifestMeta {
      */
     host_version: string;
     placements?: PlacementDeclaration[];
-    primaryView?: {
-        resourceUri: string;
-    };
     /**
      * Inbound event streams this server accepts, one per vendor. The runtime
      * mints a capability URL per `(workspace, connector, vendor)` at install and

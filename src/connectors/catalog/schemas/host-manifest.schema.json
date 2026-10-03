@@ -19,18 +19,6 @@
       },
       "description": "Shell layout placement declarations. Several `sidebar.<group>` placements from one server are one app in the sidebar: it is listed once under the catalog entry's `title`, opens its first placement by priority, and lists the placements beneath it by `label` while one is open."
     },
-    "primaryView": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["resourceUri"],
-      "properties": {
-        "resourceUri": {
-          "type": "string",
-          "description": "ui:// URI for the main view."
-        }
-      },
-      "description": "Primary view resource URI."
-    },
     "hooks": {
       "type": "array",
       "items": {

@@ -107,9 +107,9 @@ describe("HostManifestMeta type", () => {
   it("matches manifest _meta structure", () => {
     const meta: HostManifestMeta = {
       host_version: "1.0",
-      primaryView: { resourceUri: "ui://tasks/board" },
+      placements: [{ slot: "sidebar.apps", resourceUri: "ui://tasks/board" }],
     };
     expect(meta.host_version).toBe("1.0");
-    expect(meta.primaryView?.resourceUri).toBe("ui://tasks/board");
+    expect(meta.placements?.[0]?.resourceUri).toBe("ui://tasks/board");
   });
 });

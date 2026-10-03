@@ -95,8 +95,6 @@ The connector's other placements still register. Name routes after your own serv
 
 The virtual `primary` resource path resolves to the **first declared placement's** `resourceUri`, so the shell can load your main view without knowing its URI ahead of time. See [UI Resources](/apps/ui-resources) for how `primary` resolves.
 
-The schema also accepts a `primaryView` object for back-compat, but the host does not consume it: placements are the source of truth for what is registered and routed. Declare a placement, not `primaryView`.
-
 ## Sidebar rendering
 
 Under the focused workspace, the sidebar shows:

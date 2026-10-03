@@ -1,5 +1,16 @@
 import { describe, expect, it } from "bun:test";
+import Ajv from "ajv";
+import schema from "../../src/connectors/catalog/schemas/host-manifest.schema.json";
 import { hostMetaToUiMeta } from "../../src/connectors/runtime/defaults.ts";
+
+// Keys the schema no longer defines. A catalog that still carries them must
+// load, and they must change nothing.
+const REMOVED_KEYS = {
+  name: "Hello",
+  icon: "hand",
+  category: "operations",
+  primaryView: { resourceUri: "ui://hello/main" },
+};
 
 const PLACEMENT = {
   slot: "sidebar.apps",
@@ -23,12 +34,10 @@ describe("hostMetaToUiMeta", () => {
     expect(hostMetaToUiMeta({ host_version: "1.0", placements: [PLACEMENT] })).not.toBeNull();
   });
 
-  it("does not read name, icon or category", () => {
+  it("does not read name, icon, category or primaryView", () => {
     const ui = hostMetaToUiMeta({
       host_version: "1.0",
-      name: "Hello",
-      icon: "hand",
-      category: "operations",
+      ...REMOVED_KEYS,
       placements: [PLACEMENT],
     } as never);
     expect(ui).toEqual({ placements: [PLACEMENT] });
@@ -50,5 +59,13 @@ describe("hostMetaToUiMeta", () => {
         placements: [{ slot: "sidebar.apps", resourceUri: "https://evil.example/x" }],
       }),
     ).toBeNull();
+  });
+});
+
+describe("the published host schema", () => {
+  it("accepts a block that still carries the removed keys", () => {
+    const validate = new Ajv({ strict: false }).compile(schema);
+    const block = { host_version: "1.0", ...REMOVED_KEYS, placements: [PLACEMENT] };
+    expect(validate(block)).toBe(true);
   });
 });
