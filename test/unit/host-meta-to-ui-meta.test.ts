@@ -23,7 +23,7 @@ describe("hostMetaToUiMeta", () => {
     expect(hostMetaToUiMeta({ host_version: "1.0", placements: [PLACEMENT] })).not.toBeNull();
   });
 
-  it("does not read the deprecated name, icon or category", () => {
+  it("does not read name, icon or category", () => {
     const ui = hostMetaToUiMeta({
       host_version: "1.0",
       name: "Hello",

@@ -1177,8 +1177,8 @@ describe("manage_connectors installed entry — displayName", () => {
   };
 
   test("ignores a host UI name stored on an installed ref", async () => {
-    // Installs made before the host block's `name` was deprecated persisted it
-    // in the ref's `ui` snapshot. Nothing reads it.
+    // Installs made while the host block carried `name` persisted it in the
+    // ref's `ui` snapshot. Nothing reads it.
     const ui = { name: "Spoofed", icon: "" } as never;
     await h.lifecycle.seedInstance(
       STUB_SERVER_NAME,
