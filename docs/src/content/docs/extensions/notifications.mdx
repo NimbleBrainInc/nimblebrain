@@ -67,6 +67,9 @@ One block in `_meta["ai.nimblebrain/host"]`:
 One outbox per server, carrying every event name you emit. The host filters;
 you do not need a resource per event type.
 
+This declaration moves to the MCP Events extension
+(`io.modelcontextprotocol/events`) when that extension ships.
+
 Declaring an outbox **grants your server nothing**. No URL is minted, no token
 audience is created, and no path to a human is opened — that is a route, and
 only a workspace admin writes one. What it does impose is a standing poll, which
