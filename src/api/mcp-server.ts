@@ -1982,8 +1982,8 @@ function fmtClientField(value: string): string {
 /**
  * One line per `/mcp` `tools/call`, refused or not, so "does any client call
  * X" has an answer in the logs: the tool's name and who asked, never
- * arguments or results. The name is the client's string, so it is quoted and
- * capped like any other client-supplied field.
+ * arguments or results. The name and the app source are the client's strings,
+ * so each is quoted and capped like any other client-supplied field.
  */
 function logToolCall(
   name: string,
@@ -1992,7 +1992,9 @@ function logToolCall(
   wsId: string,
   identityId: string,
 ): void {
-  const caller = isAppCall(appSource, sessionCtx) ? `app:${appSource}` : "agent";
+  const caller = isAppCall(appSource, sessionCtx)
+    ? `app:${fmtClientField(appSource ?? "")}`
+    : "agent";
   log.info(
     `[mcp] tools/call tool=${fmtClientField(name)} caller=${caller} grant=${sessionCtx.grant} ws=${wsId} identity=${identityId}`,
   );

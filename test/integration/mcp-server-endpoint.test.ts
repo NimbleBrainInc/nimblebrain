@@ -323,8 +323,29 @@ describe("MCP Server Endpoint (/mcp)", () => {
       expect(line).toContain('tool="fake__echo"');
       expect(line).toContain("caller=agent");
       expect(line).toContain(`ws=${TEST_WORKSPACE_ID}`);
+      expect(line).toContain("grant=first_party");
+      expect(line).toContain("identity=");
       // Arguments are never written.
       expect(line).not.toContain("secret words");
+    });
+
+    it("quotes an app's source, so a source cannot write fields into the line", async () => {
+      const client = await createMcpClient();
+      const forged = 'fake tool="other__delete" ws=ws_forged';
+      try {
+        await client
+          .callTool({
+            name: "fake__echo",
+            arguments: { text: "hi" },
+            _meta: { "ai.nimblebrain/source": forged },
+          })
+          .catch(() => {});
+      } finally {
+        await client.close();
+      }
+      const line = capture.lines.find((l) => l.startsWith("info [mcp] tools/call"));
+      expect(line).toContain(`caller=app:${JSON.stringify(forged)}`);
+      expect(line).not.toContain("caller=app:fake ");
     });
 
     it("info-logs the declared clientInfo when a session initializes", async () => {
