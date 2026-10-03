@@ -26,8 +26,6 @@ interface Props {
   hasFilter: boolean;
   onClearFilters: () => void;
 
-  uploading: boolean;
-  uploadHint: string | null;
   onUpload: () => void;
   onNewFolder: () => void;
 }
@@ -105,17 +103,9 @@ export function Toolbar(props: Props) {
             <FolderPlusIcon />
             New folder
           </button>
-          <button
-            type="button"
-            className="upload-btn"
-            disabled={props.uploading}
-            onClick={props.onUpload}
-            title={
-              props.uploadHint ? `Upload files (${props.uploadHint.toLowerCase()})` : "Upload files"
-            }
-          >
+          <button type="button" className="upload-btn" onClick={props.onUpload}>
             <UploadIcon />
-            {props.uploading ? "Uploading…" : "Upload"}
+            Upload
           </button>
         </div>
       </div>
@@ -177,7 +167,6 @@ export function Toolbar(props: Props) {
           </button>
         )}
       </div>
-      {props.uploadHint && <div className="upload-hint">{props.uploadHint}</div>}
     </div>
   );
 }

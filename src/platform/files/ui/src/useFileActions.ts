@@ -14,10 +14,9 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
  */
 export function useFileActions(reload: () => void) {
   const app = useApp();
-  const { pickFiles } = useFileUpload();
+  const { pickFiles, uploadFiles } = useFileUpload();
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [refusal, setRefusal] = useState<UploadRefusal | null>(null);
   const [busy, setBusy] = useState<"upload" | "delete" | null>(null);
 
   const call = useCallback(
@@ -84,33 +83,38 @@ export function useFileActions(reload: () => void) {
   );
 
   /**
-   * The host stores each pick at the top level; picks made inside a folder are
-   * then moved into it, so an upload lands where the reader is.
+   * Store files, picked (`files` omitted) or already held (dropped), in a
+   * folder. The host stores each at the top level; they are then moved into the
+   * folder, so an upload lands where the reader is. The outcome says how many
+   * were stored and, when any were refused, why, for the upload dialog to show.
    */
   const upload = useCallback(
-    async (folderId: string) => {
+    async (folderId: string, files?: readonly File[]): Promise<UploadOutcome> => {
       setBusy("upload");
-      setError(null);
-      setRefusal(null);
-      const picked = await pick(() => pickFiles({ multiple: true }));
-      setRefusal(picked.refusal);
-      setError(picked.error);
-      const storedIds = picked.storedIds;
       try {
-        if (storedIds.length === 0) return;
-        if (folderId !== ROOT) await call("move", { ids: storedIds, folderId });
-        reload();
+        const sent = await send(() => (files ? uploadFiles(files) : pickFiles({ multiple: true })));
+        if (sent.storedIds.length > 0) {
+          if (folderId !== ROOT) await call("move", { ids: sent.storedIds, folderId });
+          reload();
+        }
+        return sent;
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        // The files were stored but the move failed: they sit at the top level.
+        return {
+          storedIds: [],
+          refusal: null,
+          error: err instanceof Error ? err.message : String(err),
+        };
       } finally {
         setBusy(null);
       }
     },
-    [pickFiles, call, reload],
+    [pickFiles, uploadFiles, call, reload],
   );
 
   return {
     call,
+    flash,
     move,
     remove,
     createFolder,
@@ -119,8 +123,6 @@ export function useFileActions(reload: () => void) {
     notice,
     error,
     setError,
-    refusal,
-    clearRefusal: () => setRefusal(null),
     uploading: busy === "upload",
     deleting: busy === "delete",
   };
@@ -142,17 +144,20 @@ async function deleteEach(
   return refused;
 }
 
-/**
- * Run the host's picker. A refusal still stores the files that passed, so their
- * ids come back with it, to be placed like any other upload.
- */
-async function pick(picker: () => Promise<Array<{ id: string }>>): Promise<{
+/** What an upload did: the files stored, and why any others were not. */
+export interface UploadOutcome {
   storedIds: string[];
   refusal: UploadRefusal | null;
   error: string | null;
-}> {
+}
+
+/**
+ * Hand files to the host, picked or held. A refusal still stores the files that
+ * passed, so their ids come back with it, to be placed like any other upload.
+ */
+async function send(upload: () => Promise<Array<{ id: string }>>): Promise<UploadOutcome> {
   try {
-    return { storedIds: (await picker()).map((f) => f.id), refusal: null, error: null };
+    return { storedIds: (await upload()).map((f) => f.id), refusal: null, error: null };
   } catch (err) {
     const refusal = readUploadRefusal(err);
     if (refusal) return { storedIds: refusal.storedIds, refusal, error: null };

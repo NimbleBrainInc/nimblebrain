@@ -1,3 +1,4 @@
+import { hostSupports } from "@nimblebrain/synapse";
 import { useApp, useHostContext, useModelContext, useTrail } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DetailOverlay } from "./DetailOverlay";
@@ -7,10 +8,10 @@ import { FolderIcon } from "./icons";
 import { Pager } from "./Pager";
 import { Toolbar } from "./Toolbar";
 import { type Crumb, type FileEntry, type Folder, type ListResult, ROOT } from "./types";
-import { UploadRefusals } from "./UploadRefusals";
+import { UploadDialog } from "./UploadDialog";
 import { type UploadLimits, uploadLimitHint } from "./upload";
 import { useBrowseState } from "./useBrowseState";
-import { useFileActions } from "./useFileActions";
+import { type UploadOutcome, useFileActions } from "./useFileActions";
 import { useFacets, useFileList } from "./useFileList";
 import { useSelection } from "./useSelection";
 
@@ -24,7 +25,9 @@ type Dialog =
   | { kind: "new-folder" }
   | { kind: "rename"; folder: Folder }
   | { kind: "move"; ids: string[] }
-  | { kind: "delete"; ids: string[]; label: string };
+  | { kind: "delete"; ids: string[]; label: string }
+  /** `files`: dropped on the view, to upload as the dialog opens. */
+  | { kind: "upload"; files: File[] | null };
 
 /** A file opened from the list carries its folder's path; one opened by address does not. */
 type OpenFile = FileEntry & { folderPath?: string };
@@ -37,6 +40,9 @@ export function Dashboard() {
   const actions = useFileActions(list.reload);
   const [detailFile, setDetailFile] = useState<OpenFile | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  const canDrop = hostSupports(app, "uploadFiles");
+  // Files dragged onto the view open the upload dialog with them.
+  const dragging = useViewDrop(canDrop, (files) => setDialog({ kind: "upload", files }));
 
   const breadcrumb = useBreadcrumb(list.result, browse.searching, browse.folderId);
   // While browsing, the chips count what choosing one would search: this
@@ -141,9 +147,7 @@ export function Dashboard() {
         facets={browseFacets ?? list.result?.facets ?? null}
         hasFilter={browse.hasFilter}
         onClearFilters={browse.clearFilters}
-        uploading={actions.uploading}
-        uploadHint={uploadLimitHint(uploads)}
-        onUpload={() => actions.upload(browse.folderId)}
+        onUpload={() => setDialog({ kind: "upload", files: null })}
         onNewFolder={() => setDialog({ kind: "new-folder" })}
       />
 
@@ -159,9 +163,6 @@ export function Dashboard() {
           message={actions.error ?? list.error}
           onDismiss={() => actions.setError(null)}
         />
-        {actions.refusal && (
-          <UploadRefusals refusal={actions.refusal} onDismiss={actions.clearRefusal} />
-        )}
       </div>
 
       <div className="content" ref={contentRef}>
@@ -212,6 +213,11 @@ export function Dashboard() {
       </div>
 
       <Toast message={actions.notice} />
+      {dragging && (
+        <div className="drop-hint" aria-hidden>
+          Drop to upload to {lastName(breadcrumb, "Files")}
+        </div>
+      )}
 
       {detailFile && (
         <DetailOverlay
@@ -235,6 +241,13 @@ export function Dashboard() {
           renameFolder={actions.renameFolder}
           move={moveAndFollow}
           remove={removeAndFollow}
+          upload={{
+            destination: lastName(breadcrumb, "Files"),
+            canDrop,
+            limits: uploadLimitHint(uploads),
+            send: (files) => actions.upload(browse.folderId, files),
+            done: (n) => actions.flash(`Uploaded ${n} file${n === 1 ? "" : "s"}`),
+          }}
         />
       )}
     </>
@@ -254,6 +267,7 @@ function DialogLayer({
   renameFolder,
   move,
   remove,
+  upload,
 }: {
   dialog: Dialog;
   folderId: string;
@@ -262,6 +276,13 @@ function DialogLayer({
   renameFolder: (id: string, name: string) => Promise<void>;
   move: (ids: string[], target: string) => Promise<void>;
   remove: (ids: string[], label: string) => Promise<void>;
+  upload: {
+    destination: string;
+    canDrop: boolean;
+    limits: string | null;
+    send: (files?: readonly File[]) => Promise<UploadOutcome>;
+    done: (stored: number) => void;
+  };
 }) {
   switch (dialog.kind) {
     case "new-folder":
@@ -292,6 +313,21 @@ function DialogLayer({
           excluded={new Set(dialog.ids.filter((id) => id.startsWith("fd_")))}
           onClose={onClose}
           onMove={(target) => move(dialog.ids, target)}
+        />
+      );
+    case "upload":
+      return (
+        <UploadDialog
+          destination={upload.destination}
+          canDrop={upload.canDrop}
+          limits={upload.limits}
+          initialFiles={dialog.files}
+          onUpload={upload.send}
+          onDone={(n) => {
+            upload.done(n);
+            onClose();
+          }}
+          onClose={onClose}
         />
       );
     case "delete":
@@ -340,8 +376,50 @@ function followAddress(
   else if (id.startsWith(FILE_PREFIX)) openFile(id.slice(FILE_PREFIX.length));
 }
 
-function lastName(breadcrumb: Crumb[]): string {
-  return breadcrumb[breadcrumb.length - 1]?.name ?? "this folder";
+function lastName(breadcrumb: Crumb[], top = "this folder"): string {
+  return breadcrumb[breadcrumb.length - 1]?.name ?? top;
+}
+
+/**
+ * Files dragged from outside onto the view: `true` while they are over it, and
+ * `onDrop` with them when let go. A drop the upload dialog's zone takes stops
+ * there. Without `enabled` (a host that cannot take dropped files) a drop is
+ * still swallowed, so the browser never navigates the frame to the file.
+ */
+function useViewDrop(enabled: boolean, onDrop: (files: File[]) => void): boolean {
+  const [dragging, setDragging] = useState(false);
+  const dropRef = useRef(onDrop);
+  dropRef.current = onDrop;
+
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => Boolean(e.dataTransfer?.types.includes("Files"));
+    const over = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (enabled) setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      // Leaving for a child fires too; only leaving the frame has no target.
+      if (e.relatedTarget === null) setDragging(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDragging(false);
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (enabled && files.length > 0) dropRef.current(files);
+    };
+    window.addEventListener("dragover", over);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
+    };
+  }, [enabled]);
+
+  return dragging;
 }
 
 function nameOf(id: string, folders: Folder[], files: FileEntry[]): string {
