@@ -16,9 +16,9 @@
 // Gutter: the content's edges sit on the top bar's (`pl-4 pr-3` in TopBar), so
 // the title lines up under the bar's title and Settings' edge under Chat's.
 // Nothing is centered, since centering moves content off those lines as the
-// main area widens. The header spans the column so Settings stays on that
-// edge; the sections below it are capped for line length. Widths come from
-// container queries on the main area (web/DESIGN.md), never the viewport.
+// main area widens. Every section spans the full column, so all of them end on
+// Settings' edge; the app grid adds columns as it widens instead. Widths come
+// from container queries on the main area (web/DESIGN.md), never the viewport.
 //
 // App data source: `forSlot("sidebar")` → `workspaceApps()`, the same set the
 // sidebar quick-list reads, so the grid and the count agree. Icons are the
@@ -151,82 +151,80 @@ export function WorkspaceOverviewPage() {
           </Link>
         </header>
 
-        <div className="max-w-5xl">
-          <AskComposer workspaceName={workspace.name} />
+        <AskComposer workspaceName={workspace.name} />
 
-          {/* What needs a member here: each app's open counts, and each
+        {/* What needs a member here: each app's open counts, and each
             connector that needs attention. */}
-          <BriefingView
-            workspaceId={workspace.id}
-            briefing={briefing}
-            connectors={connectorsReady ? connectors.installed : []}
-            loading={briefingLoading || !connectorsReady}
-            error={briefingError}
-            onRetry={refreshBriefing}
-            onOpen={handleBriefingOpen}
-            onOpenConnector={handleConnectorOpen}
-          />
+        <BriefingView
+          workspaceId={workspace.id}
+          briefing={briefing}
+          connectors={connectorsReady ? connectors.installed : []}
+          loading={briefingLoading || !connectorsReady}
+          error={briefingError}
+          onRetry={refreshBriefing}
+          onOpen={handleBriefingOpen}
+          onOpenConnector={handleConnectorOpen}
+        />
 
-          <RecentConversations
-            conversations={recent}
-            allPath={`${slugPath}/conversations`}
-            onOpen={openPanel}
-          />
+        <RecentConversations
+          conversations={recent}
+          allPath={`${slugPath}/conversations`}
+          onOpen={openPanel}
+        />
 
-          <SectionLabel className="mb-3">Apps</SectionLabel>
-          {apps === null ? (
-            // Brief shell-catch-up window after a switch — hold the space, don't
-            // flash a skeleton (the page stays mounted, so this is a sub-second gap).
-            <div
-              className="min-h-[4.5rem]"
-              aria-hidden
-              data-testid="workspace-overview-apps-pending"
-            />
-          ) : apps.length === 0 ? (
-            <div
-              className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
-              data-testid="workspace-overview-empty"
-            >
-              <p>No apps installed in this workspace yet.</p>
-              {canAddApps && (
-                <Link
-                  to={`${slugPath}/settings/connectors/browse`}
-                  className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Add an app
-                </Link>
-              )}
-            </div>
-          ) : (
-            <div
-              className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4"
-              data-testid="workspace-overview-app-grid"
-            >
-              {apps.map((p) => (
-                <AppCard
-                  key={p.resourceUri}
-                  placement={p}
-                  iconUrl={iconFor(p.serverName)}
-                  onOpen={() => {
-                    if (!p.route) return;
-                    navigate(`${slugPath}/app/${p.route}`);
-                  }}
-                />
-              ))}
-              {canAddApps && (
-                <Link
-                  to={`${slugPath}/settings/connectors/browse`}
-                  data-testid="workspace-overview-add-app"
-                  className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
-                >
-                  <Plus className="size-5" aria-hidden />
-                  Add app
-                </Link>
-              )}
-            </div>
-          )}
-        </div>
+        <SectionLabel className="mb-3">Apps</SectionLabel>
+        {apps === null ? (
+          // Brief shell-catch-up window after a switch — hold the space, don't
+          // flash a skeleton (the page stays mounted, so this is a sub-second gap).
+          <div
+            className="min-h-[4.5rem]"
+            aria-hidden
+            data-testid="workspace-overview-apps-pending"
+          />
+        ) : apps.length === 0 ? (
+          <div
+            className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
+            data-testid="workspace-overview-empty"
+          >
+            <p>No apps installed in this workspace yet.</p>
+            {canAddApps && (
+              <Link
+                to={`${slugPath}/settings/connectors/browse`}
+                className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
+              >
+                <Plus className="size-4" aria-hidden />
+                Add an app
+              </Link>
+            )}
+          </div>
+        ) : (
+          <div
+            className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 @7xl:grid-cols-5"
+            data-testid="workspace-overview-app-grid"
+          >
+            {apps.map((p) => (
+              <AppCard
+                key={p.resourceUri}
+                placement={p}
+                iconUrl={iconFor(p.serverName)}
+                onOpen={() => {
+                  if (!p.route) return;
+                  navigate(`${slugPath}/app/${p.route}`);
+                }}
+              />
+            ))}
+            {canAddApps && (
+              <Link
+                to={`${slugPath}/settings/connectors/browse`}
+                data-testid="workspace-overview-add-app"
+                className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
+              >
+                <Plus className="size-5" aria-hidden />
+                Add app
+              </Link>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
