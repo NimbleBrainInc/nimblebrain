@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { readCursor, writeCursor } from "../../../src/notifications/cursors.ts";
+import { clearCursor, readCursor, writeCursor } from "../../../src/notifications/cursors.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { NotificationPoller, type PollTarget } from "../../../src/notifications/poller.ts";
 import { positionOutbox } from "../../../src/notifications/position.ts";
@@ -123,5 +123,53 @@ describe("positionOutbox", () => {
 
     await pollerOver([targetFor(outbox)]).sweep();
     expect(await storedCursor()).toBeDefined();
+  });
+});
+
+/**
+ * Run `during` once the poller has taken its position off the record and before
+ * its read reaches the source: another cursor writer landing while a read is in
+ * flight.
+ */
+function interleave(outbox: OutboxFixture, during: () => Promise<unknown>): void {
+  const source = outbox.source;
+  const read = source.readResource.bind(source);
+  let armed = true;
+  source.readResource = async (uri, opts) => {
+    if (armed) {
+      armed = false;
+      await during();
+    }
+    return read(uri, opts);
+  };
+}
+
+describe("the poller's cursor write", () => {
+  test("a bootstrap in flight does not overwrite the install-time position", async () => {
+    const outbox = await fixture();
+    interleave(outbox, async () => {
+      await positionOutbox(workspaceStore, targetFor(outbox), 50);
+      // What `on_ready` reports, before the poller's bootstrap is answered.
+      outbox.emit(fixtureEvent("evt_setup"));
+    });
+
+    // The poller's bootstrap answers a horizon past `evt_setup`, and loses to
+    // the position, so the next sweep reads from before the event.
+    await pollerOver([targetFor(outbox)]).sweep();
+    expect(eventIds()).toEqual([]);
+
+    await pollerOver([targetFor(outbox)]).sweep();
+    expect(eventIds()).toEqual(["evt_setup"]);
+  });
+
+  test("a read in flight across an uninstall does not bring the cursor back", async () => {
+    const outbox = await fixture();
+    await positionOutbox(workspaceStore, targetFor(outbox), 50);
+    outbox.emit(fixtureEvent("evt_before_uninstall"));
+    interleave(outbox, () => clearCursor(workspaceStore, wsId, "fixture-outbox"));
+
+    await pollerOver([targetFor(outbox)]).sweep();
+
+    expect(await storedCursor()).toBeUndefined();
   });
 });

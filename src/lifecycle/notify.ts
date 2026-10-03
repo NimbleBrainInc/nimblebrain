@@ -82,8 +82,10 @@ export interface LifecycleNotifyDeps {
   contractWarningsFor?(wsId: string, serverName: string): Promise<string[]>;
   /**
    * Give the connector's notifications outbox a position, when it declares one
-   * and has none, before its `on_ready` handler is called. Never throws.
-   * Optional: a connector without an outbox has nothing to position.
+   * and has none, before its `on_ready` handler is called. Optional: a
+   * connector without an outbox has nothing to position. A rejection is logged
+   * and the handler is still called, because positioning serves the handler and
+   * must never withhold it.
    *
    * Here rather than in the poller because the order is the guarantee: what a
    * handler starts, it reports later, and a cursor taken after that report steps
@@ -151,7 +153,13 @@ export async function notifyReady(
   // the extension sends it only to a handler that does.
   const args =
     decl.declaredBy === "extension" ? readyArguments(findTool(tools, handler), reason) : { reason };
-  await deps.positionOutbox?.(wsId, connector);
+  await deps.positionOutbox?.(wsId, connector).catch((err: unknown) => {
+    log.warn("[lifecycle] could not position the outbox before on_ready", {
+      connector,
+      workspace_id: wsId,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  });
   return callReady(port, connector, handler, args, reason);
 }
 

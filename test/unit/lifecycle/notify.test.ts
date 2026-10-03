@@ -380,6 +380,21 @@ describe("the outbox position", () => {
     expect(order).toEqual([`position:${WS}:${CONNECTOR}`, "workspace_ready"]);
   });
 
+  test("a position that fails still lets the handler be called", async () => {
+    const fake = makeFake([handler("workspace_ready"), handler("workspace_removing")]);
+    const deps: LifecycleNotifyDeps = {
+      ...makeDeps(fake),
+      positionOutbox: async () => {
+        throw new Error("catalog unreachable");
+      },
+    };
+
+    const outcome = await notifyReady(deps, WS, CONNECTOR, "install");
+
+    expect(outcome.settled).toBe(true);
+    expect(fake.calls.map((c) => c.tool)).toEqual(["workspace_ready"]);
+  });
+
   test("is not taken for a connector with no on_ready handler", async () => {
     const fake = makeFake([handler("workspace_removing")]);
     let positioned = false;

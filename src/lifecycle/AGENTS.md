@@ -54,7 +54,8 @@ Three rules that are load-bearing rather than stylistic:
   A first outbox read with no cursor skips everything already in the outbox,
   and install-time work finishes inside the poller's first interval, so a
   position taken after the handler steps over what the handler reports. Keep
-  the call ahead of `callReady`, and keep the cursor write set-if-absent.
+  the call ahead of `callReady`, never let its failure withhold the handler,
+  and keep the cursor write set-if-absent.
 - **`on_removing` fires before `lifecycle.uninstall` and before the OAuth
   revoke**, is best-effort, and never *fails* the uninstall — which does wait
   for it, bounded by a **5s deadline in `notifyRemoving` and by nothing else**.

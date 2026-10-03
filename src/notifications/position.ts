@@ -22,9 +22,11 @@ import type { PollTarget } from "./poller.ts";
  * and the poller's ordinary reads deliver it.
  *
  * A no-op when a cursor is already stored: a resume, a reboot, or the second of
- * an install's two racing `on_ready` calls. The write is set-if-absent, so a
- * poller bootstrap racing this one cannot both land. Whichever wrote first
- * read first, and both reads finished before any handler was called.
+ * an install's two racing `on_ready` calls. A poller bootstrap can race this
+ * one and still be in flight when the handler runs. Both writes are
+ * set-if-absent, so only the first lands: if it is this one, the poller's later
+ * horizon is refused; if it is the poller's, that read had already returned
+ * before this write, so before the handler was called.
  *
  * Best-effort, and it never fails the notification: a read that fails here
  * leaves the poller to bootstrap as it would have anyway. Returns whether a
