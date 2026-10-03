@@ -183,7 +183,8 @@ function listFolders(
 
   const below = input.recursive && folderId ? subtreeIds(index, folderId) : null;
   const inScope = (f: FolderEntry): boolean => {
-    if (folderId === undefined) return true;
+    // Everywhere, as for files: no folder, or the top level and all below it.
+    if (folderId === undefined || (input.recursive && folderId === null)) return true;
     const parent = f.parentId && index.byId.has(f.parentId) ? f.parentId : null;
     return below ? f.id !== folderId && below.has(parent ?? "") : parent === folderId;
   };
