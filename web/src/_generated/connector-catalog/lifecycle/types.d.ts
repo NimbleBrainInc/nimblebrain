@@ -57,6 +57,18 @@ export type LifecycleEvent = (typeof LIFECYCLE_EVENTS)[number];
  */
 export type LifecycleDeclaration = Partial<Record<LifecycleEvent, string>>;
 /**
+ * The declaration that governs one connection: the catalog block, or the
+ * binding a server declares on the wire through the `ai.nimblebrain/lifecycle`
+ * extension (`src/services/lifecycle-extension.ts`), marked
+ * `declaredBy: "extension"`. A wire binding's handlers are called as the
+ * extension requires: `reason` only to a `ready` handler that declares it, and
+ * a `taskSupport: "optional"` handler admitted, because every lifecycle call is
+ * made inline.
+ */
+export type LifecycleBinding = LifecycleDeclaration & {
+    declaredBy?: "extension";
+};
+/**
  * Why `on_ready` is firing.
  *
  * One event with a discriminator rather than two events, because there is one

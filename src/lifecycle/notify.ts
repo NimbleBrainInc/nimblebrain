@@ -1,12 +1,14 @@
 import type { ToolResult } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
+import { readyArguments } from "../services/lifecycle-extension.ts";
 import {
   type ConnectorPort,
   summarizeToolError,
   watchToolSurface,
 } from "../tools/connector-surface.ts";
+import type { Tool } from "../tools/types.ts";
 import { LifecycleContractError, verifyLifecycleTools } from "./declaration.ts";
-import type { LifecycleDeclaration, LifecycleReadyReason } from "./types.ts";
+import type { LifecycleBinding, LifecycleReadyReason } from "./types.ts";
 
 /**
  * Telling a connector it is installed, and telling it that it is being removed.
@@ -59,14 +61,25 @@ export interface ReadyOutcome {
 
 export interface LifecycleNotifyDeps {
   /**
-   * The lifecycle declaration for a connector installed in `wsId`, from
-   * OPERATOR-TRUSTED metadata — the published catalog entry the installed ref
-   * is (`catalog/binding.ts`), never a caller-supplied one. `undefined` when it
-   * declares none.
+   * The lifecycle declaration for a connector installed in `wsId`: the binding
+   * its server advertises through `ai.nimblebrain/lifecycle` when it advertises
+   * the extension, and otherwise the OPERATOR-TRUSTED catalog block — the
+   * published catalog entry the installed ref is (`catalog/binding.ts`), never a
+   * caller-supplied one. Never both. `undefined` when it declares none.
    */
-  declarationFor(wsId: string, serverName: string): Promise<LifecycleDeclaration | undefined>;
-  /** The live source for `(wsId, serverName)`, or undefined when it is not running. */
+  declarationFor(wsId: string, serverName: string): Promise<LifecycleBinding | undefined>;
+  /**
+   * The live source for `(wsId, serverName)`, or undefined when it is not
+   * running. Its `execute` must make a plain inline call: a lifecycle call is
+   * never task-augmented.
+   */
   portFor(wsId: string, serverName: string): ConnectorPort | undefined;
+  /**
+   * The install warnings for marked tools the extension binding rejected (a
+   * duplicate marker, an unknown event, a required argument). Optional: a
+   * catalog declaration has none.
+   */
+  contractWarningsFor?(wsId: string, serverName: string): Promise<string[]>;
 }
 
 /**
@@ -124,7 +137,15 @@ export async function notifyReady(
   // there is nothing to call now and nothing to come back for.
   if (!handler) return { settled: true };
 
-  return callReady(port, connector, handler, reason);
+  // The catalog path sends `reason` whether or not the handler declares it;
+  // the extension sends it only to a handler that does.
+  const args =
+    decl.declaredBy === "extension" ? readyArguments(findTool(tools, handler), reason) : { reason };
+  return callReady(port, connector, handler, args, reason);
+}
+
+function findTool(tools: Tool[], name: string): Tool | undefined {
+  return tools.find((t) => t.name === name);
 }
 
 /**
@@ -139,13 +160,12 @@ async function callReady(
   port: ConnectorPort,
   connector: string,
   handler: string,
+  args: Record<string, unknown>,
   reason: LifecycleReadyReason,
 ): Promise<ReadyOutcome> {
   let error: string;
   try {
-    // `reason` travels whether or not the handler's schema declares it — see
-    // `verifyLifecycleTools` for why that is deliberate and what it depends on.
-    const result = await port.execute(handler, { reason });
+    const result = await port.execute(handler, args);
     if (!result.isError) return { settled: true, ...noticeFrom(result.content) };
     error = summarizeToolError(result);
   } catch (err) {
@@ -253,10 +273,9 @@ const REMOVING_DEADLINE_MS = 5_000;
  * Everything behind this call waits on it — the OAuth revoke, the source
  * teardown, the hook revoke, the secret deletion — so without a bound, the
  * duration of a workspace admin's uninstall is chosen by the connector being
- * removed. `verifyLifecycleTools` refuses a task-augmented handler, whose await
- * has no deadline of its own, but that check runs on the READY path and only
- * warns: it never gated this call, and it says nothing about a merely slow
- * inline one.
+ * removed. The call is made inline (`LifecycleNotifyDeps.portFor`), so it never
+ * waits on a task, but a merely slow inline handler is bounded by nothing else.
+ * With no binding held, the deadline also covers rediscovering it.
  *
  * Abandoning the call does not cancel the server's work; it stops the uninstall
  * waiting for it, which is all that was ever promised. `Promise.race` keeps a
@@ -270,37 +289,55 @@ export async function notifyRemoving(
   connector: string,
   opts: { deadlineMs?: number } = {},
 ): Promise<void> {
-  // Resolved before the call so the warn line can name the handler even when
-  // what failed was reading the declaration or reaching the source.
-  let handler: string | undefined;
+  const deadlineMs = opts.deadlineMs ?? REMOVING_DEADLINE_MS;
+  // Filled in as the declaration resolves, so the warn line can name the
+  // handler even when what failed or timed out was reaching the source.
+  const attempt: RemovingAttempt = { abandoned: false };
   try {
-    handler = (await deps.declarationFor(wsId, connector))?.on_removing;
-    if (!handler) return;
-    const port = deps.portFor(wsId, connector);
-    if (!port) {
-      log.debug(
-        "lifecycle",
-        `[lifecycle] ${connector} declares on_removing but is not running — skipping`,
-      );
-      return;
-    }
-    const result = await withDeadline(
-      port.execute(handler, {}),
-      opts.deadlineMs ?? REMOVING_DEADLINE_MS,
-    );
+    // The deadline covers resolving the declaration as well as the call: with
+    // no binding held, resolving it reconnects and rediscovers the server's
+    // capabilities, and that is waited for inside the same bound.
+    const result = await withDeadline(deliverRemoving(deps, wsId, connector, attempt), deadlineMs);
     if (result === DEADLINE) {
-      warnRemoving(
-        connector,
-        handler,
-        `did not answer within ${opts.deadlineMs ?? REMOVING_DEADLINE_MS}ms`,
-      );
+      attempt.abandoned = true;
+      warnRemoving(connector, attempt.handler, `did not answer within ${deadlineMs}ms`);
       return;
     }
-    if (!result.isError) return;
-    warnRemoving(connector, handler, summarizeToolError(result));
+    if (!result?.isError) return;
+    warnRemoving(connector, attempt.handler, summarizeToolError(result));
   } catch (err) {
-    warnRemoving(connector, handler, err instanceof Error ? err.message : String(err));
+    warnRemoving(connector, attempt.handler, err instanceof Error ? err.message : String(err));
   }
+}
+
+/** One `on_removing` delivery, as {@link notifyRemoving} and {@link deliverRemoving} share it. */
+interface RemovingAttempt {
+  handler?: string;
+  /** Set when the deadline passed: the uninstall has moved on, so no call may start. */
+  abandoned: boolean;
+}
+
+/** Resolve the `on_removing` handler and call it; `undefined` when there is nothing to call. */
+async function deliverRemoving(
+  deps: LifecycleNotifyDeps,
+  wsId: string,
+  connector: string,
+  attempt: RemovingAttempt,
+): Promise<ToolResult | undefined> {
+  const handler = (await deps.declarationFor(wsId, connector))?.on_removing;
+  // A rediscovery that outlived the deadline must not call a connector the
+  // uninstall is already tearing down.
+  if (!handler || attempt.abandoned) return undefined;
+  attempt.handler = handler;
+  const port = deps.portFor(wsId, connector);
+  if (!port) {
+    log.debug(
+      "lifecycle",
+      `[lifecycle] ${connector} declares on_removing but is not running — skipping`,
+    );
+    return undefined;
+  }
+  return port.execute(handler, {});
 }
 
 /** What {@link withDeadline} returns when the call did not answer in time. */
@@ -313,10 +350,7 @@ const DEADLINE = Symbol("lifecycle-deadline");
  * The timer is cleared on both paths: a pending 5-second timer per uninstall
  * would keep a process alive past the work it belongs to.
  */
-async function withDeadline(
-  call: Promise<ToolResult>,
-  ms: number,
-): Promise<ToolResult | typeof DEADLINE> {
+async function withDeadline<T>(call: Promise<T>, ms: number): Promise<T | typeof DEADLINE> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<typeof DEADLINE>((resolve) => {
     timer = setTimeout(() => resolve(DEADLINE), ms);

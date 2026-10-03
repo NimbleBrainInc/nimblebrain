@@ -72,6 +72,17 @@ export function toToolSchema(t: ToolSchema): ToolSchema {
   };
 }
 
+/** How a source dispatches one call. */
+export interface ToolExecuteOptions {
+  /**
+   * Make a plain inline `tools/call`, never a task-augmented one, whatever the
+   * tool or the connection advertises. The host's lifecycle calls ask for this:
+   * the `ai.nimblebrain/lifecycle` extension forbids task augmentation, and an
+   * uninstall waits behind the call. A source with no task path ignores it.
+   */
+  inline?: boolean;
+}
+
 /** Pluggable tool provider. Each source manages its own lifecycle. */
 export interface ToolSource {
   readonly name: string;
@@ -93,6 +104,7 @@ export interface ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
+    options?: ToolExecuteOptions,
   ): Promise<ToolResult>;
   /**
    * Subscribe to "my tool list may have changed" signals — fired when the
