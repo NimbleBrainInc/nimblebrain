@@ -82,6 +82,9 @@ describe("nb__open_app", () => {
       .join("");
     expect(text).toContain("Opening People");
     expect(text).toContain("if it supports opening at that address");
+    // An app already on screen that cannot follow the target stays where it was, so the
+    // fallback must not claim it went home.
+    expect(text).toContain("stays on what it was showing if it was already open");
     expect(text).not.toContain("Opened");
   });
 
