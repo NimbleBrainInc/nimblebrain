@@ -2,6 +2,8 @@
 
 Scope: tool sources, the MCP client (`mcp-source.ts`), and the credential store (`src/tools/`). Tool-name parsing and the workspace wall are in `src/orchestrator/AGENTS.md`.
 
+**An update tool here is a patch: an omitted field is left alone, and `null` clears.** The rule and the schema form are in `src/platform/AGENTS.md` §1.3; `set_model_config` in `core-source.ts` is the reference.
+
 ## Credentials
 
 **Every secret goes through one door.** `CredentialStore` (`src/tools/credential-store.ts`) is scoped — `instance` (`{workDir}/credentials/secrets/`), `workspace` (`workspaces/<wsId>/credentials/secrets/`), `user` (`users/<userId>/credentials/secrets/`) — and it is built only by `createCredentialStore` (`src/tools/credential-store-backend.ts`), which reads the `secrets` config block — at the composition root, where the audit sink is attached and `runtime.getCredentialStore()` hands it out, and in the operator `secrets` subcommand, which has no runtime. `Runtime.start` installs that instance via `setCredentialStore` for the leaf readers (`remote-transport.ts`, `oauth-static-client.ts`) that hold no runtime; reach it with `requireCredentialStore()` there and with the runtime accessor everywhere else. **Never construct a `FileCredentialStore`** — a direct construction bypasses the configured backend, so on a deployment that seals it reads and writes plaintext. A value that claims to be sealed opens on `reveal()` or throws, never on `get` (a `get` without a reveal is the presence probe) and never as plaintext; see ADR-0035.

@@ -18,17 +18,17 @@ describe("thinkingPatchFor", () => {
     // think harder" has to be expressible without pinning a mode — pinning
     // one is not equivalent, it skips the reasoning-capability check.
     expect(thinkingPatchFor(THINKING_DEFAULT, "high", null)).toEqual({
-      clearThinking: true,
+      thinking: null,
       thinkingEffort: "high",
-      clearThinkingBudget: true,
+      thinkingBudgetTokens: null,
     });
   });
 
   it("clears the depth on the default path only when the operator chose no tier", () => {
     expect(thinkingPatchFor(THINKING_DEFAULT, EFFORT_DEFAULT, null)).toEqual({
-      clearThinking: true,
-      clearThinkingEffort: true,
-      clearThinkingBudget: true,
+      thinking: null,
+      thinkingEffort: null,
+      thinkingBudgetTokens: null,
     });
   });
 
@@ -46,7 +46,7 @@ describe("thinkingPatchFor", () => {
     expect(thinkingPatchFor("enabled", "low", null)).toEqual({
       thinking: "enabled",
       thinkingEffort: "low",
-      clearThinkingBudget: true,
+      thinkingBudgetTokens: null,
     });
   });
 
@@ -55,8 +55,8 @@ describe("thinkingPatchFor", () => {
     // at that budget. Clearing it here deleted a real setting from disk and
     // from the live process, with nothing on screen to show it happened.
     expect(thinkingPatchFor(THINKING_DEFAULT, EFFORT_DEFAULT, 8192)).toEqual({
-      clearThinking: true,
-      clearThinkingEffort: true,
+      thinking: null,
+      thinkingEffort: null,
       thinkingBudgetTokens: 8192,
     });
   });
@@ -67,8 +67,8 @@ describe("thinkingPatchFor", () => {
     for (const mode of ["off", "adaptive"] as const) {
       expect(thinkingPatchFor(mode, "max", 8192)).toEqual({
         thinking: mode,
-        clearThinkingEffort: true,
-        clearThinkingBudget: true,
+        thinkingEffort: null,
+        thinkingBudgetTokens: null,
       });
     }
   });
@@ -86,8 +86,9 @@ describe("thinkingPatchFor", () => {
       thinkingPatchFor("adaptive", "low", null),
     ];
     for (const patch of cases) {
-      expect("thinkingEffort" in patch || patch.clearThinkingEffort === true).toBe(true);
-      expect("thinkingBudgetTokens" in patch || patch.clearThinkingBudget === true).toBe(true);
+      expect("thinking" in patch).toBe(true);
+      expect("thinkingEffort" in patch).toBe(true);
+      expect("thinkingBudgetTokens" in patch).toBe(true);
     }
   });
 
@@ -98,8 +99,8 @@ describe("thinkingPatchFor", () => {
     // because the budget arm is where it happened the second time.
     for (const mode of [THINKING_DEFAULT, "enabled", "off", "adaptive"] as const) {
       const patch = thinkingPatchFor(mode, "high", 8192);
-      expect("thinkingEffort" in patch).toBe(tuningAppliesTo(mode));
-      expect("thinkingBudgetTokens" in patch).toBe(tuningAppliesTo(mode));
+      expect(patch.thinkingEffort !== null).toBe(tuningAppliesTo(mode));
+      expect(patch.thinkingBudgetTokens !== null).toBe(tuningAppliesTo(mode));
     }
   });
 });

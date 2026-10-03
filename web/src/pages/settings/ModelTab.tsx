@@ -74,8 +74,8 @@ export function ModelTab() {
   const numberOrNull = (raw: string) => (raw.trim() === "" ? null : Number(raw));
 
   // Empty string is the "no override — use platform default" sentinel
-  // for the select. On save, that becomes a literal `null` to the tool,
-  // which clears any persisted operator override.
+  // for the select. On save, that becomes `null` to the tool, which clears
+  // any persisted operator override.
   const [thinking, setThinking] = useState<ThinkingMode | typeof THINKING_DEFAULT>(
     THINKING_DEFAULT,
   );
@@ -124,18 +124,16 @@ export function ModelTab() {
       const thinkingPatch = thinkingPatchFor(thinking, thinkingEffort, thinkingBudgetTokens);
 
       // An empty field means "follow the platform default", and it is sent as
-      // an explicit clear rather than by omitting the key — omission means
-      // "leave alone", so a cleared field would silently keep its old value.
-      // Posting the resolved default back instead would pin a value nobody
-      // chose and opt the deployment out of every future change to it.
-      const clearable = (value: number | null, key: string, clearFlag: string) =>
-        value !== null ? { [key]: value } : { [clearFlag]: true };
-
+      // `null`, which clears the override, rather than by omitting the key —
+      // omission means "leave alone", so a cleared field would silently keep
+      // its old value. Posting the resolved default back instead would pin a
+      // value nobody chose and opt the deployment out of every future change
+      // to it.
       await callToolWithoutWorkspace("nb", "set_model_config", {
-        models: { default: defaultModel, fast: fastModel },
-        ...clearable(maxIterations, "maxIterations", "clearMaxIterations"),
-        ...clearable(maxInputTokens, "maxInputTokens", "clearMaxInputTokens"),
-        ...clearable(maxOutputTokens, "maxOutputTokens", "clearMaxOutputTokens"),
+        models: { default: defaultModel || null, fast: fastModel || null },
+        maxIterations,
+        maxInputTokens,
+        maxOutputTokens,
         ...thinkingPatch,
       });
       setFeedback({ type: "success", message: "Model configuration saved." });

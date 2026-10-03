@@ -123,6 +123,34 @@ For update-style tools, the shape is:
 - `manifest` is a partial patch — every field optional.
 - `body` is optional; omitting means "keep current".
 
+**Every update tool is a patch, and `null` clears.** Write a new update
+tool this way, and move an existing one onto it when you change its fields,
+under `src/platform/` or `src/tools/` (`set_model_config` is the reference).
+Not every tool follows it yet: `set_preferences` has no clear for its
+scalar fields, and its `model` field also takes `""`, because `get_config`
+reports an unset preference as `""` and a client writes back what it read.
+
+| Caller sends | Meaning |
+|---|---|
+| field omitted | leave it unchanged |
+| a value | set it |
+| `null` | clear it: remove the stored value so the default applies again |
+
+- Declare a clearable field as `anyOf: [<typed schema>, { type: "null" }]`,
+  with constraints such as `enum` or `minimum` on the typed branch. Never
+  `type: [T, "null"]` with `null` in an `enum`: Gemini rejects it, and that
+  fails every tool call for the tenant. The schema-shape lint refuses it.
+- No `clear<Field>: true` flags and no `""` as a clear. Each is a second
+  spelling of `null` that callers must learn per tool. Refuse a stray one
+  with an error that says to pass `null`.
+- A clear deletes the stored key, on disk and in the live process alike. A
+  stored `null` reads back as a choice the operator never made.
+- Every settable field needs its clear, or "unset" is a state an operator can
+  leave but never return to.
+- Each field validates and applies on its own, so a caller (a settings form
+  saving one field at a time) can send any single field. If two fields must
+  change together, name the pair in the tool description and validate it.
+
 ### 1.4 Minimum sufficient surface
 
 The schema enumerates only what a typical caller needs for a successful
@@ -346,6 +374,8 @@ passed, production stayed broken. Match the production type strictly.
 | `source`, `ownerId` in input schema | Runtime fields the LLM has no business setting |
 | Designed-but-not-enforced placeholder fields | Confuses callers; schema lies about what's load-bearing |
 | Multiple casings accepted in handler | Hides the contract; one casing won, document it |
+| `clearX: true` flag, or `""`, to unset a field | A second spelling of `null`; the clear is `null` (§1.3) |
+| Update tool that replaces the whole record | A caller that changes one field must resend every other one, and an omitted field is lost; take a patch (§1.3) |
 | Defensive `validateAutomationFields(args)` after schema validation | Validator already ran; redundant code that drifts from the schema |
 | Storing config in `manifest` AND a flat field at root | Two sources of truth; one will get out of sync |
 | Inline `as { … }` on a `callTool(...)` / `handleX(...)` return | Re-declares the contract; drifts the first time the handler changes. Import the named output type from `schemas/` (§2.1). |
@@ -391,7 +421,8 @@ update by grep is the discipline; the type system is the safety net.
 ## 5. Where the convention is enforced
 
 - **Lint**: `test/unit/platform/schema-shape.test.ts` walks every
-  source's `tools/list` and rejects bare object/array shapes.
+  source's `tools/list`, the core `nb` tools included, and rejects bare
+  object/array shapes, `clear<Field>` flags, and a `null` inside an `enum`.
 - **Type system**: typed `interface XxxInput` per handler — drift between
   the schema and the type surfaces at compile.
 - **Type system, output side (§2.1)**: handler return types are the named

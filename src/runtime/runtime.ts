@@ -4645,7 +4645,7 @@ export class Runtime {
    * just display wrong, it persists.
    */
   configuredModelSlots(pending?: {
-    models?: Partial<Record<string, string>>;
+    models?: Partial<Record<string, string | null>>;
     defaultModel?: string;
   }): ModelSlots {
     // `pending` asks what the slots WOULD be if that patch were applied, so a
@@ -4653,10 +4653,10 @@ export class Runtime {
     // is the same chain either way — one implementation, not two that drift.
     const models: Partial<Record<string, string>> = { ...this.config.models };
     for (const [slot, value] of Object.entries(pending?.models ?? {})) {
-      // `""` clears, matching `updateConfig` and the override merge: the slot
-      // falls back rather than holding an empty string.
-      if (value === "") delete models[slot];
-      else models[slot] = value;
+      // `null` clears, matching `updateConfig` and the override merge: the
+      // slot falls back to the default.
+      if (value === null) delete models[slot];
+      else if (value !== undefined) models[slot] = value;
     }
     const fallback = pending?.defaultModel ?? this.config.defaultModel ?? DEFAULT_MODEL;
     return {
@@ -4966,7 +4966,7 @@ export class Runtime {
    */
   updateConfig(patch: {
     defaultModel?: string;
-    models?: Partial<ModelSlots>;
+    models?: Partial<Record<ModelSlot, string | null>>;
     maxIterations?: number | null;
     maxInputTokens?: number | null;
     maxOutputTokens?: number | null;
@@ -4983,12 +4983,10 @@ export class Runtime {
       // tinted by the caller's own workspace and profile.
       this.config.models ??= {};
       for (const [slot, model] of Object.entries(patch.models)) {
-        // `""` is the clear for a slot — it is the one string that is not a
-        // model id, so it needs no separate flag. Deleting rather than storing
-        // it matters: `configuredModelSlots` falls back on nullish only, so a
-        // stored `""` would resolve to the bare provider prefix.
-        if (model === "") delete this.config.models[slot as ModelSlot];
-        else this.config.models[slot as ModelSlot] = model;
+        // `null` clears the slot. Deleting rather than storing it keeps a
+        // cleared slot indistinguishable from one never set.
+        if (model === null) delete this.config.models[slot as ModelSlot];
+        else if (model !== undefined) this.config.models[slot as ModelSlot] = model;
       }
     }
     if (patch.defaultModel !== undefined) {

@@ -54,7 +54,7 @@ mock.module("../src/api/client", () => ({
       };
     }
     if (tool === "set_model_config" && saveGate) await saveGate;
-    if (tool === "set_model_config" && args.clearMaxOutputTokens === true) {
+    if (tool === "set_model_config" && args.maxOutputTokens === null) {
       pinnedMaxOutput = undefined;
     }
     return { structuredContent: {}, isError: false };
