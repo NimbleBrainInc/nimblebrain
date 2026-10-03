@@ -204,9 +204,9 @@ describe("createDirectExecutor — the run input cap", () => {
     expect(req?.maxRunInputTokens).toBe(150_000);
   });
 
-  test("an automation without maxInputTokens runs under the per-run ceiling", async () => {
+  test("an automation without maxInputTokens runs with no input cap when no ceiling is configured", async () => {
     const req = await requestFor({});
-    expect(req?.maxRunInputTokens).toBe(1_000_000);
+    expect(req?.maxRunInputTokens).toBeUndefined();
   });
 });
 
@@ -304,6 +304,21 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(result?.stopReason).toBe("max_input_tokens");
     expect(run.error).toContain("input-token cap");
     expect(run.error).toContain("200,000");
+    expect(run.error).toContain("its own Max Input Tokens");
+  });
+
+  test("max_input_tokens under the operator ceiling names the ceiling, not the automation's cap", async () => {
+    const ceilings = resolveAutomationsConfig({ maxRunInputTokens: 50_000 });
+    const executor = createDirectExecutor(
+      taskFnWithStop("max_input_tokens"),
+      () => ({}),
+      (a) => effectiveRunLimits(a, ceilings, 25),
+    );
+    const { run } = await executor(makeAutomation({ maxInputTokens: 200_000 }));
+    expect(run.error).toContain("50,000");
+    expect(run.error).not.toContain("200,000");
+    expect(run.error).toContain("automations.maxRunInputTokens");
+    expect(run.error).not.toContain("Raise Max Input Tokens");
   });
 
   test("length → failure (fail-closed default)", async () => {

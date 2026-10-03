@@ -148,9 +148,9 @@ const ManifestFields = {
       description:
         "Input tokens one run may spend in total, summed over every model call (1000 to " +
         "1000000), counting cache reads. Before each model call the run stops with stopReason " +
-        "max_input_tokens if that call's projected input would pass the cap. Omit to use the " +
-        "runtime's per-run ceiling, which also bounds a set value; create and update report " +
-        "the effective value.",
+        "max_input_tokens if that call's projected input would pass the cap. Omit for no " +
+        "per-run cap unless the runtime sets a per-run ceiling, which also bounds a set value; " +
+        "create and update report the effective value.",
     }),
   ),
   allowedTools: Type.Optional(
@@ -643,12 +643,14 @@ export interface AutomationRecord {
 
 /**
  * The caps a run of the automation executes under: each cap the definition
- * sets, lowered to the runtime's per-run ceiling, and the ceiling or runtime
- * default where it sets none. `message` names any cap that was lowered.
+ * sets, lowered to the runtime's per-run ceiling, and the runtime default held
+ * to the ceiling where it sets none. `maxInputTokens` is absent when the run
+ * has no input-token cap (neither the definition nor the runtime sets one).
+ * `message` names any cap that was lowered.
  */
 export interface AutomationEffectiveLimits {
   maxIterations: number;
-  maxInputTokens: number;
+  maxInputTokens?: number;
   maxRunDurationMs: number;
 }
 

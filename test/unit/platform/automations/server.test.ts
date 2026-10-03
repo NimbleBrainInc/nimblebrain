@@ -1067,11 +1067,18 @@ describe("create and update report effective run limits", () => {
       createArgs("Plain", "p", { type: "interval", intervalMs: 60_000 }),
       makeCtx(),
     );
-    expect(result.effectiveLimits).toEqual({
-      maxIterations: 25,
-      maxInputTokens: 1_000_000,
-      maxRunDurationMs: 120_000,
-    });
+    // No input ceiling is configured, so a run with no cap of its own has none.
+    expect(result.effectiveLimits).toEqual({ maxIterations: 25, maxRunDurationMs: 120_000 });
+    expect(result.effectiveLimits.maxInputTokens).toBeUndefined();
+    expect(result.message).not.toContain("is above");
+  });
+
+  test("create reports a configured input ceiling for an automation that sets no cap", () => {
+    const result = handleCreate(
+      createArgs("Bounded", "p", { type: "interval", intervalMs: 60_000 }),
+      makeCtx({ runLimitsOf }),
+    );
+    expect(result.effectiveLimits.maxInputTokens).toBe(50_000);
     expect(result.message).not.toContain("is above");
   });
 

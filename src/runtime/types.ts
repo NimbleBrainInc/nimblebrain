@@ -265,7 +265,7 @@ export interface RuntimeConfig {
 
   /**
    * Automations — how many runs the process holds in flight and waiting, and
-   * the ceilings on any one run. See `src/platform/automations/config.ts`.
+   * the ceilings on any one run. See `src/config/automations.ts`.
    */
   automations?: AutomationsConfig;
 

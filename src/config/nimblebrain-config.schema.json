@@ -481,7 +481,7 @@
       "additionalProperties": false
     },
     "automations": {
-      "description": "Automation run guardrails: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each automation's own caps at execution time and fill in for caps it leaves unset.",
+      "description": "Automation run guardrails: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each automation's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
       "type": "object",
       "properties": {
         "maxConcurrentRuns": {
@@ -508,9 +508,8 @@
         "maxRunInputTokens": {
           "type": "integer",
           "minimum": 1000,
-          "maximum": 1000000,
-          "description": "Ceiling on one run's input tokens, summed over every model call. An automation's own maxInputTokens above it is lowered to it, and one that sets none runs under it. Default: 1000000.",
-          "default": 1000000
+          "maximum": 100000000,
+          "description": "Ceiling on one run's input tokens, summed over every model call. An automation's own maxInputTokens above it is lowered to it, and one that sets none runs under it. Unset (the default): no ceiling, so an automation's input tokens are capped only by its own maxInputTokens."
         },
         "maxRunDurationMs": {
           "type": "integer",

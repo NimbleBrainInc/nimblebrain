@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { AUTOMATIONS_CONFIG_KEYS } from "../../src/config/automations.ts";
+import {
+  AUTOMATIONS_CONFIG_BOUNDS,
+  AUTOMATIONS_CONFIG_KEYS,
+  resolveAutomationsConfig,
+} from "../../src/config/automations.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 import {
@@ -42,7 +46,9 @@ const schema = JSON.parse(
 ) as {
   properties: {
     features: SchemaObject;
-    automations: SchemaObject;
+    automations: SchemaObject & {
+      properties: Record<string, { minimum: number; maximum: number; default?: number }>;
+    };
     models: SchemaObject;
     notifications: SchemaObject & {
       properties: { poll: SchemaObject };
@@ -137,9 +143,23 @@ describe("config schema ↔ notification poll config", () => {
 });
 
 describe("config schema ↔ automations config", () => {
-  // `AUTOMATIONS_CONFIG_KEYS` is derived from the resolver's output, so a key
-  // the runtime reads is a key the schema must declare.
+  // `AUTOMATIONS_CONFIG_KEYS` is derived from the bounds the resolver clamps
+  // against, so a key the runtime reads is a key the schema must declare.
   expectLockstep("automations", schema.properties.automations, AUTOMATIONS_CONFIG_KEYS);
+
+  // The schema's range and default are what an editor offers, and the
+  // resolver's are what runs; a ceiling with no default must not advertise one.
+  test("automations: each key's range and default match the resolver's", () => {
+    const resolved = resolveAutomationsConfig();
+    for (const key of AUTOMATIONS_CONFIG_KEYS) {
+      const declared = schema.properties.automations.properties[key];
+      expect({ key, min: declared?.minimum, max: declared?.maximum }).toEqual({
+        key,
+        ...AUTOMATIONS_CONFIG_BOUNDS[key],
+      });
+      expect({ key, default: declared?.default }).toEqual({ key, default: resolved[key] });
+    }
+  });
 });
 
 describe("config schema ↔ secrets block", () => {

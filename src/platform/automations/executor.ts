@@ -191,10 +191,11 @@ function buildRequest(
     },
   };
   if (automation.model != null) req.model = automation.model;
-  // Always sent, already clamped to the operator's per-run ceilings, so no run
-  // is uncapped whatever its definition says (see `effectiveRunLimits`).
+  // Already clamped to the operator's per-run ceilings (see
+  // `effectiveRunLimits`). Iterations are always capped; input tokens only when
+  // the definition or the operator sets a cap.
   req.maxIterations = limits.maxIterations;
-  req.maxRunInputTokens = limits.maxInputTokens;
+  if (limits.maxInputTokens != null) req.maxRunInputTokens = limits.maxInputTokens;
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
   if (automation.allowedTools?.length) req.allowedTools = automation.allowedTools;
@@ -480,13 +481,30 @@ function unrecognizedStopError(
   return `Model turn ended without a recognized stop (${raw}).`;
 }
 
-/** The error for a run the engine stopped at its input-token cap. */
-function runInputCapError(spent: number, cap: number | undefined): string {
-  const limit = cap != null ? ` of ${cap.toLocaleString("en-US")}` : "";
+/**
+ * The error for a run the engine stopped at its input-token cap. `applied` is
+ * the cap the run executed under; it names the automation's own cap when that
+ * is what applied, and the runtime's per-run ceiling when the ceiling lowered
+ * the automation's cap or filled in for an unset one, since only the operator
+ * can raise that.
+ */
+function runInputCapError(
+  spent: number,
+  applied: number | undefined,
+  own: number | undefined,
+): string {
+  const limit = applied != null ? ` of ${applied.toLocaleString("en-US")}` : "";
+  const ownApplied = own != null && (applied == null || own <= applied);
+  const which = ownApplied
+    ? "its own Max Input Tokens"
+    : "this runtime's per-run ceiling (automations.maxRunInputTokens)";
+  const remedy = ownApplied
+    ? "Raise Max Input Tokens or narrow the task."
+    : "Ask the operator to raise the ceiling, or narrow the task.";
   return (
-    `Stopped at its input-token cap${limit}: the run had spent ${spent.toLocaleString("en-US")} ` +
-    "input tokens, and its next step was projected to pass the cap. Raise Max Input Tokens or " +
-    "narrow the task."
+    `Stopped at the input-token cap${limit}, which is ${which}: the run had spent ` +
+    `${spent.toLocaleString("en-US")} input tokens, and its next step was projected to pass ` +
+    `the cap. ${remedy}`
   );
 }
 
@@ -495,6 +513,7 @@ function mapResultToRun(
   startedAt: string,
   data: TaskFnResult,
   trigger: AutomationRunTrigger,
+  limits: EffectiveRunLimits,
 ): AutomationRun {
   const stopReason = data.stopReason as AutomationRun["stopReason"];
   let status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
@@ -534,7 +553,11 @@ function mapResultToRun(
     }
   }
   if (stopReason === "max_input_tokens") {
-    error = runInputCapError(data.usage.inputTokens, automation.maxInputTokens);
+    error = runInputCapError(
+      data.usage.inputTokens,
+      limits.maxInputTokens,
+      automation.maxInputTokens,
+    );
   }
   error ??= unrecognizedStopError(status, stopReason, data);
 
@@ -766,7 +789,7 @@ export function createDirectExecutor(
         ...buildRequest(automation, trigger, limits, ctx, input),
         signal: runController.signal,
       });
-      const run = mapResultToRun(automation, startedAt, data, trigger);
+      const run = mapResultToRun(automation, startedAt, data, trigger, limits);
       // Build the result sidecar from the same data — non-null on every normal
       // return, INCLUDING the aborted-partial path below (the partial usage and
       // activity log accumulated before the abort are still a real deliverable

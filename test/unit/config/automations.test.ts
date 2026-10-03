@@ -6,14 +6,26 @@ import {
 } from "../../../src/config/automations.ts";
 
 describe("resolveAutomationsConfig", () => {
-  it("fills every key with its default when the block is absent", () => {
-    expect(resolveAutomationsConfig()).toEqual({
+  it("fills every key with its default when the block is absent, leaving no input ceiling", () => {
+    const resolved = resolveAutomationsConfig();
+    expect(resolved).toEqual({
       maxConcurrentRuns: 2,
       maxQueuedRuns: 50,
       maxRunIterations: 50,
-      maxRunInputTokens: 1_000_000,
+      maxRunInputTokens: undefined,
       maxRunDurationMs: 600_000,
     });
+    expect(resolved.maxRunInputTokens).toBeUndefined();
+  });
+
+  it("accepts an input ceiling far above the create range, up to its own maximum", () => {
+    expect(resolveAutomationsConfig({ maxRunInputTokens: 20_000_000 }).maxRunInputTokens).toBe(
+      20_000_000,
+    );
+    expect(resolveAutomationsConfig({ maxRunInputTokens: 5e9 }).maxRunInputTokens).toBe(
+      100_000_000,
+    );
+    expect(resolveAutomationsConfig({ maxRunInputTokens: 10 }).maxRunInputTokens).toBe(1_000);
   });
 
   it("keeps values inside their range and clamps the rest", () => {
@@ -63,12 +75,18 @@ describe("effectiveRunLimits", () => {
     ).toEqual({ maxIterations: 10, maxInputTokens: 50_000, maxRunDurationMs: 60_000 });
   });
 
-  it("uses the runtime default for unset iterations and duration, and the ceiling for tokens", () => {
-    expect(effectiveRunLimits({}, resolveAutomationsConfig(), 25)).toEqual({
-      maxIterations: 25,
-      maxInputTokens: 1_000_000,
-      maxRunDurationMs: 120_000,
-    });
+  it("uses the runtime default for unset iterations and duration, and no input cap", () => {
+    const limits = effectiveRunLimits({}, resolveAutomationsConfig(), 25);
+    expect(limits).toEqual({ maxIterations: 25, maxRunDurationMs: 120_000 });
+    expect("maxInputTokens" in limits).toBe(false);
+  });
+
+  it("keeps a definition's own input cap as written when no ceiling is configured", () => {
+    expect(effectiveRunLimits({ maxInputTokens: 900_000 }).maxInputTokens).toBe(900_000);
+  });
+
+  it("holds an unset input cap to a configured ceiling", () => {
+    expect(effectiveRunLimits({}, ceilings).maxInputTokens).toBe(50_000);
   });
 
   it("describes only the caps it lowered", () => {

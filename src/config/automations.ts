@@ -4,10 +4,10 @@
  *
  * The block is the operator's, not the automation author's. An author sets a
  * run's caps on the definition (`maxIterations`, `maxInputTokens`,
- * `maxRunDurationMs`); these ceilings bound whatever the author set, and fill
- * in for what they left unset, at execution time. Enforcing there covers every
- * stored definition, however it was written (the tool, the CLI, a connector,
- * a hand edit).
+ * `maxRunDurationMs`); these ceilings bound what the author set, and what the
+ * runtime fills in for what they left unset, at execution time. Enforcing
+ * there covers every stored definition, however it was written (the tool, the
+ * CLI, a connector, a hand edit).
  */
 
 import { DEFAULT_MAX_ITERATIONS, MAX_ITERATIONS } from "../limits.ts";
@@ -20,30 +20,44 @@ export interface AutomationsConfig {
   maxQueuedRuns?: number;
   /** Ceiling on one run's agentic iterations. */
   maxRunIterations?: number;
-  /** Ceiling on one run's input tokens, summed over every model call. */
+  /**
+   * Ceiling on one run's input tokens, summed over every model call. Unset,
+   * there is none, and a definition with no cap of its own runs uncapped.
+   */
   maxRunInputTokens?: number;
   /** Ceiling on one run's wall-clock time, in ms. */
   maxRunDurationMs?: number;
 }
 
-/** The same keys, resolved. */
-export type ResolvedAutomationsConfig = Required<AutomationsConfig>;
+/**
+ * The same keys, resolved. `maxRunInputTokens` stays unset when the operator
+ * sets none, because input tokens have no runtime default: a run is capped
+ * only by its definition or by an operator ceiling.
+ */
+export type ResolvedAutomationsConfig = Required<Omit<AutomationsConfig, "maxRunInputTokens">> & {
+  maxRunInputTokens: number | undefined;
+};
 
 /** Wall-clock for a run whose definition sets none. */
 export const DEFAULT_RUN_DURATION_MS = 120_000;
 
 /**
- * Each key's default and the range it is clamped to. The per-run ceilings
+ * The range each key is clamped to. The iteration and duration ceilings
  * default to the top of the range the create and update tools accept, so a
  * definition those tools accept runs as written unless an operator lowers the
- * ceiling.
+ * ceiling. The input-token ceiling has no default, and its range reaches well
+ * past the create range so an operator can set one that admits the large runs
+ * uncapped definitions make.
  */
-const BOUNDS: Record<keyof ResolvedAutomationsConfig, { def: number; min: number; max: number }> = {
-  maxConcurrentRuns: { def: 2, min: 1, max: 100 },
-  maxQueuedRuns: { def: 50, min: 0, max: 1000 },
-  maxRunIterations: { def: MAX_ITERATIONS, min: 1, max: MAX_ITERATIONS },
-  maxRunInputTokens: { def: 1_000_000, min: 1_000, max: 1_000_000 },
-  maxRunDurationMs: { def: 600_000, min: 10_000, max: 600_000 },
+export const AUTOMATIONS_CONFIG_BOUNDS: Record<
+  keyof AutomationsConfig,
+  { min: number; max: number }
+> = {
+  maxConcurrentRuns: { min: 1, max: 100 },
+  maxQueuedRuns: { min: 0, max: 1000 },
+  maxRunIterations: { min: 1, max: MAX_ITERATIONS },
+  maxRunInputTokens: { min: 1_000, max: 100_000_000 },
+  maxRunDurationMs: { min: 10_000, max: 600_000 },
 };
 
 /**
@@ -55,28 +69,29 @@ const BOUNDS: Record<keyof ResolvedAutomationsConfig, { def: number; min: number
  * is the unambiguous fallback. The schema rejects such a value at load anyway.
  */
 export function resolveAutomationsConfig(config?: AutomationsConfig): ResolvedAutomationsConfig {
-  const pick = (key: keyof ResolvedAutomationsConfig): number => {
-    const { def, min, max } = BOUNDS[key];
+  const pick = (key: keyof AutomationsConfig): number | undefined => {
+    const { min, max } = AUTOMATIONS_CONFIG_BOUNDS[key];
     const raw = config?.[key];
-    if (typeof raw !== "number" || !Number.isFinite(raw)) return def;
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
     return Math.min(Math.max(Math.floor(raw), min), max);
   };
   return {
-    maxConcurrentRuns: pick("maxConcurrentRuns"),
-    maxQueuedRuns: pick("maxQueuedRuns"),
-    maxRunIterations: pick("maxRunIterations"),
+    maxConcurrentRuns: pick("maxConcurrentRuns") ?? 2,
+    maxQueuedRuns: pick("maxQueuedRuns") ?? 50,
+    maxRunIterations: pick("maxRunIterations") ?? MAX_ITERATIONS,
     maxRunInputTokens: pick("maxRunInputTokens"),
-    maxRunDurationMs: pick("maxRunDurationMs"),
+    maxRunDurationMs: pick("maxRunDurationMs") ?? 600_000,
   };
 }
 
 /**
- * Every key of the block, for the schema drift guard. Derived from the
- * resolver's output so a key added here cannot be forgotten in the schema.
+ * Every key of the block, for the schema drift guard. Derived from the bounds
+ * the resolver clamps against, so a key added here cannot be forgotten in the
+ * schema.
  */
 export const AUTOMATIONS_CONFIG_KEYS = Object.keys(
-  resolveAutomationsConfig(),
-) as (keyof ResolvedAutomationsConfig)[];
+  AUTOMATIONS_CONFIG_BOUNDS,
+) as (keyof AutomationsConfig)[];
 
 /** The per-run caps an automation definition may set (`Automation` in the automations app). */
 export interface RunCaps {
@@ -85,17 +100,19 @@ export interface RunCaps {
   maxRunDurationMs?: number;
 }
 
-/** The caps one run actually gets. */
+/** The caps one run actually gets. No `maxInputTokens` means no input-token cap. */
 export interface EffectiveRunLimits {
   maxIterations: number;
-  maxInputTokens: number;
+  maxInputTokens?: number;
   maxRunDurationMs: number;
 }
 
 /**
  * The caps a run of `auto` executes under: each value the definition sets,
- * lowered to the operator's ceiling, and the ceiling (or the runtime's own
- * default, for iterations and duration) where it sets none.
+ * lowered to the operator's ceiling, and the runtime's own default held to
+ * the ceiling where it sets none. Input tokens have no runtime default: an
+ * unset cap runs under the operator's ceiling when one is configured, and
+ * uncapped when none is.
  *
  * `defaultIterations` is the runtime's chat default, so an automation that
  * names no iteration cap runs with the same one a chat turn does.
@@ -105,12 +122,12 @@ export function effectiveRunLimits(
   config: ResolvedAutomationsConfig = resolveAutomationsConfig(),
   defaultIterations: number = DEFAULT_MAX_ITERATIONS,
 ): EffectiveRunLimits {
+  const ceiling = config.maxRunInputTokens;
+  const maxInputTokens =
+    ceiling === undefined ? auto.maxInputTokens : Math.min(auto.maxInputTokens ?? ceiling, ceiling);
   return {
     maxIterations: Math.min(auto.maxIterations ?? defaultIterations, config.maxRunIterations),
-    maxInputTokens: Math.min(
-      auto.maxInputTokens ?? config.maxRunInputTokens,
-      config.maxRunInputTokens,
-    ),
+    ...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
     maxRunDurationMs: Math.min(
       auto.maxRunDurationMs ?? DEFAULT_RUN_DURATION_MS,
       config.maxRunDurationMs,
@@ -125,10 +142,9 @@ export function effectiveRunLimits(
 export function describeClampedLimits(auto: RunCaps, effective: EffectiveRunLimits): string[] {
   const notes: string[] = [];
   const check = (field: keyof EffectiveRunLimits, asked: number | undefined) => {
-    if (asked != null && asked > effective[field]) {
-      notes.push(
-        `${field} ${asked} is above this runtime's per-run ceiling; runs use ${effective[field]}.`,
-      );
+    const applied = effective[field];
+    if (asked != null && applied != null && asked > applied) {
+      notes.push(`${field} ${asked} is above this runtime's per-run ceiling; runs use ${applied}.`);
     }
   };
   check("maxIterations", auto.maxIterations);

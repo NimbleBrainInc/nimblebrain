@@ -410,12 +410,14 @@ export interface AutomationRecord {
 }
 /**
  * The caps a run of the automation executes under: each cap the definition
- * sets, lowered to the runtime's per-run ceiling, and the ceiling or runtime
- * default where it sets none. `message` names any cap that was lowered.
+ * sets, lowered to the runtime's per-run ceiling, and the runtime default held
+ * to the ceiling where it sets none. `maxInputTokens` is absent when the run
+ * has no input-token cap (neither the definition nor the runtime sets one).
+ * `message` names any cap that was lowered.
  */
 export interface AutomationEffectiveLimits {
     maxIterations: number;
-    maxInputTokens: number;
+    maxInputTokens?: number;
     maxRunDurationMs: number;
 }
 export interface AutomationsCreateOutput {
