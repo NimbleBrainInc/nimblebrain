@@ -10,6 +10,7 @@
  * No retry logic — the scheduler handles backoff.
  */
 
+import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/automations.ts";
 import { type AutomationRunTrigger, isTransientError, type RunInput } from "./scheduler.ts";
 import type {
   Automation,
@@ -18,8 +19,6 @@ import type {
   RunFileRef,
   RunToolCall,
 } from "./types.ts";
-
-const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** Max chars of the deliverable kept in the run-list `resultPreview`. The full
  *  output lives in the `AutomationRunResult` sidecar. */
@@ -156,6 +155,7 @@ export function containsRecursiveTool(allowedTools: string[] | undefined): strin
 function buildRequest(
   automation: Automation,
   trigger: AutomationRunTrigger,
+  limits: EffectiveRunLimits,
   ctx?: ExecutorContext,
   input?: RunInput,
 ): TaskFnRequest {
@@ -191,8 +191,10 @@ function buildRequest(
     },
   };
   if (automation.model != null) req.model = automation.model;
-  if (automation.maxIterations != null) req.maxIterations = automation.maxIterations;
-  if (automation.maxInputTokens != null) req.maxRunInputTokens = automation.maxInputTokens;
+  // Always sent, already clamped to the operator's per-run ceilings, so no run
+  // is uncapped whatever its definition says (see `effectiveRunLimits`).
+  req.maxIterations = limits.maxIterations;
+  req.maxRunInputTokens = limits.maxInputTokens;
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
   if (automation.allowedTools?.length) req.allowedTools = automation.allowedTools;
@@ -714,10 +716,16 @@ function classifyAbortedRun(
  * @param getContext  Derives the run's workspace/identity context from the
  *                    automation. Every trigger gets the same answer: the
  *                    automation's owner, in its workspace.
+ * @param limitsOf    The caps a run executes under: the definition's own,
+ *                    clamped to the operator's per-run ceilings. Enforced
+ *                    here, at execution, so every stored definition is
+ *                    bounded however it was written.
  */
 export function createDirectExecutor(
   taskFn: TaskFn,
   getContext: (automation: Automation) => ExecutorContext,
+  limitsOf: (automation: Automation) => EffectiveRunLimits = (automation) =>
+    effectiveRunLimits(automation),
 ) {
   return async function executeDirect(
     automation: Automation,
@@ -726,7 +734,8 @@ export function createDirectExecutor(
     input?: RunInput,
   ): Promise<{ run: AutomationRun; result: AutomationRunResult | null }> {
     const startedAt = new Date().toISOString();
-    const timeoutMs = automation.maxRunDurationMs ?? DEFAULT_TIMEOUT_MS;
+    const limits = limitsOf(automation);
+    const timeoutMs = limits.maxRunDurationMs;
     const ctx = getContext(automation);
 
     // Combined cancellation: a single controller aborts when EITHER the
@@ -754,7 +763,7 @@ export function createDirectExecutor(
 
     try {
       const data = await taskFn({
-        ...buildRequest(automation, trigger, ctx, input),
+        ...buildRequest(automation, trigger, limits, ctx, input),
         signal: runController.signal,
       });
       const run = mapResultToRun(automation, startedAt, data, trigger);

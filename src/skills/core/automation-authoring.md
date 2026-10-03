@@ -130,6 +130,11 @@ Suggest token budgets based on frequency:
 The `maxRunDurationMs` field defaults to 120 seconds. Increase it for complex
 multi-tool tasks that may take longer (max: 600 seconds / 10 minutes).
 
+The runtime holds every run to its own per-run ceilings on iterations, input
+tokens, and duration. Create and update return `effectiveLimits`, the caps runs
+will actually get; when the message says a cap was lowered, tell the user the
+effective value rather than the one they asked for.
+
 ## Checking Status
 
 Use automations__status for read queries.

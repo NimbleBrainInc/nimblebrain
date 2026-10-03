@@ -22,6 +22,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
+import { resolveAutomationsConfig } from "../../../src/config/automations.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { createAutomationsSource } from "../../../src/platform/automations/source.ts";
 import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
@@ -69,6 +70,8 @@ function makeRuntimeStub(workDir: string): unknown {
     getLifecycle: () => ({ getInstances: () => [] }),
     getNotificationsDeclaration: async () => undefined,
     getNotificationsPollConfig: () => resolvePollConfig(),
+    getAutomationsConfig: () => resolveAutomationsConfig(),
+    getMaxIterations: () => 25,
   };
 }
 

@@ -36,7 +36,19 @@ Three schedule types:
 - **Interval** — a fixed interval in milliseconds, minimum 60000 (one minute)
 - **Event** — no time at all: the automation runs when a notification reaches it
 
-The runtime runs two automations at a time across all of its workspaces, and Run now and event runs take those same two slots. A scheduled run that comes due while both are busy waits for a slot and then runs, oldest due first, so a tightly spaced batch runs late rather than being dropped.
+## Run slots and the queue
+
+The runtime runs a fixed number of automation runs at once across all of its workspaces: two by default, set by the operator with [`automations.maxConcurrentRuns`](/config/nimblebrain-json/#automations). Scheduled runs, Run now, and event runs all share those slots.
+
+- **A scheduled run** that comes due while every slot is busy waits for a slot and then runs, oldest due first, so a tightly spaced batch runs late rather than being dropped. Its place is held by its next-run time, so it survives a restart.
+- **A Run now or an event run** that arrives while every slot is busy joins a queue and starts the moment a slot frees, oldest first. Run now answers at once that the run is queued and at what position. A queued run gets a freed slot before a waiting scheduled run does.
+- **The queue is bounded**: 50 runs by default ([`automations.maxQueuedRuns`](/config/nimblebrain-json/#automations)). A run that arrives when it is full is not started and is recorded as skipped, with the reason.
+- **One run per automation.** A Run now or event run for an automation that already has a run in flight or queued is recorded as skipped.
+- **Cancel** stops a run in flight, or removes a queued one and records it as cancelled.
+
+<Aside type="caution">
+The queue is held in memory. Runs still queued when the runtime stops are recorded as skipped, and a process that is killed outright loses them with no record. Run them again once it is back.
+</Aside>
 
 ## Running on an event
 
@@ -122,7 +134,8 @@ Both limits sit under **Limits** in the create form, and the agent can set them 
 
 ![The create form's Limits section, with a daily token budget and an allowed-tools list filled in](../../../assets/guide/automation-create-limits.png)
 
-- **Token budget** — a cap on the tokens (not dollars) an automation's runs use per day or month, or over its lifetime. It is checked after each run finishes: once the period's total passes the cap, the automation turns off and stays off until you turn it back on. The run that crosses the cap still finishes, so to bound a single run, use the per-run token and iteration caps.
+- **Token budget** — a cap on the tokens (not dollars) an automation's runs use per day or month, or over its lifetime. Every run counts against it, including Run now on a paused automation. It is checked after each run finishes: once the period's total passes the cap, an enabled automation turns off and stays off until you turn it back on, and Run now on a paused one is refused until the period resets (for a lifetime budget, until you raise it). The run that crosses the cap still finishes, so to bound a single run, use the per-run caps.
+- **Per-run caps** — the most iterations, input tokens, and wall-clock time one run may use. The runtime holds every run to its own ceilings for each (50 iterations, 1,000,000 input tokens, and 10 minutes by default, which an operator can lower with the [`automations`](/config/nimblebrain-json/#automations) block). A cap set above the ceiling is lowered to it, and a run with no input-token cap runs under the ceiling. Creating or updating an automation reports the caps its runs will actually get, and says when one was lowered.
 - **Allowed tools** — tool names or globs the automation's runs may use, such as `gmail__*` for a workspace connector's tools, `my_gmail__*` for your personal connection, or `files__read` for a single tool. A run can't activate or call anything outside the list; only `nb__search` and `nb__manage_tools`, which find and activate the listed tools, stay available regardless. Add any other system tool a run needs, such as `nb__use_skill` to load skills or `nb__read_resource` to read a connector's resources. Prefer a `<connector>__*` glob, since a connector can rename its tools. Leave it empty to allow every tool. The list can't include the tools that create, update, or delete automations.
 
 A shorter tool list also makes each run cheaper, because the model is sent fewer tool definitions.
@@ -141,7 +154,7 @@ Browse and manage automations from the **Automations** panel in the sidebar, or 
 
 4. **Resume a paused automation** — re-enable it on its existing schedule.
 
-5. **Trigger an immediate run** — bypass the schedule and run now. This runs a paused automation too, which is how you test one before enabling it; a paused automation is never fired by its schedule or by events. Short runs return the full run record. A run that takes longer than about 30 seconds keeps going in the background: the response says it is still running, and its record appears in the run history when it ends.
+5. **Trigger an immediate run** — bypass the schedule and run now. This runs a paused automation too, which is how you test one before enabling it; a paused automation is never fired by its schedule or by events. Short runs return the full run record. A run that takes longer than about 30 seconds keeps going in the background: the response says it is still running, and its record appears in the run history when it ends. When every run slot is busy, the response says the run is queued and at what position (see [Run slots and the queue](#run-slots-and-the-queue)).
 
 </Steps>
 
@@ -161,7 +174,7 @@ A run's status comes from what its tool calls did, not from what its final answe
 | `degraded` | The run finished, but at least one tool call failed and no later call to that tool made it good, which usually means part of the work did not happen. The error names each tool and how many of its calls were left failed. Shown as **Finished with errors**. |
 | `failure` | The run could not finish, a connector it called was unreachable, or a tool it called three or more times never once succeeded. |
 | `timeout` | The run hit its duration or iteration limit. |
-| `skipped` / `cancelled` | The run did not start, or was stopped. |
+| `skipped` / `cancelled` | The run did not start (already running or queued, the queue was full, the token budget was spent, or it was still queued when the runtime stopped), or was stopped or removed from the queue. The error says which. |
 
 A failed call counts as retried when a later call to the same tool with the same input succeeds. When a tool succeeded on only one input in the run, a failure before that success counts as an earlier attempt at it, such as a rejected argument the agent then corrected. A later success with different argument names counts too, since that is the corrected form of a call the tool rejected. Only a later call to the same tool counts, so two healthy patterns still read `degraded`: a lookup that fails as not found and is followed by a create on another tool, and a fallback to a different tool after one fails. A degraded run does not count toward the ten consecutive failures that pause an automation, and does not delay its next run.
 

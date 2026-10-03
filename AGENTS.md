@@ -66,7 +66,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | Guide | Covers |
 |---|---|
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, named output types, `ui://` MIME type |
-| [`src/platform/automations/AGENTS.md`](./src/platform/automations/AGENTS.md) | Automation storage, per-run membership gate, run results |
+| [`src/platform/automations/AGENTS.md`](./src/platform/automations/AGENTS.md) | Automation storage, per-run membership gate, run results, run admission (slots, queue, budget, per-run caps) |
 | [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, provisioning the first workspace |
 | [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |
 | [`src/tools/AGENTS.md`](./src/tools/AGENTS.md) | `CredentialStore`, credential refs, OAuth records, credential ownership; long-running (task-augmented) MCP tools |
