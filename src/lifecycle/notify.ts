@@ -1,6 +1,6 @@
 import type { ToolResult } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
-import { readyArguments } from "../services/lifecycle-extension.ts";
+import { readyArguments, selectLifecycleHandlers } from "../services/lifecycle-extension.ts";
 import {
   type ConnectorPort,
   summarizeToolError,
@@ -130,12 +130,19 @@ export async function notifyReady(
     log.debug("lifecycle", `[lifecycle] ${connector} is running but advertises no tools yet`);
     return { settled: false };
   }
-  verifyLifecycleTools(tools, decl, connector);
+  // On the extension path the handlers are read off the listing in hand, not
+  // the held binding: the binding is refreshed by its own tool-surface watch,
+  // which the retry of this call races on the same change.
+  const wire = decl.declaredBy === "extension" ? selectLifecycleHandlers(tools) : undefined;
+  const current = wire?.binding ?? decl;
+  verifyLifecycleTools(tools, current, connector);
 
-  const handler = decl.on_ready;
+  const handler = current.on_ready;
   // A server may declare `on_removing` alone. Its contract is checked above;
-  // there is nothing to call now and nothing to come back for.
-  if (!handler) return { settled: true };
+  // there is nothing to call now and nothing to come back for. A `ready`
+  // handler the host rejected is different: the server is still to be fixed,
+  // and the fix arrives as a tool-set change, so the attempt stays open.
+  if (!handler) return { settled: !wire?.rejected.some((r) => r.event === "on_ready") };
 
   // The catalog path sends `reason` whether or not the handler declares it;
   // the extension sends it only to a handler that does.

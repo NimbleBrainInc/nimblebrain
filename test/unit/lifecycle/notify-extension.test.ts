@@ -6,6 +6,7 @@ import {
   resetReadyNotifications,
 } from "../../../src/lifecycle/notify.ts";
 import type { LifecycleBinding } from "../../../src/lifecycle/types.ts";
+import { LIFECYCLE_EXTENSION_ID } from "../../../src/services/lifecycle-extension.ts";
 import type { ConnectorPort } from "../../../src/tools/connector-surface.ts";
 import type { Tool, ToolResult } from "../../../src/tools/types.ts";
 
@@ -36,6 +37,11 @@ function tool(name: string, extra: Partial<Tool> = {}): Tool {
   };
 }
 
+/** A tool marked as the handler of a wire event, as a server that advertises the extension lists it. */
+function marked(name: string, event: "ready" | "removing", extra: Partial<Tool> = {}): Tool {
+  return tool(name, { meta: { [LIFECYCLE_EXTENSION_ID]: { event } }, ...extra });
+}
+
 function fakePort(tools: Tool[]) {
   const calls: { tool: string; input: Record<string, unknown> }[] = [];
   const port: ConnectorPort = {
@@ -56,7 +62,10 @@ afterEach(() => resetReadyNotifications());
 
 describe("ready, declared on the wire", () => {
   test("omits reason when the handler's schema does not declare it", async () => {
-    const { port, calls } = fakePort([tool("scope_ready"), tool("scope_removing")]);
+    const { port, calls } = fakePort([
+      marked("scope_ready", "ready"),
+      marked("scope_removing", "removing"),
+    ]);
     const outcome = await notifyReady(
       deps(async () => WIRE, port),
       WS,
@@ -69,7 +78,7 @@ describe("ready, declared on the wire", () => {
 
   test("sends reason to a handler that declares it", async () => {
     const { port, calls } = fakePort([
-      tool("scope_ready", {
+      marked("scope_ready", "ready", {
         inputSchema: { type: "object", properties: { reason: { type: "string" } } },
       }),
     ]);
@@ -84,7 +93,7 @@ describe("ready, declared on the wire", () => {
 
   test('admits a taskSupport "optional" handler, which the catalog path refuses', async () => {
     const optional = { execution: { taskSupport: "optional" as const } };
-    const { port, calls } = fakePort([tool("scope_ready", optional)]);
+    const { port, calls } = fakePort([marked("scope_ready", "ready", optional)]);
     await notifyReady(
       deps(async () => WIRE_READY, port),
       WS,
@@ -114,6 +123,45 @@ describe("ready, declared on the wire", () => {
     );
     expect(outcome.settled).toBe(true);
     expect(calls).toEqual([]);
+  });
+
+  test("a rejected ready handler leaves the attempt open, and the fixed one is called", async () => {
+    const broken = marked("scope_ready", "ready", {
+      inputSchema: { type: "object", properties: {}, required: ["workspace"] },
+    });
+    const first = fakePort([broken]);
+    const rejected = await notifyReady(
+      deps(async () => ({ declaredBy: "extension" }), first.port),
+      WS,
+      CONNECTOR,
+      "resume",
+    );
+    expect(rejected.settled).toBe(false);
+    expect(first.calls).toEqual([]);
+
+    // The held binding still predates the fix; the listing in hand does not.
+    const fixed = fakePort([marked("scope_ready", "ready")]);
+    const outcome = await notifyReady(
+      deps(async () => ({ declaredBy: "extension" }), fixed.port),
+      WS,
+      CONNECTOR,
+      "resume",
+    );
+    expect(outcome.settled).toBe(true);
+    expect(fixed.calls).toEqual([{ tool: "scope_ready", input: {} }]);
+  });
+
+  test("a rejected removing handler alone settles the ready attempt", async () => {
+    const { port } = fakePort([
+      marked("scope_removing", "removing", { execution: { taskSupport: "required" } }),
+    ]);
+    const outcome = await notifyReady(
+      deps(async () => ({ declaredBy: "extension" }), port),
+      WS,
+      CONNECTOR,
+      "resume",
+    );
+    expect(outcome.settled).toBe(true);
   });
 });
 

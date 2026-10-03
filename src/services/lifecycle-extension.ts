@@ -47,6 +47,8 @@ export interface LifecycleRejection {
   /** The marked tool, or one of the conflicting tools for a duplicate. */
   tool: string;
   reason: string;
+  /** The event the marker names, when it names a known one. */
+  event?: LifecycleEvent;
 }
 
 /**
@@ -89,12 +91,13 @@ export function selectLifecycleHandlers(tools: readonly Tool[]): {
       const names = candidates.map((t) => JSON.stringify(t.name.slice(0, 60))).join(", ");
       rejected.push({
         tool: only.name,
+        event,
         reason: `${candidates.length} tools (${names}) are marked for "${wireName(event)}", so the event is undeclared`,
       });
       continue;
     }
     const why = uncallable(only);
-    if (why) rejected.push({ tool: only.name, reason: why });
+    if (why) rejected.push({ tool: only.name, event, reason: why });
     else binding[event] = only.name;
   }
   return { binding, rejected };

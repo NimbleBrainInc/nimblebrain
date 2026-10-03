@@ -87,3 +87,7 @@ tool list is "not ready yet", not a violation.
 (`"hooks"`, `"lifecycle"`, `"lifecycle-binding"`); `stopWatchingToolSurface`
 drops them all on uninstall and `stopAllToolSurfaceWatches` on shutdown, beside
 `resetReadyNotifications` and `resetLifecycleBindings`.
+The `"lifecycle"` and `"lifecycle-binding"` watches fire on the same change in
+no fixed order, so on the extension path `notifyReady` reads the handlers off
+the listing it fetched, never the held binding. A `ready` handler that listing
+rejects leaves the attempt unsettled, so the fix is called on the next change.
