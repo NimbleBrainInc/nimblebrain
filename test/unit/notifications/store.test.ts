@@ -386,6 +386,18 @@ describe("list", () => {
   });
 });
 
+describe("listWithUnread", () => {
+  test("pages like list and counts the whole inbox, in one read", () => {
+    const store = storeFor(WS_A);
+    for (let i = 0; i < 5; i++) store.append("acme", envelope({ eventId: `e${i}` }));
+    store.markRead([{ source: "acme", eventId: "e0" }]);
+    const { items, unread } = store.listWithUnread({ limit: 2, unreadOnly: true });
+    expect(items.map((i) => i.envelope.eventId)).toEqual(["e4", "e3"]);
+    expect(unread).toBe(4);
+    expect(store.list({ limit: 2, unreadOnly: true })).toEqual(items);
+  });
+});
+
 describe("unreadCount", () => {
   test("counts the whole inbox, not one page", () => {
     const store = storeFor(WS_A);

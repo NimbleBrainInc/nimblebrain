@@ -212,22 +212,29 @@ export class NotificationStore {
    * forward through what a tab open today saw live.
    */
   list(opts: NotificationListOptions = {}): Notification[] {
-    const limit = clampLimit(opts.limit);
-    const items = this.#loadAll();
-    if (opts.order !== "asc") items.reverse();
-    const out: Notification[] = [];
-    for (const item of items) {
-      if (!matchesFilters(item, opts)) continue;
-      out.push(item);
-      if (out.length >= limit) break;
-    }
-    return out;
+    return this.listWithUnread(opts).items;
   }
 
   /**
-   * How many items nobody has marked read, across the whole inbox. Separate
-   * from {@link list} because a page is capped: a count taken from one would
-   * stop at the page size.
+   * {@link list}'s page and the whole inbox's {@link unreadCount}, from one
+   * read of the day files. `notifications__list` answers with both.
+   */
+  listWithUnread(opts: NotificationListOptions = {}): { items: Notification[]; unread: number } {
+    const limit = clampLimit(opts.limit);
+    const all = this.#loadAll();
+    if (opts.order !== "asc") all.reverse();
+    const items: Notification[] = [];
+    let unread = 0;
+    for (const item of all) {
+      if (!item.readAt) unread++;
+      if (items.length < limit && matchesFilters(item, opts)) items.push(item);
+    }
+    return { items, unread };
+  }
+
+  /**
+   * How many items nobody has marked read, across the whole inbox. A page is
+   * capped, so a count taken from one would stop at the page size.
    */
   unreadCount(): number {
     return this.#loadAll().reduce((n, item) => (item.readAt ? n : n + 1), 0);
@@ -255,13 +262,19 @@ export class NotificationStore {
     if (wanted.size === 0) return [];
     const readAt = new Date().toISOString();
     const changed: Notification[] = [];
+    // Counted on the way through every day file, so the announcement after
+    // needs no second read.
+    let unread = 0;
 
     for (const day of this.#dayFiles()) {
       const items = this.#readDayFile(day);
       let dirty = false;
       for (const item of items) {
         if (item.readAt) continue;
-        if (!wanted.has(refKey(item.source, item.envelope.eventId))) continue;
+        if (!wanted.has(refKey(item.source, item.envelope.eventId))) {
+          unread++;
+          continue;
+        }
         item.readAt = readAt;
         if (readBy) item.readBy = readBy;
         dirty = true;
@@ -269,7 +282,7 @@ export class NotificationStore {
       }
       if (dirty) this.#rewriteDayFile(day, items);
     }
-    this.#announceRead(changed);
+    this.#announceRead(changed, unread);
     return changed;
   }
 
@@ -368,17 +381,17 @@ export class NotificationStore {
 
   /**
    * `notification.read`, after the rewrite. Read state is shared across the
-   * workspace, so every member's count moves; the frame carries the count so
-   * nobody has to re-read to learn it. A mark that changed nothing says nothing.
+   * workspace, so every member's count moves; the frame carries the count
+   * `markRead` took on its way through, so nobody re-reads to learn it. A mark that changed nothing says nothing.
    */
-  #announceRead(changed: readonly Notification[]): void {
+  #announceRead(changed: readonly Notification[], unread: number): void {
     if (changed.length === 0) return;
     this.#eventSink.emit({
       type: "notification.read",
       data: {
         workspaceId: this.#wsId,
         ids: changed.map((item) => notificationId(item)),
-        unread: this.unreadCount(),
+        unread,
       },
     });
   }
