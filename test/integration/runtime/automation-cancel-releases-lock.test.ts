@@ -59,6 +59,7 @@ describe("cancelling an automation run", () => {
       { emit() {} },
     );
     await source.start();
+    let onShutdown = () => {};
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
@@ -101,7 +102,8 @@ describe("cancelling an automation run", () => {
         resolveExecutorContext,
       );
       const scheduler = new Scheduler(executor, { workDir });
-      scheduler.reload();
+      scheduler.start();
+      onShutdown = () => scheduler.stop();
 
       const firstRun = scheduler.runNow(WS, DEV_IDENTITY.id, "hangs");
       await enteredP;
@@ -118,6 +120,7 @@ describe("cancelling an automation run", () => {
       const second = await scheduler.runNow(WS, DEV_IDENTITY.id, "hangs");
       expect(second?.status).toBe("success");
     } finally {
+      onShutdown();
       await runtime.shutdown();
     }
   }, 20_000);
