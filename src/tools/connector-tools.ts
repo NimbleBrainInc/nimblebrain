@@ -1831,16 +1831,17 @@ async function notifyConnectorReady(
   wsId: string,
   serverName: string,
 ): Promise<{ notice?: string; warning?: string }> {
-  const deps = ctx.runtime.getLifecycleNotifyDeps();
   // Marked tools the extension binding rejected. Reported beside whatever the
   // call itself says, because a rejected `removing` handler does not stop a
   // valid `ready` one from being called.
-  const rejected = (await deps.contractWarningsFor?.(wsId, serverName).catch(() => [])) ?? [];
+  let rejected: string[] = [];
   const withRejected = (warning?: string) => {
     const joined = [warning, ...rejected].filter(Boolean).join(" ");
     return joined ? { warning: joined } : {};
   };
   try {
+    const deps = ctx.runtime.getLifecycleNotifyDeps();
+    rejected = (await deps.contractWarningsFor?.(wsId, serverName).catch(() => [])) ?? [];
     const { notice } = await notifyReady(deps, wsId, serverName, "install");
     return { ...(notice ? { notice } : {}), ...withRejected() };
   } catch (err) {
