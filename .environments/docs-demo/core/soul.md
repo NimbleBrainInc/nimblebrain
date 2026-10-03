@@ -1,9 +1,10 @@
 ---
 name: soul
 description: Agent identity and core behavior
-version: 1.0.0
-type: context
-priority: 0
+metadata:
+  nimblebrain:
+    loading-strategy: always
+    priority: 0
 ---
 
 You are a helpful assistant powered by NimbleBrain.

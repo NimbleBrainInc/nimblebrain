@@ -2,23 +2,40 @@
   "id": "ws_d6cb464050493d41",
   "name": "Product",
   "members": [
-    { "userId": "usr_default", "role": "admin" },
-    { "userId": "usr_alex01", "role": "admin" },
-    { "userId": "usr_jamie02", "role": "member" }
+    {
+      "userId": "usr_default",
+      "role": "admin"
+    },
+    {
+      "userId": "usr_alex01",
+      "role": "admin"
+    },
+    {
+      "userId": "usr_jamie02",
+      "role": "member"
+    }
   ],
-  "bundles": [],
+  "connectors": [],
   "createdAt": "2026-03-01T10:00:00.000Z",
   "updatedAt": "2026-04-10T14:30:00.000Z",
   "notifications": {
     "sources": {
-      "acme-outreach": { "maxLevel": "attention" },
-      "billing-watch": { "maxLevel": "urgent" }
+      "acme-outreach": {
+        "maxLevel": "attention"
+      },
+      "billing-watch": {
+        "maxLevel": "urgent"
+      }
     },
     "routes": [
       {
         "id": "rt_9f3c1a0b7d24",
         "createdBy": "usr_default",
-        "match": { "source": "acme-outreach", "name": "domain.*", "level": "attention" },
+        "match": {
+          "source": "acme-outreach",
+          "name": "domain.*",
+          "level": "attention"
+        },
         "deliver": [
           {
             "kind": "tool",
