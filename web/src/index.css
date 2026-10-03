@@ -96,10 +96,11 @@
 
 @layer base {
   /* The browser draws its own parts (scrollbars, form controls, the canvas)
-     from `color-scheme`. index.html declares both, so this pins the one in use
-     to the shell's mode rather than the OS preference. */
+     from `color-scheme`, so it follows the shell's mode, not the OS preference.
+     It also keeps Chrome's auto-dark off: Chrome repaints a page whose root
+     scheme is light unless it is `only light`. */
   :root {
-    color-scheme: light;
+    color-scheme: only light;
   }
   :root.dark {
     color-scheme: dark;
