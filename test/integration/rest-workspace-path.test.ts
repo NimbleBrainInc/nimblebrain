@@ -126,11 +126,6 @@ const RETIRED_ROUTES: Array<{ method: string; path: string; body?: () => unknown
   { method: "POST", path: "/v1/chat", body: () => ({ message: "hi" }) },
   { method: "POST", path: "/v1/chat/stream", body: () => ({ message: "hi" }) },
   { method: "POST", path: "/v1/chat/start", body: () => ({ message: "hi" }) },
-  {
-    method: "POST",
-    path: "/v1/tools/call",
-    body: () => ({ server: "nb", tool: "manage_workspaces", arguments: { action: "list" } }),
-  },
   { method: "GET", path: "/v1/shell" },
   {
     method: "POST",

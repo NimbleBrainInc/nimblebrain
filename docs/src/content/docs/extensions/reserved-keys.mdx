@@ -30,6 +30,14 @@ One more key is set by the host's own components and scoped to a single hop:
 |---|---|---|
 | `ai.nimblebrain/source` | `tools/call`, `resources/read`, and task requests at the [MCP endpoint](/connect/mcp-endpoint/) | Names the server a request is for. A workspace endpoint serves many servers behind one URL, and two servers can use the same resource URI. The app bridge always sets it to the app's own server, whatever the app asks for. A `tools/call` that names a source may reach only that server's tools, and only those whose `ui.visibility` includes `"app"`. It counts as the app's call only under a first-party credential (the web app's own session); a token issued to an external MCP client is treated as an agent's whatever it names, so it never reaches a tool without `"model"`. |
 
+## Tool definition key
+
+One key sits on the host's own tool definitions rather than on results:
+
+| Key | Set on | Meaning |
+|---|---|---|
+| `ai.nimblebrain/workspace` | The host's own tools that act on the caller or the org, such as `nb__set_preferences` and `nb__manage_users` | `"optional"`: the tool works with no workspace. The web app's org and profile settings call these tools without one. The host reads the key only from its own tools, so a server that declares it on a tool of its own changes nothing: that tool is still called only through a workspace. |
+
 ## If you see one
 
 Seeing one of these keys in a trace between the host and your server is normal. Seeing your own server set one is a bug in your server. The host removes the key, so it does nothing, but the attempt tells you something in your code is copying `_meta` it should not.

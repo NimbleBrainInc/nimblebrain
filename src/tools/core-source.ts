@@ -30,6 +30,7 @@ const VERSION = process.env.NB_VERSION || pkg.version;
 
 import type { BriefingItem, BriefingOutput } from "../platform/schemas/home.ts";
 import { createBriefingCollector } from "../services/briefing-collector.ts";
+import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 // --- set_model_config helpers -------------------------------------------------
 // The handler is a linear validate → normalize → merge → write pipeline; each
@@ -500,7 +501,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "get_config",
       description:
         "Get current runtime configuration: default model, configured providers, and limits.",
-      meta: { ui: { visibility: ["app"] } },
+      meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
         properties: {},
@@ -575,7 +576,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "set_model_config",
       description:
         "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
-      meta: { ui: { visibility: ["app"] } },
+      meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
         properties: {
@@ -756,6 +757,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "set_preferences",
       description:
         "Set user preferences: display name, timezone, locale, theme, or the model this user's new conversations run on. Use this when the user says their name, asks to change timezone/language/theme, or asks to use a particular model.",
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
         properties: {
@@ -829,7 +831,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       name: "workspace_info",
       description:
         "Get workspace metadata: platform version, telemetry status, and install ID. Used by the web client on startup.",
-      meta: { ui: { visibility: ["app"] } },
+      meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
         properties: {},
