@@ -20,7 +20,9 @@ for the wrong workspace.
 - **The URL is the only thing that names a workspace.** The server chooses
   none: bootstrap returns the caller's workspaces and no focus, and no
   preference records a workspace to land in. The web shell focuses the
-  workspace a `/w/<id>` path names, and nothing on a page outside `/w/`.
+  workspace a `/w/<id>` path names, and nothing on a page loaded outside
+  `/w/`. Pages outside `/w/` make no workspace-scoped request, so a focus left
+  over from an earlier `/w/` page addresses no request.
 - **A user with no workspace gets one at bootstrap**, as ADR-0039 provides:
   an ordinary workspace, named for them, with them as admin. Nothing records
   that it was the first.
