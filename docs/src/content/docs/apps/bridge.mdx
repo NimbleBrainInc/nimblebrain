@@ -67,6 +67,7 @@ These have no spec equivalent. Each name is both the method and the identifier t
 |--------|-----------|-------------|
 | `ai.nimblebrain/action` | App → Host | Request a semantic action from the shell. |
 | `ai.nimblebrain/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#ainimblebrainrequest-file). |
+| `ai.nimblebrain/upload-files` | App → Host | Store `File`s the app already holds (dropped on it, say), the way a pick is stored; answered `{ files: [...] }`. See [below](#ainimblebrainupload-files). |
 | `ai.nimblebrain/keydown` | App → Host | Forward keyboard shortcuts to the host. |
 | `ai.nimblebrain/location` | App → Host | Report the app's trail, root first, so the shell's top bar shows its title and breadcrumb. See [below](#ainimblebrainlocation). |
 | `ai.nimblebrain/navigate` | Host → App | Go to one of the trail entries the app sent, when the user picks it in the top bar. |
@@ -114,6 +115,7 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
         "io.modelcontextprotocol/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
         "ai.nimblebrain/action": {},
         "ai.nimblebrain/request-file": {},
+        "ai.nimblebrain/upload-files": {},
         "ai.nimblebrain/keydown": {},
         "ai.nimblebrain/location": {}
       }
@@ -621,6 +623,24 @@ An error does not mean nothing was stored: read `error.data.files`. The browser'
 <Aside type="caution">
 **SDK compatibility.** With the `@nimblebrain/synapse` SDK, call `pickFile()` for a single entry or `pickFiles()` for the list — both read this one shape, from the release that moves `connect()` onto the spec's own client onwards. **Releases through 0.18.0 read the bare shapes** (an array, a single object, or `null`) and throw on `{ files }`, reporting it as an out-of-date *host* — so an app on 0.18.0 or earlier has to move its pin in the same deploy as the host.
 </Aside>
+
+### `ai.nimblebrain/upload-files`
+
+Store files the app already holds, such as files dropped on it. A sandboxed app cannot reach the upload endpoint itself, and a tool call is no way to carry a file (its arguments are JSON, capped at 1 MB), so it hands the `File` objects to the host, which uploads them exactly as it uploads a pick.
+
+```js
+// App → Host. `files` holds File objects; postMessage clones them whole.
+{
+  jsonrpc: "2.0",
+  id: "syn-8",
+  method: "ai.nimblebrain/upload-files",
+  params: { files: [file1, file2], maxSize: 10485760 }
+}
+```
+
+`files` holds 1 to 100 `File`s; an entry that is not a `File` refuses the whole request before anything is stored. `maxSize` is optional and, as for a pick, can lower the instance's per-file limit but not raise it. From there it is a pick: the same total limit, the same `{ files: [...] }` answer, and the same refusal, a JSON-RPC error whose `data` lists the files stored anyway and why each other was refused.
+
+With `@nimblebrain/synapse`, call `uploadFiles(app, files)` (0.24.0+), and use `hostSupports(app, "uploadFiles")` to decide whether to offer a drop target. The host declares it as `experimental["ai.nimblebrain/upload-files"]`.
 
 ### `ai.nimblebrain/keydown`
 

@@ -24,6 +24,11 @@
 export const ACTION_METHOD = "ai.nimblebrain/action";
 /** App → host request: the host's file picker, answered `{ files }`. */
 export const REQUEST_FILE_METHOD = "ai.nimblebrain/request-file";
+/**
+ * App → host request: store files the app already holds (dropped on it, say),
+ * passed as `File` objects in `{ files }`, answered `{ files }` like the picker.
+ */
+export const UPLOAD_FILES_METHOD = "ai.nimblebrain/upload-files";
 /** App → host notification: a keyboard shortcut pressed inside the frame. */
 export const KEYDOWN_METHOD = "ai.nimblebrain/keydown";
 /**
@@ -49,6 +54,7 @@ export const NAVIGATE_METHOD = "ai.nimblebrain/navigate";
 export const NIMBLEBRAIN_EXTENSIONS = [
   ACTION_METHOD,
   REQUEST_FILE_METHOD,
+  UPLOAD_FILES_METHOD,
   KEYDOWN_METHOD,
   LOCATION_METHOD,
 ] as const;

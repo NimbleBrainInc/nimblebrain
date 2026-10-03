@@ -22,7 +22,12 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../../test/setup";
-import { LOCATION_METHOD, NAVIGATE_METHOD, REQUEST_FILE_METHOD } from "../../bridge/extensions";
+import {
+  LOCATION_METHOD,
+  NAVIGATE_METHOD,
+  REQUEST_FILE_METHOD,
+  UPLOAD_FILES_METHOD,
+} from "../../bridge/extensions";
 import type { UploadLimits } from "../../bridge/host-extensions";
 
 /**
@@ -209,6 +214,7 @@ describe("ui/initialize — advertised capabilities", () => {
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
       "ai.nimblebrain/request-file": {},
+      "ai.nimblebrain/upload-files": {},
       "ai.nimblebrain/keydown": {},
       "ai.nimblebrain/location": {},
     });
@@ -222,6 +228,7 @@ describe("ui/initialize — advertised capabilities", () => {
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
       "ai.nimblebrain/request-file": {},
+      "ai.nimblebrain/upload-files": {},
       "ai.nimblebrain/keydown": {},
       "ai.nimblebrain/location": {},
     });
@@ -519,6 +526,85 @@ describe("spec request ids", () => {
 
     const reply = (await frame.waitFor(replyTo(0))) as { result: unknown };
     expect(reply.result).toEqual({});
+  });
+});
+
+describe("ai.nimblebrain/upload-files", () => {
+  // Files the app already holds (dropped on it) take the picker's path from the
+  // point a pick has its files, so they answer and refuse exactly as a pick does.
+
+  test("uploads the files it was given and answers { files }", async () => {
+    const entry = { id: "fl_abc", filename: "notes.txt", mimeType: "text/plain", size: 5 };
+    const uploaded: File[][] = [];
+    const origUpload = uploadStub;
+    uploadStub = async (files: File[]) => {
+      uploaded.push(files);
+      return { files: [entry] };
+    };
+    try {
+      const frame = mount();
+      await handshake(frame);
+      const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+      frame.send({
+        jsonrpc: "2.0",
+        id: "drop-one",
+        method: UPLOAD_FILES_METHOD,
+        params: { files: [file] },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("drop-one"), 2000)) as { result: unknown };
+      expect(reply.result).toEqual({ files: [entry] });
+      expect(uploaded).toEqual([[file]]);
+    } finally {
+      uploadStub = origUpload;
+    }
+  });
+
+  test("an entry that is not a File refuses the request and uploads nothing", async () => {
+    const origUpload = uploadStub;
+    let calls = 0;
+    uploadStub = async () => {
+      calls += 1;
+      return { files: [] };
+    };
+    try {
+      const frame = mount();
+      await handshake(frame);
+      frame.send({
+        jsonrpc: "2.0",
+        id: "drop-bad",
+        method: UPLOAD_FILES_METHOD,
+        params: { files: [{ name: "a.txt", data: "aGk=" }] },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("drop-bad"), 2000)) as {
+        error: { code: number; message: string };
+      };
+      expect(reply.error.code).toBe(-32602);
+      expect(reply.error.message).toContain("must be a File");
+      expect(calls).toBe(0);
+    } finally {
+      uploadStub = origUpload;
+    }
+  });
+
+  test("a file over the limit is refused before upload, with the refusal as data", async () => {
+    const frame = mount();
+    await handshake(frame);
+    const big = new File(["0123456789"], "big.bin");
+    frame.send({
+      jsonrpc: "2.0",
+      id: "drop-big",
+      method: UPLOAD_FILES_METHOD,
+      params: { files: [big], maxSize: 4 },
+    });
+
+    const reply = (await frame.waitFor(isReplyTo("drop-big"), 2000)) as {
+      error: { code: number; data: { files: unknown[]; errors: string[] } };
+    };
+    expect(reply.error.code).toBe(-32602);
+    expect(reply.error.data.files).toEqual([]);
+    expect(reply.error.data.errors[0]).toContain("big.bin");
   });
 });
 
