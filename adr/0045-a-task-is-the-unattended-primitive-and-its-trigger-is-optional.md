@@ -87,9 +87,11 @@ the door rather than by any one source:
   id** for as long as any run naming it is in flight: the first run to name an id
   sets the balance, and every run naming it checks and debits that same balance,
   so runs that share an account cannot together exceed it. Before each model
-  call the door checks the projected cost against every account and ends the run
-  with a typed stop reason if any would be exceeded; after the call it debits
-  each one, and reports the debits back to the source. The door never interprets
+  call the door reserves the call's projected cost against every account,
+  lowering the call's output ceiling to what they can pay for, and ends the run
+  with a typed stop reason when they cannot pay for a minimal call; after the
+  call it releases the reservation and debits the actual cost, and the source
+  learns what was spent from the run's reported usage. The door never interprets
   an account: whether an id stands for a batch, a task, or a workspace is the
   source's knowledge, so the door gains no notion of a run's parent (ADR-0021).
 

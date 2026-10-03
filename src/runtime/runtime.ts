@@ -87,7 +87,6 @@ import type {
   EngineResult,
   EventSink,
   SkillsLoadedPayload,
-  SpendGate,
   ThinkingEffort,
   ToolPromotionResult,
   ToolResult,
@@ -1543,7 +1542,6 @@ export class Runtime {
           ? { maxRunInputTokens: request.maxRunInputTokens }
           : {}),
         ...(request.spendAccounts ? { spendAccounts: request.spendAccounts } : {}),
-        ...(request.onSpendDebit ? { onSpendDebit: request.onSpendDebit } : {}),
       },
       model: this.resolveRequestModelString(request.model),
       ...(request.signal ? { signal: request.signal } : {}),
@@ -1856,10 +1854,9 @@ export class Runtime {
 
   /**
    * Hold the run's spend accounts open and hand them to the engine as
-   * `engineConfig.spend`; returns what releases them. A run that names none
-   * (every chat) gets no gate. Dollars are priced at the run model's rates.
-   * The debit callback is the source's; a throw from it is logged, never
-   * allowed to end the run.
+   * `engineConfig.spend`; returns what releases them, with any reservation
+   * still outstanding. A run that names none (every chat) gets no gate.
+   * Dollars are priced at the run model's rates.
    */
   private openSpendAccounts(spec: RunSpec, engineConfig: EngineConfig): () => void {
     const accounts = spec.budget.spendAccounts;
@@ -1868,22 +1865,7 @@ export class Runtime {
       model: spec.model,
       rates: resolveRates(spec.model),
     });
-    const onDebit = spec.budget.onSpendDebit;
-    const gate: SpendGate = {
-      check: (projected) => hold.check(projected),
-      debit: (actual) => {
-        const debits = hold.debit(actual);
-        if (!onDebit) return;
-        try {
-          onDebit(debits);
-        } catch (err) {
-          log.warn("spend.debit_callback_failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      },
-    };
-    engineConfig.spend = gate;
+    engineConfig.spend = hold;
     return () => hold.release();
   }
 

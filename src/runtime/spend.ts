@@ -1,5 +1,5 @@
 /**
- * Spend accounts: what a run may spend, checked before each model call and
+ * Spend accounts: what a run may spend, reserved before each model call and
  * debited after it.
  *
  * Asserted at the run-start door (`Runtime.startRun`), so every source that
@@ -7,15 +7,27 @@
  * accounts, each an opaque id the source chose, with a unit and the amount
  * remaining. The door keeps ONE live balance per id for as long as any run
  * naming it is in flight: the first run to name an id sets its unit and
- * balance, and every later run naming it checks and debits that same balance,
- * so runs sharing an account cannot together exceed it. The balance is
- * discarded when the last run naming the id ends; the source re-issues the
- * remaining amount on its next run, from the debits it was told about.
+ * balance, and every later run naming it draws on that same balance. The
+ * balance is discarded when the last run naming the id ends; the source
+ * re-issues the remaining amount on its next run, from the usage the run
+ * reported.
+ *
+ * Runs sharing an account cannot together exceed it because each call
+ * reserves its worst case before it is sent: `check` clamps the call's output
+ * to what the account has left after every other reservation (balance minus
+ * outstanding reservations), and reserves the projected input plus that
+ * output. `debit` releases the call's reservation and subtracts what it
+ * actually cost; ending the run releases any reservation still outstanding.
+ * A call cannot write more than its clamped output, so the only way past a
+ * balance is input beyond the projection (the prompt estimate undercounting):
+ * the debit takes the real amount, and the balance goes negative by at most
+ * that excess.
  *
  * The door never interprets an id. Whether one stands for a batch, a task, or
  * a workspace is the source's knowledge, so nothing here branches on it.
  */
 
+import type { SpendGate } from "../engine/types.ts";
 import { costBreakdown } from "../usage/cost.ts";
 import type { TokenUsage, UsageRates } from "../usage/types.ts";
 
@@ -31,17 +43,8 @@ export interface SpendAccount {
   remaining: number;
 }
 
-/** What one model call took from one account. */
-export interface SpendDebit {
-  accountId: string;
-  unit: SpendUnit;
-  amount: number;
-  /** The account's balance after this debit. Negative when the call overran its projection. */
-  remaining: number;
-}
-
 /**
- * How a model call is costed in each unit. `usd` prices with the run model's
+ * How a model call is costed in each unit. `usd` debits with the run model's
  * rates, the same arithmetic as `costBreakdown`.
  */
 export interface SpendPricing {
@@ -49,53 +52,105 @@ export interface SpendPricing {
   model: string;
 }
 
-/** The accounts one run holds open. */
-export interface SpendHold {
+/**
+ * The accounts one run holds open: the engine's `SpendGate`, plus the end of
+ * the run.
+ */
+export interface SpendHold extends SpendGate {
   /**
-   * The first account the projected call would take past its balance, or null
-   * when every account can pay for it.
+   * Stop holding the accounts, releasing any outstanding reservation. The last
+   * run to release an id discards its balance. Idempotent.
    */
-  check(projected: TokenUsage): string | null;
-  /** Debit every account with a call's actual usage; returns what each paid. */
-  debit(actual: TokenUsage): SpendDebit[];
-  /** Stop holding the accounts. The last run to release an id discards its balance. Idempotent. */
   release(): void;
 }
 
 export interface SpendBalances {
   /** Hold `accounts` open for one run. */
   open(accounts: readonly SpendAccount[], pricing: SpendPricing): SpendHold;
-  /** The live balance of `id`, or undefined when no run in flight names it. */
+  /** The live balance of `id` (reservations not subtracted), or undefined when no run in flight names it. */
   balance(id: string): number | undefined;
 }
 
 /**
- * The cost of `usage` in `unit`.
- *
- * A `usd` amount on a model with no known rates is `Infinity` when projecting,
- * so an account the door cannot price never lets a call through, and 0 when
- * debiting, since nothing is known to have been charged.
+ * What `usage` actually cost in `unit`. A `usd` amount on a model with no
+ * known rates is 0, since nothing is known to have been charged.
  */
-export function spendIn(
-  unit: SpendUnit,
-  usage: TokenUsage,
-  pricing: SpendPricing,
-  mode: "project" | "debit",
-): number {
+export function spendIn(unit: SpendUnit, usage: TokenUsage, pricing: SpendPricing): number {
   switch (unit) {
     case "input_tokens":
       return usage.inputTokens;
     case "output_tokens":
       return usage.outputTokens;
     case "usd":
-      if (!pricing.rates) return mode === "project" ? Number.POSITIVE_INFINITY : 0;
-      return costBreakdown(pricing.model, usage, pricing.rates).total;
+      return pricing.rates ? costBreakdown(pricing.model, usage, pricing.rates).total : 0;
+  }
+}
+
+/** Worst-case dollars per token, or null for a model with no known rates. */
+type WorstRates = { input: number; output: number } | null;
+
+/**
+ * Worst-case dollars per input and per output token. Projected input is
+ * priced at the dearest input-side rate (a cache write can bill above base
+ * input), and output at the dearer of output and reasoning, so a call's
+ * projection is never below what the same tokens can cost.
+ */
+function worstRates(rates: UsageRates): NonNullable<WorstRates> {
+  return {
+    input: Math.max(rates.input, rates.cacheRead, rates.cacheWrite5m, rates.cacheWrite1h) / 1e6,
+    output: Math.max(rates.output, rates.reasoning ?? 0) / 1e6,
+  };
+}
+
+/**
+ * The most output `available` in `unit` pays for alongside the call's input,
+ * or null when the input alone does not fit. An `input_tokens` account never
+ * limits output; a `usd` account the door cannot price never lets a call
+ * through.
+ */
+function outputAllowance(
+  unit: SpendUnit,
+  available: number,
+  inputTokens: number,
+  rates: WorstRates,
+): number | null {
+  switch (unit) {
+    case "input_tokens":
+      return inputTokens > available ? null : Number.POSITIVE_INFINITY;
+    case "output_tokens":
+      return Math.floor(available);
+    case "usd": {
+      if (!rates) return null;
+      const afterInput = available - inputTokens * rates.input;
+      if (afterInput < 0) return null;
+      return rates.output > 0 ? Math.floor(afterInput / rates.output) : Number.POSITIVE_INFINITY;
+    }
+  }
+}
+
+/** A call's worst case in `unit`: its projected input and its clamped output. */
+function projectedCost(
+  unit: SpendUnit,
+  inputTokens: number,
+  outputTokens: number,
+  rates: WorstRates,
+): number {
+  switch (unit) {
+    case "input_tokens":
+      return inputTokens;
+    case "output_tokens":
+      return outputTokens;
+    case "usd":
+      // Reached only after `outputAllowance` let the call through, so priced.
+      return rates ? inputTokens * rates.input + outputTokens * rates.output : 0;
   }
 }
 
 interface Live {
   unit: SpendUnit;
   balance: number;
+  /** Outstanding reservations of every call in flight against this id. */
+  reserved: number;
   holders: number;
 }
 
@@ -112,28 +167,63 @@ export function createSpendBalances(): SpendBalances {
         ids.push(account.id);
         const entry = live.get(account.id);
         if (entry) entry.holders++;
-        else live.set(account.id, { unit: account.unit, balance: account.remaining, holders: 1 });
+        else {
+          live.set(account.id, {
+            unit: account.unit,
+            balance: account.remaining,
+            reserved: 0,
+            holders: 1,
+          });
+        }
       }
+      const rates = pricing.rates ? worstRates(pricing.rates) : null;
+      // This run's outstanding reservation per id: one call's, from `check`
+      // until its `debit`.
+      const reservation = new Map<string, number>();
+      const unreserve = () => {
+        for (const [id, amount] of reservation) live.get(id)!.reserved -= amount;
+        reservation.clear();
+      };
       let released = false;
+
       return {
-        check(projected) {
+        check(call) {
+          // A check replaces any reservation this run still holds, so a call
+          // that never reached its debit cannot keep its worst case reserved.
+          unreserve();
+          const floor = Math.min(call.minOutputTokens, call.maxOutputTokens);
+          let allowed = call.maxOutputTokens;
           for (const id of ids) {
             const entry = live.get(id)!;
-            if (spendIn(entry.unit, projected, pricing, "project") > entry.balance) return id;
+            const allowance = outputAllowance(
+              entry.unit,
+              entry.balance - entry.reserved,
+              call.inputTokens,
+              rates,
+            );
+            if (allowance === null) return { accountId: id };
+            allowed = Math.min(allowed, allowance);
+            if (allowed < floor) return { accountId: id };
           }
-          return null;
+          for (const id of ids) {
+            const entry = live.get(id)!;
+            const amount = projectedCost(entry.unit, call.inputTokens, allowed, rates);
+            entry.reserved += amount;
+            reservation.set(id, amount);
+          }
+          return { maxOutputTokens: allowed };
         },
         debit(actual) {
-          return ids.map((id) => {
+          unreserve();
+          for (const id of ids) {
             const entry = live.get(id)!;
-            const amount = spendIn(entry.unit, actual, pricing, "debit");
-            entry.balance -= amount;
-            return { accountId: id, unit: entry.unit, amount, remaining: entry.balance };
-          });
+            entry.balance -= spendIn(entry.unit, actual, pricing);
+          }
         },
         release() {
           if (released) return;
           released = true;
+          unreserve();
           for (const id of ids) {
             const entry = live.get(id)!;
             if (--entry.holders === 0) live.delete(id);

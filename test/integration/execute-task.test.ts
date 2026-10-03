@@ -28,7 +28,6 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { SpendDebit } from "../../src/runtime/spend.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -187,25 +186,43 @@ describe("runtime.executeTask", () => {
     expect(runtime.getSpendBalances().balance("acct-tight")).toBeUndefined();
   });
 
-  it("debits every account after each model call and reports the debits", async () => {
+  it("debits every account after each model call, from the balance shared with runs in flight", async () => {
     runtime = await bootRuntime(undefined);
     const { defaultWsId } = await provisionWorkspaces(runtime);
-    const debits: SpendDebit[] = [];
+    // Another run in flight keeps the balance alive past this run's end, so
+    // what this run took from it stays observable.
+    const inFlight = runtime
+      .getSpendBalances()
+      .open([{ id: "acct-in", unit: "input_tokens", remaining: 100_000_000 }], {
+        model: "test",
+        rates: null,
+      });
+    try {
+      const result = await runtime.executeTask({
+        workspaceId: defaultWsId,
+        prompt: "summarize today's activity",
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+        spendAccounts: [{ id: "acct-in", unit: "input_tokens", remaining: 100_000_000 }],
+      });
 
-    const result = await runtime.executeTask({
-      workspaceId: defaultWsId,
-      prompt: "summarize today's activity",
-      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
-      spendAccounts: [{ id: "acct-in", unit: "input_tokens", remaining: 100_000_000 }],
-      onSpendDebit: (d) => debits.push(...d),
-    });
-
-    expect(result.stopReason).toBe("complete");
-    expect(result.spendAccountId).toBeUndefined();
-    expect(debits).toHaveLength(1);
-    expect(debits[0]?.accountId).toBe("acct-in");
-    expect(debits[0]?.amount).toBe(result.usage.inputTokens);
-    expect(debits[0]?.remaining).toBe(100_000_000 - result.usage.inputTokens);
+      expect(result.stopReason).toBe("complete");
+      expect(result.spendAccountId).toBeUndefined();
+      expect(result.usage.inputTokens).toBeGreaterThan(0);
+      expect(runtime.getSpendBalances().balance("acct-in")).toBe(
+        100_000_000 - result.usage.inputTokens,
+      );
+      // The run's reservation went with it: the in-flight run can reserve
+      // everything that is left.
+      expect(
+        inFlight.check({
+          inputTokens: 100_000_000 - result.usage.inputTokens,
+          maxOutputTokens: 1,
+          minOutputTokens: 1,
+        }),
+      ).toEqual({ maxOutputTokens: 1 });
+    } finally {
+      inFlight.release();
+    }
   });
 
   it("checks the live balance another run in flight already set for the same account", async () => {

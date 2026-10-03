@@ -14,7 +14,7 @@ import type { TokenUsage } from "../usage/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { AdmissionLease } from "./admission.ts";
 import type { RunTrigger } from "./run-spec.ts";
-import type { SpendAccount, SpendDebit } from "./spend.ts";
+import type { SpendAccount } from "./spend.ts";
 
 /** Model slot configuration. Each slot maps to a provider:model-id string. */
 export interface ModelSlots {
@@ -480,13 +480,11 @@ export interface TaskRequest {
   /**
    * The spend accounts the run draws on: opaque ids the caller chose, each with
    * a unit and the amount remaining. Runs in flight that name the same id share
-   * one balance. Before each model call the run ends with stopReason
-   * `spend_limit` if the call's projected cost would overrun one
-   * (`src/runtime/spend.ts`). Absent = no account.
+   * one balance. Each model call's output is clamped to what they allow, and
+   * the run ends with stopReason `spend_limit` before a call they cannot pay
+   * for (`src/runtime/spend.ts`). Absent = no account.
    */
   spendAccounts?: SpendAccount[];
-  /** Told what each model call took from every account, as the call returns. */
-  onSpendDebit?: (debits: SpendDebit[]) => void;
   /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
   allowedTools?: string[];
   /**

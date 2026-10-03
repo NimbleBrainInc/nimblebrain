@@ -725,18 +725,46 @@ function appendFinalStepReminder(
 }
 
 /**
- * Whether the next model call may be sent, judged before it is: the run-wide
- * input cap (`EngineConfig.maxRunInputTokens`) first, then the spend accounts
- * (`EngineConfig.spend`). The call's input is projected as the larger of the
- * estimate of the prompt about to be sent and the previous call's reported
- * input; its output at the call's ceiling, so a call that fits cannot overrun
- * an output or dollar account by what it writes. Null lets the call through.
+ * The fewest output tokens a call is sent with when the run's spend accounts
+ * clamp it. A call allowed less could not write a useful step (a tool call
+ * with its arguments, or a short answer), so the run stops with `spend_limit`
+ * instead of sending it.
+ */
+const MIN_SPEND_CALL_OUTPUT_TOKENS = 256;
+
+/**
+ * The output tokens a call may write beyond its `maxOutputTokens`: the
+ * Anthropic adapter adds an `enabled` thinking budget on top of `max_tokens`
+ * (see `clampThinkingBudget`). Every other dialect fits thinking inside it.
+ */
+function thinkingBeyondMaxOutput(options: SharedV4ProviderOptions): number {
+  const thinking = (
+    options.anthropic as { thinking?: { type?: string; budgetTokens?: number } } | undefined
+  )?.thinking;
+  return thinking?.type === "enabled" ? (thinking.budgetTokens ?? 0) : 0;
+}
+
+/**
+ * Whether the next model call may be sent, and with how many output tokens,
+ * judged before it is: the run-wide input cap (`EngineConfig.maxRunInputTokens`)
+ * first, then the spend accounts (`EngineConfig.spend`). The call's input is
+ * projected as the larger of the estimate of the prompt about to be sent and
+ * the previous call's reported input.
+ *
+ * The accounts are asked for the call's whole output ceiling, thinking budget
+ * included, and answer with the largest they can pay for (reserved until the
+ * call is debited). The call's `maxOutputTokens` is clamped so that it plus
+ * its thinking budget fits that answer: the thinking budget never grows with a
+ * smaller ceiling, so `granted − budget(min(ceiling, granted))` fits, and the
+ * minimum asked for (`MIN_SPEND_CALL_OUTPUT_TOKENS` plus its own budget) keeps
+ * that at or above `MIN_SPEND_CALL_OUTPUT_TOKENS`.
  */
 function checkBeforeCall(
   config: EngineConfig,
   call: { spentInput: number; lastCallInputTokens: number; estimate: () => number },
-): "max_input_tokens" | { spendAccountId: string } | null {
-  if (config.maxRunInputTokens === undefined && !config.spend) return null;
+): "max_input_tokens" | { spendAccountId: string } | { maxOutputTokens: number } {
+  const ceiling = config.maxOutputTokens;
+  if (config.maxRunInputTokens === undefined && !config.spend) return { maxOutputTokens: ceiling };
   const projected = Math.max(call.lastCallInputTokens, call.estimate());
   if (
     config.maxRunInputTokens !== undefined &&
@@ -744,12 +772,18 @@ function checkBeforeCall(
   ) {
     return "max_input_tokens";
   }
-  const overrun = config.spend?.check({
-    ...emptyUsage(),
+  if (!config.spend) return { maxOutputTokens: ceiling };
+  const beyond = (max: number) =>
+    thinkingBeyondMaxOutput(buildThinkingProviderOptions(config.model, config.thinking, max));
+  const floor = Math.min(ceiling, MIN_SPEND_CALL_OUTPUT_TOKENS);
+  const grant = config.spend.check({
     inputTokens: projected,
-    outputTokens: config.maxOutputTokens,
+    maxOutputTokens: ceiling + beyond(ceiling),
+    minOutputTokens: floor + beyond(floor),
   });
-  return overrun ? { spendAccountId: overrun } : null;
+  if ("accountId" in grant) return { spendAccountId: grant.accountId };
+  const fitted = Math.min(ceiling, grant.maxOutputTokens);
+  return { maxOutputTokens: Math.min(fitted, grant.maxOutputTokens - beyond(fitted)) };
 }
 
 /**
@@ -1354,15 +1388,17 @@ export class AgentEngine {
           runInputCapReached = true;
           break;
         }
-        if (preCallStop) {
+        if ("spendAccountId" in preCallStop) {
           spendAccountId = preCallStop.spendAccountId;
           break;
         }
+        // The model's ceiling, or less when the spend accounts allow less.
+        const callMaxOutputTokens = preCallStop.maxOutputTokens;
 
         const callProviderOptions = buildThinkingProviderOptions(
           config.model,
           config.thinking,
-          config.maxOutputTokens,
+          callMaxOutputTokens,
         );
 
         const callProvider = getProviderFromModel(config.model);
@@ -1401,7 +1437,7 @@ export class AgentEngine {
                 {
                   prompt: cachedPrompt,
                   tools: cachedTools,
-                  maxOutputTokens: config.maxOutputTokens,
+                  maxOutputTokens: callMaxOutputTokens,
                   // Forward the run-scoped signal into the model call. AI
                   // SDK V4 providers honor `abortSignal` by aborting the
                   // underlying fetch, so an in-flight stream cancels at
