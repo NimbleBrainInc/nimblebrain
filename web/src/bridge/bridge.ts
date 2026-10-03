@@ -54,6 +54,8 @@ import {
   LOCATION_METHOD,
   NAVIGATE_METHOD,
   REQUEST_FILE_METHOD,
+  UPLOAD_FILES_APPS,
+  UPLOAD_FILES_METHOD,
 } from "./extensions";
 import { buildHostCapabilities } from "./host-capabilities";
 import { buildHostStyles, type UploadLimits } from "./host-extensions";
@@ -68,6 +70,7 @@ import type {
   ResourcesListMessage,
   ResourcesReadMessage,
   SynapseRequestFileMessage,
+  SynapseUploadFilesMessage,
   UiActionMessage,
   UiMessageMessage,
   UiToolResultError,
@@ -242,7 +245,7 @@ export function createBridge(
       // ext-apps protocol: ui/initialize REQUEST (has id + method)
       // -----------------------------------------------------------------
       case "ui/initialize":
-        handleInitialize(msg.id, callbacks, postToIframe);
+        handleInitialize(msg.id, appName, callbacks, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -416,6 +419,21 @@ export function createBridge(
       // -----------------------------------------------------------------
       case REQUEST_FILE_METHOD:
         handleRequestFile(msg.params, msg.id, postToIframe, readUploadLimits(callbacks));
+        break;
+
+      // -----------------------------------------------------------------
+      // Extension: ai.nimblebrain/upload-files — files the app already holds
+      // -----------------------------------------------------------------
+      case UPLOAD_FILES_METHOD:
+        if (!UPLOAD_FILES_APPS.has(appName)) {
+          postToIframe({
+            jsonrpc: "2.0",
+            id: msg.id,
+            error: { code: -32601, message: `${UPLOAD_FILES_METHOD} is not offered to this app` },
+          });
+          break;
+        }
+        handleUploadFiles(msg.params, msg.id, postToIframe, readUploadLimits(callbacks));
         break;
 
       // -----------------------------------------------------------------
@@ -740,6 +758,7 @@ function base64ToBytes(blob: string): Uint8Array | null {
 
 function handleInitialize(
   id: unknown,
+  appName: string,
   callbacks: BridgeCallbacks | undefined,
   postToIframe: PostToIframe,
 ): void {
@@ -763,7 +782,7 @@ function handleInitialize(
   // custom properties — extensions there would tear down the connection.
   //
   const extensions = readHostExtensions(callbacks);
-  const hostCapabilities = buildHostCapabilities();
+  const hostCapabilities = buildHostCapabilities(appName);
   const response: ExtAppsInitializeResponse = {
     jsonrpc: "2.0",
     id,
@@ -1068,6 +1087,42 @@ function handleRequestFile(
         },
       });
     });
+}
+
+/**
+ * Store files the app already holds (`ai.nimblebrain/upload-files`), such as
+ * files dropped on it. They take the picker's path from the point a pick has
+ * its files: the same limits, the same upload, the same answer and refusal.
+ * An entry that is not a `File` (the schema can only say "an array") refuses
+ * the whole request before anything is stored.
+ */
+function handleUploadFiles(
+  params: SynapseUploadFilesMessage["params"],
+  id: string,
+  postToIframe: PostToIframe,
+  limits: UploadLimits | undefined,
+): void {
+  const answer = (promise: Promise<RequestFileResult>) =>
+    promise
+      .then((result) => postToIframe({ jsonrpc: "2.0", id, result }))
+      .catch((err: unknown) => postToIframe({ jsonrpc: "2.0", id, error: uploadError(err) }));
+
+  if (!params.files.every((file) => file instanceof File)) {
+    answer(Promise.reject(new Error("Every entry in `files` must be a File.")));
+    return;
+  }
+  const requested = params.maxSize ?? limits?.maxFileSize ?? DEFAULT_PICKER_MAX_SIZE;
+  const maxSize = limits ? Math.min(requested, limits.maxFileSize) : requested;
+  answer(processPickedFiles(params.files as File[], maxSize, limits?.maxTotalSize));
+}
+
+/** The JSON-RPC error a failed pick or upload answers, carrying a refusal's `data`. */
+function uploadError(err: unknown): { code: number; message: string; data?: RequestFileRefusal } {
+  return {
+    code: -32602,
+    message: err instanceof Error ? err.message : "File upload failed",
+    ...(err instanceof FilesRefusedError ? { data: err.data } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1465,7 +1520,7 @@ function refusedFileErrors(err: unknown): string[] | undefined {
  * failure is rethrown as is.
  */
 async function processPickedFiles(
-  files: FileList | null,
+  files: FileList | readonly File[] | null,
   maxSize: number,
   maxTotalSize: number | undefined,
 ): Promise<RequestFileResult> {

@@ -35,6 +35,7 @@ import {
   LOCATION_METHOD,
   NAVIGATE_METHOD,
   REQUEST_FILE_METHOD,
+  UPLOAD_FILES_METHOD,
 } from "./extensions";
 
 // ── Shared building blocks ───────────────────────────────────────────────
@@ -308,6 +309,21 @@ export const SynapseRequestFileMessage = Type.Object({
 });
 export type SynapseRequestFileMessage = Static<typeof SynapseRequestFileMessage>;
 
+/**
+ * `files` holds `File` objects, which `postMessage` clones whole. The schema
+ * can only say "an array"; the handler refuses any entry that is not a `File`.
+ */
+export const SynapseUploadFilesMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(UPLOAD_FILES_METHOD),
+  id: RequestId,
+  params: Type.Object({
+    files: Type.Array(Type.Unknown(), { minItems: 1, maxItems: 100 }),
+    maxSize: Type.Optional(Type.Number()),
+  }),
+});
+export type SynapseUploadFilesMessage = Static<typeof SynapseUploadFilesMessage>;
+
 export const UiKeydownMessage = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal(KEYDOWN_METHOD),
@@ -364,6 +380,7 @@ export const AppToHostMessage = Type.Union([
   UiRequestDisplayModeMessage,
   LoggingMessageNotification,
   SynapseRequestFileMessage,
+  SynapseUploadFilesMessage,
   UiKeydownMessage,
   UiLocationMessage,
   ExtAppsInitializeRequest,

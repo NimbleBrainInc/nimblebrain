@@ -12,7 +12,8 @@
  * directory layout, ID scheme, registry semantics — lives there. This
  * module only defines the tool schemas and adapts calls into the store.
  *
- * Tools (8): list, search, read, read_pdf_pages, create, info, tag, delete
+ * Tools (12): list, search, read, read_pdf_pages, create, info, tag, delete, move,
+ *   create_folder, update_folder, delete_folder
  * Resources: ui://files/browser (React SPA)
  * Placements: sidebar files link at priority 3
  */
@@ -36,14 +37,20 @@ import {
 } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import {
+  FilesCreateFolderInput,
   FilesCreateInput,
   type FilesCreateOutput,
+  FilesDeleteFolderInput,
+  type FilesDeleteFolderOutput,
   FilesDeleteInput,
   type FilesDeleteOutput,
+  type FilesFolderOutput,
   FilesInfoInput,
   type FilesInfoOutput,
   FilesListInput,
   type FilesListOutput,
+  FilesMoveInput,
+  type FilesMoveOutput,
   FilesReadInput,
   FilesReadPdfPagesInput,
   type FilesReadPdfPagesOutput,
@@ -51,20 +58,21 @@ import {
   type FilesSearchOutput,
   FilesTagInput,
   type FilesTagOutput,
+  FilesUpdateFolderInput,
 } from "../schemas/files.ts";
+import {
+  createFolder,
+  deleteFolder,
+  ensureFolderPath,
+  moveFiles,
+  updateFolder,
+} from "./folders.ts";
+import { listFiles } from "./query.ts";
 import { loadFilesUi } from "./ui-resource.ts";
 
 // ---------------------------------------------------------------------------
 // Tool handler helpers
 // ---------------------------------------------------------------------------
-
-interface ListInput {
-  limit?: number;
-  offset?: number;
-  tags?: string[];
-  mimeType?: string;
-  sort?: "createdAt" | "filename" | "size";
-}
 
 function filterEntries(
   entries: FileEntry[],
@@ -79,25 +87,6 @@ function filterEntries(
     out = out.filter((f) => f.mimeType.startsWith(mimeType));
   }
   return out;
-}
-
-async function handleList(store: FileStore, args: ListInput): Promise<FilesListOutput> {
-  const limit = args.limit ?? 20;
-  const offset = args.offset ?? 0;
-  const sort = args.sort ?? "createdAt";
-
-  const all = await store.readRegistry();
-  const files = filterEntries(all, args.tags, args.mimeType);
-
-  if (sort === "createdAt") {
-    files.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  } else if (sort === "filename") {
-    files.sort((a, b) => a.filename.localeCompare(b.filename));
-  } else if (sort === "size") {
-    files.sort((a, b) => b.size - a.size);
-  }
-
-  return { files: files.slice(offset, offset + limit), total: files.length };
 }
 
 interface SearchInput {
@@ -320,6 +309,7 @@ async function handleReadPdfPages(
 interface CreateInput {
   manifest: {
     filename: string;
+    folder?: string;
     mimeType: string;
     tags?: string[];
     description?: string;
@@ -382,7 +372,12 @@ function decodeCreateBody(body: string, encoding: "base64" | "text"): Buffer {
   return Buffer.from(compact, "base64");
 }
 
-async function handleCreate(store: FileStore, args: CreateInput): Promise<FilesCreateOutput> {
+/** `placeIn` resolves `manifest.folder` to a folder id, creating missing levels. */
+async function handleCreate(
+  store: FileStore,
+  args: CreateInput,
+  placeIn: (path: string) => Promise<string | null>,
+): Promise<FilesCreateOutput> {
   // TODO: apply the same MIME allowlist as chat-multipart ingest
   // (`ALLOWED_MIMES` in `src/files/ingest.ts`). The tool currently accepts
   // any `mimeType` the LLM supplies; the chat path rejects anything
@@ -395,7 +390,11 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<FilesC
   // a specific type is trusted as-is. Same recovery as the upload handlers,
   // so an agent-written `.typ` is readable just like an uploaded one.
   const mimeType = resolveMimeType(manifest.filename, manifest.mimeType);
+  const folderId = await placeIn(manifest.folder ?? "");
   const saved = await store.saveFile(decoded, manifest.filename, mimeType);
+  // Provenance comes from the request, never the caller: the conversation in a
+  // chat, the run in an unattended automation run.
+  const ctx = getRequestContext();
   const entry: FileEntry = {
     id: saved.id,
     filename: manifest.filename,
@@ -405,12 +404,14 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<FilesC
     // The LLM invokes this tool; human-uploaded-via-UI is "manual",
     // chat-multipart is "chat", app-generated is "app".
     source: "agent",
-    conversationId: null,
+    conversationId: ctx?.conversationId ?? null,
+    runId: ctx?.runId ?? null,
     createdAt: new Date().toISOString(),
     description: manifest.description ?? null,
+    folderId,
   };
   await store.appendRegistry(entry);
-  return { id: saved.id, filename: manifest.filename, size: saved.size };
+  return { id: saved.id, filename: manifest.filename, size: saved.size, folderId };
 }
 
 async function handleInfo(store: FileStore, args: { id: string }): Promise<FilesInfoOutput> {
@@ -460,14 +461,15 @@ async function handleDelete(store: FileStore, args: { id: string }): Promise<Fil
 /** Create the "files" platform source — in-process MCP server. */
 export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSource {
   /**
-   * Resolve the caller's workspace-owned file store. Files live at
+   * Resolve the caller's workspace-owned file store, and the key naming its
+   * partition. Files live at
    * `workspaces/<wsId>/files/<ownerId>/`, so this needs both the owner (the
    * authenticated identity) and the workspace, which rides
    * `RequestContext.workspaceId` (set on both doors). No workspace in scope
    * (e.g. a background job with no bound workspace) ⇒ deny rather than guess
    * a workspace.
    */
-  function getStore(): FileStore {
+  function partition(): { key: string; store: FileStore } {
     // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
     // the same path automations' source, the REST file handlers, and chat
     // rehydration use, so "who am I" never drifts between sources. Fail-closed:
@@ -479,7 +481,28 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     if (!wsId) {
       throw new Error("files: no workspace in scope (files are workspace-owned)");
     }
-    return runtime.getWorkspaceFileStore(wsId, ownerId);
+    return { key: `${wsId}/${ownerId}`, store: runtime.getWorkspaceFileStore(wsId, ownerId) };
+  }
+
+  function getStore(): FileStore {
+    return partition().store;
+  }
+
+  /**
+   * Folder writes read the partition's folders, check them, then append. Two
+   * at once (a turn's parallel `create`s into one new path) would both pass the
+   * check and both append, so they run one at a time per partition.
+   */
+  const folderWrites = new Map<string, Promise<unknown>>();
+  function folderWrite<T>(write: (store: FileStore) => Promise<T>): Promise<T> {
+    const { key, store } = partition();
+    const run = (folderWrites.get(key) ?? Promise.resolve()).then(() => write(store));
+    const settled = run.catch(() => undefined);
+    folderWrites.set(key, settled);
+    void settled.then(() => {
+      if (folderWrites.get(key) === settled) folderWrites.delete(key);
+    });
+    return run;
   }
 
   function ok(data: object): ToolResult {
@@ -493,11 +516,18 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
   const tools: InProcessTool[] = [
     {
       name: "list",
-      description: "List your files with pagination, filtering by tags or MIME type, and sorting.",
+      description:
+        "List your files: in one folder (with the folders inside it) or across all of them, " +
+        "filtered by text, kind, source, conversation, run, creation time, tags, or MIME type, " +
+        "sorted and paged. Each file carries its folder path, and the result counts matches by kind and source.",
       inputSchema: FilesListInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return ok(await handleList(getStore(), input as unknown as ListInput));
+          const out: FilesListOutput = await listFiles(
+            getStore(),
+            input as unknown as FilesListInput,
+          );
+          return ok(out);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
@@ -561,7 +591,11 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       inputSchema: FilesCreateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return ok(await handleCreate(getStore(), input as unknown as CreateInput));
+          return ok(
+            await handleCreate(getStore(), input as unknown as CreateInput, (path) =>
+              folderWrite((store) => ensureFolderPath(store, path)),
+            ),
+          );
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
@@ -599,6 +633,74 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           return ok(await handleDelete(getStore(), input as unknown as { id: string }));
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+    {
+      name: "move",
+      description:
+        'Move files into a folder, by id; "root" is the top level. Every id must name one of your files, or none moves.',
+      inputSchema: FilesMoveInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          const { ids, folderId } = input as unknown as FilesMoveInput;
+          const out: FilesMoveOutput = {
+            ids,
+            folderId: await folderWrite((store) => moveFiles(store, ids, folderId)),
+          };
+          return ok(out);
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+    {
+      name: "create_folder",
+      description:
+        "Create a folder, at the top level or inside `parentId`. A name must be unique among the folders beside it. To put a new file in a folder by path, pass `manifest.folder` to `create` instead; it creates missing folders.",
+      inputSchema: FilesCreateFolderInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          const { manifest } = input as unknown as FilesCreateFolderInput;
+          const out: FilesFolderOutput = await folderWrite((store) =>
+            createFolder(store, manifest),
+          );
+          return ok(out);
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+    {
+      name: "update_folder",
+      description:
+        'Rename a folder (`manifest.name`) or move it (`manifest.parentId`; "root" is the top level). Its files and folders go with it.',
+      inputSchema: FilesUpdateFolderInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          const { id, manifest } = input as unknown as FilesUpdateFolderInput;
+          const out: FilesFolderOutput = await folderWrite((store) =>
+            updateFolder(store, { id, ...manifest }),
+          );
+          return ok(out);
+        } catch (err) {
+          return fail(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+    {
+      name: "delete_folder",
+      description:
+        "Delete an empty folder. A folder that holds files or folders is refused; move or delete what is inside first.",
+      inputSchema: FilesDeleteFolderInput,
+      handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
+        try {
+          const { id } = input as unknown as FilesDeleteFolderInput;
+          await folderWrite((store) => deleteFolder(store, id));
+          const out: FilesDeleteFolderOutput = { deleted: true };
+          return ok(out);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }

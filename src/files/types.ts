@@ -21,8 +21,19 @@ export interface FileEntry {
   tags: string[];
   source: "chat" | "agent" | "app" | "manual";
   conversationId: string | null;
+  /**
+   * The unattended run that wrote the file (`RequestContext.runId`), so a run's
+   * outputs can be found from the run. Absent when no run wrote it.
+   */
+  runId?: string | null;
   createdAt: string;
   description: string | null;
+  /**
+   * The folder the file sits in (a `FolderEntry.id` in the same partition).
+   * Absent or `null` is the top level. A folder is metadata only: the bytes stay
+   * flat on disk, so moving a file rewrites this field and nothing else.
+   */
+  folderId?: string | null;
   /**
    * Denormalised owner of the file. The store is rooted at the owner partition
    * (`workspaces/<wsId>/files/<ownerId>/`), so the DIRECTORY is the authority —
@@ -51,6 +62,20 @@ export interface FileEntry {
    * boundary, and absent reads as `private` (fail-closed).
    */
   visibility?: "private" | "shared";
+  deleted?: true;
+  deletedAt?: string;
+}
+
+/**
+ * A folder in an owner's partition (`folders.jsonl`, beside `registry.jsonl`).
+ * Last write per id wins, as in the file registry; a tombstone deletes.
+ */
+export interface FolderEntry {
+  id: string;
+  name: string;
+  /** The containing folder's id, or `null` at the top level. */
+  parentId: string | null;
+  createdAt: string;
   deleted?: true;
   deletedAt?: string;
 }
