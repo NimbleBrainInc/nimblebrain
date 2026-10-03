@@ -386,6 +386,18 @@ describe("list", () => {
   });
 });
 
+describe("listWithUnread", () => {
+  test("pages like list and counts the whole inbox", () => {
+    const store = storeFor(WS_A);
+    for (let i = 0; i < 5; i++) store.append("acme", envelope({ eventId: `e${i}` }));
+    store.markRead([{ source: "acme", eventId: "e0" }]);
+    const { items, unread } = store.listWithUnread({ limit: 2, unreadOnly: true });
+    expect(items.map((i) => i.envelope.eventId)).toEqual(["e4", "e3"]);
+    expect(unread).toBe(4);
+    expect(store.list({ limit: 2, unreadOnly: true })).toEqual(items);
+  });
+});
+
 describe("unreadCount", () => {
   test("counts the whole inbox, not one page", () => {
     const store = storeFor(WS_A);
@@ -510,6 +522,28 @@ describe("notification.read", () => {
     const event = sink.events.find((e) => e.type === "notification.read");
     expect(event?.data).toEqual({ workspaceId: WS_A, ids: ["acme:e1"], unread: 1 });
     expect(Value.Check(NotificationReadPayload, event?.data)).toBe(true);
+  });
+
+  test("counts unread items in day files the mark does not rewrite", () => {
+    const sink = new CapturingSink();
+    const store = storeFor(WS_A, sink);
+    store.append("acme", envelope({ eventId: "e1" }));
+    // An unread item in yesterday's file, which marking e1 leaves untouched.
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    writeFileSync(
+      join(workDir, "workspaces", WS_A, "notifications", `${yesterday.slice(0, 10)}.jsonl`),
+      `${JSON.stringify({
+        envelope: envelope({ eventId: "old" }),
+        source: "acme",
+        workspaceId: WS_A,
+        receivedAt: yesterday,
+        seq: 0,
+        deliveries: [],
+      })}\n`,
+    );
+    store.markRead([{ source: "acme", eventId: "e1" }]);
+    const event = sink.events.find((e) => e.type === "notification.read");
+    expect(event?.data).toEqual({ workspaceId: WS_A, ids: ["acme:e1"], unread: 1 });
   });
 
   test("a mark that changes nothing emits nothing", () => {
