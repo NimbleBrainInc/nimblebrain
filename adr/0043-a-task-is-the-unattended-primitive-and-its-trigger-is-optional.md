@@ -1,4 +1,4 @@
-# 0043. A task is the unattended primitive; its trigger is optional, and its outcome separates running from being good
+# 0043. A task is the unattended primitive; its trigger is optional, an execution provider runs it, and its outcome separates running from being good
 
 - Status: Proposed
 - Date: 2026-10-03
@@ -40,8 +40,9 @@ reach the runtime as MCP servers (ADR-0020).
 Remote callers already speak the protocol for "start this, give me a handle,
 poll it": MCP task augmentation (ADR-0029), which the MCP endpoint serves. Task
 augmentation is how an operation is carried over the wire. It is not a domain
-noun, and a durable job service that runs a tool's work behind an MCP server is
-a different layer again: it runs a server's code, not the agent.
+noun. Where a run's loop executes is a third question: in the runtime's own
+process today, and an installation with a durable job service could run it there
+instead, for durability and scale, if the job is told exactly what the run may do.
 
 ## Decision
 
@@ -69,6 +70,23 @@ unattended runs execute at once, the queue beyond that, and a fair share between
 workspaces) and **spend** (a budget checked before each model call, against the
 run, its batch, its task, and its workspace). A source that starts runs inherits
 both by construction, including sources not yet written.
+
+**The door decides a run; an execution provider runs it.** The door resolves
+everything a run is allowed to be (the workspace, the membership check, the tool
+set and prompt, the model, the budgets) into a resolved run specification, and
+hands it to the configured **execution provider**, which runs the engine loop and
+returns the run's outcome. The runtime ships one provider, **in-process**, which
+runs the loop in the runtime's own process and needs nothing else; it is the
+default, and an installation with no other provider runs every task with it. A
+**remote provider** runs the loop elsewhere, for example as a job on a durable
+job service, and is selected by configuration, never by the task's author. A
+remote provider receives the resolved specification and a credential scoped to
+that one run, and nothing else: it holds no stored secret, it reaches tools only
+by calling back through the runtime's MCP endpoint with that credential, so every
+tool call still passes the workspace wall, consent, and the unattended policy, and
+its model calls are metered against the same spend governor. A provider can narrow
+what the door decided but cannot widen it, which is what keeps it from being a
+second run-start door.
 
 **A run's outcome has two independent parts.** *Execution* says how the run
 ended:
@@ -132,17 +150,28 @@ for either.
 - Automations migrate. Their storage becomes task storage, reconciled at boot so
   no step depends on an operator remembering it, and their tools stay available
   under their current names for a deprecation window.
-- One-off tasks accumulate. They need a retention rule that expires one-off
-  definitions while keeping their runs' history for its own retention period.
+- Run history is kept indefinitely, one-off definitions with it, since a run's
+  record is meaningless without the task it ran. Storage grows with use, and the
+  run index needs no trim.
+- A remote provider buys durability and scale: a queued or running run survives a
+  runtime restart, and a batch's concurrency is bounded by budget rather than by
+  the runtime's own process. It costs a network hop on every tool and model call,
+  so a short task may run faster in-process, and the provider is chosen per
+  installation and may be chosen per task.
+- The in-process provider is the reference: a remote provider must produce the
+  same outcome for the same specification, and the conformance tests run against
+  both.
 - Assessment costs a grader call per run, and sending a deliverable to a grader is
   a data flow. A workspace connects a grader the way it connects any server, with
   the same consent, so where the deliverable goes is the workspace's decision.
 - "Task" now names the domain primitive, and MCP task augmentation is how a run
   travels. The glossary has to say so, because the protocol word and the domain
   word meet on every remote run.
-- Remote callers start unattended runs with the reach of the identity they hold.
-  The unattended tool policy and a task's own tool scope bound what a run can do;
-  a scope on the credential itself is not part of this decision.
+- A run acts with the reach of the identity that owns its task, including the
+  credentials its tools need. Those credentials are used where they are stored;
+  no provider receives a copy. The unattended tool policy and a task's own tool
+  scope bound what a run can do; a scope on the caller's credential is not part
+  of this decision.
 
 ## Alternatives considered
 
@@ -156,10 +185,15 @@ for either.
   what the door now owns.
 - **A kernel task noun** — rejected: the door owns the run and leaves the
   caller's resource to the caller (ADR-0021). The task is that resource.
-- **Running agent tasks on a durable job service behind an MCP server** —
-  rejected: such a service runs a server's code, and the agent loop lives behind
-  the door. A task's run calls such a service as a tool when it needs heavy or
-  isolated compute.
+- **A durable job service as the run-start path** — rejected: if the job
+  service decided what a run may do, it would be a second door. As an execution
+  provider it runs what the door decided, which is the accepted form.
+- **Shipping the specification with the credentials it needs** — rejected: a
+  remote provider would then hold every secret its runs touch, outside the store
+  and the wall. Calling back for tools keeps one place where secrets live.
+- **Only a remote provider** — rejected: the runtime must run tasks on a laptop
+  and in an installation with no job service, so the in-process provider is the
+  default and the reference.
 - **A run status that folds assessment in** ("succeeded with poor results") —
   rejected: whether a run ended and whether its result is good change for
   different reasons and are filtered separately.
