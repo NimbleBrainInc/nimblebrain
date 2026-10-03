@@ -90,9 +90,8 @@ the door rather than by any one source:
   call the door checks the projected cost against every account and ends the run
   with a typed stop reason if any would be exceeded; after the call it debits
   each one, and reports the debits back to the source. The door never interprets
-  an account: whether an id stands for a
-  batch, a task, or a workspace is the source's knowledge, so the door gains no
-  notion of a run's parent (ADR-0021).
+  an account: whether an id stands for a batch, a task, or a workspace is the
+  source's knowledge, so the door gains no notion of a run's parent (ADR-0021).
 
 A source that starts runs inherits both by construction, including sources not
 yet written.
