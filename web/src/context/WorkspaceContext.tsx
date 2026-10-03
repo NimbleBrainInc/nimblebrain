@@ -88,13 +88,14 @@ export function WorkspaceProvider({
 
   // Bootstrap is the one call that lists the viewer's memberships, so a write
   // that changes them re-reads it. The focused entry is swapped for its fresh
-  // copy; focus itself stays with the URL.
+  // copy, and a focused workspace the list no longer holds (deleted, or the
+  // viewer removed) drops focus rather than leave its nav pointing nowhere.
   const refreshWorkspaces = useCallback(async () => {
     const data = await tryBootstrap();
     if (!data) return;
     const next = bootstrapWorkspacesToInfo(data.workspaces);
     setWorkspaces(next);
-    setActiveState((current) => (current && next.find((w) => w.id === current.id)) ?? current);
+    setActiveState((current) => (current && next.find((w) => w.id === current.id)) ?? null);
   }, []);
 
   const value = useMemo<WorkspaceContextValue>(

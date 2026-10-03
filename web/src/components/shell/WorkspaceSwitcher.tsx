@@ -13,7 +13,8 @@
 // the focused workspace's settings, and creating a new one.
 //
 // Collapsed, the trigger is the focused workspace's glyph, or the chevrons
-// when no workspace is focused (home, profile), so it never renders empty.
+// when no workspace is focused (before the first `/w/` visit, or after the
+// focused one is deleted), so it never renders empty.
 //
 // A dot marks a workspace with unread notifications, on its row and, when it
 // is a workspace other than this one, on the trigger: the trigger is the way

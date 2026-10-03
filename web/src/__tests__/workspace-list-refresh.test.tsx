@@ -5,8 +5,9 @@
 // Pins:
 //   1. `refreshWorkspaces` replaces the list with bootstrap's, so a workspace
 //      created in settings reaches the switcher without a reload, and swaps
-//      the focused entry for its fresh copy.
-//   2. Collapsed with no focused workspace (home, profile), the trigger still
+//      the focused entry for its fresh copy; a focused workspace no longer in
+//      the list drops focus.
+//   2. Collapsed with no focused workspace, the trigger still
 //      draws an icon instead of an empty button.
 // ---------------------------------------------------------------------------
 
@@ -95,6 +96,16 @@ describe("refreshWorkspaces", () => {
     expect(ctx.workspaces.map((w) => w.id)).toEqual([A, B]);
     expect(ctx.activeWorkspace?.id).toBe(A);
     expect(ctx.activeWorkspace?.name).toBe("Alpha renamed");
+  });
+
+  test("drops focus when the focused workspace is gone from the list", async () => {
+    await mount([info(A, "Alpha"), info(B, "Beta")], A);
+    rebootstrap = [bootstrapWs(B, "Beta")];
+
+    await act(async () => ctx.refreshWorkspaces());
+
+    expect(ctx.workspaces.map((w) => w.id)).toEqual([B]);
+    expect(ctx.activeWorkspace).toBeNull();
   });
 
   test("leaves focus empty when nothing was focused", async () => {
