@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { automationRunsTotal } from "../../../../src/api/metrics.ts";
+import { resolveAutomationsConfig } from "../../../../src/config/automations.ts";
 import {
   backoffDelay,
   computeBudgetResetAt,
@@ -2215,6 +2216,427 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
     expect(defOf(scheduler, auto.id)?.nextRunAt).toBeUndefined();
 
     resolve(makeSuccessRun(auto.id));
+    scheduler.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: the run queue (Run now and event runs at the global limit)
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — run queue", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Executor whose runs stay open until released one by one, oldest first. */
+  function createSlotExecutor(): {
+    executor: Executor;
+    started: string[];
+    releaseOne: () => void;
+    releaseAll: () => void;
+  } {
+    const pending: Array<{ id: string; resolve: () => void }> = [];
+    const started: string[] = [];
+    const executor: Executor = mock(async (auto: Automation) => {
+      started.push(auto.id);
+      return new Promise<{ run: AutomationRun; result: null }>((resolve) => {
+        pending.push({ id: auto.id, resolve: () => resolve(execOk(makeSuccessRun(auto.id))) });
+      });
+    }) as Executor;
+    return {
+      executor,
+      started,
+      releaseOne: () => pending.shift()?.resolve(),
+      releaseAll: () => {
+        for (const p of pending.splice(0)) p.resolve();
+      },
+    };
+  }
+
+  /** Disabled automations (so the timer never fires them), one per id. */
+  function seedIdle(ids: string[], overrides: Partial<Automation> = {}): void {
+    seedDefs(
+      tmpDir,
+      new Map(
+        ids.map((id) => [id, makeAutomation({ id, name: id, enabled: false, ...overrides })]),
+      ),
+    );
+  }
+
+  const tick = () => new Promise((r) => setTimeout(r, 10));
+
+  it("queues a Run now at the global limit instead of starting it", async () => {
+    seedIdle(["a", "b", "c"]);
+    const { executor, started, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    scheduler.start();
+
+    expect(scheduler.requestRunNow(WS, OWNER, "a")?.state).toBe("started");
+    expect(scheduler.requestRunNow(WS, OWNER, "b")?.state).toBe("started");
+    const third = scheduler.requestRunNow(WS, OWNER, "c");
+    expect(third).toMatchObject({ state: "queued", position: 1 });
+    await tick();
+
+    expect(started).toEqual(["a", "b"]);
+    expect(scheduler.getActiveRunIds().length).toBe(2);
+    expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/c`]);
+    expect(readRuns(tmpDir, WS, OWNER, "c")).toEqual([]);
+
+    releaseAll();
+    scheduler.stop();
+  });
+
+  it("starts the next queued run the moment a slot frees, without a timer tick", async () => {
+    seedIdle(["a", "b", "c"]);
+    const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    scheduler.start();
+    const onTimer = spyOn(scheduler, "onTimer");
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    scheduler.requestRunNow(WS, OWNER, "b");
+    const third = scheduler.requestRunNow(WS, OWNER, "c");
+    await tick();
+
+    releaseOne(); // "a" ends
+    await tick();
+    expect(started).toEqual(["a", "b", "c"]);
+    expect(scheduler.getQueuedRunIds()).toEqual([]);
+    expect(onTimer).not.toHaveBeenCalled();
+
+    releaseAll();
+    if (third?.state !== "queued") throw new Error("expected queued");
+    const run = await third.run;
+    expect(run.status).toBe("success");
+    expect(run.automationId).toBe("c");
+    expect(readRuns(tmpDir, WS, OWNER, "c").map((r) => r.status)).toEqual(["success"]);
+    scheduler.stop();
+  });
+
+  it("takes its slot count and queue limit from the automations config", async () => {
+    seedIdle(["a", "b", "c", "d", "e"]);
+    const { executor, started, releaseAll } = createSlotExecutor();
+    const { maxConcurrentRuns, maxQueuedRuns } = resolveAutomationsConfig({
+      maxConcurrentRuns: 3,
+      maxQueuedRuns: 1,
+    });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      maxConcurrentRuns,
+      maxQueuedRuns,
+    });
+    scheduler.start();
+
+    const states = ["a", "b", "c", "d", "e"].map(
+      (id) => scheduler.requestRunNow(WS, OWNER, id)?.state,
+    );
+    await tick();
+    expect(states).toEqual(["started", "started", "started", "queued", "refused"]);
+    expect(started).toEqual(["a", "b", "c"]);
+
+    releaseAll();
+    scheduler.stop();
+  });
+
+  it("queues FIFO and reports each run's position", async () => {
+    seedIdle(["a", "b", "c", "d"]);
+    const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    expect(scheduler.requestRunNow(WS, OWNER, "b")).toMatchObject({ position: 1 });
+    expect(scheduler.requestRunNow(WS, OWNER, "c")).toMatchObject({ position: 2 });
+    expect(scheduler.requestRunNow(WS, OWNER, "d")).toMatchObject({ position: 3 });
+
+    for (let i = 0; i < 3; i++) {
+      await tick();
+      releaseOne();
+    }
+    await tick();
+    expect(started).toEqual(["a", "b", "c", "d"]);
+    releaseAll();
+    scheduler.stop();
+  });
+
+  it("refuses a Run now beyond the queue limit with a skipped record", async () => {
+    seedIdle(["a", "b", "c"]);
+    const { executor, started, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      maxConcurrentRuns: 1,
+      maxQueuedRuns: 1,
+    });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    expect(scheduler.requestRunNow(WS, OWNER, "b")?.state).toBe("queued");
+    const refused = scheduler.requestRunNow(WS, OWNER, "c");
+    if (refused?.state !== "refused") throw new Error("expected refused");
+    expect(refused.run.status).toBe("skipped");
+    expect(refused.run.error).toContain("Run queue full");
+    expect(refused.run.trigger).toBe("manual");
+    expect(readRuns(tmpDir, WS, OWNER, "c").map((r) => r.error)).toEqual([refused.run.error]);
+    await tick();
+    expect(started).toEqual(["a"]);
+
+    releaseAll();
+    scheduler.stop();
+  });
+
+  it("refuses a Run now for an automation that is already queued", async () => {
+    seedIdle(["a", "b"]);
+    const { executor, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    expect(scheduler.requestRunNow(WS, OWNER, "b")?.state).toBe("queued");
+    const again = scheduler.requestRunNow(WS, OWNER, "b");
+    if (again?.state !== "refused") throw new Error("expected refused");
+    expect(again.run.error).toBe("Already queued (runNow)");
+    expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/b`]);
+
+    const running = scheduler.requestRunNow(WS, OWNER, "a");
+    if (running?.state !== "refused") throw new Error("expected refused");
+    expect(running.run.error).toBe("Already running (runNow)");
+
+    releaseAll();
+    scheduler.stop();
+  });
+
+  it("a refused Run now leaves the schedule alone", async () => {
+    const nextRunAt = new Date(Date.now() + 3_600_000).toISOString();
+    seedDefs(tmpDir, new Map([["a", makeAutomation({ id: "a", nextRunAt })]]));
+    const { executor, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    expect(scheduler.requestRunNow(WS, OWNER, "a")?.state).toBe("refused");
+    expect(loadDefs(tmpDir).get("a")?.nextRunAt).toBe(nextRunAt);
+
+    releaseAll();
+    scheduler.stop();
+  });
+
+  it("cancel removes a queued run and records it cancelled", async () => {
+    seedIdle(["a", "b"]);
+    const { executor, started, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    const queued = scheduler.requestRunNow(WS, OWNER, "b");
+    if (queued?.state !== "queued") throw new Error("expected queued");
+
+    expect(scheduler.cancelRun(WS, OWNER, "b")).toBe(true);
+    expect(scheduler.getQueuedRunIds()).toEqual([]);
+    const run = await queued.run;
+    expect(run.status).toBe("cancelled");
+    expect(readRuns(tmpDir, WS, OWNER, "b").map((r) => r.status)).toEqual(["cancelled"]);
+
+    releaseAll();
+    await tick();
+    expect(started).toEqual(["a"]);
+    expect(scheduler.cancelRun(WS, OWNER, "b")).toBe(false);
+    scheduler.stop();
+  });
+
+  it("stop records every queued run as skipped", async () => {
+    seedIdle(["a", "b"]);
+    const { executor } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    const queued = scheduler.requestRunNow(WS, OWNER, "b");
+    if (queued?.state !== "queued") throw new Error("expected queued");
+
+    scheduler.stop();
+    const run = await queued.run;
+    expect(run.status).toBe("skipped");
+    expect(run.error).toContain("runtime stopped");
+    expect(readRuns(tmpDir, WS, OWNER, "b").map((r) => r.status)).toEqual(["skipped"]);
+  });
+
+  it("an event run at the limit queues and runs when a slot frees", async () => {
+    seedDefs(
+      tmpDir,
+      new Map([
+        ["a", makeAutomation({ id: "a", enabled: false })],
+        ["ev", makeAutomation({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
+      ]),
+    );
+    const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    const outcome = scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
+    await tick();
+    expect(started).toEqual(["a"]);
+    expect(scheduler.getQueuedRunIds()).toEqual([`${WS}/${OWNER}/ev`]);
+    expect(readRuns(tmpDir, WS, OWNER, "ev")).toEqual([]);
+
+    releaseOne();
+    await tick();
+    expect(started).toEqual(["a", "ev"]);
+    releaseAll();
+    const settled = await outcome;
+    if (!("run" in settled)) throw new Error(`expected a run, got ${JSON.stringify(settled)}`);
+    expect(settled.run.status).toBe("success");
+    scheduler.stop();
+  });
+
+  it("an event run beyond the queue limit is skipped", async () => {
+    seedDefs(
+      tmpDir,
+      new Map([
+        ["a", makeAutomation({ id: "a", enabled: false })],
+        ["ev", makeAutomation({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
+      ]),
+    );
+    const { executor, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      maxConcurrentRuns: 1,
+      maxQueuedRuns: 0,
+    });
+    scheduler.start();
+
+    scheduler.requestRunNow(WS, OWNER, "a");
+    const outcome = await scheduler.runFromEvent(WS, OWNER, "ev", { preamble: "x" });
+    expect(outcome).toMatchObject({ skipped: expect.stringContaining("run queue was full") });
+    expect(readRuns(tmpDir, WS, OWNER, "ev").map((r) => r.trigger)).toEqual(["event"]);
+
+    releaseAll();
+    scheduler.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: token budget on Run now
+// ---------------------------------------------------------------------------
+
+describe("Scheduler — token budget applies to every run", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function runOf(id: string, inputTokens: number): AutomationRun {
+    return { ...makeSuccessRun(id), inputTokens, outputTokens: 0 };
+  }
+
+  it("accumulates a disabled automation's Run now spend", async () => {
+    const auto = makeAutomation({
+      enabled: false,
+      tokenBudget: { maxInputTokens: 5000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    const scheduler = new Scheduler(createMockExecutor(runOf(auto.id, 3000)), {
+      workDir: tmpDir,
+    });
+    scheduler.start();
+
+    await scheduler.runNow(WS, OWNER, auto.id);
+    expect(defOf(scheduler, auto.id)?.cumulativeInputTokens).toBe(3000);
+    scheduler.stop();
+  });
+
+  it("refuses Run now on a disabled automation whose budget is spent", async () => {
+    const auto = makeAutomation({
+      enabled: false,
+      tokenBudget: { maxInputTokens: 5000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    const executor = createMockExecutor(runOf(auto.id, 3000));
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+
+    expect((await scheduler.runNow(WS, OWNER, auto.id))?.status).toBe("success");
+    expect((await scheduler.runNow(WS, OWNER, auto.id))?.status).toBe("success"); // 6000 > 5000
+    const refused = await scheduler.runNow(WS, OWNER, auto.id);
+    expect(refused?.status).toBe("skipped");
+    expect(refused?.error).toContain("Token budget exceeded");
+    expect(refused?.error).toContain("until the budget resets");
+    expect(executor).toHaveBeenCalledTimes(2);
+    scheduler.stop();
+  });
+
+  it("lets Run now through again once the window resets", async () => {
+    const auto = makeAutomation({
+      enabled: false,
+      cumulativeInputTokens: 9000,
+      tokenBudget: { maxInputTokens: 5000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    const executor = createMockExecutor(runOf(auto.id, 100));
+    const scheduler = new Scheduler(executor, { workDir: tmpDir });
+    scheduler.start();
+
+    expect((await scheduler.runNow(WS, OWNER, auto.id))?.status).toBe("skipped");
+
+    // The window's boundary passes.
+    defOf(scheduler, auto.id)!.budgetResetAt = new Date(Date.now() - 1000).toISOString();
+    const stored = loadDefs(tmpDir).get(auto.id)!;
+    stored.budgetResetAt = new Date(Date.now() - 1000).toISOString();
+    saveAutomation(tmpDir, WS, OWNER, stored);
+
+    expect((await scheduler.runNow(WS, OWNER, auto.id))?.status).toBe("success");
+    const after = defOf(scheduler, auto.id)!;
+    expect(after.cumulativeInputTokens).toBe(100);
+    expect(new Date(after.budgetResetAt!).getTime()).toBeGreaterThan(Date.now());
+    scheduler.stop();
+  });
+
+  it("a lifetime budget refuses until it is raised", async () => {
+    const auto = makeAutomation({
+      enabled: false,
+      cumulativeInputTokens: 9000,
+      tokenBudget: { maxInputTokens: 5000 },
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    const scheduler = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+    scheduler.start();
+
+    const refused = await scheduler.runNow(WS, OWNER, auto.id);
+    expect(refused?.status).toBe("skipped");
+    expect(refused?.error).toContain("until its token budget is raised");
+    scheduler.stop();
+  });
+
+  it("seeding an unset window starts it fresh instead of counting stale spend", async () => {
+    const auto = makeAutomation({
+      cumulativeInputTokens: 90_000,
+      tokenBudget: { maxInputTokens: 10_000, period: "daily" },
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    const scheduler = new Scheduler(createMockExecutor(runOf(auto.id, 1000)), {
+      workDir: tmpDir,
+    });
+    scheduler.start();
+    await scheduler.onTimer();
+
+    const updated = defOf(scheduler, auto.id)!;
+    expect(updated.cumulativeInputTokens).toBe(1000);
+    expect(updated.enabled).toBe(true);
+    expect(updated.budgetResetAt).toBeDefined();
     scheduler.stop();
   });
 });

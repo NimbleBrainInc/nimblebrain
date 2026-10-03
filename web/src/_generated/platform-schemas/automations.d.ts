@@ -327,6 +327,18 @@ export interface AutomationsRunsOutput {
  *                                                    (`since: startedAt`)
  *                                                    when it ends.
  *
+ *   { status: "queued"; automationId; position;     when every run slot was
+ *     queuedAt; enabled; message }                   busy. It starts as soon
+ *                                                    as a slot frees; its record
+ *                                                    lands in `automations__runs`
+ *                                                    (`since: queuedAt`) when it
+ *                                                    ends. `automations__cancel`
+ *                                                    removes it from the queue.
+ *
+ * A Run now the scheduler refuses (already running or queued, a full queue, a
+ * spent token budget) returns the first shape with a `skipped` run whose
+ * `error` says why.
+ *
  * `enabled` is the automation's own flag. Run now runs a disabled automation,
  * because it is a deliberate act and the create form's test run depends on
  * it; a disabled automation is not fired by its schedule or by events, and
@@ -345,6 +357,14 @@ export type AutomationsRunOutput = {
     status: "dispatched";
     automationId: string;
     startedAt: string;
+    enabled: boolean;
+    message: string;
+} | {
+    status: "queued";
+    automationId: string;
+    /** 1 is next to start. */
+    position: number;
+    queuedAt: string;
     enabled: boolean;
     message: string;
 };
@@ -388,15 +408,27 @@ export interface AutomationRecord {
     tokenBudget?: AutomationTokenBudget;
     budgetResetAt?: string;
 }
+/**
+ * The caps a run of the automation executes under: each cap the definition
+ * sets, lowered to the runtime's per-run ceiling, and the ceiling or runtime
+ * default where it sets none. `message` names any cap that was lowered.
+ */
+export interface AutomationEffectiveLimits {
+    maxIterations: number;
+    maxInputTokens: number;
+    maxRunDurationMs: number;
+}
 export interface AutomationsCreateOutput {
     automation: AutomationRecord;
     created: boolean;
     message: string;
+    effectiveLimits: AutomationEffectiveLimits;
 }
 export interface AutomationsUpdateOutput {
     automation: AutomationRecord;
     updated: boolean;
     message: string;
+    effectiveLimits: AutomationEffectiveLimits;
 }
 export interface AutomationsDeleteOutput {
     deleted: boolean;

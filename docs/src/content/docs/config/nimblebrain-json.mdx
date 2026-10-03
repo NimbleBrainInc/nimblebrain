@@ -117,6 +117,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
+| `automations` | `object` | — | Automation run slots, queue, and per-run ceilings. See [automations](#automations). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
@@ -624,6 +625,34 @@ the first few forever.
   read the same outbox twice and race the same stored position. See
   [Observability](/deploy/observability/#background-loops).
 </Aside>
+
+## automations
+
+Guardrails on [automation](/using/automations) runs: how many the runtime holds in flight and waiting, across every workspace, and the most any one run may spend.
+
+```json
+{
+  "automations": {
+    "maxConcurrentRuns": 2,
+    "maxQueuedRuns":     50,
+    "maxRunIterations":  50,
+    "maxRunInputTokens": 1000000,
+    "maxRunDurationMs":  600000
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxConcurrentRuns` | `integer` | `2` | Automation runs in flight at once. Scheduled, Run now, and event runs share these slots. Range: 1--100. |
+| `maxQueuedRuns` | `integer` | `50` | Run now and event runs held waiting for a slot; each starts as soon as one frees. Beyond it a run is refused and recorded as skipped. `0` refuses at the limit. Range: 0--1000. |
+| `maxRunIterations` | `integer` | `50` | Ceiling on one run's agentic iterations. Range: 1--50. |
+| `maxRunInputTokens` | `integer` | `1000000` | Ceiling on one run's input tokens, summed over every model call. Range: 1,000--1,000,000. |
+| `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. |
+
+The three per-run ceilings apply when a run starts, so they cover every stored automation however it was written. A cap an automation sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling, and the input-token ceiling itself. The create and update tools report the caps that result.
+
+A scheduled run that finds every slot busy is deferred rather than queued: it keeps its next-run time and runs on the first scheduler tick with a free slot, so its place survives a restart. The queue is held in memory: runs still queued when the runtime stops are recorded as skipped.
 
 ## files
 
