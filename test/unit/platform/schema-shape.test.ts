@@ -35,6 +35,7 @@ import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
+import { createRunAdmission } from "../../../src/runtime/admission.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
 import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
@@ -79,6 +80,7 @@ function makeRuntimeStub(workDir: string): unknown {
     getNotificationsDeclaration: async () => undefined,
     getNotificationsPollConfig: () => resolvePollConfig(),
     getAutomationsConfig: () => resolveAutomationsConfig(),
+    getRunAdmission: () => createRunAdmission(),
     getMaxIterations: () => 25,
   };
 }

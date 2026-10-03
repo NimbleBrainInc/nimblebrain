@@ -38,10 +38,10 @@ Three schedule types:
 
 ## Run slots and the queue
 
-The runtime runs a fixed number of automation runs at once across all of its workspaces: two by default, set by the operator with [`automations.maxConcurrentRuns`](/config/nimblebrain-json/#automations). Scheduled runs, Run now, and event runs all share those slots.
+The runtime runs a fixed number of unattended runs at once across all of its workspaces: two by default, set by the operator with [`automations.maxConcurrentRuns`](/config/nimblebrain-json/#automations). Scheduled runs, Run now, event runs, and any other run started without a person in the loop all share those slots. Chat is not limited by them.
 
 - **A scheduled run** that comes due while every slot is busy waits for a slot and then runs, oldest due first, so a tightly spaced batch runs late rather than being dropped. Its place is held by its next-run time, so it survives a restart.
-- **A Run now or an event run** that arrives while every slot is busy joins a queue and starts the moment a slot frees, oldest first. Run now answers at once that the run is queued and at what position. A queued run gets a freed slot before a waiting scheduled run does.
+- **A Run now or an event run** that arrives while every slot is busy joins a queue and starts when a slot frees. A freed slot goes to the waiting run whose workspace holds the fewest slots, and to the oldest among equals, so one busy workspace cannot keep another waiting; a workspace with no one else waiting uses every slot. Run now answers at once that the run is queued and at what position in arrival order. A queued run gets a freed slot before a waiting scheduled run does.
 - **The queue is bounded**: 50 runs by default ([`automations.maxQueuedRuns`](/config/nimblebrain-json/#automations)). A run that arrives when it is full is not started and is recorded as skipped, with the reason.
 - **One run per automation.** A Run now or event run for an automation that already has a run in flight or queued is recorded as skipped.
 - **Cancel** stops a run in flight, or removes a queued one and records it as cancelled.
