@@ -54,7 +54,7 @@ function dcrEntry(): CatalogListing {
     description: "Meeting notes",
     install: {
       kind: "remote-oauth",
-      url: "https://api.granola.test/mcp",
+      url: "https://mcp.granola.ai/mcp",
       transportType: "streamable-http",
       auth: "dcr",
     },
@@ -188,7 +188,7 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
     const refs = await new IdentityConnectorStore({ workDir: h.workDir }).list(USER.id);
     expect(refs).toHaveLength(1);
     const ref = refs[0] as { url?: string; oauthScope?: unknown };
-    expect(ref.url).toBe("https://api.granola.test/mcp");
+    expect(ref.url).toBe("https://mcp.granola.ai/mcp");
     // Identity refs are user-owned structurally and carry NO oauthScope literal.
     expect(ref.oauthScope).toBeUndefined();
     // Fresh install reports alreadyInstalled:false (symmetric with the dup path).

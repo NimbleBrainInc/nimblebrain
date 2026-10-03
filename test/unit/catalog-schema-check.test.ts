@@ -81,6 +81,21 @@ describe("validateCatalog", () => {
     expect(diagnostics[0]?.message).toContain("duplicate name");
   });
 
+  test("two ids sharing one server name are both reported, naming each other and the name", () => {
+    // `a.b/c` and `a/b.c` both slugify to `a-b-c`.
+    writeCatalog("a.json", [{ ...VALID_ENTRY, name: "a.b/c" }, VALID_ENTRY]);
+    writeCatalog("b.json", [{ ...VALID_ENTRY, name: "a/b.c" }]);
+
+    const diagnostics = validateCatalog(dir);
+    expect(diagnostics.map((d) => d.name).sort()).toEqual(["a.b/c", "a/b.c"]);
+    for (const d of diagnostics) {
+      expect(d.collision).toBe(true);
+      expect(d.message).toContain('"a-b-c"');
+    }
+    expect(diagnostics.find((d) => d.name === "a.b/c")?.message).toContain('"a/b.c"');
+    expect(readCatalogServers(dir).map((s) => s.name)).toEqual(["com.example/mcp"]);
+  });
+
   test("an unparseable file is reported and does not sink its siblings", () => {
     writeFileSync(join(dir, "a-broken.json"), "{ not json");
     writeCatalog("b-fine.json", [VALID_ENTRY]);

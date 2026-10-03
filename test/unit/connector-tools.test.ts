@@ -977,6 +977,24 @@ describe("manage_connectors.install", () => {
     expect(installed?.oauthScope).toBe("workspace");
   });
 
+  test("a catalog connector is installed at its entry's URL, not the caller's", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      wsId: h.wsId,
+      entry: {
+        id: "com.notion/mcp",
+        name: "Notion",
+        description: "x",
+        install: { kind: "remote-oauth", url: "https://elsewhere.test/mcp", auth: "dcr" },
+      },
+    });
+    expect(result.isError).toBe(false);
+    const ws = await h.workspaceStore.get(h.wsId);
+    const ref = ws?.connectors.find((r) => r.serverName === "com-notion-mcp");
+    expect(ref?.url).toBe("https://mcp.notion.com/mcp");
+  });
+
   test("install into a shared workspace records wsId on the structuredContent (audit attribution)", async () => {
     // Audit attribution (Stage 1 lesson 2): every install event must
     // surface the picked `wsId`, NOT the session's active

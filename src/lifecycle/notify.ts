@@ -59,11 +59,12 @@ export interface ReadyOutcome {
 
 export interface LifecycleNotifyDeps {
   /**
-   * The lifecycle declaration for an installed connector, from
-   * OPERATOR-TRUSTED metadata — the published catalog entry, never a
-   * caller-supplied one. `undefined` when the connector declares none.
+   * The lifecycle declaration for a connector installed in `wsId`, from
+   * OPERATOR-TRUSTED metadata — the published catalog entry the installed ref
+   * is (`catalog/binding.ts`), never a caller-supplied one. `undefined` when it
+   * declares none.
    */
-  declarationFor(serverName: string): Promise<LifecycleDeclaration | undefined>;
+  declarationFor(wsId: string, serverName: string): Promise<LifecycleDeclaration | undefined>;
   /** The live source for `(wsId, serverName)`, or undefined when it is not running. */
   portFor(wsId: string, serverName: string): ConnectorPort | undefined;
 }
@@ -94,7 +95,7 @@ export async function notifyReady(
   connector: string,
   reason: LifecycleReadyReason,
 ): Promise<ReadyOutcome> {
-  const decl = await deps.declarationFor(connector);
+  const decl = await deps.declarationFor(wsId, connector);
   if (!decl) return { settled: true };
 
   const port = deps.portFor(wsId, connector);
@@ -273,7 +274,7 @@ export async function notifyRemoving(
   // what failed was reading the declaration or reaching the source.
   let handler: string | undefined;
   try {
-    handler = (await deps.declarationFor(connector))?.on_removing;
+    handler = (await deps.declarationFor(wsId, connector))?.on_removing;
     if (!handler) return;
     const port = deps.portFor(wsId, connector);
     if (!port) {

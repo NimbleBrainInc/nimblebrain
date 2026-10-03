@@ -460,8 +460,8 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   // transport" is what the guard is for.
   const poller = new NotificationPoller({
     targets: () =>
-      collectPollTargets(runtime.getLifecycle(), (serverName) =>
-        runtime.getNotificationsDeclaration(serverName),
+      collectPollTargets(runtime.getLifecycle(), (wsId, serverName) =>
+        runtime.getNotificationsDeclaration(wsId, serverName),
       ),
     storeFor: (wsId) => runtime.getNotificationStore(wsId),
     workspaceStore: runtime.getWorkspaceStore(),

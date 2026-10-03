@@ -170,6 +170,13 @@ beforeAll(async () => {
       await source.start();
       registry.addSource(source);
     }
+    // Installed at the catalog entries' URLs: a catalog gate binds to the ref.
+    await wsStore.update(wsId, {
+      connectors: [
+        { url: "https://scope.acme.test/mcp", serverName: SCOPED },
+        { url: "https://plain.acme.test/mcp", serverName: PLAIN },
+      ],
+    });
   }
 
   // A personal connector under the catalog connector's own name, granted to

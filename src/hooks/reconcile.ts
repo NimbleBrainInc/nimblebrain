@@ -32,12 +32,13 @@ import type { HookDeclaration } from "./types.ts";
 export interface HookReconcileDeps {
   workspaceStore: WorkspaceStore;
   /**
-   * The hook declarations for an installed connector, from OPERATOR-TRUSTED
-   * metadata — the published catalog entry, never a caller-supplied one. A
-   * forged entry that could inject a route would be choosing where this runtime
-   * sends a delivery, with a freshly minted platform token attached.
+   * The hook declarations for a connector installed in `wsId`, from
+   * OPERATOR-TRUSTED metadata — the published catalog entry the installed ref
+   * is (`catalog/binding.ts`), never a caller-supplied one. A forged entry that
+   * could inject a route would be choosing where this runtime sends a delivery,
+   * with a freshly minted platform token attached.
    */
-  declarationsFor(serverName: string): Promise<HookDeclaration[]>;
+  declarationsFor(wsId: string, serverName: string): Promise<HookDeclaration[]>;
   /** The live source for `(wsId, serverName)`, or undefined when it is not running. */
   portFor(wsId: string, serverName: string): ConnectorPort | undefined;
   /** This runtime's hook identity, or undefined when it has no hooks door. */
@@ -89,7 +90,7 @@ export async function ensureHooks(
   const identity = deps.identity;
   if (!identity) return [];
 
-  let declarations = await deps.declarationsFor(connector);
+  let declarations = await deps.declarationsFor(wsId, connector);
   if (declarations.length === 0) return [];
 
   const ws = await deps.workspaceStore.get(wsId);

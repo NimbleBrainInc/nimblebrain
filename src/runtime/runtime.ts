@@ -14,6 +14,7 @@ import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
   catalogPath,
@@ -31,21 +32,16 @@ import {
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
 import {
   catalogTitleByServerName,
-  catalogUiByServerName,
   namedUi,
   withCatalogUi,
 } from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
-import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
+import { serverNameFromRef } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
-import type {
-  ConnectorInstance,
-  ConnectorUiMeta,
-  PlacementDeclaration,
-} from "../connectors/runtime/types.ts";
+import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
 import {
   type ConnectorTeardownOutcome,
   uninstallWorkspaceConnector,
@@ -1021,7 +1017,11 @@ export class Runtime {
       await seedWorkspaceConnectorInstances(
         lifecycle,
         placementRegistry,
-        withCatalogUi(workspaceConnectorEntries, await bootCatalogUi(rt)),
+        withCatalogUi(
+          workspaceConnectorEntries,
+          await bootCatalogEntries(rt),
+          (wsId, serverName, entry) => rt.warnCatalogMismatch(wsId, serverName, entry),
+        ),
       );
 
       // Reconcile connector-skill overlays to the pinned version. Overlays bind
@@ -3278,9 +3278,10 @@ export class Runtime {
   }
 
   /**
-   * Each installed connector's display name by server name: the trusted catalog
-   * entry's core `title ?? name`, by the same slug rule
-   * {@link trustedCatalogEntryFor} uses. A connector the catalog does not name
+   * Each installed connector's display name by server name: the catalog entry's
+   * core `title ?? name`, by the server name its id slugifies to. A label, not a
+   * grant, so it is not held to the ref's URL as {@link boundCatalogEntries}
+   * holds every grant. A connector the catalog does not name
    * is absent, and callers show its server name. A catalog read that fails
    * yields no titles rather than failing the caller, which only displays them.
    */
@@ -4095,20 +4096,18 @@ export class Runtime {
   }
 
   /**
-   * The outbox an installed connector declares, or `undefined` when it
+   * The outbox a connector installed in `wsId` declares, or `undefined` when it
    * declares none.
    *
-   * Resolved from the operator-published catalog the same way hook
-   * declarations are, and by the same slug rule the install used, so the two
-   * cannot disagree after a catalog edit. The poller reads this to decide
-   * which connectors it has anything to poll.
+   * Resolved from the catalog entry the installed ref is, the same way hook
+   * declarations are ({@link trustedCatalogEntryFor}). The poller reads this to
+   * decide which connectors it has anything to poll.
    */
   async getNotificationsDeclaration(
+    wsId: string,
     serverName: string,
   ): Promise<NotificationsDeclaration | undefined> {
-    const entries = await this.getConnectorCatalog().catalogEntries();
-    const entry = entries.find((e) => slugifyServerName(e.id) === serverName);
-    return entry?.notifications;
+    return (await this.trustedCatalogEntryFor(wsId, serverName))?.notifications;
   }
 
   /**
@@ -4116,21 +4115,19 @@ export class Runtime {
    *
    * The set the poller has anything to read from, and the set the settings
    * surface offers a ceiling for — one derivation rather than two, so the page
-   * can never show a source the poller ignores. Resolved from the
-   * operator-published catalog by the same slug rule the install used, and
-   * intersected with the workspace's own registry so another workspace's
-   * connectors are not in the answer.
+   * can never show a source the poller ignores. Resolved from the catalog entry
+   * each installed ref is ({@link boundCatalogEntries}), and intersected with
+   * the workspace's own registry so a connector that is not running is not in
+   * the answer.
    */
   async listNotificationSources(
     wsId: string,
   ): Promise<Array<{ source: string; label: string; description?: string }>> {
     const registry = await this.ensureWorkspaceRegistry(wsId);
     const installed = new Set(registry.sourceNames());
-    const entries = await this.getConnectorCatalog().catalogEntries();
     const out: Array<{ source: string; label: string; description?: string }> = [];
-    for (const entry of entries) {
+    for (const [source, entry] of await this.boundCatalogEntries(wsId)) {
       if (!entry.notifications) continue;
-      const source = slugifyServerName(entry.id);
       if (!installed.has(source)) continue;
       out.push({
         source,
@@ -4161,8 +4158,8 @@ export class Runtime {
     return {
       workspaceStore: this._workspaceStore,
       identity: readHookIdentity(),
-      declarationsFor: async (serverName: string) => {
-        const entry = await this.trustedCatalogEntryFor(serverName);
+      declarationsFor: async (wsId: string, serverName: string) => {
+        const entry = await this.trustedCatalogEntryFor(wsId, serverName);
         return entry?.hooks ?? [];
       },
       portFor: (wsId, serverName) => this.connectorPortFor(wsId, serverName),
@@ -4181,8 +4178,8 @@ export class Runtime {
    */
   getLifecycleNotifyDeps(): LifecycleNotifyDeps {
     return {
-      declarationFor: async (serverName: string) => {
-        const entry = await this.trustedCatalogEntryFor(serverName);
+      declarationFor: async (wsId: string, serverName: string) => {
+        const entry = await this.trustedCatalogEntryFor(wsId, serverName);
         return entry?.lifecycle;
       },
       portFor: (wsId, serverName) => this.connectorPortFor(wsId, serverName),
@@ -4208,7 +4205,7 @@ export class Runtime {
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
   ): Promise<ConnectorAdmission> {
-    return this.admissionWith(wsId, principal, await this.catalogGatesByServer());
+    return this.admissionWith(wsId, principal, await this.catalogGatesByServer(wsId));
   }
 
   /** {@link connectorAdmission} against gates the caller already resolved. */
@@ -4251,7 +4248,7 @@ export class Runtime {
     toolName: string,
     call: AdminToolCall,
   ): Promise<ToolResult | null> {
-    const declared = await this.catalogGatesByServer();
+    const declared = await this.catalogGatesByServer(wsId);
     if (isHostOnlyTool(declared.get(serverName)?.lifecycle, toolName)) {
       return hostOnlyToolDenial(serverName, toolName);
     }
@@ -4317,7 +4314,7 @@ export class Runtime {
    * does not advertise. Empty when there is nothing to say.
    */
   async adminToolsContractWarnings(wsId: string, serverName: string): Promise<string[]> {
-    const entry = await this.trustedCatalogEntryFor(serverName);
+    const entry = await this.trustedCatalogEntryFor(wsId, serverName);
     if (!entry?.adminTools) return [];
     const port = this.connectorPortFor(wsId, serverName);
     let tools: Tool[] | undefined;
@@ -4335,23 +4332,16 @@ export class Runtime {
     });
   }
 
-  /** The gating declarations (`admin_tools`, `lifecycle`) by installed source
-   *  name, from the trusted catalog, by the same slug rule
-   *  {@link trustedCatalogEntryFor} uses. A connector that declares neither is
-   *  absent. */
-  private async catalogGatesByServer(): Promise<
-    Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>
-  > {
-    const entries = await this.getConnectorCatalog().catalogEntries();
-    const seen = new Set<string>();
+  /** The gating declarations (`admin_tools`, `lifecycle`) of each connector
+   *  installed in `wsId`, by source name, from the catalog entry it is
+   *  ({@link boundCatalogEntries}). A connector that declares neither is absent. */
+  private async catalogGatesByServer(
+    wsId: string,
+  ): Promise<Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>> {
     const out = new Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>();
-    for (const e of entries) {
-      // First entry per slug wins, declaring or not, as in `trustedCatalogEntryFor`.
-      const slug = slugifyServerName(e.id);
-      if (seen.has(slug)) continue;
-      seen.add(slug);
+    for (const [serverName, e] of await this.boundCatalogEntries(wsId)) {
       if (e.adminTools || e.lifecycle) {
-        out.set(slug, {
+        out.set(serverName, {
           ...(e.adminTools ? { adminTools: e.adminTools } : {}),
           ...(e.lifecycle ? { lifecycle: e.lifecycle } : {}),
         });
@@ -4360,19 +4350,62 @@ export class Runtime {
     return out;
   }
 
-  /**
-   * The operator-trusted catalog entry an installed connector came from.
-   *
-   * The installed ref does not persist the catalog id, so the entry is found by
-   * the same slug rule the install used (`slugifyServerName(entry.id) ===
-   * serverName`). Deriving it rather than storing a second copy is what keeps
-   * the two from disagreeing after a catalog edit.
-   */
+  /** The operator-trusted catalog entry a connector installed in `wsId` is. */
   private async trustedCatalogEntryFor(
+    wsId: string,
     serverName: string,
   ): Promise<ConnectorCatalogEntry | undefined> {
-    const entries = await this.getConnectorCatalog().catalogEntries();
-    return entries.find((e) => slugifyServerName(e.id) === serverName);
+    return (await this.boundCatalogEntries(wsId)).get(serverName);
+  }
+
+  /**
+   * The catalog entry each connector installed in `wsId` is, by source name.
+   * Every catalog grant (host UI aside, which boot binds from the same rule)
+   * is read through here.
+   *
+   * The installed ref does not persist the catalog id, so the entry is found by
+   * the server name its id slugifies to and then held to the ref's identity —
+   * its URL, or a brokered ref's stamped catalog id (`bindCatalogEntry`).
+   * Deriving it rather than storing a second copy keeps the two from
+   * disagreeing after a catalog edit. A ref that carries an entry's name and is
+   * another server is absent here, so it runs with no grants, and the operator
+   * is told once per process.
+   */
+  private async boundCatalogEntries(wsId: string): Promise<Map<string, ConnectorCatalogEntry>> {
+    const [ws, entries] = await Promise.all([
+      this._workspaceStore.get(wsId),
+      this.getConnectorCatalog().catalogEntries(),
+    ]);
+    const out = new Map<string, ConnectorCatalogEntry>();
+    for (const ref of ws?.connectors ?? []) {
+      const serverName = serverNameFromRef(ref);
+      if (serverName === null) continue;
+      const binding = bindCatalogEntry(ref, entries);
+      if (binding.kind === "bound") out.set(serverName, binding.entry);
+      else if (binding.kind === "mismatch")
+        this.warnCatalogMismatch(wsId, serverName, binding.entry);
+    }
+    return out;
+  }
+
+  /** Connectors already reported by {@link warnCatalogMismatch}, as `wsId/serverName`. */
+  private readonly catalogMismatchesWarned = new Set<string>();
+
+  /**
+   * Say once per (workspace, connector) that an installed connector carries a
+   * catalog entry's server name and is not that entry's server. Names the entry
+   * and never the ref's URL, which may carry a credential.
+   */
+  warnCatalogMismatch(wsId: string, serverName: string, entry: ConnectorCatalogEntry): void {
+    const key = `${wsId}/${serverName}`;
+    if (this.catalogMismatchesWarned.has(key)) return;
+    this.catalogMismatchesWarned.add(key);
+    log.warn(
+      `[connectors] "${serverName}" in ${wsId} carries the server name of catalog entry ` +
+        `"${entry.id}" but is not its server (a different URL or broker); it runs without ` +
+        "that entry's host UI, hooks, lifecycle, admin_tools or outbox",
+      { workspace_id: wsId, connector: serverName, catalog_id: entry.id },
+    );
   }
 
   /** The live source for `(wsId, serverName)` as a reconcile port, or undefined
@@ -5701,13 +5734,13 @@ function registerPlatformPlacements(
 }
 
 /**
- * The catalog's host UI by server name, for the boot seed. A catalog that cannot
- * be read yields an empty map, which leaves every connector with its stored `ui`:
- * a bad catalog file must not take every app out of the shell.
+ * The catalog, for the boot seed's host UI. A catalog that cannot be read yields
+ * `null`, which leaves every connector with its stored `ui`: a bad catalog file
+ * must not take every app out of the shell.
  */
-async function bootCatalogUi(rt: Runtime): Promise<Map<string, ConnectorUiMeta | null>> {
+async function bootCatalogEntries(rt: Runtime): Promise<ConnectorCatalogEntry[] | null> {
   try {
-    return catalogUiByServerName(await rt.getConnectorCatalog().catalogEntries());
+    return await rt.getConnectorCatalog().catalogEntries();
   } catch (err) {
     log.warn(
       "[connectors] catalog unreadable at boot; installed connectors keep their stored host UI",
@@ -5715,7 +5748,7 @@ async function bootCatalogUi(rt: Runtime): Promise<Map<string, ConnectorUiMeta |
         error: err instanceof Error ? err.message : String(err),
       },
     );
-    return new Map();
+    return null;
   }
 }
 

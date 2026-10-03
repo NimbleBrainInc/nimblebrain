@@ -234,6 +234,7 @@ export class ConnectorCatalog {
     const out: AggregatedServers = { servers: [], errors: [] };
     for (const d of diagnostics) {
       if (d.index === undefined) out.errors.push({ file: d.source, message: d.message });
+      else if (d.collision) log.error(`[catalog] ${d.message}`);
       else log.warn(`[catalog] ${d.message}`);
     }
 
