@@ -50,10 +50,10 @@ export function NotificationsProvider({
   const [error, setError] = useState<string | null>(null);
 
   // The workspace a read was issued for. A read that lands after a switch is
-  // dropped rather than applied: the tool answers for whatever workspace the
-  // request header named at send time, so a late response is another
-  // workspace's inbox, and painting it here is a cross-workspace leak in the
-  // one place the user would never think to check.
+  // dropped rather than applied: it answers for the workspace it named at send
+  // time, so a late response is another workspace's inbox, and painting it
+  // here is a cross-workspace leak in the one place the user would never think
+  // to check.
   const requestedFor = useRef<string | undefined>(undefined);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
