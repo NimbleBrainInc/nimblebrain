@@ -57,7 +57,7 @@ const ADMIN: UserIdentity = {
   preferences: {},
 };
 
-const SHARED_WS = "ws_helix";
+const SHARED_WS = "ws_003eba8844413cd9";
 /** `slugifyServerName("ai.granola/mcp")`, which is what the install records. */
 const CONNECTOR = "ai-granola-mcp";
 const NOTICE = "Setting up your sending workspace — watch the panel.";

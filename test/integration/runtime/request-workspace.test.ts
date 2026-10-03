@@ -94,8 +94,7 @@ describe("isPrincipalWorkspaceMember reads the member list", () => {
   it("is false for a workspace whose members lack the principal, whatever its id", async () => {
     const runtime = await startDev("membership");
     const store = runtime.getWorkspaceStore();
-    // An id that looks like the old per-user form grants nothing by its shape.
-    const ws = await seedWorkspace(store, `ws_user_${ALICE.id}`, {
+    const ws = await seedWorkspace(store, "ws_3f9a1c7e0b2d4856", {
       name: "Looks personal",
       members: [{ userId: "usr_bob", role: "admin" }],
     });
@@ -182,9 +181,9 @@ describe("a conversation's live title goes to its owner", () => {
     }
 
     test("reaches the owner's tabs alone, not the other members of the workspace", async () => {
-      const alice = collect(mgr.addIdentityClient(ALICE.id, new Set(["ws_team"])));
-      const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_team"])));
-      const workspaceClient = collect(mgr.addClient("ws_team"));
+      const alice = collect(mgr.addIdentityClient(ALICE.id, new Set(["ws_0071a5bbf40116e6"])));
+      const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_0071a5bbf40116e6"])));
+      const workspaceClient = collect(mgr.addClient("ws_0071a5bbf40116e6"));
 
       mgr.emit({
         type: "conversation.title",

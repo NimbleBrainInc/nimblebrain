@@ -139,12 +139,16 @@ describe("SmitheryProvider — the interface subset (what validates the seam)", 
 
 describe("smitheryUserId — owner namespacing (vendor-free)", () => {
   it("uses the bare workspace id when no tenant is stamped", () => {
-    expect(smitheryUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("ws_01abc");
+    expect(smitheryUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "ws_0001f3ac8053ce11",
+    );
   });
 
   it("prefixes the tenant id so workspace ids don't collide across tenants", () => {
     process.env.NB_TENANT_ID = "tenant-a";
-    expect(smitheryUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("tenant-a:ws_01abc");
+    expect(smitheryUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "tenant-a:ws_0001f3ac8053ce11",
+    );
   });
 
   it("namespaces identity owners distinctly from workspaces", () => {
@@ -154,14 +158,14 @@ describe("smitheryUserId — owner namespacing (vendor-free)", () => {
 
 describe("smitheryConnectionId — deterministic, path-safe, collision-free", () => {
   it("is stable for the same (owner, server) pair", () => {
-    const a = smitheryConnectionId("tenant-a:ws_01abc", "nimblebrain/bassethound");
-    const b = smitheryConnectionId("tenant-a:ws_01abc", "nimblebrain/bassethound");
+    const a = smitheryConnectionId("tenant-a:ws_0001f3ac8053ce11", "nimblebrain/bassethound");
+    const b = smitheryConnectionId("tenant-a:ws_0001f3ac8053ce11", "nimblebrain/bassethound");
     expect(a).toBe(b);
   });
 
   it("contains only path-safe characters even when the owner id does not", () => {
     // The Composio-style owner id carries a colon, which is not path-safe.
-    const id = smitheryConnectionId("tenant-a:ws_01abc", "nimblebrain/bassethound");
+    const id = smitheryConnectionId("tenant-a:ws_0001f3ac8053ce11", "nimblebrain/bassethound");
     expect(id).toMatch(/^[a-z0-9-]+$/);
     expect(encodeURIComponent(id)).toBe(id);
   });
@@ -181,8 +185,8 @@ describe("smitheryConnectionId — deterministic, path-safe, collision-free", ()
   });
 
   it("separates different servers for the same owner", () => {
-    const one = smitheryConnectionId("ws_1", "nimblebrain/bassethound");
-    const two = smitheryConnectionId("ws_1", "nimblebrain/other");
+    const one = smitheryConnectionId("ws_0002ee92e8791c13", "nimblebrain/bassethound");
+    const two = smitheryConnectionId("ws_0002ee92e8791c13", "nimblebrain/other");
     expect(one).not.toBe(two);
   });
 });
@@ -198,7 +202,7 @@ describe("SmitheryProvider.createSession", () => {
     });
 
     const session = await createSmitheryProvider().createSession({
-      userId: "ws_01abc",
+      userId: "ws_0001f3ac8053ce11",
       connectorId: "nimblebrain/bassethound",
       config: { server: "nimblebrain/bassethound" },
     });
@@ -211,9 +215,9 @@ describe("SmitheryProvider.createSession", () => {
     // The catalog names a registry server; the runtime never invents an endpoint.
     const body = JSON.parse(String(call?.init?.body));
     expect(body.server).toBe("nimblebrain/bassethound");
-    expect(body.metadata.userId).toBe("ws_01abc");
+    expect(body.metadata.userId).toBe("ws_0001f3ac8053ce11");
 
-    const expectedId = smitheryConnectionId("ws_01abc", "nimblebrain/bassethound");
+    const expectedId = smitheryConnectionId("ws_0001f3ac8053ce11", "nimblebrain/bassethound");
     expect(session.type).toBe("http");
     expect(session.url).toBe(
       smitheryMcpUrl(
@@ -236,7 +240,7 @@ describe("SmitheryProvider.createSession", () => {
   it("treats `disconnected` as usable — Smithery re-establishes the upstream leg on demand", async () => {
     stubFetch(200, { connectionId: "c", status: { state: "disconnected" } });
     const session = await createSmitheryProvider().createSession({
-      userId: "ws_01abc",
+      userId: "ws_0001f3ac8053ce11",
       connectorId: "nimblebrain/bassethound",
       config: { server: "nimblebrain/bassethound" },
     });
@@ -250,7 +254,7 @@ describe("SmitheryProvider.createSession", () => {
     });
 
     const promise = createSmitheryProvider().createSession({
-      userId: "ws_01abc",
+      userId: "ws_0001f3ac8053ce11",
       connectorId: "nimblebrain/needs-oauth",
       config: { server: "nimblebrain/needs-oauth" },
     });
@@ -269,7 +273,7 @@ describe("SmitheryProvider.createSession", () => {
     });
 
     const promise = createSmitheryProvider().createSession({
-      userId: "ws_01abc",
+      userId: "ws_0001f3ac8053ce11",
       connectorId: "nimblebrain/needs-config",
       config: { server: "nimblebrain/needs-config" },
     });
@@ -283,7 +287,7 @@ describe("SmitheryProvider.createSession", () => {
     });
 
     const promise = createSmitheryProvider().createSession({
-      userId: "ws_01abc",
+      userId: "ws_0001f3ac8053ce11",
       connectorId: "nimblebrain/broken",
       config: { server: "nimblebrain/broken" },
     });
@@ -294,7 +298,7 @@ describe("SmitheryProvider.createSession", () => {
     stubFetch(404, { error: "not_found", message: "Namespace not found or access denied" });
 
     const promise = createSmitheryProvider().createSession({
-      userId: "ws_01abc",
+      userId: "ws_0001f3ac8053ce11",
       connectorId: "nimblebrain/bassethound",
       config: { server: "nimblebrain/bassethound" },
     });

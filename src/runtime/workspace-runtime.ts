@@ -39,7 +39,7 @@ import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
 /** A single entry in the process inventory — one per (workspace, connector) pair. */
 export interface ProcessInventoryEntry {
-  /** Workspace id (e.g., "ws_engineering"). */
+  /** Workspace id (e.g., "ws_0030a37f450693bf"). */
   wsId: string;
   /** The connector reference from the workspace definition. */
   connector: ConnectorRef;

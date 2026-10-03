@@ -24,7 +24,7 @@ import { handleFork } from "../../../../src/platform/conversations/tools/fork.ts
 import { handleUpdate } from "../../../../src/platform/conversations/tools/update.ts";
 
 let workDir: string;
-const WS = "ws_helix";
+const WS = "ws_003eba8844413cd9";
 const OWNER = "usr_alice";
 const CONV = "conv_00000000000000a1";
 

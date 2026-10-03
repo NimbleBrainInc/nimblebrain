@@ -57,7 +57,7 @@ function flowSlot(lifecycle: ConnectorLifecycleManager): Map<string, Promise<unk
 }
 
 const OPTS = { workDir: "/tmp/nb-test", callbackUrl: "http://localhost/callback" };
-const KEY = "ghost|ws_test|_workspace";
+const KEY = "ghost|ws_0076759dbbe19fcc|_workspace";
 
 describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", () => {
   let lifecycle: ConnectorLifecycleManager;
@@ -85,11 +85,11 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     // Five concurrent calls in the same tick — N callers should produce
     // exactly one startAuthInner invocation.
     const results = await Promise.allSettled([
-      lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS),
-      lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS),
-      lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS),
-      lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS),
-      lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS),
+      lifecycle.startAuth("ghost", "ws_0076759dbbe19fcc", "_workspace", OPTS),
+      lifecycle.startAuth("ghost", "ws_0076759dbbe19fcc", "_workspace", OPTS),
+      lifecycle.startAuth("ghost", "ws_0076759dbbe19fcc", "_workspace", OPTS),
+      lifecycle.startAuth("ghost", "ws_0076759dbbe19fcc", "_workspace", OPTS),
+      lifecycle.startAuth("ghost", "ws_0076759dbbe19fcc", "_workspace", OPTS),
     ]);
     expect(innerInvocations).toBe(1);
     // All callers see the same rejection.
@@ -104,13 +104,15 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     // state branch in recordConnectionStateChange never gets a chance to
     // release the slot. The wrapper's flow.catch is the safety net; without
     // it the key would be locked forever on the very first failed attempt.
-    await expect(lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS)).rejects.toThrow();
+    await expect(
+      lifecycle.startAuth("ghost", "ws_0076759dbbe19fcc", "_workspace", OPTS),
+    ).rejects.toThrow();
     // Microtask drain so the .catch handler runs
     await Promise.resolve();
     expect(flowSlot(lifecycle).has(KEY)).toBe(false);
     // And the next attempt isn't stuck on the stale rejection — it's a
     // fresh call that also fails (different Promise reference).
-    const next = lifecycle.startAuth("ghost", "ws_test", "_workspace", OPTS);
+    const next = lifecycle.startAuth("ghost", "ws_0076759dbbe19fcc", "_workspace", OPTS);
     await expect(next).rejects.toThrow(/not installed/);
   });
 
@@ -125,12 +127,12 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     ] as const;
     for (const newState of terminals) {
       const lc = new ConnectorLifecycleManager(new CapturingSink());
-      seedInstance(lc, "granola", "ws_test", { url: "https://example.test/mcp" });
+      seedInstance(lc, "granola", "ws_0076759dbbe19fcc", { url: "https://example.test/mcp" });
       // Inject a fake in-flight flow
       const fake = Promise.resolve({ authorizationUrl: "x" });
-      flowSlot(lc).set("granola|ws_test|_workspace", fake);
-      lc.recordConnectionStateChange("granola", "ws_test", "_workspace", newState);
-      expect(flowSlot(lc).has("granola|ws_test|_workspace")).toBe(false);
+      flowSlot(lc).set("granola|ws_0076759dbbe19fcc|_workspace", fake);
+      lc.recordConnectionStateChange("granola", "ws_0076759dbbe19fcc", "_workspace", newState);
+      expect(flowSlot(lc).has("granola|ws_0076759dbbe19fcc|_workspace")).toBe(false);
     }
   });
 
@@ -143,23 +145,37 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     // silently no-ops until restart).
     const lc = new ConnectorLifecycleManager(new CapturingSink());
     // NO seedInstance — the instance was removed while the flow was in flight.
-    flowSlot(lc).set("ghost|ws_test|_workspace", Promise.resolve({ authorizationUrl: null }));
-    lc.recordConnectionStateChange("ghost", "ws_test", "_workspace", "running");
-    expect(flowSlot(lc).has("ghost|ws_test|_workspace")).toBe(false);
+    flowSlot(lc).set(
+      "ghost|ws_0076759dbbe19fcc|_workspace",
+      Promise.resolve({ authorizationUrl: null }),
+    );
+    lc.recordConnectionStateChange("ghost", "ws_0076759dbbe19fcc", "_workspace", "running");
+    expect(flowSlot(lc).has("ghost|ws_0076759dbbe19fcc|_workspace")).toBe(false);
   });
 
   test("recordConnectionStateChange does NOT release the slot on starting / pending_auth (the in-flight states the mutex exists to coalesce across)", () => {
-    seedInstance(lifecycle, "granola", "ws_test", { url: "https://example.test/mcp" });
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", { url: "https://example.test/mcp" });
     const fake = Promise.resolve({ authorizationUrl: "x" });
-    flowSlot(lifecycle).set("granola|ws_test|_workspace", fake);
+    flowSlot(lifecycle).set("granola|ws_0076759dbbe19fcc|_workspace", fake);
 
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "starting");
-    expect(flowSlot(lifecycle).get("granola|ws_test|_workspace")).toBe(fake);
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "starting",
+    );
+    expect(flowSlot(lifecycle).get("granola|ws_0076759dbbe19fcc|_workspace")).toBe(fake);
 
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
-      authorizationUrl: "y",
-    });
-    expect(flowSlot(lifecycle).get("granola|ws_test|_workspace")).toBe(fake);
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "pending_auth",
+      {
+        authorizationUrl: "y",
+      },
+    );
+    expect(flowSlot(lifecycle).get("granola|ws_0076759dbbe19fcc|_workspace")).toBe(fake);
   });
 
   test("flow.catch's CAS does not clear a slot that's been reassigned to a later flow", async () => {
@@ -206,9 +222,9 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     // permanently (every later startAuth returns the stale resolved promise → Reconnect
     // a silent no-op). Pin the invariant.
     const lifecycle = new ConnectorLifecycleManager(new CapturingSink());
-    seedInstance(lifecycle, "minted", "ws_test", { url: "https://example.test/mcp" });
+    seedInstance(lifecycle, "minted", "ws_0076759dbbe19fcc", { url: "https://example.test/mcp" });
     flowSlot(lifecycle).set(
-      "minted|ws_test|_workspace",
+      "minted|ws_0076759dbbe19fcc|_workspace",
       Promise.resolve({ authorizationUrl: null }),
     );
 
@@ -233,7 +249,7 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
       source,
       provider,
       serverName: "minted",
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
       principalId: "_workspace",
       getCapturedAuthUrl: () => undefined, // headless — connected without interactive auth
       resolveAuthUrl,
@@ -242,7 +258,7 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
 
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(flowSlot(lifecycle).has("minted|ws_test|_workspace")).toBe(false); // slot released
+    expect(flowSlot(lifecycle).has("minted|ws_0076759dbbe19fcc|_workspace")).toBe(false); // slot released
     expect(resolveAuthUrl).toHaveBeenCalledWith(null); // public contract: resolve null, not reject
   });
 });

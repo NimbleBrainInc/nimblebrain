@@ -286,9 +286,9 @@ async function press(input: HTMLInputElement, key: string) {
   });
 }
 
-const MINE = ws({ id: "ws_mine", name: "Mat's workspace" });
-const HELIX = ws({ id: "ws_helix", name: "Helix" });
-const ACME = ws({ id: "ws_acme", name: "Acme" });
+const MINE = ws({ id: "ws_00488fa17f87e9a3", name: "Mat's workspace" });
+const HELIX = ws({ id: "ws_003eba8844413cd9", name: "Helix" });
+const ACME = ws({ id: "ws_000f7ed6658f9d30", name: "Acme" });
 
 // ---------------------------------------------------------------------------
 // (1) One workspace, flat
@@ -298,24 +298,24 @@ describe("WorkspaceNav — the focused workspace only", () => {
   test("lists the focused workspace's views under /w/<slug>/ and no other workspace", async () => {
     mounted = await mount({
       workspaces: [MINE, HELIX, ACME],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [...IDENTITY_PLACEMENTS, appPlacement("people"), appPlacement("tasks")],
     });
 
     const nav = byTestId(mounted.container, "sidebar-workspace-nav");
     expect(nav).toHaveLength(1);
-    expect(nav[0]?.getAttribute("data-workspace-id")).toBe("ws_helix");
+    expect(nav[0]?.getAttribute("data-workspace-id")).toBe("ws_003eba8844413cd9");
 
     const hrefs = anchorHrefs(mounted.container);
     expect(hrefs).toEqual([
-      "/w/helix/",
-      "/w/helix/conversations",
-      "/w/helix/automations",
-      "/w/helix/files",
-      "/w/helix/settings/connectors/browse",
-      "/w/helix/app/people",
-      "/w/helix/app/tasks",
+      "/w/003eba8844413cd9/",
+      "/w/003eba8844413cd9/conversations",
+      "/w/003eba8844413cd9/automations",
+      "/w/003eba8844413cd9/files",
+      "/w/003eba8844413cd9/settings/connectors/browse",
+      "/w/003eba8844413cd9/app/people",
+      "/w/003eba8844413cd9/app/tasks",
     ]);
     expect(nav[0]?.textContent).not.toContain("Acme");
     expect(nav[0]?.textContent).not.toContain("Mat's workspace");
@@ -324,15 +324,17 @@ describe("WorkspaceNav — the focused workspace only", () => {
   test("Overview is the current page only on the overview", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/conversations",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/conversations",
       placements: IDENTITY_PLACEMENTS,
     });
 
     const current = Array.from(mounted.container.getElementsByTagName("a")).filter(
       (a) => a.getAttribute("aria-current") === "page",
     );
-    expect(current.map((a) => a.getAttribute("href"))).toEqual(["/w/helix/conversations"]);
+    expect(current.map((a) => a.getAttribute("href"))).toEqual([
+      "/w/003eba8844413cd9/conversations",
+    ]);
   });
 });
 
@@ -344,8 +346,8 @@ describe("WorkspaceNav — app quick-list", () => {
   test("caps apps at MAX_INLINE_APPS with a View-all overflow to the overview", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: Array.from({ length: MAX_INLINE_APPS + 1 }, (_, i) =>
         appPlacement(`app-${i}`, { priority: (i + 1) * 10 }),
       ),
@@ -356,14 +358,14 @@ describe("WorkspaceNav — app quick-list", () => {
     const viewAll = byTestId(mounted.container, "sidebar-workspace-view-all");
     expect(viewAll).toHaveLength(1);
     expect(viewAll[0]?.textContent).toContain(`View all ${MAX_INLINE_APPS + 1} apps`);
-    expect(viewAll[0]?.getAttribute("href")).toBe("/w/helix/");
+    expect(viewAll[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/");
   });
 
   test("the open app is the only one marked aria-current=page", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/app/salesforce",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/app/salesforce",
       placements: [appPlacement("collateral"), appPlacement("salesforce"), appPlacement("apollo")],
     });
 
@@ -391,24 +393,24 @@ describe("WorkspaceNav — app quick-list", () => {
     ];
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [...people, appPlacement("tasks", { priority: 20 })],
     });
 
     // Closed: one row per app, opening on the app's first view, and no views listed.
     const closed = byTestId(mounted.container, "sidebar-workspace-app");
     expect(closed.map((a) => a.getAttribute("href"))).toEqual([
-      "/w/helix/app/people",
-      "/w/helix/app/tasks",
+      "/w/003eba8844413cd9/app/people",
+      "/w/003eba8844413cd9/app/tasks",
     ]);
     expect(byTestId(mounted.container, "sidebar-workspace-app-view")).toHaveLength(0);
     mounted.unmount();
 
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/app/people/organizations",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/app/people/organizations",
       placements: [...people, appPlacement("tasks", { priority: 20 })],
     });
 
@@ -440,8 +442,8 @@ describe("WorkspaceNav — app quick-list", () => {
 
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements,
     });
     expect(label()).toEqual(["Contacts"]);
@@ -449,8 +451,8 @@ describe("WorkspaceNav — app quick-list", () => {
 
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements,
       installed: [installedConnector("people", "People")],
     });
@@ -460,8 +462,8 @@ describe("WorkspaceNav — app quick-list", () => {
     // A list read for another workspace does not name this one's apps.
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements,
       installed: [installedConnector("people", "People")],
       installedFor: ACME.id,
@@ -472,8 +474,8 @@ describe("WorkspaceNav — app quick-list", () => {
   test("the cap and the View-all count are in apps, not in the views they place", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [
         appPlacement("people", { priority: 10, route: "people" }),
         appPlacement("people", {
@@ -499,8 +501,8 @@ describe("WorkspaceNav — app quick-list", () => {
   test("collapsed, an app with several views is one icon, marked when a view is open", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/app/people/organizations",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/app/people/organizations",
       collapsed: true,
       placements: [
         appPlacement("people", { priority: 10, route: "people" }),
@@ -521,8 +523,8 @@ describe("WorkspaceNav — app quick-list", () => {
   test("no overflow link when apps fit within the cap", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [appPlacement("collateral"), appPlacement("salesforce")],
     });
 
@@ -535,14 +537,14 @@ describe("WorkspaceNav — add a connector", () => {
   test("the APPS header carries a + to the connector catalog", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [appPlacement("people")],
     });
 
     const add = byTestId(mounted.container, "sidebar-add-connector");
     expect(add).toHaveLength(1);
-    expect(add[0]?.getAttribute("href")).toBe("/w/helix/settings/connectors/browse");
+    expect(add[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/settings/connectors/browse");
     expect(add[0]?.getAttribute("aria-label")).toBe("Add apps and tools");
     expect(add[0]?.parentElement?.textContent).toBe("Apps");
   });
@@ -550,8 +552,8 @@ describe("WorkspaceNav — add a connector", () => {
   test("a workspace with no apps still shows APPS and its +", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
     });
 
     expect(byTestId(mounted.container, "sidebar-add-connector")).toHaveLength(1);
@@ -560,9 +562,9 @@ describe("WorkspaceNav — add a connector", () => {
 
   test("a member who cannot write the workspace gets no +", async () => {
     mounted = await mount({
-      workspaces: [ws({ id: "ws_helix", name: "Helix", userRole: "member" })],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      workspaces: [ws({ id: "ws_003eba8844413cd9", name: "Helix", userRole: "member" })],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [appPlacement("people")],
     });
 
@@ -573,14 +575,14 @@ describe("WorkspaceNav — add a connector", () => {
   test("no connectors without a view, no shared row", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [appPlacement("people")],
       installed: [installedConnector("people")],
     });
 
     expect(byTestId(mounted.container, "sidebar-workspace-tools")).toHaveLength(0);
-    expect(anchorHrefs(mounted.container)).not.toContain("/w/helix/settings/connectors");
+    expect(anchorHrefs(mounted.container)).not.toContain("/w/003eba8844413cd9/settings/connectors");
   });
 });
 
@@ -588,8 +590,8 @@ describe("WorkspaceNav — connectors without a view", () => {
   test("share one row after the apps, counting only those without a view", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [appPlacement("people")],
       installed: [
         installedConnector("people"),
@@ -600,21 +602,21 @@ describe("WorkspaceNav — connectors without a view", () => {
 
     const row = byTestId(mounted.container, "sidebar-workspace-tools");
     expect(row).toHaveLength(1);
-    expect(row[0]?.getAttribute("href")).toBe("/w/helix/settings/connectors");
+    expect(row[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/settings/connectors");
     expect(row[0]?.textContent).toContain("2 more connected");
     expect(row[0]?.getAttribute("title")).toBe("Gmail, Granola");
     // After the apps.
     const hrefs = anchorHrefs(mounted.container);
-    expect(hrefs.indexOf("/w/helix/settings/connectors")).toBeGreaterThan(
-      hrefs.indexOf("/w/helix/app/people"),
+    expect(hrefs.indexOf("/w/003eba8844413cd9/settings/connectors")).toBeGreaterThan(
+      hrefs.indexOf("/w/003eba8844413cd9/app/people"),
     );
   });
 
   test("a single one is named; with no apps the count drops 'more'", async () => {
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       installed: [installedConnector("gmail", "Gmail")],
     });
     expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
@@ -624,8 +626,8 @@ describe("WorkspaceNav — connectors without a view", () => {
 
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       installed: [installedConnector("gmail", "Gmail"), installedConnector("exa", "Exa")],
     });
     expect(byTestId(mounted.container, "sidebar-workspace-tools")[0]?.textContent).toEndWith(
@@ -637,8 +639,8 @@ describe("WorkspaceNav — connectors without a view", () => {
     const appNames = Array.from({ length: MAX_INLINE_APPS + 1 }, (_, i) => `app-${i}`);
     mounted = await mount({
       workspaces: [HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: appNames.map((name, i) => appPlacement(name, { priority: (i + 1) * 10 })),
       installed: [
         ...appNames.map((name) => installedConnector(name)),
@@ -655,8 +657,8 @@ describe("WorkspaceNav — connectors without a view", () => {
   test("no row while the installed list still names another workspace", async () => {
     mounted = await mount({
       workspaces: [HELIX, ACME],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       installed: [installedConnector("gmail", "Gmail")],
       installedFor: ACME.id,
     });
@@ -671,28 +673,32 @@ describe("WorkspaceNav — connectors without a view", () => {
 
 describe("WorkspaceSwitcher — list + filter", () => {
   test("the trigger names the focused workspace; the list is alphabetical with it selected", async () => {
-    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_mine" });
+    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_00488fa17f87e9a3" });
 
     const trigger = buttons(mounted.container, "workspace-switcher-trigger")[0];
     expect(trigger?.textContent).toContain("Mat's workspace");
 
     await openSwitcher();
     expect(options().map((o) => o.getAttribute("data-workspace-id"))).toEqual([
-      "ws_acme",
-      "ws_helix",
-      "ws_mine",
+      "ws_000f7ed6658f9d30",
+      "ws_003eba8844413cd9",
+      "ws_00488fa17f87e9a3",
     ]);
     const selected = options().filter((o) => o.getAttribute("aria-selected") === "true");
-    expect(selected.map((o) => o.getAttribute("data-workspace-id"))).toEqual(["ws_mine"]);
+    expect(selected.map((o) => o.getAttribute("data-workspace-id"))).toEqual([
+      "ws_00488fa17f87e9a3",
+    ]);
   });
 
   test("typing narrows the list by name", async () => {
-    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_mine" });
+    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_00488fa17f87e9a3" });
     await openSwitcher();
 
     await type(switcherInput(), "hel");
 
-    expect(options().map((o) => o.getAttribute("data-workspace-id"))).toEqual(["ws_helix"]);
+    expect(options().map((o) => o.getAttribute("data-workspace-id"))).toEqual([
+      "ws_003eba8844413cd9",
+    ]);
   });
 });
 
@@ -704,44 +710,48 @@ describe("WorkspaceSwitcher — switching", () => {
   test("picking a workspace fires the setter once and navigates to /w/<slug>/", async () => {
     mounted = await mount({
       workspaces: [MINE, HELIX, ACME],
-      activeId: "ws_mine",
-      initialPath: "/w/mine/conversations",
+      activeId: "ws_00488fa17f87e9a3",
+      initialPath: "/w/00488fa17f87e9a3/conversations",
     });
     setActiveSpy.mockClear();
 
     await openSwitcher();
-    await click(options().find((o) => o.getAttribute("data-workspace-id") === "ws_helix"));
+    await click(
+      options().find((o) => o.getAttribute("data-workspace-id") === "ws_003eba8844413cd9"),
+    );
 
     expect(setActiveSpy).toHaveBeenCalledTimes(1);
-    expect(setActiveSpy.mock.calls[0]?.[0]).toBe("ws_helix");
-    expect(mounted.navigationTarget()).toBe("/w/helix/");
+    expect(setActiveSpy.mock.calls[0]?.[0]).toBe("ws_003eba8844413cd9");
+    expect(mounted.navigationTarget()).toBe("/w/003eba8844413cd9/");
   });
 
   test("re-picking the focused workspace opens its overview without firing the setter", async () => {
     mounted = await mount({
       workspaces: [MINE, HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/conversations",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/conversations",
     });
     setActiveSpy.mockClear();
 
     await openSwitcher();
-    await click(options().find((o) => o.getAttribute("data-workspace-id") === "ws_helix"));
+    await click(
+      options().find((o) => o.getAttribute("data-workspace-id") === "ws_003eba8844413cd9"),
+    );
 
     expect(setActiveSpy).toHaveBeenCalledTimes(0);
-    expect(mounted.navigationTarget()).toBe("/w/helix/");
+    expect(mounted.navigationTarget()).toBe("/w/003eba8844413cd9/");
   });
 
   test("Enter switches to the highlighted match", async () => {
-    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_mine" });
+    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_00488fa17f87e9a3" });
     setActiveSpy.mockClear();
     await openSwitcher();
 
     await press(switcherInput(), "ArrowDown");
     await press(switcherInput(), "Enter");
 
-    expect(setActiveSpy.mock.calls[0]?.[0]).toBe("ws_helix");
-    expect(mounted.navigationTarget()).toBe("/w/helix/");
+    expect(setActiveSpy.mock.calls[0]?.[0]).toBe("ws_003eba8844413cd9");
+    expect(mounted.navigationTarget()).toBe("/w/003eba8844413cd9/");
   });
 });
 
@@ -751,18 +761,18 @@ describe("WorkspaceSwitcher — switching", () => {
 
 describe("WorkspaceSwitcher — footer", () => {
   test("opens the focused workspace's settings", async () => {
-    mounted = await mount({ workspaces: [MINE, HELIX], activeId: "ws_helix" });
+    mounted = await mount({ workspaces: [MINE, HELIX], activeId: "ws_003eba8844413cd9" });
     await openSwitcher();
 
     const settings = buttons(document.body, "workspace-switcher-settings")[0];
     expect(settings?.textContent).toContain("Helix settings");
     await click(settings);
 
-    expect(mounted.navigationTarget()).toBe("/w/helix/settings");
+    expect(mounted.navigationTarget()).toBe("/w/003eba8844413cd9/settings");
   });
 
   test("New workspace opens the workspaces page", async () => {
-    mounted = await mount({ workspaces: [MINE], activeId: "ws_mine" });
+    mounted = await mount({ workspaces: [MINE], activeId: "ws_00488fa17f87e9a3" });
     await openSwitcher();
 
     await click(buttons(document.body, "workspace-switcher-new")[0]);
@@ -779,8 +789,8 @@ describe("WorkspaceNav — collapsed", () => {
   test("renders the same destinations icon-only, each with an accessible name", async () => {
     mounted = await mount({
       workspaces: [MINE, HELIX],
-      activeId: "ws_helix",
-      initialPath: "/w/helix/",
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
       placements: [...IDENTITY_PLACEMENTS, appPlacement("people")],
       collapsed: true,
     });

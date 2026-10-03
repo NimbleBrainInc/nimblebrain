@@ -9,7 +9,7 @@ import { handleStats } from "../../../../../src/platform/conversations/tools/sta
  * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
  * covered in test/unit/platform/conversations-workspace-scope.test.ts.
  */
-const SCOPE = { workspaceId: "ws_user_usr_test" };
+const SCOPE = { workspaceId: "ws_00859aff6f095b0e" };
 
 const TMP_DIR = join(import.meta.dir, ".tmp-stats-test");
 
@@ -83,7 +83,7 @@ function writeConv(opts: ConvOptions): void {
   for (const msg of messages) {
     lines.push(JSON.stringify(msg));
   }
-  const wsDir = join(TMP_DIR, "ws_user_usr_test", "conversations", "usr_test");
+  const wsDir = join(TMP_DIR, "ws_00859aff6f095b0e", "conversations", "usr_test");
   mkdirSync(wsDir, { recursive: true });
   writeFileSync(join(wsDir, `${opts.id}.jsonl`), `${lines.join("\n")}\n`);
 }

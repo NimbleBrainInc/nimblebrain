@@ -61,7 +61,7 @@ function createApp(opts: { issuer?: string; verify?: () => Promise<null> } = {})
 // ── WWW-Authenticate header tests ────────────────────────────────
 
 const ORIGIN = "https://nb.example.com";
-const METADATA_URL = `${ORIGIN}/.well-known/oauth-protected-resource/mcp/ws_a`;
+const METADATA_URL = `${ORIGIN}/.well-known/oauth-protected-resource/mcp/ws_00079598e311c160`;
 
 let savedOrigin: string | undefined;
 beforeEach(() => {
@@ -76,7 +76,7 @@ afterEach(() => {
 describe("MCP OAuth WWW-Authenticate header", () => {
   it("returns WWW-Authenticate with correct format when an authorization server is declared", async () => {
     const app = createApp({ issuer: "https://auth.example.com" });
-    const res = await app.request("/mcp/ws_a", {
+    const res = await app.request("/mcp/ws_00079598e311c160", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -101,7 +101,7 @@ describe("MCP OAuth WWW-Authenticate header", () => {
     // token for the origin, which /mcp/<wsId> refuses; and a host taken from
     // the request would let a caller choose the resource.
     const app = createApp({ issuer: "https://auth.example.com" });
-    const res = await app.request("http://attacker.example.net/mcp/ws_a", {
+    const res = await app.request("http://attacker.example.net/mcp/ws_00079598e311c160", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -117,7 +117,7 @@ describe("MCP OAuth WWW-Authenticate header", () => {
 
   it("does not include WWW-Authenticate when no authorization server is declared", async () => {
     const app = createApp({});
-    const res = await app.request("/mcp/ws_a", {
+    const res = await app.request("/mcp/ws_00079598e311c160", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),
@@ -140,7 +140,7 @@ describe("MCP auth — transient unavailability", () => {
         throw new TransientAuthError("jwks_unavailable", "boom");
       },
     });
-    const res = await app.request("/mcp/ws_a", {
+    const res = await app.request("/mcp/ws_00079598e311c160", {
       method: "POST",
       headers: { "Content-Type": "application/json", Host: "api.example.com" },
       body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),

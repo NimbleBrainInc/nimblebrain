@@ -240,7 +240,7 @@ describe("McpSource — OAuth retry path", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-mcp-oauth-retry-"));
-    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
     // The provider's tokens, verifier and DCR registration are all keys in the
     // installed credential store, so this suite has to install one rooted at
     // its OWN workDir. Without it the writes land in whatever store an earlier
@@ -256,7 +256,7 @@ describe("McpSource — OAuth retry path", () => {
 
   it("401 → OAuth → 200: start() completes and tools() returns the server's tools", async () => {
     const provider = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "retry-test",
       workDir,
       callbackUrl: CALLBACK,
@@ -307,7 +307,7 @@ describe("McpSource — OAuth retry path", () => {
     let authorizationUrl: string | undefined;
     const pending = Promise.withResolvers<void>();
     const provider = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "pending-test",
       workDir,
       callbackUrl: CALLBACK,
@@ -356,7 +356,7 @@ describe("McpSource — OAuth retry path", () => {
 
   it("a reconnect whose code exchange carries no id_token clears the prior identity", async () => {
     const provider = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "reauth-test",
       workDir,
       callbackUrl: CALLBACK,
@@ -400,7 +400,7 @@ describe("McpSource — OAuth retry path", () => {
     server.stop();
     server = startMockOAuthMcpServer({ oidc: true });
     const provider = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "userinfo-test",
       workDir,
       callbackUrl: CALLBACK,
@@ -445,7 +445,7 @@ describe("McpSource — OAuth retry path", () => {
     // Each authorize URL the connection offers, as Connect would hand it out.
     const offered: string[] = [];
     const provider = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName,
       workDir,
       callbackUrl: CALLBACK,

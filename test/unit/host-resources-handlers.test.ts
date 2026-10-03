@@ -36,7 +36,7 @@ let wsAStore: FileStore;
 
 beforeEach(async () => {
   rootDir = await mkdtemp(join(tmpdir(), "nb-host-resources-handlers-"));
-  wsAStore = createFileStore(join(rootDir, "ws_a", "files"));
+  wsAStore = createFileStore(join(rootDir, "ws_00079598e311c160", "files"));
 });
 
 afterEach(async () => {
@@ -133,7 +133,7 @@ describe("McpSource inbound host-resources handlers", () => {
       },
       NoopSink,
       {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
@@ -221,7 +221,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
       NoopSink,
       {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
@@ -301,7 +301,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { type: "inProcess", createServer: async () => ({ server, clientTransport }) },
       NoopSink,
       {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,
@@ -335,7 +335,7 @@ describe("McpSource inbound host-resources handlers", () => {
       { type: "inProcess", createServer: async () => fake },
       NoopSink,
       {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         connectorId: "fake-connector",
         hostResources: resolver,
         rateLimit,

@@ -31,7 +31,7 @@ import { seedWorkspace } from "../helpers/test-workspace.ts";
  */
 
 const testDir = join(tmpdir(), `nb-pc-policy-${Date.now()}`);
-const SHARED_WS = "ws_helix";
+const SHARED_WS = "ws_003eba8844413cd9";
 
 let runtime: Runtime;
 let personalWs: string;

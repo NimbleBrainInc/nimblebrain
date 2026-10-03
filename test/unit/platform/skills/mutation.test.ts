@@ -62,7 +62,7 @@ class FakeRuntime {
     const convDir = join(workDir, "conversations");
     mkdirSync(convDir, { recursive: true });
     // The dev user administers the workspace these tests write to.
-    this.setMember("ws_demo", DEV_USER.id, "admin");
+    this.setMember("ws_002afe1142297ff4", DEV_USER.id, "admin");
   }
 
   getWorkDir(): string {
@@ -187,7 +187,12 @@ describe("skills__create", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: null, workspaceId: "ws_any", runId: "run_a8f15601-0dd", unattended: true },
+      {
+        identity: null,
+        workspaceId: "ws_001823913791bb9c",
+        runId: "run_a8f15601-0dd",
+        unattended: true,
+      },
       () =>
         client.callTool({
           name: "create",
@@ -217,7 +222,11 @@ describe("skills__create", () => {
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
-      { identity: null, workspaceId: "ws_any", conversationId: "conv_aaaaaaaaaaaaaaaa" },
+      {
+        identity: null,
+        workspaceId: "ws_001823913791bb9c",
+        conversationId: "conv_aaaaaaaaaaaaaaaa",
+      },
       () =>
         client.callTool({
           name: "create",
@@ -315,8 +324,8 @@ describe("skills__create", () => {
   });
 
   test("workspace scope writes under {workDir}/workspaces/{wsId}/skills/", async () => {
-    runtime.wsId = "ws_demo";
-    seedWorkspaceRoot(workDir, "ws_demo");
+    runtime.wsId = "ws_002afe1142297ff4";
+    seedWorkspaceRoot(workDir, "ws_002afe1142297ff4");
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -328,7 +337,9 @@ describe("skills__create", () => {
       },
     });
     expect(result.isError).toBeFalsy();
-    expect(existsSync(join(workDir, "workspaces", "ws_demo", "skills", "ws-only.md"))).toBe(true);
+    expect(
+      existsSync(join(workDir, "workspaces", "ws_002afe1142297ff4", "skills", "ws-only.md")),
+    ).toBe(true);
   });
 });
 
@@ -341,7 +352,7 @@ describe("skills__create", () => {
 // READ rule as "any member". Behavior here must be identical to the prior
 // hand-rolled branch for every (member, role, mode) combination.
 describe("skills — workspace-scope write gate", () => {
-  const WS = "ws_gate";
+  const WS = "ws_0039fad880e2fea0";
 
   function setIdentity(id: string, orgRole: "owner" | "admin" | "member"): void {
     runtime.wsId = WS;
@@ -1257,16 +1268,16 @@ describe("cross-workspace access — regression", () => {
       orgRole: "member",
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
-    runtime.wsId = "ws_alice";
-    // Alice is admin in ws_alice. ws_other has no Alice membership.
-    runtime.setMember("ws_alice", "u_alice", "admin");
-    runtime.workspaces.set("ws_other", {
-      id: "ws_other",
+    runtime.wsId = "ws_00148bca567ef156";
+    // Alice is admin in ws_00148bca567ef156. ws_005820c54ca342ad has no Alice membership.
+    runtime.setMember("ws_00148bca567ef156", "u_alice", "admin");
+    runtime.workspaces.set("ws_005820c54ca342ad", {
+      id: "ws_005820c54ca342ad",
       name: "Other",
       members: [{ userId: "u_carol", role: "admin" }],
     });
-    // Pre-stage a skill under ws_other, on disk.
-    const otherDir = join(workDir, "workspaces", "ws_other", "skills");
+    // Pre-stage a skill under ws_005820c54ca342ad, on disk.
+    const otherDir = join(workDir, "workspaces", "ws_005820c54ca342ad", "skills");
     mkdirSync(otherDir, { recursive: true });
     const otherPath = join(otherDir, "secret.md");
     writeFileSync(
@@ -1274,7 +1285,7 @@ describe("cross-workspace access — regression", () => {
       [
         "---",
         "name: secret",
-        'description: "ws_other secret"',
+        'description: "ws_005820c54ca342ad secret"',
         'version: "1.0.0"',
         "type: skill",
         "priority: 50",
@@ -1346,9 +1357,9 @@ describe("cross-workspace access — regression", () => {
       orgRole: "member",
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
-    runtime.wsId = "ws_team";
-    runtime.setMember("ws_team", "u_bob", "member");
-    const wsDir = join(workDir, "workspaces", "ws_team", "skills");
+    runtime.wsId = "ws_0071a5bbf40116e6";
+    runtime.setMember("ws_0071a5bbf40116e6", "u_bob", "member");
+    const wsDir = join(workDir, "workspaces", "ws_0071a5bbf40116e6", "skills");
     mkdirSync(wsDir, { recursive: true });
     const path = join(wsDir, "team-skill.md");
     writeFileSync(
@@ -1428,7 +1439,7 @@ describe("symlink escape — mutation defense", () => {
   test("update refuses a symlink whose target is outside allowed roots", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     // Create a real file outside the work tree.
     const outsideDir = mkdtempSync(join(tmpdir(), "skills-mut-outside-"));
     const outsidePath = join(outsideDir, "secret.md");
@@ -1437,7 +1448,7 @@ describe("symlink escape — mutation defense", () => {
       ["---", "name: secret", "type: skill", "priority: 50", "---", "outside body", ""].join("\n"),
     );
     // Symlink under a writable scope dir.
-    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_002afe1142297ff4", "skills");
     mkdirSync(wsDir, { recursive: true });
     const linkPath = join(wsDir, "evil.md");
     symlinkSync(outsidePath, linkPath);
@@ -1456,14 +1467,14 @@ describe("symlink escape — mutation defense", () => {
   test("delete refuses a symlink whose target is outside allowed roots", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     const outsideDir = mkdtempSync(join(tmpdir(), "skills-mut-outside-"));
     const outsidePath = join(outsideDir, "secret.md");
     writeFileSync(
       outsidePath,
       ["---", "name: secret", "type: skill", "priority: 50", "---", "outside body", ""].join("\n"),
     );
-    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_002afe1142297ff4", "skills");
     mkdirSync(wsDir, { recursive: true });
     const linkPath = join(wsDir, "evil.md");
     symlinkSync(outsidePath, linkPath);
@@ -1498,7 +1509,7 @@ describe("symlink boundary — outside workdir entirely", () => {
   test("update refuses a symlink whose realpath sits outside the workDir tree", async () => {
     const src = await buildSource();
     const client = src.getClient()!;
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
 
     // Sibling of workDir. NOT under `tmpdir()` parent or any other
     // writable root — fully outside the platform's reach.
@@ -1511,7 +1522,7 @@ describe("symlink boundary — outside workdir entirely", () => {
       ),
     );
 
-    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_002afe1142297ff4", "skills");
     mkdirSync(wsDir, { recursive: true });
     const linkPath = join(wsDir, "evil.md");
     symlinkSync(targetPath, linkPath);
@@ -1535,12 +1546,12 @@ describe("symlink boundary — outside workdir entirely", () => {
 
 describe("symlink boundary — cross-workspace", () => {
   test("update via cross-workspace symlink: refused, no content leak into _versions/", async () => {
-    runtime.wsId = "ws_alice";
+    runtime.wsId = "ws_00148bca567ef156";
     const src = await buildSource();
     const client = src.getClient()!;
 
     // Pre-stage wsB's secret on disk.
-    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    const otherDir = join(workDir, "workspaces", "ws_0021762e0e7b3844", "skills");
     mkdirSync(otherDir, { recursive: true });
     const otherPath = join(otherDir, "secret.md");
     writeFileSync(
@@ -1549,8 +1560,8 @@ describe("symlink boundary — cross-workspace", () => {
     );
 
     // Symlink under wsA pointing at wsB's file. The lexical scope is
-    // workspace, lexical wsId is "ws_alice" — caller's own.
-    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    // workspace, lexical wsId is "ws_00148bca567ef156" — caller's own.
+    const wsADir = join(workDir, "workspaces", "ws_00148bca567ef156", "skills");
     mkdirSync(wsADir, { recursive: true });
     const linkPath = join(wsADir, "evil.md");
     symlinkSync(otherPath, linkPath);
@@ -1573,11 +1584,11 @@ describe("symlink boundary — cross-workspace", () => {
   });
 
   test("delete via cross-workspace symlink: refused", async () => {
-    runtime.wsId = "ws_alice";
+    runtime.wsId = "ws_00148bca567ef156";
     const src = await buildSource();
     const client = src.getClient()!;
 
-    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    const otherDir = join(workDir, "workspaces", "ws_0021762e0e7b3844", "skills");
     mkdirSync(otherDir, { recursive: true });
     const otherPath = join(otherDir, "secret.md");
     writeFileSync(
@@ -1585,7 +1596,7 @@ describe("symlink boundary — cross-workspace", () => {
       ["---", "name: secret", "type: skill", "priority: 50", "---", "BOB_SECRET", ""].join("\n"),
     );
 
-    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    const wsADir = join(workDir, "workspaces", "ws_00148bca567ef156", "skills");
     mkdirSync(wsADir, { recursive: true });
     const linkPath = join(wsADir, "evil.md");
     symlinkSync(otherPath, linkPath);
@@ -1596,11 +1607,11 @@ describe("symlink boundary — cross-workspace", () => {
   });
 
   test("read via cross-workspace symlink: refused", async () => {
-    runtime.wsId = "ws_alice";
+    runtime.wsId = "ws_00148bca567ef156";
     const src = await buildSource();
     const client = src.getClient()!;
 
-    const otherDir = join(workDir, "workspaces", "ws_bob", "skills");
+    const otherDir = join(workDir, "workspaces", "ws_0021762e0e7b3844", "skills");
     mkdirSync(otherDir, { recursive: true });
     const otherPath = join(otherDir, "secret.md");
     writeFileSync(
@@ -1608,7 +1619,7 @@ describe("symlink boundary — cross-workspace", () => {
       ["---", "name: secret", "type: skill", "priority: 50", "---", "BOB_SECRET", ""].join("\n"),
     );
 
-    const wsADir = join(workDir, "workspaces", "ws_alice", "skills");
+    const wsADir = join(workDir, "workspaces", "ws_00148bca567ef156", "skills");
     mkdirSync(wsADir, { recursive: true });
     const linkPath = join(wsADir, "evil.md");
     symlinkSync(otherPath, linkPath);
@@ -1622,7 +1633,7 @@ describe("symlink boundary — cross-workspace", () => {
 
 describe("symlink boundary — cross-scope tier", () => {
   test("workspace skill symlinked to a user dir is refused", async () => {
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     const src = await buildSource();
     const client = src.getClient()!;
 
@@ -1637,7 +1648,7 @@ describe("symlink boundary — cross-scope tier", () => {
 
     // Symlink under a workspace pointing at the user file. Lexical
     // scope is workspace, real scope is user → boundary check trips.
-    const wsDir = join(workDir, "workspaces", "ws_demo", "skills");
+    const wsDir = join(workDir, "workspaces", "ws_002afe1142297ff4", "skills");
     mkdirSync(wsDir, { recursive: true });
     const linkPath = join(wsDir, "evil.md");
     symlinkSync(userPath, linkPath);

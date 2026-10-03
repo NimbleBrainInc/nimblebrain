@@ -18,11 +18,11 @@ function bootstrapWs(
   },
 ): BootstrapResponse["workspaces"][number] {
   return {
-    id: "ws_test",
+    id: "ws_0076759dbbe19fcc",
     name: "Test",
     memberCount: 1,
     connectorCount: 0,
-    mcpUrl: "https://nb.example.test/mcp/ws_test",
+    mcpUrl: "https://nb.example.test/mcp/ws_0076759dbbe19fcc",
     ...partial,
   };
 }
@@ -40,9 +40,15 @@ describe("bootstrapWorkspacesToInfo", () => {
 
   test("preserves id, name, memberCount, connectorCount", () => {
     const [info] = bootstrapWorkspacesToInfo([
-      bootstrapWs({ id: "ws_1", name: "Acme", memberCount: 5, connectorCount: 3, role: "admin" }),
+      bootstrapWs({
+        id: "ws_0002ee92e8791c13",
+        name: "Acme",
+        memberCount: 5,
+        connectorCount: 3,
+        role: "admin",
+      }),
     ]);
-    expect(info?.id).toBe("ws_1");
+    expect(info?.id).toBe("ws_0002ee92e8791c13");
     expect(info?.name).toBe("Acme");
     expect(info?.memberCount).toBe(5);
     expect(info?.connectorCount).toBe(3);
@@ -50,8 +56,8 @@ describe("bootstrapWorkspacesToInfo", () => {
 
   test("maps every workspace independently", () => {
     const result = bootstrapWorkspacesToInfo([
-      bootstrapWs({ id: "ws_1", role: "admin" }),
-      bootstrapWs({ id: "ws_2", role: "member" }),
+      bootstrapWs({ id: "ws_0002ee92e8791c13", role: "admin" }),
+      bootstrapWs({ id: "ws_000557aaec30828a", role: "member" }),
     ]);
     expect(result).toHaveLength(2);
     expect(result[0]?.userRole).toBe("admin");

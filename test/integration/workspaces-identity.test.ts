@@ -145,7 +145,7 @@ describe("UC-W4: Same app, different workspaces", () => {
     const crmConnector = { url: "https://crm.example.com/mcp", serverName: "crm" };
 
     const engineering: Workspace = {
-      id: "ws_engineering",
+      id: "ws_0030a37f450693bf",
       name: "Engineering",
       members: [],
       connectors: [crmConnector],
@@ -154,7 +154,7 @@ describe("UC-W4: Same app, different workspaces", () => {
     };
 
     const marketing: Workspace = {
-      id: "ws_marketing",
+      id: "ws_0045fe6fd50c202a",
       name: "Marketing",
       members: [],
       connectors: [crmConnector],
@@ -173,12 +173,12 @@ describe("UC-W4: Same app, different workspaces", () => {
 
     // Correct server names and workspace IDs
     const entries = inventory.map((e) => ({ serverName: e.serverName, wsId: e.wsId }));
-    expect(entries).toContainEqual({ serverName: "crm", wsId: "ws_engineering" });
-    expect(entries).toContainEqual({ serverName: "crm", wsId: "ws_marketing" });
+    expect(entries).toContainEqual({ serverName: "crm", wsId: "ws_0030a37f450693bf" });
+    expect(entries).toContainEqual({ serverName: "crm", wsId: "ws_0045fe6fd50c202a" });
 
     // Data dirs are workspace-scoped
-    expect(dataDirs[0]).toContain("ws_engineering");
-    expect(dataDirs[1]).toContain("ws_marketing");
+    expect(dataDirs[0]).toContain("ws_0030a37f450693bf");
+    expect(dataDirs[1]).toContain("ws_0045fe6fd50c202a");
   });
 });
 
@@ -438,7 +438,7 @@ describe("Workspace addressing", () => {
 
     const user = await userStore.create({ email: "dev@test.io", displayName: "Dev" });
 
-    expect(await isAddressedWorkspaceMember(wsStore, "ws_does_not_exist", user.id)).toBe(false);
+    expect(await isAddressedWorkspaceMember(wsStore, "ws_002cbcedbb32d4b3", user.id)).toBe(false);
   });
 
   test("refuses a malformed workspace id without looking it up", async () => {

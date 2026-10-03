@@ -165,7 +165,9 @@ describe("buildManagedConnectorRegistry — Composio configured", () => {
 
   it("derives the owner userId without loading the vendor (userId is vendor-free)", () => {
     const provider = buildManagedConnectorRegistry().get("composio");
-    expect(provider?.userId({ type: "workspace", wsId: "ws_01abc" })).toBe("ws_01abc");
+    expect(provider?.userId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "ws_0001f3ac8053ce11",
+    );
     // Constructing the provider and calling the vendor-free `userId` links nothing.
     expect(_composioVendorLoadCountForTest()).toBe(0);
   });
@@ -299,7 +301,11 @@ describe("Composio reads its own nouns out of the opaque catalog block", () => {
 
     const provider = buildManagedConnectorRegistry().get("composio");
     await expect(
-      provider?.createSession({ userId: "ws_01abc", connectorId: "com.google/gmail", config: {} }),
+      provider?.createSession({
+        userId: "ws_0001f3ac8053ce11",
+        connectorId: "com.google/gmail",
+        config: {},
+      }),
     ).rejects.toThrow(/missing a `toolkit`/);
   });
 
@@ -314,7 +320,7 @@ describe("Composio reads its own nouns out of the opaque catalog block", () => {
     // `undefined`.
     await expect(
       provider?.createSession({
-        userId: "ws_01abc",
+        userId: "ws_0001f3ac8053ce11",
         connectorId: "com.google/gmail",
         config: { toolkit: "gmail" },
       }),

@@ -92,8 +92,8 @@ beforeEach(async () => {
   runtime = new FakeRuntime(workDir);
   // Two owners in two different workspaces — usage must aggregate by owner ACROSS
   // workspaces via the cross-workspace walk. alice has 100/50, bob has 400/200.
-  await seedSpend(workDir, "ws_alice", "usr_alice", "conv_0000000000000a1c", 100, 50);
-  await seedSpend(workDir, "ws_bob", "usr_bob", "conv_0000000000000b0b", 400, 200);
+  await seedSpend(workDir, "ws_00148bca567ef156", "usr_alice", "conv_0000000000000a1c", 100, 50);
+  await seedSpend(workDir, "ws_0021762e0e7b3844", "usr_bob", "conv_0000000000000b0b", 400, 200);
 });
 
 afterEach(async () => {
@@ -284,7 +284,7 @@ describe("usage source — filters", () => {
     const client = src.getClient()!;
     const result = await client.callTool({
       name: "report",
-      arguments: { period: "all", workspaceId: "ws_bob" },
+      arguments: { period: "all", workspaceId: "ws_0021762e0e7b3844" },
     });
     const data = parse(result as { content?: Array<{ type: string; text?: string }> });
     expect(data.totals.llmCalls).toBe(0);
@@ -301,12 +301,20 @@ describe("usage source — filters", () => {
         arguments: { scope: "org", period: "all", groupBy: "workspace" },
       })) as { content?: Array<{ type: string; text?: string }> },
     );
-    expect(byWorkspace.breakdown.map((b) => b.key).sort()).toEqual(["ws_alice", "ws_bob"]);
+    expect(byWorkspace.breakdown.map((b) => b.key).sort()).toEqual([
+      "ws_00148bca567ef156",
+      "ws_0021762e0e7b3844",
+    ]);
 
     const filtered = parse(
       (await client.callTool({
         name: "report",
-        arguments: { scope: "org", period: "all", workspaceId: "ws_bob", userId: "usr_bob" },
+        arguments: {
+          scope: "org",
+          period: "all",
+          workspaceId: "ws_0021762e0e7b3844",
+          userId: "usr_bob",
+        },
       })) as { content?: Array<{ type: string; text?: string }> },
     );
     expect(filtered.totals.tokens.input).toBe(400);

@@ -114,7 +114,7 @@ class CapturingSink implements EventSink {
   }
 }
 
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const SERVER = "interactive-fail-test";
 
 describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swallowed", () => {
@@ -125,7 +125,7 @@ describe("lifecycle.startAuth — interactive-flow failure is surfaced, not swal
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-startauth-interactive-"));
-    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
     // The OAuth provider's records are keys in the installed credential store,
     // so this suite installs one rooted at its OWN workDir. Without it the
     // writes land in whatever store an earlier file left installed — which is

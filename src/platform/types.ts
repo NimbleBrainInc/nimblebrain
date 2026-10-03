@@ -5,7 +5,7 @@ import type { Runtime } from "../runtime/runtime.ts";
  * Provides workspace-scoped paths and runtime access.
  */
 export interface PlatformToolContext {
-  /** Workspace-scoped work directory (e.g., ~/.nimblebrain/workspaces/ws_default/) */
+  /** Workspace-scoped work directory (e.g., ~/.nimblebrain/workspaces/<wsId>/) */
   workDir: string;
   /** Global work directory (e.g., ~/.nimblebrain/) — for shared config, skills */
   globalWorkDir: string;

@@ -23,9 +23,9 @@ import { UnknownNamespacedToolName } from "../../../src/tools/namespace.ts";
 
 const legacy = () =>
   new UnknownNamespacedToolName(
-    "ws_helix-crm__search",
+    "ws_003eba8844413cd9-crm__search",
     "legacy_namespaced_form",
-    `[orchestrator] "ws_helix-crm__search" uses the retired ws_<id>- tool-name form; re-list tools and call "crm__search"`,
+    `[orchestrator] "ws_003eba8844413cd9-crm__search" uses the retired ws_<id>- tool-name form; re-list tools and call "crm__search"`,
   );
 
 function mcpError(err: unknown): { code?: number; data?: { reason?: string }; message?: string } {
@@ -42,7 +42,7 @@ describe("the retired ws_<id>- form — the rollout hot path", () => {
   // bare names in its tool list, so it WILL produce legacy names. Whatever the
   // caller reads has to point at the name that works.
   test("chat door returns a recoverable result naming the bare tool", () => {
-    const r = mapOrchestratorErrorToToolResult(legacy(), "ws_helix-crm__search");
+    const r = mapOrchestratorErrorToToolResult(legacy(), "ws_003eba8844413cd9-crm__search");
     expect(r.isError).toBe(true);
     const text = (r.content as { text: string }[])[0]?.text ?? "";
     expect(text).toContain("crm__search");
@@ -63,7 +63,7 @@ describe("every live routing class reaches the caller on both doors", () => {
     ["UnknownNamespacedToolName", legacy(), "invalid_tool_name"],
     [
       "UnknownToolSource",
-      new UnknownToolSource("ws_helix", "crm__search", "crm"),
+      new UnknownToolSource("ws_003eba8844413cd9", "crm__search", "crm"),
       "unknown_tool_source",
     ],
     [
@@ -80,7 +80,7 @@ describe("every live routing class reaches the caller on both doors", () => {
     ],
     [
       "ConnectorGrantDenied",
-      new ConnectorGrantDenied("u1", "gmail", "ws_helix"),
+      new ConnectorGrantDenied("u1", "gmail", "ws_003eba8844413cd9"),
       "connector_grant_denied",
     ],
   ];

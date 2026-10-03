@@ -33,10 +33,16 @@ let rootDir: string;
 let storeA: FileStore;
 let storeB: FileStore;
 
-// ctx carries the connector's workspace — the LIVE store selector. `ws_a` →
-// `storeA`, `ws_b` → `storeB` (see `storeForWorkspace`).
-const ctxA: HostResourceContext = { workspaceId: "ws_a", connectorId: "connector_x" };
-const ctxB: HostResourceContext = { workspaceId: "ws_b", connectorId: "connector_x" };
+// ctx carries the connector's workspace — the LIVE store selector. `ws_00079598e311c160` →
+// `storeA`, `ws_001c32f121060ff3` → `storeB` (see `storeForWorkspace`).
+const ctxA: HostResourceContext = {
+  workspaceId: "ws_00079598e311c160",
+  connectorId: "connector_x",
+};
+const ctxB: HostResourceContext = {
+  workspaceId: "ws_001c32f121060ff3",
+  connectorId: "connector_x",
+};
 
 /**
  * The resolver's store factory: maps `ctx.workspaceId` → that workspace's store,
@@ -46,8 +52,8 @@ const ctxB: HostResourceContext = { workspaceId: "ws_b", connectorId: "connector
  * catches.
  */
 function storeForWorkspace(wsId: string): FileStore {
-  if (wsId === "ws_a") return storeA;
-  if (wsId === "ws_b") return storeB;
+  if (wsId === "ws_00079598e311c160") return storeA;
+  if (wsId === "ws_001c32f121060ff3") return storeB;
   throw new Error(`unexpected workspace id: ${wsId}`);
 }
 
@@ -68,8 +74,8 @@ async function seedFile(store: FileStore, name: string, body: string, mime: stri
 
 beforeEach(async () => {
   rootDir = await mkdtemp(join(tmpdir(), "nb-host-resources-resolver-"));
-  storeA = createFileStore(join(rootDir, "ws_a", "files"));
-  storeB = createFileStore(join(rootDir, "ws_b", "files"));
+  storeA = createFileStore(join(rootDir, "ws_00079598e311c160", "files"));
+  storeB = createFileStore(join(rootDir, "ws_001c32f121060ff3", "files"));
 });
 
 afterEach(async () => {
@@ -144,7 +150,7 @@ describe("FileBackedHostResourcesResolver.read", () => {
     // A's store, which doesn't have it — "not found", the SAME response a
     // genuinely-missing id gets. This prevents cross-workspace inventory
     // enumeration.
-    const idInB = await seedFile(storeB, "secret.txt", "ws_b only", "text/plain");
+    const idInB = await seedFile(storeB, "secret.txt", "ws_001c32f121060ff3 only", "text/plain");
     let caught: ProtocolError | null = null;
     try {
       await makeResolver().read(`files://${idInB}`, ctxA);
@@ -154,15 +160,15 @@ describe("FileBackedHostResourcesResolver.read", () => {
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
     // The same lookup from workspace B succeeds, proving the file does exist.
     const ok = await makeResolver().read(`files://${idInB}`, ctxB);
-    expect(textOf(ok.contents[0])).toBe("ws_b only");
+    expect(textOf(ok.contents[0])).toBe("ws_001c32f121060ff3 only");
   });
 
   it("scopes by ctx.workspaceId — a file in workspace A is ABSENT under workspace B", async () => {
     // Seed a file into workspace A. Read it back under ctx A (its own
     // workspace) → found.
-    const id = await seedFile(storeA, "a-only.txt", "ws_a only", "text/plain");
+    const id = await seedFile(storeA, "a-only.txt", "ws_00079598e311c160 only", "text/plain");
     const okA = await makeResolver().read(`files://${id}`, ctxA);
-    expect(textOf(okA.contents[0])).toBe("ws_a only");
+    expect(textOf(okA.contents[0])).toBe("ws_00079598e311c160 only");
 
     // The SAME id under ctx workspace B: the resolver passes `ctx.workspaceId`
     // to the store factory, which lands in storeB (no such file) → -32002. If

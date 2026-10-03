@@ -66,7 +66,7 @@ let container: HTMLDivElement;
 let root: ReturnType<typeof ReactDOMClient.createRoot>;
 
 const ACME: WorkspaceInfo = {
-  id: "ws_acme",
+  id: "ws_000f7ed6658f9d30",
   name: "Acme",
   connectorCount: 0,
   memberCount: 1,
@@ -93,7 +93,7 @@ async function mountBar(path: string, unread = 0): Promise<void> {
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[path]}>
-        <WorkspaceProvider initialWorkspaces={[ACME]} initialActiveId="ws_acme">
+        <WorkspaceProvider initialWorkspaces={[ACME]} initialActiveId="ws_000f7ed6658f9d30">
           <NotificationsContext.Provider value={inbox(unread)}>
             <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
               <ChatPanelProvider>
@@ -102,7 +102,7 @@ async function mountBar(path: string, unread = 0): Promise<void> {
                     value={{
                       forSlot: (slot) => (slot === "sidebar" ? [PEOPLE] : []),
                       mainRoutes: () => [],
-                      shellWorkspaceId: "ws_a",
+                      shellWorkspaceId: "ws_00079598e311c160",
                     }}
                   >
                     <AppLocationProvider>
@@ -142,13 +142,13 @@ afterEach(() => {
 
 describe("TopBar", () => {
   test("with no app trail, the title is the route's own name", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     expect(byTestId("top-bar-title")?.textContent).toBe("People");
     expect(byTestId("top-bar-back")).toBeUndefined();
   });
 
   test("a trail one deep shows its label and no back control", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     await act(async () =>
       location.setAppLocation({ trail: [{ id: "list", label: "Contacts" }], navigate: () => {} }),
     );
@@ -157,7 +157,7 @@ describe("TopBar", () => {
   });
 
   test("a deeper trail shows its last label, and back asks the app for the entry before it", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     const navigate = mock((_id: string) => {});
     await act(async () =>
       location.setAppLocation({
@@ -226,7 +226,7 @@ describe("TopBar", () => {
   });
 
   test("Chat is in the bar on workspace routes only", async () => {
-    await mountBar("/w/acme/");
+    await mountBar("/w/000f7ed6658f9d30/");
     expect(byTestId("chat-chrome-open-button")).toBeDefined();
     act(() => root.unmount());
     container.remove();
@@ -237,9 +237,9 @@ describe("TopBar", () => {
   });
 
   test("the bell sits left of Chat and links to the focused workspace's inbox", async () => {
-    await mountBar("/w/acme/");
+    await mountBar("/w/000f7ed6658f9d30/");
     const bell = byTestId("top-bar-inbox");
-    expect(bell?.getAttribute("href")).toBe("/w/acme/notifications");
+    expect(bell?.getAttribute("href")).toBe("/w/000f7ed6658f9d30/notifications");
     expect(bell?.getAttribute("aria-label")).toBe("Inbox");
     expect(bell?.getAttribute("aria-current")).toBeNull();
     expect(byTestId("top-bar-inbox-dot")).toBeUndefined();
@@ -255,13 +255,13 @@ describe("TopBar", () => {
   });
 
   test("the bell shows a dot while something is unread, and the count in its name", async () => {
-    await mountBar("/w/acme/", 3);
+    await mountBar("/w/000f7ed6658f9d30/", 3);
     expect(byTestId("top-bar-inbox-dot")).toBeDefined();
     expect(byTestId("top-bar-inbox")?.getAttribute("aria-label")).toBe("Inbox, 3 unread");
   });
 
   test("on the inbox, the bell is the current page", async () => {
-    await mountBar("/w/acme/notifications");
+    await mountBar("/w/000f7ed6658f9d30/notifications");
     expect(byTestId("top-bar-inbox")?.getAttribute("aria-current")).toBe("page");
   });
 });

@@ -104,7 +104,7 @@ beforeAll(async () => {
   // The denied source is installed in another workspace the caller also
   // administers, so the assertions below test the wall rather than the
   // absence of a tool anywhere.
-  const otherWs = await provisionTestWorkspace(runtime, "ws_other", "Other");
+  const otherWs = await provisionTestWorkspace(runtime, "ws_005820c54ca342ad", "Other");
   runtime.getRegistryForWorkspace(otherWs).addSource(new SharedSourceRef(deniedSource));
 
   handle = startServer({ runtime, port: 0 });

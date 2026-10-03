@@ -85,7 +85,7 @@ describe("runtime.chat — orchestrator error taxonomy (T006)", () => {
           toolCalls: [
             {
               toolCallId: "call_unknown_ws",
-              toolName: "ws_does_not_exist-crm__search",
+              toolName: "ws_002cbcedbb32d4b3-crm__search",
               input: "{}",
             },
           ],

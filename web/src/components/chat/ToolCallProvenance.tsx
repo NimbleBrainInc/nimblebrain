@@ -5,7 +5,7 @@
 //
 //     collateral.get_doc · Helix    [ok | error | running]
 //
-// The namespaced ground-truth string (`ws_helix-collateral__get_doc`)
+// The namespaced ground-truth string (`ws_003eba8844413cd9-collateral__get_doc`)
 // stays in the event log. This component is the render-time projection
 // — workspace display name on the right, friendly tool name on the
 // left, status pill at the end (Q2: "render workspace display-name +
@@ -33,7 +33,7 @@ export type ToolCallProvenanceStatus = "ok" | "error" | "running";
 export interface ToolCallProvenanceProps {
   /**
    * Canonical namespaced tool name as it appears in the event log,
-   * e.g. `ws_helix-collateral__get_doc`. Non-namespaced names (legacy
+   * e.g. `ws_003eba8844413cd9-collateral__get_doc`. Non-namespaced names (legacy
    * unrouted tools, ambient platform tools) render as-is with no
    * workspace badge.
    */

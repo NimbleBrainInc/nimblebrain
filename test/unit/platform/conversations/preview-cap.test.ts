@@ -24,7 +24,7 @@ import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 
 const OWNER_ID = "usr_test";
-const WS_ID = "ws_preview000000";
+const WS_ID = "ws_005e2c642b8af5fe";
 
 /** A term buried far past any sane preview cap, used to prove search still reaches it. */
 const DEEP_TERM = "needle_past_the_cap";

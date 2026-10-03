@@ -90,7 +90,7 @@ describe("appsSource", () => {
   test("returns empty when shell not ready (no apps)", () => {
     const items = appsSource.getItems("", {
       ...baseCtx,
-      activeWorkspaceSlug: "helix",
+      activeWorkspaceSlug: "003eba8844413cd9",
       apps: [],
     });
     expect(items).toEqual([]);
@@ -101,12 +101,12 @@ describe("appsSource", () => {
   });
 
   test("matches apps and builds workspace-scoped route on run", () => {
-    const ctx = { ...baseCtx, activeWorkspaceSlug: "helix", apps };
+    const ctx = { ...baseCtx, activeWorkspaceSlug: "003eba8844413cd9", apps };
     const items = appsSource.getItems("crm", ctx);
     expect(items.map((i) => i.title)).toEqual(["CRM"]);
     const { ctx: run, calls } = recordRunContext();
     items[0]!.run(run);
-    expect(calls.navigate).toEqual(["/w/helix/app/crm"]);
+    expect(calls.navigate).toEqual(["/w/003eba8844413cd9/app/crm"]);
     expect(calls.closed).toBe(1);
   });
 });
@@ -120,7 +120,7 @@ describe("actionsSource", () => {
 
   test("shows workspace-scoped actions when a workspace is focused", () => {
     const ids = actionsSource
-      .getItems("", { ...baseCtx, activeWorkspaceSlug: "helix" })
+      .getItems("", { ...baseCtx, activeWorkspaceSlug: "003eba8844413cd9" })
       .map((i) => i.id);
     expect(ids).toContain("action:workspace-settings");
   });
@@ -162,12 +162,12 @@ describe("actionsSource", () => {
   test("workspace-settings run builds the scoped route", () => {
     const items = actionsSource.getItems("workspace settings", {
       ...baseCtx,
-      activeWorkspaceSlug: "helix",
+      activeWorkspaceSlug: "003eba8844413cd9",
     });
     const item = items.find((i) => i.id === "action:workspace-settings");
     expect(item).toBeDefined();
     const { ctx: run, calls } = recordRunContext();
     item!.run(run);
-    expect(calls.navigate).toEqual(["/w/helix/settings"]);
+    expect(calls.navigate).toEqual(["/w/003eba8844413cd9/settings"]);
   });
 });

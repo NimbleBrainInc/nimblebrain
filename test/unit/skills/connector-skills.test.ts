@@ -89,7 +89,12 @@ describe("connectorToolAffinity", () => {
   });
 
   test("keeps every declared pattern inside the server's namespace", () => {
-    const affinity = connectorToolAffinity("acme", ["*", "other__send", "*__send", "ws_a-x"]);
+    const affinity = connectorToolAffinity("acme", [
+      "*",
+      "other__send",
+      "*__send",
+      "ws_00079598e311c160-x",
+    ]);
     const matchesAny = (tool: string) => affinity.some((p) => toolMatches(tool, p));
     expect(matchesAny("acme__anything")).toBe(true);
     expect(matchesAny("other__send")).toBe(false);
@@ -126,7 +131,7 @@ describe("reportUnmatchedToolAffinity", () => {
   test("warns once per skill with an unmatched pattern, naming connector, skill, and patterns", () => {
     const fields = warnings(() =>
       reportUnmatchedToolAffinity({
-        wsId: "ws_a",
+        wsId: "ws_00079598e311c160",
         serverName: "acme",
         toolNames: ["acme__draft_email"],
         skills: [
@@ -138,7 +143,7 @@ describe("reportUnmatchedToolAffinity", () => {
     expect(fields).toEqual([
       {
         event: "skills.tool_affinity.unmatched",
-        workspace_id: "ws_a",
+        workspace_id: "ws_00079598e311c160",
         server: "acme",
         skill: "outreach",
         patterns: ["acme__send_*"],
@@ -149,7 +154,7 @@ describe("reportUnmatchedToolAffinity", () => {
   test("says nothing about a connector that advertises no tools yet", () => {
     const fields = warnings(() =>
       reportUnmatchedToolAffinity({
-        wsId: "ws_a",
+        wsId: "ws_00079598e311c160",
         serverName: "acme",
         toolNames: [],
         skills: [{ name: "outreach", toolAffinity: ["acme__send_*"] }],

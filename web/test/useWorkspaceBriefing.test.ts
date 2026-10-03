@@ -56,7 +56,7 @@ afterEach(() => {
 
 describe("useWorkspaceBriefing", () => {
   test("fetches on mount and exposes the briefing", async () => {
-    const { result } = renderHook(() => useWorkspaceBriefing("ws_a"));
+    const { result } = renderHook(() => useWorkspaceBriefing("ws_00079598e311c160"));
     expect(result.current.loading).toBe(true);
     expect(calls.length).toBe(1);
     expect(calls[0]?.args).toEqual({});
@@ -68,7 +68,7 @@ describe("useWorkspaceBriefing", () => {
   });
 
   test("refresh() refetches with force_refresh: true", async () => {
-    const { result } = renderHook(() => useWorkspaceBriefing("ws_a"));
+    const { result } = renderHook(() => useWorkspaceBriefing("ws_00079598e311c160"));
     await act(async () => {
       resolveCall(0, "alpha");
     });
@@ -80,13 +80,13 @@ describe("useWorkspaceBriefing", () => {
   });
 
   test("a remount fetches again: nothing is cached on the client", async () => {
-    const first = renderHook(() => useWorkspaceBriefing("ws_a"));
+    const first = renderHook(() => useWorkspaceBriefing("ws_00079598e311c160"));
     await act(async () => {
       resolveCall(0, "alpha");
     });
     first.unmount();
 
-    const { result } = renderHook(() => useWorkspaceBriefing("ws_a"));
+    const { result } = renderHook(() => useWorkspaceBriefing("ws_00079598e311c160"));
     expect(calls.length).toBe(2);
     expect(result.current.briefing).toBeNull();
     expect(result.current.loading).toBe(true);
@@ -94,7 +94,7 @@ describe("useWorkspaceBriefing", () => {
 
   test("no state survives a workspace change", async () => {
     const { result, rerender } = renderHook(({ ws }: { ws: string }) => useWorkspaceBriefing(ws), {
-      initialProps: { ws: "ws_a" },
+      initialProps: { ws: "ws_00079598e311c160" },
     });
     await act(async () => {
       resolveCall(0, "alpha");
@@ -102,20 +102,20 @@ describe("useWorkspaceBriefing", () => {
     expect(labelOf(result.current.briefing)).toBe("alpha");
 
     await act(async () => {
-      rerender({ ws: "ws_b" });
+      rerender({ ws: "ws_001c32f121060ff3" });
     });
     expect(result.current.briefing).toBeNull();
     expect(result.current.error).toBeNull();
     expect(result.current.loading).toBe(true);
     expect(calls.length).toBe(2);
 
-    // An error in ws_b does not follow the member back to ws_a either.
+    // An error in ws_001c32f121060ff3 does not follow the member back to ws_00079598e311c160 either.
     await act(async () => {
       calls[1]?.reject(new Error("boom"));
     });
     expect(result.current.error).toBe("boom");
     await act(async () => {
-      rerender({ ws: "ws_a" });
+      rerender({ ws: "ws_00079598e311c160" });
     });
     expect(result.current.error).toBeNull();
     expect(result.current.briefing).toBeNull();
@@ -125,10 +125,10 @@ describe("useWorkspaceBriefing", () => {
 
   test("drops a stale response superseded by a workspace switch", async () => {
     const { result, rerender } = renderHook(({ ws }: { ws: string }) => useWorkspaceBriefing(ws), {
-      initialProps: { ws: "ws_a" },
+      initialProps: { ws: "ws_00079598e311c160" },
     });
     await act(async () => {
-      rerender({ ws: "ws_b" });
+      rerender({ ws: "ws_001c32f121060ff3" });
     });
     expect(calls.length).toBe(2);
 
@@ -137,7 +137,7 @@ describe("useWorkspaceBriefing", () => {
     });
     expect(labelOf(result.current.briefing)).toBe("bravo");
 
-    // The slow ws_a response lands late and is dropped.
+    // The slow ws_00079598e311c160 response lands late and is dropped.
     await act(async () => {
       resolveCall(0, "alpha-stale");
     });
@@ -147,7 +147,7 @@ describe("useWorkspaceBriefing", () => {
   test("a load that outlasts the client timeout becomes an error", async () => {
     jest.useFakeTimers();
     try {
-      const { result } = renderHook(() => useWorkspaceBriefing("ws_a"));
+      const { result } = renderHook(() => useWorkspaceBriefing("ws_00079598e311c160"));
       await act(async () => {
         jest.advanceTimersByTime(BRIEFING_TIMEOUT_MS);
       });

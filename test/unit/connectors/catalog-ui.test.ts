@@ -40,7 +40,7 @@ function entry(id: string, ui?: ConnectorUiMeta): ConnectorCatalogEntry {
 function installed(serverName: string, ui: ConnectorUiMeta | null) {
   const connector: ConnectorRef = { url: "https://example.test/mcp", serverName, ui };
   const meta: LocalConnectorMeta = { version: "remote", ui };
-  return { wsId: "ws_a", serverName, connector, meta, dataDir: "/d" };
+  return { wsId: "ws_00079598e311c160", serverName, connector, meta, dataDir: "/d" };
 }
 
 describe("installed connectors take their host UI from the catalog at boot", () => {

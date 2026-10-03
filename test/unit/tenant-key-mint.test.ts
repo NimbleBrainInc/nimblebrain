@@ -83,7 +83,7 @@ describe("buildMintRequest — authorizer parity", () => {
     const now = 1_700_000_000;
     const wire = buildMintRequest({
       tid: TID,
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
       tenantKey: TENANT_KEY,
@@ -94,7 +94,7 @@ describe("buildMintRequest — authorizer parity", () => {
     if (!v.ok) return;
     expect(v).toMatchObject({
       tid: "hq",
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
     });
@@ -105,7 +105,7 @@ describe("buildMintRequest — authorizer parity", () => {
     const wrongKey = deriveTenantKey(randomBytes(32), TID);
     const wire = buildMintRequest({
       tid: TID,
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
       tenantKey: wrongKey,
@@ -121,7 +121,7 @@ describe("buildMintRequest — authorizer parity", () => {
     const iat = 1_700_000_000;
     const wire = buildMintRequest({
       tid: TID,
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
       tenantKey: TENANT_KEY,
@@ -138,22 +138,29 @@ describe("buildMintRequest — authorizer parity", () => {
 describe("buildMintRequest — local validation", () => {
   const base = {
     tid: TID,
-    workspace: "ws_smoke",
+    workspace: "ws_006ecec8527e3353",
     audience: "artifacts",
     scope: "artifacts:write",
     tenantKey: TENANT_KEY,
   };
 
-  it("accepts the runtime's real workspace ids (ws_<hex>, ws_user_<id>) verbatim", () => {
+  it("accepts the runtime's workspace ids (ws_<16 hex>) verbatim", () => {
     expect(() => buildMintRequest({ ...base, workspace: "ws_1a2b3c4d5e6f7a8b" })).not.toThrow();
-    expect(() => buildMintRequest({ ...base, workspace: "ws_user_01HXYZ" })).not.toThrow();
+    expect(() => buildMintRequest({ ...base, workspace: "ws_007a979c480dcf8a" })).not.toThrow();
+  });
+
+  it("rejects a slug or user-derived id", () => {
+    expect(() => buildMintRequest({ ...base, workspace: "ws_acme_corp" })).toThrow(MintError);
+    expect(() => buildMintRequest({ ...base, workspace: "ws_user_usr_alice" })).toThrow(MintError);
   });
 
   it("rejects a string that is not a NimbleBrain workspace id", () => {
     // No ws_ prefix, traversal, and whitespace all fail the runtime's own grammar.
     expect(() => buildMintRequest({ ...base, workspace: "not-a-workspace" })).toThrow(MintError);
     expect(() => buildMintRequest({ ...base, workspace: "ws_../etc" })).toThrow(MintError);
-    expect(() => buildMintRequest({ ...base, workspace: "ws_a b" })).toThrow(MintError);
+    expect(() => buildMintRequest({ ...base, workspace: "ws_00079598e311c160 b" })).toThrow(
+      MintError,
+    );
   });
 
   it("rejects an over-long audience", () => {
@@ -225,7 +232,7 @@ describe("mintServiceToken", () => {
     const { fetchImpl } = fakeAuthorizer({ expiresIn: 300, now: () => 1000 });
     const tok = await mintServiceToken({
       tokenUrl: "https://authz.test/token",
-      workspace: "ws_smoke",
+      workspace: "ws_006ecec8527e3353",
       audience: "artifacts",
       scope: "artifacts:write",
       identity: IDENTITY,
@@ -241,7 +248,7 @@ describe("mintServiceToken", () => {
     await expect(
       mintServiceToken({
         tokenUrl: "https://authz.test/token",
-        workspace: "ws_smoke",
+        workspace: "ws_006ecec8527e3353",
         audience: "artifacts",
         scope: "artifacts:write",
         identity: IDENTITY,
@@ -254,7 +261,7 @@ describe("mintServiceToken", () => {
 describe("ServiceTokenCache", () => {
   const req = {
     tokenUrl: "https://authz.test/token",
-    workspace: "ws_smoke",
+    workspace: "ws_006ecec8527e3353",
     audience: "artifacts",
     scope: "artifacts:write",
   };
@@ -327,7 +334,7 @@ describe("ServiceTokenCache", () => {
 describe("createMintingFetch", () => {
   const req = {
     tokenUrl: "https://authz.test/token",
-    workspace: "ws_smoke",
+    workspace: "ws_006ecec8527e3353",
     audience: "artifacts",
     scope: "artifacts:write",
   };

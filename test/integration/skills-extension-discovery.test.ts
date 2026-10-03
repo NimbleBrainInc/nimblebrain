@@ -320,12 +320,14 @@ describe("bodies on need", () => {
     const fetch = spyOn(internals, "fetchVerifiedSkillText");
     try {
       fetch.mockImplementationOnce(async () => ({ ok: false, reason: "unverified" }));
-      expect(await internals.loadServerSkillBody("ws_a", "impostor", entry)).toEqual({
-        ok: false,
-        reason: "unverified",
-      });
+      expect(await internals.loadServerSkillBody("ws_00079598e311c160", "impostor", entry)).toEqual(
+        {
+          ok: false,
+          reason: "unverified",
+        },
+      );
       fetch.mockImplementationOnce(async () => ({ ok: true, text }));
-      expect(await internals.loadServerSkillBody("ws_b", "honest", entry)).toEqual({
+      expect(await internals.loadServerSkillBody("ws_001c32f121060ff3", "honest", entry)).toEqual({
         ok: true,
         body: expect.stringContaining("LISTED_BODY"),
       });

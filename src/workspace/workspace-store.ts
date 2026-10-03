@@ -5,7 +5,7 @@ import { log } from "../observability/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { scaffoldWorkspace } from "./scaffold.ts";
 import type { Workspace, WorkspaceMember, WorkspaceRole } from "./types.ts";
-import { GENERATED_WORKSPACE_ID_RE, WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
+import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
 
 // Re-export so existing `import { WORKSPACE_ID_RE } from ".../workspace-store.ts"`
 // call sites keep working. The literal source string + flags live in
@@ -70,11 +70,9 @@ export type MembershipChangeHandler = (userId: string) => void;
  * moves the id, the dir, or the URL. It is also the only way an id is made:
  * `WorkspaceStore.create` takes no caller-chosen id.
  *
- * **Alphabet.** The id MUST match `GENERATED_WORKSPACE_ID_PATTERN`
- * (`^ws_[a-f0-9]{16}$`), which `create` asserts, and so the wider loading
- * pattern `WORKSPACE_ID_PATTERN` too — no hyphens, because `-` is the
- * workspace/tool separator in `ws_<id>-<tool>` (see `src/tools/namespace.ts`).
- * Lowercase hex (`[a-f0-9]`) is a strict subset of `[a-z0-9_]`, so it
+ * **Alphabet.** The id MUST match `WORKSPACE_ID_PATTERN` (`^ws_[a-f0-9]{16}$`),
+ * which `create` asserts — no hyphens, because `-` is the workspace/tool
+ * separator in `ws_<id>-<tool>` (see `src/tools/namespace.ts`), so it
  * round-trips through `parseNamespacedToolName` cleanly. This mirrors the
  * established opaque-id idiom for users (`usr_<hex>`, `src/identity/user.ts`)
  * and files (`fl_<hex>`, `src/files/store.ts`).
@@ -152,6 +150,7 @@ export class WorkspaceStore {
   private workspacesDir: string;
   private archivedDir: string;
   private membershipChangeHandlers = new Set<MembershipChangeHandler>();
+  private warnedNonConforming = new Set<string>();
 
   constructor(workDir: string) {
     this.workspacesDir = join(workDir, "workspaces");
@@ -229,6 +228,10 @@ export class WorkspaceStore {
     const workspaces: Workspace[] = [];
     for (const entry of entries) {
       if (!entry.startsWith("ws_")) continue;
+      if (!WORKSPACE_ID_RE.test(entry)) {
+        this.warnNonConforming(entry);
+        continue;
+      }
       const ws = await this.get(entry);
       if (ws) workspaces.push(ws);
     }
@@ -242,22 +245,60 @@ export class WorkspaceStore {
   }
 
   /**
+   * Names of the `ws_*` directories under `workspaces/` that hold a
+   * `workspace.json` but fail `WORKSPACE_ID_RE`, sorted. Such a directory is
+   * a workspace no door can address — `get` refuses its id like any malformed
+   * one — so boot refuses to start while one exists
+   * (`assertWorkspaceIdsConform`) rather than serve without it.
+   */
+  async listNonConformingIds(): Promise<string[]> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.workspacesDir);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    return entries
+      .filter(
+        (entry) =>
+          entry.startsWith("ws_") && !WORKSPACE_ID_RE.test(entry) && existsSync(this.wsPath(entry)),
+      )
+      .sort();
+  }
+
+  /**
+   * `list` meets a non-conforming directory only when one was placed after
+   * boot, since boot refuses to start with one. It is skipped, because no
+   * door can address it, and named once per store so it is not invisible
+   * until the next boot refuses.
+   */
+  private warnNonConforming(entry: string): void {
+    if (this.warnedNonConforming.has(entry) || !existsSync(this.wsPath(entry))) return;
+    this.warnedNonConforming.add(entry);
+    log.warn(
+      `[workspace] skipping workspaces/${entry}: its name is not a workspace id ` +
+        "(ws_ and 16 lowercase hex chars). The next boot refuses to start until it is renamed.",
+    );
+  }
+
+  /**
    * Generate an opaque, collision-free workspace id.
    *
    * 64 bits of entropy makes a collision astronomically unlikely; the
    * bounded retry is defense-in-depth so the rare case self-heals instead
    * of surfacing a confusing conflict to the operator. Every candidate is
-   * asserted against GENERATED_WORKSPACE_ID_RE before it is used, so a
-   * generator that drifts from the opaque form throws here rather than
-   * minting an id of a shape the loader would have to keep accepting.
+   * asserted against WORKSPACE_ID_RE before it is used, so a generator that
+   * drifts from the opaque form throws here rather than minting an id the
+   * store could never load.
    */
   private async generateUniqueWorkspaceId(): Promise<string> {
     const MAX_ID_ATTEMPTS = 5;
     for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
       const candidate = generateWorkspaceId();
-      if (!GENERATED_WORKSPACE_ID_RE.test(candidate)) {
+      if (!WORKSPACE_ID_RE.test(candidate)) {
         throw new Error(
-          `[workspace-store] create: generated workspace id "${candidate}" does not match ${GENERATED_WORKSPACE_ID_RE}`,
+          `[workspace-store] create: generated workspace id "${candidate}" does not match ${WORKSPACE_ID_RE}`,
         );
       }
       if (!(await this.get(candidate))) return candidate;
@@ -270,8 +311,8 @@ export class WorkspaceStore {
   /**
    * Create a workspace. Its id is always generated (`ws_<16-hex>`, see
    * `generateWorkspaceId`); no caller chooses it, so no id can encode a name,
-   * a user, or a tenant, and every id the store mints has the one shape the
-   * loading pattern will eventually be narrowed to.
+   * a user, or a tenant, and every id the store mints has the one shape it
+   * loads.
    */
   async create(
     name: string,

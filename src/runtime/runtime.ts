@@ -250,6 +250,7 @@ import type { TokenUsage } from "../usage/types.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { retireLegacyPersonalWorkspaces } from "../workspace/legacy-personal.ts";
+import { assertWorkspaceIdsConform } from "../workspace/migration-guard.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { chatResponseBody } from "./chat-response.ts";
@@ -724,6 +725,7 @@ export class Runtime {
     const instanceConfig = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
+    await assertWorkspaceIdsConform(workspaceStore);
     await retireLegacyPersonalWorkspaces(workspaceStore, userStore);
     // The runtime is the one owner of the identity provider: the server
     // authenticates with this one, and every permission check here judges the
@@ -6114,7 +6116,7 @@ function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | Use
 /**
  * Cache key for one workspace's instance of a named server's skills.
  *
- * `WORKSPACE_ID_RE` (`^ws_[a-z0-9_]{1,64}$`) excludes `:`, so the first half
+ * `WORKSPACE_ID_RE` (`^ws_[a-f0-9]{16}$`) excludes `:`, so the first half
  * can never contain the separator and no two pairs can collide — the server
  * name's alphabet does not enter into it. Same construction as the
  * `${wsId}:${userId}` file-store key above.

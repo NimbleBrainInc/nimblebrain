@@ -14,7 +14,7 @@ const automation = {
   name: "Morning sweep",
   prompt: "Sweep the inbox",
   ownerId: "usr_owner_a",
-  workspaceId: "ws_a_shared",
+  workspaceId: "ws_0009cebdf778aef6",
 } as Automation;
 
 // An org admin clicking Run now from another workspace: the context a manual
@@ -26,13 +26,13 @@ const adminElsewhere = {
     displayName: "B",
     orgRole: "admin",
   } as UserIdentity,
-  workspaceId: "ws_b_other",
+  workspaceId: "ws_001de97502167e3d",
 };
 
 describe("resolveExecutorContext", () => {
   test("acts as the automation's owner, in the automation's workspace", () => {
     const ctx = resolveExecutorContext(automation);
-    expect(ctx.workspaceId).toBe("ws_a_shared");
+    expect(ctx.workspaceId).toBe("ws_0009cebdf778aef6");
     expect(ctx.identity).toEqual({ id: "usr_owner_a" });
   });
 
@@ -41,7 +41,7 @@ describe("resolveExecutorContext", () => {
   // what that context holds.
   test("ignores an ambient request context for another workspace and person", () => {
     const ctx = runWithRequestContext(adminElsewhere, () => resolveExecutorContext(automation));
-    expect(ctx.workspaceId).toBe("ws_a_shared");
+    expect(ctx.workspaceId).toBe("ws_0009cebdf778aef6");
     expect(ctx.identity).toEqual({ id: "usr_owner_a" });
   });
 
@@ -81,7 +81,7 @@ describe("a manual run builds the scheduled run's context", () => {
     const [manual, scheduled] = requests;
     expect(manual?.trigger).toBe("manual");
     expect(scheduled?.trigger).toBe("schedule");
-    expect(manual?.workspaceId).toBe("ws_a_shared");
+    expect(manual?.workspaceId).toBe("ws_0009cebdf778aef6");
     expect(manual?.identity).toEqual({ id: "usr_owner_a" });
     expect({ workspaceId: manual?.workspaceId, identity: manual?.identity }).toEqual({
       workspaceId: scheduled?.workspaceId,

@@ -40,7 +40,7 @@ function makeRuntime(workDir: string): Runtime {
   return {
     getWorkDir: () => workDir,
     getWorkspaceScopedDir: () => workDir,
-    getCurrentWorkspaceId: () => "ws_audit",
+    getCurrentWorkspaceId: () => "ws_001b7d589bde72e7",
     getCurrentIdentity: () => null,
     getDefaultModel: () => "claude-sonnet-4-6",
     getWorkspaceStore: () => null,

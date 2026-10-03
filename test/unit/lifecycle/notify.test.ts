@@ -30,7 +30,7 @@ import type { Tool, ToolResult } from "../../../src/tools/types.ts";
  * install.
  */
 
-const WS = "ws_acme";
+const WS = "ws_000f7ed6658f9d30";
 const CONNECTOR = "acme-billing-mcp";
 
 const DECL: LifecycleDeclaration = {

@@ -139,7 +139,7 @@ function catalogYaml(): string {
 
 function buildHarness(provider: ManagedConnectorProvider): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-example-broker-"));
-  const wsId = "ws_test";
+  const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
   writeFileSync(join(workDir, "catalog.yaml"), catalogYaml());
   const registry = managedConnectorRegistryOf([provider]);
@@ -200,7 +200,7 @@ function widgetsEntry(): CatalogListing {
 /** The ref an install of this connector persists. */
 function installedRef(): ConnectorRef {
   return {
-    url: "https://broker.example/acme/acme.sprockets.ws:ws_test/mcp",
+    url: "https://broker.example/acme/acme.sprockets.ws:ws_0076759dbbe19fcc/mcp",
     serverName: "com-example-widgets",
     oauthScope: "workspace",
     transport: {
@@ -210,7 +210,7 @@ function installedRef(): ConnectorRef {
     brokered: {
       provider: PROVIDER_ID,
       connectorId: CONNECTOR_ID,
-      providerRef: { lease: "acme.sprockets.ws:ws_test", realm: "acme" },
+      providerRef: { lease: "acme.sprockets.ws:ws_0076759dbbe19fcc", realm: "acme" },
     },
   };
 }
@@ -239,7 +239,7 @@ describe("example-broker — install", () => {
     expect(calls.sessions).toHaveLength(1);
     expect(calls.sessions[0]?.connectorId).toBe(CONNECTOR_ID);
     expect(calls.sessions[0]?.config).toEqual({ realm: "acme", widget: "sprockets" });
-    expect(calls.sessions[0]?.userId).toBe("ws:ws_test");
+    expect(calls.sessions[0]?.userId).toBe("ws:ws_0076759dbbe19fcc");
 
     const ws = await h.workspaceStore.get(h.wsId);
     const ref = ws?.connectors.find((b) => b.brokered !== undefined);
@@ -247,11 +247,11 @@ describe("example-broker — install", () => {
     expect(ref?.brokered?.connectorId).toBe(CONNECTOR_ID);
     // Opaque both ways: persisted exactly as returned.
     expect(ref?.brokered?.providerRef).toEqual({
-      lease: "acme.sprockets.ws:ws_test",
+      lease: "acme.sprockets.ws:ws_0076759dbbe19fcc",
       realm: "acme",
     });
     // The session URL, not the catalog placeholder.
-    expect(ref?.url).toContain("/acme.sprockets.ws:ws_test/mcp");
+    expect(ref?.url).toContain("/acme.sprockets.ws:ws_0076759dbbe19fcc/mcp");
     // The transport names the provider's credential — no secret at rest.
     expect(ref?.transport?.auth).toEqual({ type: "provider", provider: PROVIDER_ID, config: {} });
   });
@@ -314,7 +314,9 @@ describe("example-broker — probe", () => {
 
     expect(verdict).toBe("credential_lost");
     // The probe reads its own opaque coordinates off the ref it was handed.
-    expect(calls.probed[0]?.ref.brokered?.providerRef?.lease).toBe("acme.sprockets.ws:ws_test");
+    expect(calls.probed[0]?.ref.brokered?.providerRef?.lease).toBe(
+      "acme.sprockets.ws:ws_0076759dbbe19fcc",
+    );
   });
 });
 
@@ -394,7 +396,7 @@ describe("example-broker — boot-state derivation", () => {
   test("a connected connector seeds running", async () => {
     calls = noCalls();
     h = buildHarness(
-      exampleBroker(calls, { connectedLeases: new Set(["acme.sprockets.ws:ws_test"]) }),
+      exampleBroker(calls, { connectedLeases: new Set(["acme.sprockets.ws:ws_0076759dbbe19fcc"]) }),
     );
     const ref = installedRef();
     await h.lifecycle.seedInstance("com-example-widgets", ref.url ?? "", ref, undefined, h.wsId);

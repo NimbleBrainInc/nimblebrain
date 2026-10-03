@@ -16,7 +16,7 @@ import {
 } from "../../helpers/credential-store.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
-const WS = { type: "workspace", wsId: "ws_test" } as const;
+const WS = { type: "workspace", wsId: "ws_0076759dbbe19fcc" } as const;
 const USER = { type: "user", userId: "usr_alice" } as const;
 
 let workDir: string;
@@ -25,7 +25,7 @@ let events: EngineEvent[];
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-oauth-records-"));
-  seedWorkspaceRoot(workDir, "ws_test");
+  seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
   events = [];
   store = installTestCredentialStore(workDir, events);
 });
@@ -66,7 +66,7 @@ describe("McpOAuthRecords — roundtrip and scope", () => {
     await records(WS, "example-provider").write("tokens", { access_token: "a" });
 
     const stored = await store.get(
-      { kind: "workspace", wsId: "ws_test" },
+      { kind: "workspace", wsId: "ws_0076759dbbe19fcc" },
       mcpOAuthKey("example-provider", "tokens"),
       { caller: "test", purpose: "assert" },
     );
@@ -98,7 +98,7 @@ describe("McpOAuthRecords — roundtrip and scope", () => {
 
   test("a corrupt record reads as absent rather than throwing", async () => {
     await store.put(
-      { kind: "workspace", wsId: "ws_test" },
+      { kind: "workspace", wsId: "ws_0076759dbbe19fcc" },
       mcpOAuthKey("example-provider", "tokens"),
       "{",
     );
@@ -131,7 +131,7 @@ describe("McpOAuthRecords — roundtrip and scope", () => {
     const audit = events.filter((e) => e.type === "audit.credential_read");
     expect(audit).toHaveLength(1);
     expect(audit[0]?.data).toMatchObject({
-      scope: "workspace:ws_test",
+      scope: "workspace:ws_0076759dbbe19fcc",
       key: "mcp-oauth.example-provider.tokens",
       caller: "oauth:tokens",
       purpose: "transport example-provider",
@@ -151,7 +151,7 @@ describe("McpOAuthRecords — legacy import", () => {
     expect(value).toEqual({ access_token: "legacy" });
     expect(existsSync(path)).toBe(false);
     const stored = await store.get(
-      { kind: "workspace", wsId: "ws_test" },
+      { kind: "workspace", wsId: "ws_0076759dbbe19fcc" },
       mcpOAuthKey("example-provider", "tokens"),
       { caller: "test", purpose: "assert" },
     );
@@ -167,9 +167,9 @@ describe("McpOAuthRecords — legacy import", () => {
     await records(WS, "example-provider").read("client", read);
 
     expect(existsSync(legacyMcpOAuthDir(workDir, WS, "example-provider"))).toBe(false);
-    expect(existsSync(join(workDir, "workspaces", "ws_test", "credentials", "mcp-oauth"))).toBe(
-      false,
-    );
+    expect(
+      existsSync(join(workDir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "mcp-oauth")),
+    ).toBe(false);
   });
 
   test("a stored key wins over a legacy file — no silent downgrade", async () => {

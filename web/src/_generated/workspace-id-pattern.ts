@@ -7,5 +7,5 @@
 // The web tier rebuilds the regex locally; see the source file's
 // header for the contract.
 
-export const WORKSPACE_ID_PATTERN = "^ws_[a-z0-9_]{1,64}$";
-export const WORKSPACE_ID_FLAGS = "i";
+export const WORKSPACE_ID_PATTERN = "^ws_[a-f0-9]{16}$";
+export const WORKSPACE_ID_FLAGS = "";

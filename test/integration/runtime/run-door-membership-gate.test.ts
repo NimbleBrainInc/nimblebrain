@@ -35,7 +35,7 @@ import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nb-run-door-gate-${Date.now()}`);
-const SHARED_WS = "ws_shared_alpha";
+const SHARED_WS = "ws_006cd11080caa6b8";
 const OWNER = DEV_IDENTITY.id;
 
 afterAll(() => {

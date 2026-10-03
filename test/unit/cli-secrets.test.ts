@@ -63,11 +63,18 @@ function harness(store?: CredentialStore) {
 describe("set", () => {
   test("writes the value read from the injected reader, in every scope", async () => {
     const h = harness();
-    seedWorkspaceRoot(h.dir, "ws_test");
+    seedWorkspaceRoot(h.dir, "ws_0076759dbbe19fcc");
     try {
       expect(await h.run(["set", "acme.key"])).toBe(0);
       expect(
-        await h.run(["set", "acme.key", "--scope", "workspace", "--workspace", "ws_test"]),
+        await h.run([
+          "set",
+          "acme.key",
+          "--scope",
+          "workspace",
+          "--workspace",
+          "ws_0076759dbbe19fcc",
+        ]),
       ).toBe(0);
       expect(await h.run(["set", "acme.key", "--scope", "user", "--user", "usr_alex01"])).toBe(0);
 
@@ -75,7 +82,9 @@ describe("set", () => {
         "sk-from-stdin",
       );
       expect(
-        (await h.store.get({ kind: "workspace", wsId: "ws_test" }, "acme.key", READ))?.reveal(),
+        (
+          await h.store.get({ kind: "workspace", wsId: "ws_0076759dbbe19fcc" }, "acme.key", READ)
+        )?.reveal(),
       ).toBe("sk-from-stdin");
       expect(
         (await h.store.get({ kind: "user", userId: "usr_alex01" }, "acme.key", READ))?.reveal(),
@@ -241,7 +250,7 @@ describe("scope selection", () => {
     ["user with no id", ["list", "--scope", "user"]],
     // An id against the wrong scope would silently read or write somewhere
     // other than where the operator meant.
-    ["an id against the wrong scope", ["list", "--workspace", "ws_test"]],
+    ["an id against the wrong scope", ["list", "--workspace", "ws_0076759dbbe19fcc"]],
     ["a user id against instance", ["list", "--user", "usr_alex01"]],
     ["an unknown command", ["frobnicate"]],
     ["no command at all", []],

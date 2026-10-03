@@ -34,12 +34,12 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 const KEY_A = Buffer.alloc(32, 0x11);
 const KEY_B = Buffer.alloc(32, 0x22);
 
-const WS: CredentialScope = { kind: "workspace", wsId: "ws_test" };
+const WS: CredentialScope = { kind: "workspace", wsId: "ws_0076759dbbe19fcc" };
 const READ = { caller: "test", purpose: "unit test" };
 
 function fresh(sealer?: CredentialSealer) {
   const dir = mkdtempSync(join(tmpdir(), "nb-sealed-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   const events: EngineEvent[] = [];
   const store = new FileCredentialStore(dir, {
     eventSink: { emit: (e) => events.push(e) },
@@ -50,7 +50,7 @@ function fresh(sealer?: CredentialSealer) {
 
 /** Hand-seed a file the way an operator does, bypassing the store entirely. */
 function seed(dir: string, key: string, contents: string): string {
-  const secretsDir = join(dir, "workspaces", "ws_test", "credentials", "secrets");
+  const secretsDir = join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets");
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   const path = join(secretsDir, key);
   writeFileSync(path, contents, { mode: 0o600 });
@@ -67,7 +67,11 @@ function seed(dir: string, key: string, contents: string): string {
 
 describe("a value that claims to be sealed is never read as plaintext", () => {
   test("with NO sealer configured, reveal throws rather than returning the bytes", async () => {
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     const { store, dir, cleanup } = fresh(); // deliberately no sealer
     try {
       seed(dir, "acme.key", sealed);
@@ -87,7 +91,11 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
   });
 
   test("under a ring that does not hold its kid, reveal throws", async () => {
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
@@ -100,7 +108,7 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
 
   test("with a failed authentication tag, reveal throws", async () => {
     const sealer = createCredentialSealer([KEY_A]);
-    const parts = sealer.seal("workspace:ws_test", "acme.key", "s3cret").split(".");
+    const parts = sealer.seal("workspace:ws_0076759dbbe19fcc", "acme.key", "s3cret").split(".");
     const ct = Buffer.from(parts[4] as string, "base64url");
     ct[0] = (ct[0] as number) ^ 1;
     parts[4] = ct.toString("base64url");
@@ -118,7 +126,11 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
     // The gap the magic-only discriminator closes: `echo` adds a newline, a
     // truncated write cuts a field, and under a full-grammar gate every one of
     // these would read as legacy plaintext and be handed out AS the credential.
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     for (const damaged of [`${sealed}\n`, `${sealed} `, sealed.slice(0, -4), "NBS1."]) {
       const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
       try {
@@ -133,7 +145,7 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
 
   test("the error names the key, the scope and the wanted kid", async () => {
     const sealer = createCredentialSealer([KEY_A]);
-    const sealed = sealer.seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = sealer.seal("workspace:ws_0076759dbbe19fcc", "acme.key", "s3cret");
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
@@ -144,7 +156,7 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
       // "wrong key" has to be distinguishable from "corrupt file" without
       // anyone reading the file.
       expect(message).toContain("acme.key");
-      expect(message).toContain("workspace:ws_test");
+      expect(message).toContain("workspace:ws_0076759dbbe19fcc");
       expect(message).toContain(sealer.sealingKid);
     } finally {
       cleanup();
@@ -153,7 +165,7 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
 
   test("a failed open is audited — scope, key, reason, kid, never a value", async () => {
     const sealer = createCredentialSealer([KEY_A]);
-    const sealed = sealer.seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = sealer.seal("workspace:ws_0076759dbbe19fcc", "acme.key", "s3cret");
     const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
@@ -163,11 +175,11 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
       expect(events[0]).toEqual({
         type: "audit.credential_seal_failure",
         data: {
-          scope: "workspace:ws_test",
+          scope: "workspace:ws_0076759dbbe19fcc",
           key: "acme.key",
           reason: "unknown_kid",
           wantedKid: sealer.sealingKid,
-          workspaceId: "ws_test",
+          workspaceId: "ws_0076759dbbe19fcc",
         },
       });
       // The bytes that failed to open are still a live credential's ciphertext.
@@ -178,7 +190,11 @@ describe("a value that claims to be sealed is never read as plaintext", () => {
   });
 
   test("no sealer configured is audited as its own reason", async () => {
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     const { store, dir, events, cleanup } = fresh();
     try {
       seed(dir, "acme.key", sealed);
@@ -200,7 +216,11 @@ describe("a presence probe never opens anything", () => {
   // repair it. The failure belongs on the connection that uses the secret.
 
   test("an unopenable value is still probeable — get resolves, reveal throws", async () => {
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
@@ -222,7 +242,7 @@ describe("a presence probe never opens anything", () => {
       seed(
         dir,
         "bad.one",
-        createCredentialSealer([KEY_B]).seal("workspace:ws_test", "bad.one", "x"),
+        createCredentialSealer([KEY_B]).seal("workspace:ws_0076759dbbe19fcc", "bad.one", "x"),
       );
       await store.put(WS, "good.two", "v2");
       const probes = await Promise.all(
@@ -237,7 +257,11 @@ describe("a presence probe never opens anything", () => {
   });
 
   test("a probe that never reveals writes no audit line at all", async () => {
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
@@ -250,7 +274,11 @@ describe("a presence probe never opens anything", () => {
   });
 
   test("revealing twice audits the failure once", async () => {
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
@@ -266,7 +294,11 @@ describe("a presence probe never opens anything", () => {
   test("a failed open writes no credential_read line", async () => {
     // It was not revealed. A log saying it was would be false in the one
     // direction that matters.
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     const { store, dir, events, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
@@ -279,7 +311,11 @@ describe("a presence probe never opens anything", () => {
   });
 
   test("a redacted unopenable value still prints as [redacted]", async () => {
-    const sealed = createCredentialSealer([KEY_A]).seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = createCredentialSealer([KEY_A]).seal(
+      "workspace:ws_0076759dbbe19fcc",
+      "acme.key",
+      "s3cret",
+    );
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_B]));
     try {
       seed(dir, "acme.key", sealed);
@@ -303,7 +339,7 @@ describe("each way an open can fail says which one it was", () => {
 
   test.each(cases)("%s is reported as %s", async (_label, reason, remedy) => {
     const sealer = createCredentialSealer([KEY_A]);
-    const sealed = sealer.seal("workspace:ws_test", "acme.key", "s3cret");
+    const sealed = sealer.seal("workspace:ws_0076759dbbe19fcc", "acme.key", "s3cret");
     let onDisk = sealed;
     let ring = sealer;
     if (reason === "unknown_kid") {
@@ -335,7 +371,7 @@ describe("what is on disk", () => {
     try {
       await store.put(WS, "acme.key", "s3cret-value");
       const raw = readFileSync(
-        join(dir, "workspaces", "ws_test", "credentials", "secrets", "acme.key"),
+        join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets", "acme.key"),
         "utf-8",
       );
       expect(raw).not.toContain("s3cret-value");
@@ -350,10 +386,11 @@ describe("what is on disk", () => {
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
       await store.put(WS, "k1", "v1");
-      const path = join(dir, "workspaces", "ws_test", "credentials", "secrets", "k1");
+      const path = join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets", "k1");
       expect(statSync(path).mode & 0o777).toBe(0o600);
       expect(
-        statSync(join(dir, "workspaces", "ws_test", "credentials", "secrets")).mode & 0o777,
+        statSync(join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets")).mode &
+          0o777,
       ).toBe(0o700);
     } finally {
       cleanup();
@@ -363,7 +400,7 @@ describe("what is on disk", () => {
   test("two puts of one value leave different bytes", async () => {
     const { store, dir, cleanup } = fresh(createCredentialSealer([KEY_A]));
     try {
-      const path = join(dir, "workspaces", "ws_test", "credentials", "secrets", "k");
+      const path = join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets", "k");
       await store.put(WS, "k", "identical");
       const first = readFileSync(path, "utf-8");
       await store.put(WS, "k", "identical");
@@ -466,7 +503,7 @@ describe("selecting the sealing backend from config", () => {
   function build(config: Record<string, unknown>, env?: string) {
     registerBuiltinCredentialStoreBackends();
     const dir = mkdtempSync(join(tmpdir(), "nb-sealed-cfg-"));
-    seedWorkspaceRoot(dir, "ws_test");
+    seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     const previous = process.env[ENV];
     if (env === undefined) delete process.env[ENV];
     else process.env[ENV] = env;
@@ -483,7 +520,7 @@ describe("selecting the sealing backend from config", () => {
     try {
       await store.put(WS, "k", "plain");
       const raw = readFileSync(
-        join(dir, "workspaces", "ws_test", "credentials", "secrets", "k"),
+        join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets", "k"),
         "utf-8",
       );
       expect(raw).toBe("plain");
@@ -517,7 +554,7 @@ describe("selecting the sealing backend from config", () => {
     try {
       await store.put(WS, "k", "s3cret");
       const raw = readFileSync(
-        join(dir, "workspaces", "ws_test", "credentials", "secrets", "k"),
+        join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets", "k"),
         "utf-8",
       );
       expect(raw.startsWith("NBS1.")).toBe(true);
@@ -537,14 +574,14 @@ describe("the failure reaches a real sink, not just a test array", () => {
   test("a failed open is written to the workspace log", async () => {
     const logDir = mkdtempSync(join(tmpdir(), "nb-sealed-log-"));
     const dir = mkdtempSync(join(tmpdir(), "nb-sealed-"));
-    seedWorkspaceRoot(dir, "ws_test");
+    seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     try {
       const store = new FileCredentialStore(dir, {
         eventSink: new WorkspaceLogSink({ dir: logDir }),
         sealer: createCredentialSealer([KEY_B]),
       });
       const sealed = createCredentialSealer([KEY_A]).seal(
-        "workspace:ws_test",
+        "workspace:ws_0076759dbbe19fcc",
         "acme.key",
         "s3cret",
       );

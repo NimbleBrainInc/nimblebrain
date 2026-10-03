@@ -37,7 +37,7 @@ afterEach(() => {
 
 function makeProvider(workDir: string, serverName = "test-srv"): WorkspaceOAuthProvider {
   return new WorkspaceOAuthProvider({
-    owner: { type: "workspace", wsId: "ws_test" },
+    owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
     serverName,
     workDir,
     callbackUrl: CALLBACK,
@@ -49,9 +49,9 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-test-"));
-    seedWorkspaceRoot(workDir, "ws_other");
-    seedWorkspaceRoot(workDir, "ws_test");
-    seedWorkspaceRoot(workDir, "ws_user_user_01");
+    seedWorkspaceRoot(workDir, "ws_005820c54ca342ad");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedWorkspaceRoot(workDir, "ws_007ea582fef093fa");
     installTestCredentialStore(workDir);
   });
 
@@ -120,7 +120,7 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
 
     // Provider 1 registers a client against the (soon-to-be-stale) redirect_uri.
     const p1 = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "drift-srv",
       workDir,
       callbackUrl: stalePath,
@@ -132,7 +132,7 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
     // host drifted, but the stored client is HONORED so refresh keeps working —
     // returned, and left on disk.
     const p2 = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "drift-srv",
       workDir,
       callbackUrl: livePath,
@@ -143,7 +143,7 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
     // resolved by re-registering against the current host — drop the stale client
     // and return undefined so the SDK runs a fresh DCR.
     const p3 = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "drift-srv",
       workDir,
       callbackUrl: livePath,
@@ -158,7 +158,7 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
     // current callback is on the list, just not first.
     const cb = "https://nb.example.com/v1/mcp-auth/callback";
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "multi-uri",
       workDir,
       callbackUrl: cb,
@@ -176,14 +176,14 @@ describe("WorkspaceOAuthProvider — record roundtrips", () => {
     await p.saveTokens(tokens);
 
     const stored = await store().get(
-      { kind: "workspace", wsId: "ws_test" },
+      { kind: "workspace", wsId: "ws_0076759dbbe19fcc" },
       mcpOAuthKey("my-server", "tokens"),
       { caller: "test", purpose: "assert" },
     );
     expect(JSON.parse(stored?.reveal() ?? "null")).toEqual(tokens);
-    expect(existsSync(join(workDir, "workspaces", "ws_test", "credentials", "mcp-oauth"))).toBe(
-      false,
-    );
+    expect(
+      existsSync(join(workDir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "mcp-oauth")),
+    ).toBe(false);
   });
 
   it("awaitPendingFlow without state() throws (no active flow)", async () => {
@@ -197,9 +197,9 @@ describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-user-"));
-    seedWorkspaceRoot(workDir, "ws_other");
-    seedWorkspaceRoot(workDir, "ws_test");
-    seedWorkspaceRoot(workDir, "ws_user_user_01");
+    seedWorkspaceRoot(workDir, "ws_005820c54ca342ad");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedWorkspaceRoot(workDir, "ws_007ea582fef093fa");
     installTestCredentialStore(workDir);
   });
 
@@ -237,7 +237,7 @@ describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
     // user scope is "not workspace-bound" — a token landing in the workspace
     // tree would be orphaned on workspace deletion.
     expect(
-      await store().get({ kind: "workspace", wsId: "ws_test" }, key, {
+      await store().get({ kind: "workspace", wsId: "ws_0076759dbbe19fcc" }, key, {
         caller: "test",
         purpose: "assert",
       }),
@@ -310,7 +310,10 @@ describe("WorkspaceOAuthProvider — user-scoped persistence", () => {
       type: "user",
       userId: "usr_alice",
     });
-    expect(makeProvider(workDir).getOwner()).toEqual({ type: "workspace", wsId: "ws_test" });
+    expect(makeProvider(workDir).getOwner()).toEqual({
+      type: "workspace",
+      wsId: "ws_0076759dbbe19fcc",
+    });
   });
 });
 
@@ -319,15 +322,15 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-trackA-"));
-    seedWorkspaceRoot(workDir, "ws_other");
-    seedWorkspaceRoot(workDir, "ws_test");
-    seedWorkspaceRoot(workDir, "ws_user_user_01");
+    seedWorkspaceRoot(workDir, "ws_005820c54ca342ad");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedWorkspaceRoot(workDir, "ws_007ea582fef093fa");
     installTestCredentialStore(workDir);
   });
 
   it("clientInformation returns the static client when staticClient is set; saveClientInformation is a no-op", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "hubspot",
       workDir,
       callbackUrl: CALLBACK,
@@ -354,16 +357,20 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
     // Nothing persisted either.
     expect(
-      await store().get({ kind: "workspace", wsId: "ws_test" }, mcpOAuthKey("hubspot", "client"), {
-        caller: "test",
-        purpose: "assert",
-      }),
+      await store().get(
+        { kind: "workspace", wsId: "ws_0076759dbbe19fcc" },
+        mcpOAuthKey("hubspot", "client"),
+        {
+          caller: "test",
+          purpose: "assert",
+        },
+      ),
     ).toBeNull();
   });
 
   it("clientMetadata.scope reflects the configured scopes (space-joined per RFC 6749)", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "gmail",
       workDir,
       callbackUrl: CALLBACK,
@@ -379,7 +386,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientMetadata.client_name uses ownerDisplayName when provided (not the opaque wsId)", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_user_user_01ABCDEF" },
+      owner: { type: "workspace", wsId: "ws_007f28a694754d35" },
       ownerDisplayName: "Engineering Team",
       serverName: "granola",
       workDir,
@@ -390,12 +397,12 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientMetadata.client_name falls back to the raw wsId when no ownerDisplayName", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_user_user_01ABCDEF" },
+      owner: { type: "workspace", wsId: "ws_007f28a694754d35" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
     });
-    expect(p.clientMetadata.client_name).toBe("NimbleBrain (ws_user_user_01ABCDEF)");
+    expect(p.clientMetadata.client_name).toBe("NimbleBrain (ws_007f28a694754d35)");
   });
 
   it("clientMetadata.client_name uses ownerDisplayName for user-scoped owners too", () => {
@@ -411,7 +418,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientMetadata carries NimbleBrain client_uri + logo_uri for consent-screen branding", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -424,7 +431,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientMetadata default token_endpoint_auth_method = 'none' (DCR PKCE-only) when no staticClient", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -434,7 +441,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("clientMetadata default token_endpoint_auth_method = 'client_secret_post' when secret provided without override", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "hubspot",
       workDir,
       callbackUrl: CALLBACK,
@@ -445,7 +452,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
 
   it("explicit tokenEndpointAuthMethod override wins", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "weird-vendor",
       workDir,
       callbackUrl: CALLBACK,
@@ -461,7 +468,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
   it("constructor rejects reserved keys in additionalAuthorizationParams", () => {
     const make = (extras: Record<string, string>) => () =>
       new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: "ws_test" },
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "broken",
         workDir,
         callbackUrl: CALLBACK,
@@ -495,7 +502,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     }) as typeof fetch;
     try {
       const p = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: "ws_test" },
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "google",
         workDir,
         callbackUrl: CALLBACK,
@@ -545,7 +552,7 @@ describe("WorkspaceOAuthProvider — Track A: pre-registered client + scopes + e
     }) as typeof fetch;
     try {
       const p = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: "ws_test" },
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "crm",
         workDir,
         callbackUrl: CALLBACK,
@@ -605,9 +612,9 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-rev-"));
-    seedWorkspaceRoot(workDir, "ws_other");
-    seedWorkspaceRoot(workDir, "ws_test");
-    seedWorkspaceRoot(workDir, "ws_user_user_01");
+    seedWorkspaceRoot(workDir, "ws_005820c54ca342ad");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedWorkspaceRoot(workDir, "ws_007ea582fef093fa");
     installTestCredentialStore(workDir);
   });
 
@@ -633,7 +640,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("returns no-op result when no tokens are stored", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -651,7 +658,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("revokes refresh + access via discovered endpoint, then deletes locally", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -696,7 +703,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
     // Verify local files are gone.
     const p2 = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -706,7 +713,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("does not POST tokens to an SSRF revocation_endpoint advertised in AS metadata", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -742,7 +749,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(result.revoked).toEqual({});
     expect(result.deletedLocal).toBe(true);
     const p2 = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -752,7 +759,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("deletes local tokens even when revocation endpoint discovery fails", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -771,7 +778,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(result.revoked).toEqual({});
 
     const p2 = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -785,7 +792,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("captures OIDC id_token claims to the identity record on saveTokens", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "google",
       workDir,
       callbackUrl: CALLBACK,
@@ -819,7 +826,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("identity() returns null when no id_token was issued", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "no-oidc",
       workDir,
       callbackUrl: CALLBACK,
@@ -830,7 +837,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("invalidateCredentials('tokens') also removes the identity record", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "google",
       workDir,
       callbackUrl: CALLBACK,
@@ -849,7 +856,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("malformed id_token does not break saveTokens", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "broken",
       workDir,
       callbackUrl: CALLBACK,
@@ -872,7 +879,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     };
     const signedIn = async (): Promise<WorkspaceOAuthProvider> => {
       const p = new WorkspaceOAuthProvider({
-        owner: { type: "workspace", wsId: "ws_test" },
+        owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         serverName: "oidc",
         workDir,
         callbackUrl: CALLBACK,
@@ -944,7 +951,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     // the AS origin; we then fetch the AS's authorization-server metadata
     // for the revocation_endpoint.
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "gmail",
       workDir,
       callbackUrl: CALLBACK,
@@ -982,7 +989,7 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
 
   it("treats RFC 7009 invalid_token 400 as success", async () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -1016,22 +1023,22 @@ describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", (
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-ctx-test-"));
-    seedWorkspaceRoot(workDir, "ws_other");
-    seedWorkspaceRoot(workDir, "ws_test");
-    seedWorkspaceRoot(workDir, "ws_user_user_01");
+    seedWorkspaceRoot(workDir, "ws_005820c54ca342ad");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedWorkspaceRoot(workDir, "ws_007ea582fef093fa");
     installTestCredentialStore(workDir);
   });
 
   it("resolves the same records whether constructed via workDir alone or workspaceContext", async () => {
-    const ctx = new WorkspaceContext({ wsId: "ws_test", workDir });
+    const ctx = new WorkspaceContext({ wsId: "ws_0076759dbbe19fcc", workDir });
     const viaLegacy = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
     });
     const viaContext = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "granola",
       workDir,
       callbackUrl: CALLBACK,
@@ -1049,11 +1056,11 @@ describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", (
   });
 
   it("rejects a workspaceContext whose wsId does not match the owner", () => {
-    const ctx = new WorkspaceContext({ wsId: "ws_other", workDir });
+    const ctx = new WorkspaceContext({ wsId: "ws_005820c54ca342ad", workDir });
     expect(
       () =>
         new WorkspaceOAuthProvider({
-          owner: { type: "workspace", wsId: "ws_test" },
+          owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
           serverName: "granola",
           workDir,
           callbackUrl: CALLBACK,
@@ -1063,7 +1070,7 @@ describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", (
   });
 
   it("rejects a workspaceContext paired with a user-typed owner", () => {
-    const ctx = new WorkspaceContext({ wsId: "ws_test", workDir });
+    const ctx = new WorkspaceContext({ wsId: "ws_0076759dbbe19fcc", workDir });
     expect(
       () =>
         new WorkspaceOAuthProvider({
@@ -1077,7 +1084,7 @@ describe("WorkspaceOAuthProvider — WorkspaceContext construction (Stage 0)", (
   });
 
   it("returns the same owner instance via getOwner — no rebind path", () => {
-    const owner = { type: "workspace" as const, wsId: "ws_test" };
+    const owner = { type: "workspace" as const, wsId: "ws_0076759dbbe19fcc" };
     const p = new WorkspaceOAuthProvider({
       owner,
       serverName: "granola",
@@ -1096,9 +1103,9 @@ describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", ()
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-authlost-"));
-    seedWorkspaceRoot(workDir, "ws_other");
-    seedWorkspaceRoot(workDir, "ws_test");
-    seedWorkspaceRoot(workDir, "ws_user_user_01");
+    seedWorkspaceRoot(workDir, "ws_005820c54ca342ad");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedWorkspaceRoot(workDir, "ws_007ea582fef093fa");
     installTestCredentialStore(workDir);
   });
 
@@ -1107,7 +1114,7 @@ describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", ()
   it("fires onAuthLost once even when called repeatedly (de-dupes a burst)", () => {
     let calls = 0;
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "teams",
       workDir,
       callbackUrl: CALLBACK,
@@ -1126,7 +1133,7 @@ describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", ()
   it("re-arms after saveTokens so a later auth loss signals again", async () => {
     let calls = 0;
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "teams",
       workDir,
       callbackUrl: CALLBACK,
@@ -1146,7 +1153,7 @@ describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", ()
 
   it("is a no-op (no throw) when no onAuthLost callback is wired", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "teams",
       workDir,
       callbackUrl: CALLBACK,
@@ -1156,7 +1163,7 @@ describe("WorkspaceOAuthProvider — notifyAuthLost (mid-session auth loss)", ()
 
   it("swallows a throwing onAuthLost callback (never worsens a tool-call failure)", () => {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "teams",
       workDir,
       callbackUrl: CALLBACK,
@@ -1173,9 +1180,9 @@ describe("WorkspaceOAuthProvider — redacted OAuth health logging", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-health-"));
-    seedWorkspaceRoot(workDir, "ws_other");
-    seedWorkspaceRoot(workDir, "ws_test");
-    seedWorkspaceRoot(workDir, "ws_user_user_01");
+    seedWorkspaceRoot(workDir, "ws_005820c54ca342ad");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedWorkspaceRoot(workDir, "ws_007ea582fef093fa");
     installTestCredentialStore(workDir);
   });
 
@@ -1244,11 +1251,11 @@ describe("WorkspaceOAuthProvider — redacted OAuth health logging", () => {
 
 describe("WorkspaceOAuthProvider — auth_lost flag", () => {
   let workDir: string;
-  const WS_OWNER = { type: "workspace", wsId: "ws_test" } as const;
+  const WS_OWNER = { type: "workspace", wsId: "ws_0076759dbbe19fcc" } as const;
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-lost-"));
-    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
     installTestCredentialStore(workDir);
   });
 
@@ -1322,7 +1329,7 @@ describe("WorkspaceOAuthProvider — identity from an OIDC server's userinfo", (
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-identity-"));
-    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
     installTestCredentialStore(workDir);
     calls = [];
     metadata = {
@@ -1355,7 +1362,7 @@ describe("WorkspaceOAuthProvider — identity from an OIDC server's userinfo", (
   /** A provider that has been told its issuer, as the SDK does on every auth(). */
   async function providerFor(opts: { scopes?: string[] } = {}): Promise<WorkspaceOAuthProvider> {
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "oidc-no-id-token",
       workDir,
       callbackUrl: CALLBACK,

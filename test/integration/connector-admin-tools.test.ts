@@ -44,8 +44,8 @@ import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
-const ADMIN_WS = "ws_helix";
-const MEMBER_WS = "ws_orbit";
+const ADMIN_WS = "ws_003eba8844413cd9";
+const MEMBER_WS = "ws_00562f536b60bccc";
 /** `slugifyServerName("ai.acme/crm")`, the source name an install records. */
 const SERVER = "ai-acme-crm";
 const CONFIGURE = `${SERVER}__configure`;

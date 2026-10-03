@@ -98,12 +98,12 @@ describe("session-store — the workspace binding", () => {
         await reg.create({
           sessionId: SAMPLE_SID,
           identityId: "usr_42",
-          workspaceId: "ws_a",
+          workspaceId: "ws_00079598e311c160",
           createdAt: now,
           lastAccessedAt: now,
         });
         const got = await reg.get(SAMPLE_SID);
-        expect(got?.workspaceId).toBe("ws_a");
+        expect(got?.workspaceId).toBe("ws_00079598e311c160");
         expect(got?.identityId).toBe("usr_42");
       } finally {
         await reg.shutdown();
@@ -124,12 +124,12 @@ describe("session-store — the workspace binding", () => {
         await reg.create({
           sessionId: SAMPLE_SID,
           identityId: "usr_42",
-          workspaceId: "ws_a",
+          workspaceId: "ws_00079598e311c160",
           createdAt: now,
           lastAccessedAt: now,
         });
         const got = await reg.get(SAMPLE_SID);
-        expect(got?.workspaceId).toBe("ws_a");
+        expect(got?.workspaceId).toBe("ws_00079598e311c160");
         expect(got?.identityId).toBe("usr_42");
       } finally {
         await reg.shutdown();

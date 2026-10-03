@@ -200,7 +200,7 @@ describe("handleReadResource", () => {
     // door (no workspace registry), but the read resolves in the focused workspace,
     // threaded via workspaceId.
     const res = await handleReadResource(req({ server: "files", uri: "files://fl_abc" }), runtime, {
-      workspaceId: "ws_a",
+      workspaceId: "ws_00079598e311c160",
     });
     expect(res.status).toBe(200);
     const body = await readJson<ReadResourceResponse>(res);
@@ -211,7 +211,7 @@ describe("handleReadResource", () => {
   it("returns 404 when an identity resource is missing", async () => {
     const runtime = makeStubRuntime({ identitySources: ["files"], resource: null });
     const res = await handleReadResource(req({ server: "files", uri: "files://fl_x" }), runtime, {
-      workspaceId: "ws_a",
+      workspaceId: "ws_00079598e311c160",
     });
     expect(res.status).toBe(404);
     const body = await readJson<ApiErrorBody>(res);
@@ -239,14 +239,14 @@ describe("handleReadResource", () => {
     const calls: Array<{ server: string; uri: string; workspaceId: string }> = [];
     const runtime = makeStubRuntime({
       sources: ["synapse-collateral"],
-      memberOf: ["ws_tenant_a"],
+      memberOf: ["ws_0073c806fc50dc07"],
       resource: { text: "ok", mimeType: "text/plain" },
       captureCall: (c) => calls.push(c),
     });
     const res = await handleReadResource(
-      req({ server: "ws_tenant_a-synapse-collateral", uri: "collateral://exports/e.pdf" }),
+      req({ server: "ws_0073c806fc50dc07-synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      { workspaceId: "ws_user_u1", identity: { id: "u1" } as never },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: { id: "u1" } as never },
     );
     expect(res.status).toBe(400);
     const body = await readJson<ApiErrorBody>(res);
@@ -254,7 +254,7 @@ describe("handleReadResource", () => {
     expect(body.message).toContain("uses the retired ws_<id>- server-name form");
     expect(body.message).toContain('"synapse-collateral"');
     expect(body.details).toEqual({
-      server: "ws_tenant_a-synapse-collateral",
+      server: "ws_0073c806fc50dc07-synapse-collateral",
       reason: "legacy_namespaced_form",
     });
     expect(calls).toEqual([]);
@@ -270,14 +270,14 @@ describe("handleReadResource", () => {
     const res = await handleReadResource(
       req({ server: "synapse-collateral", uri: "collateral://exports/e.pdf" }),
       runtime,
-      { workspaceId: "ws_tenant_a", identity: { id: "u1" } as never },
+      { workspaceId: "ws_0073c806fc50dc07", identity: { id: "u1" } as never },
     );
     expect(res.status).toBe(200);
     expect(calls).toEqual([
       {
         server: "synapse-collateral",
         uri: "collateral://exports/e.pdf",
-        workspaceId: "ws_tenant_a",
+        workspaceId: "ws_0073c806fc50dc07",
       },
     ]);
   });

@@ -49,9 +49,9 @@ const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-credprov-"));
-  seedWorkspaceRoot(workDir, "ws_acme01");
-  seedWorkspaceRoot(workDir, "ws_tenanta");
-  seedWorkspaceRoot(workDir, "ws_tenantb");
+  seedWorkspaceRoot(workDir, "ws_0010b38da2d87d3d");
+  seedWorkspaceRoot(workDir, "ws_00741647fd740fac");
+  seedWorkspaceRoot(workDir, "ws_0075ad1326581881");
   events = [];
   store = new FileCredentialStore(workDir, { eventSink: { emit: (e) => events.push(e) } });
   setCredentialStore(store);
@@ -78,7 +78,7 @@ function refFor(key: string, header?: string): RemoteTransportConfig {
 
 describe("credentialFor", () => {
   test("returns a fetch, never a static header — the secret is not held on the transport", () => {
-    const credential = credentialTransportCredentialProvider.credentialFor("ws_acme01", {
+    const credential = credentialTransportCredentialProvider.credentialFor("ws_0010b38da2d87d3d", {
       key: "acme.db_url",
     });
     expect(credential.fetch).toBeDefined();
@@ -92,32 +92,35 @@ describe("credentialFor", () => {
   });
 
   test("a config with no key is refused at source start, not at the vendor", () => {
-    expect(() => credentialTransportCredentialProvider.credentialFor("ws_acme01", {})).toThrow(
-      /string `key`/,
-    );
+    expect(() =>
+      credentialTransportCredentialProvider.credentialFor("ws_0010b38da2d87d3d", {}),
+    ).toThrow(/string `key`/);
   });
 });
 
 describe("what reaches the wire", () => {
   test("the workspace's secret rides as a bearer token by default", async () => {
-    await store.put({ kind: "workspace", wsId: "ws_acme01" }, "acme.db_url", "s3cret");
+    await store.put({ kind: "workspace", wsId: "ws_0010b38da2d87d3d" }, "acme.db_url", "s3cret");
     const { fetch: spy, calls } = captureFetch();
     globalThis.fetch = spy;
 
-    const { fetch: authed } = await resolveTransportCredential(refFor("acme.db_url"), "ws_acme01");
+    const { fetch: authed } = await resolveTransportCredential(
+      refFor("acme.db_url"),
+      "ws_0010b38da2d87d3d",
+    );
     await authed?.("https://svc.test/mcp", { method: "POST" });
 
     expect(calls[0]?.headers.get("Authorization")).toBe("Bearer s3cret");
   });
 
   test("a named header carries the secret verbatim, with no Bearer prefix", async () => {
-    await store.put({ kind: "workspace", wsId: "ws_acme01" }, "acme.db_url", "s3cret");
+    await store.put({ kind: "workspace", wsId: "ws_0010b38da2d87d3d" }, "acme.db_url", "s3cret");
     const { fetch: spy, calls } = captureFetch();
     globalThis.fetch = spy;
 
     const { fetch: authed } = await resolveTransportCredential(
       refFor("acme.db_url", "x-api-key"),
-      "ws_acme01",
+      "ws_0010b38da2d87d3d",
     );
     await authed?.("https://svc.test/mcp", {});
 
@@ -126,11 +129,14 @@ describe("what reaches the wire", () => {
   });
 
   test("the transport's own headers ride through untouched", async () => {
-    await store.put({ kind: "workspace", wsId: "ws_acme01" }, "acme.db_url", "s3cret");
+    await store.put({ kind: "workspace", wsId: "ws_0010b38da2d87d3d" }, "acme.db_url", "s3cret");
     const { fetch: spy, calls } = captureFetch();
     globalThis.fetch = spy;
 
-    const { fetch: authed } = await resolveTransportCredential(refFor("acme.db_url"), "ws_acme01");
+    const { fetch: authed } = await resolveTransportCredential(
+      refFor("acme.db_url"),
+      "ws_0010b38da2d87d3d",
+    );
     await authed?.("https://svc.test/mcp", {
       headers: { "content-type": "application/json", "mcp-session-id": "sess-1" },
     });
@@ -140,15 +146,15 @@ describe("what reaches the wire", () => {
   });
 
   test("one entry, two workspaces, two secrets — the headline case", async () => {
-    await store.put({ kind: "workspace", wsId: "ws_tenanta" }, "acme.db_url", "a-secret");
-    await store.put({ kind: "workspace", wsId: "ws_tenantb" }, "acme.db_url", "b-secret");
+    await store.put({ kind: "workspace", wsId: "ws_00741647fd740fac" }, "acme.db_url", "a-secret");
+    await store.put({ kind: "workspace", wsId: "ws_0075ad1326581881" }, "acme.db_url", "b-secret");
     const { fetch: spy, calls } = captureFetch();
     globalThis.fetch = spy;
 
     // The SAME config object, as an install into two workspaces would produce.
     const config = refFor("acme.db_url");
-    const a = await resolveTransportCredential(config, "ws_tenanta");
-    const b = await resolveTransportCredential(config, "ws_tenantb");
+    const a = await resolveTransportCredential(config, "ws_00741647fd740fac");
+    const b = await resolveTransportCredential(config, "ws_0075ad1326581881");
     await a.fetch?.("https://svc.test/mcp", {});
     await b.fetch?.("https://svc.test/mcp", {});
 
@@ -159,12 +165,15 @@ describe("what reaches the wire", () => {
   });
 
   test("rotation lands on the next request — the fetch resolves per call", async () => {
-    const scope = { kind: "workspace", wsId: "ws_acme01" } as const;
+    const scope = { kind: "workspace", wsId: "ws_0010b38da2d87d3d" } as const;
     await store.put(scope, "acme.db_url", "v1");
     const { fetch: spy, calls } = captureFetch();
     globalThis.fetch = spy;
 
-    const { fetch: authed } = await resolveTransportCredential(refFor("acme.db_url"), "ws_acme01");
+    const { fetch: authed } = await resolveTransportCredential(
+      refFor("acme.db_url"),
+      "ws_0010b38da2d87d3d",
+    );
     await authed?.("https://svc.test/mcp", {});
     await store.put(scope, "acme.db_url", "v2");
     await authed?.("https://svc.test/mcp", {});
@@ -173,24 +182,30 @@ describe("what reaches the wire", () => {
   });
 
   test("a key deleted mid-connection fails the request naming the key", async () => {
-    const { fetch: authed } = await resolveTransportCredential(refFor("acme.db_url"), "ws_acme01");
+    const { fetch: authed } = await resolveTransportCredential(
+      refFor("acme.db_url"),
+      "ws_0010b38da2d87d3d",
+    );
     await expect(authed?.("https://svc.test/mcp", {})).rejects.toThrow(
-      /acme\.db_url.*workspace:ws_acme01/s,
+      /acme\.db_url.*workspace:ws_0010b38da2d87d3d/s,
     );
   });
 
   test("each request is audited once, without the value", async () => {
-    await store.put({ kind: "workspace", wsId: "ws_acme01" }, "acme.db_url", "s3cret");
+    await store.put({ kind: "workspace", wsId: "ws_0010b38da2d87d3d" }, "acme.db_url", "s3cret");
     const { fetch: spy } = captureFetch();
     globalThis.fetch = spy;
 
-    const { fetch: authed } = await resolveTransportCredential(refFor("acme.db_url"), "ws_acme01");
+    const { fetch: authed } = await resolveTransportCredential(
+      refFor("acme.db_url"),
+      "ws_0010b38da2d87d3d",
+    );
     await authed?.("https://svc.test/mcp", {});
     await authed?.("https://svc.test/mcp", {});
 
     expect(events).toHaveLength(2);
     expect(events[0]?.data).toMatchObject({
-      scope: "workspace:ws_acme01",
+      scope: "workspace:ws_0010b38da2d87d3d",
       key: "acme.db_url",
       caller: "transport:provider:credential",
     });

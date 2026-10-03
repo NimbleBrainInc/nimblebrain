@@ -48,10 +48,15 @@ describe("ConnectorLifecycleManager — Connection state transitions", () => {
   });
 
   test("recordConnectionStateChange creates the connection on first call", () => {
-    const instance = seedInstance(lifecycle, "granola", "ws_test");
+    const instance = seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
     expect(instance.connections).toBeUndefined();
 
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "starting");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "starting",
+    );
 
     expect(instance.connections?.size).toBe(1);
     const c = instance.connections!.get("_workspace")!;
@@ -61,15 +66,21 @@ describe("ConnectorLifecycleManager — Connection state transitions", () => {
   });
 
   test("emits connection.state_changed event with the right payload", () => {
-    seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
-      authorizationUrl: "https://granola.test/oauth/authorize?state=abc",
-    });
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "pending_auth",
+      {
+        authorizationUrl: "https://granola.test/oauth/authorize?state=abc",
+      },
+    );
 
     const events = sink.byType("connection.state_changed");
     expect(events.length).toBe(1);
     expect(events[0]!.data).toMatchObject({
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
       serverName: "granola",
       principalId: "_workspace",
       state: "pending_auth",
@@ -78,42 +89,74 @@ describe("ConnectorLifecycleManager — Connection state transitions", () => {
   });
 
   test("ConnectorInstance.state mirrors the single connection state (Step 1 workspace-scope)", () => {
-    const instance = seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
-      authorizationUrl: "https://x.test/?state=s",
-    });
+    const instance = seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "pending_auth",
+      {
+        authorizationUrl: "https://x.test/?state=s",
+      },
+    );
     expect(instance.state).toBe("pending_auth");
 
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
     expect(instance.state).toBe("running");
   });
 
   test("authorizationUrl is cleared on transition out of pending_auth", () => {
-    const instance = seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
-      authorizationUrl: "https://x.test/?state=s",
-    });
+    const instance = seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "pending_auth",
+      {
+        authorizationUrl: "https://x.test/?state=s",
+      },
+    );
     expect(instance.connections!.get("_workspace")!.authorizationUrl).toBe(
       "https://x.test/?state=s",
     );
 
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
     expect(instance.connections!.get("_workspace")!.authorizationUrl).toBeUndefined();
   });
 
   test("recordConnectionStateChange on missing instance is a no-op (no throw, no emit)", () => {
-    lifecycle.recordConnectionStateChange("ghost", "ws_test", "_workspace", "pending_auth");
+    lifecycle.recordConnectionStateChange(
+      "ghost",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "pending_auth",
+    );
     expect(sink.events.length).toBe(0);
   });
 
   test("lastError populates on dead transition; clears on running", () => {
-    const instance = seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "dead", {
+    const instance = seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
+    lifecycle.recordConnectionStateChange("granola", "ws_0076759dbbe19fcc", "_workspace", "dead", {
       lastError: "auth flow timed out",
     });
     expect(instance.connections!.get("_workspace")!.lastError).toBe("auth flow timed out");
 
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
     expect(instance.connections!.get("_workspace")!.lastError).toBeUndefined();
   });
 });
@@ -138,31 +181,57 @@ describe("ConnectorLifecycleManager — connection transition log lines", () => 
     spy.mock.calls.filter((c) => String(c[0]).startsWith("[lifecycle] connection "));
 
   test("test_recordConnectionStateChange_firstRecord_logsNothing", () => {
-    seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
     expect(transitionLines(info)).toHaveLength(0);
     expect(transitionLines(warn)).toHaveLength(0);
   });
 
   test("test_recordConnectionStateChange_sameState_logsNothing", () => {
-    seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
     expect(transitionLines(info)).toHaveLength(0);
   });
 
   test("test_recordConnectionStateChange_realTransition_logsFromAndTo", () => {
-    seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "pending_auth", {
-      authorizationUrl: "https://x.test/?state=s",
-    });
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "pending_auth",
+      {
+        authorizationUrl: "https://x.test/?state=s",
+      },
+    );
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
 
     const lines = transitionLines(info);
     expect(lines).toHaveLength(1);
     expect(lines[0]![0]).toBe("[lifecycle] connection granola pending_auth → running");
     expect(lines[0]![1]).toEqual({
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
       serverName: "granola",
       principalId: "_workspace",
       from: "pending_auth",
@@ -171,9 +240,14 @@ describe("ConnectorLifecycleManager — connection transition log lines", () => 
   });
 
   test("test_recordConnectionStateChange_authLost_logsWarnWithLastError", () => {
-    seedInstance(lifecycle, "granola", "ws_test");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "running");
-    lifecycle.recordConnectionStateChange("granola", "ws_test", "_workspace", "dead", {
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc");
+    lifecycle.recordConnectionStateChange(
+      "granola",
+      "ws_0076759dbbe19fcc",
+      "_workspace",
+      "running",
+    );
+    lifecycle.recordConnectionStateChange("granola", "ws_0076759dbbe19fcc", "_workspace", "dead", {
       lastError: "auth flow timed out",
     });
 

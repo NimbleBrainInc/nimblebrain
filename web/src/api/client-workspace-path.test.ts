@@ -59,15 +59,15 @@ afterEach(() => {
 
 describe("workspacePath", () => {
   test("builds the active workspace's path", () => {
-    setActiveWorkspaceId("ws_acme");
-    expect(workspacePath("/tools/call")).toBe("/v1/workspaces/ws_acme/tools/call");
+    setActiveWorkspaceId("ws_000f7ed6658f9d30");
+    expect(workspacePath("/tools/call")).toBe("/v1/workspaces/ws_000f7ed6658f9d30/tools/call");
   });
 
   test("follows a workspace switch on the next call", () => {
-    setActiveWorkspaceId("ws_acme");
-    expect(workspacePath("/shell")).toBe("/v1/workspaces/ws_acme/shell");
-    setActiveWorkspaceId("ws_tenant_a");
-    expect(workspacePath("/shell")).toBe("/v1/workspaces/ws_tenant_a/shell");
+    setActiveWorkspaceId("ws_000f7ed6658f9d30");
+    expect(workspacePath("/shell")).toBe("/v1/workspaces/ws_000f7ed6658f9d30/shell");
+    setActiveWorkspaceId("ws_0073c806fc50dc07");
+    expect(workspacePath("/shell")).toBe("/v1/workspaces/ws_0073c806fc50dc07/shell");
   });
 
   test("throws when no workspace is active", () => {
@@ -83,14 +83,14 @@ describe("workspacePath", () => {
 
 describe("workspace-scoped helpers", () => {
   test("call the active workspace's routes and send no workspace header", async () => {
-    setActiveWorkspaceId("ws_acme");
+    setActiveWorkspaceId("ws_000f7ed6658f9d30");
     await getShell();
     await chat({ message: "hi" });
     await startChatTurn({ message: "hi" });
     expect(sent.map((s) => new URL(s.url, "https://nb.example.com").pathname)).toEqual([
-      "/v1/workspaces/ws_acme/shell",
-      "/v1/workspaces/ws_acme/chat",
-      "/v1/workspaces/ws_acme/chat/start",
+      "/v1/workspaces/ws_000f7ed6658f9d30/shell",
+      "/v1/workspaces/ws_000f7ed6658f9d30/chat",
+      "/v1/workspaces/ws_000f7ed6658f9d30/chat/start",
     ]);
     for (const request of sent) expect(request.headers["x-workspace-id"]).toBeUndefined();
   });

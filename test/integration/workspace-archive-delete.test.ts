@@ -74,14 +74,14 @@ describe("WorkspaceStore.delete — archive-then-cascade", () => {
   });
 
   test("returns false (no archive) for a workspace that does not exist", async () => {
-    expect(await store.delete("ws_ghost")).toBe(false);
-    expect(existsSync(archiveDirPath("ws_ghost"))).toBe(false);
+    expect(await store.delete("ws_003aae10ff9ed0f1")).toBe(false);
+    expect(existsSync(archiveDirPath("ws_003aae10ff9ed0f1"))).toBe(false);
   });
 
   test("disambiguates a same-id re-archive via a deterministic counter", async () => {
     // A record placed on disk again at the same id after a delete (a
     // restore) archives to the same base path a second time.
-    const id = "ws_user_alice";
+    const id = "ws_007baec42fde4587";
     const first = await seedWorkspace(store, id, { name: "Alice" });
     await store.delete(first.id);
     expect(existsSync(archiveDirPath(first.id))).toBe(true);
@@ -100,7 +100,7 @@ describe("WorkspaceStore.delete — archive-then-cascade", () => {
   });
 
   test("honors a caller-supplied archiveSuffix on collision", async () => {
-    const id = "ws_user_bob";
+    const id = "ws_007c066866cbcd57";
     const first = await seedWorkspace(store, id, { name: "Bob" });
     await store.delete(first.id);
 

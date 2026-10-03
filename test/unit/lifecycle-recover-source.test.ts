@@ -38,7 +38,7 @@ function stubSource(name: string): ToolSource {
   };
 }
 
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const WORK_DIR = "/tmp/nb-recover-test";
 
 function seedInstance(
@@ -95,7 +95,9 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
   });
 
   test("returns false for an unknown workspace registry (nothing to recover)", async () => {
-    expect(await lifecycle.tryRecoverSource("granola", "ws_absent", WORK_DIR)).toBe(false);
+    expect(await lifecycle.tryRecoverSource("granola", "ws_000e0377c44c9171", WORK_DIR)).toBe(
+      false,
+    );
   });
 
   test("returns false when no instance is installed for the source", async () => {

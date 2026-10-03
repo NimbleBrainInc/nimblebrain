@@ -284,7 +284,7 @@ async function buildUserOAuthProvider(
  * `{type:"user"}` arm (credentials at user scope, see
  * {@link buildUserOAuthProvider}); otherwise a `wsContext` is REQUIRED and yields
  * the workspace-scoped provider (tokens at that workspace's credential scope).
- * The workspace id is never defaulted — a silent `ws_default` fallback would
+ * The workspace id is never defaulted — a silent default-workspace fallback would
  * pool OAuth tokens across tenants.
  */
 export async function buildUrlOAuthProvider(

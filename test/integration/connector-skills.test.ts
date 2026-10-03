@@ -298,7 +298,7 @@ describe("connector-skill adapter — end-to-end", () => {
     // Both workspaces must hold a source of the SAME name for the leak to
     // exist — a workspace with no such source never reaches discovery at all,
     // so it cannot observe the shared cache.
-    const otherWsId = "ws_other_tenant";
+    const otherWsId = "ws_00593c3b06bb6694";
     await provisionTestWorkspace(runtime, otherWsId);
 
     const barrenServer = startRemoteMcpServer(createSkilllessFixtureServer);

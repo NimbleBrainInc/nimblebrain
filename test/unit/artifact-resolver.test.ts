@@ -165,8 +165,8 @@ function makeResolver(
   return new ArtifactResolver(client, undefined, dataPlaneFetch);
 }
 
-const WS_A = "ws_aaaa";
-const WS_B = "ws_bbbb";
+const WS_A = "ws_000bdd0fc094b355";
+const WS_B = "ws_001fbca0b355cd5f";
 
 describe("artifact:// URI parsing", () => {
   it("recognizes the artifact scheme and extracts the id", () => {

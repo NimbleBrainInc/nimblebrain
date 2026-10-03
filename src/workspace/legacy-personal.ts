@@ -17,8 +17,9 @@ import type { WorkspaceStore } from "./workspace-store.ts";
  *   is named exactly `"<displayName>'s Workspace"`. Any other name is kept;
  * - its owner is seated as admin when missing from its member list.
  *
- * Its id stays as it is. Ids are opaque, and this one is in URLs and MCP
- * client configurations that a rename would break.
+ * It never touches the id. It runs after `assertWorkspaceIdsConform`, so
+ * every record it reads already carries a generated id, and it reads none of
+ * an id's characters: the owner comes from `ownerUserId`, never from the id.
  *
  * Runs before anything serves, so no request sees a half-retired record. A
  * crash midway leaves the fields on the records not yet written, and the next

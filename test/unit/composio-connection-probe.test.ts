@@ -59,7 +59,7 @@ function fakeDirectory(): ConnectorCatalog {
 function target(connectorId: string | undefined): ProbeTarget {
   return {
     serverName: "teams",
-    wsId: "ws_1",
+    wsId: "ws_0002ee92e8791c13",
     principalId: "_workspace",
     ref: (connectorId
       ? { url: "u", composio: { connectorId } }

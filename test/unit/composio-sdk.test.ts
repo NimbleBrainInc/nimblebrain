@@ -161,17 +161,23 @@ afterEach(() => {
 
 describe("composioUserId", () => {
   test("returns wsId alone when NB_TENANT_ID unset", () => {
-    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "ws_0001f3ac8053ce11",
+    );
   });
 
   test("prefixes tenant id when NB_TENANT_ID set", () => {
     process.env.NB_TENANT_ID = "hq";
-    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("hq:ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "hq:ws_0001f3ac8053ce11",
+    );
   });
 
   test("trims whitespace on NB_TENANT_ID", () => {
     process.env.NB_TENANT_ID = "  hq  ";
-    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("hq:ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "hq:ws_0001f3ac8053ce11",
+    );
   });
 
   test("namespaces a user owner with a `user:` segment (no tenant)", () => {
@@ -196,7 +202,7 @@ describe("findActiveComposioConnection", () => {
     sdkCalls.listImpl = async () => ({ items: [] });
     const result = await findActiveComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
     });
     expect(result).toBeNull();
@@ -208,7 +214,7 @@ describe("findActiveComposioConnection", () => {
     });
     const result = await findActiveComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
     });
     expect(result).toEqual({ id: "ca_first", status: "ACTIVE" });
@@ -226,7 +232,7 @@ describe("findActiveComposioConnection", () => {
     });
     const result = await findActiveComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
     });
     expect(result).toEqual({ id: "ca_first", status: "ACTIVE", displayName: "user@example.com" });
@@ -236,7 +242,7 @@ describe("findActiveComposioConnection", () => {
     sdkCalls.listImpl = async () => ({ items: [{ status: "ACTIVE" }] });
     const result = await findActiveComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
     });
     expect(result).toBeNull();
@@ -250,11 +256,11 @@ describe("findActiveComposioConnection", () => {
     };
     await findActiveComposioConnection({
       apiKey: "k_test",
-      userId: "hq:ws_42",
+      userId: "hq:ws_000630ceb006ac11",
       authConfigId: "ac_gmail",
     });
     expect(captured).toEqual({
-      userIds: ["hq:ws_42"],
+      userIds: ["hq:ws_000630ceb006ac11"],
       authConfigIds: ["ac_gmail"],
       statuses: ["ACTIVE"],
       limit: 1,
@@ -276,7 +282,7 @@ describe("initiateComposioConnection", () => {
     });
     const result = await initiateComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
       callbackUrl: "https://nb.test/v1/composio-auth/callback",
     });
@@ -292,7 +298,7 @@ describe("initiateComposioConnection", () => {
     };
     await initiateComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
       callbackUrl: "https://nb.test/v1/composio-auth/callback",
     });
@@ -306,7 +312,7 @@ describe("initiateComposioConnection", () => {
     });
     const result = await initiateComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
       callbackUrl: "https://nb.test/cb",
     });
@@ -318,7 +324,7 @@ describe("initiateComposioConnection", () => {
     await expect(
       initiateComposioConnection({
         apiKey: "k_test",
-        userId: "ws_x",
+        userId: "ws_008bd230f095f38a",
         authConfigId: "ac_x",
         callbackUrl: "https://nb.test/cb",
       }),
@@ -334,7 +340,7 @@ describe("initiateComposioConnection", () => {
   test("redirect arm calls the hosted link, never the retired initiate", async () => {
     await initiateComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
       callbackUrl: "https://nb.test/cb",
     });
@@ -357,7 +363,7 @@ describe("initiateComposioConnection", () => {
     await expect(
       initiateComposioConnection({
         apiKey: "k_test",
-        userId: "ws_x",
+        userId: "ws_008bd230f095f38a",
         authConfigId: "ac_x",
         callbackUrl: "https://nb.test/cb",
       }),
@@ -371,7 +377,7 @@ describe("initiateComposioConnection", () => {
     await expect(
       initiateComposioConnection({
         apiKey: "k_test",
-        userId: "ws_x",
+        userId: "ws_008bd230f095f38a",
         authConfigId: "ac_x",
         callbackUrl: "https://nb.test/cb",
       }),
@@ -385,7 +391,7 @@ describe("initiateComposioConnection", () => {
     });
     await connectComposioApiKey({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
       fields: { api_key: "secret" },
     });
@@ -403,7 +409,7 @@ describe("initiateComposioConnection", () => {
     });
     const result = await connectComposioApiKey({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
       fields: { api_key: "secret" },
     });
@@ -507,7 +513,7 @@ describe("createComposioSession", () => {
     });
     const result = await createComposioSession({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       toolkit: "gmail",
       authConfigId: "ac_gmail",
     });
@@ -519,7 +525,7 @@ describe("createComposioSession", () => {
   test("requests direct_tools preset (not the meta-tool router)", async () => {
     await createComposioSession({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       toolkit: "gmail",
       authConfigId: "ac_gmail",
     });
@@ -531,7 +537,7 @@ describe("createComposioSession", () => {
   test("forwards toolkit + authConfigs mapping", async () => {
     await createComposioSession({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       toolkit: "gmail",
       authConfigId: "ac_gmail",
     });
@@ -546,7 +552,7 @@ describe("createComposioSession", () => {
   test("forwards tool allowlist when provided", async () => {
     await createComposioSession({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       toolkit: "gmail",
       authConfigId: "ac_gmail",
       tools: ["GMAIL_SEND_EMAIL", "GMAIL_FETCH_EMAILS"],
@@ -560,7 +566,7 @@ describe("createComposioSession", () => {
   test("omits tools key when allowlist is empty", async () => {
     await createComposioSession({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       toolkit: "gmail",
       authConfigId: "ac_gmail",
       tools: [],
@@ -574,7 +580,7 @@ describe("createComposioSession", () => {
     await expect(
       createComposioSession({
         apiKey: "k_test",
-        userId: "ws_x",
+        userId: "ws_008bd230f095f38a",
         toolkit: "gmail",
         authConfigId: "ac_gmail",
       }),
@@ -597,7 +603,11 @@ describe("SDK call timeout", () => {
     // Bun's `expect(...).rejects` honors the global test timeout —
     // we override it on this test only.
     await expect(
-      findActiveComposioConnection({ apiKey: "k_test", userId: "ws_x", authConfigId: "ac_x" }),
+      findActiveComposioConnection({
+        apiKey: "k_test",
+        userId: "ws_008bd230f095f38a",
+        authConfigId: "ac_x",
+      }),
     ).rejects.toThrow(/timed out/);
   }, 15_000);
 });
@@ -611,7 +621,7 @@ describe("composioClient", () => {
     sdkCalls.listImpl = async () => ({ items: [] });
     await findActiveComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
     });
     expect(sdkCalls.ctorArgs[0]?.baseURL).toBe("https://backend.composio.dev");
@@ -624,7 +634,7 @@ describe("composioClient", () => {
     sdkCalls.listImpl = async () => ({ items: [] });
     await findActiveComposioConnection({
       apiKey: "k_test",
-      userId: "ws_x",
+      userId: "ws_008bd230f095f38a",
       authConfigId: "ac_x",
     });
     expect(sdkCalls.ctorArgs[0]?.baseURL).toBe("https://composio.example.com");
@@ -644,10 +654,10 @@ describe("cleanupComposioConnector", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(joinPath(tmpdir(), "nb-composio-cleanup-"));
-    seedWorkspaceRoot(workDir, "ws_01abc");
-    seedWorkspaceRoot(workDir, "ws_42");
-    seedWorkspaceRoot(workDir, "ws_test");
-    seedWorkspaceRoot(workDir, "ws_x");
+    seedWorkspaceRoot(workDir, "ws_0001f3ac8053ce11");
+    seedWorkspaceRoot(workDir, "ws_000630ceb006ac11");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
+    seedWorkspaceRoot(workDir, "ws_008bd230f095f38a");
   });
 
   afterEach(() => {
@@ -664,12 +674,12 @@ describe("cleanupComposioConnector", () => {
     // Seed a connection.json on disk.
     await saveComposioConnection(
       workDir,
-      { type: "workspace", wsId: "ws_test" },
+      { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       "com.google/gmail",
       {
         connectedAccountId: "ca_to_revoke",
         toolkit: "gmail",
-        userId: "ws_test",
+        userId: "ws_0076759dbbe19fcc",
         connectedAt: "2026-05-13T00:00:00.000Z",
         status: "ACTIVE",
       },
@@ -677,14 +687,14 @@ describe("cleanupComposioConnector", () => {
     expect(
       hasPersistedComposioConnection(
         workDir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       ),
     ).toBe(true);
 
     const result = await cleanupComposioConnector({
       workDir,
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       connectorId: "com.google/gmail",
     });
 
@@ -694,7 +704,7 @@ describe("cleanupComposioConnector", () => {
     expect(
       hasPersistedComposioConnection(
         workDir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       ),
     ).toBe(false);
@@ -708,12 +718,12 @@ describe("cleanupComposioConnector", () => {
 
     await saveComposioConnection(
       workDir,
-      { type: "workspace", wsId: "ws_test" },
+      { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       "com.google/gmail",
       {
         connectedAccountId: "ca_x",
         toolkit: "gmail",
-        userId: "ws_test",
+        userId: "ws_0076759dbbe19fcc",
         connectedAt: "2026-05-13T00:00:00.000Z",
         status: "ACTIVE",
       },
@@ -721,7 +731,7 @@ describe("cleanupComposioConnector", () => {
 
     const result = await cleanupComposioConnector({
       workDir,
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       connectorId: "com.google/gmail",
     });
 
@@ -731,7 +741,7 @@ describe("cleanupComposioConnector", () => {
     expect(
       hasPersistedComposioConnection(
         workDir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       ),
     ).toBe(false);
@@ -747,12 +757,12 @@ describe("cleanupComposioConnector", () => {
 
     await saveComposioConnection(
       workDir,
-      { type: "workspace", wsId: "ws_test" },
+      { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       "com.google/gmail",
       {
         connectedAccountId: "ca_x",
         toolkit: "gmail",
-        userId: "ws_test",
+        userId: "ws_0076759dbbe19fcc",
         connectedAt: "2026-05-13T00:00:00.000Z",
         status: "ACTIVE",
       },
@@ -760,7 +770,7 @@ describe("cleanupComposioConnector", () => {
 
     const result = await cleanupComposioConnector({
       workDir,
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       connectorId: "com.google/gmail",
     });
 
@@ -783,7 +793,7 @@ describe("cleanupComposioConnector", () => {
     // No connection.json on disk → nothing to read or delete.
     const result = await cleanupComposioConnector({
       workDir,
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       connectorId: "com.google/gmail",
     });
 
@@ -800,12 +810,12 @@ describe("cleanupComposioConnector", () => {
 
     await saveComposioConnection(
       workDir,
-      { type: "workspace", wsId: "ws_test" },
+      { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       "com.google/gmail",
       {
         connectedAccountId: "ca_x",
         toolkit: "gmail",
-        userId: "ws_test",
+        userId: "ws_0076759dbbe19fcc",
         connectedAt: "2026-05-13T00:00:00.000Z",
         status: "ACTIVE",
       },
@@ -815,7 +825,7 @@ describe("cleanupComposioConnector", () => {
     // (The SDK delete swallows internally; the local delete should still succeed.)
     const result = await cleanupComposioConnector({
       workDir,
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       connectorId: "com.google/gmail",
     });
     expect(result.upstreamDeleted).toBe(false);

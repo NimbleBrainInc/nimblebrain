@@ -37,7 +37,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN = { id: "usr_admin", email: "admin@example.test" };
-const WS_ID = "ws_helix";
+const WS_ID = "ws_003eba8844413cd9";
 
 /** `slugifyServerName` of each catalog id — what a ref's `serverName` records. */
 const ALPHA = "com-example-alpha";
@@ -339,7 +339,7 @@ test("a failure on the FAR side of the rename reports the teardown too", async (
 });
 
 test("a workspace that does not exist reports not-deleted and tears down nothing", async () => {
-  const result = await runtime.deleteWorkspace("ws_absent");
+  const result = await runtime.deleteWorkspace("ws_000e0377c44c9171");
 
   expect(result.deleted).toBe(false);
   expect(result.connectors).toEqual([]);

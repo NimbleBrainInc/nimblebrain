@@ -67,7 +67,7 @@ import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
 
 const WS_A: WorkspaceInfo = {
-  id: "ws_a",
+  id: "ws_00079598e311c160",
   name: "Alpha",
   connectorCount: 0,
   memberCount: 1,
@@ -109,13 +109,13 @@ async function mountApp(): Promise<void> {
     root.render(
       React.createElement(
         MemoryRouter,
-        { initialEntries: ["/w/a/app/notes"] },
+        { initialEntries: ["/w/00079598e311c160/app/notes"] },
         React.createElement(
           ThemeProvider,
           null,
           React.createElement(WorkspaceProvider, {
             initialWorkspaces: [WS_A],
-            initialActiveId: "ws_a",
+            initialActiveId: "ws_00079598e311c160",
             children: React.createElement(ChatProvider, {
               currentUserId: "u1",
               initialConfig: { configuredProviders: ["anthropic"] },
@@ -255,13 +255,13 @@ describe("AppWithChat — the top bar's trail belongs to the app on screen", () 
   function tree(placement: PlacementEntry) {
     return React.createElement(
       MemoryRouter,
-      { initialEntries: ["/w/a/app/notes"] },
+      { initialEntries: ["/w/00079598e311c160/app/notes"] },
       React.createElement(
         ThemeProvider,
         null,
         React.createElement(WorkspaceProvider, {
           initialWorkspaces: [WS_A],
-          initialActiveId: "ws_a",
+          initialActiveId: "ws_00079598e311c160",
           children: React.createElement(ChatProvider, {
             currentUserId: "u1",
             initialConfig: { configuredProviders: ["anthropic"] },

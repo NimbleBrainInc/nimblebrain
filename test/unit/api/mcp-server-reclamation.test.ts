@@ -26,7 +26,11 @@ import {
 import type { ResolvedFeatures } from "../../../src/config/features.ts";
 
 const FAKE_FEATURES = {} as ResolvedFeatures;
-const SESSION_CTX = { identity: null, workspaceId: "ws_a", grant: "first_party" as const };
+const SESSION_CTX = {
+  identity: null,
+  workspaceId: "ws_00079598e311c160",
+  grant: "first_party" as const,
+};
 
 function initRequest(): Request {
   return new Request("http://test/mcp", {

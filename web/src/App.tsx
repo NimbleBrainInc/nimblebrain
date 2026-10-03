@@ -41,6 +41,7 @@ import { useServerNotificationRelay } from "./hooks/useServerNotificationRelay";
 import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
+import { routablePlacements } from "./lib/routable-placements";
 import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
@@ -358,20 +359,10 @@ function AuthenticatedAppContent({
     [forSlot],
   );
 
-  // Collect all routable placements from main + sidebar (deduplicated by route).
-  // Sidebar placements can have routes too (e.g., Conversations).
-  const mainPlacementRoutes = mainRoutes();
-  const sidebarRoutes = forSlot("sidebar").filter(
-    (p) => p.route && !p.slot.startsWith("sidebar.bottom"),
-  );
-  const seen = new Set<string>();
-  const allRoutable: PlacementEntry[] = [];
-  for (const p of [...sidebarRoutes, ...mainPlacementRoutes]) {
-    if (p.route && !seen.has(p.route)) {
-      seen.add(p.route);
-      allRoutable.push(p);
-    }
-  }
+  // Collect all routable placements from main + sidebar, one per route, a
+  // platform placement ahead of any connector's. Sidebar placements can have
+  // routes too (e.g., Conversations).
+  const allRoutable = routablePlacements(forSlot("sidebar"), mainRoutes());
 
   // App placements: everything routable except route "/", which is the shell's
   // own: `/` is `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is

@@ -51,15 +51,15 @@ function locator(): ConversationLocator {
 test("locate resolves a conversation to its workspace + owner", async () => {
   const id = convId();
   writeConversation(
-    workspaceConversationsDir(workDir, "ws_helix", "usr_alice"),
+    workspaceConversationsDir(workDir, "ws_003eba8844413cd9", "usr_alice"),
     id,
     "usr_alice",
-    "ws_helix",
+    "ws_003eba8844413cd9",
   );
 
   const loc = await locator().locate(id);
   expect(loc).toBeDefined();
-  expect(loc?.wsId).toBe("ws_helix");
+  expect(loc?.wsId).toBe("ws_003eba8844413cd9");
   expect(loc?.ownerId).toBe("usr_alice");
 });
 
@@ -72,12 +72,12 @@ test("locate resolves by path alone — it never reads/parses file content", asy
   // was the hot-path regression). Prove it: an unparseable body still resolves,
   // because locate only uses the directory path + the filename.
   const id = convId();
-  const dir = workspaceConversationsDir(workDir, "ws_helix", "usr_alice");
+  const dir = workspaceConversationsDir(workDir, "ws_003eba8844413cd9", "usr_alice");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${id}.jsonl`), "not valid json at all\n{{{{");
 
   const loc = await locator().locate(id);
-  expect(loc?.wsId).toBe("ws_helix");
+  expect(loc?.wsId).toBe("ws_003eba8844413cd9");
   expect(loc?.ownerId).toBe("usr_alice");
 });
 
@@ -88,35 +88,39 @@ test("a list covers exactly one workspace — the same owner's other workspace i
   const helix = convId();
   const acme = convId();
   writeConversation(
-    workspaceConversationsDir(workDir, "ws_helix", "usr_alice"),
+    workspaceConversationsDir(workDir, "ws_003eba8844413cd9", "usr_alice"),
     helix,
     "usr_alice",
-    "ws_helix",
+    "ws_003eba8844413cd9",
   );
   writeConversation(
-    workspaceConversationsDir(workDir, "ws_acme", "usr_alice"),
+    workspaceConversationsDir(workDir, "ws_000f7ed6658f9d30", "usr_alice"),
     acme,
     "usr_alice",
-    "ws_acme",
+    "ws_000f7ed6658f9d30",
   );
 
   const loc = locator();
   const access = { userId: "usr_alice" };
 
-  expect((await loc.list("ws_helix", {}, access)).conversations.map((c) => c.id)).toEqual([helix]);
-  expect((await loc.list("ws_acme", {}, access)).conversations.map((c) => c.id)).toEqual([acme]);
+  expect(
+    (await loc.list("ws_003eba8844413cd9", {}, access)).conversations.map((c) => c.id),
+  ).toEqual([helix]);
+  expect(
+    (await loc.list("ws_000f7ed6658f9d30", {}, access)).conversations.map((c) => c.id),
+  ).toEqual([acme]);
 });
 
 test("the access gate hides another owner's conversation in the same workspace", async () => {
   const mine = convId();
   const theirs = convId();
-  const dirAlice = workspaceConversationsDir(workDir, "ws_helix", "usr_alice");
-  const dirBob = workspaceConversationsDir(workDir, "ws_helix", "usr_bob");
-  writeConversation(dirAlice, mine, "usr_alice", "ws_helix");
-  writeConversation(dirBob, theirs, "usr_bob", "ws_helix");
+  const dirAlice = workspaceConversationsDir(workDir, "ws_003eba8844413cd9", "usr_alice");
+  const dirBob = workspaceConversationsDir(workDir, "ws_003eba8844413cd9", "usr_bob");
+  writeConversation(dirAlice, mine, "usr_alice", "ws_003eba8844413cd9");
+  writeConversation(dirBob, theirs, "usr_bob", "ws_003eba8844413cd9");
 
   const loc = locator();
-  const aliceList = await loc.list("ws_helix", {}, { userId: "usr_alice" });
+  const aliceList = await loc.list("ws_003eba8844413cd9", {}, { userId: "usr_alice" });
   expect(aliceList.conversations.map((c) => c.id)).toEqual([mine]);
 
   // Alice cannot resolve-then-read Bob's conversation: locate finds the path,
@@ -129,33 +133,33 @@ test("invalidate + JIT rescan picks up a newly written conversation (no fs.watch
   const loc = locator();
   const first = convId();
   writeConversation(
-    workspaceConversationsDir(workDir, "ws_helix", "usr_alice"),
+    workspaceConversationsDir(workDir, "ws_003eba8844413cd9", "usr_alice"),
     first,
     "usr_alice",
-    "ws_helix",
+    "ws_003eba8844413cd9",
   );
 
   // Cold read populates.
-  expect((await loc.list("ws_helix", {}, { userId: "usr_alice" })).totalCount).toBe(1);
+  expect((await loc.list("ws_003eba8844413cd9", {}, { userId: "usr_alice" })).totalCount).toBe(1);
 
   // Write a second file directly (simulating another store), then invalidate.
   const second = convId();
   writeConversation(
-    workspaceConversationsDir(workDir, "ws_helix", "usr_alice"),
+    workspaceConversationsDir(workDir, "ws_003eba8844413cd9", "usr_alice"),
     second,
     "usr_alice",
-    "ws_helix",
+    "ws_003eba8844413cd9",
   );
   // Without invalidate the cache is stale...
-  expect((await loc.list("ws_helix", {}, { userId: "usr_alice" })).totalCount).toBe(1);
+  expect((await loc.list("ws_003eba8844413cd9", {}, { userId: "usr_alice" })).totalCount).toBe(1);
   // ...invalidate forces a rescan on the next read.
   loc.invalidate();
-  expect((await loc.list("ws_helix", {}, { userId: "usr_alice" })).totalCount).toBe(2);
+  expect((await loc.list("ws_003eba8844413cd9", {}, { userId: "usr_alice" })).totalCount).toBe(2);
 });
 
 test("an ownerless file is excluded from list() but still resolves by path", async () => {
   const id = convId();
-  const dir = workspaceConversationsDir(workDir, "ws_helix", "usr_alice");
+  const dir = workspaceConversationsDir(workDir, "ws_003eba8844413cd9", "usr_alice");
   mkdirSync(dir, { recursive: true });
   // Line-1 metadata with no ownerId — pre-migration shape.
   writeFileSync(
@@ -165,8 +169,8 @@ test("an ownerless file is excluded from list() but still resolves by path", asy
 
   const loc = locator();
   // list() parses headers and drops the ownerless entry (no owner to gate on)...
-  expect((await loc.list("ws_helix")).totalCount).toBe(0);
+  expect((await loc.list("ws_003eba8844413cd9")).totalCount).toBe(0);
   // ...but locate() resolves purely by PATH, so a context-free load reaches the
   // file and surfaces the missing owner as a corruption error, not a silent miss.
-  expect((await loc.locate(id))?.wsId).toBe("ws_helix");
+  expect((await loc.locate(id))?.wsId).toBe("ws_003eba8844413cd9");
 });

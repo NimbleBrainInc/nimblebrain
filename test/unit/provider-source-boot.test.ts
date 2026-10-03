@@ -68,10 +68,12 @@ describe("seedInstance — provider-auth fleet source", () => {
       "https://web.svc.test/mcp",
       providerRef(),
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const conn = lifecycle.getInstance("web", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    const conn = lifecycle
+      .getInstance("web", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
     expect(conn?.state).not.toBe("not_authenticated");
   });
@@ -95,10 +97,12 @@ describe("seedInstance — provider-auth fleet source", () => {
       brokeredRef().url ?? "",
       brokeredRef(),
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    const conn = lifecycle
+      .getInstance("gmail", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("not_authenticated");
   });
 
@@ -112,10 +116,12 @@ describe("seedInstance — provider-auth fleet source", () => {
       brokeredRef().url ?? "",
       brokeredRef(),
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    const conn = lifecycle
+      .getInstance("gmail", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
   });
 
@@ -129,10 +135,12 @@ describe("seedInstance — provider-auth fleet source", () => {
       brokeredRef().url ?? "",
       brokeredRef(),
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const conn = lifecycle.getInstance("gmail", "ws_test")?.connections.get(WORKSPACE_PRINCIPAL_ID);
+    const conn = lifecycle
+      .getInstance("gmail", "ws_0076759dbbe19fcc")
+      ?.connections.get(WORKSPACE_PRINCIPAL_ID);
     expect(conn?.state).toBe("running");
   });
 });

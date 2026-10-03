@@ -32,25 +32,25 @@ describe("pageTitle", () => {
   });
 
   test("workspace pages, without the workspace's name", () => {
-    expect(pageTitle("/w/acme/", PLACEMENTS)).toBe("Overview");
-    expect(pageTitle("/w/acme/notifications", PLACEMENTS)).toBe("Inbox");
-    expect(pageTitle("/w/acme/context/conv-1", PLACEMENTS)).toBe("Context");
+    expect(pageTitle("/w/000f7ed6658f9d30/", PLACEMENTS)).toBe("Overview");
+    expect(pageTitle("/w/000f7ed6658f9d30/notifications", PLACEMENTS)).toBe("Inbox");
+    expect(pageTitle("/w/000f7ed6658f9d30/context/conv-1", PLACEMENTS)).toBe("Context");
   });
 
   test("settings: the Connectors row's tab keeps its name; every other tab is Settings", () => {
-    expect(pageTitle("/w/acme/settings/connectors", PLACEMENTS)).toBe("Connectors");
-    expect(pageTitle("/w/acme/settings/connectors/browse", PLACEMENTS)).toBe("Connectors");
-    expect(pageTitle("/w/acme/settings/general", PLACEMENTS)).toBe("Settings");
+    expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors", PLACEMENTS)).toBe("Connectors");
+    expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors/browse", PLACEMENTS)).toBe("Connectors");
+    expect(pageTitle("/w/000f7ed6658f9d30/settings/general", PLACEMENTS)).toBe("Settings");
   });
 
   test("an app or identity view takes its sidebar label, falling back to its route", () => {
-    expect(pageTitle("/w/acme/app/people", PLACEMENTS)).toBe("People");
-    expect(pageTitle("/w/acme/app/tasks", PLACEMENTS)).toBe("tasks");
-    expect(pageTitle("/w/acme/conversations", PLACEMENTS)).toBe("Conversations");
+    expect(pageTitle("/w/000f7ed6658f9d30/app/people", PLACEMENTS)).toBe("People");
+    expect(pageTitle("/w/000f7ed6658f9d30/app/tasks", PLACEMENTS)).toBe("tasks");
+    expect(pageTitle("/w/000f7ed6658f9d30/conversations", PLACEMENTS)).toBe("Conversations");
   });
 
   test("an unknown route names nothing", () => {
-    expect(pageTitle("/w/acme/app/gone", PLACEMENTS)).toBe("");
+    expect(pageTitle("/w/000f7ed6658f9d30/app/gone", PLACEMENTS)).toBe("");
     expect(pageTitle("/elsewhere", PLACEMENTS)).toBe("");
   });
 });

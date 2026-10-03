@@ -227,7 +227,7 @@ describe("partitionSkillsByRole", () => {
       makeSkill({
         name: "ws-rule",
         loadingStrategy: "always",
-        sourcePath: "/work/workspaces/ws_x/skills/ws-rule.md",
+        sourcePath: "/work/workspaces/ws_008bd230f095f38a/skills/ws-rule.md",
       }),
     ];
     const { context, capability } = partitionSkillsByRole(pool);

@@ -17,7 +17,7 @@ import {
  * Tests must explicitly create and provision workspaces — there is no implicit
  * dev-mode fallback. This constant standardizes the ID used across tests.
  */
-export const TEST_WORKSPACE_ID = "ws_test";
+export const TEST_WORKSPACE_ID = "ws_0076759dbbe19fcc";
 
 /**
  * Construct a `WorkspaceContext` for unit tests that don't have a full
@@ -46,8 +46,8 @@ export function makeTestWorkspaceContext(
  * stable id — a constant shared across a file, a tool name built from it —
  * seeds the record the store loads instead: `workspace.json` plus the scaffold
  * `create` lays down. This is the load path, the one existing workspaces take
- * at boot, so the id must satisfy the loading pattern (`WORKSPACE_ID_RE`), not
- * the generated one. Members are seated through `addMember`, so membership-
+ * at boot, so the id must satisfy `WORKSPACE_ID_RE` (`ws_<16-hex>`), as every
+ * stored workspace's does. Members are seated through `addMember`, so membership-
  * change subscribers fire as they would for a create.
  *
  * Throws `WorkspaceConflictError` when the id is taken, like `create`.

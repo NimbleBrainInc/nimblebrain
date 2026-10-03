@@ -27,7 +27,7 @@ export interface CredentialStoreHarness {
   cleanup: () => void;
 }
 
-export const WS: CredentialScope = { kind: "workspace", wsId: "ws_test" };
+export const WS: CredentialScope = { kind: "workspace", wsId: "ws_0076759dbbe19fcc" };
 export const INSTANCE: CredentialScope = { kind: "instance" };
 export const USER: CredentialScope = { kind: "user", userId: "usr_alex01" };
 
@@ -190,11 +190,11 @@ export function describeCredentialStoreConformance(
         expect(events[0]).toEqual({
           type: "audit.credential_read",
           data: {
-            scope: "workspace:ws_test",
+            scope: "workspace:ws_0076759dbbe19fcc",
             key: "acme.db_url",
             caller: "transport:header",
             purpose: "outbound MCP request header Authorization",
-            workspaceId: "ws_test",
+            workspaceId: "ws_0076759dbbe19fcc",
           },
         });
       } finally {

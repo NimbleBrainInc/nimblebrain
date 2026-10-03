@@ -41,8 +41,8 @@ function bootingRuntime(): Probe {
 const scheduledRun = {
   trigger: "schedule",
   principal: { identity: { id: "user-a" }, ownerId: "user-a" },
-  workspaceId: "ws_a",
-  briefingWorkspaceId: "ws_a",
+  workspaceId: "ws_00079598e311c160",
+  briefingWorkspaceId: "ws_00079598e311c160",
   input: { content: [{ type: "text", text: "go" }], userId: "user-a" },
   budget: {},
   model: "test:model",

@@ -557,7 +557,7 @@ describe("SSE Event Manager", () => {
     manager.emit({
       type: "connector.installed",
       data: {
-        wsId: "ws_test",
+        wsId: "ws_0076759dbbe19fcc",
         serverName: "weather",
         connectorName: "@test/weather",
         version: "1.0.0",

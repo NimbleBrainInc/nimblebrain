@@ -10,8 +10,8 @@
  * T008 chose approach (a) per the task spec: wrap each per-call
  * `source.execute(...)` in a fresh `runWithRequestContext` keyed on
  * `routed.context.workspaceId`. This test pins the contract: a
- * cross-workspace call into `ws_helix/...` makes the handler observe
- * `ws_helix`, not the user's other (default) workspace.
+ * cross-workspace call into `ws_003eba8844413cd9/...` makes the handler observe
+ * `ws_003eba8844413cd9`, not the user's other (default) workspace.
  *
  * Both surfaces (chat + `/mcp`) must honour the same contract. The
  * `/mcp` path was already correct (it constructs its own RequestContext
@@ -33,7 +33,7 @@ import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const TEST_USER_ID = "usr_amb_ctx_test";
 const TEST_USER_DISPLAY = "Ambient Test";
-const SHARED_WS_ID = "ws_helix";
+const SHARED_WS_ID = "ws_003eba8844413cd9";
 
 interface ContextObservation {
   workspaceId: string | null | undefined;
@@ -90,7 +90,7 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     }
   });
 
-  it("chat path: invoking ws_helix/<tool> from a user whose default workspace is another one makes the handler observe ws_helix", async () => {
+  it("chat path: invoking ws_003eba8844413cd9/<tool> from a user whose default workspace is another one makes the handler observe ws_003eba8844413cd9", async () => {
     workDir = mkdtempSync(join(tmpdir(), "nb-t008-amb-chat-"));
     mkdirSync(workDir, { recursive: true });
 
@@ -135,12 +135,12 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     // Register the probe source in BOTH workspaces' registries.
     // We need the shared workspace to have it so the cross-workspace
     // call lands. The own workspace doesn't need it for this test
-    // (the routed wsId is ws_helix).
+    // (the routed wsId is ws_003eba8844413cd9).
     const sharedReg = await runtime.ensureWorkspaceRegistry(SHARED_WS_ID);
     sharedReg.addSource(probe.source);
 
-    // Run the chat IN ws_helix. The per-call wrap must stamp the routed
-    // ws_helix at dispatch time, never the user's default workspace.
+    // Run the chat IN ws_003eba8844413cd9. The per-call wrap must stamp the routed
+    // ws_003eba8844413cd9 at dispatch time, never the user's default workspace.
     await runtime.chat({
       identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
       workspaceId: SHARED_WS_ID,
@@ -148,7 +148,7 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
     });
 
     // The handler observed exactly one call; the workspaceId it saw
-    // must be the ROUTED ws_helix, NOT the user's default workspace.
+    // must be the ROUTED ws_003eba8844413cd9, NOT the user's default workspace.
     expect(probe.observations).toHaveLength(1);
     expect(probe.observations[0]?.workspaceId).toBe(SHARED_WS_ID);
     // Cross-check: NOT the own workspace (defends against the

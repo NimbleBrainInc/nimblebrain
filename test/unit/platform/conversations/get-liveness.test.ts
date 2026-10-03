@@ -22,7 +22,7 @@ import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 
 const OWNER_ID = "usr_test";
-const WS_ID = "ws_liveness000000";
+const WS_ID = "ws_0044782be7c9916a";
 const LIVE_ID = "conv_live0000000001";
 const DEAD_ID = "conv_dead0000000001";
 

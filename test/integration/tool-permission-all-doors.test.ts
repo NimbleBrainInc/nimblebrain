@@ -31,7 +31,7 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
  * `startServer()` transport, which this engine-path test deliberately avoids.
  */
 
-const WS_ID = "ws_acme";
+const WS_ID = "ws_000f7ed6658f9d30";
 const IDENTITY_ID = "usr_admin";
 
 /** A workspace source with one safe and one destructive tool; logs executions. */
@@ -104,7 +104,7 @@ interface Harness {
 
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-perm-doors-"));
-  seedWorkspaceRoot(workDir, "ws_acme");
+  seedWorkspaceRoot(workDir, "ws_000f7ed6658f9d30");
   const store = new PermissionStore(workDir);
   const source = new MockSource();
   const router = new IdentityToolRouter({

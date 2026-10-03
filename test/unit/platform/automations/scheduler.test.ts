@@ -33,7 +33,7 @@ import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 // `{workDir}/workspaces/<wsId>/automations/<ownerId>/`. Tests seed ONE workspace
 // + owner; `makeTmpDir` returns the workDir root handed straight to the
 // Scheduler, and `seedDefs`/`loadDefs` write/read the per-automation store.
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 
 function makeTmpDir(): string {

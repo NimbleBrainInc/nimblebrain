@@ -269,7 +269,7 @@ export class PermissionStore {
       return join(this.workDir, "users", owner.userId, "permissions.json");
     }
     // Workspace branch validates against the strict `WORKSPACE_ID_RE`
-    // (`ws_<slug>`), not the laxer local `ID_RE`. Reason: the path is
+    // (`ws_<16-hex>`), not the laxer local `ID_RE`. Reason: the path is
     // built through `WorkspaceContext`, which enforces `WORKSPACE_ID_RE`
     // at construction. If we let a wsId pass the local guard but fail
     // the context's, this function would throw instead of returning

@@ -50,7 +50,7 @@ export interface FacetCache {
 }
 
 /**
- * Encode a key. Workspace ids (`ws_[a-z0-9_]+`) and server names hold no NUL,
+ * Encode a key. Workspace ids (`ws_[a-f0-9]{16}`) and server names hold no NUL,
  * so no two triples collide.
  */
 export function facetCacheKey(key: FacetKey): string {

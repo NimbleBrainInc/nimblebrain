@@ -125,8 +125,8 @@ beforeEach(async () => {
 
   workspaceStore = new WorkspaceStore(workDir);
   for (const [name, id] of [
-    ["Tenant A", "ws_tenanta"],
-    ["Tenant B", "ws_tenantb"],
+    ["Tenant A", "ws_00741647fd740fac"],
+    ["Tenant B", "ws_0075ad1326581881"],
   ] as const) {
     await seedWorkspace(workspaceStore, id, {
       name,
@@ -146,10 +146,13 @@ afterEach(() => {
 
 describe("installing a `credential` provider entry", () => {
   test("the persisted ref names the key and holds no value", async () => {
-    const result = await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
+    const result = await toolFor("ws_00741647fd740fac").handler({
+      action: "install",
+      entry: entry(),
+    });
     expect(result.isError).toBe(false);
 
-    const ref = persistedRef("ws_tenanta");
+    const ref = persistedRef("ws_00741647fd740fac");
     expect(ref.transport?.auth).toEqual({
       type: "provider",
       provider: CREDENTIAL_PROVIDER,
@@ -167,23 +170,23 @@ describe("installing a `credential` provider entry", () => {
       providerAuth: { provider: CREDENTIAL_PROVIDER, config: { key: "someone.elses_key" } },
     } as CatalogListing["install"];
 
-    await toolFor("ws_tenanta").handler({ action: "install", entry: forged });
-    const ref = persistedRef("ws_tenanta");
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: forged });
+    const ref = persistedRef("ws_00741647fd740fac");
     expect(ref.url).toBe("https://mcp.acme.test/mcp");
     expect(ref.transport?.auth).toMatchObject({ config: { key: KEY } });
   });
 
   test("the same entry installs into a second workspace and each sends its own secret", async () => {
-    await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
-    await toolFor("ws_tenantb").handler({ action: "install", entry: entry() });
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: entry() });
+    await toolFor("ws_0075ad1326581881").handler({ action: "install", entry: entry() });
 
     // Each admin seeds their own value under the SAME key.
-    await toolFor("ws_tenanta").handler({
+    await toolFor("ws_00741647fd740fac").handler({
       action: "set_secret",
       key: KEY,
       value: "postgres://a.acme.test/db",
     });
-    await toolFor("ws_tenantb").handler({
+    await toolFor("ws_0075ad1326581881").handler({
       action: "set_secret",
       key: KEY,
       value: "postgres://b.acme.test/db",
@@ -191,7 +194,9 @@ describe("installing a `credential` provider entry", () => {
 
     // The two persisted refs are byte-identical — the difference is entirely in
     // the store, which is the property that makes one catalog entry enough.
-    expect(persistedRef("ws_tenanta").transport).toEqual(persistedRef("ws_tenantb").transport);
+    expect(persistedRef("ws_00741647fd740fac").transport).toEqual(
+      persistedRef("ws_0075ad1326581881").transport,
+    );
 
     const sent: string[] = [];
     globalThis.fetch = (async (_input: string, init?: RequestInit) => {
@@ -199,7 +204,7 @@ describe("installing a `credential` provider entry", () => {
       return new Response("{}", { status: 200 });
     }) as unknown as typeof fetch;
 
-    for (const wsId of ["ws_tenanta", "ws_tenantb"]) {
+    for (const wsId of ["ws_00741647fd740fac", "ws_0075ad1326581881"]) {
       const { fetch: authed } = await resolveTransportCredential(
         persistedRef(wsId).transport,
         wsId,
@@ -211,13 +216,13 @@ describe("installing a `credential` provider entry", () => {
   });
 
   test("a workspace that never set the key fails its connection, naming the key", async () => {
-    await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: entry() });
     const { fetch: authed } = await resolveTransportCredential(
-      persistedRef("ws_tenanta").transport,
-      "ws_tenanta",
+      persistedRef("ws_00741647fd740fac").transport,
+      "ws_00741647fd740fac",
     );
     await expect(authed?.("https://mcp.acme.test/mcp", {})).rejects.toThrow(
-      /acme\.db_url.*workspace:ws_tenanta/s,
+      /acme\.db_url.*workspace:ws_00741647fd740fac/s,
     );
   });
 });

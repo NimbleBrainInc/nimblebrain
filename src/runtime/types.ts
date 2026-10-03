@@ -346,8 +346,8 @@ export interface ChatRequest {
    * deadline (e.g. the automations executor's `Promise.race` against
    * `maxRunDurationMs`) ORPHAN the in-flight LLM/tool work — the chat
    * keeps running, finishes, writes the conversation to disk, but the
-   * caller never sees the result. Production proof: `morning-brief-6am-pt`
-   * runs in ws_nimblebrain_shared completed in 6-7m while the 5m
+   * caller never sees the result. Production proof: an automation's
+   * runs completed in 6-7m while the 5m
    * Promise.race silently abandoned them, leaving fake `timeout` run
    * records and ~$X of wasted LLM spend per missed run.
    *

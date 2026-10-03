@@ -220,7 +220,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
     const wsStore = runtime.getWorkspaceStore();
     const otherWs = await wsStore.create("Other workspace");
     const nonMember = await chatIn(otherWs.id);
-    const unknown = await chatIn("ws_does_not_exist");
+    const unknown = await chatIn("ws_002cbcedbb32d4b3");
     expect(nonMember.status).toBe(404);
     expect(unknown.status).toBe(404);
     const expected = { error: "workspace_error", message: "Workspace not found" };

@@ -29,7 +29,7 @@ import { makeIdentity } from "../helpers/identity.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const TEST_USER_ID = "usr_cfg";
-const SHARED_WS_ID = "ws_cfgshared00000";
+const SHARED_WS_ID = "ws_0026af4f2a1874d8";
 
 interface Observation {
   fastModel: string | undefined;

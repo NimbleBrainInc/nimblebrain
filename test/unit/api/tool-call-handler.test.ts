@@ -70,7 +70,7 @@ function makeToolCallRuntime(opts: ToolCallStub = {}): {
 }
 
 function toolReq(body: unknown): Request {
-  return new Request("http://nb.example.com/v1/workspaces/ws_user_u1/tools/call", {
+  return new Request("http://nb.example.com/v1/workspaces/ws_007dc0488ce56f9e/tools/call", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -79,13 +79,15 @@ function toolReq(body: unknown): Request {
 
 describe("handleToolCall — the workspace is the one in the URL", () => {
   it("refuses a qualified server with a 400 naming the bare server, and runs nothing", async () => {
-    const { runtime, executed, registryWs } = makeToolCallRuntime({ memberOf: ["ws_tenant_a"] });
+    const { runtime, executed, registryWs } = makeToolCallRuntime({
+      memberOf: ["ws_0073c806fc50dc07"],
+    });
     const res = await handleToolCall(
-      toolReq({ server: "ws_tenant_a-synapse-collateral", tool: "preview" }),
+      toolReq({ server: "ws_0073c806fc50dc07-synapse-collateral", tool: "preview" }),
       runtime,
       features,
       // The caller is a member of the named workspace; the name is still refused.
-      { workspaceId: "ws_user_u1", identity: identityU1 },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
     );
     expect(res.status).toBe(400);
     const body = await readJson<ApiErrorBody>(res);
@@ -93,7 +95,7 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
     expect(body.message).toContain("uses the retired ws_<id>- server-name form");
     expect(body.message).toContain('"synapse-collateral"');
     expect(body.details).toEqual({
-      server: "ws_tenant_a-synapse-collateral",
+      server: "ws_0073c806fc50dc07-synapse-collateral",
       reason: "legacy_namespaced_form",
     });
     expect(registryWs).toEqual([]);
@@ -103,10 +105,13 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
   it("refuses a qualified tool name with a 400, even beside a bare server", async () => {
     const { runtime, executed } = makeToolCallRuntime();
     const res = await handleToolCall(
-      toolReq({ server: "synapse-collateral", tool: "ws_tenant_a-synapse-collateral__preview" }),
+      toolReq({
+        server: "synapse-collateral",
+        tool: "ws_0073c806fc50dc07-synapse-collateral__preview",
+      }),
       runtime,
       features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
     );
     expect(res.status).toBe(400);
     const body = await readJson<ApiErrorBody>(res);
@@ -121,7 +126,7 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
       toolReq({ server: "ws_BAD ID-synapse-collateral", tool: "preview" }),
       runtime,
       features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
     );
     expect(res.status).toBe(400);
     expect(executed).toEqual([]);
@@ -137,10 +142,10 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
       toolReq({ server: "synapse-collateral", tool: "preview" }),
       runtime,
       features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
     );
     expect(res.status).toBe(200);
-    expect(registryWs).toEqual(["ws_user_u1"]);
+    expect(registryWs).toEqual(["ws_007dc0488ce56f9e"]);
     expect(executed).toEqual(["synapse-collateral__preview"]);
   });
 
@@ -150,7 +155,7 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
       toolReq({ server: "synapse-collateral", tool: "synapse-collateral__preview" }),
       runtime,
       features,
-      { workspaceId: "ws_user_u1", identity: identityU1 },
+      { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 },
     );
     expect(executed).toEqual(["synapse-collateral__preview"]);
   });
@@ -162,12 +167,12 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
       runtime,
       features,
       {
-        workspaceId: "ws_user_u1",
+        workspaceId: "ws_007dc0488ce56f9e",
         identity: identityU1,
       },
     );
     expect(res.status).toBe(200);
-    expect(registryWs).toEqual(["ws_user_u1"]);
+    expect(registryWs).toEqual(["ws_007dc0488ce56f9e"]);
     expect(executed).toEqual(["calendar__preview"]);
   });
 });
@@ -216,18 +221,20 @@ function makeProxyRuntime(opts: {
 
 describe("handleResourceProxy — the workspace is the one in the URL", () => {
   it("refuses a qualified app name with a 400, and reads nothing", async () => {
-    const { runtime, calls, recoverCalls } = makeProxyRuntime({ memberOf: ["ws_tenant_a"] });
+    const { runtime, calls, recoverCalls } = makeProxyRuntime({
+      memberOf: ["ws_0073c806fc50dc07"],
+    });
     const res = await handleResourceProxy(
-      "ws_tenant_a-synapse-collateral",
+      "ws_0073c806fc50dc07-synapse-collateral",
       "main", // not "primary" — avoids the lifecycle/placement lookup
       runtime,
-      "ws_user_u1",
+      "ws_007dc0488ce56f9e",
     );
     expect(res.status).toBe(400);
     const body = await readJson<ApiErrorBody>(res);
     expect(body.message).toContain("uses the retired ws_<id>- app-name form");
     expect(body.details).toEqual({
-      app: "ws_tenant_a-synapse-collateral",
+      app: "ws_0073c806fc50dc07-synapse-collateral",
       reason: "legacy_namespaced_form",
     });
     expect(calls).toEqual([]);
@@ -236,18 +243,32 @@ describe("handleResourceProxy — the workspace is the one in the URL", () => {
 
   it("reads a bare app in the URL's workspace", async () => {
     const { runtime, calls } = makeProxyRuntime({});
-    const res = await handleResourceProxy("synapse-collateral", "main", runtime, "ws_tenant_a");
+    const res = await handleResourceProxy(
+      "synapse-collateral",
+      "main",
+      runtime,
+      "ws_0073c806fc50dc07",
+    );
     expect(res.status).toBe(200);
-    expect(calls).toEqual([{ server: "synapse-collateral", uri: "main", wsId: "ws_tenant_a" }]);
+    expect(calls).toEqual([
+      { server: "synapse-collateral", uri: "main", wsId: "ws_0073c806fc50dc07" },
+    ]);
   });
 
   it("revives an installed-but-unregistered app, addressed by the URL's workspace", async () => {
     const { runtime, calls, recoverCalls } = makeProxyRuntime({
       recoverable: "synapse-collateral",
     });
-    const res = await handleResourceProxy("synapse-collateral", "main", runtime, "ws_tenant_a");
+    const res = await handleResourceProxy(
+      "synapse-collateral",
+      "main",
+      runtime,
+      "ws_0073c806fc50dc07",
+    );
     expect(res.status).toBe(200);
-    expect(recoverCalls).toEqual([{ wsId: "ws_tenant_a", name: "synapse-collateral" }]);
-    expect(calls).toEqual([{ server: "synapse-collateral", uri: "main", wsId: "ws_tenant_a" }]);
+    expect(recoverCalls).toEqual([{ wsId: "ws_0073c806fc50dc07", name: "synapse-collateral" }]);
+    expect(calls).toEqual([
+      { server: "synapse-collateral", uri: "main", wsId: "ws_0073c806fc50dc07" },
+    ]);
   });
 });

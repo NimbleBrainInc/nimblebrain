@@ -28,8 +28,18 @@ const { RequireActiveWorkspace } = await import(
   "../pages/settings/components/RequireActiveWorkspace"
 );
 
-const WS_A: WorkspaceInfo = { id: "ws_a", name: "A", memberCount: 1, connectorCount: 0 };
-const WS_B: WorkspaceInfo = { id: "ws_b", name: "B", memberCount: 1, connectorCount: 0 };
+const WS_A: WorkspaceInfo = {
+  id: "ws_00079598e311c160",
+  name: "A",
+  memberCount: 1,
+  connectorCount: 0,
+};
+const WS_B: WorkspaceInfo = {
+  id: "ws_001c32f121060ff3",
+  name: "B",
+  memberCount: 1,
+  connectorCount: 0,
+};
 
 const originalFetch = globalThis.fetch;
 let unmount: (() => void) | null = null;
@@ -107,11 +117,11 @@ describe("WorkspaceProvider", () => {
   test("sendsNoRequest_andFocusesTheBootstrapDefault_whenBootstrapListsWorkspaces", async () => {
     const requests = recordRequests();
 
-    const container = await mount([WS_A, WS_B], "ws_b");
+    const container = await mount([WS_A, WS_B], "ws_001c32f121060ff3");
 
     expect(callToolSpy).not.toHaveBeenCalled();
     expect(requests).toEqual([]);
-    expect(byAttr(container, "data-testid", "active")?.textContent).toBe("ws_b");
+    expect(byAttr(container, "data-testid", "active")?.textContent).toBe("ws_001c32f121060ff3");
     expect(byAttr(container, "data-testid", "scoped")).not.toBeNull();
   });
 });

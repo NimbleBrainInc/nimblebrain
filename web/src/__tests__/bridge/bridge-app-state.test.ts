@@ -13,7 +13,7 @@ import { realClient } from "../../../test/setup";
 
 mock.module("../../api/client", () => ({
   ...realClient,
-  getActiveWorkspaceId: () => "ws_test",
+  getActiveWorkspaceId: () => "ws_0076759dbbe19fcc",
 }));
 
 mock.module("../../mcp-bridge-client", () => ({

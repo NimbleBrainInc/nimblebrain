@@ -65,7 +65,7 @@ interface Harness {
 
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-smithery-install-"));
-  const wsId = "ws_test";
+  const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
   // The catalog must PUBLISH the entry: a smithery install is permitted only for
   // a server the operator's own catalog names, so an empty catalog would (now

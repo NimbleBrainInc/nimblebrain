@@ -209,7 +209,7 @@ describe("detached turns (server-authoritative streaming)", () => {
     // Seed the foreign conversation in a workspace of its owner's
     // (`workspaces/<wsId>/conversations/<ownerId>/`).
     const foreignOwner = "usr_someone_else";
-    const convDir = workspaceConversationsDir(testDir, "ws_someone_elses", foreignOwner);
+    const convDir = workspaceConversationsDir(testDir, "ws_006f297ff466f8d6", foreignOwner);
     mkdirSync(convDir, { recursive: true });
     writeFileSync(
       join(convDir, `${convId}.jsonl`),

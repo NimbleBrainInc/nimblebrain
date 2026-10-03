@@ -51,7 +51,7 @@ class FakeRuntime {
 
   constructor(private workDir: string) {
     // The dev user administers the workspace these tests write to.
-    this.setMember("ws_demo", DEV_USER.id, "admin");
+    this.setMember("ws_002afe1142297ff4", DEV_USER.id, "admin");
   }
 
   getInstructionsStore() {
@@ -95,7 +95,7 @@ let source: McpSource | undefined;
 
 beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), "instructions-source-test-"));
-  seedWorkspaceRoot(workDir, "ws_demo");
+  seedWorkspaceRoot(workDir, "ws_002afe1142297ff4");
   runtime = new FakeRuntime(workDir);
 });
 
@@ -141,10 +141,10 @@ describe("instructions source — resources", () => {
 
   test("instructions://workspace round-trips when wsId is set", async () => {
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     await runtime
       .getInstructionsStore()
-      .write({ wsId: "ws_demo", text: "ws-body", updatedBy: "ui" });
+      .write({ wsId: "ws_002afe1142297ff4", text: "ws-body", updatedBy: "ui" });
     const client = src.getClient()!;
     const data = await client.readResource({ uri: "instructions://workspace" });
     expect(textOf(data.contents?.[0])).toBe("ws-body");
@@ -152,15 +152,19 @@ describe("instructions source — resources", () => {
 
   test("text is read fresh on every call (no caching)", async () => {
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     const client = src.getClient()!;
 
-    await runtime.getInstructionsStore().write({ wsId: "ws_demo", text: "v1", updatedBy: "ui" });
+    await runtime
+      .getInstructionsStore()
+      .write({ wsId: "ws_002afe1142297ff4", text: "v1", updatedBy: "ui" });
     expect(
       textOf((await client.readResource({ uri: "instructions://workspace" })).contents?.[0]),
     ).toBe("v1");
 
-    await runtime.getInstructionsStore().write({ wsId: "ws_demo", text: "v2", updatedBy: "agent" });
+    await runtime
+      .getInstructionsStore()
+      .write({ wsId: "ws_002afe1142297ff4", text: "v2", updatedBy: "agent" });
     expect(
       textOf((await client.readResource({ uri: "instructions://workspace" })).contents?.[0]),
     ).toBe("v2");
@@ -172,7 +176,7 @@ describe("instructions source — resources", () => {
 describe("instructions source — write_instructions", () => {
   test("the dev user, a workspace admin, writes and fires a notification", async () => {
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
 
     const updates: Array<{ uri: string }> = [];
     const client = src.getClient()!;
@@ -187,7 +191,7 @@ describe("instructions source — write_instructions", () => {
     expect(result.isError).toBeFalsy();
     expect((result as { structuredContent?: { ok?: boolean } }).structuredContent?.ok).toBe(true);
 
-    const body = await runtime.getInstructionsStore().read({ wsId: "ws_demo" });
+    const body = await runtime.getInstructionsStore().read({ wsId: "ws_002afe1142297ff4" });
     expect(body).toBe("ws body");
 
     await new Promise((r) => setTimeout(r, 0));
@@ -199,7 +203,7 @@ describe("instructions source — write_instructions", () => {
     // human editing the overlay in workspace settings. `UpdatedBy` keeps its
     // `"agent"` arm so meta files written before that was true still parse.
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -208,14 +212,16 @@ describe("instructions source — write_instructions", () => {
     });
     expect(result.isError).toBeFalsy();
 
-    const meta = await runtime.getInstructionsStore().readMeta({ wsId: "ws_demo" });
+    const meta = await runtime.getInstructionsStore().readMeta({ wsId: "ws_002afe1142297ff4" });
     expect(meta?.updated_by).toBe("ui");
   });
 
   test("empty text clears the overlay", async () => {
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
-    await runtime.getInstructionsStore().write({ wsId: "ws_demo", text: "first", updatedBy: "ui" });
+    runtime.wsId = "ws_002afe1142297ff4";
+    await runtime
+      .getInstructionsStore()
+      .write({ wsId: "ws_002afe1142297ff4", text: "first", updatedBy: "ui" });
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -223,12 +229,12 @@ describe("instructions source — write_instructions", () => {
       arguments: { body: "" },
     });
     expect(result.isError).toBeFalsy();
-    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("");
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_002afe1142297ff4" })).toBe("");
   });
 
   test("character-limit rejection surfaces as isError, never throws", async () => {
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     const client = src.getClient()!;
     const huge = "x".repeat(8 * 1024 + 1);
     const result = await client.callTool({
@@ -246,10 +252,10 @@ describe("instructions source — write_instructions", () => {
   // gone, with a success string as the only signal.
   test("a stale `scope` is refused, and nothing is written", async () => {
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     await runtime
       .getInstructionsStore()
-      .write({ wsId: "ws_demo", text: "existing workspace body", updatedBy: "ui" });
+      .write({ wsId: "ws_002afe1142297ff4", text: "existing workspace body", updatedBy: "ui" });
     const client = src.getClient()!;
 
     for (const scope of ["org", "connectors/foo"]) {
@@ -263,7 +269,7 @@ describe("instructions source — write_instructions", () => {
     }
 
     // The refusal precedes the store, so the displaced body is still there.
-    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe(
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_002afe1142297ff4" })).toBe(
       "existing workspace body",
     );
   });
@@ -275,7 +281,7 @@ describe("instructions source — role gates", () => {
   test("a write with no identity is refused, and nothing is written", async () => {
     const src = await buildSource();
     runtime.identity = null;
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -283,7 +289,7 @@ describe("instructions source — role gates", () => {
       arguments: { body: "x" },
     });
     expect(result.isError).toBe(true);
-    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("");
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_002afe1142297ff4" })).toBe("");
   });
 
   test("workspace non-admin member denied for workspace scope", async () => {
@@ -295,8 +301,8 @@ describe("instructions source — role gates", () => {
       orgRole: "member",
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
-    runtime.wsId = "ws_demo";
-    runtime.setMember("ws_demo", "u1", "member");
+    runtime.wsId = "ws_002afe1142297ff4";
+    runtime.setMember("ws_002afe1142297ff4", "u1", "member");
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -315,9 +321,9 @@ describe("instructions source — role gates", () => {
       orgRole: "admin",
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     // A different user is the workspace admin; the org admin is NOT a member.
-    runtime.setMember("ws_demo", "someone_else", "admin");
+    runtime.setMember("ws_002afe1142297ff4", "someone_else", "admin");
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -339,8 +345,8 @@ describe("instructions source — role gates", () => {
       orgRole: "owner",
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
-    runtime.wsId = "ws_demo";
-    runtime.setMember("ws_demo", "someone_else", "admin");
+    runtime.wsId = "ws_002afe1142297ff4";
+    runtime.setMember("ws_002afe1142297ff4", "someone_else", "admin");
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -359,8 +365,8 @@ describe("instructions source — role gates", () => {
       orgRole: "member",
       preferences: { timezone: "UTC", locale: "en-US", theme: "system" },
     };
-    runtime.wsId = "ws_demo";
-    runtime.setMember("ws_demo", "u1", "admin");
+    runtime.wsId = "ws_002afe1142297ff4";
+    runtime.setMember("ws_002afe1142297ff4", "u1", "admin");
 
     const client = src.getClient()!;
     const result = await client.callTool({
@@ -383,7 +389,7 @@ describe("instructions source — unattended runs", () => {
 
   async function writeUnattended() {
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     const client = src.getClient()!;
     return runWithRequestContext({ identity: null, unattended: true }, () =>
       client.callTool({ name: "write_instructions", arguments: { body: "x" } }),
@@ -398,7 +404,7 @@ describe("instructions source — unattended runs", () => {
     expect(error).toContain("unattended automation run");
 
     // Nothing landed — the refusal is before the store, not after it.
-    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("");
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_002afe1142297ff4" })).toBe("");
   });
 
   test("the wall outranks a workspace admin's write", async () => {
@@ -411,7 +417,7 @@ describe("instructions source — unattended runs", () => {
   test("an interactive run with the same setup writes normally", async () => {
     // Pins that the refusals above are the `unattended` flag and nothing else.
     const src = await buildSource();
-    runtime.wsId = "ws_demo";
+    runtime.wsId = "ws_002afe1142297ff4";
     const client = src.getClient()!;
 
     const result = await runWithRequestContext({ identity: null }, () =>
@@ -422,7 +428,9 @@ describe("instructions source — unattended runs", () => {
     );
 
     expect(result.isError).toBeFalsy();
-    expect(await runtime.getInstructionsStore().read({ wsId: "ws_demo" })).toBe("ws body");
+    expect(await runtime.getInstructionsStore().read({ wsId: "ws_002afe1142297ff4" })).toBe(
+      "ws body",
+    );
   });
 });
 

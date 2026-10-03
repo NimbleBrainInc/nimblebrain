@@ -3,12 +3,12 @@
 //
 // Pins the three behaviors the task spec calls out:
 //
-//   1. Friendly name + workspace badge — `ws_helix-collateral__get_doc`
+//   1. Friendly name + workspace badge — `ws_003eba8844413cd9-collateral__get_doc`
 //      renders as `collateral.get_doc · Helix` with the Helix
 //      workspace badge.
 //   2. Fallback to raw on missing workspace — a tool call for
-//      `ws_removed-foo` where `ws_removed` is no longer in the user's
-//      workspace list renders the raw `ws_removed-foo` string.
+//      `ws_00676edca6fba709-foo` where `ws_00676edca6fba709` is no longer in the user's
+//      workspace list renders the raw `ws_00676edca6fba709-foo` string.
 //      Adversarial: a regression that defaulted to another of the
 //      user's workspaces' display names would be a subtle correctness bug.
 //   3. Namespace parsing flows through `parseNamespacedToolName` only —
@@ -69,7 +69,7 @@ function findByTestId(container: HTMLElement, testid: string): HTMLElement | nul
 
 function ws(over: Partial<WorkspaceInfo>): WorkspaceInfo {
   return {
-    id: "ws_helix",
+    id: "ws_003eba8844413cd9",
     name: "Helix",
     memberCount: 1,
     connectorCount: 0,
@@ -81,9 +81,9 @@ describe("ToolCallProvenance", () => {
   test("renders friendly tool name + workspace badge for known namespaced tool", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_helix-collateral__get_doc"
+        toolName="ws_003eba8844413cd9-collateral__get_doc"
         status="ok"
-        workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
+        workspaces={[ws({ id: "ws_003eba8844413cd9", name: "Helix" })]}
       />,
     );
     const text = mounted.container.textContent ?? "";
@@ -95,7 +95,7 @@ describe("ToolCallProvenance", () => {
     // attribution test.
     const badge = findByTestId(mounted.container, "workspace-badge");
     expect(badge).not.toBeNull();
-    expect(badge?.getAttribute("data-workspace-id")).toBe("ws_helix");
+    expect(badge?.getAttribute("data-workspace-id")).toBe("ws_003eba8844413cd9");
     // Badge variant is deterministic per workspace id, but the exact
     // mapping is an implementation detail — assert non-empty.
     const variant = badge?.getAttribute("data-workspace-variant");
@@ -108,8 +108,8 @@ describe("ToolCallProvenance", () => {
   test("strips the `<server>__` prefix when present", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_helix-gmail__send_message"
-        workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
+        toolName="ws_003eba8844413cd9-gmail__send_message"
+        workspaces={[ws({ id: "ws_003eba8844413cd9", name: "Helix" })]}
       />,
     );
     const text = mounted.container.textContent ?? "";
@@ -131,18 +131,18 @@ describe("ToolCallProvenance", () => {
     // tool call.
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_removed-foo"
+        toolName="ws_00676edca6fba709-foo"
         workspaces={[
-          ws({ id: "ws_mine", name: "Mat's workspace" }),
-          ws({ id: "ws_helix", name: "Helix" }),
+          ws({ id: "ws_00488fa17f87e9a3", name: "Mat's workspace" }),
+          ws({ id: "ws_003eba8844413cd9", name: "Helix" }),
         ]}
       />,
     );
     const root = findByTestId(mounted.container, "tool-call-provenance");
     expect(root?.getAttribute("data-fallback")).toBe("missing-workspace");
-    expect(root?.getAttribute("data-raw")).toBe("ws_removed-foo");
+    expect(root?.getAttribute("data-raw")).toBe("ws_00676edca6fba709-foo");
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("ws_removed-foo");
+    expect(text).toContain("ws_00676edca6fba709-foo");
     // No workspace badge in the fallback path — there's no friendly
     // workspace to attribute to.
     expect(findByTestId(mounted.container, "workspace-badge")).toBeNull();
@@ -157,7 +157,7 @@ describe("ToolCallProvenance", () => {
     mounted = await mount(
       <ToolCallProvenance
         toolName="nb__resources_search"
-        workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
+        workspaces={[ws({ id: "ws_003eba8844413cd9", name: "Helix" })]}
       />,
     );
     const root = findByTestId(mounted.container, "tool-call-provenance");
@@ -169,9 +169,9 @@ describe("ToolCallProvenance", () => {
   test("status: error renders the error pill", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_helix-crm__search"
+        toolName="ws_003eba8844413cd9-crm__search"
         status="error"
-        workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
+        workspaces={[ws({ id: "ws_003eba8844413cd9", name: "Helix" })]}
       />,
     );
     const pill = findByTestId(mounted.container, "status-pill");
@@ -182,9 +182,9 @@ describe("ToolCallProvenance", () => {
   test("status: running renders the running pill", async () => {
     mounted = await mount(
       <ToolCallProvenance
-        toolName="ws_helix-crm__search"
+        toolName="ws_003eba8844413cd9-crm__search"
         status="running"
-        workspaces={[ws({ id: "ws_helix", name: "Helix" })]}
+        workspaces={[ws({ id: "ws_003eba8844413cd9", name: "Helix" })]}
       />,
     );
     const pill = findByTestId(mounted.container, "status-pill");
@@ -194,8 +194,8 @@ describe("ToolCallProvenance", () => {
   test("the badge variant depends only on the workspace id", () => {
     // No workspace gets a reserved treatment: two workspaces with the same id
     // and different names map to the same variant.
-    const a = workspaceBadgeVariant(ws({ id: "ws_mine", name: "Mat's workspace" }));
-    const b = workspaceBadgeVariant(ws({ id: "ws_mine", name: "Renamed" }));
+    const a = workspaceBadgeVariant(ws({ id: "ws_00488fa17f87e9a3", name: "Mat's workspace" }));
+    const b = workspaceBadgeVariant(ws({ id: "ws_00488fa17f87e9a3", name: "Renamed" }));
     expect(a).toBe(b);
   });
 });

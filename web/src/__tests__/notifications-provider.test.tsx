@@ -23,7 +23,7 @@ import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const WS = "ws_outbound";
+const WS = "ws_005b519ef7efc353";
 
 let listCalls = 0;
 let listed: Array<Record<string, unknown>> = [];

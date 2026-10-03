@@ -39,7 +39,7 @@ describe("buildProcessInventory", () => {
   });
 
   it("builds empty inventory for workspace with no connectors", () => {
-    const ws = makeWorkspace("ws_empty", "Empty", []);
+    const ws = makeWorkspace("ws_002e1fc3b4a15a41", "Empty", []);
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries).toEqual([]);
   });
@@ -50,23 +50,25 @@ describe("buildProcessInventory", () => {
       { url: "https://tasks.example.com/mcp", serverName: "tasks" },
       { url: "https://docs.example.com/mcp", serverName: "docs" },
     ];
-    const ws1 = makeWorkspace("ws_engineering", "Engineering", connectors);
-    const ws2 = makeWorkspace("ws_sales", "Sales", connectors);
+    const ws1 = makeWorkspace("ws_0030a37f450693bf", "Engineering", connectors);
+    const ws2 = makeWorkspace("ws_006a3c0eb78706fc", "Sales", connectors);
 
     const entries = buildProcessInventory([ws1, ws2], WORK_DIR);
     expect(entries).toHaveLength(6);
   });
 
   it("each entry has correct workspace-scoped data dir", () => {
-    const ws = makeWorkspace("ws_engineering", "Engineering", [crm()]);
+    const ws = makeWorkspace("ws_0030a37f450693bf", "Engineering", [crm()]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries).toHaveLength(1);
-    expect(entries[0].dataDir).toBe(join(WORK_DIR, "workspaces", "ws_engineering", "data", "crm"));
+    expect(entries[0].dataDir).toBe(
+      join(WORK_DIR, "workspaces", "ws_0030a37f450693bf", "data", "crm"),
+    );
   });
 
   it("entry has plain serverName (no compound key)", () => {
-    const ws = makeWorkspace("ws_engineering", "Engineering", [crm()]);
+    const ws = makeWorkspace("ws_0030a37f450693bf", "Engineering", [crm()]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries[0].serverName).toBe("crm");
@@ -74,8 +76,8 @@ describe("buildProcessInventory", () => {
 
   it("same connector in two workspaces → two entries, different data dirs", () => {
     const connectors = [crm()];
-    const ws1 = makeWorkspace("ws_engineering", "Engineering", connectors);
-    const ws2 = makeWorkspace("ws_sales", "Sales", connectors);
+    const ws1 = makeWorkspace("ws_0030a37f450693bf", "Engineering", connectors);
+    const ws2 = makeWorkspace("ws_006a3c0eb78706fc", "Sales", connectors);
 
     const entries = buildProcessInventory([ws1, ws2], WORK_DIR);
     expect(entries).toHaveLength(2);
@@ -84,12 +86,14 @@ describe("buildProcessInventory", () => {
     expect(entries[1].serverName).toBe("crm");
 
     expect(entries[0].dataDir).not.toBe(entries[1].dataDir);
-    expect(entries[0].dataDir).toContain("ws_engineering");
-    expect(entries[1].dataDir).toContain("ws_sales");
+    expect(entries[0].dataDir).toContain("ws_0030a37f450693bf");
+    expect(entries[1].dataDir).toContain("ws_006a3c0eb78706fc");
   });
 
   it("derives serverName from the URL when the ref carries none", () => {
-    const ws = makeWorkspace("ws_prod", "Production", [{ url: "https://example.com/mcp" }]);
+    const ws = makeWorkspace("ws_0061a3cbd4f78051", "Production", [
+      { url: "https://example.com/mcp" },
+    ]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries).toHaveLength(1);
@@ -102,18 +106,18 @@ describe("buildProcessInventory", () => {
       serverName: "crm",
       scopes: ["read"],
     };
-    const ws = makeWorkspace("ws_eng", "Eng", [ref]);
+    const ws = makeWorkspace("ws_002fbb9fda6654ca", "Eng", [ref]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
     expect(entries[0].connector).toBe(ref);
   });
 
   it("multiple workspaces with different connectors", () => {
-    const ws1 = makeWorkspace("ws_eng", "Engineering", [
+    const ws1 = makeWorkspace("ws_002fbb9fda6654ca", "Engineering", [
       crm(),
       { url: "https://tasks.example.com/mcp", serverName: "tasks" },
     ]);
-    const ws2 = makeWorkspace("ws_sales", "Sales", [
+    const ws2 = makeWorkspace("ws_006a3c0eb78706fc", "Sales", [
       crm(),
       { url: "https://analytics.example.com/mcp", serverName: "analytics" },
       { url: "https://reports.example.com/mcp", serverName: "reports" },
@@ -122,8 +126,8 @@ describe("buildProcessInventory", () => {
     const entries = buildProcessInventory([ws1, ws2], WORK_DIR);
     expect(entries).toHaveLength(5);
 
-    const engEntries = entries.filter((e) => e.wsId === "ws_eng");
-    const salesEntries = entries.filter((e) => e.wsId === "ws_sales");
+    const engEntries = entries.filter((e) => e.wsId === "ws_002fbb9fda6654ca");
+    const salesEntries = entries.filter((e) => e.wsId === "ws_006a3c0eb78706fc");
     expect(engEntries).toHaveLength(2);
     expect(salesEntries).toHaveLength(3);
   });
@@ -133,7 +137,7 @@ describe("buildProcessInventory", () => {
     // per-entry containment, so a throw here takes the instance down over one
     // bad row. Both reachable shapes are covered: a legacy `name:`/`path:`
     // entry predating the URL-only ref, and a `url: ""` that reached the store.
-    const ws = makeWorkspace("ws_mixed", "Mixed", [
+    const ws = makeWorkspace("ws_004ae1946ec2cba8", "Mixed", [
       { name: "@acme/echo" } as unknown as ConnectorRef,
       { path: "/opt/echo" } as unknown as ConnectorRef,
       { url: "" } as ConnectorRef,
@@ -153,20 +157,20 @@ describe("buildProcessInventory", () => {
   });
 
   it("one workspace's bad row does not cost another workspace its connectors", () => {
-    const broken = makeWorkspace("ws_broken", "Broken", [
+    const broken = makeWorkspace("ws_00231ca3a812703c", "Broken", [
       { name: "@acme/echo" } as unknown as ConnectorRef,
     ]);
-    const healthy = makeWorkspace("ws_healthy", "Healthy", [crm()]);
+    const healthy = makeWorkspace("ws_003de686f8a1bb95", "Healthy", [crm()]);
 
     const entries = buildProcessInventory([broken, healthy], WORK_DIR);
 
-    expect(entries.map((e) => e.wsId)).toEqual(["ws_healthy"]);
+    expect(entries.map((e) => e.wsId)).toEqual(["ws_003de686f8a1bb95"]);
   });
 
   it("no global connector state leaks between workspaces", () => {
     const connectors = [crm()];
-    const ws1 = makeWorkspace("ws_a", "A", connectors);
-    const ws2 = makeWorkspace("ws_b", "B", connectors);
+    const ws1 = makeWorkspace("ws_00079598e311c160", "A", connectors);
+    const ws2 = makeWorkspace("ws_001c32f121060ff3", "B", connectors);
 
     const entries = buildProcessInventory([ws1, ws2], WORK_DIR);
     const dataDirs = entries.map((e) => e.dataDir);

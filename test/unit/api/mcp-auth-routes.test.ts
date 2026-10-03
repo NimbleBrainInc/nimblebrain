@@ -36,7 +36,7 @@ import { readJson } from "../../helpers/http.ts";
  * middleware (which has its own tests).
  */
 
-const WS_ID = "ws_test";
+const WS_ID = "ws_0076759dbbe19fcc";
 /** The dev user, the one member of `WS_ID`. */
 const DEV_USER_ID = "usr_default";
 /** Auth that verifies every request as the dev user, as the `dev` provider does. */
@@ -247,14 +247,20 @@ describe("POST /v1/workspaces/:wsId/mcp-auth/initiate", () => {
   });
 
   test("returns 404 workspace_error and starts no flow for a workspace the caller is not in", async () => {
-    lifecycle.instances.set(`granola|ws_other`, { oauthScope: "workspace" });
-    lifecycle.authUrls.set(`granola|ws_other|_workspace`, "https://granola.test/auth?state=s");
+    lifecycle.instances.set(`granola|ws_005820c54ca342ad`, { oauthScope: "workspace" });
+    lifecycle.authUrls.set(
+      `granola|ws_005820c54ca342ad|_workspace`,
+      "https://granola.test/auth?state=s",
+    );
 
-    const res = await app.request("http://localhost/v1/workspaces/ws_other/mcp-auth/initiate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ serverName: "granola" }),
-    });
+    const res = await app.request(
+      "http://localhost/v1/workspaces/ws_005820c54ca342ad/mcp-auth/initiate",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ serverName: "granola" }),
+      },
+    );
 
     expect(res.status).toBe(404);
     expect((await readJson<ApiErrorBody>(res)).error).toBe("workspace_error");
@@ -308,10 +314,10 @@ describe("GET /v1/mcp-auth/callback", () => {
     expect(html).toContain("Authorization complete");
 
     // Redirect back to the workspace-scoped connectors page for the
-    // workspace the flow was initiated in (WS_ID = "ws_test" → slug
+    // workspace the flow was initiated in (WS_ID = "ws_0076759dbbe19fcc" → slug
     // "test"). The pre-scoping `/settings/workspace/connectors` path is
     // gone — landing there 404s now that connectors live under `/w/<slug>`.
-    expect(html).toContain("/w/test/settings/connectors");
+    expect(html).toContain("/w/0076759dbbe19fcc/settings/connectors");
     expect(html).not.toContain("/settings/workspace/connectors");
 
     // Cookie cleared: Max-Age=0

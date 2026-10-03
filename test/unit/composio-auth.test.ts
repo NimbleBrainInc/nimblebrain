@@ -136,8 +136,8 @@ interface StubLifecycleCalls {
 }
 
 /** The one workspace the stub store admits the dev user to. */
-const STUB_MEMBER_WS = "ws_test";
-const STUB_FOREIGN_WS = "ws_foreign";
+const STUB_MEMBER_WS = "ws_0076759dbbe19fcc";
+const STUB_FOREIGN_WS = "ws_0036bc4006dd6831";
 /** The dev user `requireWorkspace` admits when no identity provider is configured. */
 const DEV_USER_ID = "usr_default";
 
@@ -245,9 +245,9 @@ function composioEntry(id: string) {
 
 function freshDir(): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "nb-composio-auth-"));
-  seedWorkspaceRoot(dir, "ws_01abc");
-  seedWorkspaceRoot(dir, "ws_real");
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0001f3ac8053ce11");
+  seedWorkspaceRoot(dir, "ws_0065ab540586462e");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -266,17 +266,23 @@ describe("composioUserId", () => {
 
   test("returns wsId alone when NB_TENANT_ID is unset (single-tenant)", () => {
     delete process.env.NB_TENANT_ID;
-    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "ws_0001f3ac8053ce11",
+    );
   });
 
   test("prefixes tenant id when NB_TENANT_ID is set", () => {
     process.env.NB_TENANT_ID = "tenant-a";
-    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("tenant-a:ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "tenant-a:ws_0001f3ac8053ce11",
+    );
   });
 
   test("trims whitespace on NB_TENANT_ID", () => {
     process.env.NB_TENANT_ID = "  tenant-b  ";
-    expect(composioUserId({ type: "workspace", wsId: "ws_01abc" })).toBe("tenant-b:ws_01abc");
+    expect(composioUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
+      "tenant-b:ws_0001f3ac8053ce11",
+    );
   });
 });
 
@@ -394,7 +400,7 @@ describe("GET /v1/composio-auth/callback", () => {
       const ctx = stubCtx(dir, entry);
       const app = composioAuthRoutes(ctx);
       const nonce = "deadbeefdeadbeefdeadbeefdeadbeef";
-      const wsId = "ws_test";
+      const wsId = "ws_0076759dbbe19fcc";
       const cid = "com.google/gmail";
       // An authenticated /initiate registered this flow; the cookie is sha256(nonce).
       registerConnectFlow(nonce, { type: "workspace", wsId }, cid);
@@ -411,10 +417,10 @@ describe("GET /v1/composio-auth/callback", () => {
       expect(res.headers.get("content-type") ?? "").toContain("text/html");
 
       // Redirect back to the workspace-scoped connectors page for the
-      // workspace the connection landed in (ws_test → slug "test"), not the
+      // workspace the connection landed in (ws_0076759dbbe19fcc → slug "test"), not the
       // pre-scoping `/settings/workspace/connectors` (which 404s now).
       const html = await res.text();
-      expect(html).toContain("/w/test/settings/connectors");
+      expect(html).toContain("/w/0076759dbbe19fcc/settings/connectors");
       expect(html).not.toContain("/settings/workspace/connectors");
 
       const stored = await readComposioConnection(dir, { type: "workspace", wsId }, cid);
@@ -431,7 +437,7 @@ describe("GET /v1/composio-auth/callback", () => {
       expect(ctx.__lifecycleCalls.recordConnectionStateChange.callCount).toBe(1);
       expect(ctx.__lifecycleCalls.recordConnectionStateChange.lastCall).toEqual({
         serverName: "com-google-gmail",
-        wsId: "ws_test",
+        wsId: "ws_0076759dbbe19fcc",
         principalId: "_workspace",
         state: "running",
       });
@@ -455,7 +461,7 @@ describe("GET /v1/composio-auth/callback", () => {
     const { dir, cleanup } = freshDir();
     try {
       const cid = "com.google/gmail";
-      const wsId = "ws_test";
+      const wsId = "ws_0076759dbbe19fcc";
       const ctx = stubCtx(dir, composioEntry(cid));
       const app = composioAuthRoutes(ctx);
       const nonce = "beefbeefbeefbeefbeefbeefbeefbeef";
@@ -525,7 +531,11 @@ describe("GET /v1/composio-auth/callback", () => {
     try {
       const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
       const nonce = "abc123abc123abc123abc123abc123ab";
-      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
+      registerConnectFlow(
+        nonce,
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+        "com.google/gmail",
+      );
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
         "&connected_account_id=ca_xyz&status=ACTIVE";
@@ -533,7 +543,7 @@ describe("GET /v1/composio-auth/callback", () => {
       expect(res.status).toBe(400);
       const path = composioConnectionPath(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       );
       const { existsSync } = await import("node:fs");
@@ -548,7 +558,11 @@ describe("GET /v1/composio-auth/callback", () => {
     try {
       const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
       const nonce = "feedfacefeedfacefeedfacefeedface";
-      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
+      registerConnectFlow(
+        nonce,
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+        "com.google/gmail",
+      );
       const wrongCookie = sha256Hex("some-other-nonce");
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
@@ -567,7 +581,11 @@ describe("GET /v1/composio-auth/callback", () => {
     try {
       const app = composioAuthRoutes(stubCtx(dir, composioEntry("com.google/gmail")));
       const nonce = "abcabcabcabcabcabcabcabcabcabcab";
-      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
+      registerConnectFlow(
+        nonce,
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+        "com.google/gmail",
+      );
       const res = await app.request(`http://nb.test/v1/composio-auth/callback?n=${nonce}`, {
         headers: { cookie: `nb_composio_state=${sha256Hex(nonce)}` },
       });
@@ -583,7 +601,11 @@ describe("GET /v1/composio-auth/callback", () => {
       // Stub returns no catalog entry.
       const app = composioAuthRoutes(stubCtx(dir, null));
       const nonce = "1111111111111111111111111111111a";
-      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_test" }, "com.google/gmail");
+      registerConnectFlow(
+        nonce,
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+        "com.google/gmail",
+      );
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}` +
         "&connected_account_id=ca_xyz&status=ACTIVE";
@@ -704,9 +726,9 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
 
     // Spy on saveComposioConnection by inspecting the filesystem after.
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-"));
-    seedWorkspaceRoot(dir, "ws_01abc");
-    seedWorkspaceRoot(dir, "ws_real");
-    seedWorkspaceRoot(dir, "ws_test");
+    seedWorkspaceRoot(dir, "ws_0001f3ac8053ce11");
+    seedWorkspaceRoot(dir, "ws_0065ab540586462e");
+    seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     try {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
       (ctx as unknown as { authOptions: unknown }).authOptions = DEV_AUTH;
@@ -755,9 +777,9 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
     };
 
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-fail-"));
-    seedWorkspaceRoot(dir, "ws_01abc");
-    seedWorkspaceRoot(dir, "ws_real");
-    seedWorkspaceRoot(dir, "ws_test");
+    seedWorkspaceRoot(dir, "ws_0001f3ac8053ce11");
+    seedWorkspaceRoot(dir, "ws_0065ab540586462e");
+    seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     try {
       // Force ensureSourceRegistered to throw so we exercise the
       // failure path: contract is that connection.json must NOT be
@@ -921,7 +943,7 @@ describe("POST /v1/workspaces/:wsId/composio-auth/initiate", () => {
 
     const { app } = makeApp(composioEntry("com.google/gmail"));
     const answers: Array<{ status: number; body: string }> = [];
-    for (const wsId of ["ws_bad-id", "ws_nosuch", STUB_FOREIGN_WS]) {
+    for (const wsId of ["ws_bad-id", "ws_00515a687ea5ef98", STUB_FOREIGN_WS]) {
       const res = await app.request(`http://nb.test/v1/workspaces/${wsId}/composio-auth/initiate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1070,9 +1092,9 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     };
 
     const dir = mkdtempSync(join(tmpdir(), "nb-adopt-identity-"));
-    seedWorkspaceRoot(dir, "ws_01abc");
-    seedWorkspaceRoot(dir, "ws_real");
-    seedWorkspaceRoot(dir, "ws_test");
+    seedWorkspaceRoot(dir, "ws_0001f3ac8053ce11");
+    seedWorkspaceRoot(dir, "ws_0065ab540586462e");
+    seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     try {
       const { app, ctx } = await makeIdentityApp(composioEntry("com.google/gmail"), dir);
       const res = await app.request("http://nb.test/v1/composio-auth/initiate-identity", {
@@ -1112,9 +1134,9 @@ describe("POST /v1/composio-auth/initiate-identity", () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({ providers: { composio: { authConfigs: { gmail: "ac_gmail" } } } });
     const dir = mkdtempSync(join(tmpdir(), "nb-identity-not-installed-"));
-    seedWorkspaceRoot(dir, "ws_01abc");
-    seedWorkspaceRoot(dir, "ws_real");
-    seedWorkspaceRoot(dir, "ws_test");
+    seedWorkspaceRoot(dir, "ws_0001f3ac8053ce11");
+    seedWorkspaceRoot(dir, "ws_0065ab540586462e");
+    seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     try {
       // Valid catalog entry, but NO install ref seeded → the precheck rejects,
       // mirroring the OAuth identity initiate. Prevents a connect-before-install
@@ -1197,7 +1219,11 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       const ctx = stubCtx(dir, composioEntry("com.google/gmail"));
       const app = composioAuthRoutes(ctx);
       const nonce = "cafecafecafecafecafecafecafecafe";
-      registerConnectFlow(nonce, { type: "workspace", wsId: "ws_real" }, "com.google/gmail");
+      registerConnectFlow(
+        nonce,
+        { type: "workspace", wsId: "ws_0065ab540586462e" },
+        "com.google/gmail",
+      );
       const url =
         `http://nb.test/v1/composio-auth/callback?n=${nonce}&usr=usr_attacker` +
         "&connected_account_id=ca_xyz&status=ACTIVE";
@@ -1216,7 +1242,7 @@ describe("GET /v1/composio-auth/callback — identity (user) owner", () => {
       // The connection landed under the registered workspace owner.
       const stored = await readComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_real" },
+        { type: "workspace", wsId: "ws_0065ab540586462e" },
         "com.google/gmail",
       );
       expect(stored?.connectedAccountId).toBe("ca_xyz");

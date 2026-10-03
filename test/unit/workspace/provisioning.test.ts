@@ -145,7 +145,7 @@ describe("defaultWorkspaceFor", () => {
   test("falls back to the first membership when the default is not one of them", async () => {
     const a = await store.create("A");
     const b = await store.create("B");
-    expect(defaultWorkspaceFor([a, b], { defaultWorkspaceId: "ws_gone000000000000" }).id).toBe(
+    expect(defaultWorkspaceFor([a, b], { defaultWorkspaceId: "ws_003c5b935c4183ea" }).id).toBe(
       a.id,
     );
   });

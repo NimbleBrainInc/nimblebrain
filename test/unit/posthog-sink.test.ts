@@ -163,7 +163,7 @@ describe("PostHogEventSink", () => {
     const { mock, sink } = createTestSetup();
 
     const installed = {
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
       serverName: "remote-thing",
       connectorName: "https://example.com/mcp",
       version: "1.0.0",

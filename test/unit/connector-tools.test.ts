@@ -142,7 +142,7 @@ interface PermissionWrite {
 function buildHarness(): Harness {
   const permissionWrites: PermissionWrite[] = [];
   const workDir = mkdtempSync(join(tmpdir(), "nb-connector-tools-"));
-  const wsId = "ws_acme";
+  const wsId = "ws_000f7ed6658f9d30";
   const workspaceStore = new WorkspaceStore(workDir);
   // Installed process-wide as well as handed to the stub runtime: the OAuth
   // records the install path seeds Connection state from reach the store
@@ -376,7 +376,7 @@ describe("manage_connectors.setup_operator", () => {
   });
 
   test("rejects unknown workspace and unknown catalog entry", async () => {
-    const fakeWs = buildTool(h, ADMIN_USER, "ws_nonexistent");
+    const fakeWs = buildTool(h, ADMIN_USER, "ws_004f1f715b791487");
     const r1 = await fakeWs.handler({
       action: "setup_operator",
       catalogId: DROPBOX_ID,
@@ -835,7 +835,7 @@ describe("manage_connectors.install", () => {
     const result = await tool.handler({
       action: "install",
       entry: unsupportedEntry(),
-      wsId: "ws_does_not_exist",
+      wsId: "ws_002cbcedbb32d4b3",
     });
     expect(result.isError).toBe(true);
     const text = (result.content?.[0] as { text?: string } | undefined)?.text ?? "";
@@ -937,7 +937,7 @@ describe("manage_connectors.install", () => {
     //   - The persisted ConnectorRef carries `oauthScope: "workspace"`.
     //     The "user" literal is gone (T008) and stays gone.
     //   - The slug-shaped serverName is unchanged.
-    const adminPersonalWsId = "ws_admin_own";
+    const adminPersonalWsId = "ws_00130226f6411195";
     await seedWorkspace(h.workspaceStore, adminPersonalWsId, {
       name: "Admin's workspace",
       members: [{ userId: ADMIN_USER.id, role: "admin" }],
@@ -988,7 +988,7 @@ describe("manage_connectors.install", () => {
     // "ambient session leak" failure mode.
     const ws2 = await h.workspaceStore.create("Helix");
     await h.workspaceStore.addMember(ws2.id, ADMIN_USER.id, "admin");
-    const tool = buildTool(h, ADMIN_USER, h.wsId); // session header says ws_acme
+    const tool = buildTool(h, ADMIN_USER, h.wsId); // session header says ws_000f7ed6658f9d30
     const result = await tool.handler({
       action: "install",
       wsId: ws2.id, // picker names the second workspace
@@ -1423,11 +1423,11 @@ describe("deriveConnectorStatus", () => {
 
 describe("manage_connectors.install — a single-member workspace admits any install kind", () => {
   let h: Harness;
-  const OWN_WS = "ws_admin_own";
+  const OWN_WS = "ws_00130226f6411195";
 
   beforeEach(async () => {
     h = buildHarness();
-    await provisionWorkspace(h); // shared ws_acme, ADMIN_USER is admin
+    await provisionWorkspace(h); // shared ws_000f7ed6658f9d30, ADMIN_USER is admin
     await seedWorkspace(h.workspaceStore, OWN_WS, {
       name: "Admin's workspace",
       members: [{ userId: ADMIN_USER.id, role: "admin" }],
