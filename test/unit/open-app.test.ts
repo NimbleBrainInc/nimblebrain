@@ -74,6 +74,17 @@ describe("nb__open_app", () => {
     });
   });
 
+  // The app decides whether it can go to a target and nothing reports back, so
+  // the answer must not tell the model the record is on screen.
+  test("with a target, the answer claims the app is opening, not that the record is shown", async () => {
+    const text = (await tool.handler({ app: "People", target: "people://contacts/123" })).content
+      .map((c) => ("text" in c ? c.text : ""))
+      .join("");
+    expect(text).toContain("Opening People");
+    expect(text).toContain("if it supports opening at that address");
+    expect(text).not.toContain("Opened");
+  });
+
   test("an unknown app is an error naming the apps to retry with", async () => {
     const result = await tool.handler({ app: "Payroll" });
     expect(result.isError).toBe(true);
