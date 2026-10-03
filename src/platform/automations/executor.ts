@@ -12,7 +12,13 @@
 
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/automations.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
-import { type AutomationRunTrigger, isTransientError, type RunInput } from "./scheduler.ts";
+import {
+  type AutomationRunTrigger,
+  budgetSpendAccounts,
+  isTransientError,
+  type RunInput,
+  type RunSpendAccount,
+} from "./scheduler.ts";
 import type {
   Automation,
   AutomationRun,
@@ -59,6 +65,12 @@ export interface TaskFnRequest {
   model?: string;
   maxIterations?: number;
   maxRunInputTokens?: number;
+  /**
+   * The automation's token budget as spend accounts (`budgetSpendAccounts`).
+   * The runtime stops the run with stopReason `spend_limit` before a model call
+   * that would overrun one.
+   */
+  spendAccounts?: RunSpendAccount[];
   allowedTools?: string[];
   metadata?: Record<string, unknown>;
   /**
@@ -112,6 +124,8 @@ export interface TaskFnResult {
   finishReason?: string;
   /** The last model call's provider-native stop reason (see runtime `TaskResult`). */
   finishReasonRaw?: string;
+  /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
+  spendAccountId?: string;
   usage: { inputTokens: number; outputTokens: number; iterations: number };
 }
 
@@ -203,6 +217,8 @@ function buildRequest(
   // the definition or the operator sets a cap.
   req.maxIterations = limits.maxIterations;
   if (limits.maxInputTokens != null) req.maxRunInputTokens = limits.maxInputTokens;
+  const spendAccounts = budgetSpendAccounts(automation, Date.now());
+  if (spendAccounts.length > 0) req.spendAccounts = spendAccounts;
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
   if (automation.allowedTools?.length) req.allowedTools = automation.allowedTools;
@@ -515,12 +531,33 @@ function runInputCapError(
   );
 }
 
+/**
+ * The error for a run stopped by one of its token budget's spend accounts:
+ * its next model call would have passed the budget's cap for the window.
+ */
+function budgetStopError(account: RunSpendAccount | undefined, automation: Automation): string {
+  const which = account?.unit === "output_tokens" ? "output" : "input";
+  const cap =
+    which === "output"
+      ? automation.tokenBudget?.maxOutputTokens
+      : automation.tokenBudget?.maxInputTokens;
+  const left = account
+    ? ` (${account.remaining.toLocaleString("en-US")} left when the run began)`
+    : "";
+  const limit = cap != null ? ` of ${cap.toLocaleString("en-US")} ${which} tokens` : "";
+  return (
+    `Token budget reached: the next step was projected to pass the budget${limit}${left}, ` +
+    `so the run stopped before it.`
+  );
+}
+
 function mapResultToRun(
   automation: Automation,
   startedAt: string,
   data: TaskFnResult,
   trigger: AutomationRunTrigger,
   limits: EffectiveRunLimits,
+  spendAccounts: RunSpendAccount[] = [],
 ): AutomationRun {
   const stopReason = data.stopReason as AutomationRun["stopReason"];
   let status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
@@ -564,6 +601,12 @@ function mapResultToRun(
       data.usage.inputTokens,
       limits.maxInputTokens,
       automation.maxInputTokens,
+    );
+  }
+  if (stopReason === "spend_limit") {
+    error = budgetStopError(
+      spendAccounts.find((a) => a.id === data.spendAccountId),
+      automation,
     );
   }
   error ??= unrecognizedStopError(status, stopReason, data);
@@ -661,6 +704,10 @@ export function extractOutputFiles(toolCalls: TaskFnResult["toolCalls"]): RunFil
  *   max_iterations                           → timeout (agent loop cap)
  *   max_input_tokens                         → failure (run input cap; the
  *                                              error names the cap)
+ *   spend_limit                              → failure (token budget; the
+ *                                              error names the cap, and the
+ *                                              scheduler disables the
+ *                                              automation)
  *   length / content_filter / error / other  → failure (model couldn't
  *                                              finish — surface so the
  *                                              operator knows)
@@ -793,12 +840,20 @@ export function createDirectExecutor(
     const externalAbort = linkExternalAbort(runController, externalSignal);
 
     try {
+      const request = buildRequest(automation, trigger, limits, ctx, input);
       const data = await taskFn({
-        ...buildRequest(automation, trigger, limits, ctx, input),
+        ...request,
         signal: runController.signal,
         ...(lease ? { admission: lease } : {}),
       });
-      const run = mapResultToRun(automation, startedAt, data, trigger, limits);
+      const run = mapResultToRun(
+        automation,
+        startedAt,
+        data,
+        trigger,
+        limits,
+        request.spendAccounts,
+      );
       // Build the result sidecar from the same data — non-null on every normal
       // return, INCLUDING the aborted-partial path below (the partial usage and
       // activity log accumulated before the abort are still a real deliverable

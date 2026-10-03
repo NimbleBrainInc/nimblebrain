@@ -2,11 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StaticToolRouter } from "../../../../src/adapters/static-router.ts";
 import { automationRunsTotal } from "../../../../src/api/metrics.ts";
 import { resolveAutomationsConfig } from "../../../../src/config/automations.ts";
+import { textContent } from "../../../../src/engine/content-helpers.ts";
+import { AgentEngine } from "../../../../src/engine/engine.ts";
+import type { ToolResult, ToolSchema } from "../../../../src/engine/types.ts";
+import {
+  createDirectExecutor,
+  type TaskFn,
+} from "../../../../src/platform/automations/executor.ts";
 import {
   type AutomationRunTrigger,
   backoffDelay,
+  budgetSpendAccounts,
   computeBudgetResetAt,
   computeNextRunAt,
   countsAsEventFire,
@@ -27,6 +36,8 @@ import {
   getRequestContext,
   runWithRequestContext,
 } from "../../../../src/runtime/request-context.ts";
+import { createSpendBalances } from "../../../../src/runtime/spend.ts";
+import { createMockModel } from "../../../helpers/mock-model.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -2845,6 +2856,143 @@ describe("Scheduler — token budget applies to every run", () => {
     const refused = await scheduler.runNow(WS, OWNER, auto.id);
     expect(refused?.status).toBe("skipped");
     expect(refused?.error).toContain("until its token budget is raised");
+    scheduler.stop();
+  });
+
+  it("names one token spend account per cap, holding what is left of the window", () => {
+    const now = Date.now();
+    const resetAt = new Date(now + 3_600_000).toISOString();
+    const auto = makeAutomation({
+      cumulativeInputTokens: 3_000,
+      cumulativeOutputTokens: 900,
+      tokenBudget: { maxInputTokens: 5_000, maxOutputTokens: 1_000, period: "daily" },
+      budgetResetAt: resetAt,
+    });
+    const accounts = budgetSpendAccounts(auto, now);
+    expect(accounts.map((a) => [a.unit, a.remaining])).toEqual([
+      ["input_tokens", 2_000],
+      ["output_tokens", 100],
+    ]);
+    // Opaque to the door, distinct per automation and window.
+    expect(accounts[0]!.id).toContain(auto.id);
+    expect(accounts[0]!.id).toContain(resetAt);
+    expect(accounts[0]!.id).not.toBe(accounts[1]!.id);
+
+    // A spent window names nothing left, never a negative amount.
+    expect(budgetSpendAccounts({ ...auto, cumulativeInputTokens: 9_000 }, now)[0]!.remaining).toBe(
+      0,
+    );
+    // A passed boundary is a fresh window: full caps, and a different id.
+    const fresh = budgetSpendAccounts(auto, now + 7_200_000);
+    expect(fresh.map((a) => a.remaining)).toEqual([5_000, 1_000]);
+    expect(fresh[0]!.id).not.toBe(accounts[0]!.id);
+    // No budget, no accounts.
+    expect(budgetSpendAccounts(makeAutomation(), now)).toEqual([]);
+  });
+
+  it("disables an enabled automation whose run the budget stopped mid-way, below the cap", async () => {
+    const auto = makeAutomation({
+      cumulativeInputTokens: 3_000,
+      tokenBudget: { maxInputTokens: 5_000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    // The door stopped the run before a call that would have passed the cap,
+    // so the counters (3,000 + 1,500) stay under it.
+    const stopped: AutomationRun = {
+      ...runOf(auto.id, 1_500),
+      status: "failure",
+      stopReason: "spend_limit",
+      error: "Token budget reached: the next step was projected to pass the budget",
+    };
+    const scheduler = new Scheduler(createMockExecutor(stopped), { workDir: tmpDir });
+    scheduler.start();
+    await scheduler.onTimer();
+
+    const updated = defOf(scheduler, auto.id)!;
+    expect(updated.cumulativeInputTokens).toBe(4_500);
+    expect(updated.enabled).toBe(false);
+    expect(updated.disabledReason).toContain("Token budget reached");
+    scheduler.stop();
+  });
+
+  it("enforces the budget before each model call, through the executor and the engine", async () => {
+    // Each model call spends 1,000 input tokens and asks for a tool. With 2,500
+    // left in the window, the door lets two calls through and stops the third.
+    const auto = makeAutomation({
+      cumulativeInputTokens: 2_500,
+      tokenBudget: { maxInputTokens: 5_000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    const tools: ToolSchema[] = [{ name: "test__step", description: "step", inputSchema: {} }];
+    const balances = createSpendBalances();
+    let modelCalls = 0;
+    const taskFn: TaskFn = async (req) => {
+      const hold = balances.open(req.spendAccounts ?? [], { model: "test", rates: null });
+      const engine = new AgentEngine(
+        createMockModel(() => {
+          modelCalls++;
+          return {
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: `c${modelCalls}`,
+                toolName: "test__step",
+                input: "{}",
+              },
+            ],
+            inputTokens: 1_000,
+            outputTokens: 1,
+          };
+        }),
+        new StaticToolRouter(
+          tools,
+          (): ToolResult => ({ content: textContent("ok"), isError: false }),
+        ),
+        { emit() {} },
+      );
+      try {
+        const r = await engine.run(
+          {
+            model: "test",
+            maxIterations: 25,
+            maxInputTokens: 500_000,
+            maxOutputTokens: 100,
+            spend: { check: (p) => hold.check(p), debit: (u) => void hold.debit(u) },
+          },
+          "",
+          [{ role: "user", content: [{ type: "text", text: req.prompt }] }],
+          tools,
+        );
+        return {
+          output: r.output,
+          runId: "run_spendtest00",
+          toolCalls: [],
+          stopReason: r.stopReason,
+          ...(r.spendAccountId ? { spendAccountId: r.spendAccountId } : {}),
+          usage: { ...r.usage, iterations: r.iterations },
+        };
+      } finally {
+        hold.release();
+      }
+    };
+    const scheduler = new Scheduler(
+      createDirectExecutor(taskFn, () => ({})),
+      { workDir: tmpDir },
+    );
+    scheduler.start();
+
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    expect(modelCalls).toBe(2);
+    expect(run?.stopReason).toBe("spend_limit");
+    expect(run?.inputTokens).toBe(2_000);
+    const updated = defOf(scheduler, auto.id)!;
+    expect(updated.cumulativeInputTokens).toBe(4_500);
+    expect(updated.cumulativeInputTokens).toBeLessThanOrEqual(5_000);
+    expect(updated.enabled).toBe(false);
+    expect(updated.disabledReason).toContain("Token budget reached");
     scheduler.stop();
   });
 

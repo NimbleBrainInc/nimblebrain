@@ -24,6 +24,7 @@ import type { SkillMatch } from "../skills/matcher.ts";
 import type { SelectedSkill } from "../skills/select.ts";
 import type { Skill } from "../skills/types.ts";
 import type { RequestContext } from "./request-context.ts";
+import type { SpendAccount, SpendDebit } from "./spend.ts";
 import type { AppContext, ChatResult, TurnUsage } from "./types.ts";
 
 /** A user-message text content block. */
@@ -120,6 +121,15 @@ export interface RunBudget {
   maxIterations?: number;
   /** Input tokens the whole run may spend across every model call. Absent = no cap. */
   maxRunInputTokens?: number;
+  /**
+   * The spend accounts the run draws on (`src/runtime/spend.ts`). Each is
+   * checked before every model call and debited after it; the run ends with
+   * stopReason `spend_limit` before a call that would overrun one. Absent or
+   * empty = no account, which is every chat.
+   */
+  spendAccounts?: SpendAccount[];
+  /** Told what each model call took from every account, as the call returns. */
+  onSpendDebit?: (debits: SpendDebit[]) => void;
 }
 
 /**
@@ -192,6 +202,8 @@ export interface RunHandle {
   finishReason?: string;
   /** The last model call's provider-native stop reason. See `EngineResult.finishReasonRaw`. */
   finishReasonRaw?: string;
+  /** The account that stopped the run, when `stopReason` is `spend_limit`. */
+  spendAccountId?: string;
   usage: TurnUsage;
 }
 

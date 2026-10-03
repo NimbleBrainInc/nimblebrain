@@ -541,13 +541,74 @@ export function tokenBudgetExceeded(auto: Automation, now: number): string | nul
 }
 
 /**
+ * A spend account a run names, in the runtime's shape (`TaskRequest.spendAccounts`).
+ * Locally typed, like the rest of the executor's request.
+ */
+export interface RunSpendAccount {
+  id: string;
+  unit: "usd" | "input_tokens" | "output_tokens";
+  remaining: number;
+}
+
+/**
+ * The token budget as the spend accounts a run names: one per cap, holding
+ * what is left of the current window. The run-start door checks them before
+ * each model call and stops the run (stopReason `spend_limit`) before a call
+ * that would overrun one, so a run cannot spend past the budget.
+ *
+ * The ids are this app's to choose and mean nothing to the door: the
+ * automation's key, the window, and the unit. A window whose boundary has
+ * passed is a fresh one (the next recorded run resets the counters), so it
+ * starts full and gets an id of its own.
+ */
+export function budgetSpendAccounts(auto: Automation, now: number): RunSpendAccount[] {
+  const budget = auto.tokenBudget;
+  if (!budget) return [];
+  const reset = auto.budgetResetAt;
+  // Mirrors `rollBudgetWindow`: a passed boundary, or a periodic budget with
+  // none yet, means the next recorded run starts the window afresh.
+  const elapsed = reset !== undefined && new Date(reset).getTime() <= now;
+  const unseeded = reset === undefined && budget.period !== undefined;
+  const window = unseeded
+    ? "unseeded"
+    : reset === undefined
+      ? "lifetime"
+      : elapsed
+        ? `after:${reset}`
+        : `until:${reset}`;
+  const fresh = elapsed || unseeded;
+  const base = `automation-budget:${auto.workspaceId ?? ""}/${auto.ownerId ?? ""}/${auto.id}@${window}`;
+  const left = (cap: number, used: number | undefined) =>
+    Math.max(0, cap - (fresh ? 0 : (used ?? 0)));
+  const accounts: RunSpendAccount[] = [];
+  if (budget.maxInputTokens != null) {
+    accounts.push({
+      id: `${base}:input_tokens`,
+      unit: "input_tokens",
+      remaining: left(budget.maxInputTokens, auto.cumulativeInputTokens),
+    });
+  }
+  if (budget.maxOutputTokens != null) {
+    accounts.push({
+      id: `${base}:output_tokens`,
+      unit: "output_tokens",
+      remaining: left(budget.maxOutputTokens, auto.cumulativeOutputTokens),
+    });
+  }
+  return accounts;
+}
+
+/**
  * Account a run against the token budget: roll the window, and disable an
  * enabled automation whose window is spent.
  *
  * Every run counts, whatever triggered it and whether or not the automation
- * is enabled. A disabled automation has nothing left to disable, so its budget
- * is enforced where its runs start: Run now refuses it until the window
- * resets (see `Scheduler.requestRunNow`).
+ * is enabled. The window is spent when the counters pass a cap, or when the
+ * run was stopped by one of the budget's spend accounts: its next model call
+ * would have passed a cap, so the counters stop short of it. A disabled
+ * automation has nothing left to disable, so its budget is enforced where its
+ * runs start: Run now refuses it until the window resets (see
+ * `Scheduler.requestRunNow`), and the door stops any run that would overrun it.
  */
 function applyTokenBudget(
   auto: Automation,
@@ -559,7 +620,11 @@ function applyTokenBudget(
 
   rollBudgetWindow(auto, run, now, defaultTimezone);
 
-  const exceeded = tokenBudgetExceeded(auto, now);
+  // The automation names no spend account but its budget's, so a spend stop
+  // is the budget's.
+  const exceeded =
+    tokenBudgetExceeded(auto, now) ??
+    (run.stopReason === "spend_limit" ? (run.error ?? "Token budget reached") : null);
   if (!exceeded || !auto.enabled) return;
 
   auto.enabled = false;

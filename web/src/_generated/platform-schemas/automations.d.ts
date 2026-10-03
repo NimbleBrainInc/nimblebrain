@@ -198,7 +198,7 @@ export interface AutomationRunRecord {
     transient?: boolean;
     trigger?: "scheduled" | "manual" | "event";
     resultPreview?: string;
-    stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "length" | "content_filter" | "error" | "other";
+    stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
 }
 /**
  * One tool call from a run's activity log. Mirror of `RunToolCall` in
@@ -236,7 +236,7 @@ export interface AutomationsRunResultOutput {
         outputTokens: number;
         iterations: number;
     };
-    stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "length" | "content_filter" | "error" | "other";
+    stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
 }
 /**
  * Token budget block on a stored automation. Mirror of the

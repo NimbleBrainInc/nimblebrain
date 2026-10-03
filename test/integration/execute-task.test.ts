@@ -20,7 +20,7 @@
  * echo model, no HTTP server, in-process probe source.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,6 +28,7 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { getRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import type { SpendDebit } from "../../src/runtime/spend.ts";
 import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -163,6 +164,89 @@ describe("runtime.executeTask", () => {
 
     expect(result.stopReason).toBe("max_input_tokens");
     expect(result.usage.inputTokens).toBe(0);
+  });
+
+  it("ends the run with spend_limit, naming the account, before a call that would overrun it", async () => {
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+
+    const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
+      prompt: "score the items",
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      spendAccounts: [
+        { id: "acct-roomy", unit: "output_tokens", remaining: 100_000_000 },
+        { id: "acct-tight", unit: "input_tokens", remaining: 1 },
+      ],
+    });
+
+    expect(result.stopReason).toBe("spend_limit");
+    expect(result.spendAccountId).toBe("acct-tight");
+    expect(result.usage.inputTokens).toBe(0);
+    // The run ended, so nothing holds the accounts any more.
+    expect(runtime.getSpendBalances().balance("acct-tight")).toBeUndefined();
+  });
+
+  it("debits every account after each model call and reports the debits", async () => {
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    const debits: SpendDebit[] = [];
+
+    const result = await runtime.executeTask({
+      workspaceId: defaultWsId,
+      prompt: "summarize today's activity",
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      spendAccounts: [{ id: "acct-in", unit: "input_tokens", remaining: 100_000_000 }],
+      onSpendDebit: (d) => debits.push(...d),
+    });
+
+    expect(result.stopReason).toBe("complete");
+    expect(result.spendAccountId).toBeUndefined();
+    expect(debits).toHaveLength(1);
+    expect(debits[0]?.accountId).toBe("acct-in");
+    expect(debits[0]?.amount).toBe(result.usage.inputTokens);
+    expect(debits[0]?.remaining).toBe(100_000_000 - result.usage.inputTokens);
+  });
+
+  it("checks the live balance another run in flight already set for the same account", async () => {
+    // The first run to name an id sets its balance; a later run naming it draws
+    // on that balance, not on the amount it was given.
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    const inFlight = runtime
+      .getSpendBalances()
+      .open([{ id: "acct-shared", unit: "input_tokens", remaining: 1 }], {
+        model: "test",
+        rates: null,
+      });
+    try {
+      const result = await runtime.executeTask({
+        workspaceId: defaultWsId,
+        prompt: "score the items",
+        identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+        spendAccounts: [{ id: "acct-shared", unit: "input_tokens", remaining: 100_000_000 }],
+      });
+      expect(result.stopReason).toBe("spend_limit");
+      expect(result.spendAccountId).toBe("acct-shared");
+      expect(runtime.getSpendBalances().balance("acct-shared")).toBe(1);
+    } finally {
+      inFlight.release();
+    }
+  });
+
+  it("a chat names no spend account, so it never touches the balances", async () => {
+    runtime = await bootRuntime(undefined);
+    const { defaultWsId } = await provisionWorkspaces(runtime);
+    const balances = spyOn(runtime, "getSpendBalances");
+
+    const chat = await runtime.chat({
+      identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
+      workspaceId: defaultWsId,
+      message: "hello",
+    });
+
+    expect(chat.stopReason).toBe("complete");
+    expect(balances).not.toHaveBeenCalled();
   });
 
   it("returns a deliverable and a runId on the happy path", async () => {

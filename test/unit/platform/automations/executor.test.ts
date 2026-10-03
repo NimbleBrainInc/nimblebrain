@@ -7,6 +7,7 @@ import {
   createDirectExecutor,
   type ExecutorContext,
   type TaskFn,
+  type TaskFnRequest,
   type TaskFnResult,
   type TaskFnToolCall,
 } from "../../../../src/platform/automations/executor.ts";
@@ -319,6 +320,37 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(run.error).not.toContain("200,000");
     expect(run.error).toContain("automations.maxRunInputTokens");
     expect(run.error).not.toContain("Raise Max Input Tokens");
+  });
+
+  test("spend_limit → failure, naming the token budget it would have passed", async () => {
+    const auto = makeAutomation({
+      cumulativeInputTokens: 40_000,
+      tokenBudget: { maxInputTokens: 50_000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    let sent: TaskFnRequest | undefined;
+    const executor = createDirectExecutor(
+      async (req): Promise<TaskFnResult> => {
+        sent = req;
+        return {
+          output: "partial",
+          runId: "run_test000000",
+          toolCalls: [],
+          stopReason: "spend_limit",
+          spendAccountId: req.spendAccounts?.[0]?.id,
+          usage: { inputTokens: 8_000, outputTokens: 5, iterations: 2 },
+        };
+      },
+      () => ({}),
+    );
+    const { run, result } = await executor(auto);
+    expect(sent?.spendAccounts?.[0]?.remaining).toBe(10_000);
+    expect(run.status).toBe("failure");
+    expect(run.stopReason).toBe("spend_limit");
+    expect(result?.stopReason).toBe("spend_limit");
+    expect(run.error).toContain("Token budget reached");
+    expect(run.error).toContain("50,000 input tokens");
+    expect(run.error).toContain("10,000 left");
   });
 
   test("length → failure (fail-closed default)", async () => {

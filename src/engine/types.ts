@@ -404,6 +404,14 @@ export type ResolvedThinking =
   | { mode: "effort"; effort: ThinkingEffort; source: EffortSource }
   | { mode: "enabled"; budgetTokens: number; effort: ThinkingEffort; source: EffortSource };
 
+/** How the engine reaches a run's spend accounts. See `EngineConfig.spend`. */
+export interface SpendGate {
+  /** The id of the first account `projected` would overrun, or null. */
+  check(projected: TokenUsage): string | null;
+  /** Record a call's actual usage against every account. */
+  debit(actual: TokenUsage): void;
+}
+
 /** Engine configuration per run. */
 export interface EngineConfig {
   model: string;
@@ -422,6 +430,16 @@ export interface EngineConfig {
    * the prompt. Absent means no cap.
    */
   maxRunInputTokens?: number;
+  /**
+   * The run's spend accounts, as the runtime holds them. Before each model call
+   * the engine projects the call (input as for `maxRunInputTokens`, output as
+   * `maxOutputTokens`) and asks `check`; a non-null answer names the account
+   * the call would overrun, and the run ends with stopReason `spend_limit`
+   * before the call is sent. After each call the engine passes its actual
+   * usage to `debit`. The engine never reads what an account is. Absent means
+   * no account.
+   */
+  spend?: SpendGate;
   /**
    * Resolved thinking option for this call. Optional; absent means the
    * engine doesn't request thinking (provider default behavior).
@@ -632,6 +650,9 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  *   - `max_iterations`   — agent loop hit its iteration cap
  *   - `max_input_tokens` — the next model call would take the run past
  *                          `EngineConfig.maxRunInputTokens`
+ *   - `spend_limit`      — the next model call would overrun one of the run's
+ *                          spend accounts (`EngineConfig.spend`); the account
+ *                          is `EngineResult.spendAccountId`
  *   - `length`           — last LLM call hit `maxOutputTokens` mid-turn
  *   - `content_filter`   — last LLM call was blocked by provider moderation
  *   - `error`            — last LLM call's finish reason was `error`
@@ -655,6 +676,7 @@ export type StopReason =
   | "complete"
   | "max_iterations"
   | "max_input_tokens"
+  | "spend_limit"
   | "length"
   | "content_filter"
   | "error"
@@ -681,6 +703,8 @@ export interface EngineResult {
    * provider reported none.
    */
   finishReasonRaw?: string;
+  /** The account that stopped the run, when `stopReason` is `spend_limit`. */
+  spendAccountId?: string;
 }
 
 export interface ToolCallRecord {

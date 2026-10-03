@@ -260,6 +260,7 @@ export interface AutomationRun {
     | "complete"
     | "max_iterations"
     | "max_input_tokens"
+    | "spend_limit"
     | "length"
     | "content_filter"
     | "error"

@@ -725,6 +725,34 @@ function appendFinalStepReminder(
 }
 
 /**
+ * Whether the next model call may be sent, judged before it is: the run-wide
+ * input cap (`EngineConfig.maxRunInputTokens`) first, then the spend accounts
+ * (`EngineConfig.spend`). The call's input is projected as the larger of the
+ * estimate of the prompt about to be sent and the previous call's reported
+ * input; its output at the call's ceiling, so a call that fits cannot overrun
+ * an output or dollar account by what it writes. Null lets the call through.
+ */
+function checkBeforeCall(
+  config: EngineConfig,
+  call: { spentInput: number; lastCallInputTokens: number; estimate: () => number },
+): "max_input_tokens" | { spendAccountId: string } | null {
+  if (config.maxRunInputTokens === undefined && !config.spend) return null;
+  const projected = Math.max(call.lastCallInputTokens, call.estimate());
+  if (
+    config.maxRunInputTokens !== undefined &&
+    call.spentInput + projected > config.maxRunInputTokens
+  ) {
+    return "max_input_tokens";
+  }
+  const overrun = config.spend?.check({
+    ...emptyUsage(),
+    inputTokens: projected,
+    outputTokens: config.maxOutputTokens,
+  });
+  return overrun ? { spendAccountId: overrun } : null;
+}
+
+/**
  * Map the AI SDK V4 usage shape into our canonical TokenUsage, plus the
  * engine-only 1h/5m cache-write split the base V4 struct doesn't carry.
  * V4's `inputTokens.total` is the grand total (noCache+cacheRead+cacheWrite);
@@ -1260,6 +1288,8 @@ export class AgentEngine {
     // call's projected size for the run cap (see `EngineConfig.maxRunInputTokens`).
     let lastCallInputTokens = 0;
     let runInputCapReached = false;
+    // The spend account that would have been overrun by the next call, if any.
+    let spendAccountId: string | undefined;
 
     const unregisterToolControls = config.toolPromotion?.registerControls(toolControls);
     try {
@@ -1309,20 +1339,24 @@ export class AgentEngine {
 
         callMessages = appendFinalStepReminder(callMessages, iteration, maxIter);
 
-        // The run-wide input cap, checked against the prompt about to be sent,
-        // before it is sent (see `EngineConfig.maxRunInputTokens`).
-        if (config.maxRunInputTokens !== undefined) {
-          const projected = Math.max(
-            lastCallInputTokens,
+        // The run-wide input cap and the spend accounts, checked against the
+        // prompt about to be sent, before it is sent.
+        const preCallStop = checkBeforeCall(config, {
+          spentInput: cumulativeUsage.inputTokens,
+          lastCallInputTokens,
+          estimate: () =>
             estimatePromptTokens(
               [{ role: "system", content: callPrompt }, ...callMessages],
               modelTools,
             ),
-          );
-          if (cumulativeUsage.inputTokens + projected > config.maxRunInputTokens) {
-            runInputCapReached = true;
-            break;
-          }
+        });
+        if (preCallStop === "max_input_tokens") {
+          runInputCapReached = true;
+          break;
+        }
+        if (preCallStop) {
+          spendAccountId = preCallStop.spendAccountId;
+          break;
         }
 
         const callProviderOptions = buildThinkingProviderOptions(
@@ -1411,6 +1445,7 @@ export class AgentEngine {
 
         const turnUsage = computeTurnUsage(response.usage);
         addUsage(cumulativeUsage, turnUsage);
+        config.spend?.debit(turnUsage);
         lastCallInputTokens = turnUsage.inputTokens;
         cumulativeLlmMs += llmMs;
 
@@ -1552,6 +1587,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       runInputCapReached,
+      spendAccountId,
       lastFinishReason,
       lastFinishReasonRaw,
       totalMs,
@@ -1594,7 +1630,7 @@ export class AgentEngine {
 
   /**
    * Emit `run.done` and assemble the EngineResult: the run-level stop reason
-   * (run input cap, then iteration cap, then the model-driven exit) and the reported
+   * (run input cap, then spend account, then iteration cap, then the model-driven exit) and the reported
    * iteration count (which includes the in-progress iteration when the loop
    * exited before the cap).
    */
@@ -1603,6 +1639,7 @@ export class AgentEngine {
     iteration: number;
     maxIter: number;
     runInputCapReached: boolean;
+    spendAccountId: string | undefined;
     lastFinishReason: FinishReason | undefined;
     lastFinishReasonRaw: string | undefined;
     totalMs: number;
@@ -1616,6 +1653,7 @@ export class AgentEngine {
       iteration,
       maxIter,
       runInputCapReached,
+      spendAccountId,
       lastFinishReason,
       lastFinishReasonRaw,
       totalMs,
@@ -1626,14 +1664,17 @@ export class AgentEngine {
     } = params;
     const stopReason: StopReason = runInputCapReached
       ? "max_input_tokens"
-      : iteration >= maxIter
-        ? "max_iterations"
-        : deriveStopReason(lastFinishReason);
-    // A cap stop breaks before its iteration's model call, so every counted
-    // iteration is complete.
-    const reportedIterations = runInputCapReached
-      ? iteration
-      : reportedIterationCount(iteration, maxIter);
+      : spendAccountId !== undefined
+        ? "spend_limit"
+        : iteration >= maxIter
+          ? "max_iterations"
+          : deriveStopReason(lastFinishReason);
+    // A cap or spend stop breaks before its iteration's model call, so every
+    // counted iteration is complete.
+    const reportedIterations =
+      runInputCapReached || spendAccountId !== undefined
+        ? iteration
+        : reportedIterationCount(iteration, maxIter);
     this.events.emit({
       type: "run.done",
       data: {
@@ -1653,6 +1694,7 @@ export class AgentEngine {
       stopReason,
       ...(lastFinishReason !== undefined ? { finishReason: lastFinishReason } : {}),
       ...(lastFinishReasonRaw !== undefined ? { finishReasonRaw: lastFinishReasonRaw } : {}),
+      ...(spendAccountId !== undefined ? { spendAccountId } : {}),
     };
   }
 

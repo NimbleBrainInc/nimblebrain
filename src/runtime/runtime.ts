@@ -87,6 +87,7 @@ import type {
   EngineResult,
   EventSink,
   SkillsLoadedPayload,
+  SpendGate,
   ThinkingEffort,
   ToolPromotionResult,
   ToolResult,
@@ -253,6 +254,7 @@ import { createSystemTools } from "../tools/system-tools.ts";
 import { isToolAllowedForRun } from "../tools/tool-pattern.ts";
 import type { ResourceData, Tool, ToolSource } from "../tools/types.ts";
 import { toToolSchema } from "../tools/types.ts";
+import { resolveRates } from "../usage/cost.ts";
 import { createProcessLedger, type UsageLedger } from "../usage/ledger.ts";
 import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record.ts";
 import type { TokenUsage } from "../usage/types.ts";
@@ -289,6 +291,7 @@ import type {
   UserTextPart,
 } from "./run-spec.ts";
 import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
+import { createSpendBalances, type SpendBalances } from "./spend.ts";
 import { isStreamedRunEvent } from "./turn-stream.ts";
 import type {
   ChatRequest,
@@ -596,6 +599,9 @@ export class Runtime {
 
   /** Unattended-run admission; see {@link getRunAdmission}. */
   private _runAdmission?: RunAdmission;
+
+  /** Live spend-account balances; see {@link getSpendBalances}. */
+  private _spendBalances?: SpendBalances;
 
   private constructor(
     resolveModelFn: (modelString: string) => LanguageModelV4,
@@ -1535,6 +1541,8 @@ export class Runtime {
         ...(request.maxRunInputTokens !== undefined
           ? { maxRunInputTokens: request.maxRunInputTokens }
           : {}),
+        ...(request.spendAccounts ? { spendAccounts: request.spendAccounts } : {}),
+        ...(request.onSpendDebit ? { onSpendDebit: request.onSpendDebit } : {}),
       },
       model: this.resolveRequestModelString(request.model),
       ...(request.signal ? { signal: request.signal } : {}),
@@ -1549,8 +1557,7 @@ export class Runtime {
       runId: handle.runId,
       toolCalls: handle.toolCalls,
       stopReason: handle.stopReason,
-      ...(handle.finishReason !== undefined ? { finishReason: handle.finishReason } : {}),
-      ...(handle.finishReasonRaw !== undefined ? { finishReasonRaw: handle.finishReasonRaw } : {}),
+      ...stopDetail(handle),
       usage: handle.usage,
     };
   }
@@ -1779,6 +1786,11 @@ export class Runtime {
     // path instead. T008 (credential rebinding) tightens this further.
     engineConfig.toolPromotion = this.buildToolPromotionFactory();
 
+    // ── The spend accounts ──────────────────────────────────────────────────
+    // Held open for exactly as long as the engine runs, so a balance shared
+    // with other runs in flight lives until the last of them ends.
+    const releaseSpend = this.openSpendAccounts(spec, engineConfig);
+
     // Tell the client its conversation id (and the model it is bound to)
     // immediately, before the first token.
     if (binding) {
@@ -1817,6 +1829,8 @@ export class Runtime {
         stopReason: "aborted",
         usage: partial.usage(spec.model),
       };
+    } finally {
+      releaseSpend();
     }
 
     return {
@@ -1827,8 +1841,7 @@ export class Runtime {
       skillName,
       toolCalls: result.toolCalls,
       stopReason: result.stopReason,
-      ...(result.finishReason !== undefined ? { finishReason: result.finishReason } : {}),
-      ...(result.finishReasonRaw !== undefined ? { finishReasonRaw: result.finishReasonRaw } : {}),
+      ...stopDetail(result),
       usage: {
         ...result.usage,
         model: spec.model,
@@ -1839,6 +1852,39 @@ export class Runtime {
   }
 
   // ── run-start door helpers ───────────────────────────────────────
+
+  /**
+   * Hold the run's spend accounts open and hand them to the engine as
+   * `engineConfig.spend`; returns what releases them. A run that names none
+   * (every chat) gets no gate. Dollars are priced at the run model's rates.
+   * The debit callback is the source's; a throw from it is logged, never
+   * allowed to end the run.
+   */
+  private openSpendAccounts(spec: RunSpec, engineConfig: EngineConfig): () => void {
+    const accounts = spec.budget.spendAccounts;
+    if (!accounts?.length) return () => {};
+    const hold = this.getSpendBalances().open(accounts, {
+      model: spec.model,
+      rates: resolveRates(spec.model),
+    });
+    const onDebit = spec.budget.onSpendDebit;
+    const gate: SpendGate = {
+      check: (projected) => hold.check(projected),
+      debit: (actual) => {
+        const debits = hold.debit(actual);
+        if (!onDebit) return;
+        try {
+          onDebit(debits);
+        } catch (err) {
+          log.warn("spend.debit_callback_failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      },
+    };
+    engineConfig.spend = gate;
+    return () => hold.release();
+  }
 
   /**
    * The prompt a run reasons with, and the tool surface it reasons over.
@@ -5802,6 +5848,16 @@ export class Runtime {
     return this._runAdmission;
   }
 
+  /**
+   * The live balances of every spend account a run in flight names
+   * (`src/runtime/spend.ts`). Created on first use, so a prototype-built test
+   * double gets one too.
+   */
+  getSpendBalances(): SpendBalances {
+    this._spendBalances ??= createSpendBalances();
+    return this._spendBalances;
+  }
+
   /** Get the resolved work directory path. */
   getWorkDir(): string {
     return resolveWorkDir(this.config);
@@ -6289,6 +6345,20 @@ function buildRunContext(
     // restamp, so the wall is enforced at the automations source rather than
     // per-router-construction. See `createAutomationsSource`.
     ...(attended ? {} : { unattended: true }),
+  };
+}
+
+/**
+ * Why a run stopped, beyond its stop reason: the fields an engine result, a run
+ * handle, and a task result share, copied only when set.
+ */
+function stopDetail(
+  r: Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId">,
+): Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId"> {
+  return {
+    ...(r.finishReason !== undefined ? { finishReason: r.finishReason } : {}),
+    ...(r.finishReasonRaw !== undefined ? { finishReasonRaw: r.finishReasonRaw } : {}),
+    ...(r.spendAccountId !== undefined ? { spendAccountId: r.spendAccountId } : {}),
   };
 }
 
