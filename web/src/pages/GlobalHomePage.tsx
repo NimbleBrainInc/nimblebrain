@@ -1,6 +1,10 @@
 // ---------------------------------------------------------------------------
 // GlobalHomePage — workspace-agnostic landing at `/`
 //
+// A user in exactly one workspace goes straight into it: there is nothing to
+// choose between. Anyone else sees their workspaces here, each with its unread
+// dot. Which workspace to open is never remembered or defaulted (ADR-0044).
+//
 // Stage 2 follow-up: with chat, conversations, automations, and files now
 // identity-bound, the root URL is no longer "workspace home" — it's the
 // user's cross-workspace landing. v1 is intentionally minimal: greeting +
@@ -10,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { Pin, Plus } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { UnreadDot } from "../components/shell/UnreadDot";
 import { useSession } from "../context/SessionContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
@@ -35,6 +39,11 @@ export function GlobalHomePage() {
   const name = session?.user?.displayName ?? session?.user?.email ?? "";
   const { pinned, toggle: togglePin } = usePinnedWorkspaces();
   const ordered = orderWorkspacesForSidebar(wsCtx.workspaces, pinned);
+  const [only] = wsCtx.workspaces;
+
+  if (wsCtx.workspaces.length === 1 && only) {
+    return <Navigate to={`/w/${toSlug(only.id)}/`} replace />;
+  }
 
   return (
     <div className="h-full overflow-y-auto" data-testid="global-home-page">

@@ -37,9 +37,10 @@ import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
+import { isWorkspaceOptional } from "../tools/workspace-optional.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
-import { defaultWorkspaceFor, ensureUserWorkspace } from "../workspace/provisioning.ts";
+import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
@@ -1168,6 +1169,29 @@ function emitBridgeToolDone(
   eventSink?.emit(event);
 }
 
+/**
+ * The feature-flag and role gates every REST tools/call runs, on both doors:
+ * a `403` for a tool a disabled flag gates (defense-in-depth layer 2) or an
+ * admin-only tool called by a non-admin, else `null`.
+ */
+function gateRestToolCall(
+  toolName: string,
+  features: ResolvedFeatures,
+  identity: UserIdentity | undefined,
+): Response | null {
+  if (!isToolEnabled(toolName, features)) {
+    return apiError(403, "feature_disabled", `Tool "${toolName}" is disabled by feature flags`, {
+      tool: toolName,
+    });
+  }
+  if (!isToolVisibleToRole(toolName, identity?.orgRole)) {
+    return apiError(403, "forbidden", `Insufficient permissions for tool "${toolName}"`, {
+      tool: toolName,
+    });
+  }
+  return null;
+}
+
 /** Handle POST /v1/workspaces/:wsId/tools/call — direct tool invocation. */
 export async function handleToolCall(
   request: Request,
@@ -1219,19 +1243,8 @@ export async function handleToolCall(
     coercedArgs = validated.coercedArgs;
   }
 
-  // Feature flag gate — reject calls to disabled tools (defense-in-depth layer 2)
-  if (!isToolEnabled(toolName, features)) {
-    return apiError(403, "feature_disabled", `Tool "${toolName}" is disabled by feature flags`, {
-      tool: toolName,
-    });
-  }
-
-  // Role-based gate — reject calls to admin-only tools by non-admins
-  if (!isToolVisibleToRole(toolName, identity?.orgRole)) {
-    return apiError(403, "forbidden", `Insufficient permissions for tool "${toolName}"`, {
-      tool: toolName,
-    });
-  }
+  const gated = gateRestToolCall(toolName, features, identity);
+  if (gated) return gated;
 
   // Build per-request context for AsyncLocalStorage (concurrency-safe).
   const reqCtx = buildRestToolCallContext(identity, workspaceId);
@@ -1279,6 +1292,90 @@ export async function handleToolCall(
   });
 }
 
+/**
+ * Handle POST /v1/tools/call — a kernel tool called with no workspace.
+ *
+ * For the web shell's org and profile settings, which act on the caller or the
+ * org and are in no workspace. Resolves only kernel sources
+ * (`Runtime.getKernelSource`), never a connector, and calls only a tool that
+ * declares it works with no workspace (`tools/workspace-optional.ts`); every
+ * other tool is answered as not found here, as an unknown one is. The request
+ * context carries the caller and no workspace, so a handler that needs one
+ * refuses. Feature and role gates are the workspace door's own. ADR-0043.
+ */
+export async function handleIdentityToolCall(
+  request: Request,
+  runtime: Runtime,
+  features: ResolvedFeatures,
+  options: { eventSink?: EventSink; identity?: UserIdentity },
+): Promise<Response> {
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
+  const envelope = parseToolCallEnvelope(body);
+  if (envelope instanceof Response) return envelope;
+  const { server, tool, args } = envelope;
+  const { eventSink, identity } = options;
+
+  const refused = refuseQualifiedName("server", server) ?? refuseQualifiedName("tool", tool);
+  if (refused) return refused;
+  const notFound = () =>
+    apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
+      server,
+      tool,
+    });
+
+  const source = runtime.getKernelSource(server);
+  if (!source) return notFound();
+  const toolName = normalizeRestToolName(tool, server);
+  const toolDef = (await source.tools()).find((t) => t.name === toolName);
+  if (!toolDef || !isWorkspaceOptional(toolDef)) return notFound();
+
+  const validated = await validateRestToolInput(source, toolName, tool, server, args ?? {});
+  if (!validated.ok) return validated.response;
+
+  const gated = gateRestToolCall(toolName, features, identity);
+  if (gated) return gated;
+
+  log.info(
+    `[api] tools/call (no workspace) server=${server} tool=${tool} identity=${identity?.id ?? "none"}`,
+  );
+  const callId = `api_${crypto.randomUUID().slice(0, 8)}`;
+  emitBridgeToolCall(eventSink, toolName, callId, server, identity, null);
+  const t0 = performance.now();
+  let result: Awaited<ReturnType<ToolSource["execute"]>>;
+  try {
+    result = await runWithRequestContext({ identity: identity ?? null }, () =>
+      source.execute(splitInnerToolName(toolName).bareToolName, validated.coercedArgs),
+    );
+  } catch (err) {
+    emitBridgeToolDone(
+      eventSink,
+      toolName,
+      callId,
+      false,
+      Math.round(performance.now() - t0),
+      identity,
+      null,
+    );
+    throw err;
+  }
+  emitBridgeToolDone(
+    eventSink,
+    toolName,
+    callId,
+    !result.isError,
+    Math.round(performance.now() - t0),
+    identity,
+    null,
+  );
+
+  return json<ToolCallResponse>({
+    content: result.content,
+    structuredContent: result.structuredContent,
+    isError: result.isError,
+  });
+}
+
 /** The attachment limits a chat message is held to. */
 function fileLimits(config: ReturnType<Runtime["getFilesConfig"]>): FileLimits {
   return {
@@ -1298,40 +1395,22 @@ export async function handleBootstrap(
     return apiError(401, "authentication_required", "Authentication is required");
   }
 
-  // 1. Workspaces the user is a member of. A user who belongs to none — new,
-  // or removed from every one — gets one here: bootstrap is where the web shell
-  // starts, and the shell needs a workspace to show.
-  const userWorkspaces = await ensureUserWorkspace(
-    runtime.getWorkspaceStore(),
-    {
-      id: identity.id,
-      ...(identity.displayName ? { displayName: identity.displayName } : {}),
-    },
-    runtime.getUserStore(),
-  );
+  // Workspaces the user is a member of. A user who belongs to none — new, or
+  // removed from every one — gets one here: bootstrap is where the web shell
+  // starts, and a user with no workspace has nowhere to go. Which workspace to
+  // open is the URL's (ADR-0044); bootstrap chooses none.
+  const userWorkspaces = await ensureUserWorkspace(runtime.getWorkspaceStore(), {
+    id: identity.id,
+    ...(identity.displayName ? { displayName: identity.displayName } : {}),
+  });
 
-  // 2-3. The default focus. The client's URL (`/w/:slug`) says which workspace
-  // the user is in; bootstrap only supplies one for workspace-agnostic routes
-  // (home, profile): the user's default workspace. This is the one place the
-  // server chooses a workspace, and it reads nothing from the request to do it.
-  // The profile is read fresh, since provisioning may have just set the default.
-  const profile = await runtime.getUserStore().get(identity.id);
-  const activeWorkspace: string = defaultWorkspaceFor(userWorkspaces, profile?.preferences).id;
-
-  // 4. Shell placements for the active workspace (ambient + scoped, merged).
-  const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);
-
-  // 5. Config
   const models = runtime.getModelSlots();
   // Read inside a request context because the slot readers resolve the
   // caller's own model preference from it, and this handler has none of its
   // own. Untinted, this reports the org default to everyone who chose
   // otherwise — and the composer would name a model the first turn then
   // contradicts.
-  const newConversationModel = runWithRequestContext(
-    { identity, workspaceId: activeWorkspace },
-    () => runtime.getDefaultModel(),
-  );
+  const newConversationModel = runWithRequestContext({ identity }, () => runtime.getDefaultModel());
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
@@ -1356,12 +1435,6 @@ export async function handleBootstrap(
       mcpUrl: mcpResourceUrl(ws.id),
       unread: runtime.getNotificationStore(ws.id).unreadCount(),
     })),
-    activeWorkspace,
-    shell: {
-      placements,
-      chatEndpoint: `/v1/workspaces/${activeWorkspace}/chat/stream`,
-      eventsEndpoint: "/v1/events",
-    },
     config: {
       models,
       configuredProviders,

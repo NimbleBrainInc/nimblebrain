@@ -3447,6 +3447,18 @@ export class Runtime {
   }
 
   /**
+   * Resolve a kernel source by name: the `nb` system source, or a platform
+   * source that is not an identity source. Never a connector. This is the set
+   * `POST /v1/tools/call` resolves against, and the tools it calls there are the
+   * ones that declare they work with no workspace (`tools/workspace-optional.ts`).
+   */
+  getKernelSource(name: string): ToolSource | undefined {
+    if (this._systemSource?.name === name) return this._systemSource;
+    if (isIdentitySource(name)) return undefined;
+    return this._platformSources.find((s) => s.name === name);
+  }
+
+  /**
    * Resolve a kernel identity-scoped source by name. v1 set: `conversations`
    * (Files / Automations join when their data moves to identity ownership).
    * Returns `undefined` for an unknown or non-identity source. No workspace:
@@ -5057,7 +5069,7 @@ export class Runtime {
    *     time `contextSkills` cache, since those files are immutable.
    *   - platform (`{workDir}/skills/`) — fresh disk read, so writes via
    *     `skills__create` / `skills__update` surface immediately.
-   *   - workspace (`{workDir}/workspaces/{wsId}/skills/`) — fresh.
+   *   - workspace (`{workDir}/workspaces/{wsId}/skills/`) — fresh; none when `wsId` is null.
    *   - user (`{workDir}/users/{userId}/skills/`) — fresh.
    *
    * The cached `contextSkills` set is filtered to entries whose
@@ -5066,7 +5078,7 @@ export class Runtime {
    *
    * Each returned skill has `manifest.scope` populated.
    */
-  loadConversationSkills(wsId: string, userId: string | null): Skill[] {
+  loadConversationSkills(wsId: string | null, userId: string | null): Skill[] {
     const workDir = this.getWorkDir();
     const orgDirPrefix = `${join(workDir, "skills")}/`;
 
@@ -5089,8 +5101,11 @@ export class Runtime {
     // Live org-tier dir, fresh every call.
     orgPool.push(...loadScopedSkills(join(workDir, "skills"), "org"));
 
-    const workspaceDir = this.getWorkspaceContext(wsId).getDataPath("skills");
-    const workspacePool = loadScopedSkills(workspaceDir, "workspace");
+    // No workspace in the request (the org and profile settings pages): there
+    // is no workspace tier to merge, so org and user skills list as themselves.
+    const workspacePool = wsId
+      ? loadScopedSkills(this.getWorkspaceContext(wsId).getDataPath("skills"), "workspace")
+      : [];
 
     const userPool: Skill[] = [];
     if (userId) {

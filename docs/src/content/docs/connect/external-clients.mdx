@@ -80,6 +80,7 @@ A client gets the tools installed in the workspace its URL names (named `<source
 Two filters apply:
 
 - **Feature flags** — tools gated by a disabled flag (for example, the `skills__*` authoring tools when `skillManagement` is `false`) are hidden. See [Feature Flags](/config/features).
-- **Role** — admin-only tools (such as `nb__manage_users`, `nb__manage_workspaces`) are hidden from non-admin members.
+- **App-only tools** — tools the web app's settings call and no agent does (org administration such as `nb__manage_users` and `nb__manage_workspaces`, and model configuration) are never listed, and an external client that calls one by name is refused. Administer the org from the web app.
+- **Role** — a tool limited to org admins is hidden from other members.
 
 If an admin installs or removes an app, the change is reflected on the next `tools/list` call.

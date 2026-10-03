@@ -43,8 +43,6 @@ export interface UserPreferences {
   theme?: string;
   /** The person's own model choice for conversations they start. */
   models?: { default?: string };
-  /** The workspace this person lands in when nothing names one. */
-  defaultWorkspaceId?: string;
 }
 
 /** Mirrors `ModelSlots` (`src/runtime/types.ts`). */
@@ -210,12 +208,11 @@ export interface BootstrapResponse {
     orgRole: OrgRole;
     preferences: UserPreferences;
   };
-  /** Every workspace the caller is a member of; never empty. */
+  /**
+   * Every workspace the caller is a member of; never empty. Which one to open
+   * is the URL's: bootstrap names none (ADR-0044).
+   */
   workspaces: BootstrapWorkspace[];
-  /** The caller's default workspace, for routes that name none. */
-  activeWorkspace: string;
-  /** The shell for `activeWorkspace`. */
-  shell: ShellResponse;
   config: {
     models: ModelSlots;
     configuredProviders: string[];

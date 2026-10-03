@@ -56,6 +56,7 @@ import type { InProcessTool } from "./in-process-app.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { McpSource } from "./mcp-source.ts";
 import type { Tool, ToolSource } from "./types.ts";
+import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 /**
  * `manage_connectors` tool — single surface for the Connectors UI
@@ -226,7 +227,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
     name: "manage_connectors",
     description:
       "List, install, and disconnect remote MCP connectors. Workspace connectors are shared by all members; user connectors are personal and follow you across workspaces.",
-    meta: { ui: { visibility: ["app"] } },
+    meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
     inputSchema: {
       type: "object",
       properties: {
@@ -320,6 +321,11 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
     },
     handler: async (input): Promise<ToolResult> => {
       const args = resolveDispatchArgs(ctx, input);
+      if (args.wsId === null && !actsWithoutWorkspace(args)) {
+        return errResult(
+          `"${args.action}" acts on a workspace's connectors, and this request names no workspace. Call it through a workspace.`,
+        );
+      }
       switch (args.action) {
         case "list_catalog":
           return handleListCatalog(ctx, args.wsId);
@@ -399,6 +405,36 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
       }
     },
   };
+}
+
+/**
+ * The actions that act on the caller's own connectors, or name their target
+ * workspace in the input, and so work with no workspace in the request. Every
+ * other action reads the request's workspace, and with none it is refused before
+ * dispatch rather than given a `null` to interpret. See `tools/workspace-optional.ts`.
+ */
+const NO_WORKSPACE_ACTIONS = new Set([
+  // `install` names its target in the input (`wsId`) or installs a personal
+  // connector (`scope: "identity"`); with neither it refuses in its handler.
+  "install",
+  "list_personal_connectors",
+  "list_personal_catalog",
+  "grant_connector",
+  "revoke_connector",
+  "get_redirect_uri",
+  // The permission owner resolves to the caller's personal connector when the
+  // request names no workspace, or refuses (`resolvePermissionOwner`).
+  "list_tools_with_permissions",
+  "get_permissions",
+  "set_permissions",
+]);
+
+/** With `scope: "identity"`, removing a personal connector, which needs no workspace. */
+const IDENTITY_SCOPED_ACTIONS = new Set(["disconnect", "uninstall"]);
+
+function actsWithoutWorkspace(args: DispatchArgs): boolean {
+  if (NO_WORKSPACE_ACTIONS.has(args.action)) return true;
+  return args.scope === "identity" && IDENTITY_SCOPED_ACTIONS.has(args.action);
 }
 
 /** Coerce an optional tool-input field to a string, empty when absent. */

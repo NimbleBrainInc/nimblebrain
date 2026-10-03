@@ -52,9 +52,10 @@ REST addresses a workspace the same way: `/v1/workspaces/<wsId>/…` (ADR-0037),
 admitted by the same membership check. A route either acts on a workspace and
 names it in its path, or acts on the caller or on a primitive its own id
 locates (bootstrap, the event stream, a conversation, a file) and names none.
-No header, argument, qualified name or default selects a workspace for a request, and a conversation is resumed only at its own workspace's path. Bootstrap
-alone suggests one — the web shell's default focus, the caller's default
-workspace — and the URL the user is on overrides it.
+No header, argument, qualified name or default selects a workspace for a request, and a conversation is resumed only at its own workspace's path. The
+URL is the only thing that names a workspace: bootstrap returns the caller's
+workspaces and no focus (ADR-0044). A kernel tool that acts on the caller or
+the org needs no workspace and is called without one (ADR-0043).
 
 A workspace exists because `create` made it and stops existing because `delete`
 archived it. **No write brings one into being**: a writer may create paths
@@ -63,13 +64,12 @@ So a workspace directory on disk is always one a create produced, which is what
 lets `list()` treat an unparseable `workspace.json` as corruption rather than as
 a tree some writer conjured.
 
-### Default workspace
-The workspace a user lands in when nothing names one:
-`preferences.defaultWorkspaceId`, while they are a member of it, else their
-earliest membership. A user who belongs to no workspace gets one at bootstrap,
-named for them with them as admin, and it becomes their default. It is an
-ordinary workspace — it can be shared, and nothing marks how it was made
-(ADR-0039).
+### First workspace
+A user who belongs to no workspace gets one at bootstrap, named for them with
+them as admin. It is an ordinary workspace — it can be shared, and nothing
+marks how it was made (ADR-0039) or makes it the one the user opens. `/` takes
+a user in exactly one workspace into it and shows anyone else all of theirs
+(ADR-0044).
 
 ### Identity provider
 What authenticates a request and says who made it, named by `auth.adapter` in
@@ -198,6 +198,15 @@ call is re-issued once on a transport error, and a task call is **never**
 retried — it has already created server-side state, so replaying it would
 duplicate the side effect.
 
+### Task *(proposed, ADR-0045)*
+The unattended primitive: a definition (what to do, optional schemas and
+acceptance criteria, limits, and an **optional** trigger) and its **runs**. An
+automation is a task with a trigger; a one-off is a task run once with none; a
+batch is one task run over many inputs. A run's outcome has two parts:
+*execution* (how it ended) and *assessment* (whether the deliverable is
+acceptable). Not the same word as *task augmentation*: that is how a run travels
+over MCP, not what a run is.
+
 ### Skill
 A unit of guidance in the Agent Skills format. The file is the standard,
 unmodified, with the runtime's own configuration nested under
@@ -278,3 +287,4 @@ Orchestrate over remote MCP:
 - [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
 - [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
+- [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment

@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { UsageBreakdownEntry } from "../../_generated/platform-schemas/usage";
-import { callTool } from "../../api/client";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import {
   type ChartSeries,
@@ -154,8 +154,8 @@ export function OrgUsageTab() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      callTool("nb", "manage_users", { action: "list" }).catch(() => null),
-      callTool("nb", "manage_workspaces", { action: "list" }).catch(() => null),
+      callToolWithoutWorkspace("nb", "manage_users", { action: "list" }).catch(() => null),
+      callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list" }).catch(() => null),
     ]).then(([usersRes, workspacesRes]) => {
       if (cancelled) return;
       const users = usersRes ? (parseToolResult<{ users: UserRow[] }>(usersRes).users ?? []) : [];
@@ -182,7 +182,7 @@ export function OrgUsageTab() {
     const args = JSON.parse(argsKey) as ReturnType<typeof reportArgs>;
     setLoading(true);
     setError(null);
-    callTool("usage", "report", args)
+    callToolWithoutWorkspace("usage", "report", args)
       .then((res) => {
         if (seq !== requestSeq.current) return;
         const next = parseToolResult<UsageReport>(res);

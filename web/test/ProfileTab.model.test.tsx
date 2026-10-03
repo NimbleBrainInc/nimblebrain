@@ -31,7 +31,7 @@ let saveRejects = false;
 
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
+  callToolWithoutWorkspace: async (server: string, tool: string, args: Record<string, unknown>) => {
     callToolCalls.push({ server, tool, args });
     if (tool === "get_config") {
       if (configFails) throw new Error("network down");

@@ -342,8 +342,7 @@ export async function createTwoWorkspaceFixture(
   });
 
   // Provision both workspaces. The identity's own workspace is created
-  // first, so it is the earliest membership — the workspace a dev-mode
-  // request that names none runs in (`defaultWorkspaceFor`).
+  // first, so it is the earliest membership.
   const wsStore = runtime.getWorkspaceStore();
   const personalWorkspaceName = `${identity.displayName}'s workspace`;
   const personalWorkspace = await wsStore.create(personalWorkspaceName, {

@@ -413,6 +413,23 @@ export async function callTool<S extends string, T extends string>(
   });
 }
 
+/**
+ * Call a kernel tool that acts on the caller or the org, with no workspace:
+ * `POST /v1/tools/call`. For the org and profile settings and the shell's own
+ * startup reads, which are in no workspace. The server calls only tools that
+ * declare they need none and answers any other as not found (ADR-0043).
+ */
+export async function callToolWithoutWorkspace<S extends string, T extends string>(
+  server: S,
+  tool: T,
+  args?: ToolInput<S, T>,
+): Promise<ToolCallResponse> {
+  return request<ToolCallResponse>("/v1/tools/call", {
+    method: "POST",
+    body: JSON.stringify({ server, tool, arguments: args }),
+  });
+}
+
 /** Read an MCP resource via POST /v1/workspaces/<wsId>/resources/read. */
 export async function readResource(server: string, uri: string): Promise<ReadResourceResponse> {
   return request<ReadResourceResponse>(workspacePath("/resources/read"), {
@@ -795,7 +812,7 @@ export interface PersonalConnector {
  * through — safe to call from `/profile`, which has no workspace of its own.
  */
 export async function listPersonalConnectors(): Promise<{ connectors: PersonalConnector[] }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "list_personal_connectors",
   });
   return unwrapStructured(result, "list_personal_connectors");
@@ -808,7 +825,7 @@ export async function listPersonalConnectors(): Promise<{ connectors: PersonalCo
  * connectors the caller hasn't already installed on their identity.
  */
 export async function listPersonalCatalog(): Promise<{ catalog: CatalogListing[] }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "list_personal_catalog",
   });
   return unwrapStructured(result, "list_personal_catalog");
@@ -821,7 +838,7 @@ export async function listPersonalCatalog(): Promise<{ catalog: CatalogListing[]
  * then surface to the agent in that workspace.
  */
 export async function grantConnector(serverName: string, wsId: string): Promise<void> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "grant_connector",
     serverName,
     wsId,
@@ -831,7 +848,7 @@ export async function grantConnector(serverName: string, wsId: string): Promise<
 
 /** Revoke the caller's grant of `serverName` from `wsId`. */
 export async function revokeConnector(serverName: string, wsId: string): Promise<void> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "revoke_connector",
     serverName,
     wsId,
@@ -849,7 +866,7 @@ export async function revokeConnector(serverName: string, wsId: string): Promise
 export async function disconnectPersonalConnector(
   serverName: string,
 ): Promise<{ ok: boolean; scope: "identity"; serverName: string; revokedWorkspaces: number }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "disconnect",
     scope: "identity",
     serverName,
@@ -960,7 +977,7 @@ export async function installConnector(
 export async function installPersonalConnector(
   entry: CatalogListing,
 ): Promise<{ ok: boolean; alreadyInstalled?: boolean; serverName: string; scope: "identity" }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const result = await callToolWithoutWorkspace("nb", "manage_connectors", {
     action: "install",
     scope: "identity",
     entry,
@@ -1118,7 +1135,9 @@ export async function listConnectorToolsWithPermissions(
   tools: ConnectorTool[];
   permissions: Record<string, ToolPolicy>;
 }> {
-  const result = await callTool("nb", "manage_connectors", {
+  // A personal connector is no workspace's, so its permissions are read with none.
+  const call = scope === "identity" ? callToolWithoutWorkspace : callTool;
+  const result = await call("nb", "manage_connectors", {
     action: "list_tools_with_permissions",
     serverName,
     ...(scope ? { scope } : {}),
@@ -1131,7 +1150,8 @@ export async function setConnectorPermissions(
   scope: PermissionScope,
   tools: Record<string, ToolPolicy>,
 ): Promise<{ ok: boolean; scope: PermissionOwnerScope; serverName: string }> {
-  const result = await callTool("nb", "manage_connectors", {
+  const call = scope === "identity" ? callToolWithoutWorkspace : callTool;
+  const result = await call("nb", "manage_connectors", {
     action: "set_permissions",
     serverName,
     scope,

@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getShell } from "../api/client";
 import type { PlacementEntry, ShellResponse } from "../types";
 
-export function useShell(_token: string, workspaceId?: string, initialShell?: ShellResponse) {
-  const [shell, setShell] = useState<ShellResponse | null>(initialShell ?? null);
-  const [loading, setLoading] = useState(!initialShell);
+/**
+ * The focused workspace's shell: its placements. With no workspace (a page
+ * outside `/w/`) there is none to read, so nothing is fetched and the shell
+ * stays empty until a workspace is focused.
+ */
+export function useShell(_token: string, workspaceId?: string) {
+  const [shell, setShell] = useState<ShellResponse | null>(null);
+  const [loading, setLoading] = useState(workspaceId !== undefined);
   const [error, setError] = useState<string | null>(null);
-  // Which workspace the current `shell` placements reflect. Seeded from the
-  // mount-time workspace, because the bootstrap shell is built server-side for
-  // `bootstrap.activeWorkspace` — the same id passed here on first render.
+  // Which workspace the current `shell` placements reflect.
   //
   // Why a separate signal and not just `loading`: on a workspace switch we
   // deliberately keep the old shell visible and leave `loading === false` (no
@@ -16,11 +19,7 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
   // workspace's placements, so a per-workspace consumer (the overview page's
   // app grid) needs to know the shell hasn't caught up yet — `loading` can't
   // tell it. Comparing `shellWorkspaceId` to the target id closes that gap.
-  const [shellWorkspaceId, setShellWorkspaceId] = useState<string | undefined>(
-    initialShell ? workspaceId : undefined,
-  );
-  // When bootstrap data is provided, skip the first effect invocation
-  const skipNext = useRef(!!initialShell);
+  const [shellWorkspaceId, setShellWorkspaceId] = useState<string | undefined>(undefined);
   // Latest workspaceId, readable from the stable `refresh` callback without
   // making it churn (and re-subscribe its SSE consumer) on every switch.
   const workspaceIdRef = useRef(workspaceId);
@@ -34,6 +33,7 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
    */
   const refresh = useCallback(async () => {
     const wsId = workspaceIdRef.current;
+    if (!wsId) return;
     try {
       const data = await getShell(wsId);
       setShell(data);
@@ -46,8 +46,8 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId is a parameter that drives refetch
   useEffect(() => {
-    if (skipNext.current) {
-      skipNext.current = false;
+    if (!workspaceId) {
+      setLoading(false);
       return;
     }
 
