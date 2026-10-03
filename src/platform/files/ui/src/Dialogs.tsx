@@ -1,9 +1,9 @@
 import { useApp } from "@nimblebrain/synapse/react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { FolderIcon } from "./icons";
+import { Overlay } from "./Overlay";
 import { type Crumb, type Folder, type ListResult, ROOT } from "./types";
 
-/** A native modal `<dialog>`: Esc and a backdrop click close it. */
 function Modal({
   title,
   onClose,
@@ -13,30 +13,50 @@ function Modal({
   onClose: () => void;
   children: ReactNode;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    dialog.showModal();
-    return () => {
-      if (dialog.open) dialog.close();
-    };
-  }, []);
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: <dialog> handles Esc natively via onClose; the click handler is a backdrop-dismiss affordance.
-    <dialog
-      ref={ref}
-      className="modal"
-      onClose={onClose}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="modal-panel">
-        <div className="modal-title">{title}</div>
-        {children}
+    <Overlay label={title} className="modal-panel" onClose={onClose}>
+      <div className="modal-title">{title}</div>
+      {children}
+    </Overlay>
+  );
+}
+
+/** Ask before a destructive action. `onConfirm` resolves when the action is done. */
+export function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div className="modal-message">{message}</div>
+      <div className="modal-actions">
+        <button type="button" className="btn-ghost" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn-danger"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            await onConfirm();
+            onClose();
+          }}
+        >
+          {busy ? "Working…" : confirmLabel}
+        </button>
       </div>
-    </dialog>
+    </Modal>
   );
 }
 
@@ -84,8 +104,6 @@ export function NameDialog({
         <input
           className="text-input"
           aria-label="Folder name"
-          // biome-ignore lint/a11y/noAutofocus: the dialog exists to take this one field.
-          autoFocus
           value={name}
           maxLength={255}
           onChange={(e) => setName(e.target.value)}

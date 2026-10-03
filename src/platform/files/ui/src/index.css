@@ -104,38 +104,37 @@ body {
 /* ===== Content area ===== */
 .content {
   flex: 1; overflow-y: auto;
-  /* Top padding keeps the first row off the sticky controls so a card's
-     hover lift + shadow doesn't bleed into the filter pills above. */
-  padding: 8px 20px 24px;
+  padding: 0 20px 24px;
+}
+/* Errors and refusals sit above the list, so they show however far it is scrolled. */
+.notices { padding: 0 20px; flex-shrink: 0; }
+.notices:empty { display: none; }
+.error-banner { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.error-dismiss {
+  background: none; border: none; padding: 0; cursor: pointer; flex-shrink: 0;
+  color: inherit; font: inherit; font-weight: 500; text-decoration: underline;
 }
 
+/* ===== Overlays ===== */
+/* Not native modals: the host's sandbox withholds allow-modals. */
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+  animation: fadeIn 0.15s ease;
+}
+.overlay-scrim {
+  position: absolute; inset: 0;
+  border: none; padding: 0; margin: 0; cursor: default;
+  background: rgba(0, 0, 0, 0.45);
+}
+.overlay > [role="dialog"] { position: relative; outline: none; }
+
 /* ===== Detail Panel ===== */
-/* `<dialog>` element with `showModal()` — native modal semantics. The
-   browser positions it; we only need to reset its default chrome and
-   provide the backdrop fade.  The inner `.detail-panel` keeps the same
-   visual treatment as the legacy overlay. */
-.detail-overlay {
-  border: none;
-  padding: 0;
-  background: transparent;
-  /* Center in the (iframe) viewport regardless of content height. Explicit
-     `margin:auto` + `inset:0` mirrors the UA modal centering; the fixed
-     width and capped height keep a tall panel from pushing off the top
-     edge — the panel scrolls internally instead. */
-  margin: auto;
-  inset: 0;
-  width: min(480px, calc(100% - 32px));
-  max-height: calc(100% - 32px);
-  animation: fadeIn 0.15s ease;
-}
-.detail-overlay::backdrop {
-  background: rgba(0, 0, 0, 0.3);
-  animation: fadeIn 0.15s ease;
-}
 .detail-panel {
   background: var(--color-background-secondary);
   border-radius: var(--border-radius-sm);
-  width: 100%;
+  width: min(480px, 100%);
   max-height: calc(100vh - 32px);
   overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0,0,0,0.15);
@@ -447,15 +446,9 @@ body {
 }
 
 /* ===== Modal ===== */
-.modal {
-  border: none; padding: 0; background: transparent;
-  margin: auto; inset: 0;
-  width: min(420px, calc(100% - 32px));
-  max-height: calc(100% - 32px);
-  animation: fadeIn 0.15s ease;
-}
-.modal::backdrop { background: rgba(0, 0, 0, 0.3); }
 .modal-panel {
+  width: min(420px, 100%);
+  max-height: calc(100vh - 32px); overflow-y: auto;
   background: var(--color-background-secondary);
   color: var(--color-text-primary);
   border-radius: var(--border-radius-sm);
@@ -466,6 +459,7 @@ body {
 .modal-title { font-family: var(--nb-font-heading); font-size: 16px; font-weight: 500; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 4px; }
 .modal-spacer { flex: 1; }
+.modal-message { font-size: 14px; color: var(--color-text-secondary); line-height: 1.5; }
 .modal-error { font-size: 12px; color: var(--nb-color-danger); }
 .text-input {
   width: 100%;

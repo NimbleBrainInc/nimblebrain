@@ -1,0 +1,55 @@
+---
+title: Files
+description: Browse, organize, and search the files you and your agents keep in a workspace.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The **Files** app holds every file in the workspace that belongs to you: what you attach in chat, what you upload, and what agents and automations write. Open it from **Files** in the sidebar.
+
+Files are private to you. Another member of the workspace has their own Files and can't see yours.
+
+## Folders
+
+Files sit at the top level until you put them in a folder. Click a folder to open it; the top bar shows where you are (**Files › Reports › Q3**), and each level in it takes you back there.
+
+- **New folder** makes a folder inside the one you're in.
+- **Rename** and **Delete** appear when you point at a folder's row.
+- **Move to…** puts the selected files and folders in another folder. Pick the destination in the dialog, or make a new folder there.
+- **Upload** stores the files in the folder you're in.
+
+A folder is deleted only when it is empty. Deleting one that still holds files or folders is refused, with a note of what is inside, so a delete never removes more than you can see.
+
+Select rows with their checkboxes; Shift-click selects a range. The bar that appears acts on everything selected.
+
+## Search and filters
+
+Type in the search box to match file names, descriptions, and tags, and folder names. Press <kbd>/</kbd> to jump to it.
+
+Inside a folder, a search covers that folder and every folder below it. Remove the **In Reports** chip, or choose **Search everywhere**, to search all your files instead. Each result shows the folder it is in; click that to go there.
+
+The chips under the search box narrow the list further and say how many files each one would show:
+
+| Chip | Keeps |
+|---|---|
+| Documents, Images, Data, Fonts, Other | Files of that kind, judged from the file type |
+| From chats | Files attached in a conversation |
+| Made by agents | Files an agent or an automation wrote |
+| Uploaded | Files uploaded through Files or an app |
+| Today, 7 days, 30 days | Files created in that period |
+
+Click a column heading to sort by name, size, or date. The list loads more as you scroll.
+
+## What the agent can do
+
+The agent works with the same files through the `files__*` tools:
+
+- `files__list` lists a folder or searches across folders with the same filters as the chips, and can find the files a given conversation or automation run wrote.
+- `files__create` takes a folder path (`Reports/Q3`) and makes any folder that is missing, so you can ask for a report to be saved to a specific folder.
+- `files__move`, `files__create_folder`, `files__update_folder`, and `files__delete_folder` organize files the way the app does, under the same rules.
+
+Every file an agent writes records the conversation or automation run it came from.
+
+<Aside type="tip">
+  Ask the agent to show you a file in Files ("open the Q3 brief in Files"), and it opens the app on that file.
+</Aside>

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { fileExtension, formatSize, isImage, sourceLabel } from "./format";
 import { DownloadIcon, FileTypeIcon } from "./icons";
+import { Overlay } from "./Overlay";
 import type { FileEntry } from "./types";
 import { useFileDownload, useFileObjectUrl } from "./useFileObjectUrl";
 
@@ -14,31 +15,11 @@ interface Props {
   onMove: () => void;
 }
 
-/**
- * Modal detail panel. Built on the native `<dialog>` element so that:
- *   - Esc dismissal is handled by the platform (`onClose` fires)
- *   - Focus is trapped inside the dialog while open
- *   - Inert background is automatic
- *   - The `::backdrop` pseudo-element handles the dim layer (CSS-only)
- *
- * Backdrop click → close: detected by checking whether the click target was
- * the dialog itself (the backdrop is the dialog's own pseudo-element, so
- * clicks land on the dialog node, not on the panel inside).
- */
+/** The open file: its preview, its details, and what can be done with it. */
 export function DetailOverlay({ file, location, deleting, onClose, onDelete, onMove }: Props) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const download = useFileDownload();
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    dialog.showModal();
-    return () => {
-      if (dialog.open) dialog.close();
-    };
-  }, []);
 
   async function handleDownload() {
     if (downloading) return;
@@ -54,78 +35,66 @@ export function DetailOverlay({ file, location, deleting, onClose, onDelete, onM
   }
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: <dialog> handles Esc natively via onClose; the click handler is purely a backdrop-dismiss affordance.
-    <dialog
-      ref={dialogRef}
-      className="detail-overlay"
-      onClose={onClose}
-      onClick={(e) => {
-        // Click on the backdrop (target is the dialog itself) closes; clicks
-        // landing on the inner panel come through with target inside it.
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="detail-panel">
-        <div className="detail-header">
-          <div className="detail-title">{file.filename}</div>
-          <button type="button" className="detail-close" title="Close" onClick={onClose}>
-            ×
-          </button>
-        </div>
-
-        <div className="detail-preview">
-          <DetailPreview file={file} />
-        </div>
-
-        <div className="detail-fields">
-          <Field
-            label="Folder"
-            value={location ? `Files / ${location.split("/").join(" / ")}` : "Files"}
-          />
-          <Field label="Type" value={file.mimeType || "Unknown"} />
-          <Field label="Size" value={formatSize(file.size || 0)} />
-          <Field
-            label="Created"
-            value={file.createdAt ? new Date(file.createdAt).toLocaleString() : "Unknown"}
-          />
-          {file.source && <Field label="Source" value={sourceLabel(file.source)} />}
-          {file.description && <Field label="Description" value={file.description} />}
-          <Field label="ID" value={file.id} mono />
-          {file.tags && file.tags.length > 0 && (
-            <div className="detail-field">
-              <div className="detail-label">Tags</div>
-              <div className="detail-tags">
-                {file.tags.map((t) => (
-                  <span key={t} className="detail-tag">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {downloadError && <div className="detail-error">Couldn’t download this file.</div>}
-
-        <div className="detail-actions">
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={downloading}
-            onClick={handleDownload}
-          >
-            <DownloadIcon size={14} />
-            {downloading ? "Downloading…" : "Download"}
-          </button>
-          <button type="button" className="btn-ghost" onClick={onMove}>
-            Move to…
-          </button>
-          <button type="button" className="btn-danger" disabled={deleting} onClick={onDelete}>
-            {deleting ? "Deleting…" : "Delete"}
-          </button>
-        </div>
+    <Overlay label={file.filename} className="detail-panel" onClose={onClose}>
+      <div className="detail-header">
+        <div className="detail-title">{file.filename}</div>
+        <button type="button" className="detail-close" title="Close" onClick={onClose}>
+          ×
+        </button>
       </div>
-    </dialog>
+
+      <div className="detail-preview">
+        <DetailPreview file={file} />
+      </div>
+
+      <div className="detail-fields">
+        <Field
+          label="Folder"
+          value={location ? `Files / ${location.split("/").join(" / ")}` : "Files"}
+        />
+        <Field label="Type" value={file.mimeType || "Unknown"} />
+        <Field label="Size" value={formatSize(file.size || 0)} />
+        <Field
+          label="Created"
+          value={file.createdAt ? new Date(file.createdAt).toLocaleString() : "Unknown"}
+        />
+        {file.source && <Field label="Source" value={sourceLabel(file.source)} />}
+        {file.description && <Field label="Description" value={file.description} />}
+        <Field label="ID" value={file.id} mono />
+        {file.tags && file.tags.length > 0 && (
+          <div className="detail-field">
+            <div className="detail-label">Tags</div>
+            <div className="detail-tags">
+              {file.tags.map((t) => (
+                <span key={t} className="detail-tag">
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {downloadError && <div className="detail-error">Couldn’t download this file.</div>}
+
+      <div className="detail-actions">
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={downloading}
+          onClick={handleDownload}
+        >
+          <DownloadIcon size={14} />
+          {downloading ? "Downloading…" : "Download"}
+        </button>
+        <button type="button" className="btn-ghost" onClick={onMove}>
+          Move to…
+        </button>
+        <button type="button" className="btn-danger" disabled={deleting} onClick={onDelete}>
+          {deleting ? "Deleting…" : "Delete"}
+        </button>
+      </div>
+    </Overlay>
   );
 }
 

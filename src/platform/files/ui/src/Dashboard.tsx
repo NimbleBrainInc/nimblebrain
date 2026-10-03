@@ -1,7 +1,7 @@
 import { useApp, useHostContext, useModelContext, useTrail } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DetailOverlay } from "./DetailOverlay";
-import { errorText, MoveDialog, NameDialog } from "./Dialogs";
+import { ConfirmDialog, errorText, MoveDialog, NameDialog } from "./Dialogs";
 import { FileList } from "./FileList";
 import { FolderIcon } from "./icons";
 import { Toolbar } from "./Toolbar";
@@ -22,7 +22,8 @@ const FILE_PREFIX = "files://";
 type Dialog =
   | { kind: "new-folder" }
   | { kind: "rename"; folder: Folder }
-  | { kind: "move"; ids: string[] };
+  | { kind: "move"; ids: string[] }
+  | { kind: "delete"; ids: string[]; label: string };
 
 /** A file opened from the list carries its folder's path; one opened by address does not. */
 type OpenFile = FileEntry & { folderPath?: string };
@@ -96,11 +97,19 @@ export function Dashboard() {
     setDetailFile((f) => (f && ids.includes(f.id) ? movedTo(f, target) : f));
   }
 
-  async function removeSelected() {
+  function askRemoveSelected() {
     const ids = [...selection.selected];
     const label =
       ids.length === 1 ? nameOf(ids[0] as string, folders, files) : `${ids.length} items`;
-    if (await actions.remove(ids, label)) selection.clear();
+    setDialog({ kind: "delete", ids, label });
+  }
+
+  async function removeAndFollow(ids: string[], label: string) {
+    // A refused folder stays put and its refusal shows; either way the
+    // selection is spent.
+    const removed = await actions.remove(ids, label);
+    selection.clear();
+    if (removed) setDetailFile((f) => (f && ids.includes(f.id) ? null : f));
   }
 
   return (
@@ -132,15 +141,21 @@ export function Dashboard() {
       <SelectionBar
         count={selection.selected.size}
         onMove={() => setDialog({ kind: "move", ids: [...selection.selected] })}
-        onDelete={removeSelected}
+        onDelete={askRemoveSelected}
         onClear={selection.clear}
       />
 
-      <div className="content">
-        <ErrorBanner message={actions.error ?? list.error} />
+      <div className="notices">
+        <ErrorBanner
+          message={actions.error ?? list.error}
+          onDismiss={() => actions.setError(null)}
+        />
         {actions.refusal && (
           <UploadRefusals refusal={actions.refusal} onDismiss={actions.clearRefusal} />
         )}
+      </div>
+
+      <div className="content">
         {list.result && browse.searching && (
           <ResultCount
             files={list.result.total}
@@ -172,7 +187,9 @@ export function Dashboard() {
             onOpenFolder={openFolder}
             onOpenFile={setDetailFile}
             onRenameFolder={(folder) => setDialog({ kind: "rename", folder })}
-            onDeleteFolder={(folder) => actions.remove([folder.id], folder.name)}
+            onDeleteFolder={(folder) =>
+              setDialog({ kind: "delete", ids: [folder.id], label: folder.name })
+            }
             hasMore={hasMore}
             loadingMore={list.loadingMore}
             onLoadMore={list.loadMore}
@@ -188,9 +205,9 @@ export function Dashboard() {
           location={detailLocation(detailFile, where)}
           deleting={actions.deleting}
           onClose={() => setDetailFile(null)}
-          onDelete={async () => {
-            if (await actions.remove([detailFile.id], detailFile.filename)) setDetailFile(null);
-          }}
+          onDelete={() =>
+            setDialog({ kind: "delete", ids: [detailFile.id], label: detailFile.filename })
+          }
           onMove={() => setDialog({ kind: "move", ids: [detailFile.id] })}
         />
       )}
@@ -203,6 +220,7 @@ export function Dashboard() {
           createFolder={actions.createFolder}
           renameFolder={actions.renameFolder}
           move={moveAndFollow}
+          remove={removeAndFollow}
         />
       )}
     </>
@@ -221,6 +239,7 @@ function DialogLayer({
   createFolder,
   renameFolder,
   move,
+  remove,
 }: {
   dialog: Dialog;
   folderId: string;
@@ -228,6 +247,7 @@ function DialogLayer({
   createFolder: (name: string, parentId: string) => Promise<void>;
   renameFolder: (id: string, name: string) => Promise<void>;
   move: (ids: string[], target: string) => Promise<void>;
+  remove: (ids: string[], label: string) => Promise<void>;
 }) {
   switch (dialog.kind) {
     case "new-folder":
@@ -260,7 +280,24 @@ function DialogLayer({
           onMove={(target) => move(dialog.ids, target)}
         />
       );
+    case "delete":
+      return (
+        <ConfirmDialog
+          title={`Delete ${dialog.label}?`}
+          message={deleteMessage(dialog.ids)}
+          confirmLabel="Delete"
+          onClose={onClose}
+          onConfirm={() => remove(dialog.ids, dialog.label)}
+        />
+      );
   }
+}
+
+function deleteMessage(ids: string[]): string {
+  const folders = ids.some((id) => id.startsWith("fd_"));
+  return folders
+    ? "This cannot be undone. A folder is deleted only when it is empty."
+    : "This cannot be undone.";
 }
 
 function buildTrail(breadcrumb: Crumb[], detailFile: OpenFile | null) {
@@ -332,8 +369,16 @@ function SelectionBar({
   );
 }
 
-function ErrorBanner({ message }: { message: string | null }) {
-  return message ? <div className="error-banner">{message}</div> : null;
+function ErrorBanner({ message, onDismiss }: { message: string | null; onDismiss: () => void }) {
+  if (!message) return null;
+  return (
+    <div className="error-banner" role="alert">
+      <span>{message}</span>
+      <button type="button" className="error-dismiss" onClick={onDismiss}>
+        Dismiss
+      </button>
+    </div>
+  );
 }
 
 function Toast({ message }: { message: string | null }) {

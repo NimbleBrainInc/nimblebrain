@@ -47,10 +47,12 @@ export function useFileActions(reload: () => void) {
     [call, flash, reload],
   );
 
-  /** Delete after confirming. A folder that is not empty is refused, and the refusal shown. */
+  /**
+   * Delete files and folders, once the reader has confirmed. A folder that is
+   * not empty is refused, and the refusal shown.
+   */
   const remove = useCallback(
     async (ids: string[], label: string): Promise<boolean> => {
-      if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return false;
       setError(null);
       setBusy("delete");
       const refused = await deleteEach(call, ids);
