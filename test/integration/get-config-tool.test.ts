@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractText } from "../../src/engine/content-helpers.ts";
+import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import { asDevUser, devProvider } from "../helpers/dev-provider.ts";
@@ -51,6 +53,28 @@ describe("get_config tool", () => {
       expect(resolved.maxInputTokens as number).toBeGreaterThan(0);
       expect(typeof resolved.maxOutputTokens).toBe("number");
       expect(resolved.maxOutputTokens as number).toBeGreaterThan(0);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("reports a theme only when the user has set one", async () => {
+    // The shell applies any theme get_config reports. Filling an unset one
+    // with "system" overrode the theme the browser held each time a
+    // config.changed event made the shell re-read this.
+    const runtime = await makeRuntime();
+    try {
+      const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
+      const prefs = async (identity: typeof DEV_IDENTITY) =>
+        (
+          (await runWithRequestContext({ identity }, () => source.execute("get_config", {})))
+            .structuredContent as { preferences: Record<string, unknown> }
+        ).preferences;
+
+      expect("theme" in (await prefs(DEV_IDENTITY))).toBe(false);
+      expect((await prefs({ ...DEV_IDENTITY, preferences: { theme: "light" } })).theme).toBe(
+        "light",
+      );
     } finally {
       await runtime.shutdown();
     }

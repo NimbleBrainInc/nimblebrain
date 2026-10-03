@@ -532,7 +532,11 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 displayName: identity?.displayName ?? "",
                 timezone: preferences.timezone ?? "",
                 locale: preferences.locale ?? "en-US",
-                theme: preferences.theme ?? "system",
+                // Absent when unset, as in /v1/bootstrap. The shell applies any
+                // theme it is given, so reporting "system" for a user who never
+                // chose one overrode the theme their browser holds whenever a
+                // `config.changed` event made it re-read this.
+                ...(preferences.theme ? { theme: preferences.theme } : {}),
                 // Empty when unset, so a client can tell "following the
                 // configured default" from "chose this model deliberately".
                 model: preferences.models?.default ?? "",
