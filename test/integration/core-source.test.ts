@@ -357,7 +357,7 @@ describe("Core Source", () => {
       // Clearing has to land on both disk and the live process. Reaching
       // only one leaves them disagreeing until restart.
       expect(
-        (await asDevUser(() => source.execute("set_model_config", { clearThinkingEffort: true })))
+        (await asDevUser(() => source.execute("set_model_config", { thinkingEffort: null })))
           .isError,
       ).toBe(false);
       expect(runtime.getOperatorConfig().thinkingEffort).toBeUndefined();
@@ -551,7 +551,7 @@ describe("Core Source", () => {
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
           thinking: "enabled",
-          clearThinkingBudget: true,
+          thinkingBudgetTokens: null,
         }),
       );
       expect(result.isError).toBe(false);
@@ -565,11 +565,7 @@ describe("Core Source", () => {
     }
   });
 
-  it("nb__set_model_config clearThinking=true clears the override and the budget", async () => {
-    // The schema-clean replacement for the legacy `thinking: null` sentinel.
-    // The handler still understands null internally — see the normalize step
-    // at the top of the handler — but the public surface is the boolean flag
-    // because Gemini rejects enums on non-string types.
+  it("nb__set_model_config thinking=null clears the mode and keeps the budget", async () => {
     const workDir = join(testDir, `work-clear-thinking-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     const configPath = join(workDir, "nimblebrain.json");
@@ -591,7 +587,7 @@ describe("Core Source", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
-          clearThinking: true,
+          thinking: null,
         }),
       );
       expect(result.isError).toBe(false);
@@ -601,14 +597,14 @@ describe("Core Source", () => {
       // mode on the grounds that it meant nothing without one; the resolver's
       // no-mode path now honors a bare budget, so cascading the delete would
       // silently discard a setting that is still in force. Clearing it is a
-      // separate instruction (`clearThinkingBudget`).
+      // separate instruction (`thinkingBudgetTokens: null`).
       expect(raw.thinkingBudgetTokens).toBe(8192);
     } finally {
       await runtime.shutdown();
     }
   });
 
-  it("nb__set_model_config clearThinkingBudget=true clears just the budget", async () => {
+  it("nb__set_model_config thinkingBudgetTokens=null clears just the budget", async () => {
     const workDir = join(testDir, `work-clear-budget-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     const configPath = join(workDir, "nimblebrain.json");
@@ -631,7 +627,7 @@ describe("Core Source", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
-          clearThinkingBudget: true,
+          thinkingBudgetTokens: null,
         }),
       );
       expect(result.isError).toBe(false);
@@ -643,15 +639,7 @@ describe("Core Source", () => {
     }
   });
 
-  it("nb__set_model_config accepts clearThinking=true alongside a budget", async () => {
-    // Without this guard, the disk-side merge:
-    //   - L430: input.thinking === null → delete existing.thinking + budget
-    //   - L441: input.thinkingBudgetTokens !== undefined/null → re-set budget
-    // produced { thinkingBudgetTokens: 4096 } with no thinking — an orphan
-    // budget on disk. Live runtime stayed clean (handler passes both as
-    // null to updateConfig when input.thinking === null), so the divergence
-    // surfaces only on next restart. Reject the combination at the input
-    // boundary instead.
+  it("nb__set_model_config accepts thinking=null alongside a budget", async () => {
     const workDir = join(testDir, `work-clear-orphan-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     const configPath = join(workDir, "nimblebrain.json");
@@ -667,13 +655,12 @@ describe("Core Source", () => {
     });
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-      // Previously rejected as orphaning the budget. It no longer orphans
-      // anything: with no mode set the resolver reads the budget and resolves
-      // to `enabled` at it, so this is a coherent request — drop the mode
+      // With no mode set the resolver reads the budget and resolves to
+      // `enabled` at it, so this is a coherent request — drop the mode
       // override, keep metering thinking at 4096.
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
-          clearThinking: true,
+          thinking: null,
           thinkingBudgetTokens: 4096,
         }),
       );
@@ -691,8 +678,10 @@ describe("Core Source", () => {
     }
   });
 
-  it("nb__set_model_config rejects ambiguous thinking + clearThinking together", async () => {
-    const workDir = join(testDir, `work-clear-ambiguous-${Date.now()}`);
+  it("nb__set_model_config rejects a clear flag and points at null", async () => {
+    // A caller that learned the old `clear*` booleans gets told how to clear,
+    // rather than a bare "not a field".
+    const workDir = join(testDir, `work-clear-flag-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     const configPath = join(workDir, "nimblebrain.json");
     writeFileSync(configPath, JSON.stringify({}));
@@ -707,13 +696,10 @@ describe("Core Source", () => {
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() =>
-        source.execute("set_model_config", {
-          thinking: "off",
-          clearThinking: true,
-        }),
+        source.execute("set_model_config", { clearThinking: true }),
       );
       expect(result.isError).toBe(true);
-      expect(extractText(result.content)).toContain("Cannot set both");
+      expect(extractText(result.content)).toContain("pass null");
     } finally {
       await runtime.shutdown();
     }
@@ -921,7 +907,7 @@ describe("Core Source", () => {
               preferences: { models: { default: "anthropic:claude-haiku-4-5-20251001" } },
             },
           },
-          () => source.execute("set_model_config", { models: { fast: "" } }),
+          () => source.execute("set_model_config", { models: { fast: null } }),
         );
         expect(res.isError).toBe(true);
         expect(extractText(res.content)).toContain("which the default slot uses");
@@ -997,7 +983,7 @@ describe("Core Source", () => {
       );
       try {
         const res = await asDevUser(() =>
-          source.execute("set_model_config", { models: { fast: "" } }),
+          source.execute("set_model_config", { models: { fast: null } }),
         );
         expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain("isError: false");
         // Cleared, so it falls back to the default — which policy allows.
@@ -1016,7 +1002,7 @@ describe("Core Source", () => {
       ]);
       try {
         const res = await asDevUser(() =>
-          source.execute("set_model_config", { models: { fast: "" } }),
+          source.execute("set_model_config", { models: { fast: null } }),
         );
         expect(res.isError).toBe(true);
         expect(extractText(res.content)).toContain("which the fast slot uses");
@@ -1220,7 +1206,7 @@ describe("Core Source", () => {
 
         const clearResult = await asDevUser(() =>
           source.execute("set_model_config", {
-            clearMaxIterations: true,
+            maxIterations: null,
           }),
         );
         expect(clearResult.isError).toBe(false);
@@ -1243,7 +1229,21 @@ describe("Core Source", () => {
       }
     });
 
-    it("an empty string clears a model slot", async () => {
+    it("an empty model slot is refused with the clear spelled out", async () => {
+      const { runtime, source, overridePath } = await startBare("empty-slot");
+      try {
+        const result = await asDevUser(() =>
+          source.execute("set_model_config", { models: { default: "" } }),
+        );
+        expect(result.isError).toBe(true);
+        expect(extractText(result.content)).toContain("Pass null to clear it");
+        expect(readOverride(overridePath).models).toBeUndefined();
+      } finally {
+        await runtime.shutdown();
+      }
+    });
+
+    it("null clears a model slot", async () => {
       const { runtime, source, overridePath } = await startBare("clear-slot");
       try {
         const beforeAnySet = runtime.getDefaultModel();
@@ -1256,14 +1256,13 @@ describe("Core Source", () => {
 
         const clearResult = await asDevUser(() =>
           source.execute("set_model_config", {
-            models: { default: "" },
+            models: { default: null },
           }),
         );
         expect(clearResult.isError).toBe(false);
 
-        // Not stored as `""`: the slot resolver falls back on nullish
-        // only, so an empty string would resolve to a bare provider
-        // prefix rather than the default model.
+        // Deleted, not stored: a cleared slot reads back the same as one
+        // never set.
         expect(readOverride(overridePath).models).toBeUndefined();
         expect(runtime.getOperatorConfig().models).toBeUndefined();
         expect(runtime.getDefaultModel()).toBe(beforeAnySet);
@@ -1343,10 +1342,13 @@ describe("Core Source", () => {
     }
   });
 
-  it("nb__set_model_config schema declares thinking as plain string + boolean clear flags (Gemini-compatible)", async () => {
-    // Regression guard: any future schema change that puts `enum` on a
-    // non-string type, or uses union types, will break Google-only tenants
-    // because Gemini rejects the entire request. Lock the LCD shape.
+  it("nb__set_model_config schema declares nullable fields as anyOf with a null branch (Gemini-compatible)", async () => {
+    // Regression guard: Gemini rejects an `enum` on anything but a string
+    // type, and that rejection fails every tool call on a Google-only tenant —
+    // including the one that would fix it. `type: ["string", "null"]` with
+    // `null` in the enum did exactly that. A nullable field is written as
+    // `anyOf` with the enum on the string branch and a separate null branch.
+    // test/unit/platform/schema-shape.test.ts holds every tool to this.
     const runtime = await makeRuntime();
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
@@ -1355,13 +1357,12 @@ describe("Core Source", () => {
       if (!setModelConfig) throw new Error("nb__set_model_config is not registered");
       const props = (setModelConfig.inputSchema as { properties: Record<string, unknown> })
         .properties;
-      const thinking = props.thinking as { type: unknown; enum: unknown };
-      expect(thinking.type).toBe("string");
-      expect(thinking.enum).toEqual(["off", "adaptive", "enabled"]);
-      const budget = props.thinkingBudgetTokens as { type: unknown };
-      expect(budget.type).toBe("number");
-      expect((props.clearThinking as { type: unknown }).type).toBe("boolean");
-      expect((props.clearThinkingBudget as { type: unknown }).type).toBe("boolean");
+      expect(props.thinking).toMatchObject({
+        anyOf: [{ type: "string", enum: ["off", "adaptive", "enabled"] }, { type: "null" }],
+      });
+      expect(props.thinkingBudgetTokens).toMatchObject({
+        anyOf: [{ type: "number" }, { type: "null" }],
+      });
     } finally {
       await runtime.shutdown();
     }

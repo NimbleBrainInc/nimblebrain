@@ -57,7 +57,7 @@ export function tuningAppliesTo(thinking: ThinkingMode | typeof THINKING_DEFAULT
 /**
  * The thinking half of a `set_model_config` patch.
  *
- * Every field is either set or explicitly cleared, never omitted, so a value
+ * Every field is either set or cleared with `null`, never omitted, so a value
  * the operator removed on this screen can't survive on disk from an earlier
  * save. The cost is deliberate and worth naming: switching to `off` or
  * `adaptive` and saving deletes a persisted depth and budget, so an
@@ -76,15 +76,9 @@ export function thinkingPatchFor(
   budget: number | null,
 ): Record<string, unknown> {
   const applies = tuningAppliesTo(thinking);
-  const effortPatch =
-    !applies || effort === EFFORT_DEFAULT
-      ? { clearThinkingEffort: true }
-      : { thinkingEffort: effort };
-  const budgetPatch =
-    !applies || budget == null ? { clearThinkingBudget: true } : { thinkingBudgetTokens: budget };
-
-  if (thinking === THINKING_DEFAULT) {
-    return { clearThinking: true, ...effortPatch, ...budgetPatch };
-  }
-  return { thinking, ...effortPatch, ...budgetPatch };
+  return {
+    thinking: thinking === THINKING_DEFAULT ? null : thinking,
+    thinkingEffort: !applies || effort === EFFORT_DEFAULT ? null : effort,
+    thinkingBudgetTokens: !applies || budget == null ? null : budget,
+  };
 }

@@ -48,29 +48,38 @@ const THINKING_EFFORTS = [
 ] as const satisfies readonly ThinkingEffort[];
 
 /**
- * Every scalar field an operator can set, each with its `clear*` flag and
- * on-disk coercion.
+ * Every scalar field an operator can set, with its on-disk coercion.
  *
- * Driven from a table because they all move together through four stages —
- * normalize, validate, persist, patch the live runtime. Written out longhand,
- * a new field has to be remembered in each, and a clear that lands on some
- * stages but not others leaves disk and process disagreeing.
+ * Driven from a table because they all move together through three stages —
+ * validate, persist, patch the live runtime. Written out longhand, a new field
+ * has to be remembered in each, and a clear that lands on some stages but not
+ * others leaves disk and process disagreeing.
  *
- * Every settable field needs a clear, or "unset" becomes a state the operator
- * can leave but never return to: the first save pins a value permanently and
- * the deployment stops tracking the platform default. A separate boolean
- * rather than a `null` value keeps each field's schema type single — which
- * Gemini's function-calling subset requires. Model slots are absent from this
- * table because they clear with `""`; see `mergeModelSlots`.
+ * Each field takes the patch convention (`src/platform/AGENTS.md` §1.3):
+ * omitted leaves it alone, a value sets it, `null` clears it. Every settable
+ * field needs that clear, or "unset" becomes a state the operator can leave but
+ * never return to: the first save pins a value permanently and the deployment
+ * stops tracking the platform default. Model slots are absent from this table
+ * because they are nested under `models`; see `mergeModelSlots`.
  */
 const CLEARABLE_FIELDS = [
-  { key: "thinking", clearFlag: "clearThinking", coerce: String },
-  { key: "thinkingEffort", clearFlag: "clearThinkingEffort", coerce: String },
-  { key: "thinkingBudgetTokens", clearFlag: "clearThinkingBudget", coerce: Number },
-  { key: "maxIterations", clearFlag: "clearMaxIterations", coerce: Number },
-  { key: "maxInputTokens", clearFlag: "clearMaxInputTokens", coerce: Number },
-  { key: "maxOutputTokens", clearFlag: "clearMaxOutputTokens", coerce: Number },
+  { key: "thinking", coerce: String },
+  { key: "thinkingEffort", coerce: String },
+  { key: "thinkingBudgetTokens", coerce: Number },
+  { key: "maxIterations", coerce: Number },
+  { key: "maxInputTokens", coerce: Number },
+  { key: "maxOutputTokens", coerce: Number },
 ] as const;
+
+/**
+ * A nullable tool-input property: `null` is the patch convention's clear
+ * (`src/platform/AGENTS.md` §1.3). Written as `anyOf` with a `null` branch
+ * rather than a `type` array so constraints such as `enum` stay on the typed
+ * branch, the form every provider's tool schema accepts.
+ */
+function nullable(schema: Record<string, unknown>): { anyOf: Record<string, unknown>[] } {
+  return { anyOf: [schema, { type: "null" }] };
+}
 
 /** Org-admin gate. */
 function checkModelConfigAccess(runtime: Runtime): string | null {
@@ -87,30 +96,6 @@ function checkModelConfigAccess(runtime: Runtime): string | null {
   return null;
 }
 
-/**
- * Normalize the `clear*` boolean sentinels into the canonical `null` the merge
- * logic understands. Mutates `input` in place (each tool call owns its input).
- * Returns an error message if mutually-exclusive fields were combined.
- *
- * The three fields are independent. Clearing `thinking` used to cascade onto
- * the other two on the grounds that a depth or a budget means nothing without
- * a mode — that stopped being true when the resolver's no-mode path started
- * reading both: an effort alone selects the tier, and a budget alone resolves
- * to `enabled` at that budget. Cascading now deletes settings that are still
- * in force, and rejects the payload the settings UI sends for its own default
- * mode.
- */
-function normalizeModelConfigClears(input: Record<string, unknown>): string | null {
-  for (const { key, clearFlag } of CLEARABLE_FIELDS) {
-    if (input[clearFlag] !== true) continue;
-    if (input[key] != null) {
-      return `Cannot set both \`${key}\` and \`${clearFlag}\`. Use one or the other.`;
-    }
-    input[key] = null;
-  }
-  return null;
-}
-
 /** Validate a positive-integer field. `max` omitted ⇒ "positive integer" wording. */
 function positiveIntFieldError(
   value: unknown,
@@ -118,7 +103,7 @@ function positiveIntFieldError(
   min: number,
   max?: number,
 ): string | null {
-  // `null` is the normalized clear sentinel, not a value to range-check.
+  // `null` is the clear, not a value to range-check.
   // `Number(null)` is 0, which would fail every one of these floors.
   if (value == null) return null;
   const n = Number(value);
@@ -148,9 +133,10 @@ function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): s
     if (!isModelSlot(slot)) {
       return `Unknown model slot "${slot}". Valid slots: ${MODEL_SLOTS.join(", ")}.`;
     }
-    // `""` clears the slot; there is no model to check the allowlist against.
+    // `null` clears the slot; there is no model to check the allowlist against.
+    if (value === null) continue;
     const model = String(value);
-    if (model === "") continue;
+    if (model === "") return `Model slot "${slot}" cannot be empty. Pass null to clear it.`;
     const error = unreachableModelError(model, runtime, slot);
     if (error) return error;
   }
@@ -163,7 +149,7 @@ function validateModelSlots(input: Record<string, unknown>, runtime: Runtime): s
  * Narrower than it looks: a slot pointed *at* a forbidden model is already
  * refused upstream by `validateModelSlots`, which checks each named value. What
  * reaches here is the case no named value covers — a slot **cleared** with
- * `""`, which falls back to a default the list may not contain.
+ * `null`, which falls back to a default the list may not contain.
  */
 function policyStrandingError(input: Record<string, unknown>, runtime: Runtime): string | null {
   const effective = runtime.getModelPolicy();
@@ -177,7 +163,7 @@ function policyStrandingError(input: Record<string, unknown>, runtime: Runtime):
  * Judged on the **post-write** slots, which the runtime computes — an earlier
  * version derived them here from `input.models` alone and missed the deprecated
  * `defaultModel` input, which also repoints the default slot, while rejecting
- * the `""` clear because it read the sentinel as a model name.
+ * a slot clear because it read the sentinel as a model name.
  *
  * Read from `configuredModelSlots`, not `getDefaultModel`: the latter is tinted
  * by the calling admin's own preference, so an admin whose personal model
@@ -194,7 +180,7 @@ function strandedSlotError(
 ): string | null {
   const pendingDefault = typeof input.defaultModel === "string" ? input.defaultModel : undefined;
   const slots = runtime.configuredModelSlots({
-    models: (input.models ?? {}) as Partial<Record<string, string>>,
+    models: (input.models ?? {}) as Partial<Record<string, string | null>>,
     ...(pendingDefault !== undefined ? { defaultModel: pendingDefault } : {}),
   });
 
@@ -217,16 +203,13 @@ function strandedSlotError(
  * lie one layer quieter.
  */
 function unwritableFieldError(input: Record<string, unknown>): string | null {
-  const writable = new Set<string>([
-    ...OVERRIDE_WRITABLE_KEYS,
-    ...CLEARABLE_FIELDS.map((f) => f.clearFlag),
-  ]);
+  const writable = new Set<string>(OVERRIDE_WRITABLE_KEYS);
   for (const key of Object.keys(input)) {
     if (input[key] === undefined || writable.has(key)) continue;
     if (key === "modelPolicy") {
       return "`modelPolicy` is not set here. It is deployment configuration — set `modelPolicy.allowed` in nimblebrain.json.";
     }
-    return `\`${key}\` is not a field this tool writes.`;
+    return `\`${key}\` is not a field this tool writes. To clear a field, pass null for it.`;
   }
   return null;
 }
@@ -284,8 +267,8 @@ function mergeModelSlots(existing: Record<string, unknown>, input: Record<string
   if (!existing.models || typeof existing.models !== "object") existing.models = {};
   const existingModels = existing.models as Record<string, unknown>;
   for (const [slot, value] of Object.entries(input.models as Record<string, unknown>)) {
-    // `""` clears the slot, mirroring the live-config path in `updateConfig`.
-    if (String(value) === "") delete existingModels[slot];
+    // `null` clears the slot, mirroring the live-config path in `updateConfig`.
+    if (value === null) delete existingModels[slot];
     else existingModels[slot] = String(value);
   }
   // Leave no empty husk behind: `"models": {}` in the override file reads as a
@@ -313,7 +296,10 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
   const modelsPatch =
     input.models !== undefined && typeof input.models === "object"
       ? Object.fromEntries(
-          Object.entries(input.models as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+          Object.entries(input.models as Record<string, unknown>).map(([k, v]) => [
+            k,
+            v === null ? null : String(v),
+          ]),
         )
       : undefined;
   // `null` reaches updateConfig verbatim: it gates on `!== undefined`, so a
@@ -575,7 +561,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       // mutex via async-mutex or similar.
       name: "set_model_config",
       description:
-        "Update model selection and runtime limits. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
+        "Update model selection and runtime limits. A patch: omit a field to leave it unchanged, pass a value to set it, or pass null to clear the override and revert to the default. Writes atomically to nimblebrain.overrides.json (preserved across deploys). Does not allow changing API keys or secrets.",
       meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: {
         type: "object",
@@ -585,13 +571,13 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             description: "Role-based model slots. Each slot maps to a provider:model-id string.",
             properties: {
               default: {
-                type: "string",
-                description: "Primary model for chat. Empty string clears the slot.",
+                ...nullable({ type: "string" }),
+                description: "Primary model for chat. null clears the slot.",
               },
               fast: {
-                type: "string",
+                ...nullable({ type: "string" }),
                 description:
-                  "Cheap/fast model for auxiliary tasks. Empty string clears the slot (falls back to the default model).",
+                  "Cheap/fast model for auxiliary tasks. null clears the slot (falls back to the default model).",
               },
             },
           },
@@ -600,77 +586,44 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             description: "Default model ID. Deprecated — use models.default instead.",
           },
           maxIterations: {
-            type: "number",
+            ...nullable({ type: "number" }),
             description:
-              "Max agentic iterations per request (1-25). Use clearMaxIterations=true to revert to the platform default.",
-          },
-          clearMaxIterations: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted max-iterations override. Mutually exclusive with `maxIterations`.",
+              "Max agentic iterations per request (1-25). null reverts to the platform default.",
           },
           maxInputTokens: {
-            type: "number",
+            ...nullable({ type: "number" }),
             description:
-              "Max input tokens per request (must be > 0). Use clearMaxInputTokens=true to revert to the platform default.",
-          },
-          clearMaxInputTokens: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted max-input-tokens override. Mutually exclusive with `maxInputTokens`.",
+              "Max input tokens per request (must be > 0). null reverts to the platform default.",
           },
           maxOutputTokens: {
-            type: "number",
+            ...nullable({ type: "number" }),
             description:
-              "Max output tokens per LLM call (must be > 0). Use clearMaxOutputTokens=true to revert to the model-derived default.",
-          },
-          clearMaxOutputTokens: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted max-output-tokens override. Mutually exclusive with `maxOutputTokens`.",
+              "Max output tokens per LLM call (must be > 0). null reverts to the model-derived default.",
           },
           thinking: {
-            type: "string",
-            enum: ["off", "adaptive", "enabled"],
+            ...nullable({ type: "string", enum: ["off", "adaptive", "enabled"] }),
             description:
               "Extended-thinking mode for reasoning-capable models. " +
               "off: never reason. adaptive: model decides per call. " +
               "enabled: always reason, at thinkingEffort. " +
-              "Use clearThinking=true to revert to the platform default.",
-          },
-          clearThinking: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted thinking override and reverts to the platform default. " +
-              "Mutually exclusive with `thinking`.",
+              "null reverts to the platform default.",
           },
           thinkingEffort: {
-            type: "string",
-            enum: [...THINKING_EFFORTS],
+            ...nullable({ type: "string", enum: [...THINKING_EFFORTS] }),
             description:
               "How hard to think when reasoning is on. The portable control — every " +
               "reasoning-capable provider can express a depth. Applies to thinking=enabled " +
-              "and to the platform default. Use clearThinkingEffort=true to revert.",
-          },
-          clearThinkingEffort: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted thinking effort. Mutually exclusive with `thinkingEffort`.",
+              "and to the platform default. null reverts to the default depth.",
           },
           thinkingBudgetTokens: {
-            type: "number",
+            ...nullable({ type: "number" }),
             description:
               "Explicit token budget for thinking, for metering in tokens rather than " +
               "naming a depth. Only honored by providers that meter thinking in tokens " +
               "(Anthropic up to 4.6, Gemini 2.5); elsewhere thinkingEffort applies — " +
               "Gemini 3 takes a level, not a budget. " +
-              "Counts toward maxOutputTokens. Anthropic requires a minimum of 1,024.",
-          },
-          clearThinkingBudget: {
-            type: "boolean",
-            description:
-              "If true, clears any persisted thinking budget. " +
-              "Mutually exclusive with `thinkingBudgetTokens`.",
+              "Counts toward maxOutputTokens. Anthropic requires a minimum of 1,024. " +
+              "null clears the budget.",
           },
         },
       },
@@ -695,13 +648,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               isError: true,
             };
           }
-
-          // Normalize the `clear*` booleans into the canonical `null` sentinel
-          // the merge logic understands (booleans keep the schema string-typed,
-          // which Gemini requires). Mutates `input`; safe because each tool call
-          // owns its input.
-          const clearError = normalizeModelConfigClears(input);
-          if (clearError) return { content: textContent(clearError), isError: true };
 
           const validationError = validateModelConfigPatch(input, runtime);
           if (validationError) return { content: textContent(validationError), isError: true };
@@ -766,7 +712,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           locale: { type: "string", description: "BCP 47 locale (e.g., 'en-US')." },
           theme: { type: "string", enum: ["system", "light", "dark"], description: "Color theme." },
           model: {
-            type: ["string", "null"],
+            ...nullable({ type: "string" }),
             description:
               "Model for this user's new conversations, as `provider:model-id`. Applies to conversations started after the change — an existing one keeps the model it was created with. Null clears the choice and follows the configured default. Auxiliary models (title generation, briefing, compaction) are operator-configured and not settable here.",
           },

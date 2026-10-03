@@ -11,6 +11,11 @@
  *   1. Every tool input schema is itself a typed object.
  *   2. Every nested property of type `"object"` declares `properties`.
  *   3. Every `array` declares `items`.
+ *   4. A field is cleared with `null`, not a `clear<Field>` boolean
+ *      (src/platform/AGENTS.md §1.3).
+ *   5. No `enum` holds `null` or sits beside a `type` array. Gemini rejected
+ *      that shape and failed every tool call for the tenant; a nullable enum
+ *      is `anyOf: [{ type: "string", enum }, { type: "null" }]`.
  *
  * Adding a new platform source: register its factory in the `SOURCES`
  * array below. Adding a new tool to an existing source: nothing to do —
@@ -29,6 +34,9 @@ import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
+import type { Runtime } from "../../../src/runtime/runtime.ts";
+import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
+import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
 
 // ── Minimal Runtime stub ─────────────────────────────────────────────────
@@ -81,14 +89,27 @@ const SOURCES = [
   { name: "conversations", factory: createConversationsSource },
   { name: "automations", factory: createAutomationsSource },
   { name: "notifications", factory: createNotificationsSource },
+  // The core `nb` tools are not a platform app, but they take the same input
+  // conventions and `set_model_config` is the reference patch tool.
+  {
+    name: "nb",
+    factory: (runtime: Runtime, sink: NoopEventSink) =>
+      defineInProcessApp(
+        { name: "nb", version: "1.0.0", tools: createCoreToolDefs(runtime) },
+        sink,
+      ),
+  },
 ] as const;
 
 // ── Schema walker ────────────────────────────────────────────────────────
 
 interface SchemaNode {
   type?: string | string[];
+  enum?: unknown[];
   properties?: Record<string, SchemaNode>;
   items?: SchemaNode;
+  anyOf?: SchemaNode[];
+  oneOf?: SchemaNode[];
 }
 
 /**
@@ -105,11 +126,26 @@ function findShapeViolations(node: SchemaNode, path = ""): string[] {
     violations.push(`${path}: object type missing 'properties'`);
   }
 
+  if (node.enum?.includes(null) || (node.enum && Array.isArray(node.type))) {
+    violations.push(`${path}: nullable enum; use anyOf with a separate { type: "null" } branch`);
+  }
+
   // Recurse into children
   if (node.properties) {
     for (const [key, child] of Object.entries(node.properties)) {
+      if (/^clear[A-Z]/.test(key) && child.type === "boolean") {
+        violations.push(`${path}.${key}: clear flag; clear the field by passing null`);
+      }
       violations.push(...findShapeViolations(child, `${path}.${key}`));
     }
+  }
+  for (const [keyword, branches] of [
+    ["anyOf", node.anyOf],
+    ["oneOf", node.oneOf],
+  ] as const) {
+    branches?.forEach((branch, i) => {
+      violations.push(...findShapeViolations(branch, `${path}.${keyword}[${i}]`));
+    });
   }
   if (node.items) {
     // type === "array" with no items would be a problem, but JSON Schema
@@ -183,6 +219,7 @@ describe("platform tool schemas — convention shape", () => {
         throw new Error(
           `Platform source "${name}" has ${allViolations.length} schema-shape violation(s):\n  ${allViolations.join("\n  ")}\n\n` +
             `Every \`object\`-typed property must declare \`properties\`. Every \`array\` must declare \`items\`. ` +
+            `A field clears with \`null\`, declared as \`anyOf\` with a \`{ type: "null" }\` branch (src/platform/AGENTS.md §1.3). ` +
             `Bare \`{ type: "object" }\` lets the model invent structure under-spec — see src/platform/skills/source.ts for the canonical pattern.`,
         );
       }
