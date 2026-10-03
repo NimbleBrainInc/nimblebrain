@@ -35,6 +35,13 @@ const PEOPLE = {
   priority: 0,
 } as PlacementEntry;
 
+const TASKS = {
+  serverName: "tasks",
+  slot: "sidebar.apps",
+  resourceUri: "ui://tasks/main",
+  priority: 0,
+} as PlacementEntry;
+
 type Target = { id: string; key: string } | undefined;
 
 let cleanup: (() => void) | null = null;
@@ -49,22 +56,8 @@ async function settle(): Promise<void> {
   });
 }
 
-/** Mount a placement, then stand in for its iframe and complete the handshake. */
-async function mountWithTarget(target: Target) {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = ReactDOMClient.createRoot(container);
-  const render = (t: Target) =>
-    root.render(
-      React.createElement(
-        ThemeProvider,
-        null,
-        React.createElement(SlotRenderer, { placements: [PEOPLE], target: t }),
-      ),
-    );
-  await act(async () => render(target));
-  await settle();
-
+/** Stand in for the mounted iframe in `container` and complete its handshake. */
+async function connectFrame(container: HTMLElement, serverName: string) {
   const iframe = container.getElementsByTagName("iframe")[0];
   if (!iframe) throw new Error("no iframe mounted");
   const inbox: unknown[] = [];
@@ -82,17 +75,13 @@ async function mountWithTarget(target: Target) {
     method: "ui/initialize",
     params: {
       protocolVersion: "2026-01-26",
-      clientInfo: { name: "people", version: "1.0.0" },
+      clientInfo: { name: serverName, version: "1.0.0" },
       capabilities: {},
     },
   });
   send({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
   await settle();
 
-  cleanup = () => {
-    act(() => root.unmount());
-    container.remove();
-  };
   const navigations = () =>
     inbox.filter((m) => (m as { method?: string }).method === NAVIGATE_METHOD);
   /** The app reports where it is, as `useTrail` does once it is subscribed to `navigate`. */
@@ -100,14 +89,43 @@ async function mountWithTarget(target: Target) {
     send({
       jsonrpc: "2.0",
       method: "ai.nimblebrain/location",
-      params: { trail: [{ id: "people://contacts", label: "People" }] },
+      params: { trail: [{ id: `${serverName}://home`, label: serverName }] },
     });
     await settle();
   };
+  return { navigations, reportLocation };
+}
+
+/** Mount a placement, then stand in for its iframe and complete the handshake. */
+async function mountWithTarget(target: Target) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = ReactDOMClient.createRoot(container);
+  const render = (placement: PlacementEntry, t: Target) =>
+    root.render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(SlotRenderer, { placements: [placement], target: t }),
+      ),
+    );
+  await act(async () => render(PEOPLE, target));
+  await settle();
+  const frame = await connectFrame(container, PEOPLE.serverName);
+
+  cleanup = () => {
+    act(() => root.unmount());
+    container.remove();
+  };
   return {
-    navigations,
-    reportLocation,
-    rerender: async (t: Target) => act(async () => render(t)),
+    ...frame,
+    rerender: async (t: Target) => act(async () => render(PEOPLE, t)),
+    /** Swap to another placement in the same renderer, as an app-to-app route change does. */
+    switchTo: async (placement: PlacementEntry, t: Target) => {
+      await act(async () => render(placement, t));
+      await settle();
+      return connectFrame(container, placement.serverName);
+    },
   };
 }
 
@@ -134,6 +152,18 @@ describe("SlotRenderer target", () => {
     });
     await rerender({ id: "people://contacts/2", key: "k2" });
     expect(navigations()).toEqual([]);
+  });
+
+  // Sibling app routes reuse one renderer, so switching apps changes only the
+  // placement. A target meant for the first app must not reach the next.
+  test("a target for one app never reaches the app switched to after it", async () => {
+    const first = await mountWithTarget({ id: "people://contacts/1", key: "k1" });
+    await first.reportLocation();
+    expect(first.navigations()).toHaveLength(1);
+
+    const second = await first.switchTo(TASKS, undefined);
+    await second.reportLocation();
+    expect(second.navigations()).toEqual([]);
   });
 
   test("a new key sends again; the same key does not", async () => {

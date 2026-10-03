@@ -116,7 +116,7 @@ function mountPlacement(
   shared: BridgeCallbacks,
   fitContent: boolean,
   onLocation: SlotRendererProps["onLocation"],
-  onFirstLocation: (bridge: BridgeHandle) => void,
+  onLocationReport: (bridge: BridgeHandle) => void,
 ): BridgeHandle {
   const { html, metaUi } = resource;
   const iframe = createAppIframe(fitContent ? buildSizedHtml(html) : html, entry.serverName, {
@@ -144,14 +144,10 @@ function mountPlacement(
   // exists only once `createBridge` returns; the app cannot send a location
   // before its handshake, so the binding is in place by the time it is read.
   let bridge: BridgeHandle | null = null;
-  let reported = false;
   const callbacks: BridgeCallbacks = {
     ...shared,
     onLocation: (trail) => {
-      if (!reported && bridge) {
-        reported = true;
-        onFirstLocation(bridge);
-      }
+      if (bridge) onLocationReport(bridge);
       onLocation?.(trail, (id) => bridge?.navigate(id));
     },
   };
@@ -233,8 +229,9 @@ export function SlotRenderer({
     }
   }, []);
 
-  /** A placement's first location report: it listens now, so a waiting target reaches it. */
-  const onFirstLocation = useCallback((bridge: BridgeHandle) => {
+  /** A placement reported a location. The first time, it listens now, so a waiting target reaches it. */
+  const onLocationReport = useCallback((bridge: BridgeHandle) => {
+    if (listeningRef.current.has(bridge)) return;
     listeningRef.current.add(bridge);
     const waiting = pendingTargetRef.current;
     if (waiting) bridge.navigate(waiting.id);
@@ -282,7 +279,7 @@ export function SlotRenderer({
           bridgeCallbacks,
           fitContent,
           (trail, navigate) => onLocationRef.current?.(trail, navigate),
-          onFirstLocation,
+          onLocationReport,
         );
       } catch (err) {
         console.warn(`Failed to load placement ${entry.resourceUri}:`, err);
@@ -312,8 +309,10 @@ export function SlotRenderer({
         b.destroy();
       });
       // A target arriving before the next mount finishes goes to that mount,
-      // never to these destroyed bridges.
+      // never to these destroyed bridges. A waiting target was these
+      // placements' own: the next ones get only the target they mount with.
       bridgesRef.current = [];
+      pendingTargetRef.current = undefined;
       if (container) container.innerHTML = "";
     };
     // Only re-mount iframes when placements change, not when callbacks change.
