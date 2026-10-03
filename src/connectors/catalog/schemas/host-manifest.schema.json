@@ -12,21 +12,6 @@
       "pattern": "^1(\\.\\d+)?$",
       "description": "Host extension contract major version. Write \"1.0\". It changes only on a breaking change; adding a block does not bump it, and a block is enabled by being present, never by this value. Any \"1.x\" (and \"1\") is major 1. The host drops a catalog entry whose host_version is not major 1, since that is a contract it predates. Within major 1 the host is FORWARD-COMPATIBLE, and this tolerance is part of the contract: it parses the fields it understands and ignores the rest; unknown top-level keys validate and are ignored; an unknown or malformed placement slot drops only that placement, never the whole declaration."
     },
-    "name": {
-      "type": "string",
-      "deprecated": true,
-      "description": "DEPRECATED and ignored. Accepted so existing catalogs load. A connector's display name is its catalog entry's core `title` (or `name`); a sidebar entry's label is its placement's own `label`."
-    },
-    "icon": {
-      "type": "string",
-      "deprecated": true,
-      "description": "DEPRECATED and ignored. Accepted so existing catalogs load. A connector's icon is its catalog entry's core `icons`; a sidebar entry's icon is its placement's own `icon`."
-    },
-    "category": {
-      "type": "string",
-      "deprecated": true,
-      "description": "DEPRECATED and ignored. Accepted so existing catalogs load."
-    },
     "placements": {
       "type": "array",
       "items": {
@@ -162,7 +147,7 @@
         },
         "icon": {
           "type": "string",
-          "description": "Lucide icon name (kebab-case)."
+          "description": "Lucide icon name (kebab-case). Shown on a `sidebar.bottom` entry; a connector's other sidebar entries show its catalog `icons`."
         },
         "route": {
           "type": "string",

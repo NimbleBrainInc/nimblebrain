@@ -36,7 +36,6 @@ Add a `placements` array to your manifest's `_meta["ai.nimblebrain/host"]`:
           "resourceUri": "ui://dashboard",
           "priority": 30,
           "label": "Tasks",
-          "icon": "check-square",
           "route": "tasks"
         },
         {
@@ -116,7 +115,7 @@ On narrow screens the sidebar becomes a drawer. `sidebar.bottom` placements rend
 
 ## Icons
 
-Specify icons using [Lucide](https://lucide.dev/icons) names in kebab-case:
+A `sidebar.apps` entry shows the connector's catalog `icons`, so it takes no `icon`. A `sidebar.bottom` placement names its own icon, using [Lucide](https://lucide.dev/icons) names in kebab-case:
 
 ```json
 { "icon": "check-square" }
@@ -172,7 +171,6 @@ const items = registry.forWorkspace("ws_0030a37f450693bf");
           "resourceUri": "ui://dashboard",
           "route": "crm",
           "label": "CRM",
-          "icon": "users",
           "priority": 50
         }
       ]

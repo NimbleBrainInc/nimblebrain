@@ -263,9 +263,9 @@ export interface HostManifestMeta {
    * is major 1.
    */
   host_version: string;
-  // `name`, `icon` and `category` are deprecated and ignored: the schema still
-  // accepts them so existing catalogs load, and nothing reads them. A
-  // connector's display identity is its catalog entry's core fields.
+  // No `name`, `icon` or `category`: a connector's display identity is its
+  // catalog entry's core `title` and `icons`. A block that still carries them
+  // validates (unknown keys are ignored) and nothing reads them.
   placements?: PlacementDeclaration[];
   primaryView?: { resourceUri: string };
   /**

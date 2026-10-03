@@ -55,7 +55,7 @@ servers:
 | `lifecycle` | `object` | No | Tools on your server the host calls when your connector becomes reachable in a workspace and just before it is removed: `{ on_ready?, on_removing? }`. See [Lifecycle](/extensions/lifecycle/). |
 | `admin_tools` | `string[]` | No | Names of tools on your server that only a workspace admin may call, at most 64. Read from a catalog entry only. See [Admin-only tools](/extensions/admin-tools/). |
 
-`name`, `icon` and `category` are deprecated and ignored. The schema still accepts them so existing catalogs load. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label and icon are its placement's own `label` and `icon`.
+The block has no `name`, `icon` or `category`; a block that still declares them loads, and the host ignores them like any unknown key. A connector's display name is its catalog entry's `title` (or `name`), and its icon the entry's `icons`, the fields the MCP Registry `ServerDetail` already defines. A sidebar entry's label is its placement's own `label`.
 
 ### `PlacementDeclaration`
 
@@ -67,7 +67,7 @@ Each entry in the `placements` array:
 | `resourceUri` | `string` | Yes | — | `ui://` URI served by this MCP server. |
 | `priority` | `number` | No | `100` | Sort order within the slot. Lower values appear first. |
 | `label` | `string` | No | — | Human-readable label for sidebar items. Ignored for `"settings"`. |
-| `icon` | `string` | No | — | Lucide icon name (kebab-case). Falls back to `CircleDot` if unset or unrecognized. |
+| `icon` | `string` | No | — | Lucide icon name (kebab-case), shown on a `sidebar.bottom` entry. Falls back to `CircleDot` if unset or unrecognized. A connector's other sidebar entries show its catalog `icons`. |
 | `route` | `string` | No | — | Route path. Registers as `/w/<slug>/app/<route>`. Ignored for `"settings"`. |
 | `size` | `"compact" \| "full" \| "auto"` | No | — | Size hint. The shell does not read it. |
 
