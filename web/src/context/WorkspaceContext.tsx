@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
-import { setActiveWorkspaceId } from "../api/client";
+import { setActiveWorkspaceId, tryBootstrap } from "../api/client";
+import { bootstrapWorkspacesToInfo } from "../lib/bootstrap";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +27,8 @@ interface WorkspaceContextValue {
   workspaces: WorkspaceInfo[];
   activeWorkspace: WorkspaceInfo | null;
   setActiveWorkspace: (ws: WorkspaceInfo) => void;
+  /** Re-read the list from bootstrap, after a write that adds or removes a workspace. */
+  refreshWorkspaces: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +39,7 @@ const WorkspaceContext = createContext<WorkspaceContextValue>({
   workspaces: [],
   activeWorkspace: null,
   setActiveWorkspace: () => {},
+  refreshWorkspaces: async () => {},
 });
 
 // ---------------------------------------------------------------------------
@@ -63,7 +67,7 @@ export function WorkspaceProvider({
   initialWorkspaces,
   initialActiveId,
 }: WorkspaceProviderProps) {
-  const [workspaces] = useState(initialWorkspaces);
+  const [workspaces, setWorkspaces] = useState(initialWorkspaces);
   const [activeWorkspace, setActiveState] = useState<WorkspaceInfo | null>(() => {
     // The URL is the only source of which workspace the user is in: the route
     // guard focuses the workspace a `/w/:slug` path names. Nothing is focused
@@ -82,9 +86,20 @@ export function WorkspaceProvider({
     setActiveWorkspaceId(ws.id);
   }, []);
 
+  // Bootstrap is the one call that lists the viewer's memberships, so a write
+  // that changes them re-reads it. The focused entry is swapped for its fresh
+  // copy; focus itself stays with the URL.
+  const refreshWorkspaces = useCallback(async () => {
+    const data = await tryBootstrap();
+    if (!data) return;
+    const next = bootstrapWorkspacesToInfo(data.workspaces);
+    setWorkspaces(next);
+    setActiveState((current) => (current && next.find((w) => w.id === current.id)) ?? current);
+  }, []);
+
   const value = useMemo<WorkspaceContextValue>(
-    () => ({ workspaces, activeWorkspace, setActiveWorkspace }),
-    [workspaces, activeWorkspace, setActiveWorkspace],
+    () => ({ workspaces, activeWorkspace, setActiveWorkspace, refreshWorkspaces }),
+    [workspaces, activeWorkspace, setActiveWorkspace, refreshWorkspaces],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

@@ -12,6 +12,9 @@
 // Its footer holds the two workspace-level actions:
 // the focused workspace's settings, and creating a new one.
 //
+// Collapsed, the trigger is the focused workspace's glyph, or the chevrons
+// when no workspace is focused (home, profile), so it never renders empty.
+//
 // A dot marks a workspace with unread notifications, on its row and, when it
 // is a workspace other than this one, on the trigger: the trigger is the way
 // there, so it is where the dot pulls.
@@ -118,7 +121,11 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
       data-testid="workspace-switcher-trigger"
       className="relative mx-auto my-1 flex size-10 items-center justify-center rounded-md transition-colors hover:bg-sidebar-foreground/10 data-[popup-open]:bg-sidebar-foreground/10"
     >
-      {focused && <WorkspaceGlyph workspace={focused} size="lg" />}
+      {focused ? (
+        <WorkspaceGlyph workspace={focused} size="lg" />
+      ) : (
+        <ChevronsUpDown aria-hidden="true" className="size-4" />
+      )}
       {elsewhere && <UnreadDot className="absolute top-1 right-1 ring-2 ring-sidebar" />}
     </Popover.Trigger>
   ) : (

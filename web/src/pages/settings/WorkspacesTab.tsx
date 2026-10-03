@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { useSession } from "../../context/SessionContext";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { EmptyState, InlineError, SettingsListPage } from "./components";
 
 interface Workspace {
@@ -235,6 +236,7 @@ function WorkspacesContent({
 export function WorkspacesTab() {
   const session = useSession();
   const navigate = useNavigate();
+  const { refreshWorkspaces } = useWorkspaceContext();
   const isAdmin = ADMIN_ROLES.has(session?.user?.orgRole ?? "");
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -276,13 +278,13 @@ export function WorkspacesTab() {
       });
       setCreateName("");
       setShowCreate(false);
-      await fetchWorkspaces();
+      await Promise.all([fetchWorkspaces(), refreshWorkspaces()]);
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create workspace");
     } finally {
       setCreating(false);
     }
-  }, [createName, fetchWorkspaces]);
+  }, [createName, fetchWorkspaces, refreshWorkspaces]);
 
   const handleDelete = useCallback(
     async (workspaceId: string, name: string) => {
@@ -294,14 +296,14 @@ export function WorkspacesTab() {
           action: "delete",
           workspaceId,
         });
-        await fetchWorkspaces();
+        await Promise.all([fetchWorkspaces(), refreshWorkspaces()]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to delete workspace");
       } finally {
         setDeletingId(null);
       }
     },
-    [fetchWorkspaces],
+    [fetchWorkspaces, refreshWorkspaces],
   );
 
   return (
