@@ -81,11 +81,16 @@ the door rather than by any one source:
 
 - **Admission**: how many unattended runs execute at once, the queue beyond that,
   and a fair share between workspaces.
-- **Spend**: the run's description carries a list of **spend accounts**, each an
-  opaque id the source chose with the amount remaining on it. Before each model
+- **Spend**: the run's description names a list of **spend accounts**, each an
+  opaque id the source chose, with a unit (dollars, input tokens, or output
+  tokens) and the amount remaining. The door keeps **one live balance per account
+  id** for as long as any run naming it is in flight: the first run to name an id
+  sets the balance, and every run naming it checks and debits that same balance,
+  so runs that share an account cannot together exceed it. Before each model
   call the door checks the projected cost against every account and ends the run
   with a typed stop reason if any would be exceeded; after the call it debits
-  each one. The door never interprets an account: whether an id stands for a
+  each one, and reports the debits back to the source. The door never interprets
+  an account: whether an id stands for a
   batch, a task, or a workspace is the source's knowledge, so the door gains no
   notion of a run's parent (ADR-0021).
 
@@ -99,12 +104,14 @@ ended:
 |---|---|
 | `skipped` | Never started: refused at admission, over a spend account, a duplicate, or the owner is no longer a member |
 | `completed` | Ended on its own with a deliverable |
-| `incomplete` | Ended at a limit (iterations, input tokens, duration, output length) with a partial deliverable |
+| `incomplete` | Ended at a limit (iterations, input tokens, duration, output length, a spend account) with a partial deliverable |
 | `failed` | Ended without a deliverable: a model or provider error, a refusal, or a limit reached before anything was produced |
 | `cancelled` | Stopped by a person or a caller |
 
 A run is a **duplicate** when its call repeats an idempotency key already used
-for that task, or when the task already has a run running or queued. The
+for that task, or when the same trigger fires while the task already has a run
+from that trigger running or queued. Manual and batch runs are never duplicates
+of each other on that ground: they differ by input. The
 execution record also carries **unrecovered tool failures**: the tools whose
 calls failed with no later call making them good, so part of the work did not
 happen. It is recorded whatever the execution value, and it is read without any
@@ -142,7 +149,9 @@ validation and the unrecovered-failure signal.
 task-augmented tool call. The tasks source is the task-aware source the `/mcp`
 endpoint routes to, and the task id it hands out is the run id, so a lookup
 reads the run record. The record is written before the handle is returned, so
-the handle survives a lost connection. A client that does not opt in to the tasks
+the handle survives a lost connection, and on the current protocol revision it
+also survives a runtime restart; the older revision routes task lookups in
+memory, so there a restart drops the handle while the run record stays. A client that does not opt in to the tasks
 extension gets the same operations as plain tools that return and look up a run
 id. No field outside the spec is needed for either.
 
@@ -166,6 +175,10 @@ period) and read a page at a time, so no read loads a task's whole history.
   is a change to every unattended run, and the queue becomes runtime state, not
   one source's state. Per-task and per-batch budgets become spend accounts the
   tasks source names, checked before each call instead of after a run.
+- An automation's token budget (separate input and output caps, reset each
+  period, the automation disabled when one runs out) becomes two token-unit
+  spend accounts the tasks source re-issues at each period's start; when a run
+  exhausts one, the source disables the task's trigger, as today.
 - Automations migrate. Their storage becomes task storage, reconciled at boot so
   no step depends on an operator remembering it, and their tools stay available
   under their current names for a deprecation window. Their run statuses map:
