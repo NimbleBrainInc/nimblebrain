@@ -532,8 +532,9 @@ function runInputCapError(
 }
 
 /**
- * The error for a run stopped by one of its token budget's spend accounts:
- * its next model call would have passed the budget's cap for the window.
+ * The error for a run stopped at `spend_limit`: what was left of its token
+ * budget's window could not pay for its next model call, even with that call's
+ * output clamped. `account` is the budget's account that stopped it, if one did.
  */
 function budgetStopError(account: RunSpendAccount | undefined, automation: Automation): string {
   const which = account?.unit === "output_tokens" ? "output" : "input";
@@ -546,7 +547,7 @@ function budgetStopError(account: RunSpendAccount | undefined, automation: Autom
     : "";
   const limit = cap != null ? ` of ${cap.toLocaleString("en-US")} ${which} tokens` : "";
   return (
-    `Token budget reached: the next step was projected to pass the budget${limit}${left}, ` +
+    `Token budget reached: too little of the budget${limit} was left for the next step${left}, ` +
     `so the run stopped before it.`
   );
 }
@@ -627,6 +628,7 @@ function mapResultToRun(
     // AutomationRunResult sidecar (see `buildRunResult`).
     resultPreview: data.output ? truncate(data.output) : undefined,
     stopReason,
+    ...(data.spendAccountId !== undefined ? { spendAccountId: data.spendAccountId } : {}),
     trigger,
     ...(error ? { error } : {}),
   };

@@ -2904,7 +2904,8 @@ describe("Scheduler — token budget applies to every run", () => {
       ...runOf(auto.id, 1_500),
       status: "failure",
       stopReason: "spend_limit",
-      error: "Token budget reached: the next step was projected to pass the budget",
+      spendAccountId: budgetSpendAccounts(auto, Date.now())[0]!.id,
+      error: "Token budget reached: too little of the budget was left for the next step",
     };
     const scheduler = new Scheduler(createMockExecutor(stopped), { workDir: tmpDir });
     scheduler.start();
@@ -2914,6 +2915,32 @@ describe("Scheduler — token budget applies to every run", () => {
     expect(updated.cumulativeInputTokens).toBe(4_500);
     expect(updated.enabled).toBe(false);
     expect(updated.disabledReason).toContain("Token budget reached");
+    scheduler.stop();
+  });
+
+  it("a spend stop by an account that is not the budget's leaves the automation enabled", async () => {
+    const auto = makeAutomation({
+      cumulativeInputTokens: 3_000,
+      tokenBudget: { maxInputTokens: 5_000, period: "daily" },
+      budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    const stopped: AutomationRun = {
+      ...runOf(auto.id, 1_500),
+      status: "failure",
+      stopReason: "spend_limit",
+      spendAccountId: "workspace-dollars:acme-corp",
+      error: "Token budget reached",
+    };
+    const scheduler = new Scheduler(createMockExecutor(stopped), { workDir: tmpDir });
+    scheduler.start();
+    await scheduler.onTimer();
+
+    const updated = defOf(scheduler, auto.id)!;
+    expect(updated.cumulativeInputTokens).toBe(4_500);
+    expect(updated.enabled).toBe(true);
+    expect(updated.disabledReason).toBeUndefined();
     scheduler.stop();
   });
 
@@ -2960,7 +2987,7 @@ describe("Scheduler — token budget applies to every run", () => {
             maxIterations: 25,
             maxInputTokens: 500_000,
             maxOutputTokens: 100,
-            spend: { check: (p) => hold.check(p), debit: (u) => void hold.debit(u) },
+            spend: hold,
           },
           "",
           [{ role: "user", content: [{ type: "text", text: req.prompt }] }],

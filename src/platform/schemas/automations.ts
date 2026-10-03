@@ -419,6 +419,8 @@ export interface AutomationRunRecord {
     | "content_filter"
     | "error"
     | "other";
+  /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
+  spendAccountId?: string;
 }
 
 /**

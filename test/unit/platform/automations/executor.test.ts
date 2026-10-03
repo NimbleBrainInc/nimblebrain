@@ -347,6 +347,7 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(sent?.spendAccounts?.[0]?.remaining).toBe(10_000);
     expect(run.status).toBe("failure");
     expect(run.stopReason).toBe("spend_limit");
+    expect(run.spendAccountId).toBe(sent?.spendAccounts?.[0]?.id);
     expect(result?.stopReason).toBe("spend_limit");
     expect(run.error).toContain("Token budget reached");
     expect(run.error).toContain("50,000 input tokens");

@@ -199,6 +199,8 @@ export interface AutomationRunRecord {
     trigger?: "scheduled" | "manual" | "event";
     resultPreview?: string;
     stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
+    /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
+    spendAccountId?: string;
 }
 /**
  * One tool call from a run's activity log. Mirror of `RunToolCall` in

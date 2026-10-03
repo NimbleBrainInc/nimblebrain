@@ -493,6 +493,22 @@ function applyNextRunAt(auto: Automation, now: number, defaultTimezone?: string)
 }
 
 /**
+ * Where an automation with a token budget stands in its window: `current`
+ * before its boundary, `elapsed` once the boundary has passed, `unseeded` for
+ * a periodic budget with no boundary yet, and `lifetime` for a budget with no
+ * period. The next recorded run starts an `elapsed` or `unseeded` window
+ * afresh (`rollBudgetWindow`), so until then its counters belong to no window.
+ */
+function budgetWindow(
+  auto: Automation,
+  now: number,
+): "current" | "elapsed" | "unseeded" | "lifetime" {
+  const reset = auto.budgetResetAt;
+  if (reset) return new Date(reset).getTime() <= now ? "elapsed" : "current";
+  return auto.tokenBudget?.period ? "unseeded" : "lifetime";
+}
+
+/**
  * Roll the budget-reset window: reset the counters when the period has
  * elapsed, and seed the boundary when a periodic budget has none.
  *
@@ -508,9 +524,8 @@ function rollBudgetWindow(
 ): void {
   if (!auto.tokenBudget) return;
 
-  const elapsed = auto.budgetResetAt && new Date(auto.budgetResetAt).getTime() <= now;
-  const unseeded = !auto.budgetResetAt && auto.tokenBudget.period;
-  if (elapsed || unseeded) {
+  const window = budgetWindow(auto, now);
+  if (window === "elapsed" || window === "unseeded") {
     auto.cumulativeInputTokens = run.inputTokens;
     auto.cumulativeOutputTokens = run.outputTokens;
     auto.budgetResetAt = computeBudgetResetAt(auto.tokenBudget.period, now, defaultTimezone);
@@ -550,6 +565,9 @@ export interface RunSpendAccount {
   remaining: number;
 }
 
+/** What every id `budgetSpendAccounts` produces starts with. */
+const BUDGET_ACCOUNT_PREFIX = "automation-budget:";
+
 /**
  * The token budget as the spend accounts a run names: one per cap, holding
  * what is left of the current window. The run-start door checks them before
@@ -564,20 +582,15 @@ export interface RunSpendAccount {
 export function budgetSpendAccounts(auto: Automation, now: number): RunSpendAccount[] {
   const budget = auto.tokenBudget;
   if (!budget) return [];
-  const reset = auto.budgetResetAt;
-  // Mirrors `rollBudgetWindow`: a passed boundary, or a periodic budget with
-  // none yet, means the next recorded run starts the window afresh.
-  const elapsed = reset !== undefined && new Date(reset).getTime() <= now;
-  const unseeded = reset === undefined && budget.period !== undefined;
-  const window = unseeded
-    ? "unseeded"
-    : reset === undefined
-      ? "lifetime"
-      : elapsed
-        ? `after:${reset}`
-        : `until:${reset}`;
-  const fresh = elapsed || unseeded;
-  const base = `automation-budget:${auto.workspaceId ?? ""}/${auto.ownerId ?? ""}/${auto.id}@${window}`;
+  const window = budgetWindow(auto, now);
+  const label =
+    window === "elapsed"
+      ? `after:${auto.budgetResetAt}`
+      : window === "current"
+        ? `until:${auto.budgetResetAt}`
+        : window;
+  const fresh = window === "elapsed" || window === "unseeded";
+  const base = `${BUDGET_ACCOUNT_PREFIX}${auto.workspaceId ?? ""}/${auto.ownerId ?? ""}/${auto.id}@${label}`;
   const left = (cap: number, used: number | undefined) =>
     Math.max(0, cap - (fresh ? 0 : (used ?? 0)));
   const accounts: RunSpendAccount[] = [];
@@ -620,11 +633,13 @@ function applyTokenBudget(
 
   rollBudgetWindow(auto, run, now, defaultTimezone);
 
-  // The automation names no spend account but its budget's, so a spend stop
-  // is the budget's.
+  // A spend stop spends the window only when one of the budget's own accounts
+  // made it; any other account the run named is not this budget's to enforce.
+  const budgetStop =
+    run.stopReason === "spend_limit" &&
+    run.spendAccountId?.startsWith(BUDGET_ACCOUNT_PREFIX) === true;
   const exceeded =
-    tokenBudgetExceeded(auto, now) ??
-    (run.stopReason === "spend_limit" ? (run.error ?? "Token budget reached") : null);
+    tokenBudgetExceeded(auto, now) ?? (budgetStop ? (run.error ?? "Token budget reached") : null);
   if (!exceeded || !auto.enabled) return;
 
   auto.enabled = false;
