@@ -223,18 +223,23 @@ describe("collectPollTargets", () => {
     expect(await collectPollTargets(lifecycle, declaresOutbox)).toEqual([]);
   });
 
-  test("resolves each connector's declaration once, however many workspaces hold it", async () => {
+  test("asks for each connector's declaration in the workspace that holds it", async () => {
     await boot("acme", { wsId: "ws_00547d5d5b3d95e2" });
     await boot("acme", { wsId: "ws_0079497e5a2649c6" });
     await boot("acme", { wsId: "ws_0078bc963588c02e" });
 
-    let lookups = 0;
-    const targets = await collectPollTargets(lifecycle, async () => {
-      lookups++;
+    // A declaration binds to one workspace's ref, so it cannot be shared by name.
+    const asked: string[] = [];
+    const targets = await collectPollTargets(lifecycle, async (wsId, serverName) => {
+      asked.push(`${wsId}/${serverName}`);
       return OUTBOX;
     });
 
     expect(targets).toHaveLength(3);
-    expect(lookups).toBe(1);
+    expect(asked.sort()).toEqual(
+      ["ws_00547d5d5b3d95e2", "ws_0078bc963588c02e", "ws_0079497e5a2649c6"].map(
+        (ws) => `${ws}/acme`,
+      ),
+    );
   });
 });

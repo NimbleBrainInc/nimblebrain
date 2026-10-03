@@ -13,14 +13,19 @@
 //   5. `?item=` opens the row it names. That query parameter is the tail of the
 //      `{{inbox.url}}` a route rendered into Slack or mail, so a reader who
 //      followed it must land on the item, not on a list to search.
+//   6. Unread is visible on the row, and the header counts the shell's total.
+//   7. Each filter reaches the server as the list argument it stands for, from
+//      the URL, and a filtered view with nothing in it says so.
 //
-// Renders the page against a supplied context value rather than a mocked API:
-// the provider's fetching is a separate contract (see
-// notifications-provider.test.tsx), and what is under test here is what the
-// page does with items it already has.
+// The page reads its own list through `notifications__list` (the client's
+// `callTool`, stubbed here) and takes the unread total and `markRead` from the
+// shell's context, supplied as a value: the provider's own fetching is a
+// separate contract (see notifications-provider.test.tsx).
 // ---------------------------------------------------------------------------
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realClient } from "../../test/setup";
+import type { InstalledConnector } from "../api/client";
 import type { NotificationView } from "../api/notifications";
 import type { NotificationsValue } from "../context/NotificationsContext";
 import type { PlacementEntry } from "../types";
@@ -37,12 +42,30 @@ import type { PlacementEntry } from "../types";
   }
 }
 
+let listed: NotificationView[] = [];
+let listArgs: Array<Record<string, unknown>> = [];
+
+mock.module("../api/client", () => ({
+  ...realClient,
+  callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
+    if (tool === "list") listArgs.push(args);
+    // Honours `unreadOnly`, the one filter whose answer changes when a row is
+    // read — which is the case the held-rows test is about.
+    const notifications = args?.unreadOnly ? listed.filter((n) => !n.readAt) : listed;
+    return {
+      content: [{ type: "text", text: JSON.stringify({ notifications, unread: 0 }) }],
+    };
+  }),
+}));
+
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes } = await import("react-router-dom");
 const { NotificationsContext } = await import("../context/NotificationsContext");
 const { ShellProvider } = await import("../context/ShellContext");
+const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsContext");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { NotificationsPage } = await import("../pages/NotificationsPage");
 
 /** A placement the focused workspace mounts, as the shell reports one. */
@@ -71,26 +94,75 @@ function item(over: Partial<NotificationView> = {}): NotificationView {
 
 let unmount: (() => void) | null = null;
 
+const WS = {
+  id: "ws_005b519ef7efc353",
+  name: "Outbound",
+  memberCount: 1,
+  connectorCount: 0,
+  userRole: "admin" as const,
+};
+
+/**
+ * The shell's context as the provider behaves: `markRead` marks the stub
+ * server's rows and moves `revision`, so the page re-reads as it does live.
+ */
+function LiveNotifications({ children }: { children: React.ReactNode }) {
+  const [revision, setRevision] = React.useState(0);
+  const value: NotificationsValue = {
+    unread: listed.filter((n) => !n.readAt).length,
+    revision,
+    refresh: () => {},
+    markRead: async (ids) => {
+      listed = listed.map((n) =>
+        ids.includes(n.id) ? { ...n, readAt: "2026-09-01T19:00:00.000Z" } : n,
+      );
+      setRevision((r) => r + 1);
+    },
+  };
+  return React.createElement(NotificationsContext.Provider, { value }, children);
+}
+
+/** An installed connector as the app-icons context lists it. Only the name fields matter here. */
+function installedApp(serverName: string, displayName: string): InstalledConnector {
+  return {
+    serverName,
+    connectorName: serverName,
+    displayName,
+    disconnectable: false,
+    version: "1.0.0",
+    state: "running",
+    scope: "workspace",
+    interactive: false,
+    toolCount: 0,
+  } as InstalledConnector;
+}
+
 async function mount(
-  over: Partial<NotificationsValue> = {},
+  { items = [], ...over }: Partial<NotificationsValue> & { items?: NotificationView[] } = {},
   placements: PlacementEntry[] = [],
   entry = "/w/ws-outbound/notifications",
+  { live = false, installed = [] }: { live?: boolean; installed?: InstalledConnector[] } = {},
 ): Promise<{
   container: HTMLDivElement;
   markRead: ReturnType<typeof mock>;
 }> {
+  listed = items;
   const markRead = mock(async () => {});
   const value: NotificationsValue = {
-    items: [],
     unread: 0,
-    loading: false,
-    error: null,
-    atPageLimit: false,
+    revision: 0,
     refresh: () => {},
     markRead,
-    markAllRead: async () => {},
     ...over,
   };
+  const routes = React.createElement(
+    Routes,
+    null,
+    React.createElement(Route, {
+      path: "/w/:slug/notifications",
+      element: React.createElement(NotificationsPage),
+    }),
+  );
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
@@ -99,28 +171,32 @@ async function mount(
       React.createElement(
         MemoryRouter,
         { initialEntries: [entry] },
-        React.createElement(
-          ShellProvider,
-          {
-            value: {
-              forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
-              mainRoutes: () => [],
-              shellWorkspaceId: "ws_005b519ef7efc353",
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS],
+          initialActiveId: WS.id,
+          children: React.createElement(
+            ShellProvider,
+            {
+              value: {
+                forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
+                mainRoutes: () => [],
+                shellWorkspaceId: "ws_005b519ef7efc353",
+              },
             },
-          },
-          React.createElement(
-            NotificationsContext.Provider,
-            { value },
             React.createElement(
-              Routes,
-              null,
-              React.createElement(Route, {
-                path: "/w/:slug/notifications",
-                element: React.createElement(NotificationsPage),
-              }),
+              WorkspaceAppIconsContext.Provider,
+              {
+                value: {
+                  iconFor: () => undefined,
+                  connectors: { workspaceId: WS.id, installed },
+                },
+              },
+              live
+                ? React.createElement(LiveNotifications, { children: routes })
+                : React.createElement(NotificationsContext.Provider, { value }, routes),
             ),
           ),
-        ),
+        }),
       ),
     );
   });
@@ -140,6 +216,11 @@ async function click(el: HTMLElement): Promise<void> {
     el.click();
   });
 }
+
+beforeEach(() => {
+  listed = [];
+  listArgs = [];
+});
 
 afterEach(() => {
   unmount?.();
@@ -330,7 +411,9 @@ describe("ordering and the empty state", () => {
         item({ id: "a:5", seq: 5, level: "urgent", title: "urgent-new" }),
       ],
     });
-    const titles = rows(container).map((r) => r.textContent?.split("acme")[0]?.trim());
+    const titles = rows(container).map(
+      (r) => r.querySelector('[data-testid="notification-title"]')?.textContent,
+    );
     expect(titles).toEqual(["urgent-new", "urgent-old", "attention-new", "info-new", "info-old"]);
   });
 
@@ -376,5 +459,115 @@ describe("?item= — where a link from outside the shell lands", () => {
     });
     expect(container.textContent).not.toContain("DNS propagated.");
     expect(markRead).not.toHaveBeenCalled();
+  });
+});
+
+describe("unread", () => {
+  test("an unread row carries the dot and a read row does not", async () => {
+    const { container } = await mount({
+      items: [
+        item({ id: "a:1", seq: 1, title: "fresh" }),
+        item({ id: "a:2", seq: 2, title: "seen", readAt: "2026-09-01T19:00:00.000Z" }),
+      ],
+    });
+    const byTitle = (title: string) => rows(container).find((r) => r.textContent?.includes(title));
+    expect(
+      byTitle("fresh")?.querySelector('[data-testid="notification-unread-dot"]'),
+    ).not.toBeNull();
+    expect(byTitle("seen")?.querySelector('[data-testid="notification-unread-dot"]')).toBeNull();
+  });
+
+  test("the header counts the shell's total, not the rows on screen", async () => {
+    const { container } = await mount({ items: [item()], unread: 140 });
+    expect(container.querySelector('[data-testid="inbox-unread-count"]')?.textContent).toBe(
+      "140 unread",
+    );
+  });
+});
+
+describe("filters", () => {
+  test("each URL filter reaches the server as its list argument", async () => {
+    await mount(
+      {},
+      [],
+      "/w/ws-outbound/notifications?status=unread&level=attention&app=acme&q=reply&within=7d",
+    );
+    const args = listArgs.at(-1)!;
+    expect(args.unreadOnly).toBe(true);
+    expect(args.level).toBe("attention");
+    expect(args.source).toBe("acme");
+    expect(args.query).toBe("reply");
+    const since = Date.parse(String(args.since));
+    expect(Math.abs(Date.now() - 7 * 24 * 60 * 60 * 1000 - since)).toBeLessThan(60_000);
+  });
+
+  test("no filters sends none", async () => {
+    await mount();
+    expect(listArgs.at(-1)).toEqual({ limit: 100 });
+  });
+
+  test("a filtered view with nothing in it says so, with a way out", async () => {
+    const { container } = await mount({}, [], "/w/ws-outbound/notifications?status=unread");
+    expect(container.textContent).toContain("Nothing matches these filters.");
+    expect(container.textContent).not.toContain("Nothing yet.");
+  });
+});
+
+describe("a row read under the Unread filter", () => {
+  test("stays on screen, open, through the re-read that no longer returns it", async () => {
+    const { container } = await mount(
+      { items: [item({ body: "the body" })] },
+      [],
+      "/w/ws-outbound/notifications?status=unread",
+      { live: true },
+    );
+    await click(rows(container)[0]!);
+    // Let the re-read the mark caused land.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(listArgs.length).toBeGreaterThan(1);
+    expect(rows(container)).toHaveLength(1);
+    expect(container.textContent).toContain("the body");
+    expect(container.textContent).not.toContain("Nothing matches these filters.");
+  });
+});
+
+describe("mark all read", () => {
+  test("says it marks only what is shown when the inbox holds more unread", async () => {
+    const { container } = await mount({ items: [item()], unread: 140 });
+    const button = Array.from(container.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").startsWith("Mark"),
+    );
+    expect(button?.textContent).toBe("Mark shown read");
+  });
+});
+
+describe("the app", () => {
+  test("a row names its connector by display name, or by server name when not installed", async () => {
+    const { container } = await mount(
+      {
+        items: [
+          item({ id: "acme:1", seq: 1, source: "acme", title: "from-acme" }),
+          item({ id: "beta:2", seq: 2, source: "beta", title: "from-beta" }),
+        ],
+      },
+      [],
+      undefined,
+      { installed: [installedApp("acme", "Acme Outreach")] },
+    );
+    const byTitle = (title: string) => rows(container).find((r) => r.textContent?.includes(title));
+    expect(byTitle("from-acme")?.textContent).toContain("Acme Outreach");
+    expect(byTitle("from-beta")?.textContent).toContain("beta");
+  });
+
+  test("a source in the inbox is in the App filter even when not installed", async () => {
+    const { container } = await mount({ items: [item({ source: "beta" })] }, [], undefined, {
+      installed: [installedApp("acme", "Acme Outreach")],
+    });
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="App"]');
+    const values = Array.from(select?.options ?? []).map((o) => o.value);
+    expect(values).toEqual(["", "acme", "beta"]);
   });
 });

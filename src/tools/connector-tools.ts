@@ -1,5 +1,6 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
+import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
 import {
   connectorSkillIdentityFrom,
@@ -1610,8 +1611,8 @@ async function handleInstallRemoteOAuth(
   const trustedUi = trusted?.ui;
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
-  // URL-safe, filesystem-safe, collision-free by construction. See
-  // `slugifyServerName` for the rule.
+  // URL-safe, filesystem-safe. Two catalog ids that share one are both refused
+  // at catalog load (`refuseServerNameCollisions`). See `slugifyServerName`.
   const serverName = slugifyServerName(entry.id);
 
   const lifecycle = ctx.runtime.getLifecycle();
@@ -1985,7 +1986,10 @@ async function validateRemoteOAuthInstall(
     // the convention puts it at, so the wiring below reads a trusted value.
     return { action: { ...action, [action.auth]: config } as RemoteOAuthInstall };
   }
-  return { action };
+  // A catalog connector is installed at the URL its entry names, never the
+  // caller's: its grants bind only to a ref at that URL (`catalog/binding.ts`).
+  const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
+  return { action: trusted ? { ...action, url: trusted.url } : action };
 }
 
 /**
@@ -2204,14 +2208,17 @@ async function handleDuplicateInstall(
   // Self-heal: workspace.json says yes but lifecycle lost the instance (prior
   // uninstall that didn't clean workspace.json). Re-seed instead of reporting
   // alreadyInstalled — the latter would skip seedInstance and fail the next
-  // OAuth initiate. The host UI comes from the catalog, as it does at boot
-  // (`catalog-ui.ts`), not from the copy the original install stored; with no
-  // catalog entry, the stored copy is all there is.
+  // OAuth initiate. The host UI comes from the catalog entry the stored ref is,
+  // as it does at boot (`catalog-ui.ts`), not from the copy the original install
+  // stored; with no catalog entry, the stored copy is all there is.
   if (!lifecycle.getInstance(dupServerName, wsId)) {
+    const binding = bindCatalogEntry(dup, trusted ? [trusted] : []);
     await lifecycle.seedInstance(
       dupServerName,
       action.url,
-      trusted ? { ...dup, ui: trusted.ui ?? null } : dup,
+      binding.kind === "uncatalogued"
+        ? dup
+        : { ...dup, ui: binding.kind === "bound" ? (binding.entry.ui ?? null) : null },
       undefined,
       wsId,
     );

@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import { log } from "../../src/observability/log.ts";
 
 /**
  * `ConnectorCatalog` is the only thing tool handlers should call.
@@ -337,5 +338,31 @@ describe("ConnectorCatalog safety scrub (XSS via _meta extension URLs)", () => {
       }),
     );
     expect(result.entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
+  });
+});
+
+describe("ConnectorCatalog server-name collisions", () => {
+  test("loads neither of two ids that share a server name, and every other entry", async () => {
+    const dir = freshCatalog();
+    // `a.b/c` and `a/b.c` both slugify to `a-b-c`.
+    writeStaticCatalog([
+      remoteServer({ name: "a.b/c" }),
+      remoteServer({ name: "io.safe/mcp" }),
+      remoteServer({ name: "a/b.c" }),
+    ]);
+    const error = spyOn(log, "error").mockImplementation(() => {});
+    try {
+      const entries = await new ConnectorCatalog(dir).catalogEntries();
+      expect(entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
+      const said = error.mock.calls.map((c) => String(c[0]));
+      expect(said).toHaveLength(2);
+      for (const line of said) {
+        expect(line).toContain('"a-b-c"');
+        expect(line).toContain("a.b/c");
+        expect(line).toContain("a/b.c");
+      }
+    } finally {
+      error.mockRestore();
+    }
   });
 });

@@ -45,26 +45,18 @@ import type { NotificationsDeclaration } from "./types.ts";
  */
 export async function collectPollTargets(
   lifecycle: ConnectorLifecycleManager,
-  declarationFor: (serverName: string) => Promise<NotificationsDeclaration | undefined>,
+  declarationFor: (
+    wsId: string,
+    serverName: string,
+  ) => Promise<NotificationsDeclaration | undefined>,
 ): Promise<PollTarget[]> {
-  // One lookup per distinct connector per sweep. The catalog is shared across
-  // workspaces, so a connector installed in twenty of them resolves once.
-  const declarations = new Map<string, Promise<NotificationsDeclaration | undefined>>();
-  const resolve = (serverName: string) => {
-    const cached = declarations.get(serverName);
-    if (cached) return cached;
-    const pending = declarationFor(serverName);
-    declarations.set(serverName, pending);
-    return pending;
-  };
-
   const targets: PollTarget[] = [];
   for (const instance of lifecycle.getInstances()) {
     const connection = instance.connections?.get(WORKSPACE_PRINCIPAL_ID);
     if (connection?.state !== "running") continue;
     const source = lifecycle.connectionSource(instance.serverName, instance.wsId);
     if (!source) continue;
-    const declaration = await resolve(instance.serverName);
+    const declaration = await declarationFor(instance.wsId, instance.serverName);
     if (!declaration) continue;
     targets.push({
       wsId: instance.wsId,

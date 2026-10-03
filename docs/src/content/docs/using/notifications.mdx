@@ -20,8 +20,9 @@ into an agent run is a **route**, and a workspace admin writes it.
 
 ## The inbox
 
-Open **Inbox** under the workspace in the left navigation. The count beside it is
-how many items nobody has read yet.
+Open the inbox from the bell in the top bar, beside **Chat**. A dot on the bell
+means something is unread; its tooltip says how many. The inbox header shows the
+same count, for the whole inbox rather than the rows on screen.
 
 ![The workspace inbox, with one item expanded to show its body, event name and raw connector data](../../../assets/guide/notifications-inbox.png)
 
@@ -30,14 +31,23 @@ above `info`, and within a level the newest is first. Each row carries:
 
 | | |
 |---|---|
-| **Title** | One line the connector wrote. Bold while unread. |
-| **Source** | The connector that emitted it — the same name its tools carry. |
+| **Unread dot** | Marks an item nobody has read. Read items are dimmed. |
+| **Title** | One line the connector wrote. |
+| **App** | The connector that emitted it, by its icon and name. |
 | **Timestamp** | When the connector says the fact happened. The expanded row also shows when this runtime received it. |
 | **Subject** | What the item is about, when the connector says. Free text, used for grouping. |
-| **Level** | `info`, `attention` or `urgent`. Advisory — the connector chose it. |
+| **Level** | `info`, `attention` or `urgent`, by icon, and a colored edge on `attention` and `urgent` rows. Advisory — the connector chose it. |
 
 Open a row to see the **body** and the event name. Opening an item marks it read;
-**Mark all read** clears the rest.
+**Mark all read** clears the rest, or **Mark shown read** when filters are on.
+
+### Filtering
+
+The bar above the list narrows it: **All** or **Unread**, a minimum level, one
+app, a time window (24 hours, 7 days or 30 days, by when the fact happened), and
+a search over the title and event name. Filters run against the whole inbox, not
+the rows already on screen, and live in the page's address, so a filtered view
+can be shared as a link.
 
 **Read state is shared across the workspace.** A notification is something a
 connector recorded, not a message addressed to a person, so the inbox is one
@@ -58,9 +68,9 @@ Under **Show details** is the connector's own structured payload, as raw JSON.
 The runtime never reads a field of it; it is passed through untouched, and shown
 here so you can see what the connector actually sent.
 
-The inbox holds 90 days. The view shows the most recent 100 items; ask the agent
-for older ones ("what notifications came in last month from acme?") and it walks
-the backlog forward.
+The inbox holds 90 days. The view shows the most recent 100 items that match the
+filters; narrow them to reach older ones, or ask the agent ("what notifications
+came in last month from acme?") and it walks the backlog forward.
 
 ### Live updates
 

@@ -74,16 +74,7 @@ const ACME: WorkspaceInfo = {
 };
 
 function inbox(unread: number): NotificationsValue {
-  return {
-    items: [],
-    unread,
-    loading: false,
-    error: null,
-    atPageLimit: false,
-    refresh: () => {},
-    markRead: async () => {},
-    markAllRead: async () => {},
-  };
+  return { unread, revision: 0, refresh: () => {}, markRead: async () => {} };
 }
 
 async function mountBar(path: string, unread = 0): Promise<void> {

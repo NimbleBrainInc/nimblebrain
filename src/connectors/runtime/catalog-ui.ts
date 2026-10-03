@@ -8,40 +8,32 @@
  * duplicate install and changes nothing; only an uninstall and reinstall did,
  * and for a connector whose uninstall releases vendor state that is not a remedy.
  * The catalog is the source of truth for host shape, and it only changes with a
- * deploy, so boot re-derives `ui` from it, by the same slug rule the install used
- * and the `admin_tools` lookup uses (`slugifyServerName(entry.id) === serverName`).
+ * deploy, so boot re-derives `ui` from the catalog entry each installed ref is,
+ * by the rule every other catalog grant uses (`bindCatalogEntry`).
  *
  * A connector no catalog entry names keeps its stored `ui`: nothing better is
  * known, and a catalog read that failed must not strip every app from the shell.
  * A catalog entry that now declares no host UI clears it, because that is what
- * the catalog says.
+ * the catalog says. A connector that carries an entry's name and is another
+ * server has its `ui` cleared: whatever it stored came from, or claims, that
+ * entry, and that entry's grants are not its.
  *
  * Placements are re-sanitized where they register (`sanitizePlacements`), so a
  * value taken here is held to the same rules as one taken at install.
  */
 
+import { bindCatalogEntry } from "../catalog/binding.ts";
 import type { ConnectorCatalogEntry } from "../catalog/types.ts";
 import { sanitizePlacements } from "./defaults.ts";
 import { slugifyServerName } from "./paths.ts";
 import type { ConnectorRef, ConnectorUiMeta, LocalConnectorMeta } from "./types.ts";
 
-/** Each catalog entry's host UI by the server name its install uses. First entry per slug wins. */
-export function catalogUiByServerName(
-  entries: readonly ConnectorCatalogEntry[],
-): Map<string, ConnectorUiMeta | null> {
-  const out = new Map<string, ConnectorUiMeta | null>();
-  for (const e of entries) {
-    const slug = slugifyServerName(e.id);
-    if (!out.has(slug)) out.set(slug, e.ui ?? null);
-  }
-  return out;
-}
-
 /**
  * Each catalog entry's display name (its core `title ?? name`, projected as
  * `ConnectorCatalogEntry.name`) by the server name its install uses. First
- * entry per slug wins. A connector no entry names has no title here; callers
- * fall back to its server name.
+ * entry per slug wins, though the catalog read already refuses a colliding pair.
+ * A connector no entry names has no title here; callers fall back to its server
+ * name.
  */
 export function catalogTitleByServerName(
   entries: readonly ConnectorCatalogEntry[],
@@ -72,13 +64,28 @@ export function namedUi(
  * The boot inventory with each catalog-named connector's `ui` replaced by the
  * catalog's. Both copies are replaced: the seeded instance reads `ref.ui` and
  * falls back to `meta.ui`, so leaving either stale would bring the old one back.
+ * `catalog` is `null` when it could not be read, which leaves every row as
+ * stored. `onMismatch` hears each row that carries an entry's name and is
+ * another server.
  */
 export function withCatalogUi<
-  T extends { serverName: string; connector: ConnectorRef; meta?: LocalConnectorMeta | null },
->(entries: readonly T[], catalogUi: ReadonlyMap<string, ConnectorUiMeta | null>): T[] {
+  T extends {
+    wsId: string;
+    serverName: string;
+    connector: ConnectorRef;
+    meta?: LocalConnectorMeta | null;
+  },
+>(
+  entries: readonly T[],
+  catalog: readonly ConnectorCatalogEntry[] | null,
+  onMismatch: (wsId: string, serverName: string, entry: ConnectorCatalogEntry) => void = () => {},
+): T[] {
+  if (catalog === null) return [...entries];
   return entries.map((entry) => {
-    if (!catalogUi.has(entry.serverName)) return entry;
-    const ui = catalogUi.get(entry.serverName) ?? null;
+    const binding = bindCatalogEntry(entry.connector, catalog);
+    if (binding.kind === "uncatalogued") return entry;
+    if (binding.kind === "mismatch") onMismatch(entry.wsId, entry.serverName, binding.entry);
+    const ui = binding.kind === "bound" ? (binding.entry.ui ?? null) : null;
     return {
       ...entry,
       connector: { ...entry.connector, ui },

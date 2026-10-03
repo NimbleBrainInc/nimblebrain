@@ -291,6 +291,8 @@ export declare const PlatformToolCatalog: {
                 level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             }>;

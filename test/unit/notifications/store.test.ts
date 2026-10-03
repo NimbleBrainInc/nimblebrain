@@ -361,6 +361,36 @@ describe("list", () => {
     expect(store.list({ limit: 2 }).length).toBe(2);
     expect(store.list({ limit: 10_000 }).length).toBe(3);
   });
+
+  test("filters by when the fact happened, inclusive", () => {
+    const store = storeFor(WS_A);
+    store.append("acme", envelope({ eventId: "old", timestamp: "2026-09-01T00:00:00Z" }));
+    store.append("acme", envelope({ eventId: "edge", timestamp: "2026-09-02T00:00:00Z" }));
+    store.append("acme", envelope({ eventId: "new", timestamp: "2026-09-03T00:00:00Z" }));
+    expect(store.list({ since: "2026-09-02T00:00:00Z" }).map((i) => i.envelope.eventId)).toEqual([
+      "new",
+      "edge",
+    ]);
+  });
+
+  test("a query matches the title or the event name, ignoring case", () => {
+    const store = storeFor(WS_A);
+    seed(store);
+    // e2's title is "A reply"; e1 and e3 fall back to their event names.
+    expect(store.list({ query: "REPLY" }).map((i) => i.envelope.eventId)).toEqual(["e2"]);
+    expect(store.list({ query: "bounce" }).map((i) => i.envelope.eventId)).toEqual(["e3"]);
+    expect(store.list({ query: "nothing-like-it" })).toEqual([]);
+  });
+});
+
+describe("unreadCount", () => {
+  test("counts the whole inbox, not one page", () => {
+    const store = storeFor(WS_A);
+    for (let i = 0; i < 5; i++) store.append("acme", envelope({ eventId: `e${i}` }));
+    store.markRead([{ source: "acme", eventId: "e0" }]);
+    expect(store.list({ limit: 2 }).length).toBe(2);
+    expect(store.unreadCount()).toBe(4);
+  });
 });
 
 describe("order", () => {

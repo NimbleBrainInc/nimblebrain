@@ -83,6 +83,10 @@ export interface NotificationListOptions {
   source?: string;
   /** Only items with a `seq` greater than this. */
   after?: number;
+  /** Only items whose `timestamp` is at or after this ISO 8601 instant. */
+  since?: string;
+  /** Only items whose title or event name contains this text, ignoring case. */
+  query?: string;
   /** Page size, clamped to {@link NOTIFICATION_LIST_MAX_LIMIT}. */
   limit?: number;
   /** Newest first (default) or oldest first. See {@link NotificationOrder}. */
@@ -217,6 +221,15 @@ export class NotificationStore {
       if (out.length >= limit) break;
     }
     return out;
+  }
+
+  /**
+   * How many items nobody has marked read, across the whole inbox. Separate
+   * from {@link list} because a page is capped: a count taken from one would
+   * stop at the page size.
+   */
+  unreadCount(): number {
+    return this.#loadAll().reduce((n, item) => (item.readAt ? n : n + 1), 0);
   }
 
   /** One item by its `(source, eventId)` identity, or `undefined`. */
@@ -454,6 +467,19 @@ function matchesFilters(item: Notification, opts: NotificationListOptions): bool
   if (opts.unreadOnly && item.readAt) return false;
   if (opts.source && item.source !== opts.source) return false;
   if (opts.after !== undefined && item.seq <= opts.after) return false;
+  if (opts.since !== undefined && Date.parse(item.envelope.timestamp) < Date.parse(opts.since)) {
+    return false;
+  }
+  if (opts.query) {
+    const needle = opts.query.toLowerCase();
+    const { title } = notificationPresentation(item.envelope);
+    if (
+      !title.toLowerCase().includes(needle) &&
+      !item.envelope.name.toLowerCase().includes(needle)
+    ) {
+      return false;
+    }
+  }
   if (opts.level) {
     const rank = NOTIFICATION_LEVEL_RANK[notificationPresentation(item.envelope).level];
     if (rank < NOTIFICATION_LEVEL_RANK[opts.level]) return false;

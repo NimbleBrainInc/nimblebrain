@@ -5,7 +5,11 @@
 // workspace's views, because the runtime walls every session to exactly one
 // workspace. Opening it lists every workspace alphabetically behind a filter
 // box (a combobox: type to narrow, ↑ ↓ to move, Enter to switch), with the
-// focused one checked. Its footer holds the two workspace-level actions:
+// focused one checked. The order never moves the focused workspace: positions
+// stay where a member learned them, and the trigger already names it. Nothing
+// is highlighted until the member types or presses ↓, so the check is the only
+// mark that reads as "selected"; the focused row scrolls into view on open.
+// Its footer holds the two workspace-level actions:
 // the focused workspace's settings, and creating a new one.
 //
 // Switching mirrors the api/client setter's equality guard — re-picking the
@@ -41,13 +45,14 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
     const q = query.trim().toLowerCase();
     return q ? ordered.filter((ws) => ws.name.toLowerCase().includes(q)) : ordered;
   }, [ordered, query]);
+  // -1: nothing highlighted (the list as opened, before typing or ↓).
   const active = Math.min(highlight, matches.length - 1);
 
   const handleOpenChange = useCallback((next: boolean) => {
     setOpen(next);
     if (next) {
       setQuery("");
-      setHighlight(0);
+      setHighlight(-1);
     }
   }, []);
 
@@ -72,6 +77,14 @@ export function WorkspaceSwitcher({ collapsed = false }: { collapsed?: boolean }
     if (!open || active < 0) return;
     document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
   });
+
+  // On open, show where the member is: the focused workspace may sit below the fold.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per open; the list is read from the DOM
+  useEffect(() => {
+    if (!open) return;
+    const index = matches.findIndex((ws) => ws.id === focused?.id);
+    if (index >= 0) document.getElementById(optionId(index))?.scrollIntoView({ block: "nearest" });
+  }, [open]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "ArrowDown") {

@@ -126,7 +126,7 @@ function dcrEntry(): CatalogListing {
     description: "Meeting notes",
     install: {
       kind: "remote-oauth",
-      url: "https://api.granola.test/mcp",
+      url: "https://mcp.granola.ai/mcp",
       transportType: "streamable-http",
       auth: "dcr",
     },
@@ -162,7 +162,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
       readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
     );
     const installed = (wsDoc.connectors as Array<{ url?: string; oauthScope?: string }>).find(
-      (b) => b.url === "https://api.granola.test/mcp",
+      (b) => b.url === "https://mcp.granola.ai/mcp",
     );
     expect(installed).toBeDefined();
     expect(installed?.oauthScope).toBe("workspace");
@@ -199,7 +199,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
       readFileSync(join(h.workDir, "workspaces", personalWsId, "workspace.json"), "utf-8"),
     );
     const installed = (wsDoc.connectors as Array<{ url?: string; oauthScope?: string }>).find(
-      (b) => b.url === "https://api.granola.test/mcp",
+      (b) => b.url === "https://mcp.granola.ai/mcp",
     );
     expect(installed?.oauthScope).toBe("workspace");
   });
@@ -301,7 +301,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     );
     const installed = (
       wsDoc.connectors as Array<{ url?: string; skillsLock?: Array<{ identity: string }> }>
-    ).find((b) => b.url === "https://api.granola.test/mcp");
+    ).find((b) => b.url === "https://mcp.granola.ai/mcp");
     expect(installed?.skillsLock?.[0]?.identity).toBe("granola");
   });
 });

@@ -14,6 +14,11 @@
 //
 // Briefing is independent (its own async timeline) — callTool is stubbed to a
 // never-resolving promise so it sits in its skeleton and doesn't interfere.
+//
+// The page also offers actions, each to someone who can take it: an invite in a
+// workspace of one, "Add app" to a workspace admin, recent conversations, and a
+// composer that sends into the chat panel. Real chat providers wrap every mount,
+// as the shell's do.
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
@@ -33,10 +38,17 @@ import { realClient } from "./setup";
 // could. WorkspaceContext skips its list call when given bootstrap data, so the
 // real setActiveWorkspaceId it calls is harmless — sibling suites reset client
 // state in their own beforeEach.
-let callToolImpl: () => Promise<unknown> = () => new Promise(() => {});
+type CallTool = (server: string, tool: string) => Promise<unknown>;
+let callToolImpl: CallTool = () => new Promise(() => {});
+// The composer's send reaches `startChatTurn`; a test records it here. Unset, the
+// real function runs, so the mock changes nothing for other suites.
+type StartChatTurn = (req: { message: string }) => Promise<unknown>;
+let startChatTurnImpl: StartChatTurn | null = null;
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callTool: () => callToolImpl(),
+  callTool: (server: string, tool: string) => callToolImpl(server, tool),
+  startChatTurn: (req: { message: string }) =>
+    startChatTurnImpl ? startChatTurnImpl(req) : realClient.startChatTurn(req as never),
 }));
 
 const ReactDOMClient = await import("react-dom/client");
@@ -47,6 +59,9 @@ const { WorkspaceProvider } = await import("../src/context/WorkspaceContext");
 const { ShellProvider } = await import("../src/context/ShellContext");
 const { toSlug } = await import("../src/lib/workspace-slug");
 const { WorkspaceAppIconsContext } = await import("../src/context/WorkspaceAppIconsContext");
+const { ChatProvider } = await import("../src/context/ChatContext");
+const { ChatPanelProvider, useChatPanelContext } = await import("../src/context/ChatPanelContext");
+const { SessionProvider } = await import("../src/context/SessionContext");
 const { useLocation } = await import("react-router-dom");
 type InstalledConnector = import("../src/api/client").InstalledConnector;
 
@@ -60,6 +75,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = null;
   callToolImpl = () => new Promise(() => {});
+  startChatTurnImpl = null;
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -102,6 +118,15 @@ const WS: WorkspaceInfo = {
   userRole: "admin",
 };
 
+/** The shell's chat providers, around the routes as `App` places them. */
+function Chat({ children }: { children: React.ReactNode }) {
+  return (
+    <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
+      <ChatPanelProvider>{children}</ChatPanelProvider>
+    </ChatProvider>
+  );
+}
+
 function appPlacement(over: Partial<PlacementEntry>): PlacementEntry {
   return {
     serverName: "crm",
@@ -115,7 +140,11 @@ function appPlacement(over: Partial<PlacementEntry>): PlacementEntry {
 }
 
 // `shellWorkspaceId` is the lever: equal to WS.id → ready; anything else → not.
-function harness(shellWorkspaceId: string | undefined, placements: PlacementEntry[]) {
+function harness(
+  shellWorkspaceId: string | undefined,
+  placements: PlacementEntry[],
+  ws: WorkspaceInfo = WS,
+) {
   const shellValue = {
     forSlot: (slot: string): PlacementEntry[] =>
       placements.filter((p) => p.slot === slot || p.slot.startsWith(`${slot}.`)),
@@ -123,12 +152,14 @@ function harness(shellWorkspaceId: string | undefined, placements: PlacementEntr
     shellWorkspaceId,
   };
   return (
-    <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
+    <MemoryRouter initialEntries={[`/w/${toSlug(ws.id)}`]}>
       <ShellProvider value={shellValue}>
-        <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
-          <Routes>
-            <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
-          </Routes>
+        <WorkspaceProvider initialWorkspaces={[ws]} initialActiveId={ws.id}>
+          <Chat>
+            <Routes>
+              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+            </Routes>
+          </Chat>
         </WorkspaceProvider>
       </ShellProvider>
     </MemoryRouter>
@@ -146,10 +177,6 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     // The false-empty regression: must NOT show "No apps installed" while loading.
     expect(findByTestId(mounted.container, "workspace-overview-empty")).toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-app-grid")).toBeNull();
-    // Header omits the (unknown) app count, but still shows members.
-    const breadcrumb = findByTestId(mounted.container, "workspace-overview-page");
-    expect(breadcrumb?.textContent).toContain("2 members");
-    expect(breadcrumb?.textContent).not.toContain("apps installed");
   });
 
   test("ready + empty → the empty card, no pending spacer", async () => {
@@ -160,7 +187,7 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     expect(findByTestId(mounted.container, "workspace-overview-app-grid")).toBeNull();
   });
 
-  test("ready + populated → the grid with cards, header shows the count", async () => {
+  test("ready + populated → the grid with cards", async () => {
     mounted = await mount(
       harness(WS.id, [
         appPlacement({ route: "crm", label: "CRM", resourceUri: "ui://crm/main" }),
@@ -179,9 +206,138 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     expect(findAllByTestId(mounted.container, "workspace-overview-app-card")).toHaveLength(2);
     expect(findByTestId(mounted.container, "workspace-overview-apps-pending")).toBeNull();
     expect(findByTestId(mounted.container, "workspace-overview-empty")).toBeNull();
+  });
+});
 
-    const page = findByTestId(mounted.container, "workspace-overview-page");
-    expect(page?.textContent).toContain("2 apps installed, 2 members");
+describe("WorkspaceOverviewPage — actions", () => {
+  const SOLO: WorkspaceInfo = { ...WS, memberCount: 1 };
+
+  test("a workspace admin alone in it is offered an invite, and Add app", async () => {
+    mounted = await mount(harness(SOLO.id, [appPlacement({})], SOLO));
+    const invite = findByTestId(mounted.container, "workspace-overview-invite");
+    expect(invite?.getAttribute("href")).toBe(`/w/${toSlug(SOLO.id)}/settings/members`);
+    expect(findByTestId(mounted.container, "workspace-overview-add-app")).not.toBeNull();
+  });
+
+  test("no invite once someone else is in it", async () => {
+    mounted = await mount(harness(WS.id, [appPlacement({})]));
+    expect(findByTestId(mounted.container, "workspace-overview-invite")).toBeNull();
+  });
+
+  test("a member who may not write sees neither invite nor Add app", async () => {
+    const member: WorkspaceInfo = { ...SOLO, userRole: "member" };
+    mounted = await mount(harness(member.id, [appPlacement({})], member));
+    expect(findByTestId(mounted.container, "workspace-overview-invite")).toBeNull();
+    expect(findByTestId(mounted.container, "workspace-overview-add-app")).toBeNull();
+  });
+
+  test("an org admin outside the membership role may still invite", async () => {
+    const member: WorkspaceInfo = { ...SOLO, userRole: "member" };
+    mounted = await mount(
+      <SessionProvider session={{ authenticated: true, user: { id: "u1", email: "a@b.c", displayName: "A", orgRole: "admin" } }}>
+        {harness(member.id, [], member)}
+      </SessionProvider>,
+    );
+    expect(findByTestId(mounted.container, "workspace-overview-invite")).not.toBeNull();
+  });
+
+  test("recent conversations list and reopen in the panel", async () => {
+    callToolImpl = (server) =>
+      server === "conversations"
+        ? Promise.resolve({
+            isError: false,
+            structuredContent: {
+              conversations: [
+                { id: "conv_1", title: "Q3 pipeline", preview: "", updatedAt: new Date().toISOString() },
+                { id: "conv_2", title: null, preview: "draft the memo", updatedAt: new Date().toISOString() },
+              ],
+            },
+          })
+        : new Promise(() => {});
+    let panelState = "";
+    function Probe() {
+      panelState = useChatPanelContext().panelState;
+      return null;
+    }
+    mounted = await mount(
+      <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
+        <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
+          <Chat>
+            <Probe />
+            <Routes>
+              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+            </Routes>
+          </Chat>
+        </WorkspaceProvider>
+      </MemoryRouter>,
+    );
+    const rows = findAllByTestId(mounted.container, "workspace-overview-recent-row");
+    expect(rows.map((r) => r.textContent?.replace(/now$/, ""))).toEqual([
+      "Q3 pipeline",
+      "draft the memo",
+    ]);
+    await act(async () => {
+      rows[0]?.click();
+    });
+    expect(panelState).toBe("sidebar");
+  });
+
+  test("no recent section for a workspace with no conversations", async () => {
+    callToolImpl = (server) =>
+      server === "conversations"
+        ? Promise.resolve({ isError: false, structuredContent: { conversations: [] } })
+        : new Promise(() => {});
+    mounted = await mount(harness(WS.id, []));
+    expect(findByTestId(mounted.container, "workspace-overview-recent")).toBeNull();
+  });
+
+  test("the composer is disabled until there is something to send", async () => {
+    mounted = await mount(harness(WS.id, []));
+    const form = findByTestId(mounted.container, "workspace-overview-ask");
+    const send = form?.getElementsByTagName("button")[0] as HTMLButtonElement | undefined;
+    expect(send?.disabled).toBe(true);
+  });
+
+  test("the composer sends the trimmed question, opens the panel, and clears", async () => {
+    const sent: string[] = [];
+    startChatTurnImpl = (req) => {
+      sent.push(req.message);
+      return new Promise(() => {});
+    };
+    // The panel persists its state; start closed so opening is observable.
+    localStorage.setItem("nb:chatPanelState", "closed");
+    let panelState = "";
+    function Probe() {
+      panelState = useChatPanelContext().panelState;
+      return null;
+    }
+    mounted = await mount(
+      <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
+        <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
+          <Chat>
+            <Probe />
+            <Routes>
+              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+            </Routes>
+          </Chat>
+        </WorkspaceProvider>
+      </MemoryRouter>,
+    );
+    expect(panelState).toBe("closed");
+    const input = findByTestId(mounted.container, "workspace-overview-ask-input") as HTMLInputElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+    await act(async () => {
+      setValue?.call(input, "  what changed this week?  ");
+      input.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+    });
+    await act(async () => {
+      (findByTestId(mounted?.container as HTMLElement, "workspace-overview-ask") as HTMLFormElement).requestSubmit();
+    });
+
+    expect(sent).toEqual(["what changed this week?"]);
+    expect(panelState).toBe("sidebar");
+    expect(input.value).toBe("");
   });
 });
 
@@ -191,8 +347,10 @@ describe("WorkspaceOverviewPage — briefing", () => {
   }
 
   test("a connector needing reconnection opens its connector page", async () => {
-    callToolImpl = () =>
-      Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } });
+    callToolImpl = (server) =>
+      server === "nb"
+        ? Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } })
+        : new Promise(() => {});
     const gmail: InstalledConnector = {
       serverName: "gmail",
       connectorName: "gmail",
@@ -212,10 +370,12 @@ describe("WorkspaceOverviewPage — briefing", () => {
       >
         <MemoryRouter initialEntries={[`/w/${slug}`]}>
           <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
-            <Routes>
-              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
-              <Route path="*" element={<Where />} />
-            </Routes>
+            <Chat>
+              <Routes>
+                <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+                <Route path="*" element={<Where />} />
+              </Routes>
+            </Chat>
           </WorkspaceProvider>
         </MemoryRouter>
       </WorkspaceAppIconsContext.Provider>,
@@ -233,17 +393,21 @@ describe("WorkspaceOverviewPage — briefing", () => {
   });
 
   test("renders nothing until the connectors list names this workspace", async () => {
-    callToolImpl = () =>
-      Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } });
+    callToolImpl = (server) =>
+      server === "nb"
+        ? Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } })
+        : new Promise(() => {});
     mounted = await mount(
       <WorkspaceAppIconsContext.Provider
         value={{ iconFor: () => undefined, connectors: { workspaceId: "ws_005820c54ca342ad", installed: [] } }}
       >
         <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
           <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
-            <Routes>
-              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
-            </Routes>
+            <Chat>
+              <Routes>
+                <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+              </Routes>
+            </Chat>
           </WorkspaceProvider>
         </MemoryRouter>
       </WorkspaceAppIconsContext.Provider>,
