@@ -20,8 +20,9 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  * was one of the inconsistencies we set out to fix; sections separate
  * themselves with spacing and a top border (see `Section`).
  *
- * Pages that don't have a save bar (e.g. read-only forms) can omit the
- * `save` prop entirely.
+ * Pages that don't have a save bar can omit the `save` prop entirely: a
+ * read-only form, or one whose fields save as they change (`useAutosaveForm`),
+ * which puts `AutosaveStatus` in the header's `action` slot instead.
  */
 export interface SettingsFormPageProps extends SettingsPageHeaderProps {
   /**

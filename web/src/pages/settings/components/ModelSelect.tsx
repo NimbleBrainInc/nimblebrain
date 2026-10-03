@@ -21,14 +21,17 @@ export function ModelSelect({
   onChange,
   availableModels,
   placeholder = "Select a model",
+  invalid,
 }: {
   id: string;
-  label: string;
+  /** Omit when the caller renders the label itself (`AutosaveField`). */
+  label?: string;
   value: string;
   onChange: (v: string) => void;
   availableModels: Record<string, ModelEntry[]>;
   /** Text for the empty option — the caller says what "no selection" means. */
   placeholder?: string;
+  invalid?: boolean;
 }) {
   // A `<select>` cannot display a value with no matching option — it falls back
   // to showing the first one. So a stored model the catalog no longer carries
@@ -39,28 +42,37 @@ export function ModelSelect({
     models.some((m) => `${provider}:${m.id}` === value),
   );
 
+  const select = (
+    <Select
+      id={id}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-invalid={invalid || undefined}
+    >
+      <option value="">{placeholder}</option>
+      {value && !known && <option value={value}>{value} (not in the current catalog)</option>}
+      {Object.entries(availableModels).map(([provider, models]) => (
+        <optgroup key={provider} label={provider}>
+          {models.map((m) => {
+            // Stored model ids are fully-qualified `provider:id`. A bare id
+            // routes to anthropic by default, so a selected
+            // `gemini-3.1-pro-preview` would 404 against the Anthropic API.
+            const qualified = `${provider}:${m.id}`;
+            return (
+              <option key={qualified} value={qualified}>
+                {m.id} (in: {m.cost.input}, out: {m.cost.output})
+              </option>
+            );
+          })}
+        </optgroup>
+      ))}
+    </Select>
+  );
+  if (!label) return select;
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">{placeholder}</option>
-        {value && !known && <option value={value}>{value} (not in the current catalog)</option>}
-        {Object.entries(availableModels).map(([provider, models]) => (
-          <optgroup key={provider} label={provider}>
-            {models.map((m) => {
-              // Stored model ids are fully-qualified `provider:id`. A bare id
-              // routes to anthropic by default, so a selected
-              // `gemini-3.1-pro-preview` would 404 against the Anthropic API.
-              const qualified = `${provider}:${m.id}`;
-              return (
-                <option key={qualified} value={qualified}>
-                  {m.id} (in: {m.cost.input}, out: {m.cost.output})
-                </option>
-              );
-            })}
-          </optgroup>
-        ))}
-      </Select>
+      {select}
     </div>
   );
 }

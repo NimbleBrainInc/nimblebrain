@@ -77,7 +77,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | [`src/lifecycle/AGENTS.md`](./src/lifecycle/AGENTS.md) | Connector `on_ready` / `on_removing` notifications |
 | [`src/connectors/runtime/AGENTS.md`](./src/connectors/runtime/AGENTS.md) | Connector teardown and workspace delete; connection credential re-validation |
 | [`src/observability/AGENTS.md`](./src/observability/AGENTS.md) | `NB_DEBUG` / `nb_debug` namespaces, structured logs, OTel spans, what may be stamped |
-| [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, shell rules, chat panel workspace scope, main-area views |
+| [`web/AGENTS.md`](./web/AGENTS.md) | Web shell: gating workspace writes, forms that save as they change and notices, shell rules, chat panel workspace scope, main-area views |
 | [`web/src/bridge/AGENTS.md`](./web/src/bridge/AGENTS.md) | MCP App Bridge rules: iframe scoping, handshake gate, notification relay, host capabilities |
 
 ## Conventions

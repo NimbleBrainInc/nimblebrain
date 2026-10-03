@@ -13,6 +13,7 @@ import { closeEventsClient } from "./api/events-client";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
+import { NoticeProvider } from "./components/notices";
 import { CommandPalette } from "./components/palette/CommandPalette";
 import { RouteGuard } from "./components/RouteGuard";
 import { ShellLayout } from "./components/ShellLayout";
@@ -137,18 +138,20 @@ function AuthenticatedApp({
 
   return (
     <ThemeProvider>
-      <SessionProvider session={session}>
-        <WorkspaceProvider initialWorkspaces={initialWorkspaces}>
-          <WorkspaceUnreadProvider token={token} workspaces={bootstrap.workspaces}>
-            <BootstrappedShell
-              token={token}
-              initialConfig={initialConfig}
-              currentUserId={bootstrap.user.id}
-              onLogout={onLogout}
-            />
-          </WorkspaceUnreadProvider>
-        </WorkspaceProvider>
-      </SessionProvider>
+      <NoticeProvider>
+        <SessionProvider session={session}>
+          <WorkspaceProvider initialWorkspaces={initialWorkspaces}>
+            <WorkspaceUnreadProvider token={token} workspaces={bootstrap.workspaces}>
+              <BootstrappedShell
+                token={token}
+                initialConfig={initialConfig}
+                currentUserId={bootstrap.user.id}
+                onLogout={onLogout}
+              />
+            </WorkspaceUnreadProvider>
+          </WorkspaceProvider>
+        </SessionProvider>
+      </NoticeProvider>
     </ThemeProvider>
   );
 }

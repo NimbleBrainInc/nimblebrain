@@ -14,9 +14,11 @@ import { createCoreToolDefs } from "../../src/tools/core-source.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import {
   EFFORT_DEFAULT,
+  type ModelConfigField,
+  type ModelConfigValues,
+  modelConfigPatch,
   THINKING_DEFAULT,
-  thinkingPatchFor,
-} from "../../web/src/pages/settings/thinking-patch.ts";
+} from "../../web/src/pages/settings/model-config-patch.ts";
 import { asDevUser, devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { facetEntry, startFacetsSource } from "../helpers/facets-server.ts";
@@ -385,8 +387,8 @@ describe("Core Source", () => {
     // The boundary this crosses is the one that kept breaking: the web tests
     // assert the patch shape, the tool tests assert hand-written inputs, and
     // nothing fed one to the other. A depth control shipped inert three times
-    // in that gap — most recently because the panel's own default-mode payload
-    // was rejected outright, which failed the whole save including model slots.
+    // in that gap. The panel saves one field at a time, so each step sends one
+    // field's patch and checks that field changed and the others did not.
     const workDir = join(testDir, `work-ui-payloads-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     const configPath = join(workDir, "nimblebrain.json");
@@ -404,58 +406,51 @@ describe("Core Source", () => {
       // Expectations are spelled out rather than derived from the same
       // predicates the panel uses — otherwise the assertion moves with the
       // bug and proves only that the code agrees with itself.
-      const cases = [
+      const steps: Array<{
+        field: ModelConfigField;
+        value: string;
+        want: Partial<Record<string, unknown>>;
+      }> = [
+        { field: "maxIterations", value: "12", want: { maxIterations: 12 } },
+        { field: "thinking", value: "enabled", want: { thinking: "enabled" } },
+        { field: "thinkingEffort", value: "high", want: { thinkingEffort: "high" } },
+        { field: "thinkingBudgetTokens", value: "8192", want: { thinkingBudgetTokens: 8192 } },
+        // Changing the mode leaves the depth and budget stored.
         {
-          mode: THINKING_DEFAULT,
-          effort: "high",
-          budget: 8192,
-          wantEffort: "high",
-          wantBudget: 8192,
+          field: "thinking",
+          value: "adaptive",
+          want: { thinking: "adaptive", thinkingEffort: "high", thinkingBudgetTokens: 8192 },
         },
-        {
-          mode: THINKING_DEFAULT,
-          effort: EFFORT_DEFAULT,
-          budget: null,
-          wantEffort: undefined,
-          wantBudget: undefined,
-        },
-        { mode: "enabled", effort: "high", budget: 8192, wantEffort: "high", wantBudget: 8192 },
-        { mode: "enabled", effort: "max", budget: null, wantEffort: "max", wantBudget: undefined },
-        {
-          mode: "enabled",
-          effort: EFFORT_DEFAULT,
-          budget: 4096,
-          wantEffort: undefined,
-          wantBudget: 4096,
-        },
-        { mode: "off", effort: "high", budget: 8192, wantEffort: undefined, wantBudget: undefined },
-        {
-          mode: "adaptive",
-          effort: "high",
-          budget: 8192,
-          wantEffort: undefined,
-          wantBudget: undefined,
-        },
-      ] as const;
+        { field: "thinking", value: THINKING_DEFAULT, want: { thinking: undefined } },
+        { field: "thinkingEffort", value: EFFORT_DEFAULT, want: { thinkingEffort: undefined } },
+        { field: "thinkingBudgetTokens", value: "", want: { thinkingBudgetTokens: undefined } },
+        { field: "fastModel", value: "", want: { models: undefined } },
+        { field: "maxIterations", value: "", want: { maxIterations: undefined } },
+      ];
 
-      for (const c of cases) {
-        const patch = thinkingPatchFor(c.mode, c.effort, c.budget);
-        // Sent alongside the rest of the panel's payload, because a
-        // rejection here also drops the model slots and limits.
-        const result = await asDevUser(() =>
-          source.execute("set_model_config", {
-            ...patch,
-            maxIterations: 12,
-          }),
+      for (const step of steps) {
+        const before = { ...runtime.getOperatorConfig() } as Record<string, unknown>;
+        const patch = modelConfigPatch(
+          step.field,
+          step.value as ModelConfigValues[typeof step.field],
         );
-        const label = `${JSON.stringify(c.mode)}/${c.effort}/${c.budget}`;
+        const result = await asDevUser(() => source.execute("set_model_config", patch));
+        const label = `${step.field}=${JSON.stringify(step.value)}`;
         expect(`${label}: ${result.isError}`).toBe(`${label}: false`);
-        // The save landed in full, not just the thinking half.
-        expect(runtime.getOperatorConfig().maxIterations).toBe(12);
 
-        const cfg = runtime.getOperatorConfig();
-        expect(`${label}: ${cfg.thinkingEffort}`).toBe(`${label}: ${c.wantEffort}`);
-        expect(`${label}: ${cfg.thinkingBudgetTokens}`).toBe(`${label}: ${c.wantBudget}`);
+        const after = runtime.getOperatorConfig() as Record<string, unknown>;
+        for (const [key, want] of Object.entries(step.want)) {
+          expect(`${label} → ${key}: ${JSON.stringify(after[key])}`).toBe(
+            `${label} → ${key}: ${JSON.stringify(want)}`,
+          );
+        }
+        // Nothing beyond the step's own fields moved.
+        for (const key of ["maxIterations", "thinking", "thinkingEffort", "thinkingBudgetTokens"]) {
+          if (key in step.want) continue;
+          expect(`${label} → ${key}: ${JSON.stringify(after[key])}`).toBe(
+            `${label} → ${key}: ${JSON.stringify(before[key])}`,
+          );
+        }
       }
     } finally {
       await runtime.shutdown();

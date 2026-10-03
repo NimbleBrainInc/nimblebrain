@@ -11,6 +11,7 @@ import type { PlacementEntry } from "../types";
 import { ArtifactPanel } from "./ArtifactPanel";
 import { ChatChrome } from "./ChatChrome";
 import { MobileSidebarDrawer } from "./MobileSidebarDrawer";
+import { NoticeViewport } from "./notices";
 import { ReleaseUpdateBanner } from "./ReleaseUpdateBanner";
 import { SidebarHeader } from "./shell/SidebarHeader";
 import { TopBar } from "./shell/TopBar";
@@ -113,7 +114,7 @@ export const ShellLayout = memo(function ShellLayout({
           modes don't need this push: mobile chat is full-width;
           fullscreen chat covers the content overlay-style. */}
       <main
-        className="flex-1 h-dvh overflow-hidden bg-background text-foreground flex flex-col"
+        className="relative flex-1 h-dvh overflow-hidden bg-background text-foreground flex flex-col"
         style={{
           marginRight: mainMarginRight,
           transition: `margin-right ${CHAT_TRANSITION_STANDARD}`,
@@ -121,6 +122,7 @@ export const ShellLayout = memo(function ShellLayout({
       >
         <TopBar />
         <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
+        <NoticeViewport />
       </main>
 
       {/* Chat chrome (toggle + sliding panel + resize handle) — the single,
