@@ -95,12 +95,9 @@ export function NameDialog({
 
   return (
     <Modal title={title} onClose={onClose}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
-      >
+      {/* No <form>: the host's sandbox withholds allow-forms, so a submit is
+          blocked before any handler runs. Enter and the button call `submit`. */}
+      <div className="name-form">
         <input
           className="text-input"
           aria-label="Folder name"
@@ -108,6 +105,9 @@ export function NameDialog({
           maxLength={255}
           onChange={(e) => setName(e.target.value)}
           onFocus={(e) => e.currentTarget.select()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
         />
         {error && <div className="modal-error">{error}</div>}
         <div className="modal-actions">
@@ -115,14 +115,15 @@ export function NameDialog({
             Cancel
           </button>
           <button
-            type="submit"
+            type="button"
             className="btn-primary"
             disabled={busy || !name.trim() || name.includes("/")}
+            onClick={submit}
           >
             {busy ? "Saving…" : submitLabel}
           </button>
         </div>
-      </form>
+      </div>
     </Modal>
   );
 }

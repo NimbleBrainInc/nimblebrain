@@ -402,19 +402,25 @@ function useViewDrop(enabled: boolean, onDrop: (files: File[]) => void): boolean
       // Leaving for a child fires too; only leaving the frame has no target.
       if (e.relatedTarget === null) setDragging(false);
     };
+    // Any drop or cancelled drag ends the drag, wherever it lands. Captured,
+    // because the dialog's zone stops its drop before it bubbles here.
+    const end = () => setDragging(false);
     const drop = (e: DragEvent) => {
       if (!hasFiles(e)) return;
       e.preventDefault();
-      setDragging(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
       if (enabled && files.length > 0) dropRef.current(files);
     };
     window.addEventListener("dragover", over);
     window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", end, true);
+    window.addEventListener("dragend", end, true);
     window.addEventListener("drop", drop);
     return () => {
       window.removeEventListener("dragover", over);
       window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", end, true);
+      window.removeEventListener("dragend", end, true);
       window.removeEventListener("drop", drop);
     };
   }, [enabled]);
