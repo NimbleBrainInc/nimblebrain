@@ -35,13 +35,17 @@ export function useFileActions(reload: () => void) {
 
   const move = useCallback(
     async (ids: string[], target: string) => {
-      const fileIds = ids.filter((id) => id.startsWith("fl_"));
-      if (fileIds.length > 0) await call("move", { ids: fileIds, folderId: target });
-      for (const id of ids.filter((x) => x.startsWith("fd_"))) {
-        await call("update_folder", { id, manifest: { parentId: target } });
+      try {
+        const fileIds = ids.filter((id) => id.startsWith("fl_"));
+        if (fileIds.length > 0) await call("move", { ids: fileIds, folderId: target });
+        for (const id of ids.filter((x) => x.startsWith("fd_"))) {
+          await call("update_folder", { id, manifest: { parentId: target } });
+        }
+        flash(`Moved ${plural(ids.length, "item")}`);
+      } finally {
+        // A move that fails part way has still moved what came before it.
+        reload();
       }
-      flash(`Moved ${plural(ids.length, "item")}`);
-      reload();
     },
     [call, flash, reload],
   );
@@ -91,21 +95,21 @@ export function useFileActions(reload: () => void) {
   const upload = useCallback(
     async (folderId: string, files?: readonly File[]): Promise<UploadOutcome> => {
       setBusy("upload");
+      const sent = await send(() => (files ? uploadFiles(files) : pickFiles({ multiple: true })));
       try {
-        const sent = await send(() => (files ? uploadFiles(files) : pickFiles({ multiple: true })));
-        if (sent.storedIds.length > 0) {
-          if (folderId !== ROOT) await call("move", { ids: sent.storedIds, folderId });
-          reload();
+        if (sent.storedIds.length > 0 && folderId !== ROOT) {
+          await call("move", { ids: sent.storedIds, folderId });
         }
         return sent;
       } catch (err) {
         // The files were stored but the move failed: they sit at the top level.
+        const reason = err instanceof Error ? err.message : String(err);
         return {
-          storedIds: [],
-          refusal: null,
-          error: err instanceof Error ? err.message : String(err),
+          ...sent,
+          error: `${plural(sent.storedIds.length, "file")} uploaded to the top level, not moved here: ${reason}`,
         };
       } finally {
+        if (sent.storedIds.length > 0) reload();
         setBusy(null);
       }
     },
