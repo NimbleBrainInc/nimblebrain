@@ -40,7 +40,7 @@ import { validateToolInput } from "../tools/validate-input.ts";
 import { isWorkspaceOptional } from "../tools/workspace-optional.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
-import { defaultWorkspaceFor, ensureUserWorkspace } from "../workspace/provisioning.ts";
+import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
@@ -1395,40 +1395,22 @@ export async function handleBootstrap(
     return apiError(401, "authentication_required", "Authentication is required");
   }
 
-  // 1. Workspaces the user is a member of. A user who belongs to none — new,
-  // or removed from every one — gets one here: bootstrap is where the web shell
-  // starts, and the shell needs a workspace to show.
-  const userWorkspaces = await ensureUserWorkspace(
-    runtime.getWorkspaceStore(),
-    {
-      id: identity.id,
-      ...(identity.displayName ? { displayName: identity.displayName } : {}),
-    },
-    runtime.getUserStore(),
-  );
+  // Workspaces the user is a member of. A user who belongs to none — new, or
+  // removed from every one — gets one here: bootstrap is where the web shell
+  // starts, and a user with no workspace has nowhere to go. Which workspace to
+  // open is the URL's (ADR-0044); bootstrap chooses none.
+  const userWorkspaces = await ensureUserWorkspace(runtime.getWorkspaceStore(), {
+    id: identity.id,
+    ...(identity.displayName ? { displayName: identity.displayName } : {}),
+  });
 
-  // 2-3. The default focus. The client's URL (`/w/:slug`) says which workspace
-  // the user is in; bootstrap only supplies one for workspace-agnostic routes
-  // (home, profile): the user's default workspace. This is the one place the
-  // server chooses a workspace, and it reads nothing from the request to do it.
-  // The profile is read fresh, since provisioning may have just set the default.
-  const profile = await runtime.getUserStore().get(identity.id);
-  const activeWorkspace: string = defaultWorkspaceFor(userWorkspaces, profile?.preferences).id;
-
-  // 4. Shell placements for the active workspace (ambient + scoped, merged).
-  const placements = runtime.getPlacementRegistry().forWorkspace(activeWorkspace);
-
-  // 5. Config
   const models = runtime.getModelSlots();
   // Read inside a request context because the slot readers resolve the
   // caller's own model preference from it, and this handler has none of its
   // own. Untinted, this reports the org default to everyone who chose
   // otherwise — and the composer would name a model the first turn then
   // contradicts.
-  const newConversationModel = runWithRequestContext(
-    { identity, workspaceId: activeWorkspace },
-    () => runtime.getDefaultModel(),
-  );
+  const newConversationModel = runWithRequestContext({ identity }, () => runtime.getDefaultModel());
   const configuredProviders = runtime.getConfiguredProviders();
   const maxIterations = runtime.getMaxIterations();
   const maxInputTokens = runtime.getMaxInputTokens();
@@ -1453,12 +1435,6 @@ export async function handleBootstrap(
       mcpUrl: mcpResourceUrl(ws.id),
       unread: runtime.getNotificationStore(ws.id).unreadCount(),
     })),
-    activeWorkspace,
-    shell: {
-      placements,
-      chatEndpoint: `/v1/workspaces/${activeWorkspace}/chat/stream`,
-      eventsEndpoint: "/v1/events",
-    },
     config: {
       models,
       configuredProviders,

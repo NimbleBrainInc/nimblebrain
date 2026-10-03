@@ -45,12 +45,11 @@ async function readRaw(id: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(recordPath(id), "utf-8"));
 }
 
-async function addUser(id: string, displayName: string, defaultWorkspaceId?: string) {
+async function addUser(id: string, displayName: string) {
   await users.create({
     id,
     email: `${id}@example.com`,
     displayName,
-    ...(defaultWorkspaceId ? { preferences: { defaultWorkspaceId } } : {}),
   });
 }
 
@@ -81,40 +80,6 @@ describe("retireLegacyPersonalWorkspaces", () => {
     }
     expect((await readRaw("ws_0072ba21c553903d")).name).toBe("Team");
     expect(await store.listLegacyPersonal()).toEqual([]);
-  });
-
-  test("sets the owner's default when unset", async () => {
-    await addUser("user_alice", "Alice");
-    await writeRaw({
-      id: "ws_0080a032f327d468",
-      name: "Alice's Workspace",
-      members: [{ userId: "user_alice", role: "admin" }],
-      isPersonal: true,
-      ownerUserId: "user_alice",
-    });
-
-    await retireLegacyPersonalWorkspaces(store, users);
-
-    expect((await users.get("user_alice"))?.preferences.defaultWorkspaceId).toBe(
-      "ws_0080a032f327d468",
-    );
-  });
-
-  test("keeps an owner's default that is already set", async () => {
-    await addUser("user_alice", "Alice", "ws_00278e0e46f42da3");
-    await writeRaw({
-      id: "ws_0080a032f327d468",
-      name: "Alice's Workspace",
-      members: [{ userId: "user_alice", role: "admin" }],
-      isPersonal: true,
-      ownerUserId: "user_alice",
-    });
-
-    await retireLegacyPersonalWorkspaces(store, users);
-
-    expect((await users.get("user_alice"))?.preferences.defaultWorkspaceId).toBe(
-      "ws_00278e0e46f42da3",
-    );
   });
 
   test("renames a workspace still carrying the old provisioned name, keeps an edited one", async () => {

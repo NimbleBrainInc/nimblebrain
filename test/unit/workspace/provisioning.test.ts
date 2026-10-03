@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UserStore } from "../../../src/identity/user.ts";
 import {
-  defaultWorkspaceFor,
   ensureUserWorkspace,
   provisionedWorkspaceName,
 } from "../../../src/workspace/provisioning.ts";
@@ -81,45 +80,6 @@ describe("ensureUserWorkspace", () => {
     expect(second?.id).not.toBe(first?.id);
     expect(second?.members).toEqual([{ userId: "user_alice", role: "admin" }]);
   });
-
-  test("sets the new workspace as the user's default, keeping other preferences", async () => {
-    const users = new UserStore(workDir);
-    await users.create({
-      id: "user_alice",
-      email: "alice@example.com",
-      displayName: "Alice",
-      preferences: { timezone: "Pacific/Honolulu" },
-    });
-
-    const [ws] = await ensureUserWorkspace(
-      store,
-      { id: "user_alice", displayName: "Alice" },
-      users,
-    );
-
-    const profile = await users.get("user_alice");
-    expect(profile?.preferences).toEqual({
-      timezone: "Pacific/Honolulu",
-      defaultWorkspaceId: ws!.id,
-    });
-  });
-
-  test("does not touch preferences when the user already has a workspace", async () => {
-    const users = new UserStore(workDir);
-    await users.create({ id: "user_alice", email: "alice@example.com", displayName: "Alice" });
-    await store.create("Team", { members: [{ userId: "user_alice", role: "admin" }] });
-
-    await ensureUserWorkspace(store, { id: "user_alice" }, users);
-
-    expect((await users.get("user_alice"))?.preferences.defaultWorkspaceId).toBeUndefined();
-  });
-
-  test("tolerates a user with no profile record", async () => {
-    const users = new UserStore(workDir);
-    const [ws] = await ensureUserWorkspace(store, { id: "user_ghost" }, users);
-    expect(ws?.id).toMatch(OPAQUE_ID);
-    expect(await users.get("user_ghost")).toBeNull();
-  });
 });
 
 describe("provisionedWorkspaceName", () => {
@@ -132,27 +92,5 @@ describe("provisionedWorkspaceName", () => {
     ["   ", "Workspace"],
   ])("%p → %p", (displayName, expected) => {
     expect(provisionedWorkspaceName(displayName)).toBe(expected);
-  });
-});
-
-describe("defaultWorkspaceFor", () => {
-  test("prefers the default workspace while the user is a member", async () => {
-    const a = await store.create("A");
-    const b = await store.create("B");
-    expect(defaultWorkspaceFor([a, b], { defaultWorkspaceId: b.id }).id).toBe(b.id);
-  });
-
-  test("falls back to the first membership when the default is not one of them", async () => {
-    const a = await store.create("A");
-    const b = await store.create("B");
-    expect(defaultWorkspaceFor([a, b], { defaultWorkspaceId: "ws_003c5b935c4183ea" }).id).toBe(
-      a.id,
-    );
-  });
-
-  test("falls back to the first membership with no preference", async () => {
-    const a = await store.create("A");
-    expect(defaultWorkspaceFor([a], undefined).id).toBe(a.id);
-    expect(defaultWorkspaceFor([a], {}).id).toBe(a.id);
   });
 });

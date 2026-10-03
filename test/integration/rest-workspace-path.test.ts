@@ -246,7 +246,7 @@ describe("identity-scoped routes need no workspace", () => {
     const res = await send("GET", "/v1/bootstrap");
     expect(res.status).toBe(200);
     const body = await readJson<BootstrapResponse>(res);
-    expect(typeof body.activeWorkspace).toBe("string");
+    expect(body.workspaces.length).toBeGreaterThan(0);
   });
 
   it("health", async () => {

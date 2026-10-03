@@ -11,8 +11,6 @@ import type { WorkspaceStore } from "./workspace-store.ts";
  * this reconcile is where they leave the records that carry them. For each
  * record with `isPersonal: true` and an `ownerUserId`, before the fields go:
  *
- * - the owner's `preferences.defaultWorkspaceId` is set to it when unset, so
- *   the owner keeps landing where they always have;
  * - it is renamed to `provisionedWorkspaceName(owner.displayName)` when it
  *   is named exactly `"<displayName>'s Workspace"`. Any other name is kept;
  * - its owner is seated as admin when missing from its member list.
@@ -44,8 +42,8 @@ export async function retireLegacyPersonalWorkspaces(
 }
 
 /**
- * Settle the owner a record names: their default, the workspace's name, and
- * their seat. Returns the name to keep.
+ * Settle the owner a record names: the workspace's name and their seat.
+ * Returns the name to keep.
  */
 async function settleOwner(
   store: WorkspaceStore,
@@ -56,11 +54,6 @@ async function settleOwner(
   let name = workspace.name;
   const owner = await users.get(ownerUserId);
   if (owner) {
-    if (!owner.preferences.defaultWorkspaceId) {
-      await users.update(ownerUserId, {
-        preferences: { ...owner.preferences, defaultWorkspaceId: workspace.id },
-      });
-    }
     if (workspace.name === `${owner.displayName}'s Workspace`) {
       name = provisionedWorkspaceName(owner.displayName);
     }

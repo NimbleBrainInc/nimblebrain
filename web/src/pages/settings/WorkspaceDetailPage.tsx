@@ -1,7 +1,7 @@
 import { Package, Plus, Trash2, Users } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { callTool } from "../../api/client";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { Button } from "../../components/ui/button";
@@ -124,9 +124,12 @@ export function WorkspaceDetailPage() {
       setError(null);
 
       const [wsRes, membersRes, usersRes] = await Promise.all([
-        callTool("nb", "manage_workspaces", { action: "list" }),
-        callTool("nb", "manage_workspaces", { action: "list_members", workspaceId: id }),
-        callTool("nb", "manage_users", { action: "list" }),
+        callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list" }),
+        callToolWithoutWorkspace("nb", "manage_workspaces", {
+          action: "list_members",
+          workspaceId: id,
+        }),
+        callToolWithoutWorkspace("nb", "manage_users", { action: "list" }),
       ]);
 
       const wsData = parseToolResult<{ workspaces: Workspace[] }>(wsRes);
@@ -163,7 +166,7 @@ export function WorkspaceDetailPage() {
     setAdding(true);
     setAddError(null);
     try {
-      await callTool("nb", "manage_workspaces", {
+      await callToolWithoutWorkspace("nb", "manage_workspaces", {
         action: "add_member",
         workspaceId: id,
         userId: addUserId,
@@ -189,7 +192,7 @@ export function WorkspaceDetailPage() {
       if (!confirmed) return;
       setRemovingId(userId);
       try {
-        await callTool("nb", "manage_workspaces", {
+        await callToolWithoutWorkspace("nb", "manage_workspaces", {
           action: "remove_member",
           workspaceId: id,
           userId,

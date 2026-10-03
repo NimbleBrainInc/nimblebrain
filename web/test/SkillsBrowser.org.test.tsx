@@ -27,7 +27,7 @@ const callToolCalls: CallToolArgs[] = [];
 
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
+  callToolWithoutWorkspace: async (server: string, tool: string, args: Record<string, unknown>) => {
     callToolCalls.push({ server, tool, args });
     if (server === "skills" && tool === "list") {
       return {

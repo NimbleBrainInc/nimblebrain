@@ -52,9 +52,10 @@ REST addresses a workspace the same way: `/v1/workspaces/<wsId>/…` (ADR-0037),
 admitted by the same membership check. A route either acts on a workspace and
 names it in its path, or acts on the caller or on a primitive its own id
 locates (bootstrap, the event stream, a conversation, a file) and names none.
-No header, argument, qualified name or default selects a workspace for a request, and a conversation is resumed only at its own workspace's path. Bootstrap
-alone suggests one — the web shell's default focus, the caller's default
-workspace — and the URL the user is on overrides it.
+No header, argument, qualified name or default selects a workspace for a request, and a conversation is resumed only at its own workspace's path. The
+URL is the only thing that names a workspace: bootstrap returns the caller's
+workspaces and no focus (ADR-0044). A kernel tool that acts on the caller or
+the org needs no workspace and is called without one (ADR-0043).
 
 A workspace exists because `create` made it and stops existing because `delete`
 archived it. **No write brings one into being**: a writer may create paths
@@ -63,13 +64,12 @@ So a workspace directory on disk is always one a create produced, which is what
 lets `list()` treat an unparseable `workspace.json` as corruption rather than as
 a tree some writer conjured.
 
-### Default workspace
-The workspace a user lands in when nothing names one:
-`preferences.defaultWorkspaceId`, while they are a member of it, else their
-earliest membership. A user who belongs to no workspace gets one at bootstrap,
-named for them with them as admin, and it becomes their default. It is an
-ordinary workspace — it can be shared, and nothing marks how it was made
-(ADR-0039).
+### First workspace
+A user who belongs to no workspace gets one at bootstrap, named for them with
+them as admin. It is an ordinary workspace — it can be shared, and nothing
+marks how it was made (ADR-0039) or makes it the one the user opens. `/` takes
+a user in exactly one workspace into it and shows anyone else all of theirs
+(ADR-0044).
 
 ### Identity provider
 What authenticates a request and says who made it, named by `auth.adapter` in

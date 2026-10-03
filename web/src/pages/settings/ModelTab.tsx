@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { callTool } from "../../api/client";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
@@ -95,7 +95,7 @@ export function ModelTab() {
   // save, because a save changes what `resolved` reports: clearing an override
   // moves its field's placeholder to the new effective value.
   const loadConfig = useCallback(async () => {
-    const config = parseToolResult<ModelConfig>(await callTool("nb", "get_config"));
+    const config = parseToolResult<ModelConfig>(await callToolWithoutWorkspace("nb", "get_config"));
     const qualify = (id: string | undefined) => qualifyModelId(id, config.availableModels ?? {});
     setDefaultModel(qualify(config.models?.default));
     setFastModel(qualify(config.models?.fast));
@@ -131,7 +131,7 @@ export function ModelTab() {
       const clearable = (value: number | null, key: string, clearFlag: string) =>
         value !== null ? { [key]: value } : { [clearFlag]: true };
 
-      await callTool("nb", "set_model_config", {
+      await callToolWithoutWorkspace("nb", "set_model_config", {
         models: { default: defaultModel, fast: fastModel },
         ...clearable(maxIterations, "maxIterations", "clearMaxIterations"),
         ...clearable(maxInputTokens, "maxInputTokens", "clearMaxInputTokens"),

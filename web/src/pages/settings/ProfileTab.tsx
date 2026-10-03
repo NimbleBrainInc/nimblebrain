@@ -1,6 +1,6 @@
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { callTool } from "../../api/client";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Badge } from "../../components/ui/badge";
 import { Input } from "../../components/ui/input";
@@ -69,7 +69,7 @@ export function ProfileTab() {
   }, []);
 
   useEffect(() => {
-    callTool("nb", "get_config")
+    callToolWithoutWorkspace("nb", "get_config")
       .then((res) => applyConfig(parseToolResult<ProfileConfig>(res)))
       .catch(() => {
         // Saving now would post the empty defaults this form fell back to, and
@@ -98,7 +98,7 @@ export function ProfileTab() {
     try {
       // Empty clears the choice — `set_preferences` reads it as "follow the
       // configured default", which is what the empty option offers.
-      const res = await callTool("nb", "set_preferences", {
+      const res = await callToolWithoutWorkspace("nb", "set_preferences", {
         displayName,
         timezone,
         theme,

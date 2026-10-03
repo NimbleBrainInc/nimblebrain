@@ -1,6 +1,6 @@
 import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { callTool } from "../../api/client";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Button } from "../../components/ui/button";
 import {
@@ -91,7 +91,9 @@ export function OrgArchivesTab() {
   const fetchArchives = useCallback(async () => {
     try {
       setError(null);
-      const res = await callTool("nb", "manage_workspaces", { action: "list_archives" });
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
+        action: "list_archives",
+      });
       const data = parseToolResult<{ archives: Archive[] }>(res);
       setArchives(data.archives ?? []);
     } catch (err) {
@@ -116,7 +118,7 @@ export function OrgArchivesTab() {
       if (!confirmed) return;
       setPurging(archive.name);
       try {
-        const res = await callTool("nb", "manage_workspaces", {
+        const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
           action: "purge_archive",
           archive: archive.name,
         });
