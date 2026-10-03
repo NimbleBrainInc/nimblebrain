@@ -16,7 +16,7 @@ import type {
 // hand-written second copy of either would drift with nothing to catch it.
 import { resolveLoadingMechanism } from "../../_generated/skill-loading";
 import { approxTokens } from "../../_generated/skill-tokens";
-import { callTool } from "../../api/client";
+import { callTool, callToolWithoutWorkspace } from "../../api/client";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
@@ -194,6 +194,9 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   // The other two vantages need no gate here: /org/skills is already org-admin
   // route-guarded, and a user may always write their own profile.
   const canWrite = createLockedScope !== "workspace" || canWriteActiveWorkspace;
+  // The org and profile vantages are in no workspace: their skills are read and
+  // written with none (ADR-0043), so no workspace tier is merged into the list.
+  const callSkills = lockedScope ? callToolWithoutWorkspace : callTool;
 
   const [skills, setSkills] = useState<ListedSkill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -221,7 +224,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
       if (fetchScope !== "all") args.scope = fetchScope;
       // List both active and disabled so the user can see Off rules and
       // turn them back on. The per-row toggle reflects the current state.
-      const res = await callTool("skills", "list", args);
+      const res = await callSkills("skills", "list", args);
       const data = parseToolResponse<SkillsListOutput>(res);
       setSkills(data.skills);
     } catch (err) {
@@ -230,7 +233,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     } finally {
       setLoading(false);
     }
-  }, [fetchScope]);
+  }, [fetchScope, callSkills]);
 
   useEffect(() => {
     void fetchSkills();
@@ -244,19 +247,22 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
     }
   }, [skills, selectedId]);
 
-  const fetchDetail = useCallback(async (id: string) => {
-    setDetailLoading(true);
-    try {
-      const res = await callTool("skills", "read", { id });
-      const data = parseToolResponse<ReadSkill>(res);
-      setDetail(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to read skill.");
-      setDetail(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
+  const fetchDetail = useCallback(
+    async (id: string) => {
+      setDetailLoading(true);
+      try {
+        const res = await callSkills("skills", "read", { id });
+        const data = parseToolResponse<ReadSkill>(res);
+        setDetail(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to read skill.");
+        setDetail(null);
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    [callSkills],
+  );
 
   useEffect(() => {
     if (!selectedId) {
@@ -281,7 +287,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
       setError(null);
       setNotice(null);
       try {
-        const res = await callTool("skills", tool, args);
+        const res = await callSkills("skills", tool, args);
         const data = parseToolResponse<Partial<SkillsWriteOutput>>(res);
         if (data.frontmatterApplied?.length) {
           setNotice(
@@ -296,7 +302,7 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
         setActionPending(false);
       }
     },
-    [fetchSkills],
+    [fetchSkills, callSkills],
   );
 
   // `set_status`, not `activate`/`deactivate`: those two now mute a skill for a

@@ -1,7 +1,7 @@
 import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { callTool } from "../../api/client";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -251,7 +251,7 @@ export function WorkspacesTab() {
   const fetchWorkspaces = useCallback(async () => {
     try {
       setError(null);
-      const res = await callTool("nb", "manage_workspaces", { action: "list" });
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", { action: "list" });
       const data = parseToolResult<{ workspaces: Workspace[] }>(res);
       setWorkspaces(data.workspaces ?? []);
     } catch (err) {
@@ -270,7 +270,7 @@ export function WorkspacesTab() {
     setCreating(true);
     setCreateError(null);
     try {
-      await callTool("nb", "manage_workspaces", {
+      await callToolWithoutWorkspace("nb", "manage_workspaces", {
         action: "create",
         name: createName.trim(),
       });
@@ -290,7 +290,10 @@ export function WorkspacesTab() {
       if (!confirmed) return;
       setDeletingId(workspaceId);
       try {
-        await callTool("nb", "manage_workspaces", { action: "delete", workspaceId });
+        await callToolWithoutWorkspace("nb", "manage_workspaces", {
+          action: "delete",
+          workspaceId,
+        });
         await fetchWorkspaces();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to delete workspace");

@@ -1,6 +1,6 @@
 import { RotateCcw, Trash2, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { callTool } from "../../api/client";
+import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -190,7 +190,7 @@ export function UsersTab() {
   const fetchUsers = useCallback(async () => {
     try {
       setError(null);
-      const res = await callTool("nb", "manage_users", { action: "list" });
+      const res = await callToolWithoutWorkspace("nb", "manage_users", { action: "list" });
       const data = parseToolResult<{ users: User[] }>(res);
       setUsers(data.users ?? []);
     } catch (err) {
@@ -209,7 +209,7 @@ export function UsersTab() {
     setCreating(true);
     setCreateError(null);
     try {
-      await callTool("nb", "manage_users", {
+      await callToolWithoutWorkspace("nb", "manage_users", {
         action: "create",
         email: createEmail.trim(),
         displayName: createName.trim(),
@@ -235,7 +235,7 @@ export function UsersTab() {
       if (!confirmed) return;
       setBusyId(userId);
       try {
-        await callTool("nb", "manage_users", { action: "delete", userId });
+        await callToolWithoutWorkspace("nb", "manage_users", { action: "delete", userId });
         await fetchUsers();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to deactivate user");
@@ -250,7 +250,7 @@ export function UsersTab() {
     async (userId: string) => {
       setBusyId(userId);
       try {
-        await callTool("nb", "manage_users", { action: "restore", userId });
+        await callToolWithoutWorkspace("nb", "manage_users", { action: "restore", userId });
         await fetchUsers();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to restore user");

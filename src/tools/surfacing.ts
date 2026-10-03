@@ -31,8 +31,9 @@ import { toolNameMatchesPattern } from "./tool-pattern.ts";
  *      model: the chat tool list (`visibleTools` at the top of `surfaceTools`
  *      below), `nb__search`, the `/mcp` `tools/list`, and the invalid-name
  *      recovery hint (`ToolRegistry.searchTools`); the engine also refuses to
- *      promote it. Only the CALL paths stay open — `/v1/workspaces/:wsId/tools/call` and `/mcp`
- *      `tools/call` still dispatch by name, which is how the web shell and views
+ *      promote it. Only the CALL paths stay open — `/v1/workspaces/:wsId/tools/call`,
+ *      `/v1/tools/call` (a tool that works with no workspace) and `/mcp` `tools/call`
+ *      still dispatch by name, which is how the web shell and views
  *      reach it. A connector's tool that declares the same visibility is held to
  *      the same rule. Feature gating (`isToolEnabled`) and role visibility
  *      (`isToolVisibleToRole`) are independent filters layered on top, not

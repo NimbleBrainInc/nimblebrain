@@ -72,6 +72,7 @@ import {
 } from "../../skills/writer.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
+import { WORKSPACE_OPTIONAL_META } from "../../tools/workspace-optional.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
 import type {
@@ -291,6 +292,7 @@ export function createSkillsSource(
     {
       name: "list",
       description: SKILLS_LIST_DESCRIPTION,
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsListInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -315,6 +317,7 @@ export function createSkillsSource(
     {
       name: "read",
       description: SKILLS_READ_DESCRIPTION,
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsReadInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -344,6 +347,7 @@ export function createSkillsSource(
     {
       name: "create",
       description: SKILLS_CREATE_DESCRIPTION,
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsCreateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -357,6 +361,7 @@ export function createSkillsSource(
     {
       name: "update",
       description: SKILLS_UPDATE_DESCRIPTION,
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsUpdateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -393,6 +398,7 @@ export function createSkillsSource(
     {
       name: "delete",
       description: SKILLS_DELETE_DESCRIPTION,
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsDeleteInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -405,7 +411,7 @@ export function createSkillsSource(
     {
       name: "set_status",
       description: SKILLS_SET_STATUS_DESCRIPTION,
-      meta: { ui: { visibility: ["app"] } },
+      meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
       inputSchema: SkillsSetStatusInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
@@ -598,8 +604,8 @@ async function listSkills(
   const includeLayer3 = filter.layer === undefined || filter.layer === 3;
   const includeLayer1 = filter.layer === undefined || filter.layer === 1;
 
-  // Layer 3: discovered via the runtime's per-conversation overlay (or the
-  // platform-only static pool when there's no workspace context).
+  // Layer 3: discovered via the runtime's per-conversation overlay: org,
+  // the request's workspace when it names one, and the caller's own.
   //
   // Skills surfaced as Layer 1 resources (today: the vendored authoring
   // guide) are filtered out here so they don't appear twice — once via
@@ -608,9 +614,7 @@ async function listSkills(
   const layer1SourcePaths = new Set<string>([resolve(authoringGuidePath)]);
   if (includeLayer3) {
     const { wsId, userId } = resolveCallContext(runtime);
-    const skills = wsId
-      ? runtime.loadConversationSkills(wsId, userId)
-      : runtime.getContextSkills().concat(runtime.getMatchableSkills());
+    const skills = runtime.loadConversationSkills(wsId, userId);
     for (const skill of skills) {
       if (isListableLayer3Skill(skill, layer1SourcePaths)) out.push(skillToListed(skill));
     }

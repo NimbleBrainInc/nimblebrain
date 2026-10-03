@@ -1,9 +1,8 @@
 import type { BootstrapResponse } from "../../src/api/schemas/responses.ts";
 import { readJson } from "../helpers/http.ts";
 /**
- * /v1/bootstrap provisions a workspace for a user who belongs to none and
- * picks the default focus (`activeWorkspace`) from the user's
- * `preferences.defaultWorkspaceId`, falling back to the earliest membership.
+ * /v1/bootstrap provisions a workspace for a user who belongs to none, and
+ * names no focus: which workspace to open is the URL's (ADR-0044).
  *
  * Runs handleBootstrap directly against a real Runtime — no HTTP server
  * needed since the handler accepts (Runtime, identity) and returns a
@@ -85,7 +84,7 @@ async function bootstrapFor(userId: string, displayName = userId): Promise<Boots
 }
 
 describe("bootstrap — a user with no workspace gets one", () => {
-  test("provisions an ordinary workspace named for the user, as their default", async () => {
+  test("provisions an ordinary workspace named for the user, and records nothing about it", async () => {
     await createUser("user_mat", "Mat Goldsborough");
 
     const body = await bootstrapFor("user_mat", "Mat Goldsborough");
@@ -95,10 +94,9 @@ describe("bootstrap — a user with no workspace gets one", () => {
     expect(ws.id).toMatch(OPAQUE_ID);
     expect(ws.name).toBe("Mat's workspace");
     expect(ws.role).toBe("admin");
-    expect(body.activeWorkspace).toBe(ws.id);
 
     const profile = await runtime.getUserStore().get("user_mat");
-    expect(profile?.preferences.defaultWorkspaceId).toBe(ws.id);
+    expect(profile?.preferences).toEqual({});
   });
 
   test("a second bootstrap does not create another workspace", async () => {
@@ -119,7 +117,7 @@ describe("bootstrap — a user with no workspace gets one", () => {
       Array.from({ length: 5 }, () => bootstrapFor("user_mat", "Mat Goldsborough")),
     );
 
-    const ids = new Set(bodies.map((b) => b.activeWorkspace));
+    const ids = new Set(bodies.map((b) => b.workspaces[0]?.id));
     expect(ids.size).toBe(1);
     expect(await runtime.getWorkspaceStore().getWorkspacesForUser("user_mat")).toHaveLength(1);
   });
@@ -137,39 +135,16 @@ describe("bootstrap — a user with no workspace gets one", () => {
   });
 });
 
-describe("bootstrap — default focus", () => {
-  test("follows preferences.defaultWorkspaceId over an earlier-created membership", async () => {
+describe("bootstrap — names no focus", () => {
+  test("lists every membership and chooses none of them", async () => {
     await createUser("user_alice", "Alice");
-    // Earlier-created team workspace, so the preferred one is NOT the first
-    // membership — otherwise the preference and the fallback alias.
     const [team, own] = await createInOrder(["Team Alpha", "Alice's workspace"], "user_alice");
-    const alice = (await runtime.getUserStore().get("user_alice"))!;
-    await runtime.getUserStore().update("user_alice", {
-      preferences: { ...alice.preferences, defaultWorkspaceId: own },
-    });
 
     const body = await bootstrapFor("user_alice");
 
-    expect(body.workspaces[0]?.id).toBe(team!);
-    expect(body.activeWorkspace).toBe(own!);
-  });
-
-  test("falls back to the earliest membership when the user left the preferred one", async () => {
-    await createUser("user_alice", "Alice");
-    const [team, other, preferred] = await createInOrder(
-      ["Team Alpha", "Other", "Preferred"],
-      "user_alice",
-    );
-    const alice = (await runtime.getUserStore().get("user_alice"))!;
-    await runtime.getUserStore().update("user_alice", {
-      preferences: { ...alice.preferences, defaultWorkspaceId: preferred },
-    });
-    await runtime.getWorkspaceStore().removeMember(preferred!, "user_alice");
-
-    const body = await bootstrapFor("user_alice");
-
-    expect(body.workspaces.map((w) => w.id)).toEqual([team!, other!]);
-    expect(body.activeWorkspace).toBe(team!);
+    expect(body.workspaces.map((w) => w.id)).toEqual([team!, own!]);
+    expect("activeWorkspace" in body).toBe(false);
+    expect("shell" in body).toBe(false);
   });
 
   test("no workspace entry carries isPersonal", async () => {

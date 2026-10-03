@@ -1613,6 +1613,6 @@ describe("manage_connectors workspace secrets", () => {
     const tool = buildTool(h, ADMIN_USER, null);
     const result = await tool.handler({ action: "list_secret_keys" });
     expect(result.isError).toBe(true);
-    expect((result.content?.[0] as { text?: string })?.text).toMatch(/Workspace context required/);
+    expect((result.content?.[0] as { text?: string })?.text).toMatch(/names no workspace/);
   });
 });

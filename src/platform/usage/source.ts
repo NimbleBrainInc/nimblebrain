@@ -25,6 +25,7 @@ import { ORG_ADMIN_ROLES } from "../../identity/types.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
+import { WORKSPACE_OPTIONAL_META } from "../../tools/workspace-optional.ts";
 import { aggregateUsage } from "../../usage/aggregate.ts";
 import {
   type UsageGroupBy,
@@ -89,6 +90,7 @@ export function createUsageSource(runtime: Runtime, eventSink: EventSink): McpSo
     {
       name: "report",
       description: USAGE_REPORT_DESCRIPTION,
+      meta: { ...WORKSPACE_OPTIONAL_META },
       inputSchema: UsageReportInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
-  callTool,
+  callToolWithoutWorkspace,
   logout,
   setAuthToken,
   setOnAuthError,
@@ -76,13 +76,7 @@ import { WorkspaceWebhooksTab } from "./pages/settings/WorkspaceWebhooksTab";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
-import type {
-  BootstrapResponse,
-  ConfigInfo,
-  FileLimits,
-  PlacementEntry,
-  ShellResponse,
-} from "./types";
+import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
 import "./index.css";
 
 function AuthenticatedApp({
@@ -102,7 +96,7 @@ function AuthenticatedApp({
 
   // Fire-and-forget telemetry init (non-blocking)
   useEffect(() => {
-    callTool("nb", "workspace_info", {})
+    callToolWithoutWorkspace("nb", "workspace_info", {})
       .then((res) => {
         let raw: unknown = res.structuredContent;
         if (!raw && res.content?.[0]?.text) {
@@ -121,8 +115,6 @@ function AuthenticatedApp({
   }, []);
 
   const initialWorkspaces: WorkspaceInfo[] = bootstrapWorkspacesToInfo(bootstrap.workspaces);
-
-  const initialShell: ShellResponse = bootstrap.shell;
 
   const initialConfig = {
     configuredProviders: bootstrap.config.configuredProviders,
@@ -146,14 +138,10 @@ function AuthenticatedApp({
   return (
     <ThemeProvider>
       <SessionProvider session={session}>
-        <WorkspaceProvider
-          initialWorkspaces={initialWorkspaces}
-          initialActiveId={bootstrap.activeWorkspace ?? undefined}
-        >
+        <WorkspaceProvider initialWorkspaces={initialWorkspaces}>
           <WorkspaceUnreadProvider token={token} workspaces={bootstrap.workspaces}>
             <BootstrappedShell
               token={token}
-              initialShell={initialShell}
               initialConfig={initialConfig}
               currentUserId={bootstrap.user.id}
               onLogout={onLogout}
@@ -168,13 +156,11 @@ function AuthenticatedApp({
 /** Inner component that has access to WorkspaceContext (needed for useShell workspace switch). */
 function BootstrappedShell({
   token,
-  initialShell,
   initialConfig,
   currentUserId,
   onLogout,
 }: {
   token: string;
-  initialShell: ShellResponse;
   initialConfig: {
     configuredProviders: string[];
     newConversationModel?: string;
@@ -193,7 +179,7 @@ function BootstrappedShell({
     forSlot,
     mainRoutes,
     refresh: refreshShell,
-  } = useShell(token, activeWorkspace?.id, initialShell);
+  } = useShell(token, activeWorkspace?.id);
 
   if (loading) {
     return (

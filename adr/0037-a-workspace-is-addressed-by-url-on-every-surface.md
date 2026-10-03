@@ -1,6 +1,6 @@
 # 0037. A workspace is addressed by URL on every surface
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0044
 - Date: 2026-09-25
 - Serves: secure RBAC
 
@@ -35,9 +35,8 @@ addresses, like any other resource it names.
   checked before any lookup; membership is checked on every request with exact
   id equality; a malformed id, an unknown workspace and a workspace the caller
   does not belong to get one answer. Both surfaces call the same code.
-- **The server never chooses a workspace for a request.** Bootstrap is the one
-  place it chooses anything: a default focus for the web shell, which the URL
-  the user is on overrides.
+- **The server never chooses a workspace.** Bootstrap returns the caller's
+  workspaces and no focus; the URL names the workspace (ADR-0044).
 
 ## Consequences
 

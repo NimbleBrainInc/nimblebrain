@@ -554,7 +554,7 @@ The `action` field is required. All other fields in `params` are action-specific
 | Action | Params | Description |
 |--------|--------|-------------|
 | `openConversation` | `{ id: string }` | Open the chat panel and load a specific conversation. |
-| `openApp` | `{ name: string, target?: string }` | Open an installed app, named by its route, server name or sidebar label. `target` is a view inside it, by the stable address that app reports in [`ai.nimblebrain/location`](#ainimblebrainlocation); the shell sends it to that app as [`ai.nimblebrain/navigate`](#ainimblebrainnavigate) once the app is on screen, whether it was already open or not. |
+| `openApp` | `{ name: string, target?: string }` | Open an installed app, named by its route, server name or sidebar label. `target` is a view inside it, by the stable address that app reports in [`ai.nimblebrain/location`](#ainimblebrainlocation); the shell sends it to that app as [`ai.nimblebrain/navigate`](#ainimblebrainnavigate) once the app has reported its location, whether it was already open or not. An app opened by this action gets the target at its first report. |
 | `openConnectorSettings` | none | Open this connector's settings page in the current workspace. The connector is always the one that sent the action. |
 
 The bridge adds `serverName`, the server whose view sent the action, to every action's params, replacing any `serverName` the app passed. It hands every action to the registered `onAction` callback, or dispatches it as an `nb:action` custom event on `window` when no callback is registered. The shell ignores an action it does not know. To put a message into the conversation, use [`ui/message`](#uimessage); to open an external page, [`ui/open-link`](#uiopen-link).
@@ -685,7 +685,7 @@ A view that sends nothing still gets a title: the bar shows the name of the side
 
 ### `ai.nimblebrain/navigate`
 
-Sent by the host when the user picks an entry in the top bar (a breadcrumb, or back), naming the trail entry to go to by the `id` your last `ai.nimblebrain/location` gave it:
+Sent by the host when the user picks an entry in the top bar (a breadcrumb, or back), or when an `openApp` action names a view inside your app, naming the view to go to by its `id`:
 
 ```json
 {
@@ -695,7 +695,9 @@ Sent by the host when the user picks an entry in the top bar (a breadcrumb, or b
 }
 ```
 
-Navigate there, then send the new trail. The host sends it only to an app that has sent a trail, so it needs no declaration of its own.
+Navigate there, then send the new trail. The `id` is either one of your trail's own or another address your app reports, such as a record the agent read from your tools, so resolve any address you would report, not only the entries on screen.
+
+The host sends it only to an app that has sent a trail, so it needs no declaration of its own. That is also when: an app opened at a view gets it at its first `ai.nimblebrain/location`, because the handshake completes before an app has subscribed to anything, and a notification no handler is waiting for is lost. Subscribe to `navigate` no later than you send your first location (`useTrail` does both in one render).
 
 ## Security model
 

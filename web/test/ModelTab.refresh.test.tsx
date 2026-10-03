@@ -34,7 +34,7 @@ const tools: string[] = [];
 
 mock.module("../src/api/client", () => ({
   ...realClient,
-  callTool: async (_server: string, tool: string, args: Record<string, unknown>) => {
+  callToolWithoutWorkspace: async (_server: string, tool: string, args: Record<string, unknown>) => {
     tools.push(tool);
     if (tool === "get_config") {
       if (refreshFails && tools.includes("set_model_config")) throw new Error("network down");

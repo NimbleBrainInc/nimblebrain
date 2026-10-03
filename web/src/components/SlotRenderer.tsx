@@ -1,5 +1,5 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { getResources, uiPathFromUri } from "../api/client";
 import type { BridgeHandle } from "../bridge/bridge";
 import { createBridge } from "../bridge/bridge";
@@ -32,10 +32,10 @@ interface SlotRendererProps {
   onLocation?: (trail: AppTrailEntry[], navigate: (id: string) => void) => void;
   /**
    * A view to open inside the placement, by its stable address, sent as
-   * `ai.nimblebrain/navigate`: to a placement as it mounts (the bridge holds it
-   * until the app's handshake), and again whenever `key` changes on a placement
-   * already mounted. `key` identifies the request, so the same address asked
-   * for twice is sent twice.
+   * `ai.nimblebrain/navigate` once the placement's app is listening (it has
+   * reported a location): at its first report when the target came with the
+   * mount, and again whenever `key` changes after that. `key` identifies the
+   * request, so the same address asked for twice is sent twice.
    */
   target?: { id: string; key: string };
   /**
@@ -116,6 +116,7 @@ function mountPlacement(
   shared: BridgeCallbacks,
   fitContent: boolean,
   onLocation: SlotRendererProps["onLocation"],
+  onLocationReport: (bridge: BridgeHandle) => void,
 ): BridgeHandle {
   const { html, metaUi } = resource;
   const iframe = createAppIframe(fitContent ? buildSizedHtml(html) : html, entry.serverName, {
@@ -145,7 +146,10 @@ function mountPlacement(
   let bridge: BridgeHandle | null = null;
   const callbacks: BridgeCallbacks = {
     ...shared,
-    onLocation: (trail) => onLocation?.(trail, (id) => bridge?.navigate(id)),
+    onLocation: (trail) => {
+      if (bridge) onLocationReport(bridge);
+      onLocation?.(trail, (id) => bridge?.navigate(id));
+    },
   };
   if (fitContent) {
     // A non-positive report comes from an app whose root has not rendered yet;
@@ -157,17 +161,6 @@ function mountPlacement(
   }
   bridge = createBridge(iframe, entry.serverName, callbacks);
   return bridge;
-}
-
-/** Send `target` to each placement's app, recording its key as sent. */
-function sendTarget(
-  bridges: readonly BridgeHandle[],
-  target: SlotRendererProps["target"],
-  sent: { current: string | null },
-): void {
-  if (!target) return;
-  for (const bridge of bridges) bridge.navigate(target.id);
-  sent.current = target.key;
 }
 
 export function SlotRenderer({
@@ -212,9 +205,37 @@ export function SlotRenderer({
   onLocationRef.current = onLocation;
   const targetRef = useRef(target);
   targetRef.current = target;
-  // The `key` of the last target sent, so a target is sent once whether the
-  // mount or the key change delivers it.
+  // The `key` of the last target delivered, so a target is delivered once
+  // whether the mount or the key change delivers it.
   const sentTargetKeyRef = useRef<string | null>(null);
+  // A target reaches an app only once it is listening, which is once it has
+  // reported a location: the bridge flushes held messages at the handshake,
+  // before the app has rendered the code that subscribes to `navigate`, and an
+  // app drops a notification nobody subscribed to. An app that reports a trail
+  // subscribes in the same render as its first report (`useTrail`), so the
+  // report is the signal. Until then the target waits here, and the app's first
+  // report delivers it. An app that never reports a trail has no handler for
+  // `navigate` and is never sent one, as the bridge documents.
+  const listeningRef = useRef(new WeakSet<BridgeHandle>());
+  const pendingTargetRef = useRef<SlotRendererProps["target"]>(undefined);
+
+  /** Deliver `target` to every mounted app already listening; the rest get it on their first report. */
+  const deliverTarget = useCallback((next: SlotRendererProps["target"]) => {
+    if (!next) return;
+    sentTargetKeyRef.current = next.key;
+    pendingTargetRef.current = next;
+    for (const bridge of bridgesRef.current) {
+      if (listeningRef.current.has(bridge)) bridge.navigate(next.id);
+    }
+  }, []);
+
+  /** A placement reported a location. The first time, it listens now, so a waiting target reaches it. */
+  const onLocationReport = useCallback((bridge: BridgeHandle) => {
+    if (listeningRef.current.has(bridge)) return;
+    listeningRef.current.add(bridge);
+    const waiting = pendingTargetRef.current;
+    if (waiting) bridge.navigate(waiting.id);
+  }, []);
 
   const filtered = routeFilter ? placements.filter((p) => p.route === routeFilter) : placements;
 
@@ -258,6 +279,7 @@ export function SlotRenderer({
           bridgeCallbacks,
           fitContent,
           (trail, navigate) => onLocationRef.current?.(trail, navigate),
+          onLocationReport,
         );
       } catch (err) {
         console.warn(`Failed to load placement ${entry.resourceUri}:`, err);
@@ -276,7 +298,7 @@ export function SlotRenderer({
         if (bridge) bridges.push(bridge);
       }
       bridgesRef.current = bridges;
-      if (!cancelled) sendTarget(bridges, targetRef.current, sentTargetKeyRef);
+      if (!cancelled) deliverTarget(targetRef.current);
     }
 
     renderPlacements();
@@ -287,8 +309,10 @@ export function SlotRenderer({
         b.destroy();
       });
       // A target arriving before the next mount finishes goes to that mount,
-      // never to these destroyed bridges.
+      // never to these destroyed bridges. A waiting target was these
+      // placements' own: the next ones get only the target they mount with.
       bridgesRef.current = [];
+      pendingTargetRef.current = undefined;
       if (container) container.innerHTML = "";
     };
     // Only re-mount iframes when placements change, not when callbacks change.
@@ -296,12 +320,12 @@ export function SlotRenderer({
   }, [placementKey]);
 
   // A new target for placements already mounted. One that arrives before the
-  // mount finishes is sent by the mount instead, as `sentTargetKeyRef` records.
+  // mount finishes is delivered by the mount instead, as `sentTargetKeyRef` records.
   useEffect(() => {
     if (!target || target.key === sentTargetKeyRef.current) return;
     if (bridgesRef.current.length === 0) return;
-    sendTarget(bridgesRef.current, target, sentTargetKeyRef);
-  }, [target]);
+    deliverTarget(target);
+  }, [target, deliverTarget]);
 
   // Propagate host-context changes (theme, workspace, manage flag) to mounted
   // iframes via the ext-apps `host-context-changed` notification. Iframes stay

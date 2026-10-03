@@ -2,7 +2,7 @@ import { DEV_IDENTITY, DevIdentityProvider } from "../../src/identity/providers/
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
 import type { IdentityStores } from "../../src/runtime/types.ts";
-import { defaultWorkspaceFor, ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
+import { ensureUserWorkspace } from "../../src/workspace/provisioning.ts";
 
 /**
  * The dev identity provider over the runtime's stores, for
@@ -27,20 +27,17 @@ export function asDevUser<T>(fn: () => T, workspaceId?: string): T {
 }
 
 /**
- * The dev user's workspace: the one bootstrap gives a user who belongs to none,
- * provisioned if needed, with its registry ready. The runtime never picks a
+ * The dev user's first workspace: the one bootstrap gives a user who belongs to
+ * none, provisioned if needed, with its registry ready. The runtime never picks a
  * workspace for a request, so a test that drives it directly names this one.
  */
 export async function devWorkspace(runtime: Runtime): Promise<string> {
-  const store = runtime.getWorkspaceStore();
-  const userStore = runtime.getUserStore();
-  const memberships = await ensureUserWorkspace(
-    store,
-    { id: DEV_IDENTITY.id, displayName: DEV_IDENTITY.displayName },
-    userStore,
-  );
-  const user = await userStore.get(DEV_IDENTITY.id);
-  const wsId = defaultWorkspaceFor(memberships, user?.preferences).id;
+  const [first] = await ensureUserWorkspace(runtime.getWorkspaceStore(), {
+    id: DEV_IDENTITY.id,
+    displayName: DEV_IDENTITY.displayName,
+  });
+  if (!first) throw new Error("ensureUserWorkspace returned no workspace");
+  const wsId = first.id;
   await runtime.ensureWorkspaceRegistry(wsId);
   return wsId;
 }

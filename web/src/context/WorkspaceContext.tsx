@@ -50,7 +50,11 @@ export interface WorkspaceProviderProps {
    * this list supplies.
    */
   initialWorkspaces: WorkspaceInfo[];
-  /** Pre-resolved active workspace ID from bootstrap. */
+  /**
+   * A workspace to start focused on, for a provider mounted outside the router
+   * (a test, an embedded surface). The app passes none: the URL names the
+   * workspace, and the route guard focuses it.
+   */
   initialActiveId?: string;
 }
 
@@ -61,12 +65,10 @@ export function WorkspaceProvider({
 }: WorkspaceProviderProps) {
   const [workspaces] = useState(initialWorkspaces);
   const [activeWorkspace, setActiveState] = useState<WorkspaceInfo | null>(() => {
-    // The default focus comes from the server (`initialActiveId`, the user's
-    // default workspace). When the URL is a `/w/:slug` deep-link, the route
-    // guard overrides this from the slug. There is no persisted "remembered
-    // selection" — the URL is the single source of truth for which workspace
-    // the user is in.
-    const active = initialWorkspaces.find((w) => w.id === initialActiveId) ?? initialWorkspaces[0];
+    // The URL is the only source of which workspace the user is in: the route
+    // guard focuses the workspace a `/w/:slug` path names. Nothing is focused
+    // until one does, and a page outside `/w/` names none (ADR-0044).
+    const active = initialWorkspaces.find((w) => w.id === initialActiveId);
     if (active) {
       setActiveWorkspaceId(active.id);
     }
