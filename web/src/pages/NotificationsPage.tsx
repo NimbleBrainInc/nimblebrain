@@ -234,12 +234,13 @@ export function NotificationsPage() {
     if (item && !item.readAt) markIds([item.id]);
   }, [focusPresent, focusId, items, markIds]);
 
+  const sources = useMemo(() => [...new Set(items.map((item) => item.source))], [items]);
   const shownUnread = ordered.filter((item) => !item.readAt).map((item) => item.id);
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto p-6 space-y-4">
-        <InboxFilterBar filters={filters} onChange={setFilter} />
+        <InboxFilterBar filters={filters} onChange={setFilter} sources={sources} />
 
         <div className="flex min-h-8 items-center justify-between gap-4 text-sm">
           <span data-testid="inbox-unread-count" className="text-muted-foreground">
@@ -323,23 +324,29 @@ export function NotificationsPage() {
 function InboxFilterBar({
   filters,
   onChange,
+  sources,
 }: {
   filters: InboxFilters;
   onChange: (name: string, value: string | undefined) => void;
+  /** The sources of the items on screen, which need not all be installed. */
+  sources: string[];
 }) {
   const { connectors } = useWorkspaceAppIcons();
   const apps = useMemo(() => {
-    const list = (connectors?.installed ?? []).map((c) => ({
-      value: c.serverName,
-      label: c.displayName,
-    }));
-    // An item can outlive its connector's install; a link naming that source
-    // still selects it rather than showing "Any app".
-    if (filters.app && !list.some((a) => a.value === filters.app)) {
-      list.push({ value: filters.app, label: filters.app });
-    }
-    return list.sort((a, b) => a.label.localeCompare(b.label));
-  }, [connectors, filters.app]);
+    const installed = connectors?.installed ?? [];
+    const label = (source: string) =>
+      installed.find((c) => c.serverName === source)?.displayName ?? source;
+    // Installed apps, plus any source already in the inbox: an item can outlive
+    // its connector's install, and a link naming that source still selects it.
+    const values = new Set([
+      ...installed.map((c) => c.serverName),
+      ...sources,
+      ...(filters.app ? [filters.app] : []),
+    ]);
+    return [...values]
+      .map((value) => ({ value, label: label(value) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [connectors, sources, filters.app]);
 
   const [text, setText] = useState(filters.q ?? "");
   useEffect(() => setText(filters.q ?? ""), [filters.q]);
