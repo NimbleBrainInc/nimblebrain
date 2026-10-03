@@ -40,9 +40,7 @@ export function Dashboard() {
   const breadcrumb = useBreadcrumb(list.result, browse.searching, browse.folderId);
   // While browsing, the chips count what choosing one would search: this
   // folder and everything below it, or everything at the top level.
-  const browseFacets = useFacets(
-    browse.searching ? null : browse.inFolder ? { folderId: browse.folderId, recursive: true } : {},
-  );
+  const browseFacets = useFacets(facetScope(browse));
   const folders = list.result?.folders ?? [];
   const files = list.result?.files ?? [];
   const rowIds = useMemo(() => [...folders, ...files].map((r) => r.id), [folders, files]);
@@ -296,6 +294,12 @@ function DialogLayer({
         />
       );
   }
+}
+
+/** What a chip would search from here, or `null` while a search already says. */
+function facetScope(browse: ReturnType<typeof useBrowseState>): Record<string, unknown> | null {
+  if (browse.searching) return null;
+  return browse.inFolder ? { folderId: browse.folderId, recursive: true } : {};
 }
 
 function deleteMessage(ids: string[]): string {
