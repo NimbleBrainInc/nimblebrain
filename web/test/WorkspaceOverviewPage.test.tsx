@@ -40,9 +40,15 @@ import { realClient } from "./setup";
 // state in their own beforeEach.
 type CallTool = (server: string, tool: string) => Promise<unknown>;
 let callToolImpl: CallTool = () => new Promise(() => {});
+// The composer's send reaches `startChatTurn`; a test records it here. Unset, the
+// real function runs, so the mock changes nothing for other suites.
+type StartChatTurn = (req: { message: string }) => Promise<unknown>;
+let startChatTurnImpl: StartChatTurn | null = null;
 mock.module("../src/api/client", () => ({
   ...realClient,
   callTool: (server: string, tool: string) => callToolImpl(server, tool),
+  startChatTurn: (req: { message: string }) =>
+    startChatTurnImpl ? startChatTurnImpl(req) : realClient.startChatTurn(req as never),
 }));
 
 const ReactDOMClient = await import("react-dom/client");
@@ -69,6 +75,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = null;
   callToolImpl = () => new Promise(() => {});
+  startChatTurnImpl = null;
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -289,6 +296,48 @@ describe("WorkspaceOverviewPage — actions", () => {
     const form = findByTestId(mounted.container, "workspace-overview-ask");
     const send = form?.getElementsByTagName("button")[0] as HTMLButtonElement | undefined;
     expect(send?.disabled).toBe(true);
+  });
+
+  test("the composer sends the trimmed question, opens the panel, and clears", async () => {
+    const sent: string[] = [];
+    startChatTurnImpl = (req) => {
+      sent.push(req.message);
+      return new Promise(() => {});
+    };
+    // The panel persists its state; start closed so opening is observable.
+    localStorage.setItem("nb:chatPanelState", "closed");
+    let panelState = "";
+    function Probe() {
+      panelState = useChatPanelContext().panelState;
+      return null;
+    }
+    mounted = await mount(
+      <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
+        <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>
+          <Chat>
+            <Probe />
+            <Routes>
+              <Route path="/w/:slug" element={<WorkspaceOverviewPage />} />
+            </Routes>
+          </Chat>
+        </WorkspaceProvider>
+      </MemoryRouter>,
+    );
+    expect(panelState).toBe("closed");
+    const input = findByTestId(mounted.container, "workspace-overview-ask-input") as HTMLInputElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    const WindowEvent = (globalThis as unknown as { window: { Event: typeof Event } }).window.Event;
+    await act(async () => {
+      setValue?.call(input, "  what changed this week?  ");
+      input.dispatchEvent(new WindowEvent("input", { bubbles: true }));
+    });
+    await act(async () => {
+      (findByTestId(mounted?.container as HTMLElement, "workspace-overview-ask") as HTMLFormElement).requestSubmit();
+    });
+
+    expect(sent).toEqual(["what changed this week?"]);
+    expect(panelState).toBe("sidebar");
+    expect(input.value).toBe("");
   });
 });
 
