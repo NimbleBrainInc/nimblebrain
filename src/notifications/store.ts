@@ -382,7 +382,8 @@ export class NotificationStore {
   /**
    * `notification.read`, after the rewrite. Read state is shared across the
    * workspace, so every member's count moves; the frame carries the count
-   * `markRead` took on its way through, so nobody re-reads to learn it. A mark that changed nothing says nothing.
+   * `markRead` took on its way through, so nobody re-reads to learn it. A
+   * mark that changed nothing says nothing.
    */
   #announceRead(changed: readonly Notification[], unread: number): void {
     if (changed.length === 0) return;
