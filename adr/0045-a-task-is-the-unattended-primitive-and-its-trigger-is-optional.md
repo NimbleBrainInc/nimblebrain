@@ -1,4 +1,4 @@
-# 0043. A task is the unattended primitive; its trigger is optional, and its outcome separates running from being good
+# 0045. A task is the unattended primitive; its trigger is optional, and its outcome separates running from being good
 
 - Status: Proposed
 - Date: 2026-10-03
