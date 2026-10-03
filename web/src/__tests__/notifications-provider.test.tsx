@@ -7,10 +7,12 @@
 //      of whatever page came back.
 //   2. A burst of frames is ONE read. A poll cycle delivers a batch; forty
 //      events must not be forty `notifications__list` calls.
-//   3. A reconnect refetches. The workspace stream has no `Last-Event-Id`
+//   3. A `notification.read` frame refetches. Read state is shared across the
+//      workspace, so a teammate's mark must clear this bell.
+//   4. A reconnect refetches. The workspace stream has no `Last-Event-Id`
 //      replay, so everything that arrived during the gap is simply absent —
 //      without this an inbox left open through a deploy is silently stale.
-//   4. Every read and mark names the provider's workspace. The active
+//   5. Every read and mark names the provider's workspace. The active
 //      workspace is a module variable other writers move, so a call addressed
 //      through it can answer for a workspace the provider never asked about.
 //
@@ -180,6 +182,27 @@ describe("a live frame", () => {
 
     expect(listCalls).toBe(2);
     expect(seen.unread).toBe(1);
+  });
+
+  test("a read frame refetches, so a teammate's mark clears the bell", async () => {
+    listed = [notification()];
+    const seen = { unread: 0 };
+    await mount(seen);
+    expect(seen.unread).toBe(1);
+
+    // Read state is shared across the workspace: someone else marked it.
+    listed = [notification({ readAt: "2026-09-01T19:00:00.000Z" })];
+    await act(async () => {
+      lastOptions?.onEvent("notification.read", {
+        workspaceId: WS,
+        ids: ["acme:evt_1"],
+        unread: 0,
+      });
+    });
+    await settle();
+
+    expect(listCalls).toBe(2);
+    expect(seen.unread).toBe(0);
   });
 
   test("a burst of frames is one read", async () => {
