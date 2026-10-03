@@ -12,7 +12,11 @@ import {
 import { NotificationPoller } from "../../notifications/poller.ts";
 import { RouteDispatcher } from "../../notifications/routes.ts";
 import { sendTestNotification } from "../../notifications/send-test.ts";
-import type { NotificationRef, NotificationStore } from "../../notifications/store.ts";
+import type {
+  NotificationListOptions,
+  NotificationRef,
+  NotificationStore,
+} from "../../notifications/store.ts";
 import { collectPollTargets } from "../../notifications/targets.ts";
 import { notificationId, parseNotificationId } from "../../notifications/types.ts";
 import { toNotificationView } from "../../notifications/view.ts";
@@ -106,6 +110,20 @@ const SET_ROUTES_DESCRIPTION =
   "and minimum level, and delivers to a tool installed in this workspace or to one of your " +
   "automations. The route's author is stamped from the authenticated identity — it is the " +
   "principal the route dispatches under and cannot be supplied. Workspace admin only.";
+
+/** The tool's arguments as store filters, leaving out what the caller left out. */
+function listOptionsFrom(args: NotificationsListInput): NotificationListOptions {
+  return {
+    ...(args.unreadOnly !== undefined ? { unreadOnly: args.unreadOnly } : {}),
+    ...(args.level !== undefined ? { level: args.level } : {}),
+    ...(args.source !== undefined ? { source: args.source } : {}),
+    ...(args.after !== undefined ? { after: args.after } : {}),
+    ...(args.since !== undefined ? { since: args.since } : {}),
+    ...(args.query !== undefined ? { query: args.query } : {}),
+    ...(args.limit !== undefined ? { limit: args.limit } : {}),
+    ...(args.order !== undefined ? { order: args.order } : {}),
+  };
+}
 
 export function createNotificationsSource(runtime: Runtime, eventSink: EventSink): McpSource {
   /**
@@ -296,17 +314,15 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       inputSchema: NotificationsListInput,
       handler: withErrorHandling((input) => {
         const args = input as unknown as NotificationsListInput;
-        const items = currentStore().list({
-          ...(args.unreadOnly !== undefined ? { unreadOnly: args.unreadOnly } : {}),
-          ...(args.level !== undefined ? { level: args.level } : {}),
-          ...(args.source !== undefined ? { source: args.source } : {}),
-          ...(args.after !== undefined ? { after: args.after } : {}),
-          ...(args.limit !== undefined ? { limit: args.limit } : {}),
-          ...(args.order !== undefined ? { order: args.order } : {}),
-        });
+        if (args.since !== undefined && Number.isNaN(Date.parse(args.since))) {
+          throw new Error(`"since" is not an ISO 8601 instant: ${args.since}`);
+        }
+        const store = currentStore();
+        const items = store.list(listOptionsFrom(args));
         const notifications = items.map(toNotificationView);
         const out: NotificationsListOutput = {
           notifications,
+          unread: store.unreadCount(),
           ...(notifications.length > 0
             ? { cursor: Math.max(...notifications.map((n) => n.seq)) }
             : {}),

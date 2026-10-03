@@ -1,16 +1,23 @@
-import { AlertTriangle, Bell, ChevronRight, Info, Zap } from "lucide-react";
+import { AlertTriangle, Bell, ChevronRight, Info, Search, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import type {
-  DeliveryOutcome,
-  DeliveryRecord,
-  NotificationLevel,
-  NotificationView,
+import {
+  type DeliveryOutcome,
+  type DeliveryRecord,
+  listNotifications,
+  type NotificationLevel,
+  type NotificationsListInput,
+  type NotificationView,
 } from "../api/notifications";
+import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Select } from "../components/ui/select";
 import { useNotifications } from "../context/NotificationsContext";
 import { useShellContext } from "../context/ShellContext";
-import { LEVEL_RANK } from "../lib/notification-levels";
+import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { INBOX_PAGE_SIZE, LEVEL_RANK } from "../lib/notification-levels";
 import { resolveNotificationLink } from "../lib/notification-link";
 import { cn } from "../lib/utils";
 import { EmptyState, InlineError } from "./settings/components";
@@ -32,15 +39,30 @@ import { EmptyState, InlineError } from "./settings/components";
  * `data` is the connector's structured payload. The runtime forwards it unread,
  * and this page shows it only behind a labelled disclosure, as raw JSON, so
  * nobody mistakes it for something the platform interpreted.
+ *
+ * **Filters run on the server.** The page holds one capped page of the inbox,
+ * so a filter applied to it in the browser would quietly miss everything older
+ * than the page. The filters live in the URL, so a filtered view is a link and
+ * Back returns to it.
  */
 
 const LEVEL_META: Record<
   NotificationLevel,
-  { label: string; icon: typeof Info; className: string }
+  { label: string; icon: typeof Info; className: string; edge: string }
 > = {
-  info: { label: "Info", icon: Info, className: "text-muted-foreground" },
-  attention: { label: "Attention", icon: AlertTriangle, className: "text-warning" },
-  urgent: { label: "Urgent", icon: Zap, className: "text-destructive" },
+  info: { label: "Info", icon: Info, className: "text-muted-foreground", edge: "" },
+  attention: {
+    label: "Attention",
+    icon: AlertTriangle,
+    className: "text-warning",
+    edge: "border-l-2 border-l-warning",
+  },
+  urgent: {
+    label: "Urgent",
+    icon: Zap,
+    className: "text-destructive",
+    edge: "border-l-2 border-l-destructive",
+  },
 };
 
 /** Absolute, not relative: "2 hours ago" hides the one thing an operator is checking. */
@@ -49,17 +71,96 @@ function formatInstant(iso: string): string {
   return Number.isNaN(at.getTime()) ? iso : at.toLocaleString();
 }
 
+/** The time filter's windows, by their URL value. */
+const WITHIN: Record<string, { label: string; ms: number }> = {
+  "24h": { label: "Last 24 hours", ms: 24 * 60 * 60 * 1000 },
+  "7d": { label: "Last 7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+  "30d": { label: "Last 30 days", ms: 30 * 24 * 60 * 60 * 1000 },
+};
+
+/** The filters, as the URL holds them. Absent means "any". */
+interface InboxFilters {
+  unreadOnly: boolean;
+  level?: NotificationLevel;
+  app?: string;
+  within?: string;
+  q?: string;
+}
+
+function readFilters(params: URLSearchParams): InboxFilters {
+  const level = params.get("level");
+  const within = params.get("within");
+  return {
+    unreadOnly: params.get("status") === "unread",
+    level: level === "attention" || level === "urgent" ? level : undefined,
+    app: params.get("app") || undefined,
+    within: within && within in WITHIN ? within : undefined,
+    q: params.get("q")?.trim() || undefined,
+  };
+}
+
+function hasFilters(f: InboxFilters): boolean {
+  return f.unreadOnly || !!f.level || !!f.app || !!f.within || !!f.q;
+}
+
+/**
+ * The page's own read of the inbox, filtered. Re-read when the filters change
+ * and when the shell's inbox `revision` moves, which is how a live item lands
+ * here without the page opening a stream of its own.
+ *
+ * Addressed to `workspaceId` explicitly, and a response that lands after a
+ * newer read was issued is dropped.
+ */
+function useInboxList(workspaceId: string | undefined, filters: InboxFilters, revision: number) {
+  const [items, setItems] = useState<NotificationView[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const seq = useRef(0);
+  const key = JSON.stringify(filters);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `filters`, and `revision` is the re-read signal
+  useEffect(() => {
+    if (!workspaceId) return;
+    const mine = ++seq.current;
+    const args: NotificationsListInput = { limit: INBOX_PAGE_SIZE };
+    if (filters.unreadOnly) args.unreadOnly = true;
+    if (filters.level) args.level = filters.level;
+    if (filters.app) args.source = filters.app;
+    if (filters.within) args.since = new Date(Date.now() - WITHIN[filters.within].ms).toISOString();
+    if (filters.q) args.query = filters.q;
+    listNotifications(args, workspaceId)
+      .then((out) => {
+        if (mine !== seq.current) return;
+        setItems(out.notifications);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (mine !== seq.current) return;
+        setError(err instanceof Error ? err.message : "Could not read this workspace's inbox");
+      })
+      .finally(() => {
+        if (mine === seq.current) setLoading(false);
+      });
+  }, [workspaceId, key, revision]);
+
+  return { items, setItems, loading, error };
+}
+
 export function NotificationsPage() {
   const { slug } = useParams<{ slug: string }>();
   const shell = useShellContext();
-  const { items, unread, loading, error, atPageLimit, markRead, markAllRead } = useNotifications();
+  const { activeWorkspace } = useWorkspaceContext();
+  const { unread, revision, markRead } = useNotifications();
   // `?item=` is how a delivered notification links back here from outside the
   // shell — the `{{inbox.url}}` a route template rendered into Slack or mail.
   // The reader followed a link to one item, so it opens expanded and scrolled
   // to rather than leaving them to find it in a list of a hundred.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const focusId = searchParams.get("item");
   const [open, setOpen] = useState<Set<string>>(() => new Set(focusId ? [focusId] : []));
+  const filters = readFilters(searchParams);
+  const filtered = hasFilters(filters);
+  const { items, setItems, loading, error } = useInboxList(activeWorkspace?.id, filters, revision);
 
   const placements = useMemo(
     () => (shell ? [...shell.forSlot("sidebar"), ...shell.forSlot("main")] : []),
@@ -74,6 +175,39 @@ export function NotificationsPage() {
     [items],
   );
 
+  const setFilter = useCallback(
+    (name: string, value: string | undefined) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (value) next.set(name, value);
+          else next.delete(name);
+          next.delete("item");
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const clearFilters = useCallback(() => setSearchParams({}, { replace: true }), [setSearchParams]);
+
+  // Marked here and in the shell's count at once: this list paints the rows
+  // read, and the shell drops the bell. The shell's re-read after the call
+  // moves `revision`, which re-reads this list from the store.
+  const markIds = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      const readAt = new Date().toISOString();
+      setItems((current) =>
+        current.map((item) => (ids.includes(item.id) && !item.readAt ? { ...item, readAt } : item)),
+      );
+      void markRead(ids).catch(() => {});
+    },
+    [markRead, setItems],
+  );
+
   const toggle = useCallback(
     (item: NotificationView) => {
       setOpen((current) => {
@@ -83,9 +217,9 @@ export function NotificationsPage() {
         return next;
       });
       // Opening an item is reading it. Closing one is not un-reading it.
-      if (!open.has(item.id) && !item.readAt) void markRead([item.id]);
+      if (!open.has(item.id) && !item.readAt) markIds([item.id]);
     },
-    [open, markRead],
+    [open, markIds],
   );
 
   // Following a link to an item is reading it, on the same rule `toggle` uses.
@@ -97,22 +231,23 @@ export function NotificationsPage() {
     if (!focusPresent || marked.current) return;
     marked.current = true;
     const item = items.find((i) => i.id === focusId);
-    if (item && !item.readAt) void markRead([item.id]);
-  }, [focusPresent, focusId, items, markRead]);
+    if (item && !item.readAt) markIds([item.id]);
+  }, [focusPresent, focusId, items, markIds]);
+
+  const shownUnread = ordered.filter((item) => !item.readAt).map((item) => item.id);
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto p-6 space-y-6">
-        {/* The top bar names the page; this says what it holds. */}
-        <div className="flex items-start justify-between gap-4">
-          <p className="text-sm text-muted-foreground">
-            Facts this workspace's connectors recorded without being asked — a domain went active, a
-            reply landed. Everything here is content a connector wrote, not something the platform
-            concluded.
-          </p>
-          {unread > 0 && (
-            <Button variant="outline" size="sm" onClick={() => void markAllRead()}>
-              Mark all read
+      <div className="max-w-5xl mx-auto p-6 space-y-4">
+        <InboxFilterBar filters={filters} onChange={setFilter} />
+
+        <div className="flex min-h-8 items-center justify-between gap-4 text-sm">
+          <span data-testid="inbox-unread-count" className="text-muted-foreground">
+            {unread > 0 ? `${unread} unread` : "All read"}
+          </span>
+          {shownUnread.length > 0 && (
+            <Button variant="outline" size="sm" onClick={() => markIds(shownUnread)}>
+              {filtered ? "Mark shown read" : "Mark all read"}
             </Button>
           )}
         </div>
@@ -123,7 +258,20 @@ export function NotificationsPage() {
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : null}
 
-        {!loading && ordered.length === 0 && !error ? (
+        {!loading && ordered.length === 0 && !error && filtered ? (
+          <EmptyState
+            message={
+              <>
+                Nothing matches these filters.{" "}
+                <button type="button" className="underline" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              </>
+            }
+          />
+        ) : null}
+
+        {!loading && ordered.length === 0 && !error && !filtered ? (
           <EmptyState
             message={
               <>
@@ -157,12 +305,128 @@ export function NotificationsPage() {
           ))}
         </ul>
 
-        {atPageLimit ? (
+        {ordered.length >= INBOX_PAGE_SIZE ? (
           <p className="text-xs text-muted-foreground">
             Showing the most recent {ordered.length}. Older items stay in the inbox for 90 days and
-            are reachable by asking the agent for them.
+            are reachable by narrowing the filters or asking the agent for them.
           </p>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Status, level, app, time, and text. Each control writes its own URL param;
+ * the text box waits for a pause in typing so each keystroke is not a read.
+ */
+function InboxFilterBar({
+  filters,
+  onChange,
+}: {
+  filters: InboxFilters;
+  onChange: (name: string, value: string | undefined) => void;
+}) {
+  const { connectors } = useWorkspaceAppIcons();
+  const apps = useMemo(() => {
+    const list = (connectors?.installed ?? []).map((c) => ({
+      value: c.serverName,
+      label: c.displayName,
+    }));
+    // An item can outlive its connector's install; a link naming that source
+    // still selects it rather than showing "Any app".
+    if (filters.app && !list.some((a) => a.value === filters.app)) {
+      list.push({ value: filters.app, label: filters.app });
+    }
+    return list.sort((a, b) => a.label.localeCompare(b.label));
+  }, [connectors, filters.app]);
+
+  const [text, setText] = useState(filters.q ?? "");
+  useEffect(() => setText(filters.q ?? ""), [filters.q]);
+  useEffect(() => {
+    const value = text.trim() || undefined;
+    if (value === filters.q) return;
+    const id = setTimeout(() => onChange("q", value), 250);
+    return () => clearTimeout(id);
+  }, [text, filters.q, onChange]);
+
+  const selectClass = "h-8 w-auto";
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid="inbox-filters">
+      <fieldset className="flex rounded-sm border border-input p-0.5">
+        <legend className="sr-only">Status</legend>
+        {[
+          { value: undefined, label: "All" },
+          { value: "unread", label: "Unread" },
+        ].map((option) => {
+          const active = (option.value === "unread") === filters.unreadOnly;
+          return (
+            <button
+              key={option.label}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onChange("status", option.value)}
+              className={cn(
+                "rounded-xs px-2.5 py-0.5 text-sm transition-colors",
+                active
+                  ? "bg-foreground/10 text-foreground"
+                  : "text-muted-foreground hover:bg-foreground/5",
+              )}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </fieldset>
+      <Select
+        aria-label="Level"
+        className={selectClass}
+        value={filters.level ?? ""}
+        onChange={(e) => onChange("level", e.target.value || undefined)}
+      >
+        <option value="">Any level</option>
+        <option value="attention">Attention and up</option>
+        <option value="urgent">Urgent</option>
+      </Select>
+      <Select
+        aria-label="App"
+        className={selectClass}
+        value={filters.app ?? ""}
+        onChange={(e) => onChange("app", e.target.value || undefined)}
+      >
+        <option value="">Any app</option>
+        {apps.map((app) => (
+          <option key={app.value} value={app.value}>
+            {app.label}
+          </option>
+        ))}
+      </Select>
+      <Select
+        aria-label="Time"
+        className={selectClass}
+        value={filters.within ?? ""}
+        onChange={(e) => onChange("within", e.target.value || undefined)}
+      >
+        <option value="">Any time</option>
+        {Object.entries(WITHIN).map(([value, { label }]) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </Select>
+      <div className="relative min-w-40 flex-1">
+        <Search
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          type="search"
+          aria-label="Search title or event"
+          placeholder="Search title or event"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          className="h-8 pl-8"
+        />
       </div>
     </div>
   );
@@ -211,44 +475,20 @@ function NotificationRow({
   href: string | null;
 }) {
   const level = LEVEL_META[item.level];
-  const LevelIcon = level.icon;
-  const unread = !item.readAt;
   const ref = useScrollIntoViewWhen<HTMLLIElement>(focused);
+  const { connectors } = useWorkspaceAppIcons();
+  const app = connectors?.installed.find((c) => c.serverName === item.source);
+  const appName = app?.displayName ?? item.source;
 
   return (
-    <li ref={ref} className={rowChrome(focused)}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        data-testid="notification-row"
-        data-level={item.level}
-        data-unread={unread ? "true" : "false"}
-        className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left rounded-sm hover:bg-muted/50 transition-colors"
-      >
-        <LevelIcon aria-hidden="true" className={cn("size-4 shrink-0 mt-0.5", level.className)} />
-        <span className="min-w-0 flex-1">
-          <span className={cn("block text-sm truncate", unread && "font-semibold")}>
-            {item.title}
-          </span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-            <span className="font-mono">{item.source}</span>
-            <span aria-hidden="true">·</span>
-            <span>{formatInstant(item.timestamp)}</span>
-            {item.subject ? (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="truncate">{item.subject}</span>
-              </>
-            ) : null}
-            <span className="sr-only">{`${level.label}${unread ? ", unread" : ""}`}</span>
-          </span>
-        </span>
-        <ChevronRight
-          aria-hidden="true"
-          className={cn("size-4 shrink-0 mt-0.5 transition-transform", expanded && "rotate-90")}
-        />
-      </button>
+    <li ref={ref} className={cn(rowChrome(focused), level.edge)}>
+      <NotificationRowHead
+        item={item}
+        expanded={expanded}
+        onToggle={onToggle}
+        appName={appName}
+        appIconUrl={app?.iconUrl}
+      />
 
       {expanded ? (
         <div className="px-3 pb-3 pt-0 space-y-3 border-t border-border/60">
@@ -287,6 +527,79 @@ function NotificationRow({
         </div>
       ) : null}
     </li>
+  );
+}
+
+/** The row's always-visible line: unread dot, level, title, app, time, subject. */
+function NotificationRowHead({
+  item,
+  expanded,
+  onToggle,
+  appName,
+  appIconUrl,
+}: {
+  item: NotificationView;
+  expanded: boolean;
+  onToggle: () => void;
+  appName: string;
+  appIconUrl?: string;
+}) {
+  const level = LEVEL_META[item.level];
+  const LevelIcon = level.icon;
+  const unread = !item.readAt;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      data-testid="notification-row"
+      data-level={item.level}
+      data-unread={unread ? "true" : "false"}
+      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left rounded-sm hover:bg-muted/50 transition-colors"
+    >
+      {/* The bell's dot, on the row it stands for. Read rows keep the
+            slot so titles stay aligned. */}
+      <span
+        aria-hidden="true"
+        data-testid={unread ? "notification-unread-dot" : undefined}
+        className={cn("mt-1.5 size-2 shrink-0 rounded-full", unread && "bg-primary")}
+      />
+      <LevelIcon aria-hidden="true" className={cn("size-4 shrink-0 mt-0.5", level.className)} />
+      <span className="min-w-0 flex-1">
+        <span
+          data-testid="notification-title"
+          className={cn(
+            "block text-sm truncate",
+            unread ? "font-medium text-foreground" : "text-muted-foreground",
+          )}
+        >
+          {item.title}
+        </span>
+        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <ConnectorIcon
+              name={appName}
+              iconUrl={appIconUrl}
+              className="size-3.5 rounded-xs text-3xs"
+            />
+            {appName}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>{formatInstant(item.timestamp)}</span>
+          {item.subject ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="truncate">{item.subject}</span>
+            </>
+          ) : null}
+          <span className="sr-only">{`${level.label}${unread ? ", unread" : ""}`}</span>
+        </span>
+      </span>
+      <ChevronRight
+        aria-hidden="true"
+        className={cn("size-4 shrink-0 mt-0.5 transition-transform", expanded && "rotate-90")}
+      />
+    </button>
   );
 }
 

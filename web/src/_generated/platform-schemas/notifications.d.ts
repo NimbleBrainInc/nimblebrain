@@ -23,6 +23,8 @@ export declare const NotificationsListInput: import("@sinclair/typebox").TObject
     level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
@@ -172,6 +174,11 @@ export interface NotificationView {
 }
 export interface NotificationsListOutput {
     notifications: NotificationView[];
+    /**
+     * Items nobody has marked read in this workspace's whole inbox, whatever
+     * the filters. A page is capped, so its own unread rows are not this count.
+     */
+    unread: number;
     /**
      * Highest `seq` in this page, absent when the page is empty. Pass it back as
      * `after` to continue — forward through a backlog under `order: "asc"`, or

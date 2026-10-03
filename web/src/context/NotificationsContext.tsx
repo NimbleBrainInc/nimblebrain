@@ -1,32 +1,29 @@
 import { createContext, useContext } from "react";
-import type { NotificationView } from "../api/notifications";
 
 export interface NotificationsValue {
-  /** The workspace's newest items, newest first. Empty before the first read. */
-  items: NotificationView[];
-  /** How many of {@link items} nobody has marked read. */
+  /** Items nobody has marked read in the focused workspace's whole inbox. */
   unread: number;
-  /** True until the first read of the focused workspace settles. */
-  loading: boolean;
-  /** Why the last read failed, or `null`. */
-  error: string | null;
   /**
-   * True when the read came back full. The inbox holds 90 days and this page
-   * shows one page of it, so a full page means older items exist that are not
-   * on screen — said out loud rather than implied by a list that just stops.
+   * Bumps each time the inbox is known to have changed: a live frame, a
+   * reconnect, a mark. A view that holds its own read of the inbox (a filtered
+   * list) re-reads when this moves, so it follows the stream without opening
+   * one of its own.
    */
-  atPageLimit: boolean;
-  /** Re-read the list. Coalesced with any read already in flight. */
+  revision: number;
+  /** Re-read. Coalesced with any read already in flight. */
   refresh: () => void;
-  /** Mark these ids read, then re-read. Ids already read are no-ops. */
+  /**
+   * Mark these ids read. `unread` drops before the call returns, by the number
+   * of ids, so pass only ids the caller knows are unread; the re-read after it
+   * reconciles the count either way.
+   */
   markRead: (ids: string[]) => Promise<void>;
-  /** Mark every unread item on this page read. */
-  markAllRead: () => Promise<void>;
 }
 
 /**
- * The focused workspace's inbox, shared by the top bar's bell and the inbox
- * view from one read.
+ * The focused workspace's inbox, as the shell needs it: how much is unread,
+ * and a signal that something changed. The top bar's bell reads the first;
+ * the inbox page reads the second and holds its own filtered list.
  *
  * Kept in its own module — separate from the provider — so a consumer can
  * import the hook without pulling in the provider's data-fetch and SSE
@@ -37,14 +34,10 @@ export interface NotificationsValue {
  * there is nothing unread.
  */
 export const NotificationsContext = createContext<NotificationsValue>({
-  items: [],
   unread: 0,
-  loading: false,
-  error: null,
-  atPageLimit: false,
+  revision: 0,
   refresh: () => {},
   markRead: async () => {},
-  markAllRead: async () => {},
 });
 
 export function useNotifications(): NotificationsValue {

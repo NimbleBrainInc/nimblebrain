@@ -44,6 +44,21 @@ export const NotificationsListInput = Type.Object({
         'with `order: "asc"` it walks forward through a backlog one page at a time.',
     }),
   ),
+  since: Type.Optional(
+    Type.String({
+      maxLength: 64,
+      description:
+        "Only items whose `timestamp` (when the fact happened) is at or after this ISO 8601 " +
+        "instant.",
+    }),
+  ),
+  query: Type.Optional(
+    Type.String({
+      minLength: 1,
+      maxLength: 200,
+      description: "Only items whose title or event name contains this text, ignoring case.",
+    }),
+  ),
   order: Type.Optional(
     StringEnum(["desc", "asc"] as const, {
       description:
@@ -224,6 +239,11 @@ export interface NotificationView {
 
 export interface NotificationsListOutput {
   notifications: NotificationView[];
+  /**
+   * Items nobody has marked read in this workspace's whole inbox, whatever
+   * the filters. A page is capped, so its own unread rows are not this count.
+   */
+  unread: number;
   /**
    * Highest `seq` in this page, absent when the page is empty. Pass it back as
    * `after` to continue — forward through a backlog under `order: "asc"`, or

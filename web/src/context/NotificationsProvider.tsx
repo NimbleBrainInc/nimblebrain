@@ -1,26 +1,21 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  listNotifications,
-  markNotificationsRead,
-  type NotificationView,
-} from "../api/notifications";
+import { listNotifications, markNotificationsRead } from "../api/notifications";
 import { useEvents } from "../hooks/useEvents";
-import { INBOX_PAGE_SIZE } from "../lib/notification-levels";
 import { NotificationsContext, type NotificationsValue } from "./NotificationsContext";
 
 /**
- * Holds the focused workspace's inbox for the whole shell.
+ * Holds the focused workspace's unread count for the whole shell, and the
+ * signal that the inbox changed.
  *
- * One read serves the top bar's bell and the inbox view, the way
- * `WorkspaceAppIconsProvider` serves the sidebar and the overview grid — two
- * consumers of the same fact should not be two fetches of it.
+ * The count is the server's (`unread` on `notifications__list`), over the whole
+ * inbox: a count taken from a page of items stops at the page size. The read
+ * asks for one item, because the count is all it keeps. The inbox page holds
+ * its own list, filtered, and re-reads it when `revision` moves.
  *
- * **Live, then reconciled.** `notification.created` says the list moved; it
- * does not say what the list now is. The frame carries a summary (no body, no
- * link, no connector payload), so rendering from it would put a different item
- * on screen than a reload would. The provider refetches instead, and the
- * refetch is debounced because a poll cycle delivers a batch: forty events from
- * one sweep are one read, not forty.
+ * **Live, then reconciled.** `notification.created` says the inbox moved; it
+ * does not say what it now holds. The provider re-reads instead, and the read
+ * is debounced because a poll cycle delivers a batch: forty events from one
+ * sweep are one read, not forty.
  *
  * **And refetched on reconnect.** The workspace stream has no `Last-Event-Id`
  * replay, so everything that arrived during a disconnect is simply absent from
@@ -45,30 +40,26 @@ export function NotificationsProvider({
   workspaceId?: string;
   children: ReactNode;
 }) {
-  const [items, setItems] = useState<NotificationView[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [unread, setUnread] = useState(0);
+  const [revision, setRevision] = useState(0);
 
   // The workspace a read was issued for. A read that lands after a switch is
   // dropped rather than applied: it answers for the workspace it named at send
-  // time, so a late response is another workspace's inbox, and painting it
-  // here is a cross-workspace leak in the one place the user would never think
-  // to check.
+  // time, so a late response is another workspace's count.
   const requestedFor = useRef<string | undefined>(undefined);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const read = useCallback(async (wsId: string) => {
     requestedFor.current = wsId;
     try {
-      const out = await listNotifications({ limit: INBOX_PAGE_SIZE }, wsId);
+      const out = await listNotifications({ limit: 1 }, wsId);
       if (requestedFor.current !== wsId) return;
-      setItems(out.notifications);
-      setError(null);
-    } catch (err) {
-      if (requestedFor.current !== wsId) return;
-      setError(err instanceof Error ? err.message : "Could not read this workspace's inbox");
+      setUnread(out.unread);
+    } catch {
+      // The count is a hint on a bell. A failed read keeps the last one; the
+      // inbox page reports its own read's failures.
     } finally {
-      if (requestedFor.current === wsId) setLoading(false);
+      if (requestedFor.current === wsId) setRevision((r) => r + 1);
     }
   }, []);
 
@@ -81,19 +72,15 @@ export function NotificationsProvider({
     }, REFRESH_DEBOUNCE_MS);
   }, [workspaceId, read]);
 
-  // The focused workspace's inbox, read without the debounce — a switch is a
-  // user action waiting on an answer, not a burst to absorb. The previous
-  // workspace's items are cleared first so its titles never sit under the new
-  // workspace's name while the read is in flight.
+  // A switch reads without the debounce: it is a user action waiting on an
+  // answer, not a burst to absorb. The previous workspace's count is cleared
+  // first so it never sits on the bell under the new workspace.
   useEffect(() => {
+    setUnread(0);
     if (!workspaceId) {
       requestedFor.current = undefined;
-      setItems([]);
-      setLoading(false);
       return;
     }
-    setItems([]);
-    setLoading(true);
     void read(workspaceId);
   }, [workspaceId, read]);
 
@@ -110,41 +97,21 @@ export function NotificationsProvider({
       if (ids.length === 0 || !workspaceId) return;
       // Painted before the call returns. Marking read is idempotent and its
       // only failure mode is an item staying unread, so waiting a round trip
-      // to un-bold a row an admin just opened buys nothing.
-      setItems((current) =>
-        current.map((item) =>
-          ids.includes(item.id) && !item.readAt
-            ? { ...item, readAt: new Date().toISOString() }
-            : item,
-        ),
-      );
+      // to clear the bell buys nothing. The re-read after it, success or not,
+      // puts the store's count back on it.
+      setUnread((n) => Math.max(0, n - ids.length));
       try {
         await markNotificationsRead(ids, workspaceId);
-      } catch {
-        // The optimistic paint is wrong now. Re-read rather than reverting by
-        // hand — the store is the only thing that knows what actually changed.
+      } finally {
         void read(workspaceId);
       }
     },
     [workspaceId, read],
   );
 
-  const markAllRead = useCallback(async () => {
-    await markRead(items.filter((item) => !item.readAt).map((item) => item.id));
-  }, [items, markRead]);
-
   const value = useMemo<NotificationsValue>(
-    () => ({
-      items,
-      unread: items.reduce((n, item) => (item.readAt ? n : n + 1), 0),
-      loading,
-      error,
-      atPageLimit: items.length >= INBOX_PAGE_SIZE,
-      refresh,
-      markRead,
-      markAllRead,
-    }),
-    [items, loading, error, refresh, markRead, markAllRead],
+    () => ({ unread, revision, refresh, markRead }),
+    [unread, revision, refresh, markRead],
   );
 
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;

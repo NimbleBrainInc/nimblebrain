@@ -13,14 +13,18 @@
 //   5. `?item=` opens the row it names. That query parameter is the tail of the
 //      `{{inbox.url}}` a route rendered into Slack or mail, so a reader who
 //      followed it must land on the item, not on a list to search.
+//   6. Unread is visible on the row, and the header counts the shell's total.
+//   7. Each filter reaches the server as the list argument it stands for, from
+//      the URL, and a filtered view with nothing in it says so.
 //
-// Renders the page against a supplied context value rather than a mocked API:
-// the provider's fetching is a separate contract (see
-// notifications-provider.test.tsx), and what is under test here is what the
-// page does with items it already has.
+// The page reads its own list through `notifications__list` (the client's
+// `callTool`, stubbed here) and takes the unread total and `markRead` from the
+// shell's context, supplied as a value: the provider's own fetching is a
+// separate contract (see notifications-provider.test.tsx).
 // ---------------------------------------------------------------------------
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realClient } from "../../test/setup";
 import type { NotificationView } from "../api/notifications";
 import type { NotificationsValue } from "../context/NotificationsContext";
 import type { PlacementEntry } from "../types";
@@ -37,12 +41,26 @@ import type { PlacementEntry } from "../types";
   }
 }
 
+let listed: NotificationView[] = [];
+let listArgs: Array<Record<string, unknown>> = [];
+
+mock.module("../api/client", () => ({
+  ...realClient,
+  callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
+    if (tool === "list") listArgs.push(args);
+    return {
+      content: [{ type: "text", text: JSON.stringify({ notifications: listed, unread: 0 }) }],
+    };
+  }),
+}));
+
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes } = await import("react-router-dom");
 const { NotificationsContext } = await import("../context/NotificationsContext");
 const { ShellProvider } = await import("../context/ShellContext");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { NotificationsPage } = await import("../pages/NotificationsPage");
 
 /** A placement the focused workspace mounts, as the shell reports one. */
@@ -71,24 +89,29 @@ function item(over: Partial<NotificationView> = {}): NotificationView {
 
 let unmount: (() => void) | null = null;
 
+const WS = {
+  id: "ws_005b519ef7efc353",
+  name: "Outbound",
+  memberCount: 1,
+  connectorCount: 0,
+  userRole: "admin" as const,
+};
+
 async function mount(
-  over: Partial<NotificationsValue> = {},
+  { items = [], ...over }: Partial<NotificationsValue> & { items?: NotificationView[] } = {},
   placements: PlacementEntry[] = [],
   entry = "/w/ws-outbound/notifications",
 ): Promise<{
   container: HTMLDivElement;
   markRead: ReturnType<typeof mock>;
 }> {
+  listed = items;
   const markRead = mock(async () => {});
   const value: NotificationsValue = {
-    items: [],
     unread: 0,
-    loading: false,
-    error: null,
-    atPageLimit: false,
+    revision: 0,
     refresh: () => {},
     markRead,
-    markAllRead: async () => {},
     ...over,
   };
   const container = document.createElement("div");
@@ -99,28 +122,32 @@ async function mount(
       React.createElement(
         MemoryRouter,
         { initialEntries: [entry] },
-        React.createElement(
-          ShellProvider,
-          {
-            value: {
-              forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
-              mainRoutes: () => [],
-              shellWorkspaceId: "ws_005b519ef7efc353",
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS],
+          initialActiveId: WS.id,
+          children: React.createElement(
+            ShellProvider,
+            {
+              value: {
+                forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
+                mainRoutes: () => [],
+                shellWorkspaceId: "ws_005b519ef7efc353",
+              },
             },
-          },
-          React.createElement(
-            NotificationsContext.Provider,
-            { value },
             React.createElement(
-              Routes,
-              null,
-              React.createElement(Route, {
-                path: "/w/:slug/notifications",
-                element: React.createElement(NotificationsPage),
-              }),
+              NotificationsContext.Provider,
+              { value },
+              React.createElement(
+                Routes,
+                null,
+                React.createElement(Route, {
+                  path: "/w/:slug/notifications",
+                  element: React.createElement(NotificationsPage),
+                }),
+              ),
             ),
           ),
-        ),
+        }),
       ),
     );
   });
@@ -140,6 +167,11 @@ async function click(el: HTMLElement): Promise<void> {
     el.click();
   });
 }
+
+beforeEach(() => {
+  listed = [];
+  listArgs = [];
+});
 
 afterEach(() => {
   unmount?.();
@@ -330,7 +362,9 @@ describe("ordering and the empty state", () => {
         item({ id: "a:5", seq: 5, level: "urgent", title: "urgent-new" }),
       ],
     });
-    const titles = rows(container).map((r) => r.textContent?.split("acme")[0]?.trim());
+    const titles = rows(container).map(
+      (r) => r.querySelector('[data-testid="notification-title"]')?.textContent,
+    );
     expect(titles).toEqual(["urgent-new", "urgent-old", "attention-new", "info-new", "info-old"]);
   });
 
@@ -376,5 +410,56 @@ describe("?item= — where a link from outside the shell lands", () => {
     });
     expect(container.textContent).not.toContain("DNS propagated.");
     expect(markRead).not.toHaveBeenCalled();
+  });
+});
+
+describe("unread", () => {
+  test("an unread row carries the dot and a read row does not", async () => {
+    const { container } = await mount({
+      items: [
+        item({ id: "a:1", seq: 1, title: "fresh" }),
+        item({ id: "a:2", seq: 2, title: "seen", readAt: "2026-09-01T19:00:00.000Z" }),
+      ],
+    });
+    const byTitle = (title: string) => rows(container).find((r) => r.textContent?.includes(title));
+    expect(
+      byTitle("fresh")?.querySelector('[data-testid="notification-unread-dot"]'),
+    ).not.toBeNull();
+    expect(byTitle("seen")?.querySelector('[data-testid="notification-unread-dot"]')).toBeNull();
+  });
+
+  test("the header counts the shell's total, not the rows on screen", async () => {
+    const { container } = await mount({ items: [item()], unread: 140 });
+    expect(container.querySelector('[data-testid="inbox-unread-count"]')?.textContent).toBe(
+      "140 unread",
+    );
+  });
+});
+
+describe("filters", () => {
+  test("each URL filter reaches the server as its list argument", async () => {
+    await mount(
+      {},
+      [],
+      "/w/ws-outbound/notifications?status=unread&level=attention&app=acme&q=reply&within=7d",
+    );
+    const args = listArgs.at(-1)!;
+    expect(args.unreadOnly).toBe(true);
+    expect(args.level).toBe("attention");
+    expect(args.source).toBe("acme");
+    expect(args.query).toBe("reply");
+    const since = Date.parse(String(args.since));
+    expect(Math.abs(Date.now() - 7 * 24 * 60 * 60 * 1000 - since)).toBeLessThan(60_000);
+  });
+
+  test("no filters sends none", async () => {
+    await mount();
+    expect(listArgs.at(-1)).toEqual({ limit: 100 });
+  });
+
+  test("a filtered view with nothing in it says so, with a way out", async () => {
+    const { container } = await mount({}, [], "/w/ws-outbound/notifications?status=unread");
+    expect(container.textContent).toContain("Nothing matches these filters.");
+    expect(container.textContent).not.toContain("Nothing yet.");
   });
 });

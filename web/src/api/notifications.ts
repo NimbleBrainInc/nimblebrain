@@ -37,6 +37,7 @@ export type {
   NotificationRouteMatch,
   NotificationRouteView,
   NotificationSourceView,
+  NotificationsListInput,
   NotificationsSendTestOutput,
   NotificationsSettingsOutput,
   NotificationView,
