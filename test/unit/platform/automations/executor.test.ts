@@ -11,6 +11,7 @@ import {
   type TaskFnToolCall,
 } from "../../../../src/platform/automations/executor.ts";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
+import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import { fakeFetch } from "../../../helpers/fake-fetch.ts";
 
 // ---------------------------------------------------------------------------
@@ -176,6 +177,28 @@ describe("createDirectExecutor", () => {
     expect(capturedRequest).toBeDefined();
     expect(capturedRequest!.workspaceId).toBeUndefined();
     expect(capturedRequest!.identity).toBeUndefined();
+  });
+
+  // Without the handoff, executeTask acquires a second slot for a run that
+  // already holds one, and at the limit every run waits out its duration cap.
+  test("hands the scheduler's run slot to the task request", async () => {
+    let captured: Parameters<TaskFn>[0] | undefined;
+    const taskFn: TaskFn = async (req) => {
+      captured = req;
+      return makeDirectTaskFn()(req);
+    };
+    const ticket = createRunAdmission().request({ workspaceId: "ws_0076759dbbe19fcc" });
+    if (ticket.state !== "admitted") throw new Error("expected a free slot");
+
+    await createDirectExecutor(taskFn, () => ({}))(
+      makeAutomation(),
+      undefined,
+      "scheduled",
+      undefined,
+      ticket.lease,
+    );
+
+    expect(captured?.admission).toBe(ticket.lease);
   });
 });
 

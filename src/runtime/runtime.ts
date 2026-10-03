@@ -1473,6 +1473,8 @@ export class Runtime {
    *    refused; the runtime never chooses a workspace for it.
    *  - An abort returns what the run accomplished instead of throwing: nothing
    *    else records this run's events, so silent abandonment would lose them.
+   *    A run aborted while it waits for a slot never started, so it rejects
+   *    with an `AbortError`.
    *  - The run is admitted first: it holds one of the runtime's unattended run
    *    slots while it executes, and waits in the run queue when none is free
    *    (`getRunAdmission`). A chat is never admitted.
