@@ -80,7 +80,7 @@ Visible only to organization admins and owners. Hidden from regular members. The
 
 ### Model (`/org/model`)
 
-Choose which AI models the agent uses across **every** workspace:
+Choose which AI models the agent uses across **every** workspace. Each field saves as you change it: a dropdown when you pick, a number when you leave the field or press Enter (Escape undoes the edit). A save that applies takes effect at once and shows a notice with **Undo**; one the server refuses stays on the field with the reason, **Retry** and **Revert**.
 
 - **Default model** — primary model for chat.
 - **Fast model** — cheaper, faster model for quick auxiliary tasks. Still give it a large context window, not just low latency/price — a `fast` request carries the same tool surface as a normal one, so a small-context model starves conversation history ([details](/config/nimblebrain-json#models)).

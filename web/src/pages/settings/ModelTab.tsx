@@ -155,7 +155,21 @@ export function ModelTab() {
     labels: LABELS,
     notices: ALL_UNDO,
   });
-  const { load } = form;
+  const { load, revert } = form;
+
+  // A mode that ignores depth and budget hides their fields. One that failed
+  // to save, or holds an edit not yet saved, would leave the page reporting a
+  // change nobody can see to retry or revert, so it goes back to its saved
+  // value. An effect rather than the select's handler, so a save that fails
+  // after the field is hidden is caught too.
+  const tuningShown = tuningAppliesTo(form.values.thinking);
+  const effortStatus = form.fieldState("thinkingEffort").status;
+  const budgetStatus = form.fieldState("thinkingBudgetTokens").status;
+  useEffect(() => {
+    if (tuningShown) return;
+    if (effortStatus === "error" || effortStatus === "dirty") revert("thinkingEffort");
+    if (budgetStatus === "error" || budgetStatus === "dirty") revert("thinkingBudgetTokens");
+  }, [tuningShown, effortStatus, budgetStatus, revert]);
 
   useEffect(() => {
     readConfig()

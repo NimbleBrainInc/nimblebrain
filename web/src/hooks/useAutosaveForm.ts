@@ -229,7 +229,9 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
       }
       queued.current.add(field);
       setStatus(field, "saving");
-      chain.current = chain.current.then(() => run(field));
+      // `run` settles every save itself; the catch keeps one unexpected throw
+      // from stranding every later save behind a rejected chain.
+      chain.current = chain.current.then(() => run(field)).catch(() => {});
     },
     [run, setError, setStatus],
   );

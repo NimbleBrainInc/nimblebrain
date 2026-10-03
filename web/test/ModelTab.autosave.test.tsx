@@ -30,6 +30,8 @@ let pinnedMaxOutput: number | undefined = PINNED_MAX_OUTPUT;
 let refreshFails = false;
 /** When set, `set_model_config` answers with this refusal. */
 let refusal: string | null = null;
+/** When set, only a thinking-budget save is refused, with this text. */
+let budgetRefusal: string | null = null;
 /** While set, `set_model_config` waits on it, holding the save in flight. */
 let saveGate: Promise<void> | null = null;
 const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
@@ -67,6 +69,9 @@ mock.module("../src/api/client", () => ({
     }
     if (saveGate) await saveGate;
     if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
+    if (budgetRefusal && "thinkingBudgetTokens" in args) {
+      return { content: [{ type: "text", text: budgetRefusal }], isError: true };
+    }
     if (args.maxOutputTokens === null) pinnedMaxOutput = undefined;
     return { structuredContent: {}, isError: false };
   },
@@ -85,6 +90,7 @@ afterEach(async () => {
   pinnedMaxOutput = PINNED_MAX_OUTPUT;
   refreshFails = false;
   refusal = null;
+  budgetRefusal = null;
   saveGate = null;
   calls.length = 0;
 });
@@ -242,5 +248,23 @@ describe("the Model tab", () => {
     const c = await mount();
     await choose(field<HTMLSelectElement>(c, "thinking"), "adaptive");
     expect(saves()).toEqual([{ thinking: "adaptive" }]);
+  });
+  // A mode that ignores the budget hides its field. A refused budget would
+  // otherwise leave the page reporting a change nobody can see to fix.
+  test("hiding a field that failed to save puts it back, so the page is not left in error", async () => {
+    budgetRefusal = "thinkingBudgetTokens must be a positive integer ≥ 1024.";
+    const c = await mount();
+    const budget = field<HTMLInputElement>(c, "thinkingBudgetTokens");
+    await type(budget, "500");
+    await blur(budget);
+    expect(c.textContent).toContain("Some changes were not saved");
+
+    await choose(field<HTMLSelectElement>(c, "thinking"), "adaptive");
+    expect(c.querySelector("#thinkingBudgetTokens")).toBeNull();
+    expect(c.textContent).not.toContain("Some changes were not saved");
+
+    // Back to a mode that shows it: the saved value, not the refused one.
+    await choose(field<HTMLSelectElement>(c, "thinking"), "enabled");
+    expect(field<HTMLInputElement>(c, "thinkingBudgetTokens").value).toBe("");
   });
 });
