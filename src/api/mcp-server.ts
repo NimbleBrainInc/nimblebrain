@@ -1052,9 +1052,8 @@ function createHandlers(
  * result schema or not; a client receives one only through a request that
  * carries its own result schema, since the typed `callTool` refuses it too.
  * The iframe bridge and any 2025 client starting a task-augmented call depend
- * on that result. When SDK v2 sends a
- * task-shaped `tools/call` result on the 2025 era, this leg moves to it and the
- * v1 dependency goes.
+ * on that result. When SDK v2 sends a task-shaped `tools/call` result on the
+ * 2025 era, this leg moves to it and the v1 dependency goes.
  *
  * The task store is identity-bound. `ProtocolOptions.taskStore` makes the SDK
  * install tasks/{get,result,cancel,list}; `registerTaskHandlers` replaces the
