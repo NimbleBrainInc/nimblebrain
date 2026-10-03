@@ -25,6 +25,7 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { realClient } from "../../test/setup";
+import type { InstalledConnector } from "../api/client";
 import type { NotificationView } from "../api/notifications";
 import type { NotificationsValue } from "../context/NotificationsContext";
 import type { PlacementEntry } from "../types";
@@ -48,8 +49,11 @@ mock.module("../api/client", () => ({
   ...realClient,
   callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
     if (tool === "list") listArgs.push(args);
+    // Honours `unreadOnly`, the one filter whose answer changes when a row is
+    // read — which is the case the held-rows test is about.
+    const notifications = args?.unreadOnly ? listed.filter((n) => !n.readAt) : listed;
     return {
-      content: [{ type: "text", text: JSON.stringify({ notifications: listed, unread: 0 }) }],
+      content: [{ type: "text", text: JSON.stringify({ notifications, unread: 0 }) }],
     };
   }),
 }));
@@ -60,6 +64,7 @@ const { act } = await import("react");
 const { MemoryRouter, Route, Routes } = await import("react-router-dom");
 const { NotificationsContext } = await import("../context/NotificationsContext");
 const { ShellProvider } = await import("../context/ShellContext");
+const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsContext");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { NotificationsPage } = await import("../pages/NotificationsPage");
 
@@ -97,10 +102,46 @@ const WS = {
   userRole: "admin" as const,
 };
 
+/**
+ * The shell's context as the provider behaves: `markRead` marks the stub
+ * server's rows and moves `revision`, so the page re-reads as it does live.
+ */
+function LiveNotifications({ children }: { children: React.ReactNode }) {
+  const [revision, setRevision] = React.useState(0);
+  const value: NotificationsValue = {
+    unread: listed.filter((n) => !n.readAt).length,
+    revision,
+    refresh: () => {},
+    markRead: async (ids) => {
+      listed = listed.map((n) =>
+        ids.includes(n.id) ? { ...n, readAt: "2026-09-01T19:00:00.000Z" } : n,
+      );
+      setRevision((r) => r + 1);
+    },
+  };
+  return React.createElement(NotificationsContext.Provider, { value }, children);
+}
+
+/** An installed connector as the app-icons context lists it. Only the name fields matter here. */
+function installedApp(serverName: string, displayName: string): InstalledConnector {
+  return {
+    serverName,
+    connectorName: serverName,
+    displayName,
+    disconnectable: false,
+    version: "1.0.0",
+    state: "running",
+    scope: "workspace",
+    interactive: false,
+    toolCount: 0,
+  } as InstalledConnector;
+}
+
 async function mount(
   { items = [], ...over }: Partial<NotificationsValue> & { items?: NotificationView[] } = {},
   placements: PlacementEntry[] = [],
   entry = "/w/ws-outbound/notifications",
+  { live = false, installed = [] }: { live?: boolean; installed?: InstalledConnector[] } = {},
 ): Promise<{
   container: HTMLDivElement;
   markRead: ReturnType<typeof mock>;
@@ -114,6 +155,14 @@ async function mount(
     markRead,
     ...over,
   };
+  const routes = React.createElement(
+    Routes,
+    null,
+    React.createElement(Route, {
+      path: "/w/:slug/notifications",
+      element: React.createElement(NotificationsPage),
+    }),
+  );
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
@@ -135,16 +184,16 @@ async function mount(
               },
             },
             React.createElement(
-              NotificationsContext.Provider,
-              { value },
-              React.createElement(
-                Routes,
-                null,
-                React.createElement(Route, {
-                  path: "/w/:slug/notifications",
-                  element: React.createElement(NotificationsPage),
-                }),
-              ),
+              WorkspaceAppIconsContext.Provider,
+              {
+                value: {
+                  iconFor: () => undefined,
+                  connectors: { workspaceId: WS.id, installed },
+                },
+              },
+              live
+                ? React.createElement(LiveNotifications, { children: routes })
+                : React.createElement(NotificationsContext.Provider, { value }, routes),
             ),
           ),
         }),
@@ -461,5 +510,64 @@ describe("filters", () => {
     const { container } = await mount({}, [], "/w/ws-outbound/notifications?status=unread");
     expect(container.textContent).toContain("Nothing matches these filters.");
     expect(container.textContent).not.toContain("Nothing yet.");
+  });
+});
+
+describe("a row read under the Unread filter", () => {
+  test("stays on screen, open, through the re-read that no longer returns it", async () => {
+    const { container } = await mount(
+      { items: [item({ body: "the body" })] },
+      [],
+      "/w/ws-outbound/notifications?status=unread",
+      { live: true },
+    );
+    await click(rows(container)[0]!);
+    // Let the re-read the mark caused land.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(listArgs.length).toBeGreaterThan(1);
+    expect(rows(container)).toHaveLength(1);
+    expect(container.textContent).toContain("the body");
+    expect(container.textContent).not.toContain("Nothing matches these filters.");
+  });
+});
+
+describe("mark all read", () => {
+  test("says it marks only what is shown when the inbox holds more unread", async () => {
+    const { container } = await mount({ items: [item()], unread: 140 });
+    const button = Array.from(container.querySelectorAll("button")).find((b) =>
+      (b.textContent ?? "").startsWith("Mark"),
+    );
+    expect(button?.textContent).toBe("Mark shown read");
+  });
+});
+
+describe("the app", () => {
+  test("a row names its connector by display name, or by server name when not installed", async () => {
+    const { container } = await mount(
+      {
+        items: [
+          item({ id: "acme:1", seq: 1, source: "acme", title: "from-acme" }),
+          item({ id: "beta:2", seq: 2, source: "beta", title: "from-beta" }),
+        ],
+      },
+      [],
+      undefined,
+      { installed: [installedApp("acme", "Acme Outreach")] },
+    );
+    const byTitle = (title: string) => rows(container).find((r) => r.textContent?.includes(title));
+    expect(byTitle("from-acme")?.textContent).toContain("Acme Outreach");
+    expect(byTitle("from-beta")?.textContent).toContain("beta");
+  });
+
+  test("a source in the inbox is in the App filter even when not installed", async () => {
+    const { container } = await mount({ items: [item({ source: "beta" })] }, [], undefined, {
+      installed: [installedApp("acme", "Acme Outreach")],
+    });
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="App"]');
+    const values = Array.from(select?.options ?? []).map((o) => o.value);
+    expect(values).toEqual(["", "acme", "beta"]);
   });
 });
