@@ -286,6 +286,9 @@ export function SlotRenderer({
       bridges.forEach((b) => {
         b.destroy();
       });
+      // A target arriving before the next mount finishes goes to that mount,
+      // never to these destroyed bridges.
+      bridgesRef.current = [];
       if (container) container.innerHTML = "";
     };
     // Only re-mount iframes when placements change, not when callbacks change.

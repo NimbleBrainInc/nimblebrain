@@ -1087,9 +1087,13 @@ export function createChatStore(): ChatStore {
   // A finished tool call reaches `onToolDone` listeners only from a turn this
   // tab sent and is watching live, and only once. A conversation loaded from
   // history never runs these reducers; one re-attached after a reload or from
-  // another tab is a resume, and a replayed frame repeats an announced id.
+  // another tab is a resume, and a replayed frame repeats an announced id. A
+  // turn left streaming in the background, after the person moved to another
+  // conversation or workspace, is not being watched: its slice is no longer
+  // active. The panel's open state does not enter into it, since the chat
+  // stays active while the panel is closed.
   function announceToolDone(slice: ConversationSlice, evt: ToolDoneEvent): void {
-    if (!slice.watchingOwnTurn || slice.announcedToolIds.has(evt.id)) return;
+    if (!slice.watchingOwnTurn || !isActive(slice) || slice.announcedToolIds.has(evt.id)) return;
     slice.announcedToolIds.add(evt.id);
     const tool = slice.toolCalls.find((tc) => tc.id === evt.id);
     const done: FinishedToolCall = {

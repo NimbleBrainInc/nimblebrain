@@ -861,6 +861,7 @@ describe("onToolDone — a finished tool call in a turn this tab sent", () => {
     const store = createChatStore();
     const heard: unknown[] = [];
     store.onToolDone((call) => heard.push(call));
+    store.markActive("draft-open");
     await store.sendTurn("draft-open", { text: "open people" });
     const s = latestStream();
 
@@ -884,6 +885,23 @@ describe("onToolDone — a finished tool call in a turn this tab sent", () => {
     s.onSubscribed?.({ isActive: true, activeSeq: 1 });
     s.onEvent("tool.start", { id: "t9", name: "nb__open_app", input: { app: "People" } }, 2);
     s.onEvent("tool.done", { id: "t9", name: "nb__open_app", ok: true, ms: 3, output: "" }, 3);
+
+    expect(heard).toEqual([]);
+  });
+
+  it("never announces a call from a turn left streaming after the person moved away", async () => {
+    const store = createChatStore();
+    const heard: unknown[] = [];
+    store.onToolDone((call) => heard.push(call));
+    store.markActive("draft-away");
+    await store.sendTurn("draft-away", { text: "open people" });
+    const s = latestStream();
+    // A new conversation or a workspace switch: the chat renders another key now,
+    // and this turn keeps streaming in the background.
+    store.markInactive("draft-away");
+
+    s.onEvent("tool.start", { id: "t3", name: "nb__open_app", input: { app: "People" } }, 1);
+    s.onEvent("tool.done", { id: "t3", name: "nb__open_app", ok: true, ms: 1, output: "" }, 2);
 
     expect(heard).toEqual([]);
   });
