@@ -96,6 +96,8 @@ The host reads your resource as the RFC 6570 template
 | `maxEvents` | Ceiling on how many events to return in this batch. |
 | `maxAgeMs` | The host's own replay bound. Honour the **later** of the cursor's position and `now − maxAgeMs`, so a very stale cursor cannot pull an unbounded history. |
 
+If your server also declares a [lifecycle](/extensions/lifecycle/) `on_ready` handler, the host takes the bootstrap read **before** it calls that handler. Whatever the handler starts and later reports through the outbox lands after the cursor and is delivered, even when it finishes before the host's first scheduled poll.
+
 Answer with the poll result:
 
 ```jsonc

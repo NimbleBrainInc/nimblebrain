@@ -49,6 +49,12 @@ Three rules that are load-bearing rather than stylistic:
 - **A fresh install therefore delivers TWO `on_ready` calls, racily.** At least
   once is the contract, handlers must be idempotent, and suppressing one needs
   "an install is in progress" state the runtime does not hold.
+- **A connector's outbox is positioned before its `on_ready` handler is
+  called** (`LifecycleNotifyDeps.positionOutbox`, `src/notifications/position.ts`).
+  A first outbox read with no cursor skips everything already in the outbox,
+  and install-time work finishes inside the poller's first interval, so a
+  position taken after the handler steps over what the handler reports. Keep
+  the call ahead of `callReady`, and keep the cursor write set-if-absent.
 - **`on_removing` fires before `lifecycle.uninstall` and before the OAuth
   revoke**, is best-effort, and never *fails* the uninstall — which does wait
   for it, bounded by a **5s deadline in `notifyRemoving` and by nothing else**.
