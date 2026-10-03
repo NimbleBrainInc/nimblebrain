@@ -372,7 +372,12 @@ function decodeCreateBody(body: string, encoding: "base64" | "text"): Buffer {
   return Buffer.from(compact, "base64");
 }
 
-async function handleCreate(store: FileStore, args: CreateInput): Promise<FilesCreateOutput> {
+/** `placeIn` resolves `manifest.folder` to a folder id, creating missing levels. */
+async function handleCreate(
+  store: FileStore,
+  args: CreateInput,
+  placeIn: (path: string) => Promise<string | null>,
+): Promise<FilesCreateOutput> {
   // TODO: apply the same MIME allowlist as chat-multipart ingest
   // (`ALLOWED_MIMES` in `src/files/ingest.ts`). The tool currently accepts
   // any `mimeType` the LLM supplies; the chat path rejects anything
@@ -385,7 +390,7 @@ async function handleCreate(store: FileStore, args: CreateInput): Promise<FilesC
   // a specific type is trusted as-is. Same recovery as the upload handlers,
   // so an agent-written `.typ` is readable just like an uploaded one.
   const mimeType = resolveMimeType(manifest.filename, manifest.mimeType);
-  const folderId = await ensureFolderPath(store, manifest.folder ?? "");
+  const folderId = await placeIn(manifest.folder ?? "");
   const saved = await store.saveFile(decoded, manifest.filename, mimeType);
   // Provenance comes from the request, never the caller: the conversation in a
   // chat, the run in an unattended automation run.
@@ -456,14 +461,15 @@ async function handleDelete(store: FileStore, args: { id: string }): Promise<Fil
 /** Create the "files" platform source — in-process MCP server. */
 export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSource {
   /**
-   * Resolve the caller's workspace-owned file store. Files live at
+   * Resolve the caller's workspace-owned file store, and the key naming its
+   * partition. Files live at
    * `workspaces/<wsId>/files/<ownerId>/`, so this needs both the owner (the
    * authenticated identity) and the workspace, which rides
    * `RequestContext.workspaceId` (set on both doors). No workspace in scope
    * (e.g. a background job with no bound workspace) ⇒ deny rather than guess
    * a workspace.
    */
-  function getStore(): FileStore {
+  function partition(): { key: string; store: FileStore } {
     // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
     // the same path automations' source, the REST file handlers, and chat
     // rehydration use, so "who am I" never drifts between sources. Fail-closed:
@@ -475,7 +481,28 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
     if (!wsId) {
       throw new Error("files: no workspace in scope (files are workspace-owned)");
     }
-    return runtime.getWorkspaceFileStore(wsId, ownerId);
+    return { key: `${wsId}/${ownerId}`, store: runtime.getWorkspaceFileStore(wsId, ownerId) };
+  }
+
+  function getStore(): FileStore {
+    return partition().store;
+  }
+
+  /**
+   * Folder writes read the partition's folders, check them, then append. Two
+   * at once (a turn's parallel `create`s into one new path) would both pass the
+   * check and both append, so they run one at a time per partition.
+   */
+  const folderWrites = new Map<string, Promise<unknown>>();
+  function folderWrite<T>(write: (store: FileStore) => Promise<T>): Promise<T> {
+    const { key, store } = partition();
+    const run = (folderWrites.get(key) ?? Promise.resolve()).then(() => write(store));
+    const settled = run.catch(() => undefined);
+    folderWrites.set(key, settled);
+    void settled.then(() => {
+      if (folderWrites.get(key) === settled) folderWrites.delete(key);
+    });
+    return run;
   }
 
   function ok(data: object): ToolResult {
@@ -564,7 +591,11 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       inputSchema: FilesCreateInput,
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
-          return ok(await handleCreate(getStore(), input as unknown as CreateInput));
+          return ok(
+            await handleCreate(getStore(), input as unknown as CreateInput, (path) =>
+              folderWrite((store) => ensureFolderPath(store, path)),
+            ),
+          );
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
         }
@@ -617,7 +648,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
           const { ids, folderId } = input as unknown as FilesMoveInput;
           const out: FilesMoveOutput = {
             ids,
-            folderId: await moveFiles(getStore(), ids, folderId),
+            folderId: await folderWrite((store) => moveFiles(store, ids, folderId)),
           };
           return ok(out);
         } catch (err) {
@@ -633,7 +664,9 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const { manifest } = input as unknown as FilesCreateFolderInput;
-          const out: FilesFolderOutput = await createFolder(getStore(), manifest);
+          const out: FilesFolderOutput = await folderWrite((store) =>
+            createFolder(store, manifest),
+          );
           return ok(out);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
@@ -648,7 +681,9 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const { id, manifest } = input as unknown as FilesUpdateFolderInput;
-          const out: FilesFolderOutput = await updateFolder(getStore(), { id, ...manifest });
+          const out: FilesFolderOutput = await folderWrite((store) =>
+            updateFolder(store, { id, ...manifest }),
+          );
           return ok(out);
         } catch (err) {
           return fail(err instanceof Error ? err.message : String(err));
@@ -663,7 +698,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
       handler: async (input: Record<string, unknown>): Promise<ToolResult> => {
         try {
           const { id } = input as unknown as FilesDeleteFolderInput;
-          await deleteFolder(getStore(), id);
+          await folderWrite((store) => deleteFolder(store, id));
           const out: FilesDeleteFolderOutput = { deleted: true };
           return ok(out);
         } catch (err) {

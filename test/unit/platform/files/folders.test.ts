@@ -234,6 +234,21 @@ describe("create", () => {
     expect((await list({ folderId: "root" })).folders.map((f) => f.name)).toEqual(["Reports"]);
   });
 
+  test("creates in parallel into one new path share its folders", async () => {
+    const results = await Promise.all(
+      ["a.md", "b.md", "c.md"].map((filename) =>
+        exec("create", {
+          manifest: { filename, mimeType: "text/markdown", folder: "Reports/Q3" },
+          body: "#",
+          encoding: "text",
+        }),
+      ),
+    );
+    const ids = new Set(results.map((r) => parse<FilesCreateOutput>(r).folderId));
+    expect(ids.size).toBe(1);
+    expect((await list({ folderId: "root" })).folders.map((f) => f.name)).toEqual(["Reports"]);
+  });
+
   test("stamps the conversation in a chat and the run in an automation run", async () => {
     const inChat = parse<FilesCreateOutput>(
       await exec(
@@ -332,5 +347,13 @@ describe("list", () => {
     expect((await list({ folderId: a.id })).total).toBe(1);
     const all = await list({ folderId: a.id, recursive: true });
     expect(all.files.map((f) => f.folderPath).sort()).toEqual(["A", "A/B"]);
+  });
+
+  test("a recursive search from the top level finds folders at every depth", async () => {
+    const alpha = await folder("Alpha");
+    await folder("Target", alpha.id);
+    await folder("Target");
+    const out = await list({ folderId: "root", recursive: true, query: "target" });
+    expect(out.folders.map((f) => f.path).sort()).toEqual(["Alpha/Target", "Target"]);
   });
 });
