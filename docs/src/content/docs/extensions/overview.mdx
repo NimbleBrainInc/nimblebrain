@@ -13,7 +13,7 @@ Each line is one capability, and each links to its page. The last column names t
 
 | Capability | What your server gets | Carried by |
 |---|---|---|
-| [Lifecycle](/extensions/lifecycle/) | Told when it is installed into a workspace and just before it is removed, so it can set up and release per-workspace state it holds elsewhere | `ai.nimblebrain/host` (`lifecycle`) |
+| [Lifecycle](/extensions/lifecycle/) | Told when it is installed into a workspace and just before it is removed, so it can set up and release per-workspace state it holds elsewhere | `ai.nimblebrain/lifecycle` |
 | [Facets](/extensions/facets/) | Counts of work waiting on someone, shown on the workspace overview | `ai.nimblebrain/facets` |
 | [Notifications](/extensions/notifications/) | Facts nobody asked for, delivered to the workspace inbox, the agent, and an admin's routes | `ai.nimblebrain/host` (`notifications`) and `ai.nimblebrain/notification` |
 | [Inbound webhooks](/extensions/webhooks/) | A URL a vendor can deliver events to, forwarded to your server | `ai.nimblebrain/host` (`hooks`) |
@@ -61,15 +61,18 @@ Each entry names the parties the extension connects, its identifier, and why it 
 | Extension | Direction | Why it exists |
 |---|---|---|
 | [`ai.nimblebrain/facets`](/extensions/facets/) | Server → host (capability and marked resources), on both eras | A server holds work that needs someone, and the workspace overview should say how much without a model or a side channel. The server lists each count as a resource with a `_meta` marker and answers `resources/read` with `{ "count": n }`; the host renders `<count> <title>`. |
+| [`ai.nimblebrain/lifecycle`](/extensions/lifecycle/) | Server → host (capability and marked tools), then host → server (`tools/call`), on both eras | A server that holds state elsewhere for a workspace needs to know when it was installed and when it is about to be removed, and no MCP message says either. The server marks one tool per event with a `_meta` marker; the host calls it at that moment and withholds it from every other caller. |
 | [`ai.nimblebrain/host-resources`](/extensions/host-resources/) | Host → server (capability), then server → host (requests), on 2025-era connections only | MCP resources flow from server to client only. A server that needs a file the user gave the workspace would otherwise have it pasted into a tool argument by the model: slow, expensive in tokens, and capped by the context window. With this extension, the server reads the file from the host by URI. |
 
 ### Between an operator's catalog and the host
 
 These keys are metadata on a server's entry in the [connectors catalog](/config/connectors-catalog/), which uses the MCP Registry's `ServerDetail` format. They never travel in an MCP message.
 
+The catalog holds what a server must not grant itself: a declaration that could change what someone other than the server can do, or what they are exposed to, is reviewed by the operator before it takes effect, and a declaration that describes only the server's own behavior is negotiated on the wire instead.
+
 | Extension | Authored by | Why it exists |
 |---|---|---|
-| [`ai.nimblebrain/host`](/apps/manifest/) | The server's publisher | How the server takes part in the host: its [install and uninstall events](/extensions/lifecycle/), its [notification outbox](/extensions/notifications/), the [webhooks it accepts](/extensions/webhooks/), its [settings section](/extensions/settings-sections/), its [admin-only tools](/extensions/admin-tools/), and where its views appear in the [shell](/extensions/placements/). The specification describes a server's tools, not its place in an application shell. |
+| [`ai.nimblebrain/host`](/apps/manifest/) | The server's publisher | What the server asks the host to grant it. The [webhooks it accepts](/extensions/webhooks/) open a public URL on the host that forwards to the server with a workspace credential. Its [admin-only tools](/extensions/admin-tools/) decide which tools a workspace's members may call, and dropping a name would hand them one. Its [placements](/extensions/placements/), the [settings section](/extensions/settings-sections/) included, claim routes and entries in a shell the user and other apps share. The block also carries the [notification outbox](/extensions/notifications/) until the MCP Events extension ships, and the deprecated catalog form of [lifecycle](/extensions/lifecycle/#the-catalog-form-deprecated). |
 | [`ai.nimblebrain/connector`](/config/connectors-catalog/) | The operator | How to install the server: how it authenticates (DCR, a static OAuth client, or a brokered provider), which secrets the workspace supplies, and how it is tagged in Browse. This is decided by whoever runs the platform, not by the server. |
 
 ### Between a server's events and the host

@@ -11,6 +11,7 @@
  */
 
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/automations.ts";
+import type { AdmissionLease } from "../../runtime/admission.ts";
 import { type AutomationRunTrigger, isTransientError, type RunInput } from "./scheduler.ts";
 import type {
   Automation,
@@ -78,6 +79,12 @@ export interface TaskFnRequest {
    * "timeout" run record.
    */
   signal?: AbortSignal;
+  /**
+   * The run slot the scheduler was admitted to. `runtime.executeTask()` runs
+   * under it instead of acquiring a second one, and releases it as the run
+   * ends (`TaskRequest.admission`).
+   */
+  admission?: AdmissionLease;
 }
 
 /** One tool call from a task run (matches runtime `TaskResult.toolCalls[]`). */
@@ -755,6 +762,7 @@ export function createDirectExecutor(
     externalSignal?: AbortSignal,
     trigger: AutomationRunTrigger = "scheduled",
     input?: RunInput,
+    lease?: AdmissionLease,
   ): Promise<{ run: AutomationRun; result: AutomationRunResult | null }> {
     const startedAt = new Date().toISOString();
     const limits = limitsOf(automation);
@@ -788,6 +796,7 @@ export function createDirectExecutor(
       const data = await taskFn({
         ...buildRequest(automation, trigger, limits, ctx, input),
         signal: runController.signal,
+        ...(lease ? { admission: lease } : {}),
       });
       const run = mapResultToRun(automation, startedAt, data, trigger, limits);
       // Build the result sidecar from the same data — non-null on every normal

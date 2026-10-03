@@ -30,6 +30,7 @@ import {
 } from "../../../../src/platform/automations/scheduler.ts";
 import { saveAutomation } from "../../../../src/platform/automations/store.ts";
 import type { Automation, ScheduleSpec } from "../../../../src/platform/automations/types.ts";
+import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_0002ee92e8791c13";
@@ -316,7 +317,10 @@ describe("batching", () => {
           result: null,
         };
       };
-      const scheduler = new Scheduler(executor, { workDir, maxConcurrentRuns: 1 });
+      const scheduler = new Scheduler(executor, {
+        workDir,
+        admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+      });
       scheduler.start();
       expect(scheduler.requestRunNow(WS, OWNER, "holder")?.state).toBe("started");
 

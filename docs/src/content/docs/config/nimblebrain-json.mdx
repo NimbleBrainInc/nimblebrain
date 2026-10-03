@@ -644,8 +644,8 @@ Guardrails on [automation](/using/automations) runs: how many the runtime holds 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `maxConcurrentRuns` | `integer` | `2` | Automation runs in flight at once. Scheduled, Run now, and event runs share these slots. Range: 1--100. |
-| `maxQueuedRuns` | `integer` | `50` | Run now and event runs held waiting for a slot; each starts as soon as one frees. Beyond it a run is refused and recorded as skipped. `0` refuses at the limit. Range: 0--1000. |
+| `maxConcurrentRuns` | `integer` | `2` | Unattended runs in flight at once: scheduled, Run now, and event runs, and any other run started without a person in the loop. Chat turns do not take a slot. Range: 1--100. |
+| `maxQueuedRuns` | `integer` | `50` | Run now and event runs held waiting for a slot. A freed slot goes to the waiting run whose workspace holds the fewest slots, oldest first among equals. Beyond it a run is refused and recorded as skipped. `0` refuses at the limit. Range: 0--1000. |
 | `maxRunIterations` | `integer` | `50` | Ceiling on one run's agentic iterations. Range: 1--50. |
 | `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
 | `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. |

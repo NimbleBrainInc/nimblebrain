@@ -14,9 +14,12 @@ import { DEFAULT_MAX_ITERATIONS, MAX_ITERATIONS } from "../limits.ts";
 
 /** The `automations` block, as an operator writes it. */
 export interface AutomationsConfig {
-  /** Automation runs in flight at once across every workspace in the process. */
+  /**
+   * Unattended runs in flight at once across every workspace in the process
+   * (the runtime's run admission, `src/runtime/admission.ts`). Chat is not admitted.
+   */
   maxConcurrentRuns?: number;
-  /** Run now and event runs held waiting for a slot. 0 refuses at the limit. */
+  /** Unattended runs held waiting for a slot. 0 refuses at the limit. */
   maxQueuedRuns?: number;
   /** Ceiling on one run's agentic iterations. */
   maxRunIterations?: number;

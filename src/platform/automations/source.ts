@@ -136,8 +136,9 @@ export async function createAutomationsSource(
   const scheduler = new Scheduler(executor, {
     workDir,
     defaultTimezone,
-    maxConcurrentRuns: automationsConfig.maxConcurrentRuns,
-    maxQueuedRuns: automationsConfig.maxQueuedRuns,
+    // The runtime's run admission: automation runs share its slots and queue
+    // with every other unattended run.
+    admission: runtime.getRunAdmission(),
     onRunRecorded: (owner) => runtime.announceIdentitySourceChange("automations", owner),
   });
   scheduler.start();

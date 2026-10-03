@@ -22,6 +22,7 @@ import {
   saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
+import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import {
   getRequestContext,
   runWithRequestContext,
@@ -820,7 +821,10 @@ describe("Scheduler — concurrency", () => {
   it("test_global_limit_reached_defers_the_run_instead_of_skipping_it", async () => {
     const [, , auto3] = seedThreeDue(tmpDir);
     const { executor, callLog, release } = createHeldExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 2 }),
+    });
     scheduler.start();
 
     const tick = scheduler.onTimer();
@@ -861,7 +865,10 @@ describe("Scheduler — concurrency", () => {
     seedDefs(tmpDir, new Map([...busy, send].map((a) => [a.id, a])));
 
     const { executor, callLog, release } = createHeldExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 2 }),
+    });
     scheduler.start();
     const tick = scheduler.onTimer();
     await new Promise((r) => setTimeout(r, 50));
@@ -888,7 +895,10 @@ describe("Scheduler — concurrency", () => {
   it("test_global_limit_reached_arms_the_heartbeat_not_a_zero_delay_tick", async () => {
     seedThreeDue(tmpDir);
     const { executor, release } = createHeldExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 2 }),
+    });
     scheduler.start();
     const tick = scheduler.onTimer();
     await new Promise((r) => setTimeout(r, 50));
@@ -2284,7 +2294,10 @@ describe("Scheduler — run queue", () => {
   it("queues a Run now at the global limit instead of starting it", async () => {
     seedIdle(["a", "b", "c"]);
     const { executor, started, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 2 }),
+    });
     scheduler.start();
 
     expect(scheduler.requestRunNow(WS, OWNER, "a")?.state).toBe("started");
@@ -2305,7 +2318,10 @@ describe("Scheduler — run queue", () => {
   it("starts the next queued run the moment a slot frees, without a timer tick", async () => {
     seedIdle(["a", "b", "c"]);
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 2 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 2 }),
+    });
     scheduler.start();
     const onTimer = spyOn(scheduler, "onTimer");
 
@@ -2338,8 +2354,7 @@ describe("Scheduler — run queue", () => {
     });
     const scheduler = new Scheduler(executor, {
       workDir: tmpDir,
-      maxConcurrentRuns,
-      maxQueuedRuns,
+      admission: createRunAdmission({ maxConcurrentRuns, maxQueuedRuns }),
     });
     scheduler.start();
 
@@ -2357,7 +2372,10 @@ describe("Scheduler — run queue", () => {
   it("queues FIFO and reports each run's position", async () => {
     seedIdle(["a", "b", "c", "d"]);
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
@@ -2380,8 +2398,7 @@ describe("Scheduler — run queue", () => {
     const { executor, started, releaseAll } = createSlotExecutor();
     const scheduler = new Scheduler(executor, {
       workDir: tmpDir,
-      maxConcurrentRuns: 1,
-      maxQueuedRuns: 1,
+      admission: createRunAdmission({ maxConcurrentRuns: 1, maxQueuedRuns: 1 }),
     });
     scheduler.start();
 
@@ -2404,7 +2421,10 @@ describe("Scheduler — run queue", () => {
   it("refuses a Run now for an automation that is already queued", async () => {
     seedIdle(["a", "b"]);
     const { executor, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
@@ -2440,7 +2460,10 @@ describe("Scheduler — run queue", () => {
   it("cancel removes a queued run and records it cancelled", async () => {
     seedIdle(["a", "b"]);
     const { executor, started, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
@@ -2463,7 +2486,10 @@ describe("Scheduler — run queue", () => {
   it("stop records every queued run as skipped", async () => {
     seedIdle(["a", "b"]);
     const { executor } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
@@ -2486,7 +2512,10 @@ describe("Scheduler — run queue", () => {
       ]),
     );
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
@@ -2517,8 +2546,7 @@ describe("Scheduler — run queue", () => {
     const { executor, releaseAll } = createSlotExecutor();
     const scheduler = new Scheduler(executor, {
       workDir: tmpDir,
-      maxConcurrentRuns: 1,
-      maxQueuedRuns: 0,
+      admission: createRunAdmission({ maxConcurrentRuns: 1, maxQueuedRuns: 0 }),
     });
     scheduler.start();
 
@@ -2549,8 +2577,7 @@ describe("Scheduler — run queue", () => {
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
     const scheduler = new Scheduler(executor, {
       workDir: tmpDir,
-      maxConcurrentRuns: 1,
-      maxQueuedRuns: 1,
+      admission: createRunAdmission({ maxConcurrentRuns: 1, maxQueuedRuns: 1 }),
     });
     scheduler.start();
     const input = { preamble: "x" };
@@ -2604,7 +2631,10 @@ describe("Scheduler — run queue", () => {
   it("an event run disabled while queued does not start, and answers skipped", async () => {
     seedEventAnd(["a"]);
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
@@ -2643,7 +2673,10 @@ describe("Scheduler — run queue", () => {
       ]),
     );
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
@@ -2667,7 +2700,10 @@ describe("Scheduler — run queue", () => {
   it("dropWorkspace resolves the workspace's queued runs as not started, writing nothing", async () => {
     seedEventAnd(["a", "b"]);
     const { executor, started, releaseAll } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
 
     scheduler.requestRunNow(WS, OWNER, "a");
@@ -2694,7 +2730,10 @@ describe("Scheduler — run queue", () => {
   it("refuses Run now and event runs once stopped, instead of queueing what nothing drains", async () => {
     seedEventAnd(["a"]);
     const { executor, started } = createSlotExecutor();
-    const scheduler = new Scheduler(executor, { workDir: tmpDir, maxConcurrentRuns: 1 });
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 1 }),
+    });
     scheduler.start();
     scheduler.stop();
 

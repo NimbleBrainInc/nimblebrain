@@ -1,6 +1,6 @@
 ---
 title: Lifecycle
-description: Be told when your connector becomes reachable in a workspace, and when it is about to be removed — so per-workspace state you hold elsewhere is set up and released with it.
+description: Be told when your server is installed into a workspace and when it is about to be removed, with the ai.nimblebrain/lifecycle MCP extension, so per-workspace state you hold elsewhere is set up and released with it.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -11,8 +11,12 @@ know two moments: when it was installed into a workspace, and when it is about
 to be removed. Nothing in MCP tells you either. A tool call arrives when someone
 asks for something, and an install or an uninstall is not that.
 
-Lifecycle tells you both. It is a capability of the
-[`ai.nimblebrain/host`](/apps/manifest/) block.
+Lifecycle tells you both. It is an
+[MCP extension](https://modelcontextprotocol.io/extensions/overview),
+`ai.nimblebrain/lifecycle`, built on the core Tools primitive. It adds no
+method. You advertise the extension, mark one of your tools per event with a
+`_meta` key, and the host calls that tool with an ordinary `tools/call`. You
+need no NimbleBrain SDK, and nothing goes in your catalog entry.
 
 ## What it enables
 
@@ -31,10 +35,352 @@ integration end to end:
 | 2 | [Inbound webhooks](/extensions/webhooks/) | Receives the vendor's events about that resource |
 | 3 | [Notifications](/extensions/notifications/) | Tells the workspace what happened: the domain went active, a reply landed |
 
-## Declare it
+## The two events
 
-A `lifecycle` block names two tools on **your own server**, and the host calls
-them.
+| Event | Meaning | Called | Arguments |
+|---|---|---|---|
+| `ready` | The host has made your server available to the workspace, and the connection is up | The first time your server is reachable in a workspace, and on every later reconnect until one call succeeds | `{ "reason": "install" \| "resume" }` if your handler declares `reason`, otherwise `{}` |
+| `removing` | The host is about to stop using your server for the workspace for good | Immediately before the connector is uninstalled, while your server is still reachable | `{}` |
+
+`reason` answers exactly one question: *was this the user's install?*
+`"install"` means it was. `"resume"` is every other cause: a host restart, a
+reconnect, a re-auth, your server redeployed at the same URL. They are one value
+because you have nothing to do differently with them and the host frequently
+cannot tell them apart.
+
+A server that ignores `reason` entirely is still correct. What it loses is the
+ability to tell the user's act from the system's state, which is mostly useful
+for what you *say*, not for what you *write*.
+
+The extension never names the workspace. Your server knows which workspace a
+call is for from the identity the connection already carries, the same identity
+its other tools serve.
+
+## 1. Advertise the extension
+
+Put the extension in the `extensions` map of your server capabilities, with an
+empty settings object:
+
+```json
+{
+  "capabilities": {
+    "tools": {},
+    "extensions": {
+      "ai.nimblebrain/lifecycle": {}
+    }
+  }
+}
+```
+
+Where that map travels depends on the protocol revision the connection
+negotiated: on `2026-07-28` it is in the `server/discover` result, and on a
+2025-era connection it is in the `initialize` result. The host reads it from
+wherever the connection carries it, and negotiates `2026-07-28` with any server
+that offers it. A marked tool on a server that did not advertise the extension
+on that connection is an ordinary tool, and the host never calls it as a
+handler.
+
+<Aside type="caution" title="Some SDKs advertise on one revision only">
+FastMCP 4, on the MCP Python SDK 2.x, carries server extensions in
+`server/discover` only; its 2025-era `initialize` result has none. That is fine
+against this host. A host that speaks only 2025 sees no extension from such a
+server, and sends no events, with no error on either side.
+</Aside>
+
+The host advertises `ai.nimblebrain/lifecycle` in its own
+[client capabilities](/mcp/protocol-support/#client-capabilities-the-host-advertises)
+on both eras, so your server can tell whether it will be called.
+
+## 2. Mark one tool per event
+
+A handler is an ordinary tool in your `tools/list` result, carrying the
+extension identifier as a `_meta` key:
+
+```json
+{
+  "name": "workspace_ready",
+  "description": "Records that this workspace has the connector installed.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "reason": { "type": "string", "enum": ["install", "resume"] }
+    }
+  },
+  "_meta": {
+    "ai.nimblebrain/lifecycle": { "event": "ready" }
+  }
+}
+```
+
+| Field | Rule |
+|---|---|
+| `_meta["ai.nimblebrain/lifecycle"]` | Required. An object. The host tolerates fields it does not know. |
+| `…event` | Required. `"ready"` or `"removing"`. The host ignores a marker whose `event` it does not recognise, and reports it as an install warning. |
+| `inputSchema` | Must not list any `required` property. A `ready` handler may declare an optional `reason`. |
+| `execution.taskSupport` | Must not be `"required"`. `"optional"` is allowed: the host calls every handler inline, without task augmentation. |
+
+Mark one tool per event, or none: each event is optional on its own. The
+marker is the only signal. The host never identifies a handler by its name or
+its description, so name the tools whatever you like.
+
+The host treats these as undeclared, calls nothing for them, and reports each as
+a warning on the install:
+
+- an event marked on more than one tool (the host does not choose one);
+- a marked tool whose `inputSchema` lists a `required` property;
+- a marked tool whose `execution.taskSupport` is `"required"`.
+
+## Complete examples
+
+Both servers advertise the extension and mark two handlers. Neither needs
+anything beyond the MCP SDK.
+
+### TypeScript
+
+```ts title="server.ts"
+import { McpServer } from "@modelcontextprotocol/server";
+import * as z from "zod";
+
+const LIFECYCLE = "ai.nimblebrain/lifecycle";
+
+export const server = new McpServer(
+  { name: "acme-outreach", version: "1.0.0" },
+  { capabilities: { tools: {}, extensions: { [LIFECYCLE]: {} } } },
+);
+
+server.registerTool(
+  "workspace_ready",
+  {
+    description: "Records that this workspace has the connector installed.",
+    inputSchema: z.object({ reason: z.enum(["install", "resume"]).optional() }),
+    _meta: { [LIFECYCLE]: { event: "ready" } },
+  },
+  async ({ reason }) => {
+    // Idempotent by construction: record that this workspace wants a tenancy,
+    // and let your own reconciler converge it. Do not make the slow vendor
+    // call here; the user is waiting on the install.
+    const state = await requestTenancy(currentWorkspace()); // an upsert
+    const text =
+      reason === "install"
+        ? "Setting up your sending workspace. It will be ready in a few seconds."
+        : `Sending workspace: ${state}.`;
+    return { content: [{ type: "text", text }] };
+  },
+);
+
+server.registerTool(
+  "workspace_removing",
+  {
+    description: "Records that this workspace's tenancy should be released.",
+    _meta: { [LIFECYCLE]: { event: "removing" } },
+  },
+  async () => {
+    // Mark it for release and return. The same reconciler does the vendor call.
+    await releaseTenancy(currentWorkspace());
+    return { content: [{ type: "text", text: "Releasing your sending workspace." }] };
+  },
+);
+```
+
+### Python (FastMCP)
+
+```python title="server.py"
+from fastmcp import FastMCP
+from fastmcp.server.extensions import ServerExtension
+
+LIFECYCLE = "ai.nimblebrain/lifecycle"
+
+
+class Lifecycle(ServerExtension):
+    """Advertises the extension. It serves no method of its own."""
+
+    identifier = LIFECYCLE
+
+    def settings(self) -> dict:
+        return {}
+
+
+mcp = FastMCP("acme-outreach")
+mcp.add_extension(Lifecycle())
+
+
+@mcp.tool(meta={LIFECYCLE: {"event": "ready"}}, task=False)
+async def workspace_ready(reason: str | None = None) -> str:
+    """Records that this workspace has the connector installed."""
+    state = await request_tenancy(current_workspace())  # an upsert
+    if reason == "install":
+        return "Setting up your sending workspace. It will be ready in a few seconds."
+    return f"Sending workspace: {state}."
+
+
+@mcp.tool(meta={LIFECYCLE: {"event": "removing"}}, task=False)
+async def workspace_removing() -> str:
+    """Records that this workspace's tenancy should be released."""
+    await release_tenancy(current_workspace())
+    return "Releasing your sending workspace."
+```
+
+`request_tenancy` and `release_tenancy` record intent, and nothing in them calls
+the vendor. [Privileged work](#privileged-work-record-it-act-on-it-elsewhere)
+explains why.
+
+## Delivery: at least once, and twice on a fresh install
+
+The contract is **at least once per workspace per host process in which your
+connection comes up**. Concretely:
+
+- **A fresh install of a connector that connects at once delivers two `ready`
+  calls, in a racy order**: one `install` from the install itself and one
+  `resume` from the connection coming up. This is intended, not a bug to work
+  around. They are two different notifications, and collapsing them would mean
+  telling a freshly installed connector `"resume"`.
+- A connector whose connection comes up later (an interactive OAuth flow) gets
+  **no** `install` call at all, because there was no server to call when the
+  install returned. Its first `ready` carries `"resume"`.
+- After one call succeeds, later reconnects in the same host process do not call
+  again.
+
+**So your handler must be idempotent.** Write it as "make this true", not as
+"do this once": an upsert, not an insert.
+
+`removing` is called before the host closes the connection and before it
+discards the credentials it holds for the workspace, because after that there is
+nothing to call. If the host no longer holds your handler when the removal
+begins (the host restarted since your server last connected, say), it
+reconnects to find it first. The uninstall waits for the call, and for
+that reconnect, for at most a few seconds, then proceeds without it.
+
+<Aside type="caution" title="You must not assume `removing` arrives">
+It is best-effort and it can be skipped entirely: the host was down when the
+user uninstalled, your server was unreachable, the workspace was deleted
+outright. **A server that leaks a third-party resource when `removing` does not
+arrive is relying on a call nothing guarantees.** Pair it with something of your
+own that converges: a sweep for resources whose workspace has stopped checking
+in, or a record with a last-seen stamp an operator can act on.
+</Aside>
+
+**Return quickly.** Both handlers are awaited: `ready` inside the install the
+user is watching, `removing` inside the uninstall. Record the intent and let
+your own background work converge it. A handler that waits on a vendor
+round-trip makes the install feel broken and the uninstall feel stuck.
+
+## Failure semantics
+
+| | |
+|---|---|
+| An undeclared handler (marked twice, a required property, task support required) or an unknown `event` | **A warning on a successful install.** The connector installs and works, and no call is made for that event. The host re-reads your handlers on every reconnect and every `notifications/tools/list_changed`, so a fixed `removing` handler is called at the next uninstall. A `ready` call skipped this way is not made again until the host restarts or the connector is reinstalled. |
+| `ready` fails or errors | **Never fails the install.** Retried on the next reconnect, and on your next `notifications/tools/list_changed`. |
+| `removing` fails, errors, or cannot be reached | **Never fails the uninstall.** The uninstall waits for the call for a few seconds and then proceeds without it. Not retried; the connector is gone. |
+| Your server lists no tools yet | Not an error. The host waits for your tool list and calls then. |
+
+A result with `isError: true`, a JSON-RPC error and a timeout are all failed
+calls. Neither event has a retry queue. The events *are* the retry: another
+reconnect, another install.
+
+## Only the host calls a handler
+
+A lifecycle event is a statement by the host: *I installed you*, *I am removing
+you*. A call from anyone else would forge it. So the host withholds your marked
+tools from everyone else: they are absent from every tool listing it gives a
+model, in chat or at its [MCP endpoint](/connect/mcp-endpoint/), and a call to
+one from the agent, an app view, the API or another MCP client is refused with
+the structured error `host_only_tool`, workspace admins included. Your other
+tools are unaffected.
+
+This applies to connectors installed in a workspace. A
+[personal connector](/using/personal-connectors/) is neither called nor has its
+handlers withheld.
+
+## Your handler must be safe for any caller
+
+The host withholds your handlers, but nothing else does. A host that does not
+implement this extension lists them as ordinary tools and may offer them to a
+model, and anyone who holds your server's credential for a workspace can call
+them directly. So write each handler as if any of those callers could reach it:
+
+- **`removing` records the intent to release, and never destroys.** Let a
+  separate process act on that record after a grace period. A later `ready`
+  withdraws the intent, so a stray `removing` followed by normal use costs
+  nothing.
+- **`ready` only ever converges toward "installed".** Calling it twice, or from
+  the wrong caller, must leave the same state as calling it once.
+- **`reason` is data, not authority.** It says why the host called; it proves
+  nothing. Never gate a privileged act on it.
+- **Take the workspace from the connection's identity**, never from an
+  argument. The host sends none, and your server must not accept one.
+
+You may also leave your handlers out of `tools/list` for a client that did not
+advertise the extension in its client capabilities, where the negotiated
+revision lets you tell (on `2026-07-28`, client capabilities arrive with each
+request). You may additionally mark them with the MCP Apps
+`_meta.ui.visibility: ["app"]`, for hosts that honour it. Neither replaces the
+rules above.
+
+### Privileged work: record it, act on it elsewhere
+
+Creating a tenancy or a domain usually needs a credential with broad power at
+the vendor. Keep that credential out of the handlers.
+
+**Record the request as ordinary state in `ready`**, such as a row saying "this
+workspace wants a tenancy", and return. **A separate process that holds the
+privileged credential** reads those rows and acts on them, and does the same for
+the release rows `removing` writes.
+
+- The handler stays **fast**: it writes a row, so the install is not waiting on
+  a vendor round-trip.
+- It stays **idempotent**: recording "wants a tenancy" twice is the same row,
+  which is what at-least-once delivery needs.
+- It stays **unprivileged**: the process serving tool calls never holds the
+  credential that can create or destroy resources at the vendor, so a bug or a
+  prompt-injected call on that path cannot reach it.
+- The separate process is also where retries, the grace period before a
+  release, and the sweep for missed `removing` calls live, since it is already
+  converging recorded intent against the vendor.
+
+## What the user sees
+
+`ready`'s **text result becomes a notice on the install**, shown beside the
+"Installed …" confirmation. That is the one place a user waiting on setup you
+started is told to wait, so write it for them:
+
+> Installed "Acme Outreach" in this workspace. Setting up your sending
+> workspace. It will be ready in a few seconds.
+
+Only the `install` call surfaces this way; a `resume` has nobody watching. The
+host renders the text as text, never as markup, may truncate it, and never
+passes it to a model as instruction. `removing`'s result is not shown; the
+uninstall has its own confirmation.
+
+## Compatibility
+
+- **A host that does not implement the extension** sees ordinary tools with an
+  unfamiliar `_meta` key and never calls them as handlers. It may offer them to
+  a model, which is why [your handlers must be safe for any
+  caller](#your-handler-must-be-safe-for-any-caller).
+- **A server that does not implement the extension** advertises nothing, and
+  the host calls nothing. Neither side rejects the other.
+- **A 2025-era connection to a server that advertises only in
+  `server/discover`** carries no extension, so no events are sent and no error
+  is raised. A server that needs events from a host that speaks only 2025 must
+  advertise in `initialize` as well.
+- **Your server must not depend on the events to be correct**, because many
+  hosts will never send them. Do per-workspace setup lazily on first use as
+  well, or offer it as an explicit tool, and keep the sweep for releases that
+  never arrived.
+
+This is version 1 of the extension. A new `event` value, or new optional fields
+in the marker or the settings object, keep the identifier; a host ignores what
+it does not recognise. Removing an event, changing its meaning or its delivery
+guarantee, or adding a required argument would ship under a new identifier
+(`ai.nimblebrain/lifecycle-v2`).
+
+## The catalog form (deprecated)
+
+<Aside type="caution" title="Deprecated">
+Before this extension, a server's handlers were named in a `lifecycle` block of
+the [`ai.nimblebrain/host`](/apps/manifest/) catalog block. That block still
+works for now, and will be removed. New servers advertise the extension instead.
+</Aside>
 
 ```json title="manifest.json"
 "_meta": {
@@ -48,230 +394,27 @@ them.
 }
 ```
 
-Both are optional; declare either alone. Nothing else is in the block, and
-nothing else is planned: the host says *you were installed*, and what that means
-is yours.
+`on_ready` names the `ready` handler and `on_removing` the `removing` handler,
+by tool name, on the same server. The events, delivery, withholding and failure
+semantics above are the same. The differences:
 
-**Only the host calls them.** A lifecycle event means the host did something, so
-the tools you name are hidden from the model and from every other client,
-workspace admins included, and a direct call to one is refused with the
-structured error `host_only_tool`. Your other tools are unaffected.
+- **The advertised extension wins.** A connector whose server advertises
+  `ai.nimblebrain/lifecycle` on a connection has its handlers read from the
+  wire, and a `lifecycle` block in its catalog entry is ignored for that
+  connection, even if the server marks no tool. The host never delivers an event
+  through both. A server that advertises nothing keeps the catalog block.
+- **`reason` is sent to `on_ready` whether or not its schema declares it.** A
+  catalog-named handler must accept and ignore an argument it does not declare,
+  which FastMCP, the MCP TypeScript SDK and anything built on pydantic do.
+- **A named handler your server does not list, that has a required property,
+  or whose `execution.taskSupport` is `"optional"` or `"required"`** is
+  reported as an install warning, and `on_ready` is not called. The check
+  re-runs on every reconnect, so fixing your server is enough: no reinstall.
+  `on_removing` is still attempted at uninstall, under the same deadline.
 
-## Declaring handlers as an extension
-
-A server can instead declare its handlers itself, on the wire, as the
-`ai.nimblebrain/lifecycle` MCP extension. Advertise the extension in your server
-capabilities, and mark one tool per event in its `_meta`:
-
-```json title="server capabilities"
-{ "capabilities": { "tools": {}, "extensions": { "ai.nimblebrain/lifecycle": {} } } }
-```
-
-```json title="tools/list entry"
-{
-  "name": "scope_ready",
-  "inputSchema": {
-    "type": "object",
-    "properties": { "reason": { "type": "string", "enum": ["install", "resume"] } }
-  },
-  "_meta": { "ai.nimblebrain/lifecycle": { "event": "ready" } }
-}
-```
-
-`event` is `"ready"` (the `on_ready` call) or `"removing"` (the `on_removing`
-call). The events, delivery and failure semantics are the ones on this page,
-with these differences:
-
-- **The marker counts only when the extension is advertised** on that
-  connection. A marked tool on a server that does not advertise it is an
-  ordinary tool.
-- **`reason` is sent only to a `ready` handler whose `inputSchema` declares it.**
-  A handler that does not declare it is called with `{}`.
-- **`execution.taskSupport: "optional"` is allowed.** The host calls every
-  lifecycle handler inline. `"required"` makes that tool undeclared.
-- **An event marked on two tools is undeclared**, and so is a marked tool with a
-  required property. The host calls neither, and reports both, with an unknown
-  `event`, as install warnings.
-- **Where to advertise.** On a `2026-07-28` connection the host reads the
-  capability from `server/discover`. On a 2025-era connection it reads it from
-  `initialize`, and some SDKs leave it out of that result.
-
-The host advertises `ai.nimblebrain/lifecycle` in its own
-[client capabilities](/mcp/protocol-support/#client-capabilities-the-host-advertises),
-so your server can tell whether it will be called.
-
-**The catalog block still works.** A connector that advertises the extension has
-its handlers read from the wire, and a `lifecycle` block in its catalog entry is
-ignored for that connection. A connector that does not advertise it keeps the
-catalog block. The host never delivers an event through both, and handlers are
-host-only either way. Both apply to connectors installed in a workspace; a
-personal connector is neither called nor has its handlers withheld.
-
-## The two events
-
-| Field | Called | Arguments |
-|---|---|---|
-| `on_ready` | The first time your server is reachable in a workspace, and on every later reconnect until one call succeeds | `{ "reason": "install" \| "resume" }` |
-| `on_removing` | Immediately before the connector is uninstalled, while your server is still reachable | none |
-
-`reason` answers exactly one question: *was this the user's install?*
-`"install"` means it was. `"resume"` is every other cause — a host restart, a
-reconnect, a re-auth, your server redeployed at the same URL. They are one value
-because you have nothing to do differently with them and the host frequently
-cannot tell them apart.
-
-A server that ignores `reason` entirely is still correct. What it loses is the
-ability to tell the user's act from the system's state — which is mostly useful
-for what you *say*, not for what you *write*.
-
-## Delivery: at least once, and twice on a fresh install
-
-The contract is **at least once per workspace per host boot in which your source
-comes up**. Concretely:
-
-- **A fresh install of a connector that starts eagerly delivers two `on_ready`
-  calls, in a racy order** — one `install` from the install itself and one
-  `resume` from the connection coming up. This is intended, not a bug to work
-  around: they are two different notifications and collapsing them would mean
-  telling a freshly-installed connector `"resume"`.
-- A connector whose source starts later (an interactive OAuth flow) gets **no**
-  `install` call at all — there was no server to call when the install
-  returned. Its first `on_ready` carries `"resume"`.
-- After one call succeeds, later reconnects in the same host process do not call
-  again.
-
-**So your handler must be idempotent.** Write it as "make this true", not as
-"do this once": an upsert, not an insert.
-
-<Aside type="caution" title="You must not assume `on_removing` arrives">
-It is best-effort and it can be skipped entirely — the host was down when the
-user uninstalled, your server was unreachable, the workspace was deleted
-outright. **A server that leaks a third-party resource when `on_removing` does
-not arrive is relying on a call nothing guarantees.** Pair it with something of
-your own that converges: a sweep for resources whose workspace has stopped
-checking in, or a record with a last-seen stamp an operator can act on. Hoping
-is not a design.
-</Aside>
-
-## Writing the handlers
-
-Three rules bind the tools you name.
-
-**They must be callable with no arguments.** The host checks your advertised
-`tools/list` at install time; a handler with any *required* property in its
-`inputSchema` is reported as a manifest error. Declare your arguments optional,
-or declare none.
-
-**They must accept and ignore arguments they do not declare.** The host sends
-`{ reason }` to `on_ready` whether or not your schema mentions it — because
-requiring every server to declare a field most of them ignore would be a worse
-contract. FastMCP, the MCP TypeScript SDK, and anything built on pydantic do
-this already. A framework that rejects an undeclared argument would fail every
-call.
-
-**They must be ordinary inline tools.** A handler advertising
-`execution.taskSupport` of `"optional"` or `"required"` is reported as a
-manifest error, for the same reason as the arguments rule: the host *awaits*
-these calls while an install or an uninstall waits behind them, and a
-task-augmented call carries no deadline the host can bound it by. Long work goes
-*behind* the handler, not inside it — which is the next rule.
-
-### Python (FastMCP)
-
-```python
-from fastmcp import FastMCP
-
-mcp = FastMCP("acme")
-
-@mcp.tool()
-def workspace_ready(reason: str = "resume") -> str:
-    # Idempotent by construction: record that this workspace wants a tenancy,
-    # and let your own reconciler converge it. Do NOT do the slow vendor call
-    # inline — the user is waiting on the install.
-    state = request_tenancy(current_workspace())   # upsert, not insert
-    if reason == "install":
-        return "Setting up your sending workspace. It will be ready in a few seconds."
-    return f"Sending workspace: {state}."
-
-@mcp.tool()
-def workspace_removing() -> str:
-    # Mark it for release and return. The same reconciler does the vendor call.
-    release_tenancy(current_workspace())
-    return "Releasing your sending workspace."
-```
-
-### TypeScript
-
-```ts
-server.registerTool(
-  "workspace_ready",
-  {
-    description: "Called by the host when this connector becomes reachable in a workspace.",
-    inputSchema: { reason: z.string().optional() },
-  },
-  async ({ reason }) => {
-    const state = await requestTenancy(currentWorkspace());
-    const text =
-      reason === "install"
-        ? "Setting up your sending workspace. It will be ready in a few seconds."
-        : `Sending workspace: ${state}.`;
-    return { content: [{ type: "text", text }] };
-  },
-);
-```
-
-**Return quickly.** Both handlers are awaited: `on_ready` inside the install the
-user is watching, `on_removing` inside the uninstall. Record the intent and let
-your own background work converge it; a handler that waits on a vendor
-round-trip makes the install feel broken and the uninstall feel stuck.
-
-## Privileged work: record it, act on it elsewhere
-
-Creating a tenancy or a domain usually needs a credential with broad power at
-the vendor. Keep that credential out of the handlers.
-
-**Record the request as ordinary state in `on_ready`**, such as a row saying
-"this workspace wants a tenancy", and return. **A separate process that holds
-the privileged credential** reads those rows and acts on them, and does the
-same for the release rows `on_removing` writes.
-
-- The handler stays **fast**: it writes a row, so the install is not waiting on
-  a vendor round-trip.
-- It stays **idempotent**: recording "wants a tenancy" twice is the same row,
-  which is what at-least-once delivery needs.
-- It stays **unprivileged**: the process serving tool calls never holds the
-  credential that can create or destroy resources at the vendor, so a bug or a
-  prompt-injected call on that path cannot reach it.
-- The separate process is also where retries and the sweep for missed
-  `on_removing` calls live, since it is already converging recorded intent
-  against the vendor.
-
-The handlers in the examples above follow this shape: `request_tenancy` and
-`release_tenancy` record intent, and nothing in them calls the vendor.
-
-## What the user sees
-
-`on_ready`'s **text result becomes a notice on the install**, shown beside the
-"Installed …" confirmation. That is the one place a user waiting on setup you
-started is told to wait, so write it for them:
-
-> Installed "Acme Outreach" in this workspace. Setting up your sending
-> workspace. It will be ready in a few seconds.
-
-Only the `install` call surfaces this way — a `resume` has nobody watching.
-`on_removing`'s result is not shown; the uninstall has its own confirmation.
-
-## Failure semantics
-
-| | |
-|---|---|
-| A handler the server does not advertise, that requires an argument, or that is task-augmented | **A warning on a successful install.** The connector installs and works, and no `on_ready` call is made. The check re-runs on every reconnect, so fixing the manifest and reconnecting is enough — no reinstall. It is a warning, not a gate: `on_removing` is still attempted at uninstall, under the deadline below. |
-| `on_ready` fails or errors | **Never fails the install.** Retried on the next reconnect, and on your next `tools/list_changed`. |
-| `on_removing` fails, errors, or cannot be reached | **Never fails the uninstall.** The uninstall waits for the call for a few seconds and then proceeds without it. Not retried; the connector is gone. |
-| Your server advertises no tools yet | Not an error. The host waits for your tool list and calls then. |
-
-Neither call has a retry queue. The events *are* the retry: another reconnect,
-another install.
+To move, advertise the extension and mark the tools the block names. Keep the
+block while your server still serves a NimbleBrain release that reads only the
+catalog, then delete it.
 
 ## Where `pre_install` and `post_uninstall` went
 
@@ -285,20 +428,20 @@ the set:
 | Transition | Callable? | |
 |---|---|---|
 | not installed → installing | **no** | there is no server to call |
-| installing → installed | **no** | the connector exists but its source may not be up (interactive OAuth) |
+| installing → installed | **no** | the connector exists but its connection may not be up (interactive OAuth) |
 | → running, or reconnected | **yes** | the first moment your server is reachable at all |
 | running → disconnected | **no** | unreachability *is* the event |
 | installed → uninstalling | **yes, but only before teardown** | after it there is nothing to call |
 | uninstalling → gone | **no** | — |
 
-Exactly two moments are reachable, and "was this the install?" is not a third —
+Exactly two moments are reachable, and "was this the install?" is not a third:
 it is a property of the first, which is what `reason` carries.
 
 The rule that falls out:
 
 > **Before a connector is reachable and after it is gone, extension is
-> DECLARATIVE — the manifest tells the host what to do. In between, extension is
-> CALLABLE — the host calls your server.**
+> DECLARATIVE: the host acts on what it already knows. In between, extension
+> is CALLABLE: the host calls your server.**
 
 So the "missing" events are not gaps, and some of them already ship.
 Install-time secret collection is the pre-install extension point, declared as
@@ -307,15 +450,18 @@ deleting the secrets you declared are the post-uninstall ones, performed by the
 host off the connector's own record.
 
 Helm and npm carry the full matrix because the manager runs the hook in a
-context **it** controls — a Job, a shell script — and never calls into the thing
+context **it** controls (a Job, a shell script) and never calls into the thing
 being managed. Every system shaped like this one converges on two, with the same
 asymmetry: Kubernetes `lifecycle: { postStart, preStop }`, VS Code
 `activate`/`deactivate`, Chrome `onInstalled`/`onSuspend`.
 
 ## Related
 
-- [Manifest Reference](/apps/manifest/) — the `lifecycle` field in the `ai.nimblebrain/host` block.
-- [Inbound webhooks](/extensions/webhooks/) — receiving the vendor's events about
-  what `on_ready` set up.
-- [Notifications](/extensions/notifications/) — telling the host about facts you learn
-  later, which is the other half of a server that does work between calls.
+- [Extensions](/extensions/overview/): the rules every `ai.nimblebrain/*`
+  extension follows, and the registry.
+- [Protocol support](/mcp/protocol-support/): the client capabilities the host
+  advertises, on each era.
+- [Inbound webhooks](/extensions/webhooks/): receiving the vendor's events about
+  what `ready` set up.
+- [Notifications](/extensions/notifications/): telling the host about facts you
+  learn later, which is the other half of a server that does work between calls.

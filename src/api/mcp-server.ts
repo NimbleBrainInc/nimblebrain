@@ -1047,11 +1047,13 @@ function createHandlers(
  * The 2025 leg: a session's SDK v1 `Server`, with the session's task store.
  *
  * It stays on SDK v1 because SDK v2 cannot serve the 2025 task vocabulary: its
- * wire seam refuses a task-shaped `tools/call` result on the way out as well as
- * on the way in, explicit result schema or not. The iframe bridge and any 2025
- * client starting a task-augmented call depend on that result. When the SDK
- * serves it (typescript-sdk#2599), this leg moves to SDK v2 and the v1
- * dependency goes.
+ * `tools/call` result validation requires `content` beside `task` ("content is
+ * required when the body carries 'task'"). A server cannot send one, explicit
+ * result schema or not; a client receives one only through a request that
+ * carries its own result schema, since the typed `callTool` refuses it too.
+ * The iframe bridge and any 2025 client starting a task-augmented call depend
+ * on that result. When SDK v2 sends a task-shaped `tools/call` result on the
+ * 2025 era, this leg moves to it and the v1 dependency goes.
  *
  * The task store is identity-bound. `ProtocolOptions.taskStore` makes the SDK
  * install tasks/{get,result,cancel,list}; `registerTaskHandlers` replaces the

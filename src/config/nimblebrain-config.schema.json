@@ -488,14 +488,14 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 100,
-          "description": "Automation runs in flight at once. Scheduled, Run now, and event runs share these slots. Default: 2.",
+          "description": "Unattended runs in flight at once, across every workspace: scheduled, Run now, and event automation runs, and any other run started without a person in the loop. Chat turns do not take a slot. Default: 2.",
           "default": 2
         },
         "maxQueuedRuns": {
           "type": "integer",
           "minimum": 0,
           "maximum": 1000,
-          "description": "Run now and event runs held waiting for a slot once maxConcurrentRuns are in flight; each starts as soon as a slot frees. Beyond it a run is refused and recorded as skipped. 0 refuses at the limit. The queue is in memory: runs still queued when the runtime stops are recorded as skipped. Default: 50.",
+          "description": "Runs held waiting for a slot once maxConcurrentRuns are in flight (Run now and event runs; a scheduled run defers instead). A freed slot goes to the waiting run whose workspace holds the fewest slots, oldest first among equals. Beyond it a run is refused and recorded as skipped. 0 refuses at the limit. The queue is in memory: runs still queued when the runtime stops are recorded as skipped. Default: 50.",
           "default": 50
         },
         "maxRunIterations": {
