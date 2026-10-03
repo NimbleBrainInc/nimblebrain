@@ -50,6 +50,8 @@ let forwarded: { url: string; init: RequestInit }[] = [];
 let upstreamResponse: () => Response;
 /** Log lines the door emitted during a test. */
 let logLines: string[] = [];
+/** The vendors the connector's bound catalog entry declares, as the runtime would answer. */
+let declaredVendors: string[] = [VENDOR];
 
 /**
  * Run `fn` with every log line the runtime writes captured.
@@ -123,7 +125,14 @@ const captureFetch = (async (url: string | URL | Request, init?: RequestInit) =>
 
 function makeCtx(over: Partial<AppContext> = {}): AppContext {
   return {
-    runtime: { getWorkspaceStore: () => store, getAllowInsecureRemotes: () => false },
+    runtime: {
+      getWorkspaceStore: () => store,
+      getAllowInsecureRemotes: () => false,
+      getHookReconcileDeps: () => ({
+        declarationsFor: async () =>
+          declaredVendors.map((vendor) => ({ vendor, route: ROUTE, register_tool: "register" })),
+      }),
+    },
     ...over,
   } as unknown as AppContext;
 }
@@ -172,6 +181,7 @@ beforeEach(async () => {
   wsId = ws.id;
   forwarded = [];
   logLines = [];
+  declaredVendors = [VENDOR];
   upstreamResponse = () => new Response("ok", { status: 202 });
   await seedWorkspace({});
 });
@@ -252,6 +262,16 @@ describe("a legitimate delivery", () => {
     if (!call) throw new Error("expected one forwarded request");
     expect((call.init.headers as Headers).get("cookie")).toBeNull();
   });
+});
+
+test("a registration its connector's catalog entry no longer declares forwards nothing", async () => {
+  // The connector stopped being its entry's server (or the entry dropped the
+  // vendor), so the runtime answers no declaration for it: the registration
+  // minted while it was bound must not keep forwarding.
+  declaredVendors = [];
+  const res = await deliver(makeApp(), hookUrl());
+  expect(res.status).toBe(404);
+  expect(forwarded).toHaveLength(0);
 });
 
 test("another workspace's id does not reach this workspace's connector", async () => {

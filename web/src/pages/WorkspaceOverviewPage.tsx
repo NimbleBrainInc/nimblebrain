@@ -1,35 +1,48 @@
 // ---------------------------------------------------------------------------
 // WorkspaceOverviewPage — workspace landing at `/w/<slug>/`
 //
-// Stage 2 follow-up: the workspace's apps used to surface in a bottom
-// `APPS` group in the sidebar. That section is gone; this page is the
-// full app grid + workspace metadata. The sidebar now shows a top-N
-// quick-list under the focused workspace and links here via "View all N
-// apps" (see WorkspaceNav) — both surfaces read the same app set
-// through `workspaceApps()` so the grid and the count agree.
+// Answers "what do I do here?", most direct first:
+//   1. Ask: a composer that sends into the chat panel, opening it, the way an
+//      app's `ui/message` does (`AppWithChat`).
+//   2. What needs a member: the briefing panel (`BriefingView`), which renders
+//      nothing when nothing does.
+//   3. Pick up: the workspace's most recent conversations, each reopening in
+//      the panel.
+//   4. Apps: one card per placement, plus "Add app" for a member who may
+//      install one.
+// Workspace facts appear only as an action: a workspace of one shows an
+// invite to someone who may manage its members, and nothing otherwise.
 //
-// App data source: `forSlot("sidebar")` → `workspaceApps()`, which keeps
-// the grouped sub-slots (`sidebar.<group>`), one card per placement. The
-// placement registry is already workspace-scoped server-side, so this is
-// the right surface — the same data that fed the old `APPS` group. Icons
-// are the apps' brand icons (registry `icons[].src`) via
-// `useWorkspaceAppIcons`, with a letter-avatar fallback.
+// Gutter: the content's edges sit on the top bar's (`pl-4 pr-3` in TopBar), so
+// the title lines up under the bar's title and Settings' edge under Chat's.
+// Nothing is centered, since centering moves content off those lines as the
+// main area widens. Every section spans the full column, so all of them end on
+// Settings' edge; the app grid adds columns as it widens instead. Widths come
+// from container queries on the main area (web/DESIGN.md), never the viewport.
 //
-// Future: filter chips (All / With UI / Tools only) + pin/recency once
-// per-user-per-workspace state exists.
+// App data source: `forSlot("sidebar")` → `workspaceApps()`, the same set the
+// sidebar quick-list reads, so the grid and the count agree. Icons are the
+// apps' brand icons via `useWorkspaceAppIcons`, with a letter-avatar fallback.
 // ---------------------------------------------------------------------------
 
-import { Settings } from "lucide-react";
-import { useCallback } from "react";
+import { ArrowUp, MessageSquare, Plus, Settings, UserPlus } from "lucide-react";
+import { type FormEvent, useCallback, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { BriefingView } from "../components/briefing/BriefingView";
 import { ConnectorIcon } from "../components/connectors/ConnectorIcon";
+import { relativeTime } from "../components/RecentConversationsPopover";
+import { Tooltip } from "../components/ui/tooltip";
+import { useChatContext } from "../context/ChatContext";
+import { useChatPanelContext } from "../context/ChatPanelContext";
+import { useSession } from "../context/SessionContext";
 import { useShellContext } from "../context/ShellContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
-import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
+import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { type RecentConversation, useRecentConversations } from "../hooks/useRecentConversations";
+import { canManageWorkspaceMembers, canWriteWorkspace } from "../hooks/useScopedRole";
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
 import { cn } from "../lib/utils";
-import { appsByConnector, connectorSettingsPath, workspaceApps } from "../lib/workspace-apps";
+import { connectorSettingsPath, workspaceApps } from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
@@ -39,6 +52,8 @@ export function WorkspaceOverviewPage() {
   const shell = useShellContext();
   const { iconFor, connectors } = useWorkspaceAppIcons();
   const navigate = useNavigate();
+  const session = useSession();
+  const { openPanel } = useChatPanelContext();
 
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
 
@@ -52,6 +67,7 @@ export function WorkspaceOverviewPage() {
     error: briefingError,
     refresh: refreshBriefing,
   } = useWorkspaceBriefing(workspace?.id);
+  const recent = useRecentConversations(workspace?.id, RECENT_LIMIT);
 
   // Connector status comes from the list the app icons already fetch. Until
   // it names this workspace (a switch in flight), the briefing waits for it,
@@ -100,27 +116,42 @@ export function WorkspaceOverviewPage() {
   const appsReady = shell != null && shell.shellWorkspaceId === workspace.id;
   const apps = appsReady && shell ? workspaceApps(shell.forSlot("sidebar")) : null;
 
+  const slugPath = `/w/${toSlug(workspace.id)}`;
+  const canAddApps = canWriteWorkspace(workspace.userRole);
+  const canInvite =
+    workspace.memberCount === 1 &&
+    canManageWorkspaceMembers(session?.user?.orgRole, workspace.userRole);
+
   return (
-    <div className="h-full overflow-y-auto" data-testid="workspace-overview-page">
-      <div className="max-w-6xl mx-auto px-8 py-10">
-        <header className="mb-8 flex items-start justify-between gap-4">
+    <div className="@container h-full overflow-y-auto" data-testid="workspace-overview-page">
+      <div className="pt-8 pb-10 pl-4 pr-3">
+        <header className="mb-6 flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-3xl font-heading font-medium text-foreground">{workspace.name}</h1>
-            <p className="mt-2 text-sm text-muted-foreground italic">
-              {/* Counted in apps, as the sidebar counts them: a connector that
-                  places several views is one app with several cards below. */}
-              {describeWorkspace(workspace, apps ? appsByConnector(apps).length : null)}
-            </p>
+            <h1 className="truncate text-3xl font-heading font-medium text-foreground">
+              {workspace.name}
+            </h1>
+            {canInvite && (
+              <Link
+                to={`${slugPath}/settings/members`}
+                data-testid="workspace-overview-invite"
+                className="mt-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <UserPlus className="size-4" aria-hidden />
+                Only you so far. Invite people
+              </Link>
+            )}
           </div>
           <Link
-            to={`/w/${toSlug(workspace.id)}/settings/general`}
+            to={`${slugPath}/settings/general`}
             data-testid="workspace-overview-settings"
-            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 rounded-sm border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02] hover:border-foreground/20 transition-colors"
+            className="shrink-0 inline-flex h-8 items-center gap-2 px-3 rounded-md border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
           >
-            <Settings className="w-4 h-4" />
-            <span className="hidden sm:inline">Settings</span>
+            <Settings className="size-4" aria-hidden />
+            Settings
           </Link>
         </header>
+
+        <AskComposer workspaceName={workspace.name} />
 
         {/* What needs a member here: each app's open counts, and each
             connector that needs attention. */}
@@ -135,9 +166,13 @@ export function WorkspaceOverviewPage() {
           onOpenConnector={handleConnectorOpen}
         />
 
-        <div className="text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground mb-3">
-          Available apps
-        </div>
+        <RecentConversations
+          conversations={recent}
+          allPath={`${slugPath}/conversations`}
+          onOpen={openPanel}
+        />
+
+        <SectionLabel className="mb-3">Apps</SectionLabel>
         {apps === null ? (
           // Brief shell-catch-up window after a switch — hold the space, don't
           // flash a skeleton (the page stays mounted, so this is a sub-second gap).
@@ -148,14 +183,23 @@ export function WorkspaceOverviewPage() {
           />
         ) : apps.length === 0 ? (
           <div
-            className="rounded-sm border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
+            className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground"
             data-testid="workspace-overview-empty"
           >
-            No apps installed in this workspace yet.
+            <p>No apps installed in this workspace yet.</p>
+            {canAddApps && (
+              <Link
+                to={`${slugPath}/settings/connectors/browse`}
+                className="mt-3 inline-flex h-8 items-center gap-2 px-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/80 transition-colors"
+              >
+                <Plus className="size-4" aria-hidden />
+                Add an app
+              </Link>
+            )}
           </div>
         ) : (
           <div
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"
+            className="grid grid-cols-1 gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 @7xl:grid-cols-5"
             data-testid="workspace-overview-app-grid"
           >
             {apps.map((p) => (
@@ -165,10 +209,20 @@ export function WorkspaceOverviewPage() {
                 iconUrl={iconFor(p.serverName)}
                 onOpen={() => {
                   if (!p.route) return;
-                  navigate(`/w/${toSlug(workspace.id)}/app/${p.route}`);
+                  navigate(`${slugPath}/app/${p.route}`);
                 }}
               />
             ))}
+            {canAddApps && (
+              <Link
+                to={`${slugPath}/settings/connectors/browse`}
+                data-testid="workspace-overview-add-app"
+                className="flex items-center gap-2 p-4 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
+              >
+                <Plus className="size-5" aria-hidden />
+                Add app
+              </Link>
+            )}
           </div>
         )}
       </div>
@@ -176,14 +230,117 @@ export function WorkspaceOverviewPage() {
   );
 }
 
-// `appCount === null` means the app list hasn't resolved for this workspace
-// yet — show only the member count (known immediately from the workspace
-// list) rather than flashing a wrong "0 apps installed".
-function describeWorkspace(workspace: WorkspaceInfo, appCount: number | null): string {
-  const members = `${workspace.memberCount} ${workspace.memberCount === 1 ? "member" : "members"}`;
-  if (appCount === null) return `${members}.`;
-  const apps = `${appCount} ${appCount === 1 ? "app installed" : "apps installed"}`;
-  return `${apps}, ${members}.`;
+/** How many conversations the overview offers to pick back up. */
+const RECENT_LIMIT = 5;
+
+function SectionLabel({ children, className }: { children: string; className?: string }) {
+  return (
+    <div
+      className={cn(
+        "text-2xs font-bold tracking-[0.08em] uppercase text-muted-foreground",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The workspace's latest conversations, each reopening in the chat panel. */
+function RecentConversations({
+  conversations,
+  allPath,
+  onOpen,
+}: {
+  conversations: RecentConversation[] | null;
+  allPath: string;
+  onOpen: (id: string) => void;
+}) {
+  if (!conversations || conversations.length === 0) return null;
+  return (
+    <section className="mb-10" aria-label="Recent conversations">
+      <div className="mb-3 flex items-baseline justify-between gap-4">
+        <SectionLabel>Recent conversations</SectionLabel>
+        <Link
+          to={allPath}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          View all
+        </Link>
+      </div>
+      <ul
+        className="divide-y divide-border rounded-lg border border-border"
+        data-testid="workspace-overview-recent"
+      >
+        {conversations.map((c) => (
+          <li key={c.id}>
+            <button
+              type="button"
+              onClick={() => onOpen(c.id)}
+              data-testid="workspace-overview-recent-row"
+              className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-foreground/5 transition-colors"
+            >
+              <MessageSquare className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-foreground">
+                {c.title || c.preview || "Untitled conversation"}
+              </span>
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                {relativeTime(c.updatedAt)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Ask the workspace's agent. Sends into the chat panel's conversation and opens
+ * the panel, as an app's message does, so the reply arrives where every other
+ * chat turn does. Its own component so streaming re-renders stay out of the page.
+ */
+function AskComposer({ workspaceName }: { workspaceName: string }) {
+  const chat = useChatContext();
+  const { panelState, openPanel } = useChatPanelContext();
+  const [text, setText] = useState("");
+  const ready = text.trim().length > 0 && !chat.isStreaming;
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!ready) return;
+    if (panelState === "closed") openPanel();
+    void chat.sendMessage(text.trim());
+    setText("");
+  };
+
+  return (
+    <form
+      onSubmit={submit}
+      data-testid="workspace-overview-ask"
+      className="mb-10 flex items-center gap-2 rounded-lg border border-border bg-card py-1.5 pl-4 pr-1.5 focus-within:border-foreground/20 transition-colors"
+    >
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        aria-label={`Ask anything in ${workspaceName}`}
+        placeholder={`Ask anything in ${workspaceName}…`}
+        data-testid="workspace-overview-ask-input"
+        className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+      />
+      <Tooltip label="Send">
+        <button
+          type="submit"
+          aria-label="Send"
+          disabled={!ready}
+          className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/80 disabled:bg-foreground/10 disabled:text-muted-foreground transition-colors"
+        >
+          <ArrowUp className="size-4" aria-hidden />
+        </button>
+      </Tooltip>
+    </form>
+  );
 }
 
 function AppCard({
@@ -203,8 +360,8 @@ function AppCard({
       data-testid="workspace-overview-app-card"
       data-app-route={placement.route ?? ""}
       className={cn(
-        "group flex items-center gap-2 p-4 rounded-sm border border-border bg-card text-left",
-        "hover:border-foreground/20 hover:bg-foreground/[0.02] transition-colors",
+        "group flex items-center gap-2 p-4 rounded-lg border border-border bg-card text-left",
+        "hover:border-foreground/20 hover:bg-foreground/5 transition-colors",
       )}
     >
       <ConnectorIcon name={label} iconUrl={iconUrl} className="h-5 w-5 rounded text-3xs" />

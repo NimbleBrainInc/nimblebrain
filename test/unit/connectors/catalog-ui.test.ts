@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import type { ConnectorCatalogEntry } from "../../../src/connectors/catalog/types.ts";
 import {
   catalogTitleByServerName,
-  catalogUiByServerName,
   namedUi,
   withCatalogUi,
 } from "../../../src/connectors/runtime/catalog-ui.ts";
@@ -33,6 +32,7 @@ function entry(id: string, ui?: ConnectorUiMeta): ConnectorCatalogEntry {
     name: id,
     description: "",
     url: "https://example.test/mcp",
+    auth: "dcr",
     ui,
   } as ConnectorCatalogEntry;
 }
@@ -45,35 +45,39 @@ function installed(serverName: string, ui: ConnectorUiMeta | null) {
 
 describe("installed connectors take their host UI from the catalog at boot", () => {
   it("gives an installed connector a placement the catalog gained after install", () => {
-    const [out] = withCatalogUi(
-      [installed(SN, atInstall)],
-      catalogUiByServerName([entry(ID, now)]),
-    );
+    const [out] = withCatalogUi([installed(SN, atInstall)], [entry(ID, now)]);
     expect(out?.connector.ui).toEqual(now);
     // Both copies: the seeded instance falls back from `ref.ui` to `meta.ui`.
     expect(out?.meta?.ui).toEqual(now);
   });
 
   it("clears the host UI when the catalog entry no longer declares one", () => {
-    const [out] = withCatalogUi([installed(SN, atInstall)], catalogUiByServerName([entry(ID)]));
+    const [out] = withCatalogUi([installed(SN, atInstall)], [entry(ID)]);
     expect(out?.connector.ui).toBeNull();
     expect(out?.meta?.ui).toBeNull();
   });
 
   it("leaves a connector no catalog entry names exactly as stored", () => {
     const row = installed("some-other-server", atInstall);
-    const [out] = withCatalogUi([row], catalogUiByServerName([entry(ID, now)]));
+    const [out] = withCatalogUi([row], [entry(ID, now)]);
     expect(out).toBe(row);
   });
 
   it("changes nothing when the catalog could not be read", () => {
     const row = installed(SN, atInstall);
-    expect(withCatalogUi([row], new Map())).toEqual([row]);
+    expect(withCatalogUi([row], null)).toEqual([row]);
   });
 
-  it("matches by the install's slug rule, first entry per slug winning", () => {
-    const map = catalogUiByServerName([entry(ID, now), entry(ID, atInstall)]);
-    expect(map.get(SN)).toEqual(now);
+  it("gives a connector at another URL under the entry's name no host UI, and reports it", () => {
+    const row = installed(SN, atInstall);
+    const foreign = { ...row, connector: { ...row.connector, url: "https://other.test/mcp" } };
+    const heard: string[] = [];
+    const [out] = withCatalogUi([foreign], [entry(ID, now)], (wsId, serverName, e) =>
+      heard.push(`${wsId}/${serverName}->${e.id}`),
+    );
+    expect(out?.connector.ui).toBeNull();
+    expect(out?.meta?.ui).toBeNull();
+    expect(heard).toEqual([`${row.wsId}/${SN}->${ID}`]);
   });
 });
 

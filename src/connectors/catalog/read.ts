@@ -30,6 +30,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { log } from "../../observability/log.ts";
+import { slugifyServerName } from "../runtime/paths.ts";
 import {
   projectServerDetailToCatalogListing,
   serverDetailToCatalogEntry,
@@ -58,6 +59,12 @@ export interface CatalogDiagnostic {
   name?: string;
   /** Operator-facing description, already formatted. */
   message: string;
+  /**
+   * The entry was refused because its server name collides with another
+   * entry's. An error rather than a warning: the operator published two
+   * connectors and neither installs.
+   */
+  collision?: true;
 }
 
 /** A surviving entry, kept with where it came from so a later stage can name it. */
@@ -98,7 +105,8 @@ export function readCatalogServers(path: string): ServerDetail[] {
  * An entry is removed silently at three points, and all three show the
  * operator the same nothing — the connector is absent, no error anywhere:
  *
- *   1. this source's `ServerDetail` schema + name-dedup checks;
+ *   1. this source's `ServerDetail` schema + name-dedup checks, and the
+ *      refusal of every entry whose server name another entry shares;
  *   2. `validateServerDetailSafety` at the directory boundary — unsafe
  *      icon/docs/portal URL, reserved OAuth param;
  *   3. the directory's projection returning null — `remotes` is optional in
@@ -191,7 +199,49 @@ export function readCatalogEntries(path: string): CatalogRead {
       diagnostics,
     );
   }
-  return { entries, diagnostics };
+  return { entries: refuseServerNameCollisions(entries, diagnostics), diagnostics };
+}
+
+/**
+ * Drop every entry whose server name another entry also slugifies to.
+ *
+ * An installed connector is bound to its catalog entry by that server name
+ * (`binding.ts`), so two entries sharing one would leave the binding to read
+ * order: one connector would be installed under the other's grants. Distinct
+ * ids can share one, because `slugifyServerName` maps both `.` and `/` to `-`
+ * (`a.b/c` and `a/b.c` are both `a-b-c`). Neither entry is the right answer, so
+ * neither loads, and every other entry still does. The rule is not changed to
+ * avoid the collision because changing it would rename installed connectors.
+ */
+function refuseServerNameCollisions(
+  entries: CatalogEntry[],
+  diagnostics: CatalogDiagnostic[],
+): CatalogEntry[] {
+  const bySlug = new Map<string, CatalogEntry[]>();
+  for (const e of entries) {
+    const slug = slugifyServerName(e.detail.name);
+    bySlug.set(slug, [...(bySlug.get(slug) ?? []), e]);
+  }
+  const kept: CatalogEntry[] = [];
+  for (const e of entries) {
+    const slug = slugifyServerName(e.detail.name);
+    const group = bySlug.get(slug) ?? [];
+    if (group.length === 1) {
+      kept.push(e);
+      continue;
+    }
+    const others = group.filter((o) => o !== e).map((o) => `"${o.detail.name}"`);
+    diagnostics.push({
+      source: e.source,
+      index: e.index,
+      name: e.detail.name,
+      collision: true,
+      message:
+        `${e.source}[${e.index}:${e.detail.name}] refused — its server name "${slug}" is also ` +
+        `the server name of ${others.join(", ")}; neither loads until one id changes`,
+    });
+  }
+  return kept;
 }
 
 /**

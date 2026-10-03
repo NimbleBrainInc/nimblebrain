@@ -742,11 +742,31 @@ describe("WorkspaceSwitcher — switching", () => {
     expect(mounted.navigationTarget()).toBe("/w/003eba8844413cd9/");
   });
 
+  test("opens with nothing highlighted, so the check is the only selected mark", async () => {
+    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_00488fa17f87e9a3" });
+    await openSwitcher();
+
+    expect(options().filter((o) => o.hasAttribute("data-highlighted"))).toHaveLength(0);
+    expect(switcherInput()?.getAttribute("aria-activedescendant")).toBeNull();
+  });
+
+  test("Enter with nothing highlighted switches nowhere", async () => {
+    mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_00488fa17f87e9a3" });
+    setActiveSpy.mockClear();
+    await openSwitcher();
+
+    await press(switcherInput(), "Enter");
+
+    expect(setActiveSpy).toHaveBeenCalledTimes(0);
+  });
+
   test("Enter switches to the highlighted match", async () => {
     mounted = await mount({ workspaces: [MINE, HELIX, ACME], activeId: "ws_00488fa17f87e9a3" });
     setActiveSpy.mockClear();
     await openSwitcher();
 
+    // The first ↓ highlights Acme, the second Helix.
+    await press(switcherInput(), "ArrowDown");
     await press(switcherInput(), "ArrowDown");
     await press(switcherInput(), "Enter");
 

@@ -246,7 +246,8 @@ interface AdmittedDelivery {
  *
  * Returns `undefined` for every rejection reason there is — an id matching no
  * registration, one whose rotation grace window has closed, a registration with
- * no id at all, a workspace that is gone, a connector no longer installed.
+ * no id at all, a workspace that is gone, a connector no longer installed, or
+ * one whose catalog entry it no longer is or that no longer declares the vendor.
  * Collapsing them into one return value is
  * deliberate and is the whole point of the function: the caller has nothing to
  * branch on, so it cannot accidentally answer two rejections differently and
@@ -279,17 +280,40 @@ async function admitDelivery(
         });
       }
 
-      // The connector must still be installed — which is also where the forward
-      // target comes from, so this is a required lookup rather than an extra
-      // check. An uninstall drops the registration too; this is what still holds
-      // if a workspace record is edited by hand or a cleanup path is missed.
-      const ref = findInstalledConnector(ws.connectors ?? [], registration.connector);
-      if (!ref || !("url" in ref)) return undefined;
+      const ref = await forwardTarget(ctx, ws, registration);
+      if (!ref) return undefined;
 
       return { wsId: ws.id, registration, ref };
     }
   }
   return undefined;
+}
+
+/**
+ * The installed ref a registration forwards to, or `undefined` when it may not
+ * forward at all.
+ *
+ * The connector must still be installed — which is also where the forward
+ * target comes from, so this is a required lookup rather than an extra check.
+ * An uninstall drops the registration too; this is what still holds if a
+ * workspace record is edited by hand or a cleanup path is missed.
+ *
+ * And the catalog entry that connector IS must still declare the vendor. The
+ * registration was minted from that declaration, but a ref can stop binding to
+ * its entry (its URL or the entry's changed) after it was, and forwarding then
+ * would send the vendor's deliveries to another server.
+ */
+async function forwardTarget(
+  ctx: AppContext,
+  ws: { id: string; connectors?: ConnectorRef[] },
+  registration: HookRegistration,
+): Promise<RemoteConnectorRef | undefined> {
+  const ref = findInstalledConnector(ws.connectors ?? [], registration.connector);
+  if (!ref || !("url" in ref)) return undefined;
+  const declared = await ctx.runtime
+    .getHookReconcileDeps()
+    .declarationsFor(ws.id, registration.connector);
+  return declared.some((d) => d.vendor === registration.vendor) ? ref : undefined;
 }
 
 /** The forward hop, plus the metric, the log line, and the vendor's answer. */

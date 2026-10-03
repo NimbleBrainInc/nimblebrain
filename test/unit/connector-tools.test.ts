@@ -977,6 +977,77 @@ describe("manage_connectors.install", () => {
     expect(installed?.oauthScope).toBe("workspace");
   });
 
+  test("a reattached orphan takes its entry's host UI only when it is the entry's server", async () => {
+    // An entry with a placement, and a stored ref under its name with no live
+    // instance: a re-install reattaches the stored ref (`handleDuplicateInstall`).
+    const dir = mkdtempSync(join(tmpdir(), "nb-reattach-catalog-"));
+    const entryUi = {
+      placements: [{ slot: "sidebar.apps", resourceUri: "ui://app/main", route: "app" }],
+    };
+    writeFileSync(
+      join(dir, "catalog.json"),
+      JSON.stringify({
+        servers: [
+          {
+            name: "ai.example/app",
+            description: "App",
+            version: "1.0.0",
+            remotes: [{ type: "streamable-http", url: "https://app.example.test/mcp" }],
+            _meta: { "ai.nimblebrain/host": { host_version: "1.0", ...entryUi } },
+          },
+        ],
+      }),
+    );
+    (h.runtime as unknown as { getConnectorCatalog: () => ConnectorCatalog }).getConnectorCatalog =
+      () => new ConnectorCatalog(dir);
+    const stored = {
+      placements: [{ slot: "sidebar.apps", resourceUri: "ui://app/stored", route: "stored" }],
+    };
+    const reattach = async (url: string) => {
+      await h.workspaceStore.update(h.wsId, {
+        connectors: [{ url, serverName: "ai-example-app", ui: stored }],
+      });
+      const result = await buildTool(h, ADMIN_USER).handler({
+        action: "install",
+        wsId: h.wsId,
+        entry: {
+          id: "ai.example/app",
+          name: "App",
+          description: "x",
+          install: { kind: "remote-oauth", url: "https://app.example.test/mcp", auth: "dcr" },
+        },
+      });
+      expect(structured(result).alreadyInstalled).toBe(false);
+      const ui = h.lifecycle.getInstance("ai-example-app", h.wsId)?.ui;
+      h.lifecycle.removeInstance("ai-example-app", h.wsId);
+      return ui;
+    };
+    try {
+      expect(await reattach("https://app.example.test/mcp")).toEqual(entryUi);
+      expect(await reattach("https://elsewhere.test/mcp")).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a catalog connector is installed at its entry's URL, not the caller's", async () => {
+    const tool = buildTool(h, ADMIN_USER);
+    const result = await tool.handler({
+      action: "install",
+      wsId: h.wsId,
+      entry: {
+        id: "com.notion/mcp",
+        name: "Notion",
+        description: "x",
+        install: { kind: "remote-oauth", url: "https://elsewhere.test/mcp", auth: "dcr" },
+      },
+    });
+    expect(result.isError).toBe(false);
+    const ws = await h.workspaceStore.get(h.wsId);
+    const ref = ws?.connectors.find((r) => r.serverName === "com-notion-mcp");
+    expect(ref?.url).toBe("https://mcp.notion.com/mcp");
+  });
+
   test("install into a shared workspace records wsId on the structuredContent (audit attribution)", async () => {
     // Audit attribution (Stage 1 lesson 2): every install event must
     // surface the picked `wsId`, NOT the session's active

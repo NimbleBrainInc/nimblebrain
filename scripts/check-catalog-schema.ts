@@ -6,7 +6,8 @@
  * and reports every entry the runtime would silently drop: one that
  * fails the upstream `ServerDetail` schema, duplicates a name already
  * claimed by an earlier file, sits in a file that cannot be read or
- * parsed, is scrubbed at the directory boundary for an unsafe URL or a
+ * parsed, shares its server name with another entry (both are refused),
+ * is scrubbed at the directory boundary for an unsafe URL or a
  * reserved OAuth param, or resolves to nothing installable — and every
  * entry whose malformed `admin_tools` makes all its tools admin-only.
  * Exit 1 if there is any, 0 if every entry reaches Browse as written.
@@ -67,7 +68,8 @@ function main(): void {
         "registry schema (src/connectors/catalog/schemas/server.schema.json); icon, docs, and\n" +
         "portal URLs must be http(s); OAuth params may not use reserved keys; and an\n" +
         "entry needs `packages` or a `remotes` entry the installer supports; `admin_tools`\n" +
-        "must be a list of at most 64 tool names with no whitespace.",
+        "must be a list of at most 64 tool names with no whitespace; and no two names may\n" +
+        "slugify to one server name (`a.b/c` and `a/b.c` are both `a-b-c`).",
     );
   }
   process.exit(1);

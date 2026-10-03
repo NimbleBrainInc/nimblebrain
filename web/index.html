@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The shell draws its own light and dark themes. This tells Dark Reader,
+         and the browsers that embed it (Firefox for iOS's website dark mode), to
+         leave the page alone. index.css opts out of Chrome's auto-dark. -->
+    <meta name="darkreader-lock" />
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48 64x64">
     <link rel="icon" type="image/png" href="/favicon-192.png" sizes="192x192">
     <title>NimbleBrain</title>

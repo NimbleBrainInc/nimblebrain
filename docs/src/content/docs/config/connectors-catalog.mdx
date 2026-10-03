@@ -369,7 +369,10 @@ Every `ServerDetail` is validated when its file is read and again when the catal
 | `auth='static' requires operatorSetup.{portalUrl,hint,clientSecretKey}` | Add the `operatorSetup` block under `_meta["ai.nimblebrain/connector"]`. |
 | `additionalAuthorizationParams cannot include reserved keys` | Remove `client_id`, `redirect_uri`, `state`, `code_challenge`, `code_challenge_method`, `scope`, etc. — these are filled by the OAuth provider. |
 | `duplicate name "<id>"` | Each entry's `name` must be unique within a single static source. |
+| `refused — its server name "<slug>" is also the server name of "<id>"` | Two names slugify to one server name (`a.b/c` and `a/b.c` are both `a-b-c`), so neither loads. Rename one. Logged as an error. |
 | `not installable: needs a \`remotes\` entry` | The entry advertises only `packages[]`. This runtime connects to remote MCP servers; give the entry a `remotes[]` URL. |
+
+An entry's grants — its host UI, `hooks` delivery, the host's `lifecycle` calls and its outbox — apply only to an installed connector at the entry's `remotes[0].url` (a brokered connector: the provider and entry its broker recorded); a connector that only shares the entry's server name gets none of them. Its restrictions, `admin_tools` and the withholding of `lifecycle` handlers, apply to every connector under its server name. Changing an entry's URL therefore takes its grants from every existing install until it is reinstalled.
 
 When the top-level shape is bad (not a list or `{servers: [...]}`, malformed YAML), the whole override is rejected and the bundled catalog is used. The startup logs name the file path and the parse error.
 
