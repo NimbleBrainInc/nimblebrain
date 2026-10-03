@@ -37,6 +37,7 @@ import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
+import { isWorkspaceOptional } from "../tools/workspace-optional.ts";
 import { bytesToBase64 } from "../util/base64.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { defaultWorkspaceFor, ensureUserWorkspace } from "../workspace/provisioning.ts";
@@ -1271,6 +1272,98 @@ export async function handleToolCall(
   // No refresh signal goes out from here. This is the MCP App Bridge proxy,
   // whose traffic is mostly reads; a view learns of a write only when the app's
   // server announces it (`src/tools/server-notifications.ts`).
+
+  return json<ToolCallResponse>({
+    content: result.content,
+    structuredContent: result.structuredContent,
+    isError: result.isError,
+  });
+}
+
+/**
+ * Handle POST /v1/tools/call — a kernel tool called with no workspace.
+ *
+ * For the web shell's org and profile settings, which act on the caller or the
+ * org and are in no workspace. Resolves only kernel sources
+ * (`Runtime.getKernelSource`), never a connector, and calls only a tool that
+ * declares it works with no workspace (`tools/workspace-optional.ts`); every
+ * other tool is answered as not found here, as an unknown one is. The request
+ * context carries the caller and no workspace, so a handler that needs one
+ * refuses. Feature and role gates are the workspace door's own. ADR-0043.
+ */
+export async function handleIdentityToolCall(
+  request: Request,
+  runtime: Runtime,
+  features: ResolvedFeatures,
+  options: { eventSink?: EventSink; identity?: UserIdentity },
+): Promise<Response> {
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
+  const envelope = parseToolCallEnvelope(body);
+  if (envelope instanceof Response) return envelope;
+  const { server, tool, args } = envelope;
+  const { eventSink, identity } = options;
+
+  const refused = refuseQualifiedName("server", server) ?? refuseQualifiedName("tool", tool);
+  if (refused) return refused;
+  const notFound = () =>
+    apiError(404, "tool_not_found", `Tool "${tool}" not found on server "${server}"`, {
+      server,
+      tool,
+    });
+
+  const source = runtime.getKernelSource(server);
+  if (!source) return notFound();
+  const toolName = normalizeRestToolName(tool, server);
+  const toolDef = (await source.tools()).find((t) => t.name === toolName);
+  if (!toolDef || !isWorkspaceOptional(toolDef)) return notFound();
+
+  const validated = await validateRestToolInput(source, toolName, tool, server, args ?? {});
+  if (!validated.ok) return validated.response;
+
+  if (!isToolEnabled(toolName, features)) {
+    return apiError(403, "feature_disabled", `Tool "${toolName}" is disabled by feature flags`, {
+      tool: toolName,
+    });
+  }
+  if (!isToolVisibleToRole(toolName, identity?.orgRole)) {
+    return apiError(403, "forbidden", `Insufficient permissions for tool "${toolName}"`, {
+      tool: toolName,
+    });
+  }
+
+  log.info(
+    `[api] tools/call (no workspace) server=${server} tool=${tool} identity=${identity?.id ?? "none"}`,
+  );
+  const callId = `api_${crypto.randomUUID().slice(0, 8)}`;
+  emitBridgeToolCall(eventSink, toolName, callId, server, identity, null);
+  const t0 = performance.now();
+  let result: Awaited<ReturnType<ToolSource["execute"]>>;
+  try {
+    result = await runWithRequestContext({ identity: identity ?? null }, () =>
+      source.execute(splitInnerToolName(toolName).bareToolName, validated.coercedArgs),
+    );
+  } catch (err) {
+    emitBridgeToolDone(
+      eventSink,
+      toolName,
+      callId,
+      false,
+      Math.round(performance.now() - t0),
+      identity,
+      null,
+    );
+    throw err;
+  }
+  emitBridgeToolDone(
+    eventSink,
+    toolName,
+    callId,
+    !result.isError,
+    Math.round(performance.now() - t0),
+    identity,
+    null,
+  );
 
   return json<ToolCallResponse>({
     content: result.content,

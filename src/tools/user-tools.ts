@@ -4,6 +4,7 @@ import type { CreateUserResult, IdentityProvider, UserIdentity } from "../identi
 import { ORG_ADMIN_ROLES } from "../identity/types.ts";
 import type { User, UserStore } from "../identity/user.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ export function createManageUsersTool(ctx: ManageUsersContext): InProcessTool {
     name: "manage_users",
     description:
       "Create, update, delete, or list workspace users. Only org admins and owners can use this tool.",
-    meta: { ui: { visibility: ["app"] } },
+    meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
     inputSchema: {
       type: "object",
       properties: {

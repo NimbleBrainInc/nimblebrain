@@ -14,6 +14,7 @@ import { canManageWorkspaceMembers } from "../workspace/authz.ts";
 import type { WorkspaceMember } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
+import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 /**
  * Project one tool-supplied connector row onto a `ConnectorRef`. Only the URL and
@@ -98,7 +99,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
     name: "manage_workspaces",
     description:
       "Manage workspaces and their members. Workspace CRUD requires org admin. Member management requires org admin or workspace admin membership, so an org admin can seat themselves as admin of any workspace, including one left with no admin member. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
-    meta: { ui: { visibility: ["app"] } },
+    meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
     inputSchema: {
       type: "object",
       properties: {

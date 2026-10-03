@@ -180,7 +180,8 @@ For the workspace in the URL, the endpoint exposes:
 Two filters apply to both `tools/list` and `tools/call`:
 
 - **Feature flags** — tools whose controlling flag is `false` are excluded (for example, the `skills__*` authoring tools when `skillManagement` is `false`). See [Feature Flags](/config/features).
-- **Role** — admin-only tools (such as `nb__manage_users`, `nb__manage_workspaces`) are excluded when the caller's role is not admin or owner.
+- **App-only tools** — tools whose visibility is `["app"]` (org administration such as `nb__manage_users` and `nb__manage_workspaces`, and model configuration) are excluded, and a `tools/call` naming one is refused unless an app view inside NimbleBrain makes it.
+- **Role** — a tool limited to org admins is excluded when the caller's role is not admin or owner.
 
 ## Testing manually
 
