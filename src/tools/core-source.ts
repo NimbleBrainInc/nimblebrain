@@ -209,7 +209,8 @@ function unwritableFieldError(input: Record<string, unknown>): string | null {
     if (key === "modelPolicy") {
       return "`modelPolicy` is not set here. It is deployment configuration — set `modelPolicy.allowed` in nimblebrain.json.";
     }
-    return `\`${key}\` is not a field this tool writes. To clear a field, pass null for it.`;
+    const hint = /^clear[A-Z]/.test(key) ? " To clear a field, pass null for it." : "";
+    return `\`${key}\` is not a field this tool writes.${hint}`;
   }
   return null;
 }
@@ -712,7 +713,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           locale: { type: "string", description: "BCP 47 locale (e.g., 'en-US')." },
           theme: { type: "string", enum: ["system", "light", "dark"], description: "Color theme." },
           model: {
-            ...nullable({ type: "string" }),
+            type: ["string", "null"],
             description:
               "Model for this user's new conversations, as `provider:model-id`. Applies to conversations started after the change — an existing one keeps the model it was created with. Null clears the choice and follows the configured default. Auxiliary models (title generation, briefing, compaction) are operator-configured and not settable here.",
           },
