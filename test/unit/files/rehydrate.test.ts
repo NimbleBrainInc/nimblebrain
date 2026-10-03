@@ -65,6 +65,8 @@ function fakeStore(byId: Record<string, FakeStoreEntry>): FakeStore {
       } satisfies FileEntry;
     },
     appendTombstone: () => Promise.reject(new Error("not used")),
+    appendFolder: () => Promise.reject(new Error("not used")),
+    readFolders: () => Promise.resolve([]),
     deleteFile: () => Promise.reject(new Error("not used")),
     ensureFilesDir: () => Promise.reject(new Error("not used")),
     readExtractedText: async (id) => {

@@ -117,8 +117,10 @@ export interface FileEntry {
   tags: string[];
   source: "chat" | "agent" | "app" | "manual";
   conversationId: string | null;
+  runId?: string | null;
   createdAt: string;
   description: string | null;
+  folderId?: string | null;
   ownerId?: string;
   workspaceId?: string;
   visibility?: "private" | "shared";

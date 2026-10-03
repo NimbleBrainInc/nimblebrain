@@ -1,225 +1,462 @@
-import { useApp, useDataSync, useFileUpload, useHostContext } from "@nimblebrain/synapse/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useApp, useHostContext, useModelContext, useTrail } from "@nimblebrain/synapse/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { DetailOverlay } from "./DetailOverlay";
-import { FileGrid } from "./FileGrid";
-import { collectTags, TYPE_FILTERS } from "./format";
-import { Header } from "./Header";
-import type { FileEntry, FilterKey, ListResult } from "./types";
+import { errorText, MoveDialog, NameDialog } from "./Dialogs";
+import { FileList } from "./FileList";
+import { FolderIcon } from "./icons";
+import { Toolbar } from "./Toolbar";
+import { type Crumb, type FileEntry, type Folder, type ListResult, ROOT } from "./types";
 import { UploadRefusals } from "./UploadRefusals";
-import {
-  readUploadRefusal,
-  type UploadLimits,
-  type UploadRefusal,
-  uploadLimitHint,
-} from "./upload";
+import { type UploadLimits, uploadLimitHint } from "./upload";
+import { useBrowseState } from "./useBrowseState";
+import { useFileActions } from "./useFileActions";
+import { useFileList } from "./useFileList";
+import { useSelection } from "./useSelection";
 
-const SEARCH_DEBOUNCE_MS = 300;
+/** The trail's root: the view's own placement, as the host knows it. */
+const TRAIL_ROOT = { id: "ui://files/browser", label: "Files" };
+/** A folder's trail address. Folders are not MCP resources, so a path of our own. */
+const FOLDER_PREFIX = "folders/";
+const FILE_PREFIX = "files://";
+
+type Dialog =
+  | { kind: "new-folder" }
+  | { kind: "rename"; folder: Folder }
+  | { kind: "move"; ids: string[] };
+
+/** A file opened from the list carries its folder's path; one opened by address does not. */
+type OpenFile = FileEntry & { folderPath?: string };
 
 export function Dashboard() {
   const app = useApp();
-  // The host draws this view's title in its own chrome when it declares
-  // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
-  // twice. A host without it (any other MCP Apps host) gets the view's title.
-  const hostShowsTitle = "ai.nimblebrain/location" in (app.hostCapabilities.experimental ?? {});
-  const { pickFiles } = useFileUpload();
-  // The host's picker enforces these; the app only states them.
   const { uploads } = useHostContext<{ uploads?: UploadLimits }>();
+  const browse = useBrowseState();
+  const list = useFileList(browse.params);
+  const actions = useFileActions(list.reload);
+  const [detailFile, setDetailFile] = useState<OpenFile | null>(null);
+  const [dialog, setDialog] = useState<Dialog | null>(null);
 
-  const [files, setFiles] = useState<FileEntry[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [detailFile, setDetailFile] = useState<FileEntry | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [refusal, setRefusal] = useState<UploadRefusal | null>(null);
+  const breadcrumb = useBreadcrumb(list.result, browse.searching, browse.folderId);
+  const folders = list.result?.folders ?? [];
+  const files = list.result?.files ?? [];
+  const rowIds = useMemo(() => [...folders, ...files].map((r) => r.id), [folders, files]);
+  const selection = useSelection(rowIds, JSON.stringify(browse.params));
 
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const loadFiles = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await app.callTool<ListResult>("list", {
-        limit: 200,
-      });
-      if (result.isError) {
-        setError("Failed to load files");
-        return;
-      }
-      setFiles(result.data.files || []);
-      setTotalCount(result.data.totalCount || 0);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load files");
-    } finally {
-      setLoading(false);
-    }
-  }, [app]);
-
-  const searchFiles = useCallback(
-    async (query: string) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await app.callTool<ListResult>("search", { query, limit: 100 });
-        if (result.isError) {
-          setError("Search failed");
-          return;
-        }
-        setFiles(result.data.files || []);
-        setTotalCount(result.data.totalCount || 0);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Search failed");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [app],
-  );
-
-  // Initial load
-  useEffect(() => {
-    loadFiles();
-  }, [loadFiles]);
-
-  // Refresh when the files source announces a write (uploads from elsewhere,
-  // deletes, etc.)
-  useDataSync(() => {
-    if (searchQuery.trim()) {
-      searchFiles(searchQuery.trim());
-    } else {
-      loadFiles();
-    }
-  });
-
-  const handleSearchInput = useCallback(
-    (value: string) => {
-      setSearchQuery(value);
-      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      if (!value.trim()) {
-        loadFiles();
-        return;
-      }
-      searchTimerRef.current = setTimeout(() => {
-        searchFiles(value.trim());
-      }, SEARCH_DEBOUNCE_MS);
-    },
-    [loadFiles, searchFiles],
-  );
-
-  const handleClearSearch = useCallback(() => {
-    setSearchQuery("");
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    loadFiles();
-  }, [loadFiles]);
-
-  const handleUploadFailure = useCallback(
-    async (err: unknown) => {
-      const refused = readUploadRefusal(err);
-      if (!refused) {
-        setError(err instanceof Error ? `Upload failed: ${err.message}` : "Upload failed");
-        return;
-      }
-      setRefusal(refused);
-      // A refusal still stores the files that passed, so list them too.
-      if (refused.stored > 0) await loadFiles();
-    },
-    [loadFiles],
-  );
-
-  const handleUpload = useCallback(async () => {
-    setUploading(true);
-    setError(null);
-    setRefusal(null);
-    try {
-      const result = await pickFiles({ multiple: true });
-      // pickFiles returns [] if the user cancelled, or the persisted FileEntry
-      // records if upload succeeded. The host's POST /v1/workspaces/:wsId/resources path
-      // already wrote them; we just need to refresh.
-      if (result.length > 0) await loadFiles();
-    } catch (err) {
-      await handleUploadFailure(err);
-    } finally {
-      setUploading(false);
-    }
-  }, [pickFiles, loadFiles, handleUploadFailure]);
-
-  const handleDelete = useCallback(async () => {
-    if (!detailFile || deleting) return;
-    if (!window.confirm(`Delete ${detailFile.filename}? This cannot be undone.`)) return;
-    setDeleting(true);
-    try {
-      const result = await app.callTool<{ ok: boolean }>("delete", {
-        id: detailFile.id,
-      });
-      if (result.isError) {
-        setError("Failed to delete file");
-        return;
-      }
+  const { openFolder: goToFolder, setFolderId } = browse;
+  const openFolder = useCallback(
+    (id: string) => {
+      goToFolder(id);
       setDetailFile(null);
-      await loadFiles();
-    } catch (err) {
-      setError(err instanceof Error ? `Delete failed: ${err.message}` : "Delete failed");
-    } finally {
-      setDeleting(false);
-    }
-  }, [detailFile, deleting, app, loadFiles]);
+    },
+    [goToFolder],
+  );
 
-  // Compose the visible file list = type filter ∩ tag filter.
-  const visibleFiles = useMemo(() => {
-    if (loading) return [];
-    const typeMatch = TYPE_FILTERS.find((tf) => tf.key === activeFilter)?.match ?? (() => true);
-    let result = files.filter(typeMatch);
-    if (activeTag) result = result.filter((f) => f.tags?.includes(activeTag));
-    return result;
-  }, [loading, files, activeFilter, activeTag]);
+  const { setError } = actions;
+  const openFileById = useCallback(
+    async (id: string) => {
+      const res = await app.callTool<FileEntry>("info", { id });
+      if (res.isError) {
+        setError(errorText(res.data));
+        return;
+      }
+      setFolderId(res.data.folderId ?? ROOT);
+      setDetailFile(res.data);
+    },
+    [app, setError, setFolderId],
+  );
 
-  const tags = useMemo(() => (loading ? [] : collectTags(files)), [loading, files]);
-  const hasFilter = activeFilter !== "all" || activeTag !== null;
+  // Where the app is, for the host's bar: Files, the folders down to this one,
+  // then the file open over it. The host hands an address back when a level is
+  // picked, and the agent opens a view by the same address.
+  const trail = useMemo(() => buildTrail(breadcrumb, detailFile), [breadcrumb, detailFile]);
+  const hostShowsTrail = useTrail(trail, (id) => followAddress(id, openFolder, openFileById));
+
+  const where = breadcrumb.map((c) => c.name).join("/");
+  useModelContext(
+    () =>
+      describeView({
+        browse,
+        where,
+        total: list.result?.total,
+        detailFile,
+        selected: selection.selected,
+      }),
+    [browse.params, where, list.result, detailFile, selection.selected],
+  );
+
+  const scopeName = browse.inFolder ? lastName(breadcrumb) : null;
+  const body = bodyState(list.loading, list.result, rowIds.length);
+  const hasMore = list.result !== null && files.length < list.result.total;
+  const scopedTo = browse.inFolder && browse.scoped ? where : null;
+
+  async function moveAndFollow(ids: string[], target: string) {
+    await actions.move(ids, target);
+    selection.clear();
+    // The open file moved with the selection: drop its stale path.
+    setDetailFile((f) => (f && ids.includes(f.id) ? movedTo(f, target) : f));
+  }
+
+  async function removeSelected() {
+    const ids = [...selection.selected];
+    const label =
+      ids.length === 1 ? nameOf(ids[0] as string, folders, files) : `${ids.length} items`;
+    if (await actions.remove(ids, label)) selection.clear();
+  }
 
   return (
     <>
-      <Header
-        showTitle={!hostShowsTitle}
-        totalCount={totalCount}
-        loading={loading}
-        files={files}
-        activeFilter={activeFilter}
-        activeTag={activeTag}
-        searchQuery={searchQuery}
-        uploading={uploading}
+      <Toolbar
+        showTrail={!hostShowsTrail}
+        breadcrumb={breadcrumb}
+        onOpenFolder={openFolder}
+        searchInput={browse.searchInput}
+        onSearchInput={browse.setSearchInput}
+        scopeName={scopeName}
+        scoped={browse.scoped}
+        onToggleScope={() => browse.setScoped((s) => !s)}
+        kinds={browse.kinds}
+        onToggleKind={browse.toggleKind}
+        sourceKey={browse.sourceKey}
+        onToggleSource={browse.toggleSource}
+        since={browse.since}
+        onSelectSince={browse.setSince}
+        facets={list.result?.facets ?? null}
+        hasFilter={browse.hasFilter}
+        onClearFilters={browse.clearFilters}
+        uploading={actions.uploading}
         uploadHint={uploadLimitHint(uploads)}
-        tags={tags}
-        onSelectFilter={setActiveFilter}
-        onToggleTag={(tag) => setActiveTag((current) => (current === tag ? null : tag))}
-        onSearchInput={handleSearchInput}
-        onClearSearch={handleClearSearch}
-        onUpload={handleUpload}
+        onUpload={() => actions.upload(browse.folderId)}
+        onNewFolder={() => setDialog({ kind: "new-folder" })}
+      />
+
+      <SelectionBar
+        count={selection.selected.size}
+        onMove={() => setDialog({ kind: "move", ids: [...selection.selected] })}
+        onDelete={removeSelected}
+        onClear={selection.clear}
       />
 
       <div className="content">
-        {error && <div className="error-banner">{error}</div>}
-        {refusal && <UploadRefusals refusal={refusal} onDismiss={() => setRefusal(null)} />}
-        <FileGrid
-          loading={loading}
-          files={visibleFiles}
-          searchQuery={searchQuery}
-          hasFilter={hasFilter}
-          onSelect={setDetailFile}
-        />
+        <ErrorBanner message={actions.error ?? list.error} />
+        {actions.refusal && (
+          <UploadRefusals refusal={actions.refusal} onDismiss={actions.clearRefusal} />
+        )}
+        {list.result && browse.searching && (
+          <ResultCount
+            files={list.result.total}
+            folders={folders.length}
+            scopedTo={scopedTo}
+            onSearchEverywhere={() => browse.setScoped(false)}
+          />
+        )}
+
+        {body === "loading" ? (
+          <LoadingRows />
+        ) : body === "empty" ? (
+          <EmptyState
+            searching={browse.searching}
+            query={browse.query}
+            inFolder={browse.inFolder}
+          />
+        ) : (
+          <FileList
+            folders={folders}
+            files={files}
+            showLocation={browse.searching}
+            sort={browse.sort}
+            order={browse.order}
+            onSort={browse.sortBy}
+            selected={selection.selected}
+            onToggleSelect={selection.toggle}
+            onToggleAll={selection.toggleAll}
+            onOpenFolder={openFolder}
+            onOpenFile={setDetailFile}
+            onRenameFolder={(folder) => setDialog({ kind: "rename", folder })}
+            onDeleteFolder={(folder) => actions.remove([folder.id], folder.name)}
+            hasMore={hasMore}
+            loadingMore={list.loadingMore}
+            onLoadMore={list.loadMore}
+          />
+        )}
       </div>
+
+      <Toast message={actions.notice} />
 
       {detailFile && (
         <DetailOverlay
           file={detailFile}
-          deleting={deleting}
+          location={detailLocation(detailFile, where)}
+          deleting={actions.deleting}
           onClose={() => setDetailFile(null)}
-          onDelete={handleDelete}
+          onDelete={async () => {
+            if (await actions.remove([detailFile.id], detailFile.filename)) setDetailFile(null);
+          }}
+          onMove={() => setDialog({ kind: "move", ids: [detailFile.id] })}
+        />
+      )}
+
+      {dialog && (
+        <DialogLayer
+          dialog={dialog}
+          folderId={browse.folderId}
+          onClose={() => setDialog(null)}
+          createFolder={actions.createFolder}
+          renameFolder={actions.renameFolder}
+          move={moveAndFollow}
         />
       )}
     </>
+  );
+}
+
+function bodyState(loading: boolean, result: ListResult | null, rows: number) {
+  if (!result) return loading ? "loading" : "list";
+  return rows === 0 && !loading ? "empty" : "list";
+}
+
+function DialogLayer({
+  dialog,
+  folderId,
+  onClose,
+  createFolder,
+  renameFolder,
+  move,
+}: {
+  dialog: Dialog;
+  folderId: string;
+  onClose: () => void;
+  createFolder: (name: string, parentId: string) => Promise<void>;
+  renameFolder: (id: string, name: string) => Promise<void>;
+  move: (ids: string[], target: string) => Promise<void>;
+}) {
+  switch (dialog.kind) {
+    case "new-folder":
+      return (
+        <NameDialog
+          title="New folder"
+          initial=""
+          submitLabel="Create"
+          onClose={onClose}
+          onSubmit={(name) => createFolder(name, folderId)}
+        />
+      );
+    case "rename":
+      return (
+        <NameDialog
+          title="Rename folder"
+          initial={dialog.folder.name}
+          submitLabel="Rename"
+          onClose={onClose}
+          onSubmit={(name) => renameFolder(dialog.folder.id, name)}
+        />
+      );
+    case "move":
+      return (
+        <MoveDialog
+          count={dialog.ids.length}
+          startFolderId={folderId}
+          excluded={new Set(dialog.ids.filter((id) => id.startsWith("fd_")))}
+          onClose={onClose}
+          onMove={(target) => move(dialog.ids, target)}
+        />
+      );
+  }
+}
+
+function buildTrail(breadcrumb: Crumb[], detailFile: OpenFile | null) {
+  const trail = [
+    TRAIL_ROOT,
+    ...breadcrumb.map((c) => ({ id: `${FOLDER_PREFIX}${c.id}`, label: c.name })),
+  ];
+  if (detailFile) trail.push({ id: `${FILE_PREFIX}${detailFile.id}`, label: detailFile.filename });
+  return trail;
+}
+
+/** Open the view an address names: the top level, a folder, or a file. */
+function followAddress(
+  id: string,
+  openFolder: (id: string) => void,
+  openFile: (id: string) => void,
+): void {
+  if (id === TRAIL_ROOT.id) openFolder(ROOT);
+  else if (id.startsWith(FOLDER_PREFIX)) openFolder(id.slice(FOLDER_PREFIX.length));
+  else if (id.startsWith(FILE_PREFIX)) openFile(id.slice(FILE_PREFIX.length));
+}
+
+function lastName(breadcrumb: Crumb[]): string {
+  return breadcrumb[breadcrumb.length - 1]?.name ?? "this folder";
+}
+
+function nameOf(id: string, folders: Folder[], files: FileEntry[]): string {
+  return (
+    folders.find((f) => f.id === id)?.name ??
+    files.find((f) => f.id === id)?.filename ??
+    "this item"
+  );
+}
+
+function movedTo(f: OpenFile, target: string): OpenFile {
+  return { ...f, folderId: target === ROOT ? null : target, folderPath: undefined };
+}
+
+function detailLocation(f: OpenFile, where: string): string {
+  if (f.folderPath !== undefined) return f.folderPath;
+  return f.folderId ? where : "";
+}
+
+function SelectionBar({
+  count,
+  onMove,
+  onDelete,
+  onClear,
+}: {
+  count: number;
+  onMove: () => void;
+  onDelete: () => void;
+  onClear: () => void;
+}) {
+  if (count === 0) return null;
+  return (
+    <div className="selection-bar" role="toolbar" aria-label="Selection">
+      <span className="selection-count">{count} selected</span>
+      <button type="button" className="btn-ghost" onClick={onMove}>
+        Move to…
+      </button>
+      <button type="button" className="btn-danger" onClick={onDelete}>
+        Delete
+      </button>
+      <button type="button" className="btn-link" onClick={onClear}>
+        Clear
+      </button>
+    </div>
+  );
+}
+
+function ErrorBanner({ message }: { message: string | null }) {
+  return message ? <div className="error-banner">{message}</div> : null;
+}
+
+function Toast({ message }: { message: string | null }) {
+  return message ? (
+    <div className="toast" role="status">
+      {message}
+    </div>
+  ) : null;
+}
+
+function LoadingRows() {
+  return (
+    <div className="loading-list">
+      {["s1", "s2", "s3", "s4", "s5", "s6"].map((k) => (
+        <div key={k} className="skel skel-row" />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The folders down to the one the reader is in. A search does not change where
+ * the reader is, so this keeps the last breadcrumb a folder listing gave.
+ */
+function useBreadcrumb(result: ListResult | null, searching: boolean, folderId: string): Crumb[] {
+  const [breadcrumb, setBreadcrumb] = useState<Crumb[]>([]);
+  useEffect(() => {
+    if (result && !searching) setBreadcrumb(result.breadcrumb);
+  }, [result, searching]);
+  useEffect(() => {
+    if (folderId === ROOT) setBreadcrumb([]);
+  }, [folderId]);
+  return breadcrumb;
+}
+
+/** What the agent is told the reader is looking at. */
+function describeView({
+  browse,
+  where,
+  total,
+  detailFile,
+  selected,
+}: {
+  browse: ReturnType<typeof useBrowseState>;
+  where: string;
+  total: number | undefined;
+  detailFile: OpenFile | null;
+  selected: ReadonlySet<string>;
+}) {
+  const state: Record<string, unknown> = {
+    folderId: browse.inFolder ? browse.folderId : null,
+    folderPath: where,
+    total: total ?? null,
+    selected: [...selected],
+  };
+  if (browse.query) state.query = browse.query;
+  if (browse.hasFilter) {
+    state.filters = { kinds: browse.kinds, source: browse.sourceKey, since: browse.since };
+  }
+  if (detailFile) state.openFileId = detailFile.id;
+
+  const place = where || "the top level";
+  let summary = `Browsing ${place} in Files`;
+  if (detailFile) summary = `Viewing ${detailFile.filename} in Files`;
+  else if (browse.searching) {
+    const what = browse.query ? ` for "${browse.query}"` : "";
+    const scope = browse.inFolder && browse.scoped ? ` in ${place}` : "";
+    summary = `Searching Files${what}${scope}: ${total ?? "…"} matches`;
+  }
+  return { state, summary };
+}
+
+function ResultCount({
+  files,
+  folders,
+  scopedTo,
+  onSearchEverywhere,
+}: {
+  files: number;
+  folders: number;
+  scopedTo: string | null;
+  onSearchEverywhere: () => void;
+}) {
+  const parts = [`${files} file${files === 1 ? "" : "s"}`];
+  if (folders > 0) parts.push(`${folders} folder${folders === 1 ? "" : "s"}`);
+  return (
+    <div className="result-count">
+      {parts.join(" and ")}
+      {scopedTo !== null && ` in ${scopedTo}`}
+      {scopedTo !== null && (
+        <button type="button" className="btn-link" onClick={onSearchEverywhere}>
+          Search everywhere
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EmptyState({
+  searching,
+  query,
+  inFolder,
+}: {
+  searching: boolean;
+  query: string;
+  inFolder: boolean;
+}) {
+  let title = "No files yet";
+  let desc = "Files from conversations, agents, and uploads appear here.";
+  if (searching) {
+    title = "Nothing matches";
+    desc = query ? `No files or folders match “${query}”.` : "No files match these filters.";
+  } else if (inFolder) {
+    title = "This folder is empty";
+    desc = "Upload files here, or move files in with Move to….";
+  }
+  return (
+    <div className="empty-state">
+      <div className="empty-state-icon">
+        <FolderIcon size={48} />
+      </div>
+      <div className="empty-state-title">{title}</div>
+      <div className="empty-state-desc">{desc}</div>
+    </div>
   );
 }

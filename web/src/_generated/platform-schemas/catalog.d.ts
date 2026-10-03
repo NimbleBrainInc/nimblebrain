@@ -335,11 +335,21 @@ export declare const PlatformToolCatalog: {
     readonly files: {
         readonly list: {
             readonly input: import("@sinclair/typebox").TObject<{
-                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                offset: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                recursive: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+                query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                kinds: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"other" | "image" | "document" | "data" | "font">>>;
+                sources: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"agent" | "manual" | "chat" | "app">>>;
+                conversationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                createdAfter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                createdBefore: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                 mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 sort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"createdAt" | "filename" | "size">>;
+                order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
+                limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+                offset: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
             }>;
         };
         readonly search: {
@@ -359,6 +369,7 @@ export declare const PlatformToolCatalog: {
             readonly input: import("@sinclair/typebox").TObject<{
                 manifest: import("@sinclair/typebox").TObject<{
                     filename: import("@sinclair/typebox").TString;
+                    folder: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     mimeType: import("@sinclair/typebox").TString;
                     tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;

@@ -1,4 +1,4 @@
-import type { FileEntry, FilterKey, TagCount } from "./types";
+import type { FileKind, FileSource } from "./types";
 
 export function formatSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -41,51 +41,44 @@ export function fileExtension(filename: string): string {
     .slice(0, 4);
 }
 
-// Compose-once filter matchers. Used by the type-pill filter and the
-// pill-count tally on each pill.
-export const TYPE_FILTERS: Array<{
-  key: FilterKey;
-  label: string;
-  match: (f: FileEntry) => boolean;
-}> = [
-  { key: "all", label: "All", match: () => true },
-  { key: "images", label: "Images", match: (f) => isImage(f.mimeType) },
-  {
-    key: "documents",
-    label: "Documents",
-    match: (f) => {
-      if (!f.mimeType) return false;
-      return (
-        f.mimeType === "application/pdf" ||
-        f.mimeType.includes("document") ||
-        f.mimeType.includes("docx") ||
-        f.mimeType.includes("word") ||
-        f.mimeType.includes("xlsx") ||
-        f.mimeType.includes("spreadsheet") ||
-        f.mimeType.startsWith("text/plain") ||
-        f.mimeType.startsWith("text/markdown")
-      );
-    },
-  },
-  {
-    key: "data",
-    label: "Data",
-    match: (f) => {
-      if (!f.mimeType) return false;
-      return (
-        f.mimeType === "text/csv" || f.mimeType === "application/json" || f.mimeType.includes("xml")
-      );
-    },
-  },
-  { key: "fonts", label: "Fonts", match: (f) => Boolean(f.mimeType?.startsWith("font/")) },
+/** The kind chips, in the order they show. */
+export const KIND_FILTERS: Array<{ key: FileKind; label: string }> = [
+  { key: "document", label: "Documents" },
+  { key: "image", label: "Images" },
+  { key: "data", label: "Data" },
+  { key: "font", label: "Fonts" },
+  { key: "other", label: "Other" },
 ];
 
-export function collectTags(files: FileEntry[]): TagCount[] {
-  const counts = new Map<string, number>();
-  for (const f of files) {
-    for (const t of f.tags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([tag, count]) => ({ tag, count }))
-    .sort((a, b) => b.count - a.count);
+/**
+ * The source chips. "Uploaded" covers both upload sources, since the
+ * difference between the host's picker and the API is not one a person picks by.
+ */
+export const SOURCE_FILTERS: Array<{ key: string; label: string; sources: FileSource[] }> = [
+  { key: "chat", label: "From chats", sources: ["chat"] },
+  { key: "agent", label: "Made by agents", sources: ["agent"] },
+  { key: "upload", label: "Uploaded", sources: ["app", "manual"] },
+];
+
+/** How a file's source reads in the list and the detail panel. */
+export function sourceLabel(source: FileSource | undefined): string {
+  if (source === "chat") return "Chat";
+  if (source === "agent") return "Agent";
+  if (source === "app" || source === "manual") return "Upload";
+  return "";
+}
+
+export type Since = "any" | "day" | "week" | "month";
+
+export const SINCE_FILTERS: Array<{ key: Since; label: string; days: number }> = [
+  { key: "day", label: "Today", days: 1 },
+  { key: "week", label: "7 days", days: 7 },
+  { key: "month", label: "30 days", days: 30 },
+];
+
+/** The `createdAfter` a date chip asks for, or `undefined` for any time. */
+export function sinceToIso(since: Since, now = Date.now()): string | undefined {
+  const preset = SINCE_FILTERS.find((s) => s.key === since);
+  if (!preset) return undefined;
+  return new Date(now - preset.days * 86_400_000).toISOString();
 }

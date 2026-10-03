@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { fileExtension, formatSize, isImage } from "./format";
+import { fileExtension, formatSize, isImage, sourceLabel } from "./format";
 import { DownloadIcon, FileTypeIcon } from "./icons";
 import type { FileEntry } from "./types";
 import { useFileDownload, useFileObjectUrl } from "./useFileObjectUrl";
 
 interface Props {
   file: FileEntry;
+  /** The '/'-separated path of the file's folder; "" at the top level. */
+  location: string;
   deleting: boolean;
   onClose: () => void;
   onDelete: () => void;
+  onMove: () => void;
 }
 
 /**
@@ -22,7 +25,7 @@ interface Props {
  * the dialog itself (the backdrop is the dialog's own pseudo-element, so
  * clicks land on the dialog node, not on the panel inside).
  */
-export function DetailOverlay({ file, deleting, onClose, onDelete }: Props) {
+export function DetailOverlay({ file, location, deleting, onClose, onDelete, onMove }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const download = useFileDownload();
   const [downloading, setDownloading] = useState(false);
@@ -75,15 +78,19 @@ export function DetailOverlay({ file, deleting, onClose, onDelete }: Props) {
         </div>
 
         <div className="detail-fields">
-          <Field label="ID" value={file.id} mono />
+          <Field
+            label="Folder"
+            value={location ? `Files / ${location.split("/").join(" / ")}` : "Files"}
+          />
           <Field label="Type" value={file.mimeType || "Unknown"} />
           <Field label="Size" value={formatSize(file.size || 0)} />
           <Field
             label="Created"
             value={file.createdAt ? new Date(file.createdAt).toLocaleString() : "Unknown"}
           />
-          {file.source && <Field label="Source" value={file.source} />}
+          {file.source && <Field label="Source" value={sourceLabel(file.source)} />}
           {file.description && <Field label="Description" value={file.description} />}
+          <Field label="ID" value={file.id} mono />
           {file.tags && file.tags.length > 0 && (
             <div className="detail-field">
               <div className="detail-label">Tags</div>
@@ -110,8 +117,11 @@ export function DetailOverlay({ file, deleting, onClose, onDelete }: Props) {
             <DownloadIcon size={14} />
             {downloading ? "Downloading…" : "Download"}
           </button>
+          <button type="button" className="btn-ghost" onClick={onMove}>
+            Move to…
+          </button>
           <button type="button" className="btn-danger" disabled={deleting} onClick={onDelete}>
-            {deleting ? "Deleting…" : "Delete File"}
+            {deleting ? "Deleting…" : "Delete"}
           </button>
         </div>
       </div>
