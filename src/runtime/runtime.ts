@@ -72,6 +72,7 @@ import {
   type StoredMessage,
 } from "../conversation/types.ts";
 import { applyReasoningReplayPolicy, windowMessages } from "../conversation/window.ts";
+import { textContent } from "../engine/content-helpers.ts";
 import { AgentEngine } from "../engine/engine.ts";
 import type { AdminToolCallPayload } from "../engine/schemas/events.ts";
 import { estimateMessageTokens, estimateToolDescriptionTokens } from "../engine/token-estimate.ts";
@@ -4383,9 +4384,16 @@ export class Runtime {
     // The called connector's binding is resolved first, reconnecting if it
     // dropped: the call would reconnect on its own, and a binding read from a
     // closed connection is unknown, which would admit a wire-declared handler.
-    await lifecycleBindingFor(wsId, serverName, this.lifecycleSourceFor(wsId, serverName), {
-      rediscover: true,
-    }).catch(() => undefined);
+    // Still unknown after that means the connector has not connected in this
+    // process and cannot now, so the call is refused as not connected rather
+    // than left to a later reconnect inside the dispatch, past this gate.
+    const source = this.lifecycleSourceFor(wsId, serverName);
+    const wire = await lifecycleBindingFor(wsId, serverName, source, { rediscover: true }).catch(
+      () => undefined,
+    );
+    if (source && !wire) {
+      return { content: textContent(`McpSource "${serverName}" not started`), isError: true };
+    }
     const declared = await this.connectorGatesFor(wsId);
     if (isHostOnlyTool(declared.get(serverName)?.lifecycle, toolName)) {
       return hostOnlyToolDenial(serverName, toolName);

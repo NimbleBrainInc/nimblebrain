@@ -370,6 +370,33 @@ describe("withholding wire-declared handlers", () => {
   }
 });
 
+describe("a connector whose binding is unknown", () => {
+  it("refuses a call it cannot reconnect for, though the dispatch would reconnect later", async () => {
+    resetCalls();
+    forgetLifecycleBinding(MEMBER_WS, WIRED);
+    const source = sources.get(`${MEMBER_WS}/${WIRED}`) as unknown as {
+      client: unknown;
+      lastReconnectFailedAt: number | null;
+      downSince: number | null;
+      restartingSourceWait: { waitMs: number; horizonMs: number; retryMs: number };
+    };
+    source.client = null;
+    // The gate's reconnect is floored by a failure moments ago; the dispatch's
+    // restart wait, inside the outage horizon, would reconnect on its own.
+    source.lastReconnectFailedAt = Date.now();
+    source.downSince = Date.now();
+    source.restartingSourceWait = { waitMs: 2000, horizonMs: 60_000, retryMs: 50 };
+    const res = await fetch(`${baseUrl}/v1/workspaces/${MEMBER_WS}/tools/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server: WIRED, tool: "scope_removing", arguments: {} }),
+    });
+    const result = await readJson<ToolCallResponse>(res);
+    expect(result.isError).toBe(true);
+    expect(ran(MEMBER_WS, WIRED)).toEqual([]);
+  });
+});
+
 describe("holding the binding", () => {
   it("re-reads it on running and again when the tool set changes", async () => {
     const tools = [marked("scope_ready", "ready"), { name: "search" }];
