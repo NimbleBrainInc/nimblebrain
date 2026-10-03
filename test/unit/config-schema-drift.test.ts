@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { AUTOMATIONS_CONFIG_KEYS } from "../../src/config/automations.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
 import {
@@ -41,6 +42,7 @@ const schema = JSON.parse(
 ) as {
   properties: {
     features: SchemaObject;
+    automations: SchemaObject;
     models: SchemaObject;
     notifications: SchemaObject & {
       properties: { poll: SchemaObject };
@@ -132,6 +134,12 @@ describe("config schema ↔ notification poll config", () => {
   // The parent carries exactly one member today; declaring it keeps a future
   // `notifications.<something>` from landing in the schema alone.
   expectLockstep("notifications", schema.properties.notifications, ["poll"]);
+});
+
+describe("config schema ↔ automations config", () => {
+  // `AUTOMATIONS_CONFIG_KEYS` is derived from the resolver's output, so a key
+  // the runtime reads is a key the schema must declare.
+  expectLockstep("automations", schema.properties.automations, AUTOMATIONS_CONFIG_KEYS);
 });
 
 describe("config schema ↔ secrets block", () => {

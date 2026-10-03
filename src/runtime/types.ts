@@ -1,4 +1,5 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import type { AutomationsConfig } from "../config/automations.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
@@ -261,6 +262,12 @@ export interface RuntimeConfig {
   notifications?: {
     poll?: NotificationsPollConfig;
   };
+
+  /**
+   * Automations — how many runs the process holds in flight and waiting, and
+   * the ceilings on any one run. See `src/platform/automations/config.ts`.
+   */
+  automations?: AutomationsConfig;
 
   /** File context configuration. */
   files?: {

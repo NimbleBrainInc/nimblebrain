@@ -11,6 +11,7 @@ import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
+import { type ResolvedAutomationsConfig, resolveAutomationsConfig } from "../config/automations.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -5549,6 +5550,14 @@ export class Runtime {
    */
   getNotificationsPollConfig(): ResolvedPollConfig {
     return resolvePollConfig(this.config.notifications?.poll);
+  }
+
+  /**
+   * The automations block, resolved with its defaults and clamps. Read once,
+   * when the automations source builds its scheduler and executor.
+   */
+  getAutomationsConfig(): ResolvedAutomationsConfig {
+    return resolveAutomationsConfig(this.config.automations);
   }
 
   /** Get the resolved work directory path. */

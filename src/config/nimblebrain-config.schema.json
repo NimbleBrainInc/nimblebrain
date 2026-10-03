@@ -480,6 +480,48 @@
       },
       "additionalProperties": false
     },
+    "automations": {
+      "description": "Automation run guardrails: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each automation's own caps at execution time and fill in for caps it leaves unset.",
+      "type": "object",
+      "properties": {
+        "maxConcurrentRuns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Automation runs in flight at once. Scheduled, Run now, and event runs share these slots. Default: 2.",
+          "default": 2
+        },
+        "maxQueuedRuns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Run now and event runs held waiting for a slot once maxConcurrentRuns are in flight; each starts as soon as a slot frees. Beyond it a run is refused and recorded as skipped. 0 refuses at the limit. The queue is in memory: runs still queued when the runtime stops are recorded as skipped. Default: 50.",
+          "default": 50
+        },
+        "maxRunIterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Ceiling on one run's agentic iterations. An automation's own maxIterations above it is lowered to it. Default: 50.",
+          "default": 50
+        },
+        "maxRunInputTokens": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 1000000,
+          "description": "Ceiling on one run's input tokens, summed over every model call. An automation's own maxInputTokens above it is lowered to it, and one that sets none runs under it. Default: 1000000.",
+          "default": 1000000
+        },
+        "maxRunDurationMs": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 600000,
+          "description": "Ceiling on one run's wall-clock time, in milliseconds. An automation's own maxRunDurationMs above it is lowered to it. Default: 600000 (10 min).",
+          "default": 600000
+        }
+      },
+      "additionalProperties": false
+    },
     "files": {
       "description": "File context configuration for workspace file uploads.",
       "type": "object",
