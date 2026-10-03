@@ -81,7 +81,7 @@ on that connection is an ordinary tool, and the host never calls it as a
 handler.
 
 <Aside type="caution" title="Some SDKs advertise on one revision only">
-The MCP Python SDK 2.x (FastMCP 4) carries server extensions in
+FastMCP 4, on the MCP Python SDK 2.x, carries server extensions in
 `server/discover` only; its 2025-era `initialize` result has none. That is fine
 against this host. A host that speaks only 2025 sees no extension from such a
 server, and sends no events, with no error on either side.
@@ -246,8 +246,8 @@ connection comes up**. Concretely:
 `removing` is called before the host closes the connection and before it
 discards the credentials it holds for the workspace, because after that there is
 nothing to call. If the host no longer holds your handler when the removal
-begins (the connection closed on an idle timeout, say), it reconnects to find
-it first. The uninstall waits for the call, and for
+begins (the host restarted since your server last connected, say), it
+reconnects to find it first. The uninstall waits for the call, and for
 that reconnect, for at most a few seconds, then proceeds without it.
 
 <Aside type="caution" title="You must not assume `removing` arrives">
@@ -268,7 +268,7 @@ round-trip makes the install feel broken and the uninstall feel stuck.
 
 | | |
 |---|---|
-| An undeclared handler (marked twice, a required property, task support required) or an unknown `event` | **A warning on a successful install.** The connector installs and works, and no call is made for that event. The check re-runs on every reconnect and every `notifications/tools/list_changed`, so fixing the server is enough: no reinstall. |
+| An undeclared handler (marked twice, a required property, task support required) or an unknown `event` | **A warning on a successful install.** The connector installs and works, and no call is made for that event. The host re-reads your handlers on every reconnect and every `notifications/tools/list_changed`, so a fixed `removing` handler is called at the next uninstall. A `ready` call skipped this way is not made again until the host restarts or the connector is reinstalled. |
 | `ready` fails or errors | **Never fails the install.** Retried on the next reconnect, and on your next `notifications/tools/list_changed`. |
 | `removing` fails, errors, or cannot be reached | **Never fails the uninstall.** The uninstall waits for the call for a few seconds and then proceeds without it. Not retried; the connector is gone. |
 | Your server lists no tools yet | Not an error. The host waits for your tool list and calls then. |
@@ -407,9 +407,10 @@ semantics above are the same. The differences:
   catalog-named handler must accept and ignore an argument it does not declare,
   which FastMCP, the MCP TypeScript SDK and anything built on pydantic do.
 - **A named handler your server does not list, that has a required property,
-  or that advertises any `execution.taskSupport`** (`"optional"` included) is
-  reported as an install warning, and `on_ready` is not called. `on_removing`
-  is still attempted at uninstall, under the same deadline.
+  or whose `execution.taskSupport` is `"optional"` or `"required"`** is
+  reported as an install warning, and `on_ready` is not called. The check
+  re-runs on every reconnect, so fixing your server is enough: no reinstall.
+  `on_removing` is still attempted at uninstall, under the same deadline.
 
 To move, advertise the extension and mark the tools the block names. Keep the
 block while your server still serves a NimbleBrain release that reads only the
