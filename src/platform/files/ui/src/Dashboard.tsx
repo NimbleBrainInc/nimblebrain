@@ -1,9 +1,10 @@
 import { useApp, useHostContext, useModelContext, useTrail } from "@nimblebrain/synapse/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DetailOverlay } from "./DetailOverlay";
 import { ConfirmDialog, errorText, MoveDialog, NameDialog } from "./Dialogs";
 import { FileList } from "./FileList";
 import { FolderIcon } from "./icons";
+import { Pager } from "./Pager";
 import { Toolbar } from "./Toolbar";
 import { type Crumb, type FileEntry, type Folder, type ListResult, ROOT } from "./types";
 import { UploadRefusals } from "./UploadRefusals";
@@ -41,10 +42,17 @@ export function Dashboard() {
   // While browsing, the chips count what choosing one would search: this
   // folder and everything below it, or everything at the top level.
   const browseFacets = useFacets(facetScope(browse));
-  const folders = list.result?.folders ?? [];
+  // Folders lead the first page; later pages are files only.
+  const folders = list.page === 0 ? (list.result?.folders ?? []) : [];
   const files = list.result?.files ?? [];
   const rowIds = useMemo(() => [...folders, ...files].map((r) => r.id), [folders, files]);
-  const selection = useSelection(rowIds, JSON.stringify(browse.params));
+  const selection = useSelection(rowIds, `${JSON.stringify(browse.params)}#${list.page}`);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // A new page starts at its top.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `list.page` is the trigger
+  useEffect(() => {
+    contentRef.current?.scrollTo({ top: 0 });
+  }, [list.page]);
 
   const { openFolder: goToFolder, setFolderId } = browse;
   const openFolder = useCallback(
@@ -90,8 +98,6 @@ export function Dashboard() {
 
   const scopeName = browse.inFolder ? lastName(breadcrumb) : null;
   const body = bodyState(list.loading, list.result, rowIds.length);
-  const hasMore = list.result !== null && files.length < list.result.total;
-  const scopedTo = browse.inFolder && browse.scoped ? where : null;
 
   async function moveAndFollow(ids: string[], target: string) {
     await actions.move(ids, target);
@@ -158,13 +164,13 @@ export function Dashboard() {
         )}
       </div>
 
-      <div className="content">
-        {list.result && browse.searching && (
-          <ResultCount
-            files={list.result.total}
-            folders={folders.length}
-            scopedTo={scopedTo}
-            onSearchEverywhere={() => browse.setScoped(false)}
+      <div className="content" ref={contentRef}>
+        {list.result && (
+          <Pager
+            page={list.page}
+            pageCount={list.pageCount}
+            total={list.result.total}
+            onPage={list.setPage}
           />
         )}
 
@@ -193,9 +199,14 @@ export function Dashboard() {
             onDeleteFolder={(folder) =>
               setDialog({ kind: "delete", ids: [folder.id], label: folder.name })
             }
-            hasMore={hasMore}
-            loadingMore={list.loadingMore}
-            onLoadMore={list.loadMore}
+          />
+        )}
+        {list.pageCount > 1 && list.result && (
+          <Pager
+            page={list.page}
+            pageCount={list.pageCount}
+            total={list.result.total}
+            onPage={list.setPage}
           />
         )}
       </div>
@@ -458,32 +469,6 @@ function describeView({
     summary = `Searching Files${what}${scope}: ${total ?? "…"} matches`;
   }
   return { state, summary };
-}
-
-function ResultCount({
-  files,
-  folders,
-  scopedTo,
-  onSearchEverywhere,
-}: {
-  files: number;
-  folders: number;
-  scopedTo: string | null;
-  onSearchEverywhere: () => void;
-}) {
-  const parts = [`${files} file${files === 1 ? "" : "s"}`];
-  if (folders > 0) parts.push(`${folders} folder${folders === 1 ? "" : "s"}`);
-  return (
-    <div className="result-count">
-      {parts.join(" and ")}
-      {scopedTo !== null && ` in ${scopedTo}`}
-      {scopedTo !== null && (
-        <button type="button" className="btn-link" onClick={onSearchEverywhere}>
-          Search everywhere
-        </button>
-      )}
-    </div>
-  );
 }
 
 function EmptyState({

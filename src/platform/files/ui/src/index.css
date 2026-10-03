@@ -366,11 +366,6 @@ body {
 }
 .selection-count { font-size: 13px; font-weight: 500; margin-right: auto; }
 
-.result-count {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 12px; color: var(--color-text-secondary);
-  padding: 4px 0 8px;
-}
 
 /* ===== List ===== */
 .file-list { display: flex; flex-direction: column; animation: fadeIn 0.2s ease; }
@@ -432,7 +427,24 @@ body {
   font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit;
 }
 .sort-btn.active, .sort-btn:hover { color: var(--color-text-primary); }
-.list-more { min-height: 40px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--color-text-secondary); }
+.pager {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 0;
+  font-size: 12px; color: var(--color-text-secondary);
+}
+.pager-controls { display: flex; align-items: center; gap: 4px; }
+.pager-page { padding: 0 8px; white-space: nowrap; }
+.pager-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit; font-size: 12px;
+  cursor: pointer; white-space: nowrap;
+}
+.pager-btn:hover:not(:disabled) { border-color: var(--color-text-accent); color: var(--color-text-accent); }
+.pager-btn:disabled { opacity: 0.4; cursor: default; }
 
 @media (max-width: 560px) {
   .list-head, .list-row,

@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import { formatSize, relativeTime, sourceLabel } from "./format";
 import { FileTypeIcon, FolderIcon } from "./icons";
 import type { Folder, ListedFile, SortField, SortOrder } from "./types";
@@ -18,29 +17,9 @@ interface Props {
   onOpenFile: (file: ListedFile) => void;
   onRenameFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
 }
 
 export function FileList(props: Props) {
-  const sentinel = useRef<HTMLDivElement>(null);
-  const { hasMore, loadingMore, onLoadMore } = props;
-
-  // The next page loads as the end of the list nears the viewport.
-  useEffect(() => {
-    const el = sentinel.current;
-    if (!el || !hasMore) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting) && !loadingMore) onLoadMore();
-      },
-      { rootMargin: "400px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [hasMore, loadingMore, onLoadMore]);
-
   const rowCount = props.folders.length + props.files.length;
   const allSelected = rowCount > 0 && props.selected.size === rowCount;
 
@@ -149,12 +128,6 @@ export function FileList(props: Props) {
           </span>
         </div>
       ))}
-
-      {hasMore && (
-        <div ref={sentinel} className="list-more">
-          {loadingMore ? "Loading…" : ""}
-        </div>
-      )}
     </div>
   );
 }
