@@ -312,6 +312,21 @@ describe("MCP Server Endpoint (/mcp)", () => {
       expect(line).toContain(`ua="${"u".repeat(200)}"`);
     });
 
+    it("info-logs each tools/call with the tool's name and who called it", async () => {
+      const client = await createMcpClient();
+      try {
+        await client.callTool({ name: "fake__echo", arguments: { text: "secret words" } });
+      } finally {
+        await client.close();
+      }
+      const line = capture.lines.find((l) => l.startsWith("info [mcp] tools/call"));
+      expect(line).toContain('tool="fake__echo"');
+      expect(line).toContain("caller=agent");
+      expect(line).toContain(`ws=${TEST_WORKSPACE_ID}`);
+      // Arguments are never written.
+      expect(line).not.toContain("secret words");
+    });
+
     it("info-logs the declared clientInfo when a session initializes", async () => {
       const res = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
         method: "POST",
