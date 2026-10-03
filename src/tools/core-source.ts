@@ -209,8 +209,7 @@ function unwritableFieldError(input: Record<string, unknown>): string | null {
     if (key === "modelPolicy") {
       return "`modelPolicy` is not set here. It is deployment configuration — set `modelPolicy.allowed` in nimblebrain.json.";
     }
-    const hint = /^clear[A-Z]/.test(key) ? " To clear a field, pass null for it." : "";
-    return `\`${key}\` is not a field this tool writes.${hint}`;
+    return `\`${key}\` is not a field this tool writes.`;
   }
   return null;
 }

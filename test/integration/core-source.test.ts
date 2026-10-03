@@ -678,10 +678,8 @@ describe("Core Source", () => {
     }
   });
 
-  it("nb__set_model_config rejects a clear flag and points at null", async () => {
-    // A caller that learned the old `clear*` booleans gets told how to clear,
-    // rather than a bare "not a field".
-    const workDir = join(testDir, `work-clear-flag-${Date.now()}`);
+  it("nb__set_model_config rejects a field it does not write", async () => {
+    const workDir = join(testDir, `work-unwritable-field-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
     const configPath = join(workDir, "nimblebrain.json");
     writeFileSync(configPath, JSON.stringify({}));
@@ -695,11 +693,9 @@ describe("Core Source", () => {
     });
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
-      const result = await asDevUser(() =>
-        source.execute("set_model_config", { clearThinking: true }),
-      );
+      const result = await asDevUser(() => source.execute("set_model_config", { notAField: true }));
       expect(result.isError).toBe(true);
-      expect(extractText(result.content)).toContain("pass null");
+      expect(extractText(result.content)).toContain("`notAField` is not a field this tool writes");
     } finally {
       await runtime.shutdown();
     }
@@ -972,9 +968,7 @@ describe("Core Source", () => {
       }
     });
 
-    it("reads the empty-string clear as a clear, not as a model", async () => {
-      // `""` is the documented way to clear a slot; read as a model name it
-      // resolved to a bare provider prefix and rejected itself.
+    it("clears a slot with null under a policy", async () => {
       const { runtime, source } = await startWithPolicy(
         "clear-sentinel",
         ["anthropic:claude-sonnet-5"],
