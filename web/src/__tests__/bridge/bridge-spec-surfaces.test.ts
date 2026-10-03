@@ -214,7 +214,6 @@ describe("ui/initialize — advertised capabilities", () => {
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
       "ai.nimblebrain/request-file": {},
-      "ai.nimblebrain/upload-files": {},
       "ai.nimblebrain/keydown": {},
       "ai.nimblebrain/location": {},
     });
@@ -228,7 +227,6 @@ describe("ui/initialize — advertised capabilities", () => {
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
       "ai.nimblebrain/request-file": {},
-      "ai.nimblebrain/upload-files": {},
       "ai.nimblebrain/keydown": {},
       "ai.nimblebrain/location": {},
     });
@@ -533,6 +531,33 @@ describe("ai.nimblebrain/upload-files", () => {
   // Files the app already holds (dropped on it) take the picker's path from the
   // point a pick has its files, so they answer and refuse exactly as a pick does.
 
+  test("an app other than Files is refused, and nothing is uploaded", async () => {
+    const origUpload = uploadStub;
+    let calls = 0;
+    uploadStub = async () => {
+      calls += 1;
+      return { files: [] };
+    };
+    try {
+      const frame = mount("db-query");
+      await handshake(frame);
+      frame.send({
+        jsonrpc: "2.0",
+        id: "drop-other",
+        method: UPLOAD_FILES_METHOD,
+        params: { files: [new File(["x"], "planted.md")] },
+      });
+
+      const reply = (await frame.waitFor(isReplyTo("drop-other"), 2000)) as {
+        error: { code: number };
+      };
+      expect(reply.error.code).toBe(-32601);
+      expect(calls).toBe(0);
+    } finally {
+      uploadStub = origUpload;
+    }
+  });
+
   test("uploads the files it was given and answers { files }", async () => {
     const entry = { id: "fl_abc", filename: "notes.txt", mimeType: "text/plain", size: 5 };
     const uploaded: File[][] = [];
@@ -542,7 +567,7 @@ describe("ai.nimblebrain/upload-files", () => {
       return { files: [entry] };
     };
     try {
-      const frame = mount();
+      const frame = mount("files");
       await handshake(frame);
       const file = new File(["hello"], "notes.txt", { type: "text/plain" });
       frame.send({
@@ -568,7 +593,7 @@ describe("ai.nimblebrain/upload-files", () => {
       return { files: [] };
     };
     try {
-      const frame = mount();
+      const frame = mount("files");
       await handshake(frame);
       frame.send({
         jsonrpc: "2.0",
@@ -589,7 +614,7 @@ describe("ai.nimblebrain/upload-files", () => {
   });
 
   test("a file over the limit is refused before upload, with the refusal as data", async () => {
-    const frame = mount();
+    const frame = mount("files");
     await handshake(frame);
     const big = new File(["0123456789"], "big.bin");
     frame.send({

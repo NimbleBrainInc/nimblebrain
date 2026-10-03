@@ -54,6 +54,7 @@ import {
   LOCATION_METHOD,
   NAVIGATE_METHOD,
   REQUEST_FILE_METHOD,
+  UPLOAD_FILES_APPS,
   UPLOAD_FILES_METHOD,
 } from "./extensions";
 import { buildHostCapabilities } from "./host-capabilities";
@@ -244,7 +245,7 @@ export function createBridge(
       // ext-apps protocol: ui/initialize REQUEST (has id + method)
       // -----------------------------------------------------------------
       case "ui/initialize":
-        handleInitialize(msg.id, callbacks, postToIframe);
+        handleInitialize(msg.id, appName, callbacks, postToIframe);
         break;
 
       // -----------------------------------------------------------------
@@ -424,6 +425,14 @@ export function createBridge(
       // Extension: ai.nimblebrain/upload-files — files the app already holds
       // -----------------------------------------------------------------
       case UPLOAD_FILES_METHOD:
+        if (!UPLOAD_FILES_APPS.has(appName)) {
+          postToIframe({
+            jsonrpc: "2.0",
+            id: msg.id,
+            error: { code: -32601, message: `${UPLOAD_FILES_METHOD} is not offered to this app` },
+          });
+          break;
+        }
         handleUploadFiles(msg.params, msg.id, postToIframe, readUploadLimits(callbacks));
         break;
 
@@ -749,6 +758,7 @@ function base64ToBytes(blob: string): Uint8Array | null {
 
 function handleInitialize(
   id: unknown,
+  appName: string,
   callbacks: BridgeCallbacks | undefined,
   postToIframe: PostToIframe,
 ): void {
@@ -772,7 +782,7 @@ function handleInitialize(
   // custom properties — extensions there would tear down the connection.
   //
   const extensions = readHostExtensions(callbacks);
-  const hostCapabilities = buildHostCapabilities();
+  const hostCapabilities = buildHostCapabilities(appName);
   const response: ExtAppsInitializeResponse = {
     jsonrpc: "2.0",
     id,

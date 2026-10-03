@@ -29,6 +29,13 @@ export const REQUEST_FILE_METHOD = "ai.nimblebrain/request-file";
  * passed as `File` objects in `{ files }`, answered `{ files }` like the picker.
  */
 export const UPLOAD_FILES_METHOD = "ai.nimblebrain/upload-files";
+/**
+ * The apps `UPLOAD_FILES_METHOD` is offered to, by server name. A pick has a
+ * step the user takes; this stores whatever the app hands over, so only the
+ * platform's own Files app holds it. `files` is a reserved source name, so no
+ * connector can claim it.
+ */
+export const UPLOAD_FILES_APPS: ReadonlySet<string> = new Set(["files"]);
 /** App → host notification: a keyboard shortcut pressed inside the frame. */
 export const KEYDOWN_METHOD = "ai.nimblebrain/keydown";
 /**

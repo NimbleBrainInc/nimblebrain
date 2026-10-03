@@ -18,16 +18,19 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { NIMBLEBRAIN_EXTENSIONS } from "../../../web/src/bridge/extensions.ts";
+import { NIMBLEBRAIN_EXTENSIONS, UPLOAD_FILES_METHOD } from "../../../web/src/bridge/extensions.ts";
 import {
   buildHostCapabilities,
   TASKS_EXTENSION_ID,
 } from "../../../web/src/bridge/host-capabilities.ts";
 import { SCHEMA_BY_METHOD } from "../../../web/src/bridge/validate.ts";
 
-/** The extension identifiers the handshake offers. */
-function declaredExtensions(): string[] {
-  const { experimental } = buildHostCapabilities() as {
+/**
+ * The extension identifiers the handshake offers `appName`. The Files app is
+ * offered every one, so its declaration is the one pinned against the bridge.
+ */
+function declaredExtensions(appName = "files"): string[] {
+  const { experimental } = buildHostCapabilities(appName) as {
     experimental: Record<string, object>;
   };
   return Object.keys(experimental);
@@ -58,7 +61,7 @@ describe("the host declares what it serves", () => {
   test("the spec capabilities the SDK gates on are all declared", () => {
     // Each names a `case` in the bridge. Without the declaration the SDK either
     // throws at the call site or drops the send on the floor.
-    const caps = buildHostCapabilities();
+    const caps = buildHostCapabilities("files");
     for (const name of [
       "openLinks",
       "downloadFile",
@@ -76,6 +79,13 @@ describe("the host declares what it serves", () => {
     // schema, which has no `tasks` field and strips one. `experimental`, keyed
     // by the registered extension identifier, is the one slot that survives.
     expect(declaredExtensions()).toContain(TASKS_EXTENSION_ID);
-    expect(Object.keys(buildHostCapabilities())).not.toContain("tasks");
+    expect(Object.keys(buildHostCapabilities("files"))).not.toContain("tasks");
+  });
+
+  test("upload-files is offered to the Files app and no other", () => {
+    // It stores what an app hands over with no step the user takes, so an app
+    // that is not the platform's own never sees it declared.
+    expect(declaredExtensions("files")).toContain(UPLOAD_FILES_METHOD);
+    expect(declaredExtensions("db-query")).not.toContain(UPLOAD_FILES_METHOD);
   });
 });

@@ -15,7 +15,7 @@
 // stale the next time the bridge grows a method.
 // ---------------------------------------------------------------------------
 
-import { NIMBLEBRAIN_EXTENSIONS } from "./extensions";
+import { NIMBLEBRAIN_EXTENSIONS, UPLOAD_FILES_APPS, UPLOAD_FILES_METHOD } from "./extensions";
 import { serverCapabilities } from "./relayed-notifications";
 
 /**
@@ -33,14 +33,21 @@ const TASKS_CAPABILITY = {
   requests: { tools: { call: {} } },
 } as const;
 
+/** The NimbleBrain extensions `appName` is offered: `upload-files` only to the apps in `UPLOAD_FILES_APPS`. */
+export function extensionsFor(appName: string): string[] {
+  return NIMBLEBRAIN_EXTENSIONS.filter(
+    (method) => method !== UPLOAD_FILES_METHOD || UPLOAD_FILES_APPS.has(appName),
+  );
+}
+
 /**
- * Build the `hostCapabilities` object for a `ui/initialize` answer.
+ * Build the `hostCapabilities` object for `appName`'s `ui/initialize` answer.
  *
  * Built per handshake rather than held as a constant: `serverCapabilities()`
  * reads which server notifications the host relays, and an app is told only
  * about the ones it will actually receive.
  */
-export function buildHostCapabilities(): Record<string, unknown> {
+export function buildHostCapabilities(appName: string): Record<string, unknown> {
   return {
     openLinks: {},
     downloadFile: {},
@@ -57,7 +64,7 @@ export function buildHostCapabilities(): Record<string, unknown> {
     updateModelContext: { text: {}, structuredContent: {} },
     experimental: {
       [TASKS_EXTENSION_ID]: TASKS_CAPABILITY,
-      ...Object.fromEntries(NIMBLEBRAIN_EXTENSIONS.map((method) => [method, {}])),
+      ...Object.fromEntries(extensionsFor(appName).map((method) => [method, {}])),
     },
   };
 }

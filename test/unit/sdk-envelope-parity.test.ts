@@ -150,8 +150,9 @@ function completeHandshake(): void {
       // The real declaration, not a copy of it. The SDK sends a method only
       // where the host declared it, so a hand-written capability set here would
       // let a test pass against a promise the bridge never makes — which is the
-      // shape of every failure this suite exists to catch.
-      hostCapabilities: buildHostCapabilities(),
+      // shape of every failure this suite exists to catch. The Files app is
+      // offered every extension, so its declaration is the whole one.
+      hostCapabilities: buildHostCapabilities("files"),
       hostContext: {
         theme: "light",
         styles: { variables: {} },
