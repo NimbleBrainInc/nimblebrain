@@ -148,7 +148,8 @@ export function CreateAutomationForm({
       const result = await runTool.call({ name: created });
       const data = asDict(result.data);
       // A run that outlasts the tool's sync wait returns a dispatched envelope
-      // (status, startedAt) in place of `run`; both render through the same fields.
+      // (status, startedAt), and one waiting for a run slot a queued envelope
+      // (status "queued"), in place of `run`; all render through the same fields.
       setTestResult((data.run as AutomationRun | undefined) ?? (data as Partial<AutomationRun>));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Test run failed");

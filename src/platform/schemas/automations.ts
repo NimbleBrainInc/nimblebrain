@@ -137,7 +137,11 @@ const ManifestFields = {
     // (scripts/tsconfig.codegen-web.json) that forbids importing from outside
     // src/platform/schemas/. The enforcement path (server.ts) imports the
     // real constant; this is documentation only.
-    Type.Number({ description: "Max LLM iterations per run. Default 25, hard cap 50." }),
+    Type.Number({
+      description:
+        "Max LLM iterations per run. Default 25, hard cap 50. Runs are also held to the " +
+        "runtime's per-run ceiling; create and update report the effective value.",
+    }),
   ),
   maxInputTokens: Type.Optional(
     Type.Number({
@@ -145,7 +149,8 @@ const ManifestFields = {
         "Input tokens one run may spend in total, summed over every model call (1000 to " +
         "1000000), counting cache reads. Before each model call the run stops with stopReason " +
         "max_input_tokens if that call's projected input would pass the cap. Omit for no " +
-        "per-run cap.",
+        "per-run cap unless the runtime sets a per-run ceiling, which also bounds a set value; " +
+        "create and update report the effective value.",
     }),
   ),
   allowedTools: Type.Optional(
@@ -161,7 +166,11 @@ const ManifestFields = {
     }),
   ),
   maxRunDurationMs: Type.Optional(
-    Type.Number({ description: "Max wall-clock per run (ms). Default 120000." }),
+    Type.Number({
+      description:
+        "Max wall-clock per run (ms), 10000 to 600000. Default 120000. Runs are also held to " +
+        "the runtime's per-run ceiling; create and update report the effective value.",
+    }),
   ),
   tokenBudget: Type.Optional(TokenBudget),
 };
@@ -549,6 +558,18 @@ export interface AutomationsRunsOutput {
  *                                                    (`since: startedAt`)
  *                                                    when it ends.
  *
+ *   { status: "queued"; automationId; position;     when every run slot was
+ *     queuedAt; enabled; message }                   busy. It starts as soon
+ *                                                    as a slot frees; its record
+ *                                                    lands in `automations__runs`
+ *                                                    (`since: queuedAt`) when it
+ *                                                    ends. `automations__cancel`
+ *                                                    removes it from the queue.
+ *
+ * A Run now the scheduler refuses (already running or queued, a full queue, a
+ * spent token budget) returns the first shape with a `skipped` run whose
+ * `error` says why.
+ *
  * `enabled` is the automation's own flag. Run now runs a disabled automation,
  * because it is a deliberate act and the create form's test run depends on
  * it; a disabled automation is not fired by its schedule or by events, and
@@ -565,6 +586,15 @@ export type AutomationsRunOutput =
       status: "dispatched";
       automationId: string;
       startedAt: string;
+      enabled: boolean;
+      message: string;
+    }
+  | {
+      status: "queued";
+      automationId: string;
+      /** 1 is next to start. */
+      position: number;
+      queuedAt: string;
       enabled: boolean;
       message: string;
     };
@@ -611,16 +641,31 @@ export interface AutomationRecord {
   budgetResetAt?: string;
 }
 
+/**
+ * The caps a run of the automation executes under: each cap the definition
+ * sets, lowered to the runtime's per-run ceiling, and the runtime default held
+ * to the ceiling where it sets none. `maxInputTokens` is absent when the run
+ * has no input-token cap (neither the definition nor the runtime sets one).
+ * `message` names any cap that was lowered.
+ */
+export interface AutomationEffectiveLimits {
+  maxIterations: number;
+  maxInputTokens?: number;
+  maxRunDurationMs: number;
+}
+
 export interface AutomationsCreateOutput {
   automation: AutomationRecord;
   created: boolean;
   message: string;
+  effectiveLimits: AutomationEffectiveLimits;
 }
 
 export interface AutomationsUpdateOutput {
   automation: AutomationRecord;
   updated: boolean;
   message: string;
+  effectiveLimits: AutomationEffectiveLimits;
 }
 
 export interface AutomationsDeleteOutput {

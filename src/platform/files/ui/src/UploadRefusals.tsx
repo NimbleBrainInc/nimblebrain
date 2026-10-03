@@ -13,7 +13,7 @@ export function UploadRefusals({ refusal, onDismiss }: UploadRefusalsProps) {
       <div className="upload-refusals-head">
         <span>
           {count === 1 ? "1 file wasn't uploaded" : `${count} files weren't uploaded`}
-          {refusal.stored > 0 ? ` (${refusal.stored} uploaded)` : ""}
+          {refusal.storedIds.length > 0 ? ` (${refusal.storedIds.length} uploaded)` : ""}
         </span>
         <button type="button" className="upload-refusals-dismiss" onClick={onDismiss}>
           Dismiss

@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
+  effectiveRunLimits,
+  resolveAutomationsConfig,
+} from "../../../../src/config/automations.ts";
+import type { RunNowTicket } from "../../../../src/platform/automations/scheduler.ts";
+import {
   estimateRunsPerDay,
   formatRelativeTime,
   formatSchedule,
@@ -93,7 +98,7 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
     reloadScheduler: () => {
       schedulerReloaded = true;
     },
-    runNow: async (automationId: string): Promise<AutomationRun | null> => {
+    runNow: (automationId: string): RunNowTicket | null => {
       const auto = loadDefs().get(automationId);
       if (!auto) return null;
       const run: AutomationRun = {
@@ -109,7 +114,7 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
         resultPreview: "Test run completed",
       };
       seedRun(automationId, run);
-      return run;
+      return { state: "started", run: Promise.resolve(run) };
     },
     cancelRun: (_automationId: string) => false,
     readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
@@ -879,12 +884,12 @@ describe("handleRun", () => {
     // the automation disabled; the response must say so.
     const base = makeCtx();
     const ctx = makeCtx({
-      runNow: async (id) => {
-        const run = await base.runNow(id);
+      runNow: (id) => {
+        const ticket = base.runNow(id);
         const defs = loadDefs();
         defs.get(id)!.enabled = false;
         saveDefs(defs);
-        return run;
+        return ticket;
       },
     });
     handleCreate(createArgs("Trips", "p", { type: "interval", intervalMs: 60_000 }), ctx);
@@ -899,11 +904,14 @@ describe("handleRun", () => {
   });
 
   test("a disabled automation's dispatched envelope says it is disabled", async () => {
-    let resolveRun: ((value: AutomationRun | null) => void) | undefined;
-    const runPromise = new Promise<AutomationRun | null>((resolve) => {
+    let resolveRun: ((value: AutomationRun) => void) | undefined;
+    const runPromise = new Promise<AutomationRun>((resolve) => {
       resolveRun = resolve;
     });
-    const slowCtx = makeCtx({ handleRunSyncWaitMs: 20, runNow: () => runPromise });
+    const slowCtx = makeCtx({
+      handleRunSyncWaitMs: 20,
+      runNow: () => ({ state: "started", run: runPromise }),
+    });
     handleCreate(
       createArgs("Slow paused", "p", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
       slowCtx,
@@ -918,7 +926,7 @@ describe("handleRun", () => {
       expect(result.message).toContain("still running");
       expect(result.message).toContain("is disabled");
     } finally {
-      resolveRun?.(null);
+      resolveRun?.(makeRun());
     }
   });
 
@@ -938,13 +946,13 @@ describe("handleRun", () => {
     // test cleans up its own timer instead of leaving a long setTimeout
     // pending past the assertion. Pattern matters — copy-pasted tests
     // with leaked timers add up.
-    let resolveRun: ((value: AutomationRun | null) => void) | undefined;
-    const runPromise = new Promise<AutomationRun | null>((resolve) => {
+    let resolveRun: ((value: AutomationRun) => void) | undefined;
+    const runPromise = new Promise<AutomationRun>((resolve) => {
       resolveRun = resolve;
     });
     const slowCtx = makeCtx({
       handleRunSyncWaitMs: 20,
-      runNow: () => runPromise,
+      runNow: () => ({ state: "started", run: runPromise }),
     });
     handleCreate(
       createArgs("Slow", "Takes forever", { type: "interval", intervalMs: 60_000 }),
@@ -957,10 +965,9 @@ describe("handleRun", () => {
       // Narrow to the "dispatched" branch of the union — if the
       // handler ever stops emitting this branch (regression to a
       // blocking handleRun), this test fails to compile.
-      if (!("status" in result)) {
+      if (!("status" in result) || result.status !== "dispatched") {
         throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
       }
-      expect(result.status).toBe("dispatched");
       expect(result.automationId).toBe("slow");
       expect(result.enabled).toBe(true);
       expect(Number.isNaN(Date.parse(result.startedAt))).toBe(false);
@@ -976,8 +983,111 @@ describe("handleRun", () => {
       // the test (handleRun no longer awaits it after the sync-wait
       // times out, and Bun's runner doesn't pin the suite on it, but
       // hygiene matters when the file grows).
-      resolveRun?.(null);
+      resolveRun?.(makeRun());
     }
+  });
+
+  test("a run that waits for a slot returns the queued envelope at once", async () => {
+    let resolveRun: ((value: AutomationRun) => void) | undefined;
+    const run = new Promise<AutomationRun>((resolve) => {
+      resolveRun = resolve;
+    });
+    const ctx = makeCtx({ runNow: () => ({ state: "queued", position: 3, run }) });
+    handleCreate(createArgs("Waits", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+
+    try {
+      const result = await handleRun({ name: "Waits" }, ctx);
+      if (!("status" in result) || result.status !== "queued") {
+        throw new Error(`expected queued envelope, got ${JSON.stringify(result)}`);
+      }
+      expect(result.position).toBe(3);
+      expect(result.automationId).toBe("waits");
+      expect(result.message).toContain("queued at position 3");
+      expect(result.message).toContain("automations__cancel");
+      expect(result.message).toContain(result.queuedAt);
+    } finally {
+      resolveRun?.(makeRun());
+    }
+  });
+
+  test("a refused run returns its skipped record and says why", async () => {
+    const skipped = makeRun({
+      automationId: "refused",
+      status: "skipped",
+      error: "Already queued (runNow)",
+    });
+    const ctx = makeCtx({ runNow: () => ({ state: "refused", run: skipped }) });
+    handleCreate(createArgs("Refused", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+
+    const result = await handleRun({ name: "Refused" }, ctx);
+    if (!("run" in result)) throw new Error(`expected run shape, got ${JSON.stringify(result)}`);
+    expect(result.run.status).toBe("skipped");
+    expect(result.message).toContain("did not run");
+    expect(result.message).toContain("Already queued");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Effective per-run limits reported at write time
+// ---------------------------------------------------------------------------
+
+describe("create and update report effective run limits", () => {
+  const ceilings = resolveAutomationsConfig({
+    maxRunIterations: 10,
+    maxRunInputTokens: 50_000,
+    maxRunDurationMs: 60_000,
+  });
+  const runLimitsOf = (auto: Automation) => effectiveRunLimits(auto, ceilings, 25);
+
+  test("create reports caps above the ceiling as clamped", () => {
+    const ctx = makeCtx({ runLimitsOf });
+    const result = handleCreate(
+      createArgs(
+        "Greedy",
+        "p",
+        { type: "interval", intervalMs: 60_000 },
+        { maxIterations: 40, maxInputTokens: 900_000, maxRunDurationMs: 300_000 },
+      ),
+      ctx,
+    );
+    expect(result.effectiveLimits).toEqual({
+      maxIterations: 10,
+      maxInputTokens: 50_000,
+      maxRunDurationMs: 60_000,
+    });
+    expect(result.message).toContain("maxIterations 40 is above");
+    expect(result.message).toContain("maxInputTokens 900000 is above");
+    expect(result.message).toContain("maxRunDurationMs 300000 is above");
+    // The definition keeps what the caller asked for; the ceiling applies at run time.
+    expect(result.automation.maxIterations).toBe(40);
+  });
+
+  test("create reports the defaults an automation runs under when it sets no caps", () => {
+    const result = handleCreate(
+      createArgs("Plain", "p", { type: "interval", intervalMs: 60_000 }),
+      makeCtx(),
+    );
+    // No input ceiling is configured, so a run with no cap of its own has none.
+    expect(result.effectiveLimits).toEqual({ maxIterations: 25, maxRunDurationMs: 120_000 });
+    expect(result.effectiveLimits.maxInputTokens).toBeUndefined();
+    expect(result.message).not.toContain("is above");
+  });
+
+  test("create reports a configured input ceiling for an automation that sets no cap", () => {
+    const result = handleCreate(
+      createArgs("Bounded", "p", { type: "interval", intervalMs: 60_000 }),
+      makeCtx({ runLimitsOf }),
+    );
+    expect(result.effectiveLimits.maxInputTokens).toBe(50_000);
+    expect(result.message).not.toContain("is above");
+  });
+
+  test("update reports the clamped value of a patched cap", () => {
+    const ctx = makeCtx({ runLimitsOf });
+    handleCreate(createArgs("Patched", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    const result = handleUpdate(updateArgs("Patched", { maxIterations: 30 }), ctx);
+    expect(result.effectiveLimits.maxIterations).toBe(10);
+    expect(result.message).toContain("maxIterations 30 is above");
   });
 });
 

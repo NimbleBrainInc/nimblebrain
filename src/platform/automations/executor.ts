@@ -10,6 +10,7 @@
  * No retry logic — the scheduler handles backoff.
  */
 
+import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/automations.ts";
 import { type AutomationRunTrigger, isTransientError, type RunInput } from "./scheduler.ts";
 import type {
   Automation,
@@ -18,8 +19,6 @@ import type {
   RunFileRef,
   RunToolCall,
 } from "./types.ts";
-
-const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** Max chars of the deliverable kept in the run-list `resultPreview`. The full
  *  output lives in the `AutomationRunResult` sidecar. */
@@ -156,6 +155,7 @@ export function containsRecursiveTool(allowedTools: string[] | undefined): strin
 function buildRequest(
   automation: Automation,
   trigger: AutomationRunTrigger,
+  limits: EffectiveRunLimits,
   ctx?: ExecutorContext,
   input?: RunInput,
 ): TaskFnRequest {
@@ -191,8 +191,11 @@ function buildRequest(
     },
   };
   if (automation.model != null) req.model = automation.model;
-  if (automation.maxIterations != null) req.maxIterations = automation.maxIterations;
-  if (automation.maxInputTokens != null) req.maxRunInputTokens = automation.maxInputTokens;
+  // Already clamped to the operator's per-run ceilings (see
+  // `effectiveRunLimits`). Iterations are always capped; input tokens only when
+  // the definition or the operator sets a cap.
+  req.maxIterations = limits.maxIterations;
+  if (limits.maxInputTokens != null) req.maxRunInputTokens = limits.maxInputTokens;
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
   if (automation.allowedTools?.length) req.allowedTools = automation.allowedTools;
@@ -478,13 +481,30 @@ function unrecognizedStopError(
   return `Model turn ended without a recognized stop (${raw}).`;
 }
 
-/** The error for a run the engine stopped at its input-token cap. */
-function runInputCapError(spent: number, cap: number | undefined): string {
-  const limit = cap != null ? ` of ${cap.toLocaleString("en-US")}` : "";
+/**
+ * The error for a run the engine stopped at its input-token cap. `applied` is
+ * the cap the run executed under; it names the automation's own cap when that
+ * is what applied, and the runtime's per-run ceiling when the ceiling lowered
+ * the automation's cap or filled in for an unset one, since only the operator
+ * can raise that.
+ */
+function runInputCapError(
+  spent: number,
+  applied: number | undefined,
+  own: number | undefined,
+): string {
+  const limit = applied != null ? ` of ${applied.toLocaleString("en-US")}` : "";
+  const ownApplied = own != null && (applied == null || own <= applied);
+  const which = ownApplied
+    ? "its own Max Input Tokens"
+    : "this runtime's per-run ceiling (automations.maxRunInputTokens)";
+  const remedy = ownApplied
+    ? "Raise Max Input Tokens or narrow the task."
+    : "Ask the operator to raise the ceiling, or narrow the task.";
   return (
-    `Stopped at its input-token cap${limit}: the run had spent ${spent.toLocaleString("en-US")} ` +
-    "input tokens, and its next step was projected to pass the cap. Raise Max Input Tokens or " +
-    "narrow the task."
+    `Stopped at the input-token cap${limit}, which is ${which}: the run had spent ` +
+    `${spent.toLocaleString("en-US")} input tokens, and its next step was projected to pass ` +
+    `the cap. ${remedy}`
   );
 }
 
@@ -493,6 +513,7 @@ function mapResultToRun(
   startedAt: string,
   data: TaskFnResult,
   trigger: AutomationRunTrigger,
+  limits: EffectiveRunLimits,
 ): AutomationRun {
   const stopReason = data.stopReason as AutomationRun["stopReason"];
   let status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
@@ -532,7 +553,11 @@ function mapResultToRun(
     }
   }
   if (stopReason === "max_input_tokens") {
-    error = runInputCapError(data.usage.inputTokens, automation.maxInputTokens);
+    error = runInputCapError(
+      data.usage.inputTokens,
+      limits.maxInputTokens,
+      automation.maxInputTokens,
+    );
   }
   error ??= unrecognizedStopError(status, stopReason, data);
 
@@ -714,10 +739,16 @@ function classifyAbortedRun(
  * @param getContext  Derives the run's workspace/identity context from the
  *                    automation. Every trigger gets the same answer: the
  *                    automation's owner, in its workspace.
+ * @param limitsOf    The caps a run executes under: the definition's own,
+ *                    clamped to the operator's per-run ceilings. Enforced
+ *                    here, at execution, so every stored definition is
+ *                    bounded however it was written.
  */
 export function createDirectExecutor(
   taskFn: TaskFn,
   getContext: (automation: Automation) => ExecutorContext,
+  limitsOf: (automation: Automation) => EffectiveRunLimits = (automation) =>
+    effectiveRunLimits(automation),
 ) {
   return async function executeDirect(
     automation: Automation,
@@ -726,7 +757,8 @@ export function createDirectExecutor(
     input?: RunInput,
   ): Promise<{ run: AutomationRun; result: AutomationRunResult | null }> {
     const startedAt = new Date().toISOString();
-    const timeoutMs = automation.maxRunDurationMs ?? DEFAULT_TIMEOUT_MS;
+    const limits = limitsOf(automation);
+    const timeoutMs = limits.maxRunDurationMs;
     const ctx = getContext(automation);
 
     // Combined cancellation: a single controller aborts when EITHER the
@@ -754,10 +786,10 @@ export function createDirectExecutor(
 
     try {
       const data = await taskFn({
-        ...buildRequest(automation, trigger, ctx, input),
+        ...buildRequest(automation, trigger, limits, ctx, input),
         signal: runController.signal,
       });
-      const run = mapResultToRun(automation, startedAt, data, trigger);
+      const run = mapResultToRun(automation, startedAt, data, trigger, limits);
       // Build the result sidecar from the same data — non-null on every normal
       // return, INCLUDING the aborted-partial path below (the partial usage and
       // activity log accumulated before the abort are still a real deliverable

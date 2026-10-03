@@ -2,7 +2,12 @@ import type { HostManifestMeta } from "../connectors/runtime/types.ts";
 import { log } from "../observability/log.ts";
 import { summarizeToolNames } from "../tools/connector-surface.ts";
 import type { Tool } from "../tools/types.ts";
-import { LIFECYCLE_EVENTS, type LifecycleDeclaration, type LifecycleEvent } from "./types.ts";
+import {
+  LIFECYCLE_EVENTS,
+  type LifecycleBinding,
+  type LifecycleDeclaration,
+  type LifecycleEvent,
+} from "./types.ts";
 
 /**
  * Reading and checking the `lifecycle` block a server declares in
@@ -87,13 +92,13 @@ export class LifecycleContractError extends Error {
  */
 export function verifyLifecycleTools(
   tools: Tool[],
-  decl: LifecycleDeclaration,
+  decl: LifecycleBinding,
   connector: string,
 ): void {
   for (const event of LIFECYCLE_EVENTS) {
     const toolName = decl[event];
     if (!toolName) continue;
-    verifyOne(tools, event, toolName, connector);
+    verifyOne(tools, event, toolName, connector, decl.declaredBy === "extension");
   }
 }
 
@@ -102,6 +107,7 @@ function verifyOne(
   event: LifecycleEvent,
   toolName: string,
   connector: string,
+  fromExtension: boolean,
 ): void {
   const tool = tools.find((t) => t.name === toolName);
   if (!tool) {
@@ -137,8 +143,13 @@ function verifyOne(
   //
   // The pair of values mirrors `isTaskAugmented` in `McpSource.execute`, which
   // is the dispatch this predicate is about; they must move together.
+  //
+  // A handler declared through the `ai.nimblebrain/lifecycle` extension may be
+  // "optional": the extension permits it, and every lifecycle call is made
+  // inline (the lifecycle port), never through that dispatch. "required" never
+  // reaches here on that path, because the binding already refused it.
   const taskSupport = tool.execution?.taskSupport;
-  if (taskSupport === "optional" || taskSupport === "required") {
+  if (taskSupport === "required" || (taskSupport === "optional" && !fromExtension)) {
     throw new LifecycleContractError(
       `Connector "${connector}" declares lifecycle "${event}" as "${toolName}", which advertises ` +
         `execution.taskSupport "${taskSupport}". A lifecycle handler must be an ordinary inline ` +

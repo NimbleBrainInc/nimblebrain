@@ -34,18 +34,27 @@ export interface Automation {
   /** Tool allowlist (glob patterns) for this automation's runs. Empty or absent: every tool. */
   allowedTools?: string[];
 
-  /** Max agentic iterations per run. Default: 25. Hard cap: 50. */
+  /**
+   * Max agentic iterations per run. Default: the runtime's chat default (25).
+   * Held at execution to the operator's `automations.maxRunIterations` (at
+   * most 50); see `effectiveRunLimits`.
+   */
   maxIterations?: number;
 
   /**
    * Input tokens one run may spend, summed over every model call. Before each
    * call the engine ends the run with stopReason `max_input_tokens` if that
    * call's projected input would pass it (see `EngineConfig.maxRunInputTokens`).
-   * Unset = no per-run cap.
+   * Held at execution to the operator's `automations.maxRunInputTokens` when
+   * one is configured, which also applies when this is unset. Unset with no
+   * ceiling configured: no per-run cap.
    */
   maxInputTokens?: number;
 
-  /** Max execution time in ms for a single run. Default: 120_000 (2 minutes). */
+  /**
+   * Max execution time in ms for a single run. Default: 120_000 (2 minutes).
+   * Held at execution to the operator's `automations.maxRunDurationMs`.
+   */
   maxRunDurationMs?: number;
 
   /** Model override for this automation. Null = workspace default. */
@@ -232,9 +241,10 @@ export interface AutomationRun {
    * What started this run — the scheduler's timer, an operator's Run now, or a
    * notification a route delivered here.
    *
-   * Absent on records written before the field existed, which is why the fire
-   * ceiling counts `"event"` explicitly rather than counting everything that is
-   * not scheduled.
+   * Absent on the record of a run that never started (the reason names what
+   * asked for it), so the fire ceiling counts only fires that ran. Absent too
+   * on records written before the field existed, which is why the ceiling
+   * counts `"event"` explicitly rather than everything that is not scheduled.
    */
   trigger?: "scheduled" | "manual" | "event";
   /** Final agent response, truncated for the run list. The full deliverable,

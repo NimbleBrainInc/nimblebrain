@@ -3,12 +3,30 @@
  * Regenerate: bun run codegen. AI agents: edit the source, not this file.
  */
 import { type Static } from "@sinclair/typebox";
+/** The coarse kinds `files__list` filters and counts by, from a file's MIME type. */
+export declare const FILE_KINDS: readonly ["image", "document", "data", "font", "other"];
+export type FileKind = (typeof FILE_KINDS)[number];
+/** Where a file came from, as `FileRecord.source` stores it. */
+export declare const FILE_SOURCES: readonly ["chat", "agent", "app", "manual"];
+export type FileSource = (typeof FILE_SOURCES)[number];
+/** The id `folderId` takes for the top level, which is not a folder record. */
+export declare const ROOT_FOLDER_ID = "root";
 export declare const FilesListInput: import("@sinclair/typebox").TObject<{
-    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-    offset: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    recursive: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+    query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    kinds: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"other" | "image" | "document" | "data" | "font">>>;
+    sources: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"agent" | "manual" | "chat" | "app">>>;
+    conversationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    createdAfter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    createdBefore: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     sort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"createdAt" | "filename" | "size">>;
+    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+    offset: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;
 export type FilesListInput = Static<typeof FilesListInput>;
 export declare const FilesSearchInput: import("@sinclair/typebox").TObject<{
@@ -45,6 +63,7 @@ export interface FilesReadPdfPagesOutput {
 export declare const FilesCreateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TObject<{
         filename: import("@sinclair/typebox").TString;
+        folder: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         mimeType: import("@sinclair/typebox").TString;
         tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -67,6 +86,30 @@ export declare const FilesDeleteInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
 export type FilesDeleteInput = Static<typeof FilesDeleteInput>;
+export declare const FilesMoveInput: import("@sinclair/typebox").TObject<{
+    ids: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>;
+    folderId: import("@sinclair/typebox").TString;
+}>;
+export type FilesMoveInput = Static<typeof FilesMoveInput>;
+export declare const FilesCreateFolderInput: import("@sinclair/typebox").TObject<{
+    manifest: import("@sinclair/typebox").TObject<{
+        name: import("@sinclair/typebox").TString;
+        parentId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>;
+}>;
+export type FilesCreateFolderInput = Static<typeof FilesCreateFolderInput>;
+export declare const FilesUpdateFolderInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    manifest: import("@sinclair/typebox").TObject<{
+        name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        parentId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>;
+}>;
+export type FilesUpdateFolderInput = Static<typeof FilesUpdateFolderInput>;
+export declare const FilesDeleteFolderInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+}>;
+export type FilesDeleteFolderInput = Static<typeof FilesDeleteFolderInput>;
 /**
  * A file's registry entry, as `files__list`, `files__search`, and
  * `files__info` return it. Mirror of `FileEntry` (`src/files/types.ts`),
@@ -78,20 +121,74 @@ export interface FileRecord {
     mimeType: string;
     size: number;
     tags: string[];
-    source: "chat" | "agent" | "app" | "manual";
+    source: FileSource;
     conversationId: string | null;
+    runId?: string | null;
     createdAt: string;
     description: string | null;
+    folderId?: string | null;
     ownerId?: string;
     workspaceId?: string;
     visibility?: "private" | "shared";
     deleted?: true;
     deletedAt?: string;
 }
-/** What `files__list` returns: one page of matching files and the count of all matches. */
+/**
+ * A folder record. Mirror of `FolderEntry` (`src/files/types.ts`), held to it
+ * by `src/platform/files/output-types-drift-guard.ts`.
+ */
+export interface FolderRecord {
+    id: string;
+    name: string;
+    parentId: string | null;
+    createdAt: string;
+    deleted?: true;
+    deletedAt?: string;
+}
+/** A listed file, with the '/'-separated path of its folder ("" at the top level). */
+export type ListedFile = FileRecord & {
+    folderPath: string;
+};
+/** A listed folder, with its own '/'-separated path. */
+export type ListedFolder = FolderRecord & {
+    path: string;
+};
+/**
+ * What `files__list` returns.
+ *
+ * - `files`: one page of matching files; `total` counts every match.
+ * - `folders`: with `folderId`, the folders inside it (matching `query`, if
+ *   any); without it, folders anywhere whose name matches `query`. Empty when a
+ *   kind, source, provenance, date, tag, or MIME filter is set, since those
+ *   describe files.
+ * - `breadcrumb`: the listed folder and its ancestors, top first; empty at the
+ *   top level or without `folderId`.
+ * - `facets`: how many matches each kind and source has, each counted with
+ *   every filter but its own, so a count says what choosing it would show.
+ */
 export interface FilesListOutput {
-    files: FileRecord[];
+    files: ListedFile[];
     total: number;
+    folders: ListedFolder[];
+    breadcrumb: Array<{
+        id: string;
+        name: string;
+    }>;
+    facets: {
+        kinds: Record<FileKind, number>;
+        sources: Record<FileSource, number>;
+    };
+}
+/** What `files__move` returns: the moved files' ids and their folder. */
+export interface FilesMoveOutput {
+    ids: string[];
+    folderId: string | null;
+}
+/** What `files__create_folder` and `files__update_folder` return. */
+export type FilesFolderOutput = ListedFolder;
+/** What `files__delete_folder` returns. */
+export interface FilesDeleteFolderOutput {
+    deleted: true;
 }
 /** What `files__search` returns: the newest matches up to `limit`, and the count of all matches. */
 export interface FilesSearchOutput {
@@ -103,6 +200,8 @@ export interface FilesCreateOutput {
     id: string;
     filename: string;
     size: number;
+    /** The stored file's folder, or `null` at the top level. */
+    folderId: string | null;
 }
 /** What `files__info` returns: the file's registry entry. */
 export type FilesInfoOutput = FileRecord;

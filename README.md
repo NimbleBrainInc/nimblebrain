@@ -243,7 +243,7 @@ Each workspace has its own config at `<workDir>/workspaces/<ws-id>/workspace.jso
 
 ```json
 {
-  "id": "ws_product",
+  "id": "ws_d6cb464050493d41",
   "name": "Product",
   "members": [{ "userId": "usr_default", "role": "admin" }],
   "connectors": [

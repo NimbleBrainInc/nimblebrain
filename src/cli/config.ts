@@ -236,6 +236,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     features: fileConfig.features as RuntimeConfig["features"],
     connectors: fileConfig.connectors as RuntimeConfig["connectors"],
     files: fileConfig.files as RuntimeConfig["files"],
+    automations: fileConfig.automations as RuntimeConfig["automations"],
     // Pass config path for connector install/uninstall persistence
     configPath,
     configOverridePath,

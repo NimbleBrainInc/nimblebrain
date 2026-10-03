@@ -318,11 +318,11 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
           throw new Error(`"since" is not an ISO 8601 instant: ${args.since}`);
         }
         const store = currentStore();
-        const items = store.list(listOptionsFrom(args));
+        const { items, unread } = store.listWithUnread(listOptionsFrom(args));
         const notifications = items.map(toNotificationView);
         const out: NotificationsListOutput = {
           notifications,
-          unread: store.unreadCount(),
+          unread,
           ...(notifications.length > 0
             ? { cursor: Math.max(...notifications.map((n) => n.seq)) }
             : {}),

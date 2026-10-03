@@ -851,6 +851,7 @@ function createHandlers(
     // Apps visibility). Naming a source only narrows reach, so it is checked
     // for any caller; whether the call is an app's is decided below.
     const appSource = scopedSourceName(request.params._meta);
+    logToolCall(name, appSource, sessionCtx, wsId, identityId);
     if (appSource !== undefined) {
       const refused = await assertAppMayCall(
         name,
@@ -1976,6 +1977,27 @@ const MAX_LOGGED_FIELD_CHARS = 200;
  */
 function fmtClientField(value: string): string {
   return JSON.stringify(value.slice(0, MAX_LOGGED_FIELD_CHARS));
+}
+
+/**
+ * One line per `/mcp` `tools/call`, refused or not, so "does any client call
+ * X" has an answer in the logs: the tool's name and who asked, never
+ * arguments or results. The name and the app source are the client's strings,
+ * so each is quoted and capped like any other client-supplied field.
+ */
+function logToolCall(
+  name: string,
+  appSource: string | undefined,
+  sessionCtx: McpSessionContext,
+  wsId: string,
+  identityId: string,
+): void {
+  const caller = isAppCall(appSource, sessionCtx)
+    ? `app:${fmtClientField(appSource ?? "")}`
+    : "agent";
+  log.info(
+    `[mcp] tools/call tool=${fmtClientField(name)} caller=${caller} grant=${sessionCtx.grant} ws=${wsId} identity=${identityId}`,
+  );
 }
 
 /** The `clientInfo` an initialize request declares, as a quoted `name/version`. */

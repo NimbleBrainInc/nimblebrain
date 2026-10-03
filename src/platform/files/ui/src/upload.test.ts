@@ -24,7 +24,7 @@ describe("readUploadRefusal", () => {
     });
     expect(readUploadRefusal(err)).toEqual({
       errors: ['File "setup.exe" has disallowed type: application/x-msdownload'],
-      stored: 1,
+      storedIds: ["fl_a"],
     });
   });
 
@@ -45,7 +45,7 @@ describe("UploadRefusals", () => {
             'File "setup.exe" has disallowed type: application/x-msdownload',
             'File "video.mov" (40.0 MB) exceeds per-file limit of 25.0 MB',
           ],
-          stored: 3,
+          storedIds: ["fl_a", "fl_b", "fl_c"],
         },
         onDismiss: () => {},
       }),
@@ -61,7 +61,7 @@ describe("UploadRefusals", () => {
       createElement(UploadRefusals, {
         refusal: {
           errors: ['File "setup.exe" has disallowed type: application/x-msdownload'],
-          stored: 0,
+          storedIds: [],
         },
         onDismiss: () => {},
       }),

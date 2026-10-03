@@ -9,11 +9,17 @@
 
 import { Cron } from "croner";
 import {
+  describeClampedLimits,
+  type EffectiveRunLimits,
+  effectiveRunLimits,
+} from "../../config/automations.ts";
+import {
   AUTOMATIONS_LIST_DEFAULT_LIMIT,
   AUTOMATIONS_LIST_MAX_LIMIT,
   MAX_ITERATIONS,
 } from "../../limits.ts";
 import type {
+  AutomationEffectiveLimits,
   AutomationSummary,
   AutomationsCancelOutput,
   AutomationsCreateOutput,
@@ -27,6 +33,7 @@ import type {
 } from "../schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
+import type { RunNowTicket } from "./scheduler.ts";
 import type { ReadRunsOptions } from "./store.ts";
 import {
   type Automation,
@@ -284,7 +291,8 @@ export interface ToolContext {
   definitions: () => Map<string, Automation>;
   save: (defs: Map<string, Automation>) => void;
   reloadScheduler: () => void;
-  runNow: (automationId: string) => Promise<AutomationRun | null>;
+  /** Ask the scheduler to run the automation now; null when it is not loaded. */
+  runNow: (automationId: string) => RunNowTicket | null;
   cancelRun: (automationId: string) => boolean;
   /** Read one automation's run history (workspace + owner bound at construction). */
   readRuns: (automationId: string, opts?: ReadRunsOptions) => AutomationRun[];
@@ -293,6 +301,12 @@ export interface ToolContext {
   /** Read one run's full result sidecar (the deliverable). */
   readRunResult: (automationId: string, runId: string) => AutomationRunResult | null;
   defaultTimezone: string;
+  /**
+   * The caps a run of an automation executes under, for create and update to
+   * report. The executor applies the same function. Absent: the built-in
+   * ceilings and the runtime's built-in iteration default.
+   */
+  runLimitsOf?: (automation: Automation) => EffectiveRunLimits;
   /** Workspace default model (for cost estimation when automation.model is null). */
   defaultModel?: string;
   /** Current user ID (for setting automation ownership at creation time). */
@@ -461,7 +475,7 @@ export function handleCreate(
 
   validateAutomationFields(manifest);
 
-  return createAutomation(
+  const result = createAutomation(
     {
       name: manifest.name,
       prompt: body,
@@ -483,6 +497,22 @@ export function handleCreate(
     },
     ctx,
   );
+  return withEffectiveLimits(result, ctx);
+}
+
+/**
+ * Attach the caps the automation's runs execute under, and name any cap the
+ * definition sets above its ceiling, so the caller learns at write time what a
+ * run will actually be held to.
+ */
+function withEffectiveLimits<T extends { automation: Automation; message: string }>(
+  result: T,
+  ctx: ToolContext,
+): T & { effectiveLimits: AutomationEffectiveLimits } {
+  const effectiveLimits = (ctx.runLimitsOf ?? effectiveRunLimits)(result.automation);
+  const notes = describeClampedLimits(result.automation, effectiveLimits);
+  const message = notes.length > 0 ? `${result.message} ${notes.join(" ")}` : result.message;
+  return { ...result, message, effectiveLimits };
 }
 
 /**
@@ -508,7 +538,7 @@ export function handleUpdate(
     validateAutomationFields(patch);
   }
 
-  return updateAutomation(
+  const result = updateAutomation(
     name,
     {
       ...(patch ?? {}),
@@ -517,6 +547,7 @@ export function handleUpdate(
     },
     ctx,
   );
+  return withEffectiveLimits(result, ctx);
 }
 
 export function handleDelete(
@@ -733,6 +764,46 @@ export async function handleRun(
 
   log(`handleRun: found "${name}" (id=${automation.id}), dispatching via runNow...`);
 
+  const ticket = ctx.runNow(automation.id);
+  if (!ticket) {
+    // Debug: dump scheduler state to understand why runNow returned null
+    const ids = Array.from(ctx.definitions().keys());
+    log(
+      `handleRun: runNow returned null for "${automation.id}". Scheduler has ${ids.length} definitions: [${ids.join(", ")}]`,
+    );
+    throw new Error(
+      `Failed to trigger run for "${name}" (id=${automation.id}). The scheduler could not find this automation. Try reloading.`,
+    );
+  }
+
+  if (ticket.state === "refused") {
+    const { enabled } = disabledState(ctx, name, automation);
+    return {
+      run: ticket.run,
+      enabled,
+      message: `"${name}" did not run: ${ticket.run.error ?? "the scheduler refused it"}`,
+    };
+  }
+
+  if (ticket.state === "queued") {
+    // The queued run is the scheduler's to finish; nothing awaits it here.
+    ticket.run.catch(() => {});
+    const queuedAt = new Date().toISOString();
+    const { enabled, disabledNote } = disabledState(ctx, name, automation);
+    return {
+      status: "queued",
+      automationId: automation.id,
+      position: ticket.position,
+      queuedAt,
+      enabled,
+      message:
+        `"${name}" is queued at position ${ticket.position}: every automation run slot is busy, ` +
+        `and it starts as soon as one frees. When it ends, its run appears in automations__runs ` +
+        `(automationId "${automation.id}", since "${queuedAt}"); remove it from the queue with ` +
+        `automations__cancel.${disabledNote}`,
+    };
+  }
+
   // Race the run against a sync-wait deadline. Quick automations finish
   // inside the window and return their full run record; longer ones get
   // a "dispatched" envelope so the agent can poll instead of seeing a
@@ -750,7 +821,7 @@ export async function handleRun(
   // exactly that case — the scheduler's own logging is the right place
   // for filesystem diagnostics, not the MCP request frame.
   const startedAt = new Date().toISOString();
-  const runPromise = ctx.runNow(automation.id);
+  const runPromise = ticket.run;
   runPromise.catch(() => {});
 
   const waitMs = ctx.handleRunSyncWaitMs ?? HANDLE_RUN_SYNC_WAIT_MS;
@@ -763,20 +834,16 @@ export async function handleRun(
   const timeoutPromise = new Promise<typeof PENDING>((resolve) => {
     timer = setTimeout(() => resolve(PENDING), waitMs);
   });
-  let outcome: AutomationRun | null | typeof PENDING;
+  let outcome: AutomationRun | typeof PENDING;
   try {
     outcome = await Promise.race([runPromise, timeoutPromise]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
 
-  // Run now runs a disabled automation (see `Scheduler.runNow`); say so, since
-  // its schedule and events will not fire it again. Read after the run settles:
-  // the run itself can disable it (failure auto-disable, token budget).
-  const enabled = findByName(ctx.definitions(), name)?.enabled ?? automation.enabled;
-  const disabledNote = enabled
-    ? ""
-    : ` "${name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;
+  // Read after the run settles: the run itself can disable it (failure
+  // auto-disable, token budget).
+  const { enabled, disabledNote } = disabledState(ctx, name, automation);
 
   if (outcome === PENDING) {
     return {
@@ -792,21 +859,26 @@ export async function handleRun(
     };
   }
 
-  if (!outcome) {
-    // Debug: dump scheduler state to understand why runNow returned null
-    const schedulerDefs = ctx.definitions();
-    const ids = Array.from(schedulerDefs.keys());
-    log(
-      `handleRun: runNow returned null for "${automation.id}". Scheduler has ${ids.length} definitions: [${ids.join(", ")}]`,
-    );
-    throw new Error(
-      `Failed to trigger run for "${name}" (id=${automation.id}). The scheduler could not find this automation. Try reloading.`,
-    );
-  }
-
   return disabledNote
     ? { run: outcome, enabled, message: disabledNote.trim() }
     : { run: outcome, enabled };
+}
+
+/**
+ * The automation's current `enabled` flag, and a note for a disabled one. Run
+ * now runs a disabled automation (see `Scheduler.requestRunNow`); the note says
+ * so, since its schedule and events will not fire it again.
+ */
+function disabledState(
+  ctx: ToolContext,
+  name: string,
+  automation: Automation,
+): { enabled: boolean; disabledNote: string } {
+  const enabled = findByName(ctx.definitions(), name)?.enabled ?? automation.enabled;
+  const disabledNote = enabled
+    ? ""
+    : ` "${name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;
+  return { enabled, disabledNote };
 }
 
 export function handleCancel(
@@ -831,7 +903,7 @@ export function handleCancel(
     id: automation.id,
     message: cancelled
       ? `Automation "${name}" run cancelled.`
-      : `Automation "${name}" has no active run to cancel.`,
+      : `Automation "${name}" has no running or queued run to cancel.`,
   };
 }
 

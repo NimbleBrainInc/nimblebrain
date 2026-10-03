@@ -14,8 +14,8 @@
  * Zero runtime emission: type aliases erase, and this module compiles empty.
  */
 
-import type { FileEntry } from "../../files/types.ts";
-import type { FileRecord } from "../schemas/files.ts";
+import type { FileEntry, FolderEntry } from "../../files/types.ts";
+import type { FileRecord, FolderRecord } from "../schemas/files.ts";
 
 /** Fails to compile (TS2344) when `_A` is not assignable to `B`. */
 type AssertAssignable<_A extends B, B> = unknown;
@@ -32,3 +32,9 @@ export type DriftFileRecordA = AssertAssignable<FileRecord, FileEntry>;
 export type DriftFileRecordB = AssertAssignable<FileEntry, FileRecord>;
 export type DriftFileRecordKeysA = AssertNever<Exclude<keyof FileRecord, keyof FileEntry>>;
 export type DriftFileRecordKeysB = AssertNever<Exclude<keyof FileEntry, keyof FileRecord>>;
+
+// FolderRecord ↔ FolderEntry — the same mirror for folders.
+export type DriftFolderRecordA = AssertAssignable<FolderRecord, FolderEntry>;
+export type DriftFolderRecordB = AssertAssignable<FolderEntry, FolderRecord>;
+export type DriftFolderRecordKeysA = AssertNever<Exclude<keyof FolderRecord, keyof FolderEntry>>;
+export type DriftFolderRecordKeysB = AssertNever<Exclude<keyof FolderEntry, keyof FolderRecord>>;

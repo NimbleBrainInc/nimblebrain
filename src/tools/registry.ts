@@ -13,7 +13,7 @@ import { splitInnerToolName } from "../util/tool-name.ts";
 import type { McpSource } from "./mcp-source.ts";
 import { rankToolSearchResults } from "./search-ranking.ts";
 import type { ServerNotification } from "./server-notifications.ts";
-import type { Tool, ToolSource } from "./types.ts";
+import type { Tool, ToolExecuteOptions, ToolSource } from "./types.ts";
 import { toToolSchema } from "./types.ts";
 
 /**
@@ -62,8 +62,9 @@ export class SharedSourceRef implements ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
+    options?: ToolExecuteOptions,
   ): Promise<ToolResult> {
-    return this.inner.execute(toolName, input, signal);
+    return this.inner.execute(toolName, input, signal, options);
   }
   /** Forward readiness subscriptions to the shared underlying source so a
    *  per-workspace registry wrapping it still learns when its tools change. */

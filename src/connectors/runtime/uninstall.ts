@@ -22,6 +22,7 @@
  */
 
 import { revokeHooksForConnector } from "../../hooks/provisioning.ts";
+import { forgetLifecycleBinding } from "../../lifecycle/bindings.ts";
 import type { LifecycleNotifyDeps } from "../../lifecycle/notify.ts";
 import { forgetReadyNotification, notifyRemoving } from "../../lifecycle/notify.ts";
 import { clearCursor } from "../../notifications/cursors.ts";
@@ -170,10 +171,11 @@ export async function uninstallWorkspaceConnector(
     await clearCursor(deps.getWorkspaceStore(), wsId, serverName);
     // And drop the tool-set watches, whose closures would otherwise hold a
     // source nothing routes to any more, along with the per-process record that
-    // this connector has already been told it is ready — a reinstall is a new
-    // installation and must be told so.
+    // this connector has already been told it is ready, and its held lifecycle
+    // binding — a reinstall is a new installation and must be told so.
     stopWatchingToolSurface(wsId, serverName);
     forgetReadyNotification(wsId, serverName);
+    forgetLifecycleBinding(wsId, serverName);
     // Drop tool permissions for this connector — they have no meaning
     // once the connector is gone.
     await deps.getPermissionStore().deleteConnector({ scope: "workspace", wsId }, serverName);

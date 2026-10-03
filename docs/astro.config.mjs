@@ -109,6 +109,7 @@ export default defineConfig({
                   { label: 'Chat', slug: 'using/chat' },
                   { label: 'Conversations', slug: 'using/conversations' },
                   { label: 'Workspaces', slug: 'using/workspaces' },
+                  { label: 'Files', slug: 'using/files' },
                   { label: 'File Context', slug: 'using/file-context' },
                   { label: 'Skills', slug: 'using/skills' },
                   { label: 'Automations', slug: 'using/automations' },

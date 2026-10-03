@@ -31,6 +31,7 @@ export type {
   ResourcesReadMessage,
   ResourceTemplatesListMessage,
   SynapseRequestFileMessage,
+  SynapseUploadFilesMessage,
   ToolsCallMessage,
   UiActionMessage,
   UiKeydownMessage,

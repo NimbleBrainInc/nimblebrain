@@ -45,6 +45,19 @@ describe("loadConfig", () => {
     expect(config.maxIterations).toBe(15);
   });
 
+  it("carries the automations block through to the runtime config", () => {
+    const configPath = writeTestConfig("automations.json", {
+      automations: { maxConcurrentRuns: 4, maxQueuedRuns: 10, maxRunIterations: 12 },
+    });
+
+    const config = loadConfig({ config: configPath });
+    expect(config.automations).toEqual({
+      maxConcurrentRuns: 4,
+      maxQueuedRuns: 10,
+      maxRunIterations: 12,
+    });
+  });
+
   it("strips workspace-owned fields from config", () => {
     const configPath = writeTestConfig("strip-workspace.json", {
       model: { provider: "anthropic" },

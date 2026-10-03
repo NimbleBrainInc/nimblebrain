@@ -3,7 +3,8 @@
  *
  * Uses setTimeout-based timer armed to the next-due job (max 60s wake).
  * Evaluates cron expressions via Croner. Handles interval scheduling,
- * concurrency guards, exponential backoff, and global concurrent run limits.
+ * concurrency guards, exponential backoff, global concurrent run limits, and
+ * the queue Run now and event runs wait in at that limit.
  *
  * The scheduler does NOT execute runs directly — it delegates to an
  * executor function injected at construction time.
@@ -40,6 +41,9 @@ const BACKOFF_DELAYS = [30_000, 60_000, 300_000, 900_000, 3_600_000] as const;
 
 /** Auto-disable after this many consecutive failures. */
 export const MAX_CONSECUTIVE_ERRORS = 10;
+
+/** Why a Run now or event run is refused once `stop()` has run: no slot frees and nothing drains the queue. */
+const STOPPED_REASON = "the scheduler is stopped";
 
 /** Patterns that classify an error message as transient. */
 const TRANSIENT_PATTERNS: RegExp[] = [
@@ -90,6 +94,44 @@ export type Executor = (
   input?: RunInput,
 ) => Promise<{ run: AutomationRun; result: AutomationRunResult | null }>;
 
+/**
+ * What a Run now request became, known as soon as it is made.
+ *
+ * - `started`: a slot was free and the run is in flight.
+ * - `queued`: every slot was busy; the run waits in the scheduler's queue at
+ *   `position` (1 is next) and starts the moment a slot frees.
+ * - `refused`: the run did not start, and `run` is the skipped record saying
+ *   why (already running or queued, the queue is full, the budget is spent,
+ *   the scheduler is stopped).
+ *
+ * `run` on the first two resolves with the run's record once it ends, so a
+ * caller that wants to wait can, and one that wants to answer now can too.
+ */
+export type RunNowTicket =
+  | { state: "started"; run: Promise<AutomationRun> }
+  | { state: "queued"; position: number; run: Promise<AutomationRun> }
+  | { state: "refused"; run: AutomationRun };
+
+/**
+ * How a queued run left the queue: `started` when it took a slot and ran
+ * (`run` is its record), not started when it was dropped, cancelled, or
+ * refused on the way out (`run` is the not-started record saying why).
+ */
+interface QueuedOutcome {
+  run: AutomationRun;
+  started: boolean;
+}
+
+/** One run waiting for a slot. */
+interface QueuedRun {
+  key: string;
+  trigger: "manual" | "event";
+  input?: RunInput;
+  queuedAt: string;
+  resolve: (outcome: QueuedOutcome) => void;
+  reject: (err: unknown) => void;
+}
+
 export interface SchedulerConfig {
   /**
    * The runtime work directory (`{workDir}`). The scheduler is multi-workspace:
@@ -100,6 +142,11 @@ export interface SchedulerConfig {
   workDir: string;
   /** Maximum concurrent automation runs. Default: 2. */
   maxConcurrentRuns?: number;
+  /**
+   * Run now and event runs held waiting for a slot once `maxConcurrentRuns`
+   * are in flight. Beyond it a run is refused with a skipped record. Default: 50.
+   */
+  maxQueuedRuns?: number;
   /** Default timezone for cron expressions. Default: system timezone. */
   defaultTimezone?: string;
   /**
@@ -415,7 +462,14 @@ function applyNextRunAt(auto: Automation, now: number, defaultTimezone?: string)
   }
 }
 
-/** Roll the budget-reset window: reset counters when the period elapsed, else seed it. */
+/**
+ * Roll the budget-reset window: reset the counters when the period has
+ * elapsed, and seed the boundary when a periodic budget has none.
+ *
+ * Seeding starts a fresh window, the same as a reset: the counters may hold
+ * spend from before the boundary existed (a definition written before windows
+ * were anchored at write time), and that spend belongs to no window.
+ */
 function rollBudgetWindow(
   auto: Automation,
   run: AutomationRun,
@@ -424,44 +478,120 @@ function rollBudgetWindow(
 ): void {
   if (!auto.tokenBudget) return;
 
-  // Reset counters if the budget period has elapsed
-  if (auto.budgetResetAt && new Date(auto.budgetResetAt).getTime() <= now) {
+  const elapsed = auto.budgetResetAt && new Date(auto.budgetResetAt).getTime() <= now;
+  const unseeded = !auto.budgetResetAt && auto.tokenBudget.period;
+  if (elapsed || unseeded) {
     auto.cumulativeInputTokens = run.inputTokens;
     auto.cumulativeOutputTokens = run.outputTokens;
     auto.budgetResetAt = computeBudgetResetAt(auto.tokenBudget.period, now, defaultTimezone);
   }
-
-  // Initialize budgetResetAt if not set
-  if (!auto.budgetResetAt && auto.tokenBudget.period) {
-    auto.budgetResetAt = computeBudgetResetAt(auto.tokenBudget.period, now, defaultTimezone);
-  }
 }
 
-/** Enforce the token budget: roll the reset window and disable if a cap is exceeded. */
+/**
+ * Why the automation's token budget is spent for the current window, or null
+ * when it is not (or there is none).
+ *
+ * A window whose boundary has passed is not spent, though its counters still
+ * hold the old window's total: the next recorded run resets them.
+ */
+export function tokenBudgetExceeded(auto: Automation, now: number): string | null {
+  const budget = auto.tokenBudget;
+  if (!budget) return null;
+  if (auto.budgetResetAt && new Date(auto.budgetResetAt).getTime() <= now) return null;
+  const used = { input: auto.cumulativeInputTokens ?? 0, output: auto.cumulativeOutputTokens ?? 0 };
+  const which =
+    budget.maxInputTokens != null && used.input > budget.maxInputTokens
+      ? "input"
+      : budget.maxOutputTokens != null && used.output > budget.maxOutputTokens
+        ? "output"
+        : null;
+  if (!which) return null;
+  const limit = which === "input" ? budget.maxInputTokens! : budget.maxOutputTokens!;
+  return `Token budget exceeded: ${used[which].toLocaleString()} / ${limit.toLocaleString()} ${which} tokens used`;
+}
+
+/**
+ * Account a run against the token budget: roll the window, and disable an
+ * enabled automation whose window is spent.
+ *
+ * Every run counts, whatever triggered it and whether or not the automation
+ * is enabled. A disabled automation has nothing left to disable, so its budget
+ * is enforced where its runs start: Run now refuses it until the window
+ * resets (see `Scheduler.requestRunNow`).
+ */
 function applyTokenBudget(
   auto: Automation,
   run: AutomationRun,
   now: number,
   defaultTimezone?: string,
 ): void {
-  if (!auto.tokenBudget || !auto.enabled) return;
+  if (!auto.tokenBudget) return;
 
   rollBudgetWindow(auto, run, now, defaultTimezone);
 
-  const inputExceeded =
-    auto.tokenBudget.maxInputTokens != null &&
-    auto.cumulativeInputTokens > auto.tokenBudget.maxInputTokens;
-  const outputExceeded =
-    auto.tokenBudget.maxOutputTokens != null &&
-    auto.cumulativeOutputTokens > auto.tokenBudget.maxOutputTokens;
-  if (!inputExceeded && !outputExceeded) return;
+  const exceeded = tokenBudgetExceeded(auto, now);
+  if (!exceeded || !auto.enabled) return;
 
   auto.enabled = false;
   auto.disabledAt = new Date(now).toISOString();
-  const which = inputExceeded ? "input" : "output";
-  const used = inputExceeded ? auto.cumulativeInputTokens : auto.cumulativeOutputTokens;
-  const limit = inputExceeded ? auto.tokenBudget.maxInputTokens : auto.tokenBudget.maxOutputTokens;
-  auto.disabledReason = `Token budget exceeded: ${used.toLocaleString()} / ${limit!.toLocaleString()} ${which} tokens used`;
+  auto.disabledReason = exceeded;
+}
+
+/**
+ * Why Run now refuses `auto` on budget grounds, or null when it may run. Only
+ * a disabled automation is refused here: an enabled one is disabled by the run
+ * that spends its budget, so its next Run now finds it disabled.
+ */
+function runNowBudgetRefusal(auto: Automation, now: number): string | null {
+  if (auto.enabled) return null;
+  const exceeded = tokenBudgetExceeded(auto, now);
+  if (!exceeded) return null;
+  const until = auto.budgetResetAt
+    ? `until the budget resets at ${auto.budgetResetAt}`
+    : "until its token budget is raised (the budget has no reset period)";
+  return `${exceeded}. Run now is refused ${until}.`;
+}
+
+/**
+ * A not-started run record for a queued run whose automation is gone, so it
+ * cannot be written to that automation's history. Returned to the waiter only.
+ * It carries no `trigger`, like every record of a run that never started (see
+ * {@link countsAsEventFire}).
+ */
+function notStartedRun(
+  key: string,
+  reason: string,
+  status: "skipped" | "cancelled" = "skipped",
+): QueuedOutcome {
+  const now = new Date().toISOString();
+  const run: AutomationRun = {
+    id: `run_${Date.now()}_${status === "cancelled" ? "cancel" : "skip"}`,
+    automationId: key.slice(key.lastIndexOf("/") + 1),
+    startedAt: now,
+    completedAt: now,
+    status,
+    inputTokens: 0,
+    outputTokens: 0,
+    toolCalls: 0,
+    iterations: 0,
+    error: reason,
+  };
+  return { run, started: false };
+}
+
+/**
+ * Whether a run record counts as one fire toward an event automation's hourly
+ * ceiling (`maxFiresPerHour`): an event-triggered run that actually started.
+ *
+ * A run that never started carries no `trigger` — `recordSkipped` does not
+ * stamp one — so a refused fire (already running or queued, the queue full,
+ * disabled or cancelled while queued) is not counted. A `skipped` record with
+ * the trigger is a dispatched run the runtime refused at the door (the owner's
+ * membership re-check), which did no work either. A run that started and was
+ * then cancelled still counts: it ran, and its work may have produced events.
+ */
+export function countsAsEventFire(run: AutomationRun): boolean {
+  return run.trigger === "event" && run.status !== "skipped";
 }
 
 // ---------------------------------------------------------------------------
@@ -477,17 +607,26 @@ export class Scheduler {
    */
   private definitions: Map<string, Automation> = new Map();
   private readonly activeRuns: Map<string, AbortController> = new Map();
+  /**
+   * Run now and event runs waiting for a slot, oldest first. In memory only:
+   * `stop()` records each as skipped, and a process that dies without stopping
+   * loses them with no record. Scheduled runs never enter it (see
+   * `considerForDispatch`).
+   */
+  private readonly queue: QueuedRun[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
 
   private readonly executor: Executor;
   private config: SchedulerConfig;
   private readonly maxConcurrentRuns: number;
+  private readonly maxQueuedRuns: number;
 
   constructor(executor: Executor, config: SchedulerConfig) {
     this.executor = executor;
     this.config = config;
     this.maxConcurrentRuns = config.maxConcurrentRuns ?? 2;
+    this.maxQueuedRuns = config.maxQueuedRuns ?? 50;
   }
 
   /** Composite key for the cross-workspace/owner definitions/activeRuns maps. */
@@ -574,6 +713,23 @@ export class Scheduler {
     this.running = false;
     this.clearTimer();
 
+    // The queue lives in memory, so a queued run cannot outlive the process.
+    // Record each as skipped while the store is still reachable, so the run
+    // history says it was asked for and never ran.
+    for (const entry of this.queue.splice(0)) {
+      const auto = this.definitions.get(entry.key);
+      const reason = "Queued run dropped: the runtime stopped before a run slot freed";
+      try {
+        entry.resolve(
+          auto
+            ? { run: this.recordSkipped(auto, reason, entry.trigger), started: false }
+            : notStartedRun(entry.key, reason),
+        );
+      } catch (err) {
+        entry.reject(err);
+      }
+    }
+
     // Abort all active runs
     for (const [id, controller] of this.activeRuns) {
       controller.abort();
@@ -627,6 +783,14 @@ export class Scheduler {
       this.definitions.delete(key);
       dropped++;
     }
+    // A queued run for the workspace has nowhere left to run or to be
+    // recorded, so its waiter gets an unpersisted skipped record.
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      const entry = this.queue[i]!;
+      if (!entry.key.startsWith(`${wsId}/`)) continue;
+      this.queue.splice(i, 1);
+      entry.resolve(notStartedRun(entry.key, "the workspace was deleted"));
+    }
     if (dropped === 0) return 0;
     this.clearTimer();
     if (this.running) this.armTimer();
@@ -635,15 +799,23 @@ export class Scheduler {
 
   /**
    * Trigger an immediate run of a specific automation, bypassing schedule
-   * and backoff checks. Respects concurrency guards.
+   * and backoff checks, and answer at once with what became of it (see
+   * {@link RunNowTicket}). Null when the automation is not loaded.
    *
    * Runs a disabled automation. `enabled` decides whether the automation fires
    * unattended — from its schedule or from events — and Run now is a person's
    * deliberate act, which is how a disabled automation is tested before it is
    * enabled (the create form's test run creates it disabled and runs it).
    * `handleRun` tells the caller the automation is disabled.
+   *
+   * Run now shares the global run slots with every other trigger. At the limit
+   * it waits in the queue rather than starting over the limit or being
+   * dropped. It is refused, with a skipped record, when the automation already
+   * has a run in flight or queued, when the queue is full, when the automation
+   * is disabled and its token budget is spent for the window, and when the
+   * scheduler is stopped (nothing would drain the queue).
    */
-  async runNow(wsId: string, ownerId: string, automationId: string): Promise<AutomationRun | null> {
+  requestRunNow(wsId: string, ownerId: string, automationId: string): RunNowTicket | null {
     const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
     const auto = this.definitions.get(key);
     if (!auto) {
@@ -654,13 +826,38 @@ export class Scheduler {
       return null;
     }
 
-    // Still respect per-automation concurrency
-    if (this.activeRuns.has(key)) {
-      const skipped = this.recordSkipped(auto, "Already running (runNow)");
-      return skipped;
-    }
+    const refuse = (reason: string): RunNowTicket => ({
+      state: "refused",
+      run: this.recordSkipped(auto, reason, "manual"),
+    });
 
-    return this.dispatchRun(auto, "manual");
+    if (!this.running) return refuse(STOPPED_REASON);
+    if (this.activeRuns.has(key)) return refuse("Already running (runNow)");
+    if (this.isQueued(key)) return refuse("Already queued (runNow)");
+    const budget = runNowBudgetRefusal(auto, Date.now());
+    if (budget) return refuse(budget);
+
+    if (this.activeRuns.size < this.maxConcurrentRuns) {
+      return { state: "started", run: this.dispatchRun(auto, "manual") };
+    }
+    const queued = this.enqueue(key, "manual");
+    if (!queued) return refuse(this.queueFullReason());
+    return {
+      state: "queued",
+      position: queued.position,
+      run: queued.outcome.then((outcome) => outcome.run),
+    };
+  }
+
+  /**
+   * Run now, awaited: the run's record once it ends (a queued run's once it
+   * has waited for its slot and run), the skipped record when it is refused,
+   * or null when the automation is not loaded.
+   */
+  async runNow(wsId: string, ownerId: string, automationId: string): Promise<AutomationRun | null> {
+    const ticket = this.requestRunNow(wsId, ownerId, automationId);
+    if (!ticket) return null;
+    return ticket.run;
   }
 
   /**
@@ -672,6 +869,13 @@ export class Scheduler {
    * carry `trigger: "event"` so its record says what woke it and the fire
    * ceiling can count it, and the caller needs to be told the run did not start
    * — a per-automation collision is a ledger row, not a silent no-op.
+   *
+   * At the global limit the batch waits in the same queue Run now uses and the
+   * returned promise settles when its run ends: the limit is transient
+   * capacity, not a verdict on the event. A queued run that leaves the queue
+   * without starting (dropped, cancelled, disabled while it waited) answers
+   * `skipped` like a run refused up front, so the caller never reports a run
+   * that did not happen as delivered.
    */
   async runFromEvent(
     wsId: string,
@@ -684,17 +888,106 @@ export class Scheduler {
     if (!auto) return { skipped: "the automation is no longer in this workspace" };
     // Unattended, so `enabled` gates it; `runNow` is the attended trigger that does not.
     if (!auto.enabled) return { skipped: "the automation is disabled" };
+    if (!this.running) return { skipped: STOPPED_REASON };
     if (this.activeRuns.has(key)) {
-      this.recordSkipped(auto, "Already running (event)");
+      this.recordSkipped(auto, "Already running (event)", "event");
       return { skipped: "a previous run of this automation is still in flight" };
     }
-    if (this.activeRuns.size >= this.maxConcurrentRuns) {
-      this.recordSkipped(auto, `Global concurrent run limit (${this.maxConcurrentRuns}) reached`);
+    if (this.isQueued(key)) {
+      this.recordSkipped(auto, "Already queued (event)", "event");
+      return { skipped: "a previous run of this automation is still queued" };
+    }
+    if (this.activeRuns.size < this.maxConcurrentRuns) {
+      return { run: await this.dispatchRun(auto, "event", input) };
+    }
+    const queued = this.enqueue(key, "event", input);
+    if (!queued) {
+      this.recordSkipped(auto, this.queueFullReason(), "event");
       return {
-        skipped: `the runtime was already at its concurrent-run limit (${this.maxConcurrentRuns})`,
+        skipped: `the runtime was at its concurrent-run limit and its run queue was full (${this.maxQueuedRuns})`,
       };
     }
-    return { run: await this.dispatchRun(auto, "event", input) };
+    const outcome = await queued.outcome;
+    if (!outcome.started) return { skipped: outcome.run.error ?? "the queued run did not start" };
+    return { run: outcome.run };
+  }
+
+  /** Whether `key` has a run waiting in the queue. */
+  private isQueued(key: string): boolean {
+    return this.queue.some((entry) => entry.key === key);
+  }
+
+  private queueFullReason(): string {
+    return (
+      `Run queue full: ${this.maxConcurrentRuns} runs in flight (the concurrent-run limit) ` +
+      `and ${this.maxQueuedRuns} waiting (the queue limit)`
+    );
+  }
+
+  /**
+   * Put a run at the back of the queue. Returns its 1-based position and a
+   * promise of how it leaves the queue, or null when the queue is full.
+   */
+  private enqueue(
+    key: string,
+    trigger: QueuedRun["trigger"],
+    input?: RunInput,
+  ): { position: number; outcome: Promise<QueuedOutcome> } | null {
+    if (this.queue.length >= this.maxQueuedRuns) return null;
+    let entry!: QueuedRun;
+    const outcome = new Promise<QueuedOutcome>((resolve, reject) => {
+      entry = { key, trigger, input, queuedAt: new Date().toISOString(), resolve, reject };
+    });
+    this.queue.push(entry);
+    return { position: this.queue.length, outcome };
+  }
+
+  /**
+   * Start queued runs while slots are free, oldest first. Called the moment a
+   * run's slot frees, so a queued run never waits for the timer. An entry whose
+   * automation is in flight (a scheduled run that took a slot) stays queued and
+   * the next one is tried.
+   */
+  private drainQueue(): void {
+    while (this.queue.length > 0 && this.activeRuns.size < this.maxConcurrentRuns) {
+      const idx = this.queue.findIndex((entry) => !this.activeRuns.has(entry.key));
+      if (idx < 0) return;
+      const [entry] = this.queue.splice(idx, 1);
+      if (entry) this.startQueued(entry);
+    }
+  }
+
+  /**
+   * Start one dequeued run, re-checking what may have changed while it
+   * waited: the automation deleted, an event automation disabled, a Run now
+   * whose budget another run spent.
+   */
+  private startQueued(entry: QueuedRun): void {
+    const auto = this.definitions.get(entry.key);
+    if (!auto) {
+      entry.resolve(notStartedRun(entry.key, "the automation was deleted while queued"));
+      return;
+    }
+    const refuse = (reason: string) =>
+      entry.resolve({ run: this.recordSkipped(auto, reason, entry.trigger), started: false });
+    try {
+      if (entry.trigger === "event" && !auto.enabled) {
+        refuse("Disabled while queued (event)");
+        return;
+      }
+      const budget = entry.trigger === "manual" ? runNowBudgetRefusal(auto, Date.now()) : null;
+      if (budget) {
+        refuse(budget);
+        return;
+      }
+    } catch (err) {
+      entry.reject(err);
+      return;
+    }
+    this.dispatchRun(auto, entry.trigger, entry.input).then(
+      (run) => entry.resolve({ run, started: true }),
+      entry.reject,
+    );
   }
 
   /**
@@ -712,15 +1005,34 @@ export class Scheduler {
   }
 
   /**
-   * Cancel an active automation run. Returns true if cancelled, false if not running.
+   * Cancel an automation's run: abort it when in flight, or take it out of the
+   * queue (recording it as cancelled) when waiting. Returns false when it has
+   * neither.
    */
   cancelRun(wsId: string, ownerId: string, automationId: string): boolean {
-    const controller = this.activeRuns.get(
-      Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId }),
+    const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
+    const controller = this.activeRuns.get(key);
+    if (controller) {
+      controller.abort();
+      return true;
+    }
+    const idx = this.queue.findIndex((entry) => entry.key === key);
+    if (idx < 0) return false;
+    const [entry] = this.queue.splice(idx, 1);
+    if (!entry) return false;
+    const auto = this.definitions.get(key);
+    const reason = "Cancelled by user while queued";
+    entry.resolve(
+      auto
+        ? { run: this.recordSkipped(auto, reason, entry.trigger, "cancelled"), started: false }
+        : notStartedRun(key, reason, "cancelled"),
     );
-    if (!controller) return false;
-    controller.abort();
     return true;
+  }
+
+  /** Runs waiting for a slot, oldest first (for inspection/testing). */
+  getQueuedRunIds(): string[] {
+    return this.queue.map((entry) => entry.key);
   }
 
   /**
@@ -853,6 +1165,13 @@ export class Scheduler {
     // advance a one-shot cron past its only date and lose the run. `onTimer`
     // walks due runs oldest first, so deferral is FIFO. Revisit with a per-owner
     // fair-share queue only if multi-tenant fairness becomes a need.
+    //
+    // A deferred scheduled run does not join the Run now / event queue: its
+    // persisted `nextRunAt` already holds its place, survives a restart (the
+    // in-memory queue does not, and a one-shot cron would lose its only run),
+    // and admits one pending occurrence per automation by construction. Queued
+    // runs take a freed slot first, since `drainQueue` runs as the slot frees
+    // and the timer only on its next tick.
     if (this.activeRuns.size >= this.maxConcurrentRuns) return null;
 
     return this.dispatchRun(auto, "scheduled");
@@ -878,8 +1197,24 @@ export class Scheduler {
     const startedAt = new Date().toISOString();
 
     try {
-      const { run, result } = await this.executor(auto, controller.signal, trigger, input);
+      return await this.executeAndRecord(auto, controller, startedAt, trigger, input);
+    } finally {
+      // The slot is free whether the run's record landed or its write threw.
       this.activeRuns.delete(key);
+      this.drainQueue();
+    }
+  }
+
+  /** Run the executor and record the outcome; the slot is released by the caller. */
+  private async executeAndRecord(
+    auto: Automation,
+    controller: AbortController,
+    startedAt: string,
+    trigger: AutomationRunTrigger,
+    input?: RunInput,
+  ): Promise<AutomationRun> {
+    try {
+      const { run, result } = await this.executor(auto, controller.signal, trigger, input);
       this.updateAfterRun(auto, run);
       // Persist the full deliverable sidecar alongside the run summary. Present
       // for both the scheduled and manual (runNow) paths; null only when the
@@ -888,7 +1223,6 @@ export class Scheduler {
       this.runRecorded(auto);
       return run;
     } catch (err) {
-      this.activeRuns.delete(key);
       const { status, suffix, error, transient } = classifyRunFailure(err);
       const failedRun: AutomationRun = {
         id: `run_${Date.now()}_${suffix}`,
@@ -976,16 +1310,29 @@ export class Scheduler {
   }
 
   /**
-   * Record a skipped run in the store.
+   * Record a run that did not start: skipped, or cancelled while queued.
+   *
+   * `trigger` is what asked for the run, and it is NOT written to the record:
+   * `trigger` on a run record means the run started, which is what the event
+   * fire ceiling counts (see {@link countsAsEventFire}). The reason names the
+   * trigger where it matters. It decides one thing here: only a scheduled
+   * occurrence (`trigger` absent or `scheduled`) advances `nextRunAt`, so the
+   * timer does not find it due again. A refused Run now or event run is not an
+   * occurrence of the schedule and leaves it alone.
    */
-  private recordSkipped(auto: Automation, reason: string): AutomationRun {
+  private recordSkipped(
+    auto: Automation,
+    reason: string,
+    trigger?: AutomationRunTrigger,
+    status: "skipped" | "cancelled" = "skipped",
+  ): AutomationRun {
     const now = Date.now();
     const run: AutomationRun = {
-      id: `run_${now}_skip`,
+      id: `run_${now}_${status === "cancelled" ? "cancel" : "skip"}`,
       automationId: auto.id,
       startedAt: new Date(now).toISOString(),
       completedAt: new Date(now).toISOString(),
-      status: "skipped",
+      status,
       inputTokens: 0,
       outputTokens: 0,
       toolCalls: 0,
@@ -997,6 +1344,11 @@ export class Scheduler {
     if (!wsId || !ownerId) return run; // defensive — can't locate the store
     appendRun(this.config.workDir, wsId, ownerId, auto.id, run);
     automationRunsTotal.inc({ status: run.status });
+
+    if (trigger !== undefined && trigger !== "scheduled") {
+      this.runRecorded(auto);
+      return run;
+    }
 
     // Advance nextRunAt so this automation isn't immediately "due" again.
     // Re-read THIS automation's file to avoid overwriting concurrent changes.

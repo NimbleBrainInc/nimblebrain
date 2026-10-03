@@ -10,8 +10,8 @@ import { formatSize } from "./format";
 export interface UploadRefusal {
   /** One line per refused file, naming it and the reason. */
   errors: string[];
-  /** How many of the picked files were stored despite the refusal. */
-  stored: number;
+  /** The ids of the picked files stored despite the refusal. */
+  storedIds: string[];
 }
 
 /** The refusal an upload error carries, or `null` for any other failure. */
@@ -20,7 +20,11 @@ export function readUploadRefusal(err: unknown): UploadRefusal | null {
   const errors = data?.errors;
   if (!Array.isArray(errors) || errors.length === 0) return null;
   if (!errors.every((e) => typeof e === "string")) return null;
-  return { errors, stored: Array.isArray(data?.files) ? data.files.length : 0 };
+  const files: unknown[] = Array.isArray(data?.files) ? data.files : [];
+  const storedIds = files
+    .map((f) => (f as { id?: unknown } | null)?.id)
+    .filter((id): id is string => typeof id === "string");
+  return { errors, storedIds };
 }
 
 /**

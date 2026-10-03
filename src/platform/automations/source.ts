@@ -1,5 +1,7 @@
+import { effectiveRunLimits } from "../../config/automations.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
+import { log } from "../../observability/log.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import type { TaskRequest } from "../../runtime/types.ts";
@@ -8,7 +10,7 @@ import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-a
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { AutomationEventTrigger } from "./event-trigger.ts";
 import { createDirectExecutor, type ExecutorContext } from "./executor.ts";
-import { Scheduler } from "./scheduler.ts";
+import { countsAsEventFire, Scheduler } from "./scheduler.ts";
 import { TOOL_SCHEMAS } from "./schemas.ts";
 import {
   handleCancel,
@@ -56,6 +58,31 @@ export function resolveExecutorContext(automation: Automation): ExecutorContext 
   };
 }
 
+/** The timezone a schedule or budget window uses when it names none. */
+const FALLBACK_TIMEZONE = "Pacific/Honolulu";
+
+/**
+ * The instance default timezone, from `NB_TIMEZONE`, checked once here.
+ *
+ * An unknown name would make every budget-window and next-run computation
+ * throw (`Intl` refuses it), and a throw while recording a run leaves the run
+ * unrecorded and the automation due, so it re-runs back to back. Checking at
+ * the one place the value enters means neither path has to guard for it.
+ */
+export function resolveDefaultTimezone(raw: string | undefined): string {
+  if (!raw) return FALLBACK_TIMEZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: raw });
+    return raw;
+  } catch {
+    log.warn("[automations] NB_TIMEZONE is not a known timezone; using the fallback", {
+      value: raw,
+      fallback: FALLBACK_TIMEZONE,
+    });
+    return FALLBACK_TIMEZONE;
+  }
+}
+
 /** Reconcile an automation map against the owner's on-disk store: write each (stamping its workspace + owner binding) and drop definitions no longer in the map. */
 function saveOwnerAutomations(
   workDir: string,
@@ -92,7 +119,11 @@ export async function createAutomationsSource(
   eventSink: EventSink,
 ): Promise<McpSource> {
   const workDir = runtime.getWorkDir();
-  const defaultTimezone = process.env.NB_TIMEZONE ?? "Pacific/Honolulu";
+  const defaultTimezone = resolveDefaultTimezone(process.env.NB_TIMEZONE);
+  const automationsConfig = runtime.getAutomationsConfig();
+  // The chat default is read per run: an admin can change it at runtime.
+  const runLimitsOf = (automation: Automation) =>
+    effectiveRunLimits(automation, automationsConfig, runtime.getMaxIterations());
 
   // Direct executor: calls runtime.executeTask() in-process — the unattended
   // sibling of chat() that frames the agent as producing a deliverable, not a
@@ -100,10 +131,13 @@ export async function createAutomationsSource(
   const executor = createDirectExecutor(
     (req) => runtime.executeTask(req as TaskRequest),
     resolveExecutorContext,
+    runLimitsOf,
   );
   const scheduler = new Scheduler(executor, {
     workDir,
     defaultTimezone,
+    maxConcurrentRuns: automationsConfig.maxConcurrentRuns,
+    maxQueuedRuns: automationsConfig.maxQueuedRuns,
     onRunRecorded: (owner) => runtime.announceIdentitySourceChange("automations", owner),
   });
   scheduler.start();
@@ -123,7 +157,7 @@ export async function createAutomationsSource(
     automation: (wsId, owner, id) => loadAutomation(workDir, wsId, owner, id) ?? undefined,
     eventRunsSince: (wsId, owner, id, since) =>
       readRuns(workDir, wsId, owner, id, { since: new Date(since).toISOString() }).filter(
-        (run) => run.trigger === "event",
+        countsAsEventFire,
       ).length,
     run: (wsId, owner, id, input) => scheduler.runFromEvent(wsId, owner, id, input),
     disable: (wsId, owner, id, reason) => {
@@ -174,12 +208,13 @@ export async function createAutomationsSource(
         runtime.announceIdentitySourceChange("automations", owner);
       },
       reloadScheduler: () => scheduler.reload(),
-      runNow: (id) => scheduler.runNow(wsId, owner, id),
+      runNow: (id) => scheduler.requestRunNow(wsId, owner, id),
       cancelRun: (id) => scheduler.cancelRun(wsId, owner, id),
       readRuns: (id, opts) => readRuns(workDir, wsId, owner, id, opts),
       readAllRuns: (opts) => readAllRuns(workDir, wsId, owner, opts),
       readRunResult: (id, runId) => readRunResult(workDir, wsId, owner, id, runId),
       defaultTimezone,
+      runLimitsOf,
       defaultModel: runtime.getDefaultModel(),
       currentUserId: owner,
       currentWorkspaceId: wsId,
