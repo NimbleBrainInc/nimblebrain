@@ -1169,6 +1169,29 @@ function emitBridgeToolDone(
   eventSink?.emit(event);
 }
 
+/**
+ * The feature-flag and role gates every REST tools/call runs, on both doors:
+ * a `403` for a tool a disabled flag gates (defense-in-depth layer 2) or an
+ * admin-only tool called by a non-admin, else `null`.
+ */
+function gateRestToolCall(
+  toolName: string,
+  features: ResolvedFeatures,
+  identity: UserIdentity | undefined,
+): Response | null {
+  if (!isToolEnabled(toolName, features)) {
+    return apiError(403, "feature_disabled", `Tool "${toolName}" is disabled by feature flags`, {
+      tool: toolName,
+    });
+  }
+  if (!isToolVisibleToRole(toolName, identity?.orgRole)) {
+    return apiError(403, "forbidden", `Insufficient permissions for tool "${toolName}"`, {
+      tool: toolName,
+    });
+  }
+  return null;
+}
+
 /** Handle POST /v1/workspaces/:wsId/tools/call — direct tool invocation. */
 export async function handleToolCall(
   request: Request,
@@ -1220,19 +1243,8 @@ export async function handleToolCall(
     coercedArgs = validated.coercedArgs;
   }
 
-  // Feature flag gate — reject calls to disabled tools (defense-in-depth layer 2)
-  if (!isToolEnabled(toolName, features)) {
-    return apiError(403, "feature_disabled", `Tool "${toolName}" is disabled by feature flags`, {
-      tool: toolName,
-    });
-  }
-
-  // Role-based gate — reject calls to admin-only tools by non-admins
-  if (!isToolVisibleToRole(toolName, identity?.orgRole)) {
-    return apiError(403, "forbidden", `Insufficient permissions for tool "${toolName}"`, {
-      tool: toolName,
-    });
-  }
+  const gated = gateRestToolCall(toolName, features, identity);
+  if (gated) return gated;
 
   // Build per-request context for AsyncLocalStorage (concurrency-safe).
   const reqCtx = buildRestToolCallContext(identity, workspaceId);
@@ -1321,16 +1333,8 @@ export async function handleIdentityToolCall(
   const validated = await validateRestToolInput(source, toolName, tool, server, args ?? {});
   if (!validated.ok) return validated.response;
 
-  if (!isToolEnabled(toolName, features)) {
-    return apiError(403, "feature_disabled", `Tool "${toolName}" is disabled by feature flags`, {
-      tool: toolName,
-    });
-  }
-  if (!isToolVisibleToRole(toolName, identity?.orgRole)) {
-    return apiError(403, "forbidden", `Insufficient permissions for tool "${toolName}"`, {
-      tool: toolName,
-    });
-  }
+  const gated = gateRestToolCall(toolName, features, identity);
+  if (gated) return gated;
 
   log.info(
     `[api] tools/call (no workspace) server=${server} tool=${tool} identity=${identity?.id ?? "none"}`,

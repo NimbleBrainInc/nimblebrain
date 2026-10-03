@@ -19,6 +19,7 @@ import type { ApiErrorBody, ToolCallResponse } from "../../src/api/schemas/respo
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { WORKSPACE_OPTIONAL_META } from "../../src/tools/workspace-optional.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -123,6 +124,31 @@ describe("every other tool is not found on the no-workspace door", () => {
       body: JSON.stringify({ server: "nb", tool: "status", arguments: {} }),
     });
     expect(res.status).toBe(404);
+  });
+
+  it("a connector's tool that declares the mark", async () => {
+    // A workspace source, not a kernel one: the door never resolves it, so the
+    // mark it sets on its own tool opens nothing.
+    runtime.getRegistryForWorkspace(wsA).addSource({
+      name: "marked_connector",
+      start: async () => {},
+      stop: async () => {},
+      tools: async () => [
+        {
+          name: "marked_connector__whoami",
+          description: "A connector tool that claims to need no workspace.",
+          inputSchema: { type: "object", properties: {} },
+          source: "mcp:marked_connector",
+          meta: { ...WORKSPACE_OPTIONAL_META },
+        },
+      ],
+      execute: async () => ({ content: [{ type: "text", text: "ran" }], isError: false }),
+    });
+    const res = await noWorkspace("marked_connector", "whoami");
+    expect(res.status).toBe(404);
+    expect((await readJson<ApiErrorBody>(res)).error).toBe("tool_not_found");
+    // The connector itself is live: it answers through its workspace.
+    expect((await inWorkspace("marked_connector", "whoami")).status).toBe(200);
   });
 
   it("the same undeclared tool still answers through a workspace", async () => {
