@@ -4380,6 +4380,12 @@ export class Runtime {
     toolName: string,
     call: AdminToolCall,
   ): Promise<ToolResult | null> {
+    // The called connector's binding is resolved first, reconnecting if it
+    // dropped: the call would reconnect on its own, and a binding read from a
+    // closed connection is unknown, which would admit a wire-declared handler.
+    await lifecycleBindingFor(wsId, serverName, this.lifecycleSourceFor(wsId, serverName), {
+      rediscover: true,
+    }).catch(() => undefined);
     const declared = await this.connectorGatesFor(wsId);
     if (isHostOnlyTool(declared.get(serverName)?.lifecycle, toolName)) {
       return hostOnlyToolDenial(serverName, toolName);

@@ -34,7 +34,11 @@ import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
-import { forgetLifecycleBinding, resetLifecycleBindings } from "../../src/lifecycle/bindings.ts";
+import {
+  forgetLifecycleBinding,
+  lifecycleBindingFor,
+  resetLifecycleBindings,
+} from "../../src/lifecycle/bindings.ts";
 import {
   notifyReady,
   notifyRemoving,
@@ -292,6 +296,21 @@ describe("the host's calls, declared on the wire", () => {
 });
 
 describe("withholding wire-declared handlers", () => {
+  it("refuses a call when no binding is held and the connection has dropped", async () => {
+    resetCalls();
+    forgetLifecycleBinding(MEMBER_WS, WIRED);
+    const source = sources.get(`${MEMBER_WS}/${WIRED}`) as unknown as { client: unknown };
+    source.client = null;
+    const res = await fetch(`${baseUrl}/v1/workspaces/${MEMBER_WS}/tools/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server: WIRED, tool: "scope_removing", arguments: {} }),
+    });
+    const result = await readJson<ToolCallResponse>(res);
+    expect(result.structuredContent).toEqual(refusal(WIRED, "scope_removing"));
+    expect(ran(MEMBER_WS, WIRED)).toEqual([]);
+  });
+
   for (const wsId of WORKSPACES) {
     const role = wsId === ADMIN_WS ? "an admin" : "a member";
 
@@ -349,4 +368,31 @@ describe("withholding wire-declared handlers", () => {
       });
     }
   }
+});
+
+describe("holding the binding", () => {
+  it("re-reads it on running and again when the tool set changes", async () => {
+    const tools = [marked("scope_ready", "ready"), { name: "search" }];
+    const { source } = await startLifecycleSource("ai-acme-shifting", { tools });
+    (await runtime.ensureWorkspaceRegistry(MEMBER_WS)).addSource(source);
+    const held = () => lifecycleBindingFor(MEMBER_WS, "ai-acme-shifting", undefined);
+
+    runtime.watchLifecycleBinding(MEMBER_WS, "ai-acme-shifting");
+    for (let i = 0; i < 50 && !(await held()); i++) await Bun.sleep(10);
+    const first = await held();
+    expect(first?.advertised && first.binding.on_ready).toBe("scope_ready");
+
+    // The server drops its marker and adds a tool; the tool-set change
+    // re-snapshots.
+    tools[0] = { name: "scope_ready" };
+    tools.push({ name: "scope_status" });
+    await source.refreshTools();
+    for (let i = 0; i < 50; i++) {
+      const now = await held();
+      if (now?.advertised && now.binding.on_ready === undefined) break;
+      await Bun.sleep(10);
+    }
+    const second = await held();
+    expect(second?.advertised && second.binding.on_ready).toBeUndefined();
+  });
 });
