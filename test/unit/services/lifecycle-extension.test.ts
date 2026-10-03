@@ -80,7 +80,7 @@ describe("selectLifecycleHandlers", () => {
     ]);
     expect(binding.on_ready).toBeUndefined();
     expect(rejected).toEqual([
-      { tool: "scope_ready", reason: expect.stringContaining("required") },
+      { tool: "scope_ready", event: "on_ready", reason: expect.stringContaining("required") },
     ]);
   });
 

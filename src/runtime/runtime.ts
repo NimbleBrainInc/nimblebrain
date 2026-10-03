@@ -133,6 +133,7 @@ import {
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
 import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
+import { positionOutbox } from "../notifications/position.ts";
 import { NotificationStore } from "../notifications/store.ts";
 import type { NotificationsDeclaration } from "../notifications/types.ts";
 import { registerBuiltinCredentialProviders } from "../oauth/minted-credential-provider.ts";
@@ -4285,8 +4286,10 @@ export class Runtime {
    * the operator-trusted catalog entry and the per-workspace registry — because
    * both reconciles ask a connector's declaration and its live source the same
    * two questions. They stay separate objects because they are separate
-   * contracts: this one holds no workspace store and no hook identity, and
-   * neither reconcile may grow a dependency on the other's.
+   * contracts: this one holds no hook identity, and neither reconcile may grow
+   * a dependency on the other's. Its one use of the workspace store is the
+   * outbox position taken before `on_ready`, closed over here so the lifecycle
+   * module never sees the store.
    */
   getLifecycleNotifyDeps(): LifecycleNotifyDeps {
     return {
@@ -4299,6 +4302,17 @@ export class Runtime {
           serverName,
           await lifecycleBindingFor(wsId, serverName, this.lifecycleSourceFor(wsId, serverName)),
         ),
+      positionOutbox: async (wsId: string, serverName: string) => {
+        const declaration = await this.getNotificationsDeclaration(wsId, serverName);
+        if (!declaration) return;
+        const source = this.getLifecycle().connectionSource(serverName, wsId);
+        if (!source) return;
+        await positionOutbox(
+          this._workspaceStore,
+          { wsId, serverName, resource: declaration.resource, source },
+          this.getNotificationsPollConfig().maxEvents,
+        );
+      },
     };
   }
 

@@ -1,6 +1,6 @@
 import type { ToolResult } from "../engine/types.ts";
 import { log } from "../observability/log.ts";
-import { readyArguments } from "../services/lifecycle-extension.ts";
+import { readyArguments, selectLifecycleHandlers } from "../services/lifecycle-extension.ts";
 import {
   type ConnectorPort,
   summarizeToolError,
@@ -44,7 +44,8 @@ export interface ReadyOutcome {
    * handler answered without an error.
    *
    * `false` means **defer** — the source is not up, or is up and advertises no
-   * tools yet, or the handler failed. All three are answered the same way: try
+   * tools yet, or the handler failed, or the host rejected the server's marked
+   * `ready` handler. All four are answered the same way: try
    * again on the next transition or tool-surface change. It is what gates the
    * observer's dedupe, so a failed call is retried and a succeeded one is not.
    */
@@ -80,6 +81,18 @@ export interface LifecycleNotifyDeps {
    * catalog declaration has none.
    */
   contractWarningsFor?(wsId: string, serverName: string): Promise<string[]>;
+  /**
+   * Give the connector's notifications outbox a position, when it declares one
+   * and has none, before its `on_ready` handler is called. Optional: a
+   * connector without an outbox has nothing to position. A rejection is logged
+   * and the handler is still called, because positioning serves the handler and
+   * must never withhold it.
+   *
+   * Here rather than in the poller because the order is the guarantee: what a
+   * handler starts, it reports later, and a cursor taken after that report steps
+   * over it (`src/notifications/position.ts`).
+   */
+  positionOutbox?(wsId: string, serverName: string): Promise<void>;
 }
 
 /**
@@ -130,17 +143,31 @@ export async function notifyReady(
     log.debug("lifecycle", `[lifecycle] ${connector} is running but advertises no tools yet`);
     return { settled: false };
   }
-  verifyLifecycleTools(tools, decl, connector);
+  // On the extension path the handlers are read off the listing in hand, not
+  // the held binding: the binding is refreshed by its own tool-surface watch,
+  // which the retry of this call races on the same change.
+  const wire = decl.declaredBy === "extension" ? selectLifecycleHandlers(tools) : undefined;
+  const current = wire?.binding ?? decl;
+  verifyLifecycleTools(tools, current, connector);
 
-  const handler = decl.on_ready;
+  const handler = current.on_ready;
   // A server may declare `on_removing` alone. Its contract is checked above;
-  // there is nothing to call now and nothing to come back for.
-  if (!handler) return { settled: true };
+  // there is nothing to call now and nothing to come back for. A `ready`
+  // handler the host rejected is different: the server is still to be fixed,
+  // and the fix arrives as a tool-set change, so the attempt stays open.
+  if (!handler) return { settled: !wire?.rejected.some((r) => r.event === "on_ready") };
 
   // The catalog path sends `reason` whether or not the handler declares it;
   // the extension sends it only to a handler that does.
   const args =
     decl.declaredBy === "extension" ? readyArguments(findTool(tools, handler), reason) : { reason };
+  await deps.positionOutbox?.(wsId, connector).catch((err: unknown) => {
+    log.warn("[lifecycle] could not position the outbox before on_ready", {
+      connector,
+      workspace_id: wsId,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  });
   return callReady(port, connector, handler, args, reason);
 }
 

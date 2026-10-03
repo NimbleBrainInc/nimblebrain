@@ -356,3 +356,57 @@ describe("on_removing", () => {
     expect(fake.calls).toHaveLength(0);
   });
 });
+
+describe("the outbox position", () => {
+  test("is taken before the on_ready handler is called", async () => {
+    // What the handler starts it reports through the outbox, and a cursor taken
+    // after that report steps over it.
+    const order: string[] = [];
+    const fake = makeFake([handler("workspace_ready"), handler("workspace_removing")]);
+    const execute = fake.port.execute;
+    fake.port.execute = async (tool, input) => {
+      order.push(tool);
+      return execute(tool, input);
+    };
+    const deps: LifecycleNotifyDeps = {
+      ...makeDeps(fake),
+      positionOutbox: async (wsId, connector) => {
+        order.push(`position:${wsId}:${connector}`);
+      },
+    };
+
+    await notifyReady(deps, WS, CONNECTOR, "install");
+
+    expect(order).toEqual([`position:${WS}:${CONNECTOR}`, "workspace_ready"]);
+  });
+
+  test("a position that fails still lets the handler be called", async () => {
+    const fake = makeFake([handler("workspace_ready"), handler("workspace_removing")]);
+    const deps: LifecycleNotifyDeps = {
+      ...makeDeps(fake),
+      positionOutbox: async () => {
+        throw new Error("catalog unreachable");
+      },
+    };
+
+    const outcome = await notifyReady(deps, WS, CONNECTOR, "install");
+
+    expect(outcome.settled).toBe(true);
+    expect(fake.calls.map((c) => c.tool)).toEqual(["workspace_ready"]);
+  });
+
+  test("is not taken for a connector with no on_ready handler", async () => {
+    const fake = makeFake([handler("workspace_removing")]);
+    let positioned = false;
+    const deps: LifecycleNotifyDeps = {
+      ...makeDeps(fake, { on_removing: "workspace_removing" }),
+      positionOutbox: async () => {
+        positioned = true;
+      },
+    };
+
+    await notifyReady(deps, WS, CONNECTOR, "install");
+
+    expect(positioned).toBe(false);
+  });
+});

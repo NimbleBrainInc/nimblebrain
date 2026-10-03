@@ -534,7 +534,12 @@ export class NotificationPoller {
   ): Promise<void> {
     if (next === undefined || next === previous) return;
     try {
-      await writeCursor(this.#deps.workspaceStore, target.wsId, target.serverName, next);
+      // From the position this read started at, and only from there: see
+      // `writeCursor`. A lost race is not a failure — whoever moved the cursor
+      // holds the position that is right, and the next read starts from it.
+      await writeCursor(this.#deps.workspaceStore, target.wsId, target.serverName, next, {
+        from: previous,
+      });
     } catch (err) {
       log.warn(
         `[notifications] cursor write failed: ${err instanceof Error ? err.message : String(err)}`,
