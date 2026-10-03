@@ -910,7 +910,7 @@ describe("workspace grouping and filters", () => {
   function seed(dir: string): void {
     writeRecord(dir, {
       userId: "usr_a",
-      workspaceId: "ws_alpha",
+      workspaceId: "ws_00164434d8dd7ffb",
       conversationId: "conv_1",
       model: "anthropic:claude-sonnet-4-5-20250929",
       usage: { inputTokens: 1, outputTokens: 0 },
@@ -918,7 +918,7 @@ describe("workspace grouping and filters", () => {
     });
     writeRecord(dir, {
       userId: "usr_a",
-      workspaceId: "ws_beta",
+      workspaceId: "ws_002038aa71ea4b8a",
       origin: "task",
       taskRunId: "run_1",
       model: "anthropic:claude-haiku-4-5-20251001",
@@ -927,7 +927,7 @@ describe("workspace grouping and filters", () => {
     });
     writeRecord(dir, {
       userId: "usr_b",
-      workspaceId: "ws_alpha",
+      workspaceId: "ws_00164434d8dd7ffb",
       conversationId: "conv_2",
       model: "anthropic:claude-haiku-4-5-20251001",
       usage: { inputTokens: 100, outputTokens: 0 },
@@ -946,13 +946,15 @@ describe("workspace grouping and filters", () => {
     seed(dir);
     const report = await aggregateUsage(dir, "all", "workspace");
     const byKey = Object.fromEntries(report.breakdown.map((r) => [r.key, r.tokens.input]));
-    expect(byKey).toEqual({ none: 1000, ws_alpha: 101, ws_beta: 10 });
+    expect(byKey).toEqual({ none: 1000, ws_00164434d8dd7ffb: 101, ws_002038aa71ea4b8a: 10 });
   });
 
   it("filters by workspace, and 'none' selects the unbound calls", async () => {
     const dir = makeTmpDir();
     seed(dir);
-    const alpha = await aggregateUsage(dir, "all", "day", { filters: { workspaceId: "ws_alpha" } });
+    const alpha = await aggregateUsage(dir, "all", "day", {
+      filters: { workspaceId: "ws_00164434d8dd7ffb" },
+    });
     expect(alpha.totals.tokens.input).toBe(101);
     const none = await aggregateUsage(dir, "all", "day", { filters: { workspaceId: "none" } });
     expect(none.totals.tokens.input).toBe(1000);
@@ -993,7 +995,7 @@ describe("workspace grouping and filters", () => {
     const dir = makeTmpDir();
     seed(dir);
     const both = await aggregateUsage(dir, "all", "day", {
-      filters: { workspaceId: "ws_alpha", model: "claude-haiku-4-5" },
+      filters: { workspaceId: "ws_00164434d8dd7ffb", model: "claude-haiku-4-5" },
     });
     expect(both.totals.tokens.input).toBe(100);
     // A userId filter naming someone other than the owner cannot widen the read.
@@ -1014,8 +1016,11 @@ describe("workspace grouping and filters", () => {
     });
     const days = report.breakdowns.day ?? [];
     expect(days.map((d) => d.key)).toEqual(["2026-04-10", "2026-04-11", "2026-04-12"]);
-    expect(Object.keys(days[0]?.stack ?? {}).sort()).toEqual(["ws_alpha", "ws_beta"]);
-    expect(Object.keys(days[1]?.stack ?? {}).sort()).toEqual(["none", "ws_alpha"]);
+    expect(Object.keys(days[0]?.stack ?? {}).sort()).toEqual([
+      "ws_00164434d8dd7ffb",
+      "ws_002038aa71ea4b8a",
+    ]);
+    expect(Object.keys(days[1]?.stack ?? {}).sort()).toEqual(["none", "ws_00164434d8dd7ffb"]);
     for (const day of days.slice(0, 2)) {
       const sum = Object.values(day.stack ?? {}).reduce((a, b) => a + b, 0);
       expect(sum).toBeCloseTo(day.cost.total, 12);

@@ -32,10 +32,10 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
       }),
     );
     expect(entry?.ui).toEqual({
-      name: "People",
-      icon: "users",
       placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" }],
     });
+    // The display name is the core title, never the host block's `name`.
+    expect(entry?.name).toBe("People");
   });
 
   test("no host block → no ui (connector still projects, tools-only)", () => {
@@ -44,11 +44,22 @@ describe("serverDetailToCatalogEntry — host UI from ServerDetail._meta", () =>
     expect(entry?.ui).toBeUndefined();
   });
 
-  test("host block without a name → no ui (host needs a label to surface anything)", () => {
+  test("host block without a name still projects its placements", () => {
     const entry = serverDetailToCatalogEntry(
       fleetDetail({ host_version: "1.0", placements: [{ slot: "main", resourceUri: "ui://x/y" }] }),
     );
-    expect(entry?.ui).toBeUndefined();
+    expect(entry?.ui).toEqual({ placements: [{ slot: "main", resourceUri: "ui://x/y" }] });
+  });
+
+  test("a host block name does not rename the connector", () => {
+    const entry = serverDetailToCatalogEntry(
+      fleetDetail({
+        host_version: "1.0",
+        name: "Spoofed",
+        placements: [{ slot: "main", resourceUri: "ui://x/y" }],
+      }),
+    );
+    expect(entry?.name).toBe("People");
   });
 });
 
@@ -120,9 +131,9 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
         { slot: "sidebar.apps", resourceUri: "ui://people/main", label: "People" },
         { slot: "sidebar", resourceUri: "ui://files/browser", label: "Files (spoof)" },
       ],
-      "ws_hq",
+      "ws_0040ca83ea2a00f5",
     );
-    const entries = reg.forWorkspace("ws_hq");
+    const entries = reg.forWorkspace("ws_0040ca83ea2a00f5");
     expect(entries.map((e) => e.resourceUri)).toEqual(["ui://people/main"]);
     // the spoof at ui://files/* is absent
     expect(entries.some((e) => e.resourceUri.startsWith("ui://files/"))).toBe(false);
@@ -137,9 +148,9 @@ describe("registration sanitizes before the registry (install AND boot paths)", 
         { slot: "main", resourceUri: "https://evil/x" },
         { slot: "main", resourceUri: "ui://" },
       ],
-      "ws_hq",
+      "ws_0040ca83ea2a00f5",
     );
-    expect(reg.forWorkspace("ws_hq")).toEqual([]);
+    expect(reg.forWorkspace("ws_0040ca83ea2a00f5")).toEqual([]);
   });
 });
 

@@ -27,7 +27,7 @@ function freshDefaultStore(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   const events: EngineEvent[] = [];
   registerBuiltinCredentialStoreBackends();
   const store = createCredentialStore({
@@ -54,7 +54,7 @@ function freshSealedStore(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-sealed-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   const events: EngineEvent[] = [];
   registerBuiltinCredentialStoreBackends();
   const store = createCredentialStore({
@@ -101,13 +101,13 @@ describe("createCredentialStore", () => {
   test("no secrets block and an explicit `file` reach the same backend", async () => {
     registerBuiltinCredentialStoreBackends();
     const dir = mkdtempSync(join(tmpdir(), "nb-credbackend-"));
-    seedWorkspaceRoot(dir, "ws_test");
+    seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
     try {
       const implicit = createCredentialStore({ workDir: dir });
       await implicit.put(WS, "k", "v");
       // The file lands exactly where the plaintext file store has always put
       // it — the byte-identical-default claim, asserted on disk.
-      const path = join(dir, "workspaces", "ws_test", "credentials", "secrets", "k");
+      const path = join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets", "k");
       expect(statSync(path).mode & 0o777).toBe(0o600);
 
       const explicit = createCredentialStore({ workDir: dir, secrets: { backend: "file" } });

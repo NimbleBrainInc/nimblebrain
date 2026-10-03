@@ -38,18 +38,18 @@ function findFirst<T extends ts.Node>(
 }
 
 describe("check-tool-namespace — isNamespacedToolStringLiteral", () => {
-  test("matches a hard-coded `ws_helix-crm__search`", () => {
-    const src = parse(`const s = "ws_helix-crm__search";`);
+  test("matches a hard-coded `ws_003eba8844413cd9-crm__search`", () => {
+    const src = parse(`const s = "ws_003eba8844413cd9-crm__search";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(node).toBeDefined();
     expect(isNamespacedToolStringLiteral(node!)).toBe(true);
   });
 
-  test("does NOT match a plain workspace id literal `ws_helix`", () => {
+  test("does NOT match a plain workspace id literal `ws_003eba8844413cd9`", () => {
     // The lint scope is the cross-workspace tool-name shape only.
     // Plain workspace ids are constructed by other helpers and have
     // their own (separate) lint.
-    const src = parse(`const s = "ws_helix";`);
+    const src = parse(`const s = "ws_003eba8844413cd9";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(isNamespacedToolStringLiteral(node!)).toBe(false);
   });
@@ -69,8 +69,8 @@ describe("check-tool-namespace — isNamespacedToolTemplate", () => {
     expect(isNamespacedToolTemplate(node!)).toBe(true);
   });
 
-  test("matches `` `ws_helix-${name}` `` (literal id in head)", () => {
-    const src = parse("const s = `ws_helix-${name}`;");
+  test("matches `` `ws_003eba8844413cd9-${name}` `` (literal id in head)", () => {
+    const src = parse("const s = `ws_003eba8844413cd9-${name}`;");
     const node = findFirst(src, ts.isTemplateExpression);
     expect(isNamespacedToolTemplate(node!)).toBe(true);
   });

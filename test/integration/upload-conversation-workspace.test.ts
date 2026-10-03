@@ -32,11 +32,11 @@ import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
 const testDir = join(tmpdir(), `nb-upload-conversation-workspace-${Date.now()}`);
 
 // The conversation's workspace — the chat is born here (focused on WORKSPACE_A).
-const WORKSPACE_A = "ws_workspace_a";
+const WORKSPACE_A = "ws_00883d7b29214d57";
 // Dev mode: no identity on the request → the dev owner.
 const OWNER = DEV_IDENTITY.id;
 // Another workspace the owner belongs to — a DIFFERENT workspace than WORKSPACE_A.
-const OTHER = "ws_workspace_other";
+const OTHER = "ws_008a4bf1445595ec";
 
 let runtime: Runtime;
 let handle: ServerHandle;

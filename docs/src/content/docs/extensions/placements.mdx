@@ -30,8 +30,6 @@ Add a `placements` array to your manifest's `_meta["ai.nimblebrain/host"]`:
   "_meta": {
     "ai.nimblebrain/host": {
       "host_version": "1.0",
-      "name": "Tasks",
-      "icon": "check-square",
       "placements": [
         {
           "slot": "sidebar.apps",
@@ -63,6 +61,19 @@ priority: 100 → appears third (default)
 
 The sidebar shows the first four apps under **Apps**, then a **View all** link to the workspace overview, which lists every app. There is no grouping by priority band.
 
+### An app with several views
+
+A server that declares more than one `sidebar.<group>` placement is still one app. The sidebar lists it once, under the connector's catalog `title`, and that entry opens its first placement by priority. While any of its placements is open, they list beneath the entry by `label`, so the views are the app's own navigation: give each a `label`, its own `route`, and its own `resourceUri`. The four-app cap and the **View all** count are in apps, not in views.
+
+```json
+"placements": [
+  { "slot": "sidebar.apps", "resourceUri": "ui://crm/contacts", "route": "crm", "label": "Contacts", "priority": 100 },
+  { "slot": "sidebar.apps", "resourceUri": "ui://crm/companies", "route": "crm/companies", "label": "Companies", "priority": 101 }
+]
+```
+
+Each placement is its own mounted view: moving between two of them loads the second resource and unmounts the first. A server with one placement renders as a single entry labelled by that placement, as before.
+
 ## Route-based navigation
 
 A placement with a `route` registers a URL inside the workspace, under `/w/<slug>/app/`:
@@ -73,6 +84,13 @@ A placement with a `route` registers a URL inside the workspace, under `/w/<slug
 | `"my-app/reports"` | `/w/<slug>/app/my-app/reports` |
 
 Clicking the app in the sidebar opens that URL and loads the placement's `resourceUri` in the main area, beside the docked chat.
+
+A route belongs to one server. The host compares routes ignoring case, percent-encoding, and repeated, leading or trailing slashes. A placement is dropped, and the runtime logs a warning naming the route and who holds it, when its route is:
+
+- one of the host's own views (for example `@nimblebraininc/conversations`), whatever the placement's `priority`;
+- already registered by another connector in the same workspace, in which case the connector registered first keeps it.
+
+The connector's other placements still register. Name routes after your own server, as in `crm` and `crm/companies` above, so they stay clear of the host and of other connectors.
 
 ### The `primary` view
 
@@ -85,8 +103,10 @@ The schema also accepts a `primaryView` object for back-compat, but the host doe
 Under the focused workspace, the sidebar shows:
 
 1. **The host's views**: Conversations, Automations, Files, and the Inbox.
-2. **Apps**: `sidebar.<group>` placements, sorted by priority, capped at four with a **View all** link.
-3. **Connectors**: a link to the workspace's connectors.
+2. **Apps**: `sidebar.<group>` placements, one entry per server, sorted by the priority of its first placement and capped at four with a **View all** link. A server's other placements list beneath its entry while it is open.
+3. **Connectors without a sidebar placement**: one shared row after the apps, showing their icons and a count, that links to the workspace's installed connectors.
+
+The **Apps** heading carries a **+** that opens the connector catalog, shown to members who can change the workspace.
 
 The group name in `sidebar.<group>` is not shown as a heading; every group renders under **Apps**. A `main` placement never appears here. To give your app a nav entry, declare a `sidebar.apps` placement with a `route`.
 
@@ -131,11 +151,11 @@ registry.register(
     { slot: "sidebar", resourceUri: "ui://nav", priority: 50, label: "My App" },
     { slot: "main", resourceUri: "ui://dashboard", route: "my-app" },
   ],
-  "ws_engineering",
+  "ws_0030a37f450693bf",
 );
 
 // Read the merged ambient + workspace-scoped list
-const items = registry.forWorkspace("ws_engineering");
+const items = registry.forWorkspace("ws_0030a37f450693bf");
 // → sorted by slot then priority
 ```
 
@@ -146,8 +166,6 @@ const items = registry.forWorkspace("ws_engineering");
   "_meta": {
     "ai.nimblebrain/host": {
       "host_version": "1.0",
-      "name": "CRM",
-      "icon": "users",
       "placements": [
         {
           "slot": "sidebar.apps",

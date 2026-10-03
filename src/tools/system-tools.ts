@@ -847,7 +847,7 @@ async function searchTools(
   // calling workspace. The aggregator namespaces nb__search per
   // workspace, so the model may invoke any workspace's copy — all
   // must see everything the identity can reach, else a tool
-  // installed in another workspace (e.g. a CRM in ws_mat) is
+  // installed in another workspace (e.g. a CRM in a team workspace) is
   // invisible to this copy. Falls back to the current workspace
   // when there's no identity in scope (non-identity-bound paths).
   const discoverable = runtime

@@ -23,7 +23,7 @@ import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
 const testDir = join(tmpdir(), `nb-resume-membership-${Date.now()}`);
-const WORKSPACE_A = "ws_workspace_a";
+const WORKSPACE_A = "ws_00883d7b29214d57";
 const OWNER = DEV_IDENTITY.id;
 
 afterAll(() => {

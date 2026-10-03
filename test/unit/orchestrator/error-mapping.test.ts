@@ -25,38 +25,38 @@ describe("mapOrchestratorErrorToToolResult", () => {
     // cross-module contract, so a value invented for the test asserts a shape
     // production cannot emit.
     const err = new UnknownNamespacedToolName(
-      "ws_abc-",
+      "ws_000c657279042abe-",
       "empty_tool_name",
-      '[tools/namespace] parseNamespacedToolName: empty tool name in "ws_abc-"',
+      '[tools/namespace] parseNamespacedToolName: empty tool name in "ws_000c657279042abe-"',
     );
-    const result = mapOrchestratorErrorToToolResult(err, "ws_abc-");
+    const result = mapOrchestratorErrorToToolResult(err, "ws_000c657279042abe-");
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       error: "orchestrator_error",
       reason: "invalid_tool_name",
-      name: "ws_abc-",
+      name: "ws_000c657279042abe-",
       parseReason: "empty_tool_name",
     });
   });
 
   test("WorkspaceAccessDenied → reason: workspace_access_denied + identityId + wsId", () => {
-    const err = new WorkspaceAccessDenied("u1", "ws_other");
-    const result = mapOrchestratorErrorToToolResult(err, "ws_other-crm__search");
+    const err = new WorkspaceAccessDenied("u1", "ws_005820c54ca342ad");
+    const result = mapOrchestratorErrorToToolResult(err, "ws_005820c54ca342ad-crm__search");
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       reason: "workspace_access_denied",
       identityId: "u1",
-      wsId: "ws_other",
+      wsId: "ws_005820c54ca342ad",
     });
   });
 
   test("UnknownToolSource → reason: unknown_tool_source + wsId + sourceName + toolName", () => {
-    const err = new UnknownToolSource("ws_helix", "missing__do", "missing");
-    const result = mapOrchestratorErrorToToolResult(err, "ws_helix-missing__do");
+    const err = new UnknownToolSource("ws_003eba8844413cd9", "missing__do", "missing");
+    const result = mapOrchestratorErrorToToolResult(err, "ws_003eba8844413cd9-missing__do");
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       reason: "unknown_tool_source",
-      wsId: "ws_helix",
+      wsId: "ws_003eba8844413cd9",
       sourceName: "missing",
       toolName: "missing__do",
     });
@@ -73,13 +73,13 @@ describe("mapOrchestratorErrorToToolResult", () => {
   });
 
   test("ConnectorGrantDenied → reason: connector_grant_denied + connector + wsId", () => {
-    const err = new ConnectorGrantDenied("u1", "granola", "ws_helix");
+    const err = new ConnectorGrantDenied("u1", "granola", "ws_003eba8844413cd9");
     const result = mapOrchestratorErrorToToolResult(err, "granola__read_notes");
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
       reason: "connector_grant_denied",
       connector: "granola",
-      wsId: "ws_helix",
+      wsId: "ws_003eba8844413cd9",
     });
     // Actionable message the agent can relay to the user.
     expect(result.content[0]).toMatchObject({ type: "text" });

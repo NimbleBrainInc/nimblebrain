@@ -10,7 +10,7 @@ import { handleSearch } from "../../../../../src/platform/conversations/tools/se
  * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
  * covered in test/unit/platform/conversations-workspace-scope.test.ts.
  */
-const SCOPE = { workspaceId: "ws_user_usr_test" };
+const SCOPE = { workspaceId: "ws_00859aff6f095b0e" };
 
 function tempDir(): string {
   const dir = join(tmpdir(), `nb-search-test-${crypto.randomUUID()}`);
@@ -53,7 +53,7 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
     meta,
     ...messages.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt })),
   ];
-  const wsDir = join(dir, "ws_user_usr_test", "conversations", "usr_test");
+  const wsDir = join(dir, "ws_00859aff6f095b0e", "conversations", "usr_test");
   mkdirSync(wsDir, { recursive: true });
   writeFileSync(join(wsDir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }

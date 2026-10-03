@@ -752,7 +752,7 @@ describe("status tool — scope: skills", () => {
     // (the same per-request path `chat` composes with); `context` carries the
     // boot context skills, `layer3` the per-request selection.
     const runtimeMock = {
-      requireWorkspaceId: () => "ws_test",
+      requireWorkspaceId: () => "ws_0076759dbbe19fcc",
       describeRequestSkills: async () => ({ context: skills.context, layer3: layer3 ?? [] }),
     } as unknown as import("../../src/runtime/runtime.ts").Runtime;
     return await createSystemTools(
@@ -804,7 +804,7 @@ describe("status tool — scope: skills", () => {
         scope: "workspace",
       },
       body: "Match the team voice.",
-      sourcePath: "/home/.nimblebrain/workspaces/ws_test/skills/team-voice.md",
+      sourcePath: "/home/.nimblebrain/workspaces/ws_0076759dbbe19fcc/skills/team-voice.md",
     };
     const source = await makeStatusSource({ context: [coreSkill, workspaceSkill], matchable: [] });
     const result = await source.execute("status", { scope: "skills" });

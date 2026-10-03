@@ -133,7 +133,7 @@ describe("Remote integration: config → validate → load → tools", () => {
     const ref: ConnectorRef = entry as ConnectorRef;
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
       allowInsecureRemotes: true,
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
     });
 
     expect(meta).not.toBeNull();
@@ -169,7 +169,7 @@ describe("Remote integration: config → validate → load → tools", () => {
     const ref: ConnectorRef = entry as ConnectorRef;
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
       allowInsecureRemotes: true,
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
     });
 
     expect(meta).not.toBeNull();
@@ -193,7 +193,7 @@ describe("Remote integration: config → validate → load → tools", () => {
     const results = await Promise.allSettled([
       startConnectorSource(ref, registry, new NoopEventSink(), {
         allowInsecureRemotes: true,
-        wsId: "ws_test",
+        wsId: "ws_0076759dbbe19fcc",
       }),
     ]);
     expect(results[0]!.status).toBe("rejected");
@@ -212,7 +212,7 @@ describe("Remote integration: config → validate → load → tools", () => {
     const results = await Promise.allSettled([
       startConnectorSource(ref, registry, new NoopEventSink(), {
         allowInsecureRemotes: true,
-        wsId: "ws_test",
+        wsId: "ws_0076759dbbe19fcc",
         keepRegisteredOnStartFailure: true,
       }),
     ]);
@@ -265,7 +265,7 @@ describe("Remote integration: registering remote connectors in workspace registr
     const ref: ConnectorRef = { url: mockServer.url, serverName: "runtime-remote" };
     await startConnectorSource(ref, registry, new NoopEventSink(), {
       allowInsecureRemotes: true,
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
     });
 
     expect(registry.hasSource("runtime-remote")).toBe(true);
@@ -296,7 +296,7 @@ describe("Remote integration: registering remote connectors in workspace registr
     const badResult = await Promise.allSettled([
       startConnectorSource(badRef, registry, new NoopEventSink(), {
         allowInsecureRemotes: true,
-        wsId: "ws_test",
+        wsId: "ws_0076759dbbe19fcc",
       }),
     ]);
     expect(badResult[0]!.status).toBe("rejected");
@@ -306,7 +306,7 @@ describe("Remote integration: registering remote connectors in workspace registr
     const goodRef: ConnectorRef = { url: mockServer.url, serverName: "good-remote" };
     await startConnectorSource(goodRef, registry, new NoopEventSink(), {
       allowInsecureRemotes: true,
-      wsId: "ws_test",
+      wsId: "ws_0076759dbbe19fcc",
     });
     expect(registry.hasSource("good-remote")).toBe(true);
 

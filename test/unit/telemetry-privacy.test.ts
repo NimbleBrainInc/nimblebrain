@@ -81,14 +81,14 @@ const runDone = (runId: string) =>
 const runError = (runId: string, error: string) =>
   engineEvent("run.error", { runId, error, type: "TypeError" });
 const connectorFields = {
-  wsId: "ws_test",
+  wsId: "ws_0076759dbbe19fcc",
   serverName: "tasks",
   connectorName: "@nimblebraininc/tasks",
 };
 const connectorInstalled = engineEvent("connector.installed", {
   ...connectorFields,
   version: "1.2.3",
-  ui: { name: "Tasks", icon: "tasks" },
+  ui: { placements: [] },
   placements: null,
 });
 const connectorUninstalled = engineEvent("connector.uninstalled", connectorFields);

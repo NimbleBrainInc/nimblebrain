@@ -85,7 +85,7 @@ const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { WorkspaceNotificationsTab } = await import("../pages/settings/WorkspaceNotificationsTab");
 
 const WS: WorkspaceInfo = {
-  id: "ws_outbound",
+  id: "ws_005b519ef7efc353",
   name: "Outbound",
   connectorCount: 0,
   memberCount: 1,

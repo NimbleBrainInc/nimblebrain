@@ -29,7 +29,7 @@ import type {
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const TMP_DIR = join(import.meta.dir, ".tmp-automation-store");
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 
 function makeAutomation(overrides: Partial<Automation> = {}): Automation {
@@ -159,25 +159,25 @@ describe("definitions", () => {
 
 describe("loadAllAutomations", () => {
   test("loads automations across workspaces and owners", () => {
-    seedWorkspaceRoot(TMP_DIR, "ws_a");
-    seedWorkspaceRoot(TMP_DIR, "ws_b");
+    seedWorkspaceRoot(TMP_DIR, "ws_00079598e311c160");
+    seedWorkspaceRoot(TMP_DIR, "ws_001c32f121060ff3");
     saveAutomation(
       TMP_DIR,
-      "ws_a",
+      "ws_00079598e311c160",
       "usr_1",
-      makeAutomation({ id: "x", workspaceId: "ws_a", ownerId: "usr_1" }),
+      makeAutomation({ id: "x", workspaceId: "ws_00079598e311c160", ownerId: "usr_1" }),
     );
     saveAutomation(
       TMP_DIR,
-      "ws_a",
+      "ws_00079598e311c160",
       "usr_2",
-      makeAutomation({ id: "y", workspaceId: "ws_a", ownerId: "usr_2" }),
+      makeAutomation({ id: "y", workspaceId: "ws_00079598e311c160", ownerId: "usr_2" }),
     );
     saveAutomation(
       TMP_DIR,
-      "ws_b",
+      "ws_001c32f121060ff3",
       "usr_1",
-      makeAutomation({ id: "z", workspaceId: "ws_b", ownerId: "usr_1" }),
+      makeAutomation({ id: "z", workspaceId: "ws_001c32f121060ff3", ownerId: "usr_1" }),
     );
 
     const all = loadAllAutomations(TMP_DIR);
@@ -187,15 +187,15 @@ describe("loadAllAutomations", () => {
 
   test("backfills workspaceId/ownerId from the path when missing on the record", () => {
     // Persist a record that lacks the binding fields; the dir is authoritative.
-    seedWorkspaceRoot(TMP_DIR, "ws_path");
+    seedWorkspaceRoot(TMP_DIR, "ws_005d531fe273e796");
     const bare = makeAutomation({ id: "bare" });
     bare.workspaceId = undefined;
     bare.ownerId = undefined;
-    saveAutomation(TMP_DIR, "ws_path", "usr_path", bare);
+    saveAutomation(TMP_DIR, "ws_005d531fe273e796", "usr_path", bare);
 
     const all = loadAllAutomations(TMP_DIR);
     const recovered = all.find((a) => a.id === "bare")!;
-    expect(recovered.workspaceId).toBe("ws_path");
+    expect(recovered.workspaceId).toBe("ws_005d531fe273e796");
     expect(recovered.ownerId).toBe("usr_path");
   });
 

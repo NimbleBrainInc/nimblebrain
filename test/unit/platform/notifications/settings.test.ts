@@ -30,7 +30,7 @@ import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 import type { Workspace } from "../../../../src/workspace/types.ts";
 import { resultText } from "../../../helpers/tool-result.ts";
 
-const WS = "ws_outbound";
+const WS = "ws_005b519ef7efc353";
 const USER = "usr_admin";
 const OTHER = "usr_other";
 const TOOL = "slack__send_message";

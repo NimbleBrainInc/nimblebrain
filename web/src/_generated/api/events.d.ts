@@ -11,8 +11,6 @@ export type PlacementDeclaration = Omit<PlacementEntry, "serverName" | "priority
 };
 /** Mirrors `ConnectorUiMeta` (`src/connectors/runtime/types.ts`). */
 export interface ConnectorUiMeta {
-    name: string;
-    icon: string;
     placements?: PlacementDeclaration[];
 }
 /** Mirrors `ResourceLinkInfo` (`src/engine/content-helpers.ts`). */

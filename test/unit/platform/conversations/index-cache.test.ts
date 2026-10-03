@@ -318,7 +318,7 @@ describe("list workspace filtering", () => {
       updatedAt: "2025-01-01T00:00:00.000Z",
       title: "Helix chat",
       ownerId: "u1",
-      workspaceId: "ws_helix",
+      workspaceId: "ws_003eba8844413cd9",
       messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
     });
     writeConvFile({
@@ -327,7 +327,7 @@ describe("list workspace filtering", () => {
       updatedAt: "2025-01-02T00:00:00.000Z",
       title: "Acme chat",
       ownerId: "u1",
-      workspaceId: "ws_acme",
+      workspaceId: "ws_000f7ed6658f9d30",
       messages: [{ role: "user", content: "hi", timestamp: "2025-01-02T00:01:00.000Z" }],
     });
     writeConvFile({
@@ -345,7 +345,7 @@ describe("list workspace filtering", () => {
       updatedAt: "2025-01-04T00:00:00.000Z",
       title: "Another owner in Helix",
       ownerId: "u2",
-      workspaceId: "ws_helix",
+      workspaceId: "ws_003eba8844413cd9",
       messages: [{ role: "user", content: "hi", timestamp: "2025-01-04T00:01:00.000Z" }],
     });
     const index = new ConversationIndex();
@@ -355,7 +355,7 @@ describe("list workspace filtering", () => {
 
   test("workspaceId scopes to that workspace, excluding other workspaces and workspaceless chats", async () => {
     const index = await buildWorkspaceIndex();
-    const r = index.list({ workspaceId: "ws_helix" }, { userId: "u1" });
+    const r = index.list({ workspaceId: "ws_003eba8844413cd9" }, { userId: "u1" });
     expect(r.conversations.map((c) => c.id)).toEqual(["helix1"]);
     expect(r.totalCount).toBe(1);
   });
@@ -364,11 +364,13 @@ describe("list workspace filtering", () => {
     // The directory is the binding, so a file that is not under a workspace is
     // not in one — whichever workspace the owner lists from.
     const index = await buildWorkspaceIndex();
-    expect(index.list({ workspaceId: "ws_user_u1" }, { userId: "u1" }).conversations).toHaveLength(
-      0,
-    );
     expect(
-      index.list({ workspaceId: "ws_helix" }, { userId: "u1" }).conversations.map((c) => c.id),
+      index.list({ workspaceId: "ws_007dc0488ce56f9e" }, { userId: "u1" }).conversations,
+    ).toHaveLength(0);
+    expect(
+      index
+        .list({ workspaceId: "ws_003eba8844413cd9" }, { userId: "u1" })
+        .conversations.map((c) => c.id),
     ).toEqual(["helix1"]);
   });
 
@@ -390,7 +392,7 @@ describe("list workspace filtering", () => {
         updatedAt: `2025-02-${day}T00:00:00.000Z`,
         title: `Acme ${i}`,
         ownerId: "u1",
-        workspaceId: "ws_acme",
+        workspaceId: "ws_000f7ed6658f9d30",
         messages: [{ role: "user", content: "hi", timestamp: `2025-02-${day}T00:01:00.000Z` }],
       });
     }
@@ -400,7 +402,7 @@ describe("list workspace filtering", () => {
       updatedAt: "2025-01-01T00:00:00.000Z",
       title: "Old Helix chat",
       ownerId: "u1",
-      workspaceId: "ws_helix",
+      workspaceId: "ws_003eba8844413cd9",
       messages: [{ role: "user", content: "hi", timestamp: "2025-01-01T00:01:00.000Z" }],
     });
     const index = new ConversationIndex();
@@ -411,7 +413,7 @@ describe("list workspace filtering", () => {
     expect(globalPage.conversations.map((c) => c.id)).not.toContain("helix_old");
 
     // Workspace-scoped: the limit applies to Helix's set, so its chat is returned.
-    const helix = index.list({ limit: 20, workspaceId: "ws_helix" }, { userId: "u1" });
+    const helix = index.list({ limit: 20, workspaceId: "ws_003eba8844413cd9" }, { userId: "u1" });
     expect(helix.conversations.map((c) => c.id)).toEqual(["helix_old"]);
     expect(helix.totalCount).toBe(1);
   });

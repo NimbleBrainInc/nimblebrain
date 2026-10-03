@@ -36,7 +36,7 @@ import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
-const WS_ID = "ws_quiesce";
+const WS_ID = "ws_0064f069a7f4e1b0";
 const AUTOMATION_ID = "daily-digest";
 /** No identity provider is configured, so every owner resolves to the dev id. */
 const OWNER = "usr_default";
@@ -166,7 +166,7 @@ test("a run that slips through cannot re-create the archived workspace", async (
       toolCalls: 0,
       iterations: 0,
     }),
-  ).toThrow(/ws_quiesce/);
+  ).toThrow(/ws_0064f069a7f4e1b0/);
 
   expect(existsSync(join(workDir, "workspaces", WS_ID))).toBe(false);
 });

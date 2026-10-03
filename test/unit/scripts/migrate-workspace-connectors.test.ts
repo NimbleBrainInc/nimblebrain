@@ -17,7 +17,7 @@ import {
 import type { Workspace } from "../../../src/workspace/types.ts";
 
 const RECORD = {
-  id: "ws_eng",
+  id: "ws_002fbb9fda6654ca",
   name: "Engineering",
   members: [],
   bundles: [{ url: "https://example.com/mcp", serverName: "example" }],
@@ -70,7 +70,7 @@ describe("migrateWorkspaceContent", () => {
       assertWorkspaceIsMigrated(asWorkspace(JSON.stringify(RECORD)));
       throw new Error("expected a throw");
     } catch (err) {
-      expect((err as Error).message).toContain("ws_eng");
+      expect((err as Error).message).toContain("ws_002fbb9fda6654ca");
       expect((err as Error).message).toContain("migrate:workspace-connectors");
     }
   });

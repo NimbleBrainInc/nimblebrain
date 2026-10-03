@@ -24,7 +24,7 @@ function identity(id: string, orgRole: OrgRole = "member"): UserIdentity {
 
 function workspace(members: Array<{ userId: string; role: WorkspaceRole }>): Workspace {
   return {
-    id: "ws_acme",
+    id: "ws_000f7ed6658f9d30",
     name: "Acme",
     members,
     connectors: [],

@@ -31,7 +31,7 @@ const SHARED_SKILL_BODY =
   "Always answer in plain English. Avoid em-dashes. Match the user's voice.";
 
 const testDir = join(tmpdir(), `nimblebrain-ws-tier-skills-${Date.now()}`);
-const HOME_WORKSPACE_ID = "ws_home";
+const HOME_WORKSPACE_ID = "ws_003f694718dd468d";
 let runtime: Runtime;
 
 beforeAll(async () => {
@@ -174,7 +174,7 @@ describe("Layer 3 — workspace-tier `loading_strategy: always` skills", () => {
     // name validation, so the wall must hold on the REAL loader composition,
     // not a FakeRuntime. Plant a dynamic skill in another workspace and
     // assert each workspace's set sees only its own tier.
-    const otherWsId = "ws_other_tier";
+    const otherWsId = "ws_005adedf64e87a2c";
     const otherName = "other-only-playbook";
     const otherSkillsDir = join(testDir, "workspaces", otherWsId, "skills");
     mkdirSync(otherSkillsDir, { recursive: true });

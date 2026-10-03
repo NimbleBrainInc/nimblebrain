@@ -15,15 +15,15 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 function freshDir(): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "nb-composio-"));
-  seedWorkspaceRoot(dir, "ws_01abc");
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0001f3ac8053ce11");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 const SAMPLE = {
   connectedAccountId: "ca_test_123",
   toolkit: "gmail",
-  userId: "hq:ws_01abc",
+  userId: "hq:ws_0001f3ac8053ce11",
   connectedAt: "2026-05-12T00:00:00.000Z",
   status: "ACTIVE",
 };
@@ -65,17 +65,17 @@ describe("composioConnectorDir + composioConnectionPath", () => {
   test("builds the expected path under workspaces/<ws>/credentials/composio/<connectorSlug>/", () => {
     const dir = composioConnectorDir(
       "/work",
-      { type: "workspace", wsId: "ws_test" },
+      { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       "com.google/gmail",
     );
-    expect(dir).toBe("/work/workspaces/ws_test/credentials/composio/com.google-gmail");
+    expect(dir).toBe("/work/workspaces/ws_0076759dbbe19fcc/credentials/composio/com.google-gmail");
     const file = composioConnectionPath(
       "/work",
-      { type: "workspace", wsId: "ws_test" },
+      { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       "com.google/gmail",
     );
     expect(file).toBe(
-      "/work/workspaces/ws_test/credentials/composio/com.google-gmail/connection.json",
+      "/work/workspaces/ws_0076759dbbe19fcc/credentials/composio/com.google-gmail/connection.json",
     );
   });
 
@@ -121,19 +121,23 @@ describe("saveComposioConnection", () => {
     try {
       await saveComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
         SAMPLE,
       );
       const path = composioConnectionPath(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       );
       const fileStat = statSync(path);
       expect(fileStat.mode & 0o777).toBe(0o600);
       const dirStat = statSync(
-        composioConnectorDir(dir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail"),
+        composioConnectorDir(
+          dir,
+          { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+          "com.google/gmail",
+        ),
       );
       expect(dirStat.mode & 0o777).toBe(0o700);
       const content = JSON.parse(await readFile(path, "utf-8"));
@@ -148,20 +152,20 @@ describe("saveComposioConnection", () => {
     try {
       await saveComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
         SAMPLE,
       );
       const updated = { ...SAMPLE, connectedAccountId: "ca_second", status: "INACTIVE" };
       await saveComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
         updated,
       );
       const readBack = await readComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       );
       expect(readBack).toEqual(updated);
@@ -177,7 +181,7 @@ describe("readComposioConnection", () => {
     try {
       const result = await readComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       );
       expect(result).toBeNull();
@@ -192,19 +196,23 @@ describe("readComposioConnection", () => {
       // Seed with an invalid file by reaching past the public API.
       await saveComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
         SAMPLE,
       );
       const path = composioConnectionPath(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       );
       const { writeFile } = await import("node:fs/promises");
       await writeFile(path, "not-json");
       await expect(
-        readComposioConnection(dir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail"),
+        readComposioConnection(
+          dir,
+          { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+          "com.google/gmail",
+        ),
       ).rejects.toThrow();
     } finally {
       cleanup();
@@ -216,19 +224,23 @@ describe("readComposioConnection", () => {
     try {
       await saveComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
         SAMPLE,
       );
       const path = composioConnectionPath(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
       );
       const { writeFile } = await import("node:fs/promises");
       await writeFile(path, JSON.stringify({ connectedAccountId: "ca_x" }));
       await expect(
-        readComposioConnection(dir, { type: "workspace", wsId: "ws_test" }, "com.google/gmail"),
+        readComposioConnection(
+          dir,
+          { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+          "com.google/gmail",
+        ),
       ).rejects.toThrow(/missing required field/);
     } finally {
       cleanup();
@@ -237,7 +249,7 @@ describe("readComposioConnection", () => {
 
   test("round-trips the optional displayName, and omits it when absent", async () => {
     const { dir, cleanup } = freshDir();
-    const owner = { type: "workspace", wsId: "ws_test" } as const;
+    const owner = { type: "workspace", wsId: "ws_0076759dbbe19fcc" } as const;
     try {
       await saveComposioConnection(dir, owner, "com.google/gmail", {
         ...SAMPLE,
@@ -262,20 +274,20 @@ describe("hasPersistedComposioConnection", () => {
       expect(
         hasPersistedComposioConnection(
           dir,
-          { type: "workspace", wsId: "ws_test" },
+          { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
           "com.google/gmail",
         ),
       ).toBe(false);
       await saveComposioConnection(
         dir,
-        { type: "workspace", wsId: "ws_test" },
+        { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
         "com.google/gmail",
         SAMPLE,
       );
       expect(
         hasPersistedComposioConnection(
           dir,
-          { type: "workspace", wsId: "ws_test" },
+          { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
           "com.google/gmail",
         ),
       ).toBe(true);

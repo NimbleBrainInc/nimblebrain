@@ -4,7 +4,8 @@ import { composeSystemPrompt, type PromptAppInfo } from "../../src/prompt/compos
 
 /**
  * `## Installed Apps` is a line-oriented list: one `- ` bullet per app. Both
- * names on that line are connector-authored, so an unescaped newline in either
+ * names on that line come from config read as unchecked JSON (the catalog
+ * entry's title, a ref's server name), so an unescaped newline in either
  * forges a sibling entry. `sanitizeLineField` is the existing mitigation —
  * its own doc comment names "app name" — and it was applied to the focused-app
  * surface but not this one.
@@ -24,7 +25,7 @@ function appBullets(prompt: string): string[] {
   return (end === -1 ? rest : rest.slice(0, end)).filter((l) => l.startsWith("- "));
 }
 
-describe("formatAppsSection sanitizes connector-authored names", () => {
+describe("formatAppsSection sanitizes the names on an app's line", () => {
   // The forged text is not erased — `sanitizeLineField` folds the newline to a
   // space, so it survives as inert text on the app's own bullet. What must not
   // happen is a SECOND bullet: that is the structural forgery.
@@ -67,62 +68,11 @@ describe("formatAppsSection sanitizes connector-authored names", () => {
   });
 });
 
-describe("hostMetaToUiMeta bounds connector-authored display strings", () => {
-  test("name and icon are truncated to the shared bound", () => {
-    const ui = hostMetaToUiMeta({
-      host_version: "1.0",
-      name: "n".repeat(500),
-      icon: "i".repeat(500),
-    });
-    expect(ui?.name).toHaveLength(128);
-    expect(ui?.icon).toHaveLength(128);
-  });
-
-  test("an ordinary name and icon pass through unchanged", () => {
-    const ui = hostMetaToUiMeta({ host_version: "1.0", name: "People", icon: "users" });
-    expect(ui?.name).toBe("People");
-    expect(ui?.icon).toBe("users");
-  });
-
-  test("a missing icon stays an empty string, not undefined", () => {
-    expect(hostMetaToUiMeta({ host_version: "1.0", name: "People" })?.icon).toBe("");
-  });
-
-  // `hostMeta` is an unchecked cast over registry JSON, so a truthy non-string
-  // reaches here. Before the typeof guard these threw out of catalog projection
-  // (killing every entry, since `catalogEntries` has no per-entry try/catch), and
-  // an array — which has its own `.slice` — survived projection to throw later
-  // inside `sanitizeLineField` on the prompt path.
-  test.each([[123], [true], [{ a: 1 }], [["x"]]])(
-    "a truthy non-string name yields null rather than throwing: %p",
-    (name) => {
-      expect(() => hostMetaToUiMeta({ name } as never)).not.toThrow();
-      expect(hostMetaToUiMeta({ name } as never)).toBeNull();
-    },
-  );
-
-  test("a non-string icon degrades to empty rather than throwing", () => {
-    expect(() =>
-      hostMetaToUiMeta({ host_version: "1.0", name: "People", icon: 7 } as never),
-    ).not.toThrow();
-    expect(hostMetaToUiMeta({ host_version: "1.0", name: "People", icon: 7 } as never)?.icon).toBe(
-      "",
-    );
-  });
-
-  test("no name still yields null — the host needs a label to surface anything", () => {
-    expect(hostMetaToUiMeta({ icon: "users" } as never)).toBeNull();
-    expect(hostMetaToUiMeta(undefined)).toBeNull();
-  });
-});
-
-describe("the prompt path tolerates a malformed persisted ui.name", () => {
-  // `hostMetaToUiMeta`'s type guard covers the projection path only.
-  // `PromptAppInfo.ui.name` also arrives via `ref.ui` — persisted config read
-  // raw (`lifecycle.ts`: `ref.ui ?? manifestMeta?.ui ?? null`) — which the
-  // guard never sees. Before `sanitizeLineField` coerced, these threw inside
-  // `composeSystemPrompt`, i.e. every turn in the affected workspace; on the
-  // pre-guard code they rendered inertly because the template stringified them.
+describe("the prompt path tolerates a malformed ui.name", () => {
+  // `PromptAppInfo.ui.name` is the catalog entry's title, and the catalog is
+  // registry JSON cast without a check. Before `sanitizeLineField` coerced, a
+  // non-string threw inside `composeSystemPrompt`, i.e. every turn in the
+  // affected workspace.
   test.each([[123], [true], [{ a: 1 }], [["x"]]])(
     "a non-string ui.name renders instead of throwing: %p",
     (name) => {
@@ -140,22 +90,17 @@ describe("the prompt path tolerates a malformed persisted ui.name", () => {
 });
 
 describe("hostMetaToUiMeta guards placements", () => {
-  // Not an array, but truthy with a numeric `length` — so the old
-  // `placements && placements.length > 0` admitted it, and `sanitizePlacements`
-  // then threw on `for...of` out of catalog projection.
-  test("a non-array with a length is not assigned", () => {
-    const ui = hostMetaToUiMeta({
-      host_version: "1.0",
-      name: "People",
-      placements: { length: 1 },
-    } as never);
-    expect(ui?.placements).toBeUndefined();
-    expect(() => sanitizePlacements(ui?.placements)).not.toThrow();
+  // Not an array, but truthy with a numeric `length` — so a bare
+  // `placements && placements.length > 0` would admit it, and `sanitizePlacements`
+  // would then throw on `for...of` out of catalog projection.
+  test("a non-array with a length projects no UI and does not throw", () => {
+    const run = () => hostMetaToUiMeta({ host_version: "1.0", placements: { length: 1 } } as never);
+    expect(run).not.toThrow();
+    expect(run()).toBeNull();
   });
 
   test("a real placements array still passes through", () => {
     const ui = hostMetaToUiMeta({
-      name: "People",
       placements: [{ slot: "sidebar.apps", resourceUri: "ui://people/main" }],
     } as never);
     expect(ui?.placements).toHaveLength(1);

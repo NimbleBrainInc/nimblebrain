@@ -61,11 +61,11 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
     const provider = await buildUrlOAuthProvider(
       urlRef(),
       "granola",
-      new WorkspaceContext({ wsId: "ws_test", workDir }),
+      new WorkspaceContext({ wsId: "ws_0076759dbbe19fcc", workDir }),
       { allowInsecureRemotes: true },
       noop,
     );
-    expect(provider?.getOwner()).toEqual({ type: "workspace", wsId: "ws_test" });
+    expect(provider?.getOwner()).toEqual({ type: "workspace", wsId: "ws_0076759dbbe19fcc" });
   });
 
   it("identityOwner takes precedence — a stray wsContext can't bind a personal connector to a workspace", async () => {
@@ -77,7 +77,7 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
     const provider = await buildUrlOAuthProvider(
       urlRef(),
       "granola",
-      new WorkspaceContext({ wsId: "ws_test", workDir }),
+      new WorkspaceContext({ wsId: "ws_0076759dbbe19fcc", workDir }),
       { identityOwner: { userId: "usr_alice" }, workDir },
       noop,
     );

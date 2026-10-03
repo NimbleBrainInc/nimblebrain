@@ -95,7 +95,7 @@ const getClientCalls = { count: 0 };
 // leaks into another suite mid-run.
 mock.module("../../api/client", () => ({
   ...realClient,
-  getActiveWorkspaceId: () => "ws_test",
+  getActiveWorkspaceId: () => "ws_0076759dbbe19fcc",
   // Keep upload benign for this transport test (no upload triggered here).
   uploadResource: async () => {
     throw new Error("uploadResource not stubbed in this test");
@@ -264,7 +264,7 @@ describe("tools/call — MCP transport", () => {
 
     // The wire name is namespaced with the active workspace (Q3
     // auto-prefix) and qualified with the app's own server per
-    // REST-parity. Mock `getActiveWorkspaceId` returns `ws_test`. The app's
+    // REST-parity. Mock `getActiveWorkspaceId` returns `ws_0076759dbbe19fcc`. The app's
     // server is named under `RESOURCE_SOURCE_META_KEY`, which is how `/mcp`
     // holds the call to the MCP Apps app scope.
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];

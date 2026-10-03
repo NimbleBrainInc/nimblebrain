@@ -458,7 +458,7 @@ describe("MCP Server Auth", () => {
   });
 
   it("refuses an unknown workspace with the same 404 as any unreachable one", async () => {
-    const res = await fetch(`${authUrl}/mcp/ws_nosuchworkspace`, {
+    const res = await fetch(`${authUrl}/mcp/ws_0052529305537a66`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

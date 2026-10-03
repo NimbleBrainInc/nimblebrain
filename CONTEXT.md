@@ -32,7 +32,8 @@ it belongs in an MCP server, a Synapse app, or upstream MCP — not the runtime.
 ### Workspace
 The authorization boundary (ADR-0001). A session reaches exactly **one**
 workspace plus the caller's identity tools — never a union across workspaces. A
-workspace has an opaque id (`ws_<16-hex>`), members, and roles
+workspace has an opaque, generated id (`ws_<16-hex>`, the only form boot
+accepts, ADR-0042), members, and roles
 (`admin` | `member`). How a workspace came to exist never changes what it is
 (ADR-0039).
 

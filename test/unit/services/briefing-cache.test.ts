@@ -10,7 +10,7 @@ import {
   FACET_STALE_CEILING_MS,
 } from "../../../src/services/briefing-cache.ts";
 
-const KEY = { workspaceId: "ws_a", serverName: "tasks", facetName: "blocked" };
+const KEY = { workspaceId: "ws_00079598e311c160", serverName: "tasks", facetName: "blocked" };
 
 function harness() {
   let clock = 1_000_000;

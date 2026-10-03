@@ -75,7 +75,7 @@ async function buildHarness(
   opts: { sessionWsId: string | null } = { sessionWsId: null },
 ): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-install-t010-"));
-  const sharedWsId = "ws_helix";
+  const sharedWsId = "ws_003eba8844413cd9";
 
   const credStore = installTestCredentialStore(workDir);
   const workspaceStore = new WorkspaceStore(workDir);
@@ -144,7 +144,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     rmSync(h.workDir, { recursive: true, force: true });
   });
 
-  test("install into ws_helix persists ConnectorRef with oauthScope=workspace + wsId=ws_helix on disk", async () => {
+  test("install into ws_003eba8844413cd9 persists ConnectorRef with oauthScope=workspace + wsId=ws_003eba8844413cd9 on disk", async () => {
     const result = await h.tool.handler({
       action: "install",
       entry: dcrEntry(),

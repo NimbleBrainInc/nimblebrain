@@ -18,7 +18,7 @@ import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
 // contents→text extraction, the not-found mapping, and the list formatting are
 // all under test, not just the data-plane plumbing.
 
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const runtime = { requireWorkspaceId: () => WS } as unknown as Runtime;
 
 function handlerFor(name: string): (input: Record<string, unknown>) => Promise<{

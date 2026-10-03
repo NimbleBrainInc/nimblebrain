@@ -676,7 +676,7 @@ describe("E2E: SSE event filtering — only routed events pass through", () => {
     manager.emit({
       type: "connector.installed",
       data: {
-        wsId: "ws_test",
+        wsId: "ws_0076759dbbe19fcc",
         serverName: "tasks",
         connectorName: "https://tasks.example.com/mcp",
         version: "1.0.0",

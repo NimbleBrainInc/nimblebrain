@@ -69,8 +69,8 @@ const DISPLAY_NAME_MAX_LENGTH = 256;
  * Compute the `user_id` value passed to Composio at every API call.
  *
  * Multi-tenant production runs one tenant per pod with `NB_TENANT_ID`
- * stamped at deploy time; workspace IDs aren't globally unique
- * (`ws_01abc` exists in every tenant) so the tenant prefix is the
+ * stamped at deploy time; a workspace ID is unique only within its
+ * tenant (nothing stops two tenants holding the same one) so the tenant prefix is the
  * thing that disambiguates Composio's namespace. Single-tenant / local
  * dev simply uses `wsId` — Composio doesn't care about format, only
  * that the string be stable per connection.

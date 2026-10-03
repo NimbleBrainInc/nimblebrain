@@ -213,14 +213,14 @@ function withWorkspaceRole(
     children: React.createElement(WorkspaceProvider, {
       initialWorkspaces: [
         {
-          id: "ws_test",
+          id: "ws_0076759dbbe19fcc",
           name: "Test",
           memberCount: 2,
           connectorCount: 0,
           ...(userRole ? { userRole } : {}),
         },
       ],
-      initialActiveId: "ws_test",
+      initialActiveId: "ws_0076759dbbe19fcc",
       children: element,
     }),
   });

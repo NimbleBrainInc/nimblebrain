@@ -74,8 +74,8 @@ describe("the credential provider attaches the resolved broker key", () => {
 
   it("is workspace-independent — one broker account serves the tenant", () => {
     process.env.COMPOSIO_API_KEY = "k_env";
-    const a = composioCredentialProvider.credentialFor("ws_a", {});
-    const b = composioCredentialProvider.credentialFor("ws_b", {});
+    const a = composioCredentialProvider.credentialFor("ws_00079598e311c160", {});
+    const b = composioCredentialProvider.credentialFor("ws_001c32f121060ff3", {});
     expect(a).toEqual(b);
   });
 

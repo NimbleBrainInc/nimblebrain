@@ -113,21 +113,21 @@ async function mountAtSlug(url: string, shellWorkspaceId?: string): Promise<Moun
 
 describe("WorkspaceNotFoundPage — settledness is slug-derived", () => {
   test("shellStillOnPreviousWorkspace_rendersPending", async () => {
-    // The regression: shell holds ws_a, URL names ws_b. Comparing shell against
+    // The regression: shell holds ws_00079598e311c160, URL names ws_001c32f121060ff3. Comparing shell against
     // the lagging ambient workspace would read equal here and claim the app is
     // gone; against the slug it reads unsettled.
-    const { container } = await mountAtSlug("/w/b/app/ghost", "ws_a");
+    const { container } = await mountAtSlug("/w/001c32f121060ff3/app/ghost", "ws_00079598e311c160");
     expect(container.textContent).toContain("Loading");
     expect(container.textContent).not.toContain("isn’t available");
   });
 
   test("shellCaughtUpWithTheSlug_reportsNotAvailable", async () => {
-    const { container } = await mountAtSlug("/w/b/app/ghost", "ws_b");
+    const { container } = await mountAtSlug("/w/001c32f121060ff3/app/ghost", "ws_001c32f121060ff3");
     expect(container.textContent).toContain("isn’t available");
   });
 
   test("noShellYet_rendersPending", async () => {
-    const { container } = await mountAtSlug("/w/b/app/ghost", undefined);
+    const { container } = await mountAtSlug("/w/001c32f121060ff3/app/ghost", undefined);
     expect(container.textContent).toContain("Loading");
   });
 });

@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildHostContext, buildHostExtensions } from "../../../web/src/bridge/host-extensions.ts";
 
-const WORKSPACE = { id: "ws_example00000000", name: "Example" };
+const WORKSPACE = { id: "ws_00346dd043d9d217", name: "Example" };
 
 const UPLOADS = { maxFileSize: 26_214_400, maxTotalSize: 104_857_600 };
 

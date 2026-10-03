@@ -105,10 +105,10 @@ interface Violation {
 
 /**
  * True for a string literal whose text contains `ws_<id>-` where the
- * `<id>` slot is non-empty. Catches hard-coded `"ws_helix-crm__search"`
+ * `<id>` slot is non-empty. Catches hard-coded `"ws_3f9a1c7e0b2d4856-crm__search"`
  * and similar.
  *
- * Workspace ids match `[a-z0-9_]` (no hyphens) per
+ * Workspace ids match `ws_[a-f0-9]{16}` (no hyphens) per
  * `WORKSPACE_ID_PATTERN`, so the regex char class excludes `-`. The
  * first `-` after `ws_<id>` is unambiguously the workspace/tool
  * separator. Empty workspace slot (`"ws_-foo"`) is intentionally NOT

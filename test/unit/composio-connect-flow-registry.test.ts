@@ -5,7 +5,7 @@ import {
   registerConnectFlow,
 } from "../../src/connectors/providers/composio/connect-flow-registry.ts";
 
-const WS = { type: "workspace", wsId: "ws_test" } as const;
+const WS = { type: "workspace", wsId: "ws_0076759dbbe19fcc" } as const;
 const USR = { type: "user", userId: "usr_test" } as const;
 
 describe("composio connect-flow-registry", () => {

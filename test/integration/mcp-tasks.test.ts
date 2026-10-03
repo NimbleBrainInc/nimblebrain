@@ -239,7 +239,7 @@ let handle: ServerHandle;
 let baseUrl: string;
 let fakeSource: FakeTaskAwareSource;
 const testDir = join(tmpdir(), `nimblebrain-mcp-tasks-${Date.now()}`);
-const OTHER_WORKSPACE_ID = "ws_other";
+const OTHER_WORKSPACE_ID = "ws_005820c54ca342ad";
 /** The one task id `fake__minted` and `other__minted` both mint. */
 const MINTED_TASK_ID = "task_minted";
 /** Settles `fake__gated`. Replaced by the test that starts it. */

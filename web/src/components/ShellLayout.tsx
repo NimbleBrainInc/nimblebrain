@@ -211,7 +211,7 @@ function SidebarBody({
   return (
     <TooltipProvider>
       <SidebarHeader collapsed={collapsed} />
-      <div className={cn("shrink-0", collapsed ? "pb-1" : "pb-3")}>
+      <div className={cn("shrink-0", collapsed ? "pb-1" : "pt-2 pb-3")}>
         <WorkspaceSwitcher collapsed={collapsed} />
       </div>
 

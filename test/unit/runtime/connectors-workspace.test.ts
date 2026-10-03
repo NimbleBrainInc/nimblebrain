@@ -10,24 +10,24 @@ describe("resolveConnectorDataDirForRef", () => {
   const workDir = "/home/user/.nimblebrain";
 
   it("slug comes from the persisted ref.serverName (the install-time canonical slug)", () => {
-    const dir = resolveConnectorDataDirForRef(workDir, "ws_eng", {
+    const dir = resolveConnectorDataDirForRef(workDir, "ws_002fbb9fda6654ca", {
       url: "https://mcp.example.com/sse",
       serverName: "example-mcp",
     });
-    expect(dir).toBe(`${workDir}/workspaces/ws_eng/data/example-mcp`);
+    expect(dir).toBe(`${workDir}/workspaces/ws_002fbb9fda6654ca/data/example-mcp`);
   });
 
   it("without serverName: falls back to deriving the slug from the URL", () => {
-    const dir = resolveConnectorDataDirForRef(workDir, "ws_eng", {
+    const dir = resolveConnectorDataDirForRef(workDir, "ws_002fbb9fda6654ca", {
       url: "https://mcp.example.com/sse",
     });
-    expect(dir.startsWith(`${workDir}/workspaces/ws_eng/data/`)).toBe(true);
+    expect(dir.startsWith(`${workDir}/workspaces/ws_002fbb9fda6654ca/data/`)).toBe(true);
   });
 
   it("two workspaces with the same connector get separate directories", () => {
     const ref = { url: "https://mcp.example.com/sse", serverName: "example-mcp" };
-    expect(resolveConnectorDataDirForRef(workDir, "ws_eng", ref)).not.toBe(
-      resolveConnectorDataDirForRef(workDir, "ws_sales", ref),
+    expect(resolveConnectorDataDirForRef(workDir, "ws_002fbb9fda6654ca", ref)).not.toBe(
+      resolveConnectorDataDirForRef(workDir, "ws_006a3c0eb78706fc", ref),
     );
   });
 });

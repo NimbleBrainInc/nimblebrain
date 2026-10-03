@@ -9,7 +9,7 @@ import { handleList } from "../../../../../src/platform/conversations/tools/list
  * entry's workspace from its DIRECTORY. Cross-workspace scoping itself is
  * covered in test/unit/platform/conversations-workspace-scope.test.ts.
  */
-const SCOPE = { workspaceId: "ws_user_usr_test" };
+const SCOPE = { workspaceId: "ws_00859aff6f095b0e" };
 
 const TMP_DIR = join(import.meta.dir, ".tmp-list-tool");
 
@@ -46,7 +46,7 @@ function writeConvFile(spec: ConvSpec): string {
   }
 
   const filename = `conv_${spec.id}.jsonl`;
-  const dir = join(TMP_DIR, "ws_user_usr_test", "conversations", "usr_test");
+  const dir = join(TMP_DIR, "ws_00859aff6f095b0e", "conversations", "usr_test");
   mkdirSync(dir, { recursive: true });
   const path = join(dir, filename);
   writeFileSync(path, lines.map((l) => `${l}\n`).join(""));

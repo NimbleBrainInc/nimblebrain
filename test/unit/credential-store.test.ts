@@ -20,7 +20,7 @@ function freshStore(): {
   cleanup: () => void;
 } {
   const dir = mkdtempSync(join(tmpdir(), "nb-credstore-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   const events: EngineEvent[] = [];
   const store = new FileCredentialStore(dir, { eventSink: { emit: (e) => events.push(e) } });
   return { store, dir, events, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -38,9 +38,16 @@ describe("FileCredentialStore — on-disk mechanics", () => {
     const { store, dir, cleanup } = freshStore();
     try {
       await store.put(WS, "k1", "v1");
-      const filePath = join(dir, "workspaces", "ws_test", "credentials", "secrets", "k1");
+      const filePath = join(
+        dir,
+        "workspaces",
+        "ws_0076759dbbe19fcc",
+        "credentials",
+        "secrets",
+        "k1",
+      );
       expect(statSync(filePath).mode & 0o777).toBe(0o600);
-      const dirPath = join(dir, "workspaces", "ws_test", "credentials", "secrets");
+      const dirPath = join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets");
       expect(statSync(dirPath).mode & 0o777).toBe(0o700);
     } finally {
       cleanup();
@@ -60,7 +67,7 @@ describe("FileCredentialStore — on-disk mechanics", () => {
       expect(statSync(join(dir, "credentials", "secrets", "acme.db_url")).isFile()).toBe(true);
       expect(
         statSync(
-          join(dir, "workspaces", "ws_test", "credentials", "secrets", "acme.db_url"),
+          join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets", "acme.db_url"),
         ).isFile(),
       ).toBe(true);
       expect(
@@ -81,7 +88,7 @@ describe("FileCredentialStore — on-disk mechanics", () => {
     const { store, dir, cleanup } = freshStore();
     try {
       await store.put(WS, "acme.db_url", "v");
-      const secretsDir = join(dir, "workspaces", "ws_test", "credentials", "secrets");
+      const secretsDir = join(dir, "workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets");
       writeFileSync(join(secretsDir, ".acme.db_url.tmp.a1b2c3d4"), "half-written");
       expect((await store.list(WS)).map((k) => k.key)).toEqual(["acme.db_url"]);
     } finally {
@@ -107,7 +114,7 @@ describe("FileCredentialStore — on-disk mechanics", () => {
 describe("credentialScopeLabel", () => {
   test("names the owner", () => {
     expect(credentialScopeLabel(INSTANCE)).toBe("instance");
-    expect(credentialScopeLabel(WS)).toBe("workspace:ws_test");
+    expect(credentialScopeLabel(WS)).toBe("workspace:ws_0076759dbbe19fcc");
     expect(credentialScopeLabel(USER)).toBe("user:usr_alex01");
   });
 });

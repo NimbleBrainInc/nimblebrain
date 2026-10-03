@@ -366,7 +366,7 @@ describe("composeSystemPrompt — apps injection", () => {
 // model an empty tool list and forcing it to hallucinate tool calls.
 
 describe("surfaceTools — namespaced (cross-workspace) names", () => {
-  const WS = "ws_helix";
+  const WS = "ws_003eba8844413cd9";
   const ns = (name: string) => namespacedToolName(WS, name);
   const makeNsSystemTools = (count = 4): ToolSchema[] =>
     makeSystemTools(count).map((t) => makeTool(ns(t.name)));

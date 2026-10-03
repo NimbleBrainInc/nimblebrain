@@ -34,8 +34,8 @@ import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 
 const OWNER_ID = "usr_test";
 const PEER_ID = "usr_peer";
-/** A workspace id in the legacy `ws_user_<userId>` form — opaque like any other. */
-const WS_PERSONAL = `ws_user_${OWNER_ID}`;
+/** The owner's own workspace. */
+const WS_PERSONAL = "ws_cccccccccccccccc";
 const WS_A = "ws_aaaaaaaaaaaaaaaa";
 const WS_B = "ws_bbbbbbbbbbbbbbbb";
 

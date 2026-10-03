@@ -36,7 +36,7 @@ let uploadStub: (files: File[]) => Promise<{ files: unknown[]; errors?: string[]
 
 mock.module("../../api/client", () => ({
   ...realClient,
-  getActiveWorkspaceId: () => "ws_test",
+  getActiveWorkspaceId: () => "ws_0076759dbbe19fcc",
   uploadResource: (files: File[]) => uploadStub(files),
 }));
 

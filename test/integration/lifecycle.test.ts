@@ -110,7 +110,7 @@ function startMockRemoteServer(): MockRemoteServer {
 }
 
 const SERVER_NAME = "remote-echo";
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 
 /**
  * Connect the mock server and record it on the lifecycle, as the install path
@@ -266,15 +266,15 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
       {
         url: "https://ipinfo.example.com/mcp",
         serverName: "ipinfo",
-        ui: { name: "IPInfo", icon: "globe" },
+        ui: { placements: [{ slot: "sidebar.apps", resourceUri: "ui://ipinfo/main" }] },
       },
       undefined,
-      "ws_test",
+      "ws_0076759dbbe19fcc",
     );
 
-    const instance = lifecycle.getInstance("ipinfo", "ws_test")!;
+    const instance = lifecycle.getInstance("ipinfo", "ws_0076759dbbe19fcc")!;
     expect(instance).toBeDefined();
-    expect(instance.ui?.name).toBe("IPInfo");
+    expect(instance.ui?.placements?.[0]?.resourceUri).toBe("ui://ipinfo/main");
     // No credential on the ref and no persisted tokens: the connector is
     // installed but not connected, and the seeded state says so.
     expect(instance.state).toBe("not_authenticated");
@@ -293,13 +293,13 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
         version: "0.1.0",
         ui: null,
       },
-      "ws_eng",
+      "ws_002fbb9fda6654ca",
     );
 
-    const instance = lifecycle.getInstance("crm", "ws_eng")!;
+    const instance = lifecycle.getInstance("crm", "ws_002fbb9fda6654ca")!;
     expect(instance.connectorName).toBe("ai.nimblebrain/crm");
     expect(instance.version).toBe("0.1.0");
-    expect(instance.wsId).toBe("ws_eng");
+    expect(instance.wsId).toBe("ws_002fbb9fda6654ca");
   });
 
   it("seedInstance retains the ref so a source can be reconstructed on demand", async () => {
@@ -310,13 +310,13 @@ describe("ConnectorLifecycleManager — instance tracking", () => {
       scopes: ["read"],
     };
 
-    await lifecycle.seedInstance("crm", ref.url, ref, undefined, "ws_eng");
+    await lifecycle.seedInstance("crm", ref.url, ref, undefined, "ws_002fbb9fda6654ca");
 
-    expect(lifecycle.getInstance("crm", "ws_eng")?.ref).toEqual(ref);
+    expect(lifecycle.getInstance("crm", "ws_002fbb9fda6654ca")?.ref).toEqual(ref);
   });
 
   it("getInstance returns undefined for an unknown server name", () => {
     const lifecycle = new ConnectorLifecycleManager(makeEventCollector());
-    expect(lifecycle.getInstance("nonexistent", "ws_test")).toBeUndefined();
+    expect(lifecycle.getInstance("nonexistent", "ws_0076759dbbe19fcc")).toBeUndefined();
   });
 });

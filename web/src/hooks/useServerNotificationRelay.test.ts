@@ -41,7 +41,7 @@ function relay() {
 let previousWorkspace: string | null;
 beforeEach(() => {
   previousWorkspace = getActiveWorkspaceId();
-  setActiveWorkspaceId("ws_a");
+  setActiveWorkspaceId("ws_00079598e311c160");
 });
 
 afterEach(() => {
@@ -59,7 +59,7 @@ describe("useServerNotificationRelay", () => {
 
     relay()({
       server: "notes",
-      workspaceId: "ws_a",
+      workspaceId: "ws_00079598e311c160",
       method: LIST_CHANGED,
       params: { _meta: { n: 1 } },
     });
@@ -72,7 +72,7 @@ describe("useServerNotificationRelay", () => {
 
   test("a notification with no params is posted with none", () => {
     const inbox = mountIframe("notes");
-    relay()({ server: "notes", workspaceId: "ws_a", method: LIST_CHANGED });
+    relay()({ server: "notes", workspaceId: "ws_00079598e311c160", method: LIST_CHANGED });
     expect(inbox).toEqual([{ jsonrpc: "2.0", method: LIST_CHANGED }]);
   });
 
@@ -83,19 +83,23 @@ describe("useServerNotificationRelay", () => {
     } as unknown as HTMLIFrameElement;
     const inbox = mountIframe("notes");
     fakeIframes.push(iframe);
-    relay()({ server: "notes", workspaceId: "ws_a", method: LIST_CHANGED });
+    relay()({ server: "notes", workspaceId: "ws_00079598e311c160", method: LIST_CHANGED });
     expect(inbox).toHaveLength(1);
   });
 
   test("a method the host does not relay to views is dropped", () => {
     const inbox = mountIframe("notes");
-    relay()({ server: "notes", workspaceId: "ws_a", method: "notifications/message" });
+    relay()({
+      server: "notes",
+      workspaceId: "ws_00079598e311c160",
+      method: "notifications/message",
+    });
     expect(inbox).toEqual([]);
   });
 
   test("a notification for a workspace that is not on screen is dropped", () => {
     const inbox = mountIframe("notes");
-    relay()({ server: "notes", workspaceId: "ws_b", method: LIST_CHANGED });
+    relay()({ server: "notes", workspaceId: "ws_001c32f121060ff3", method: LIST_CHANGED });
     expect(inbox).toEqual([]);
   });
 
@@ -104,14 +108,14 @@ describe("useServerNotificationRelay", () => {
     // workspace with the one on screen is how every such notification was lost.
     const inbox = mountIframe("files");
     relay()({ server: "files", userId: "usr_a", method: LIST_CHANGED });
-    expect(getActiveWorkspaceId()).toBe("ws_a");
+    expect(getActiveWorkspaceId()).toBe("ws_00079598e311c160");
     expect(inbox).toEqual([{ jsonrpc: "2.0", method: LIST_CHANGED }]);
   });
 
   test("before the active workspace is known, it is delivered rather than lost", () => {
     setActiveWorkspaceId(null);
     const inbox = mountIframe("notes");
-    relay()({ server: "notes", workspaceId: "ws_b", method: LIST_CHANGED });
+    relay()({ server: "notes", workspaceId: "ws_001c32f121060ff3", method: LIST_CHANGED });
     expect(inbox).toHaveLength(1);
   });
 });

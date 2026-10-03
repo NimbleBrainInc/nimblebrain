@@ -94,7 +94,7 @@ async function boot(
   serverName: string,
   opts: { wsId?: string; started?: boolean } = {},
 ): Promise<{ wsId: string; source: McpSource | null }> {
-  const wsId = opts.wsId ?? "ws_one";
+  const wsId = opts.wsId ?? "ws_00547d5d5b3d95e2";
   const registry = registryFor(wsId);
   let source: McpSource | null = null;
   if (opts.started !== false) {
@@ -117,7 +117,7 @@ describe("collectPollTargets", () => {
 
     expect(targets).toHaveLength(1);
     expect(targets[0]).toMatchObject({
-      wsId: "ws_one",
+      wsId: "ws_00547d5d5b3d95e2",
       serverName: "acme",
       resource: "acme://notifications",
     });
@@ -130,7 +130,7 @@ describe("collectPollTargets", () => {
     await boot("acme");
 
     const connection = lifecycle
-      .getInstance("acme", "ws_one")
+      .getInstance("acme", "ws_00547d5d5b3d95e2")
       ?.connections?.get(WORKSPACE_PRINCIPAL_ID);
 
     expect(connection?.state).toBe("running");
@@ -144,7 +144,7 @@ describe("collectPollTargets", () => {
     // time would keep reading a stopped object forever.
     await boot("acme");
     const reconnected = startedSource("acme");
-    await registryFor("ws_one").adoptSource(reconnected);
+    await registryFor("ws_00547d5d5b3d95e2").adoptSource(reconnected);
 
     const targets = await collectPollTargets(lifecycle, declaresOutbox);
 
@@ -159,14 +159,17 @@ describe("collectPollTargets", () => {
     // Asking the runtime each time is what makes that true for any way the map
     // can move, so this exercises the harder one: replaced wholesale between
     // the two workspaces. Against a reference captured at wiring time, or a
-    // copy of the contents, `ws_provisioned_later` is skipped silently.
-    await boot("acme", { wsId: "ws_at_boot" });
+    // copy of the contents, `ws_0063051ab7685c75` is skipped silently.
+    await boot("acme", { wsId: "ws_001a37a35caab9f0" });
     registries = new Map(registries);
-    await boot("acme", { wsId: "ws_provisioned_later" });
+    await boot("acme", { wsId: "ws_0063051ab7685c75" });
 
     const targets = await collectPollTargets(lifecycle, declaresOutbox);
 
-    expect(targets.map((t) => t.wsId).sort()).toEqual(["ws_at_boot", "ws_provisioned_later"]);
+    expect(targets.map((t) => t.wsId).sort()).toEqual([
+      "ws_001a37a35caab9f0",
+      "ws_0063051ab7685c75",
+    ]);
   });
 
   test("a connector whose source is not registered is not a target", async () => {
@@ -194,7 +197,12 @@ describe("collectPollTargets", () => {
     "stopped",
   ])("skips a connection in state %s", async (state) => {
     await boot("acme");
-    lifecycle.recordConnectionStateChange("acme", "ws_one", WORKSPACE_PRINCIPAL_ID, state);
+    lifecycle.recordConnectionStateChange(
+      "acme",
+      "ws_00547d5d5b3d95e2",
+      WORKSPACE_PRINCIPAL_ID,
+      state,
+    );
 
     expect(await collectPollTargets(lifecycle, declaresOutbox)).toEqual([]);
   });
@@ -206,19 +214,19 @@ describe("collectPollTargets", () => {
     await boot("acme");
     lifecycle.recordConnectionStateChange(
       "acme",
-      "ws_one",
+      "ws_00547d5d5b3d95e2",
       WORKSPACE_PRINCIPAL_ID,
       "not_authenticated",
     );
-    lifecycle.recordConnectionStateChange("acme", "ws_one", "usr_1", "running");
+    lifecycle.recordConnectionStateChange("acme", "ws_00547d5d5b3d95e2", "usr_1", "running");
 
     expect(await collectPollTargets(lifecycle, declaresOutbox)).toEqual([]);
   });
 
   test("resolves each connector's declaration once, however many workspaces hold it", async () => {
-    await boot("acme", { wsId: "ws_one" });
-    await boot("acme", { wsId: "ws_two" });
-    await boot("acme", { wsId: "ws_three" });
+    await boot("acme", { wsId: "ws_00547d5d5b3d95e2" });
+    await boot("acme", { wsId: "ws_0079497e5a2649c6" });
+    await boot("acme", { wsId: "ws_0078bc963588c02e" });
 
     let lookups = 0;
     const targets = await collectPollTargets(lifecycle, async () => {

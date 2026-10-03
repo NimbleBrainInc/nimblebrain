@@ -95,7 +95,7 @@ function findAllByTestId(container: HTMLElement, testid: string): HTMLElement[] 
 }
 
 const WS: WorkspaceInfo = {
-  id: "ws_acme",
+  id: "ws_000f7ed6658f9d30",
   name: "Acme",
   memberCount: 2,
   connectorCount: 0,
@@ -138,7 +138,7 @@ function harness(shellWorkspaceId: string | undefined, placements: PlacementEntr
 describe("WorkspaceOverviewPage — app grid three states", () => {
   test("not ready (shell lags this workspace) → a stable spacer, never the empty card", async () => {
     // Shell still reflects a different workspace (the switch/deep-link window).
-    mounted = await mount(harness("ws_other", [appPlacement({})]));
+    mounted = await mount(harness("ws_005820c54ca342ad", [appPlacement({})]));
 
     // A held space, not a pulsing skeleton — the page stays mounted across a
     // switch, so the apps section just holds its place until the shell resolves.
@@ -164,7 +164,14 @@ describe("WorkspaceOverviewPage — app grid three states", () => {
     mounted = await mount(
       harness(WS.id, [
         appPlacement({ route: "crm", label: "CRM", resourceUri: "ui://crm/main" }),
-        appPlacement({ route: "todo", label: "Todo", resourceUri: "ui://todo/main" }),
+        // Its own connector: the header counts apps, and two placements of one
+        // connector are one app with two views.
+        appPlacement({
+          serverName: "todo",
+          route: "todo",
+          label: "Todo",
+          resourceUri: "ui://todo/main",
+        }),
       ]),
     );
 
@@ -230,7 +237,7 @@ describe("WorkspaceOverviewPage — briefing", () => {
       Promise.resolve({ isError: false, structuredContent: { items: [], generated_at: "" } });
     mounted = await mount(
       <WorkspaceAppIconsContext.Provider
-        value={{ iconFor: () => undefined, connectors: { workspaceId: "ws_other", installed: [] } }}
+        value={{ iconFor: () => undefined, connectors: { workspaceId: "ws_005820c54ca342ad", installed: [] } }}
       >
         <MemoryRouter initialEntries={[`/w/${toSlug(WS.id)}`]}>
           <WorkspaceProvider initialWorkspaces={[WS]} initialActiveId={WS.id}>

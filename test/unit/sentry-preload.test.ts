@@ -95,7 +95,7 @@ describe("scrubBreadcrumb", () => {
   it("strips query strings from breadcrumb URLs, keeping the path", () => {
     const crumb = {
       category: "http",
-      data: { url: "https://api.anthropic.com/v1/messages?token=sk-abc&id=ws_1" },
+      data: { url: "https://api.anthropic.com/v1/messages?token=sk-abc&id=ws_0002ee92e8791c13" },
     } as unknown as Breadcrumb;
     expect(scrubBreadcrumb(crumb)?.data?.url).toBe("https://api.anthropic.com/v1/messages");
   });
@@ -117,7 +117,7 @@ describe("scrubEvent", () => {
         cookies: { session: "secret" },
         headers: { authorization: "Bearer t" },
         data: { prompt: "private" },
-        query_string: "wsId=ws_123",
+        query_string: "wsId=ws_00032b8b4d0438d3",
       },
     } as unknown as ErrorEvent;
 
@@ -133,7 +133,7 @@ describe("scrubEvent", () => {
 
   it("strips a query string embedded in request.url (symmetric with breadcrumbs)", () => {
     const event = {
-      request: { url: "https://api/v1/x?token=sk-abc&id=ws_1" },
+      request: { url: "https://api/v1/x?token=sk-abc&id=ws_0002ee92e8791c13" },
     } as unknown as ErrorEvent;
     expect(scrubEvent(event).request?.url).toBe("https://api/v1/x");
   });

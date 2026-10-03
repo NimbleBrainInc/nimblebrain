@@ -41,22 +41,25 @@ function workspaceStore(
 }
 
 test("a conversation born in workspace A is unreachable through workspace B's store", async () => {
-  const storeA = workspaceStore("ws_helix", "usr_alice");
-  const conv = await storeA.create({ ownerId: "usr_alice", workspaceId: "ws_helix" });
+  const storeA = workspaceStore("ws_003eba8844413cd9", "usr_alice");
+  const conv = await storeA.create({ ownerId: "usr_alice", workspaceId: "ws_003eba8844413cd9" });
 
   // Same workspace, same owner → loads.
   expect(await storeA.load(conv.id)).not.toBeNull();
 
   // Different workspace (same owner) → the file isn't in that dir, so null. The path
   // is the wall: a chat that hops workspaces cannot carry its context across.
-  const storeB = workspaceStore("ws_acme", "usr_alice");
+  const storeB = workspaceStore("ws_000f7ed6658f9d30", "usr_alice");
   expect(await storeB.load(conv.id)).toBeNull();
 });
 
 test("two owners in the same workspace are physically partitioned", async () => {
-  const alice = workspaceStore("ws_helix", "usr_alice");
-  const bob = workspaceStore("ws_helix", "usr_bob");
-  const aliceConv = await alice.create({ ownerId: "usr_alice", workspaceId: "ws_helix" });
+  const alice = workspaceStore("ws_003eba8844413cd9", "usr_alice");
+  const bob = workspaceStore("ws_003eba8844413cd9", "usr_bob");
+  const aliceConv = await alice.create({
+    ownerId: "usr_alice",
+    workspaceId: "ws_003eba8844413cd9",
+  });
 
   // Bob's store (a different `<ownerId>/` sub-partition) never sees Alice's file.
   expect(await bob.load(aliceConv.id)).toBeNull();
@@ -64,11 +67,11 @@ test("two owners in the same workspace are physically partitioned", async () => 
 
 test("onMutate fires on create, append, and delete (cache invalidation hook)", async () => {
   let mutations = 0;
-  const store = workspaceStore("ws_helix", "usr_alice", () => {
+  const store = workspaceStore("ws_003eba8844413cd9", "usr_alice", () => {
     mutations += 1;
   });
 
-  const conv = await store.create({ ownerId: "usr_alice", workspaceId: "ws_helix" });
+  const conv = await store.create({ ownerId: "usr_alice", workspaceId: "ws_003eba8844413cd9" });
   expect(mutations).toBe(1);
 
   // An append changes the conversation's summary, so it must invalidate the
@@ -85,7 +88,7 @@ test("onMutate fires on create, append, and delete (cache invalidation hook)", a
 });
 
 test("the conversation records its bound workspace as workspaceId", async () => {
-  const store = workspaceStore("ws_helix", "usr_alice");
-  const conv = await store.create({ ownerId: "usr_alice", workspaceId: "ws_helix" });
-  expect(conv.workspaceId).toBe("ws_helix");
+  const store = workspaceStore("ws_003eba8844413cd9", "usr_alice");
+  const conv = await store.create({ ownerId: "usr_alice", workspaceId: "ws_003eba8844413cd9" });
+  expect(conv.workspaceId).toBe("ws_003eba8844413cd9");
 });

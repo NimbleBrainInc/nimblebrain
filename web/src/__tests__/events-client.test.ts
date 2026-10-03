@@ -111,7 +111,11 @@ describe("events-client — event routing", () => {
     subscribe("config.changed", c);
 
     // Drive an event through the fake's captured onEvent.
-    lastOptions!.onEvent("server.notification", { server: "x", method: "y", workspaceId: "ws_a" });
+    lastOptions!.onEvent("server.notification", {
+      server: "x",
+      method: "y",
+      workspaceId: "ws_00079598e311c160",
+    });
 
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
@@ -129,7 +133,7 @@ describe("events-client — event routing", () => {
     lastOptions!.onEvent("server.notification", {
       server: "x",
       method: "notifications/message",
-      workspaceId: "ws_a",
+      workspaceId: "ws_00079598e311c160",
     });
 
     expect(thrower).toHaveBeenCalledTimes(1);

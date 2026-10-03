@@ -21,7 +21,9 @@ const FULL: NotificationPresentation = {
 const MINIMAL: NotificationPresentation = { level: "info", title: "domain.active" };
 
 /** What the runtime contributes. Supplied by the dispatcher, never by a server. */
-const HOST = { inboxUrl: "https://tenant.example/w/team/notifications?item=acme%3Aevt_1" };
+const HOST = {
+  inboxUrl: "https://tenant.example/w/0071a5bbf40116e6/notifications?item=acme%3Aevt_1",
+};
 
 /** Every case below renders against the same host block unless it says otherwise. */
 function render(
@@ -147,7 +149,9 @@ describe("what it does not do", () => {
 describe("inbox.url — the one placeholder the host supplies", () => {
   test("resolves to the address the dispatcher built", () => {
     const { input, misses } = render({ text: "Open: {{inbox.url}}" }, MINIMAL);
-    expect(input.text).toBe("Open: https://tenant.example/w/team/notifications?item=acme%3Aevt_1");
+    expect(input.text).toBe(
+      "Open: https://tenant.example/w/0071a5bbf40116e6/notifications?item=acme%3Aevt_1",
+    );
     expect(misses).toBe(0);
   });
 
@@ -164,7 +168,7 @@ describe("inbox.url — the one placeholder the host supplies", () => {
     const { input } = render({ text: "{{link.resource}} vs {{inbox.url}}" }, FULL);
     expect(input.text).toBe(
       "acme://domains/acme-outreach.com vs " +
-        "https://tenant.example/w/team/notifications?item=acme%3Aevt_1",
+        "https://tenant.example/w/0071a5bbf40116e6/notifications?item=acme%3Aevt_1",
     );
   });
 });

@@ -30,13 +30,13 @@ describe("appNameFromToolName (web)", () => {
     // Regression: the chat transcript used to slice on `__` alone, leaving
     // the `ws_<id>-` prefix attached. The bare name is what the REST
     // resource-read surfaces key the registry by; the namespaced form 403s.
-    expect(appNameFromToolName("ws_nimblebrain_shared-synapse-collateral__export_pdf")).toBe(
+    expect(appNameFromToolName("ws_004eae9586108d8c-synapse-collateral__export_pdf")).toBe(
       "synapse-collateral",
     );
   });
 
   test("hyphenated source names survive (only the ws_<id>- head is removed)", () => {
-    expect(appNameFromToolName("ws_helix-synapse-todo-board__create_task")).toBe(
+    expect(appNameFromToolName("ws_003eba8844413cd9-synapse-todo-board__create_task")).toBe(
       "synapse-todo-board",
     );
   });
@@ -46,23 +46,23 @@ describe("appNameFromToolName (web)", () => {
   });
 
   test("no __ separator → undefined (not an app-owned call)", () => {
-    expect(appNameFromToolName("ws_helix-nb")).toBeUndefined();
+    expect(appNameFromToolName("ws_003eba8844413cd9-nb")).toBeUndefined();
     expect(appNameFromToolName("plain")).toBeUndefined();
   });
 });
 
 describe("parseNamespacedToolName (web)", () => {
   test("parses ws_<id>-<tool> to workspace scope", () => {
-    expect(parseNamespacedToolName("ws_helix-crm__search")).toEqual({
-      scope: { kind: "workspace", wsId: "ws_helix" },
+    expect(parseNamespacedToolName("ws_003eba8844413cd9-crm__search")).toEqual({
+      scope: { kind: "workspace", wsId: "ws_003eba8844413cd9" },
       toolName: "crm__search",
     });
   });
 
   test("first `-` is the separator — tool names may contain `-`", () => {
-    // Mirrors the platform primitive: `ws_helix-foo-bar` → toolName "foo-bar"
-    expect(parseNamespacedToolName("ws_helix-foo-bar")).toEqual({
-      scope: { kind: "workspace", wsId: "ws_helix" },
+    // Mirrors the platform primitive: `ws_003eba8844413cd9-foo-bar` → toolName "foo-bar"
+    expect(parseNamespacedToolName("ws_003eba8844413cd9-foo-bar")).toEqual({
+      scope: { kind: "workspace", wsId: "ws_003eba8844413cd9" },
       toolName: "foo-bar",
     });
   });
@@ -89,7 +89,7 @@ describe("parseNamespacedToolName (web)", () => {
   });
 
   test("returns null on empty tool component after a workspace prefix", () => {
-    expect(parseNamespacedToolName("ws_helix-")).toBeNull();
+    expect(parseNamespacedToolName("ws_003eba8844413cd9-")).toBeNull();
   });
 
   test("returns null on a malformed ws_ prefix (workspace attempt, not global)", () => {
@@ -131,8 +131,8 @@ describe("web workspace-id regex stays in lockstep with the server (T012)", () =
     // codegen step re-emits and this assertion stays green automatically.
     // If a contributor edits the generated file by hand, `check:codegen`
     // fails before the test runs.
-    expect(WORKSPACE_ID_PATTERN).toBe("^ws_[a-z0-9_]{1,64}$");
-    expect(WORKSPACE_ID_FLAGS).toBe("i");
+    expect(WORKSPACE_ID_PATTERN).toBe("^ws_[a-f0-9]{16}$");
+    expect(WORKSPACE_ID_FLAGS).toBe("");
   });
 
   test("web parser uses the imported literal as its regex source", () => {
@@ -146,7 +146,7 @@ describe("web workspace-id regex stays in lockstep with the server (T012)", () =
   });
 
   test("the imported pattern rejects shapes the parser must reject", () => {
-    // Hyphens, no-prefix, path traversal, length-overflow — the same
+    // Hyphens, no-prefix, path traversal, wrong length, case — the same
     // shapes the parser's `null` returns cover, but asserted here
     // directly against the regex so any future widening of the pattern
     // string surfaces as a parser-test failure without code churn.
@@ -155,9 +155,11 @@ describe("web workspace-id regex stays in lockstep with the server (T012)", () =
     expect(re.test("ws_with-hyphen")).toBe(false); // hyphen inside
     expect(re.test("helix")).toBe(false); // no prefix
     expect(re.test("ws_..")).toBe(false); // path traversal
-    expect(re.test(`ws_${"a".repeat(65)}`)).toBe(false); // length overflow
-    expect(re.test("ws_helix")).toBe(true); // canonical
-    expect(re.test("ws_USER_abc")).toBe(true); // case-insensitive flag
+    expect(re.test(`ws_${"a".repeat(17)}`)).toBe(false); // too long
+    expect(re.test(`ws_${"a".repeat(15)}`)).toBe(false); // too short
+    expect(re.test("ws_3F9A1C7E0B2D4856")).toBe(false); // case-sensitive
+    expect(re.test("ws_acme_corp")).toBe(false); // a slug is not an id
+    expect(re.test("ws_003eba8844413cd9")).toBe(true); // canonical
   });
 });
 

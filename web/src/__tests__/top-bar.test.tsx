@@ -6,7 +6,12 @@
 //   2. An app trail one deep shows its label and no back control.
 //   3. A deeper trail shows its last label and a back control that asks the
 //      app (through the navigate it published) for the entry before the last.
-//   4. Chat sits in the bar on workspace routes only, where chat exists.
+//   4. The same trail's ancestors form a breadcrumb; each asks the app for its
+//      own entry. Past three ancestors the middle folds, root and parent stay.
+//   5. Chat sits in the bar on workspace routes only, where chat exists.
+//   6. The inbox's bell sits left of Chat on workspace routes, links to the
+//      focused workspace's inbox, and shows a dot only while something is
+//      unread, the count in its accessible name.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -29,11 +34,15 @@ const { MemoryRouter } = await import("react-router-dom");
 const { AppLocationProvider, useAppLocation } = await import("../context/AppLocationContext");
 const { ChatProvider } = await import("../context/ChatContext");
 const { ChatPanelProvider } = await import("../context/ChatPanelContext");
+const { NotificationsContext } = await import("../context/NotificationsContext");
 const { ShellProvider } = await import("../context/ShellContext");
 const { SidebarProvider } = await import("../context/SidebarContext");
+const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { TopBar } = await import("../components/shell/TopBar");
 
 import type { AppLocationContextValue } from "../context/AppLocationContext";
+import type { NotificationsValue } from "../context/NotificationsContext";
+import type { WorkspaceInfo } from "../context/WorkspaceContext";
 import type { PlacementEntry } from "../types";
 
 const PEOPLE: PlacementEntry = {
@@ -56,31 +65,56 @@ function LocationProbe() {
 let container: HTMLDivElement;
 let root: ReturnType<typeof ReactDOMClient.createRoot>;
 
-async function mountBar(path: string): Promise<void> {
+const ACME: WorkspaceInfo = {
+  id: "ws_000f7ed6658f9d30",
+  name: "Acme",
+  connectorCount: 0,
+  memberCount: 1,
+  userRole: "admin",
+};
+
+function inbox(unread: number): NotificationsValue {
+  return {
+    items: [],
+    unread,
+    loading: false,
+    error: null,
+    atPageLimit: false,
+    refresh: () => {},
+    markRead: async () => {},
+    markAllRead: async () => {},
+  };
+}
+
+async function mountBar(path: string, unread = 0): Promise<void> {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[path]}>
-        <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
-          <ChatPanelProvider>
-            <SidebarProvider>
-              <ShellProvider
-                value={{
-                  forSlot: (slot) => (slot === "sidebar" ? [PEOPLE] : []),
-                  mainRoutes: () => [],
-                  shellWorkspaceId: "ws_a",
-                }}
-              >
-                <AppLocationProvider>
-                  <LocationProbe />
-                  <TopBar />
-                </AppLocationProvider>
-              </ShellProvider>
-            </SidebarProvider>
-          </ChatPanelProvider>
-        </ChatProvider>
+        <WorkspaceProvider initialWorkspaces={[ACME]} initialActiveId="ws_000f7ed6658f9d30">
+          <NotificationsContext.Provider value={inbox(unread)}>
+            <ChatProvider currentUserId="u1" initialConfig={{ configuredProviders: ["anthropic"] }}>
+              <ChatPanelProvider>
+                <SidebarProvider>
+                  <ShellProvider
+                    value={{
+                      forSlot: (slot) => (slot === "sidebar" ? [PEOPLE] : []),
+                      mainRoutes: () => [],
+                      shellWorkspaceId: "ws_00079598e311c160",
+                    }}
+                  >
+                    <AppLocationProvider>
+                      <LocationProbe />
+                      <TopBar />
+                    </AppLocationProvider>
+                  </ShellProvider>
+                </SidebarProvider>
+              </ChatPanelProvider>
+            </ChatProvider>
+          </NotificationsContext.Provider>
+        </WorkspaceProvider>
       </MemoryRouter>,
     );
   });
@@ -90,6 +124,11 @@ const byTestId = (id: string) =>
   Array.from(container.getElementsByTagName("*")).find(
     (el) => el.getAttribute("data-testid") === id,
   ) as HTMLElement | undefined;
+
+const crumbButtons = () =>
+  Array.from(container.getElementsByTagName("button")).filter(
+    (el) => el.getAttribute("data-testid") === "top-bar-crumb",
+  );
 
 beforeEach(() => {
   localStorage.setItem("nb:chatPanelState", "closed");
@@ -103,13 +142,13 @@ afterEach(() => {
 
 describe("TopBar", () => {
   test("with no app trail, the title is the route's own name", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     expect(byTestId("top-bar-title")?.textContent).toBe("People");
     expect(byTestId("top-bar-back")).toBeUndefined();
   });
 
   test("a trail one deep shows its label and no back control", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     await act(async () =>
       location.setAppLocation({ trail: [{ id: "list", label: "Contacts" }], navigate: () => {} }),
     );
@@ -118,13 +157,13 @@ describe("TopBar", () => {
   });
 
   test("a deeper trail shows its last label, and back asks the app for the entry before it", async () => {
-    await mountBar("/w/acme/app/people");
+    await mountBar("/w/000f7ed6658f9d30/app/people");
     const navigate = mock((_id: string) => {});
     await act(async () =>
       location.setAppLocation({
         trail: [
           { id: "people", label: "People" },
-          { id: "contact/dh", label: "Dan Hoover" },
+          { id: "contact/c-1", label: "Jane Doe" },
           { id: "company/acme", label: "Acme Corp" },
         ],
         navigate,
@@ -133,13 +172,61 @@ describe("TopBar", () => {
 
     expect(byTestId("top-bar-title")?.textContent).toBe("Acme Corp");
     const back = byTestId("top-bar-back");
-    expect(back?.getAttribute("aria-label")).toBe("Back to Dan Hoover");
+    expect(back?.getAttribute("aria-label")).toBe("Back to Jane Doe");
     await act(async () => back?.click());
-    expect(navigate.mock.calls).toEqual([["contact/dh"]]);
+    expect(navigate.mock.calls).toEqual([["contact/c-1"]]);
+  });
+
+  test("each breadcrumb entry asks the app for its own entry", async () => {
+    await mountBar("/w/acme/app/people");
+    const navigate = mock((_id: string) => {});
+    await act(async () =>
+      location.setAppLocation({
+        trail: [
+          { id: "people://contacts", label: "People" },
+          { id: "people://contacts/c-1", label: "Jane Doe" },
+          { id: "people://companies/acme", label: "Acme Corp" },
+        ],
+        navigate,
+      }),
+    );
+
+    expect(byTestId("top-bar-breadcrumb")?.getAttribute("aria-label")).toBe("Breadcrumb");
+    const crumbs = crumbButtons();
+    expect(crumbs.map((c) => c.textContent)).toEqual(["People", "Jane Doe"]);
+    await act(async () => crumbs[0].click());
+    expect(navigate.mock.calls).toEqual([["people://contacts"]]);
+  });
+
+  test("a trail one deep has no breadcrumb", async () => {
+    await mountBar("/w/acme/app/people");
+    await act(async () =>
+      location.setAppLocation({ trail: [{ id: "list", label: "Contacts" }], navigate: () => {} }),
+    );
+    expect(byTestId("top-bar-breadcrumb")).toBeUndefined();
+  });
+
+  test("three ancestors all show, unfolded", async () => {
+    await mountBar("/w/acme/app/people");
+    const trail = ["a", "b", "c", "d"].map((id) => ({ id, label: id.toUpperCase() }));
+    await act(async () => location.setAppLocation({ trail, navigate: () => {} }));
+
+    expect(crumbButtons().map((c) => c.textContent)).toEqual(["A", "B", "C"]);
+    expect(byTestId("top-bar-breadcrumb")?.textContent).not.toContain("…");
+  });
+
+  test("past three ancestors, the middle folds and the root and parent stay", async () => {
+    await mountBar("/w/acme/app/people");
+    const trail = ["a", "b", "c", "d", "e"].map((id) => ({ id, label: id.toUpperCase() }));
+    await act(async () => location.setAppLocation({ trail, navigate: () => {} }));
+
+    expect(crumbButtons().map((c) => c.textContent)).toEqual(["A", "D"]);
+    expect(byTestId("top-bar-breadcrumb")?.textContent).toContain("…");
+    expect(byTestId("top-bar-title")?.textContent).toBe("E");
   });
 
   test("Chat is in the bar on workspace routes only", async () => {
-    await mountBar("/w/acme/");
+    await mountBar("/w/000f7ed6658f9d30/");
     expect(byTestId("chat-chrome-open-button")).toBeDefined();
     act(() => root.unmount());
     container.remove();
@@ -147,5 +234,34 @@ describe("TopBar", () => {
     await mountBar("/profile/general");
     expect(byTestId("top-bar-title")?.textContent).toBe("Profile");
     expect(byTestId("chat-chrome-open-button")).toBeUndefined();
+  });
+
+  test("the bell sits left of Chat and links to the focused workspace's inbox", async () => {
+    await mountBar("/w/000f7ed6658f9d30/");
+    const bell = byTestId("top-bar-inbox");
+    expect(bell?.getAttribute("href")).toBe("/w/000f7ed6658f9d30/notifications");
+    expect(bell?.getAttribute("aria-label")).toBe("Inbox");
+    expect(bell?.getAttribute("aria-current")).toBeNull();
+    expect(byTestId("top-bar-inbox-dot")).toBeUndefined();
+    const chat = byTestId("chat-chrome-open-button");
+    expect(bell && chat && bell.compareDocumentPosition(chat)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    act(() => root.unmount());
+    container.remove();
+
+    await mountBar("/profile/general");
+    expect(byTestId("top-bar-inbox")).toBeUndefined();
+  });
+
+  test("the bell shows a dot while something is unread, and the count in its name", async () => {
+    await mountBar("/w/000f7ed6658f9d30/", 3);
+    expect(byTestId("top-bar-inbox-dot")).toBeDefined();
+    expect(byTestId("top-bar-inbox")?.getAttribute("aria-label")).toBe("Inbox, 3 unread");
+  });
+
+  test("on the inbox, the bell is the current page", async () => {
+    await mountBar("/w/000f7ed6658f9d30/notifications");
+    expect(byTestId("top-bar-inbox")?.getAttribute("aria-current")).toBe("page");
   });
 });

@@ -159,7 +159,7 @@ interface Harness {
 function buildHarness(): Harness {
   const workDir = mkdtempSync(join(tmpdir(), "nb-composio-install-"));
   const credStore = installTestCredentialStore(workDir);
-  const wsId = "ws_test";
+  const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
 
   // The catalog must PUBLISH the entry: a brokered install is permitted only
@@ -603,7 +603,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
       brokered: { provider: "composio", connectorId: GMAIL_ID },
-      ui: { name: "Gmail", icon: "", placements: [] },
+      ui: { placements: [] },
     };
     await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
 
@@ -626,8 +626,6 @@ describe("manage_connectors.install (composio-auth)", () => {
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
       ui: {
-        name: "Uncatalogued",
-        icon: "",
         placements: [{ slot: "settings", resourceUri: "ui://uncatalogued/settings" }],
       },
     };
@@ -679,7 +677,7 @@ describe("manage_connectors.install (composio-auth)", () => {
   test("(g) composio install into a single-member workspace persists the ref", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
-    const personalWsId = "ws_admin_own";
+    const personalWsId = "ws_00130226f6411195";
     await seedWorkspace(h.workspaceStore, personalWsId, {
       name: "Admin's workspace",
       members: [{ userId: ADMIN.id, role: "admin" }],
@@ -713,7 +711,7 @@ describe("manage_connectors.install (composio-auth)", () => {
   test("(h) disconnect of a single-member workspace composio connector runs cleanup keyed on that wsId", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
 
-    const personalWsId = "ws_admin_own";
+    const personalWsId = "ws_00130226f6411195";
     await seedWorkspace(h.workspaceStore, personalWsId, {
       name: "Admin's workspace",
       members: [{ userId: ADMIN.id, role: "admin" }],

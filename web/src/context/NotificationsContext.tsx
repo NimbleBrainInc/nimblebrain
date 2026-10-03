@@ -25,7 +25,7 @@ export interface NotificationsValue {
 }
 
 /**
- * The focused workspace's inbox, shared by the left-nav badge and the inbox
+ * The focused workspace's inbox, shared by the top bar's bell and the inbox
  * view from one read.
  *
  * Kept in its own module — separate from the provider — so a consumer can

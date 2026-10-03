@@ -123,7 +123,7 @@ describe("the connection's own credential", () => {
   test("is resolved per delivery, so a put between two deliveries reaches the second", async () => {
     // The same rule the connector's MCP transport follows: a rotated secret is
     // on the next request, whichever plane sends it.
-    const wsId = "ws_forward01";
+    const wsId = "ws_0037dad0a604b221";
     const key = "acme.signing_secret";
     const workDir = mkdtempSync(join(tmpdir(), "nb-forward-ref-"));
     seedWorkspaceRoot(workDir, wsId);

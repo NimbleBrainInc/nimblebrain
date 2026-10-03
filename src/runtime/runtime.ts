@@ -29,7 +29,12 @@ import {
   type ManagedConnectorRegistry,
 } from "../connectors/providers/registry.ts";
 import { registerSmitheryCredentialProvider } from "../connectors/providers/smithery/transport-credential.ts";
-import { catalogUiByServerName, withCatalogUi } from "../connectors/runtime/catalog-ui.ts";
+import {
+  catalogTitleByServerName,
+  catalogUiByServerName,
+  namedUi,
+  withCatalogUi,
+} from "../connectors/runtime/catalog-ui.ts";
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
@@ -245,6 +250,7 @@ import type { TokenUsage } from "../usage/types.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
 import { retireLegacyPersonalWorkspaces } from "../workspace/legacy-personal.ts";
+import { assertWorkspaceIdsConform } from "../workspace/migration-guard.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { chatResponseBody } from "./chat-response.ts";
@@ -719,6 +725,7 @@ export class Runtime {
     const instanceConfig = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
+    await assertWorkspaceIdsConform(workspaceStore);
     await retireLegacyPersonalWorkspaces(workspaceStore, userStore);
     // The runtime is the one owner of the identity provider: the server
     // authenticates with this one, and every permission check here judges the
@@ -3261,12 +3268,31 @@ export class Runtime {
   async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
     const instances = this.getConnectorInstancesForWorkspace(workspaceId);
     const registry = this._workspaceRegistries.get(workspaceId);
+    const titles = await this.connectorTitles();
 
     const apps: PromptAppInfo[] = [];
     for (const instance of instances) {
-      apps.push(await this.buildAppInfo(instance, registry));
+      apps.push(await this.buildAppInfo(instance, registry, titles));
     }
     return apps;
+  }
+
+  /**
+   * Each installed connector's display name by server name: the trusted catalog
+   * entry's core `title ?? name`, by the same slug rule
+   * {@link trustedCatalogEntryFor} uses. A connector the catalog does not name
+   * is absent, and callers show its server name. A catalog read that fails
+   * yields no titles rather than failing the caller, which only displays them.
+   */
+  async connectorTitles(): Promise<ReadonlyMap<string, string>> {
+    try {
+      return catalogTitleByServerName(await this.getConnectorCatalog().catalogEntries());
+    } catch (err) {
+      log.warn("[runtime] connector titles unavailable; showing server names", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return new Map();
+    }
   }
 
   /**
@@ -3277,8 +3303,9 @@ export class Runtime {
   private async buildAppInfo(
     instance: ConnectorInstance,
     registry: ToolRegistry | undefined,
+    titles: ReadonlyMap<string, string>,
   ): Promise<PromptAppInfo> {
-    const ui: PromptAppInfo["ui"] = instance.ui ? { name: instance.ui.name } : null;
+    const ui: PromptAppInfo["ui"] = namedUi(instance.serverName, instance.ui, titles);
 
     // Surface the MCP server's `initialize.instructions` (when set) so the
     // LLM sees per-connector guidance — typically a pointer to `skill://`
@@ -6089,7 +6116,7 @@ function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | Use
 /**
  * Cache key for one workspace's instance of a named server's skills.
  *
- * `WORKSPACE_ID_RE` (`^ws_[a-z0-9_]{1,64}$`) excludes `:`, so the first half
+ * `WORKSPACE_ID_RE` (`^ws_[a-f0-9]{16}$`) excludes `:`, so the first half
  * can never contain the separator and no two pairs can collide — the server
  * name's alphabet does not enter into it. Same construction as the
  * `${wsId}:${userId}` file-store key above.

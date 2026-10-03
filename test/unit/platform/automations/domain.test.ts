@@ -32,7 +32,7 @@ import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 // Automations are workspace-owned: the domain's collection context is backed by
 // the per-automation store, scoped to one workspace + owner (the focus the tool
 // surface would resolve). `save` reconciles the map against disk.
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 let workDir: string;
 let reloadCount: number;

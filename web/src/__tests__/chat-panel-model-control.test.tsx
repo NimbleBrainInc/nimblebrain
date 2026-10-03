@@ -42,7 +42,7 @@ mock.module("../api/client", () => ({
           metadata: {
             id: args?.id ?? "conv_existing",
             ownerId: "u1",
-            workspaceId: "ws_a",
+            workspaceId: "ws_00079598e311c160",
             title: null,
             ...(mockConversationModel ? { model: mockConversationModel } : {}),
           },
@@ -72,7 +72,7 @@ const { chatStore } = await import("../hooks/chat-store");
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 const WS_A: WorkspaceInfo = {
-  id: "ws_a",
+  id: "ws_00079598e311c160",
   name: "Alpha",
   connectorCount: 0,
   memberCount: 1,
@@ -98,10 +98,10 @@ async function mountPanel(convId?: string): Promise<void> {
     root.render(
       React.createElement(
         MemoryRouter,
-        { initialEntries: ["/w/a/overview"] },
+        { initialEntries: ["/w/00079598e311c160/overview"] },
         React.createElement(WorkspaceProvider, {
           initialWorkspaces: [WS_A],
-          initialActiveId: "ws_a",
+          initialActiveId: "ws_00079598e311c160",
           children: React.createElement(ChatProvider, {
             ...(convId ? { initialConversationId: convId } : {}),
             currentUserId: "u1",

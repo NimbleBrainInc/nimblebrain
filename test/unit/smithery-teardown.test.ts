@@ -219,9 +219,15 @@ describe("uninstall → broker teardown wiring", () => {
           },
         },
       };
-      await lifecycle.seedInstance("ai-bassethound-mcp", ref.url, ref, undefined, "ws_test");
+      await lifecycle.seedInstance(
+        "ai-bassethound-mcp",
+        ref.url,
+        ref,
+        undefined,
+        "ws_0076759dbbe19fcc",
+      );
 
-      await lifecycle.uninstall("ai-bassethound-mcp", new ToolRegistry(), "ws_test");
+      await lifecycle.uninstall("ai-bassethound-mcp", new ToolRegistry(), "ws_0076759dbbe19fcc");
 
       const deletes = calls.filter((c) => c.method === "DELETE");
       expect(deletes).toHaveLength(1);

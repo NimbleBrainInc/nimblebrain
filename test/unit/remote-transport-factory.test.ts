@@ -179,7 +179,7 @@ describe("createRemoteTransport — provider auth (minted)", () => {
     } as unknown as Parameters<typeof createRemoteTransport>[1];
     await expect(
       createRemoteTransport(new URL("https://artifacts.test/mcp"), noConfig, undefined, {
-        workspaceId: "ws_smoke",
+        workspaceId: "ws_006ecec8527e3353",
       }),
     ).rejects.toThrow(/config object/);
   });
@@ -188,7 +188,7 @@ describe("createRemoteTransport — provider auth (minted)", () => {
     delete process.env.NB_FLEET_AUTHORIZER_ISSUER;
     await expect(
       createRemoteTransport(new URL("https://artifacts.test/mcp"), mintedConfig, undefined, {
-        workspaceId: "ws_smoke",
+        workspaceId: "ws_006ecec8527e3353",
       }),
     ).rejects.toThrow(/NB_FLEET_AUTHORIZER_ISSUER/);
   });
@@ -202,7 +202,7 @@ describe("createRemoteTransport — provider auth (minted)", () => {
       mintedConfig,
       undefined,
       {
-        workspaceId: "ws_smoke",
+        workspaceId: "ws_006ecec8527e3353",
       },
     );
     expect(t).toBeInstanceOf(StreamableHTTPClientTransport);
@@ -220,7 +220,7 @@ describe("createRemoteTransport — a credential reference resolves on every req
   // A live source can outlive a rotation by days. If the value resolved at
   // build rode every request, rotating a leaked secret would leave the tool
   // plane presenting it until something happened to reconnect.
-  const WS = "ws_rotate01";
+  const WS = "ws_0068b1c6a0851b09";
   const KEY = "acme.signing_secret";
   const HEADER = "X-Signing-Secret";
   const ENDPOINT = new URL("https://mcp.acme.test/mcp");

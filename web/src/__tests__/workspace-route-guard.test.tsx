@@ -47,11 +47,9 @@ const { getActiveWorkspaceId } = await import("../api/client");
 
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
-const DEFAULT_WS = "ws_mine";
-// Multi-underscore semantic id mirrors the real shared workspace that
-// surfaced the bug (`ws_nimblebrain_shared` → slug `nimblebrain_shared`).
-const SHARED = "ws_nimblebrain_shared";
-const SHARED_SLUG = "nimblebrain_shared";
+const DEFAULT_WS = "ws_00488fa17f87e9a3";
+const SHARED = "ws_004eae9586108d8c";
+const SHARED_SLUG = "004eae9586108d8c";
 
 function ws(overrides: Partial<WorkspaceInfo> & { id: string; name: string }): WorkspaceInfo {
   return {
@@ -180,7 +178,7 @@ describe("WorkspaceRouteGuard — workspace single-source-of-truth", () => {
     mounted = await mount({
       workspaces: [ws({ id: DEFAULT_WS, name: "Mat's workspace" })],
       activeId: DEFAULT_WS,
-      initialPath: "/w/ws_not_a_member/probe",
+      initialPath: "/w/ws_005344c2653be0d6/probe",
     });
     expect(hasTestId(mounted.container, "probe")).toBe(false);
     expect(navTarget).toBe("/");

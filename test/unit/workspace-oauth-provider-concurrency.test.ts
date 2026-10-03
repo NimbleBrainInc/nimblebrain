@@ -43,7 +43,7 @@ function makeProvider(
   onInteractiveAuthRequired?: (url: string) => void,
 ): WorkspaceOAuthProvider {
   const provider = new WorkspaceOAuthProvider({
-    owner: { type: "workspace", wsId: "ws_test" },
+    owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
     serverName: "test-srv",
     workDir,
     callbackUrl: CALLBACK,
@@ -80,7 +80,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), "nb-oauth-concurrency-test-"));
-    seedWorkspaceRoot(workDir, "ws_test");
+    seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
     installTestCredentialStore(workDir);
   });
 
@@ -132,7 +132,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     // through the SDK's natural failure path.
     const controller = new AbortController();
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "test-srv",
       workDir,
       callbackUrl: CALLBACK,
@@ -152,7 +152,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     const controller = new AbortController();
     controller.abort();
     const p = new WorkspaceOAuthProvider({
-      owner: { type: "workspace", wsId: "ws_test" },
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "test-srv",
       workDir,
       callbackUrl: CALLBACK,

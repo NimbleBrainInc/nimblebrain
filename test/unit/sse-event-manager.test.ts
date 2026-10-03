@@ -91,14 +91,14 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("connection.state_changed is forwarded to the matching workspace only", async () => {
-    const wsA = collect(mgr.addClient("ws_a"));
-    const wsB = collect(mgr.addClient("ws_b"));
+    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
+    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
     released.push(wsA.release, wsB.release);
 
     mgr.emit({
       type: "connection.state_changed",
       data: {
-        wsId: "ws_a",
+        wsId: "ws_00079598e311c160",
         serverName: "granola",
         connectorName: "https://granola.test/",
         principalId: "_workspace",
@@ -112,14 +112,14 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("connector.* events are workspace-scoped", async () => {
-    const wsA = collect(mgr.addClient("ws_a"));
-    const wsB = collect(mgr.addClient("ws_b"));
+    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
+    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
     released.push(wsA.release, wsB.release);
 
-    mgr.emit(installed("ws_a", "ipinfo", "@nb/ipinfo"));
+    mgr.emit(installed("ws_00079598e311c160", "ipinfo", "@nb/ipinfo"));
     mgr.emit({
       type: "connector.uninstalled",
-      data: { wsId: "ws_b", serverName: "granola", connectorName: "https://x" },
+      data: { wsId: "ws_001c32f121060ff3", serverName: "granola", connectorName: "https://x" },
     });
     await flush();
 
@@ -128,8 +128,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("workspace-scoped event with an empty wsId is dropped (no global fan-out)", async () => {
-    const wsA = collect(mgr.addClient("ws_a"));
-    const wsB = collect(mgr.addClient("ws_b"));
+    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
+    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
     released.push(wsA.release, wsB.release);
 
     // An empty wsId on a workspace-scoped event — emitter bug. The
@@ -143,14 +143,14 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("notification.created reaches the item's workspace only", async () => {
-    const wsA = collect(mgr.addClient("ws_a"));
-    const wsB = collect(mgr.addClient("ws_b"));
+    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
+    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
     released.push(wsA.release, wsB.release);
 
     mgr.emit({
       type: "notification.created",
       data: {
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
         id: "acme:evt_01",
         seq: 1,
         source: "acme",
@@ -167,8 +167,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("notification.* with an empty workspaceId is dropped, not fanned out", async () => {
-    const wsA = collect(mgr.addClient("ws_a"));
-    const wsB = collect(mgr.addClient("ws_b"));
+    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
+    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
     released.push(wsA.release, wsB.release);
 
     // The inbox is per workspace and a notification carries a connector's own
@@ -204,8 +204,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("global-scope events reach all clients regardless of workspace", async () => {
-    const wsA = collect(mgr.addClient("ws_a"));
-    const wsB = collect(mgr.addClient("ws_b"));
+    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
+    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
     const noWs = collect(mgr.addClient(undefined));
     released.push(wsA.release, wsB.release, noWs.release);
 
@@ -218,7 +218,7 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("unrouted event types (tool.progress, tool.task_status, connector.health) are dropped", async () => {
-    const ws = collect(mgr.addClient("ws_a"));
+    const ws = collect(mgr.addClient("ws_00079598e311c160"));
     released.push(ws.release);
 
     mgr.emit(engineEvent("tool.progress", { runId: "r1", id: "c1", message: "working" }));
@@ -240,7 +240,7 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("events no client reads (skill.*, bridge.tool.*) are not sent", async () => {
-    const ws = collect(mgr.addClient("ws_a"));
+    const ws = collect(mgr.addClient("ws_00079598e311c160"));
     released.push(ws.release);
 
     mgr.emit(engineEvent("skill.created", { id: "/skills/x", name: "x", scope: "user" }));
@@ -250,7 +250,7 @@ describe("SseEventManager — routing table", () => {
         id: "api_1",
         server: "x",
         userId: null,
-        workspaceId: "ws_a",
+        workspaceId: "ws_00079598e311c160",
       }),
     );
     await flush();
@@ -278,9 +278,9 @@ describe("SseEventManager — server.notification follows its one owner", () => 
   const LIST_CHANGED = "notifications/resources/list_changed";
 
   test("a person's own notification reaches that person alone, not their workspace's other members", async () => {
-    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_team"])));
-    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_team"])));
-    const legacyWorkspace = collect(mgr.addClient("ws_team"));
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_0071a5bbf40116e6"])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_0071a5bbf40116e6"])));
+    const legacyWorkspace = collect(mgr.addClient("ws_0071a5bbf40116e6"));
     released.push(alice.release, bob.release, legacyWorkspace.release);
 
     mgr.emit({
@@ -295,13 +295,13 @@ describe("SseEventManager — server.notification follows its one owner", () => 
   });
 
   test("a workspace's notification still reaches only that workspace's members", async () => {
-    const member = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
-    const outsider = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
+    const member = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_00079598e311c160"])));
+    const outsider = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_001c32f121060ff3"])));
     released.push(member.release, outsider.release);
 
     mgr.emit({
       type: "server.notification",
-      data: { server: "notes", workspaceId: "ws_a", method: LIST_CHANGED },
+      data: { server: "notes", workspaceId: "ws_00079598e311c160", method: LIST_CHANGED },
     });
     await flush();
 
@@ -310,7 +310,7 @@ describe("SseEventManager — server.notification follows its one owner", () => 
   });
 
   test("a notification naming no owner, or both, reaches no one", async () => {
-    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_00079598e311c160"])));
     released.push(alice.release);
 
     mgr.emit(
@@ -322,7 +322,12 @@ describe("SseEventManager — server.notification follows its one owner", () => 
     );
     mgr.emit({
       type: "server.notification",
-      data: { server: "notes", workspaceId: "ws_a", userId: "usr_alice", method: LIST_CHANGED },
+      data: {
+        server: "notes",
+        workspaceId: "ws_00079598e311c160",
+        userId: "usr_alice",
+        method: LIST_CHANGED,
+      },
     });
     await flush();
 
@@ -381,14 +386,14 @@ describe("SseEventManager — identity-scoped clients", () => {
   });
 
   test("identity client receives workspace-scoped events only for member workspaces", async () => {
-    // Alice is in ws_a; Bob is in ws_b. Each opens an identity-scoped
+    // Alice is in ws_00079598e311c160; Bob is in ws_001c32f121060ff3. Each opens an identity-scoped
     // /v1/events stream. The fan-out gate is the cached membership set.
-    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
-    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_00079598e311c160"])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_001c32f121060ff3"])));
     released.push(alice.release, bob.release);
 
-    mgr.emit(installed("ws_a", "ipinfo", "@nb/ipinfo"));
-    mgr.emit(installed("ws_b", "granola", "@nb/granola"));
+    mgr.emit(installed("ws_00079598e311c160", "ipinfo", "@nb/ipinfo"));
+    mgr.emit(installed("ws_001c32f121060ff3", "granola", "@nb/granola"));
     await flush();
 
     expect(alice.events).toEqual(["connector.installed"]);
@@ -398,14 +403,16 @@ describe("SseEventManager — identity-scoped clients", () => {
   test("multi-workspace identity client receives events for any member workspace", async () => {
     // A user with membership in both workspaces — the everyday case for
     // an operator with a personal and a team workspace.
-    const both = collect(mgr.addIdentityClient("usr_op", new Set(["ws_a", "ws_b"])));
+    const both = collect(
+      mgr.addIdentityClient("usr_op", new Set(["ws_00079598e311c160", "ws_001c32f121060ff3"])),
+    );
     released.push(both.release);
 
-    mgr.emit(installed("ws_a", "ipinfo", "@nb/ipinfo"));
+    mgr.emit(installed("ws_00079598e311c160", "ipinfo", "@nb/ipinfo"));
     mgr.emit({
       type: "connection.state_changed",
       data: {
-        wsId: "ws_b",
+        wsId: "ws_001c32f121060ff3",
         serverName: "granola",
         connectorName: "https://granola.test/",
         principalId: "_workspace",
@@ -422,11 +429,11 @@ describe("SseEventManager — identity-scoped clients", () => {
     // event's route. Without it the payload lands on every signed-in
     // identity's tab, since /v1/events is identity-scoped and they all share
     // this manager.
-    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
-    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_00079598e311c160"])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_001c32f121060ff3"])));
     released.push(alice.release, bob.release);
 
-    mgr.broadcast("config.changed", { key: "model" }, "ws_a");
+    mgr.broadcast("config.changed", { key: "model" }, "ws_00079598e311c160");
     await flush();
 
     expect(alice.events).toEqual(["config.changed"]);
@@ -434,8 +441,8 @@ describe("SseEventManager — identity-scoped clients", () => {
   });
 
   test("a broadcast with NO wsId reaches everyone", async () => {
-    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
-    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_b"])));
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_00079598e311c160"])));
+    const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_001c32f121060ff3"])));
     released.push(alice.release, bob.release);
 
     mgr.broadcast("config.changed", { key: "model" }, undefined);
@@ -465,18 +472,18 @@ describe("SseEventManager — identity-scoped clients", () => {
     const alice = collect(mgr.addIdentityClient("usr_alice", new Set()));
     released.push(alice.release);
 
-    mgr.emit(installed("ws_a", "x", "y"));
+    mgr.emit(installed("ws_00079598e311c160", "x", "y"));
     await flush();
     expect(alice.events).toEqual([]); // not yet a member
 
     // The workspace store fires a membership change — manager refreshes.
-    store.setMemberships("usr_alice", ["ws_a"]);
+    store.setMemberships("usr_alice", ["ws_00079598e311c160"]);
     // Refresh is async (awaits getWorkspacesForUser); flush twice so the
     // promise-then microtask runs before the next emit.
     await flush();
     await flush();
 
-    mgr.emit(installed("ws_a", "x", "z"));
+    mgr.emit(installed("ws_00079598e311c160", "x", "z"));
     await flush();
 
     expect(alice.events).toEqual(["connector.installed"]);
@@ -484,16 +491,16 @@ describe("SseEventManager — identity-scoped clients", () => {
 
   test("membership-change refresh drops events for removed workspaces", async () => {
     // Alice was a member; removal → manager re-queries to an empty set;
-    // subsequent emits for ws_a no longer reach her.
-    store.setMemberships("usr_alice", ["ws_a"]);
-    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    // subsequent emits for ws_00079598e311c160 no longer reach her.
+    store.setMemberships("usr_alice", ["ws_00079598e311c160"]);
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_00079598e311c160"])));
     released.push(alice.release);
 
     store.setMemberships("usr_alice", []);
     await flush();
     await flush();
 
-    mgr.emit(installed("ws_a", "x", "y"));
+    mgr.emit(installed("ws_00079598e311c160", "x", "y"));
     await flush();
 
     expect(alice.events).toEqual([]);
@@ -502,16 +509,16 @@ describe("SseEventManager — identity-scoped clients", () => {
   test("identity client unaffected by other identities' membership changes", async () => {
     // Membership-change fires per-userId; the manager scans only matching
     // clients. Alice's set must not be churned by Bob's mutations.
-    store.setMemberships("usr_alice", ["ws_a"]);
-    store.setMemberships("usr_bob", ["ws_b"]);
-    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_a"])));
+    store.setMemberships("usr_alice", ["ws_00079598e311c160"]);
+    store.setMemberships("usr_bob", ["ws_001c32f121060ff3"]);
+    const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_00079598e311c160"])));
     released.push(alice.release);
 
     store.setMemberships("usr_bob", []);
     await flush();
     await flush();
 
-    mgr.emit(installed("ws_a", "x", "y"));
+    mgr.emit(installed("ws_00079598e311c160", "x", "y"));
     await flush();
 
     expect(alice.events).toEqual(["connector.installed"]);

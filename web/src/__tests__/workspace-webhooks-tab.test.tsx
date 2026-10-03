@@ -49,7 +49,7 @@ const { WorkspaceWebhooksTab } = await import("../pages/settings/WorkspaceWebhoo
 import type { WorkspaceInfo } from "../context/WorkspaceContext";
 
 const WS: WorkspaceInfo = {
-  id: "ws_outbound",
+  id: "ws_005b519ef7efc353",
   name: "Outbound",
   connectorCount: 0,
   memberCount: 1,

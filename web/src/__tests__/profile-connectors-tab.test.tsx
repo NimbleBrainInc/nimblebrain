@@ -201,7 +201,7 @@ describe("ProfileConnectorsTab", () => {
         description: "Meeting notes",
         state: "running",
         auth: "dcr",
-        grantedWorkspaces: ["ws_helix"],
+        grantedWorkspaces: ["ws_003eba8844413cd9"],
       },
       {
         serverName: "gmail",
@@ -315,7 +315,7 @@ describe("ProfileConnectorsTab", () => {
         description: null,
         state: "running",
         auth: "dcr",
-        grantedWorkspaces: ["ws_helix", "ws_acme"],
+        grantedWorkspaces: ["ws_003eba8844413cd9", "ws_000f7ed6658f9d30"],
       },
     ];
     mounted = await mount();
@@ -362,12 +362,12 @@ describe("ProfileConnectorsTab", () => {
         description: null,
         state: "running",
         auth: "dcr",
-        grantedWorkspaces: ["ws_helix"],
+        grantedWorkspaces: ["ws_003eba8844413cd9"],
       },
     ];
     mounted = await mountWithWorkspaces([
-      { id: "ws_helix", name: "Helix", memberCount: 1, connectorCount: 0 },
-      { id: "ws_mine", name: "Mat's workspace", memberCount: 1, connectorCount: 0 },
+      { id: "ws_003eba8844413cd9", name: "Helix", memberCount: 1, connectorCount: 0 },
+      { id: "ws_00488fa17f87e9a3", name: "Mat's workspace", memberCount: 1, connectorCount: 0 },
     ]);
     const container = mounted.container;
     const buttons = () => [...container.getElementsByTagName("button")];
@@ -384,7 +384,7 @@ describe("ProfileConnectorsTab", () => {
     expect(buttons().some((b) => b.textContent === "Revoke")).toBe(true);
 
     await click(buttons().find((b) => b.textContent === "Grant"));
-    expect(grantConnector).toHaveBeenCalledWith("granola", "ws_mine");
+    expect(grantConnector).toHaveBeenCalledWith("granola", "ws_00488fa17f87e9a3");
   });
 
   test("shows an error state when the list load fails", async () => {
@@ -513,7 +513,7 @@ describe("ProfileConnectorsTab", () => {
         description: null,
         state: "running",
         auth: "dcr",
-        grantedWorkspaces: ["ws_helix"],
+        grantedWorkspaces: ["ws_003eba8844413cd9"],
       },
     ];
     mounted = await mount();

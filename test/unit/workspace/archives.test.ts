@@ -30,8 +30,8 @@ async function archiveOne(name: string): Promise<string> {
 describe("isArchiveName", () => {
   test("accepts the names delete produces", () => {
     expect(isArchiveName("ws_0123456789abcdef")).toBe(true);
-    expect(isArchiveName("ws_user_usr_abc-1")).toBe(true);
-    expect(isArchiveName("ws_team-v2")).toBe(true);
+    expect(isArchiveName("ws_00837e5d38d45d5a-1")).toBe(true);
+    expect(isArchiveName("ws_0071a5bbf40116e6-v2")).toBe(true);
   });
 
   test("refuses anything that could leave archived/", () => {
@@ -40,14 +40,14 @@ describe("isArchiveName", () => {
       ".",
       "..",
       "../workspaces",
-      "ws_a/../../workspaces",
-      "ws_a/b",
-      "ws_a\\b",
+      "ws_00079598e311c160/../../workspaces",
+      "ws_00079598e311c160/b",
+      "ws_00079598e311c160\\b",
       "/etc",
-      "ws_a-",
-      "ws_a-..",
-      "ws_a-b/c",
-      "ws_a-b-c",
+      "ws_00079598e311c160-",
+      "ws_00079598e311c160-..",
+      "ws_00079598e311c160-b/c",
+      "ws_00079598e311c160-b-c",
       "workspaces",
     ]) {
       expect(isArchiveName(name)).toBe(false);
@@ -73,15 +73,15 @@ describe("listArchives", () => {
 
   test("lists a directory with a missing or unparseable workspace.json as unknown", async () => {
     await archiveOne("Alpha");
-    await mkdir(join(archivedDir, "ws_missing"), { recursive: true });
-    await mkdir(join(archivedDir, "ws_broken"), { recursive: true });
-    await writeFile(join(archivedDir, "ws_broken", "workspace.json"), "{not json");
+    await mkdir(join(archivedDir, "ws_0049f03a47b25cbd"), { recursive: true });
+    await mkdir(join(archivedDir, "ws_00231ca3a812703c"), { recursive: true });
+    await writeFile(join(archivedDir, "ws_00231ca3a812703c", "workspace.json"), "{not json");
     // A stray file is not an archive.
     await writeFile(join(archivedDir, "notes.txt"), "hello");
 
     const rows = await listArchives(archivedDir);
     expect(rows).toHaveLength(3);
-    for (const name of ["ws_missing", "ws_broken"]) {
+    for (const name of ["ws_0049f03a47b25cbd", "ws_00231ca3a812703c"]) {
       const row = rows.find((r) => r.name === name);
       expect(row).toBeDefined();
       expect(row?.workspaceId).toBeNull();
@@ -115,7 +115,7 @@ describe("purgeArchive", () => {
       `../workspaces/${live.id}`,
       "../workspaces",
       "..",
-      `ws_x/../../workspaces/${live.id}`,
+      `ws_008bd230f095f38a/../../workspaces/${live.id}`,
       liveDir,
     ]) {
       await expect(purgeArchive(archivedDir, name)).rejects.toThrow("is not an archive name");
@@ -129,9 +129,9 @@ describe("purgeArchive", () => {
     await mkdir(outside);
     await writeFile(join(outside, "keep.txt"), "keep");
     await mkdir(archivedDir, { recursive: true });
-    await symlink(outside, join(archivedDir, "ws_link"));
+    await symlink(outside, join(archivedDir, "ws_00420b6733e5af3c"));
 
-    await expect(purgeArchive(archivedDir, "ws_link")).rejects.toThrow(
+    await expect(purgeArchive(archivedDir, "ws_00420b6733e5af3c")).rejects.toThrow(
       "is not an archive directory",
     );
     expect(existsSync(join(outside, "keep.txt"))).toBe(true);

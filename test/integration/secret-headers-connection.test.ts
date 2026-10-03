@@ -52,7 +52,7 @@ const ENTRY_ID = "com.acme/db-query";
 const SERVER_NAME = "com-acme-db-query";
 const HEADER = "X-Db-Url";
 const KEY = "acme.db_url";
-const WS = "ws_tenanta";
+const WS = "ws_00741647fd740fac";
 
 const ADMIN: UserIdentity = {
   id: "usr_admin_secret_conn",

@@ -8,8 +8,8 @@ import type { AppTrailEntry } from "../bridge/schemas";
  * An app reports its whole trail, root first, over `ai.nimblebrain/location`
  * (`bridge/extensions.ts`); `AppWithChat` publishes it here with a `navigate`
  * bound to that app's bridge. The top bar shows the trail's last label as the
- * title and, when the trail is deeper than one, a back control that navigates
- * to the entry before it. With no trail (any non-app route, or an app that
+ * title and, when the trail is deeper than one, the entries above it as a
+ * breadcrumb (a back control where the bar is narrow). With no trail (any non-app route, or an app that
  * sends none) the bar falls back to the route's own name.
  *
  * A standalone context, like `FocusedAppContext`, so a trail change re-renders

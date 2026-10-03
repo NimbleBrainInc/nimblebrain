@@ -153,7 +153,7 @@ describe("check-credential-paths — isUserCredentialStringLiteral", () => {
   });
 
   test("does NOT match a string with /credentials/ but no /users/", () => {
-    const src = parse(`const p = "/work/workspaces/ws_a/credentials/foo.json";`);
+    const src = parse(`const p = "/work/workspaces/ws_00079598e311c160/credentials/foo.json";`);
     const node = findFirst(src, ts.isStringLiteral);
     expect(isUserCredentialStringLiteral(node!)).toBe(false);
   });

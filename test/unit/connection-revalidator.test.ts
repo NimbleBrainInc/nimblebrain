@@ -35,7 +35,7 @@ interface Flip {
   newState: ConnectionState;
 }
 
-function composioInstance(serverName: string, wsId = "ws_1"): FakeInstance {
+function composioInstance(serverName: string, wsId = "ws_0002ee92e8791c13"): FakeInstance {
   return {
     serverName,
     wsId,

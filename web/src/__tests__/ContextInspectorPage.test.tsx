@@ -166,7 +166,7 @@ const { ContextInspectorPage } = await import("../pages/ContextInspectorPage");
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_ID}`]}>
+    <MemoryRouter initialEntries={[`/w/000d299235755008/context/${CONV_ID}`]}>
       <Routes>
         <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
       </Routes>
@@ -257,13 +257,13 @@ describe("ContextInspectorPage", () => {
     function Nav() {
       const navigate = useNavigate();
       return (
-        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_B}`)}>
+        <button type="button" onClick={() => navigate(`/w/000d299235755008/context/${CONV_B}`)}>
           go-to-b
         </button>
       );
     }
     const { container } = render(
-      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_ID}`]}>
+      <MemoryRouter initialEntries={[`/w/000d299235755008/context/${CONV_ID}`]}>
         <Nav />
         <Routes>
           <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
@@ -305,13 +305,16 @@ describe("ContextInspectorPage", () => {
     function Nav() {
       const navigate = useNavigate();
       return (
-        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_BUDGET_FAIL}`)}>
+        <button
+          type="button"
+          onClick={() => navigate(`/w/000d299235755008/context/${CONV_BUDGET_FAIL}`)}
+        >
           go-fail
         </button>
       );
     }
     const { container } = render(
-      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_ID}`]}>
+      <MemoryRouter initialEntries={[`/w/000d299235755008/context/${CONV_ID}`]}>
         <Nav />
         <Routes>
           <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />
@@ -338,13 +341,13 @@ describe("ContextInspectorPage", () => {
     function Nav() {
       const navigate = useNavigate();
       return (
-        <button type="button" onClick={() => navigate(`/w/abc123/context/${CONV_FRESH}`)}>
+        <button type="button" onClick={() => navigate(`/w/000d299235755008/context/${CONV_FRESH}`)}>
           go-fresh
         </button>
       );
     }
     const { container } = render(
-      <MemoryRouter initialEntries={[`/w/abc123/context/${CONV_STALE}`]}>
+      <MemoryRouter initialEntries={[`/w/000d299235755008/context/${CONV_STALE}`]}>
         <Nav />
         <Routes>
           <Route path="/w/:slug/context/:convId" element={<ContextInspectorPage />} />

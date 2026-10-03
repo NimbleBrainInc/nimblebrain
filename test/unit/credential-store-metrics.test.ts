@@ -24,7 +24,7 @@ import {
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const KEY_A = Buffer.alloc(32, 0x11);
-const WS_SECRETS = ["workspaces", "ws_test", "credentials", "secrets"];
+const WS_SECRETS = ["workspaces", "ws_0076759dbbe19fcc", "credentials", "secrets"];
 
 // Deltas, not resets: the registry is process-global and other files touch it.
 async function failures(reason: string): Promise<number> {
@@ -51,7 +51,7 @@ afterEach(() => {
 
 function fresh(sealer?: CredentialSealer) {
   const dir = mkdtempSync(join(tmpdir(), "nb-cred-metrics-"));
-  seedWorkspaceRoot(dir, "ws_test");
+  seedWorkspaceRoot(dir, "ws_0076759dbbe19fcc");
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const store = new FileCredentialStore(dir, {
     eventSink: new MetricsEventSink(),
@@ -83,7 +83,7 @@ describe("nb_credential_seal_failures_total", () => {
     const emit = (reason: SealFailureReason) =>
       sink.emit({
         type: "audit.credential_seal_failure",
-        data: { scope: "workspace:ws_test", key: "acme.key", reason },
+        data: { scope: "workspace:ws_0076759dbbe19fcc", key: "acme.key", reason },
       });
     emit("reseal_skipped");
     emit("reseal_skipped");
@@ -107,10 +107,14 @@ describe("nb_credential_seal_failures_total", () => {
     await store.reconcile?.();
     seed("injected.key", "attacker-chosen");
     const before = await failures("plaintext_refused");
-    const got = await store.get({ kind: "workspace", wsId: "ws_test" }, "injected.key", {
-      caller: "test",
-      purpose: "unit test",
-    });
+    const got = await store.get(
+      { kind: "workspace", wsId: "ws_0076759dbbe19fcc" },
+      "injected.key",
+      {
+        caller: "test",
+        purpose: "unit test",
+      },
+    );
     expect(() => got?.reveal()).toThrow(/plaintext/);
     expect((await failures("plaintext_refused")) - before).toBe(1);
   });
@@ -171,11 +175,11 @@ describe("labels", () => {
     new MetricsEventSink().emit({
       type: "audit.credential_seal_failure",
       data: {
-        scope: "workspace:ws_test",
+        scope: "workspace:ws_0076759dbbe19fcc",
         key: "acme.key",
         reason: "auth_failed",
         wantedKid: "0123456789abcdef",
-        workspaceId: "ws_test",
+        workspaceId: "ws_0076759dbbe19fcc",
       },
     });
     new MetricsEventSink().emit({

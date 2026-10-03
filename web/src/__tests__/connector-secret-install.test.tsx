@@ -59,7 +59,7 @@ const installConnector = mock(async () => {
     alreadyInstalled: false,
     serverName: "com-acme-db-query",
     scope: "workspace" as const,
-    wsId: "ws_test",
+    wsId: "ws_0076759dbbe19fcc",
   };
 });
 
@@ -93,7 +93,7 @@ function LocationProbe() {
 // The real provider, not a mock of `useScopedRole`: a module mock is
 // process-wide, and a partial one hands every later suite its stubbed answer.
 const ADMIN_WORKSPACE = {
-  id: "ws_acme",
+  id: "ws_000f7ed6658f9d30",
   name: "Acme",
   memberCount: 1,
   connectorCount: 0,
@@ -102,8 +102,8 @@ const ADMIN_WORKSPACE = {
 
 function Page() {
   return (
-    <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId="ws_acme">
-      <MemoryRouter initialEntries={["/w/acme/settings/connectors/browse"]}>
+    <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId="ws_000f7ed6658f9d30">
+      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/settings/connectors/browse"]}>
         <LocationProbe />
         <Routes>
           <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
@@ -220,7 +220,7 @@ describe("a Browse entry that declares secretHeaders", () => {
     expect(setWorkspaceSecret.mock.calls[0]).toEqual(["acme.db_url", "postgres://a.acme.test/db"]);
     // provider-auth completes without a sign-in, so the install finishes on
     // Browse — the credential is already in place when it starts.
-    expect(lastPath).toBe("/w/acme/settings/connectors/browse");
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/settings/connectors/browse");
   });
 
   test("cancelling installs nothing and stores nothing", async () => {

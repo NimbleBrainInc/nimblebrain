@@ -30,9 +30,18 @@ interface StoredWorkspace {
 }
 
 const WORKSPACES: Record<string, StoredWorkspace> = {
-  ws_acme: { id: "ws_acme", members: [{ userId: ALICE.id, role: "member" }] },
-  ws_other: { id: "ws_other", members: [{ userId: "usr_bob", role: "admin" }] },
-  ws_dev: { id: "ws_dev", members: [{ userId: DEV_IDENTITY.id, role: "admin" }] },
+  ws_000f7ed6658f9d30: {
+    id: "ws_000f7ed6658f9d30",
+    members: [{ userId: ALICE.id, role: "member" }],
+  },
+  ws_005820c54ca342ad: {
+    id: "ws_005820c54ca342ad",
+    members: [{ userId: "usr_bob", role: "admin" }],
+  },
+  ws_002be648a4e7934d: {
+    id: "ws_002be648a4e7934d",
+    members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
+  },
 };
 
 /** A store that records every lookup, and resolves ids case-insensitively like a case-folding filesystem. */
@@ -50,7 +59,7 @@ function makeStore(): { store: WorkspaceStore; lookups: string[] } {
 describe("isAddressedWorkspaceMember", () => {
   it("admits a member of the addressed workspace", async () => {
     const { store } = makeStore();
-    expect(await isAddressedWorkspaceMember(store, "ws_acme", ALICE.id)).toBe(true);
+    expect(await isAddressedWorkspaceMember(store, "ws_000f7ed6658f9d30", ALICE.id)).toBe(true);
   });
 
   it("checks the shape before any lookup", async () => {
@@ -60,8 +69,8 @@ describe("isAddressedWorkspaceMember", () => {
       "acme",
       "ws_",
       "ws_../etc",
-      "ws_a-b",
-      "ws_a/b",
+      "ws_00079598e311c160-b",
+      "ws_00079598e311c160/b",
       `ws_${"a".repeat(65)}`,
     ]) {
       expect(isWorkspaceIdShape(wsId)).toBe(false);
@@ -72,17 +81,17 @@ describe("isAddressedWorkspaceMember", () => {
 
   it("refuses an unknown workspace", async () => {
     const { store } = makeStore();
-    expect(await isAddressedWorkspaceMember(store, "ws_nosuch", ALICE.id)).toBe(false);
+    expect(await isAddressedWorkspaceMember(store, "ws_00515a687ea5ef98", ALICE.id)).toBe(false);
   });
 
   it("refuses a workspace the caller does not belong to", async () => {
     const { store } = makeStore();
-    expect(await isAddressedWorkspaceMember(store, "ws_other", ALICE.id)).toBe(false);
+    expect(await isAddressedWorkspaceMember(store, "ws_005820c54ca342ad", ALICE.id)).toBe(false);
   });
 
   it("requires exact id equality, not the store's own matching", async () => {
     const { store } = makeStore();
-    // The store resolves `WS_ACME` to `ws_acme`; the addressed id is not that id.
+    // The store resolves `WS_ACME` to `ws_000f7ed6658f9d30`; the addressed id is not that id.
     expect(await isAddressedWorkspaceMember(store, "WS_ACME", ALICE.id)).toBe(false);
   });
 });
@@ -113,16 +122,16 @@ async function probe(
 
 describe("requireWorkspace", () => {
   it("admits a member and binds the workspace in the path", async () => {
-    const res = await probe(makeApp({ identity: ALICE }), "ws_acme");
+    const res = await probe(makeApp({ identity: ALICE }), "ws_000f7ed6658f9d30");
     expect(res.status).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ workspaceId: "ws_acme" });
+    expect(JSON.parse(res.body)).toEqual({ workspaceId: "ws_000f7ed6658f9d30" });
   });
 
   it("answers a malformed, an unknown and a non-member workspace identically", async () => {
     const app = makeApp({ identity: ALICE });
-    const malformed = await probe(app, "ws_a-b");
-    const unknown = await probe(app, "ws_nosuch");
-    const nonMember = await probe(app, "ws_other");
+    const malformed = await probe(app, "ws_00079598e311c160-b");
+    const unknown = await probe(app, "ws_00515a687ea5ef98");
+    const nonMember = await probe(app, "ws_005820c54ca342ad");
     expect(malformed.status).toBe(404);
     expect(unknown).toEqual(malformed);
     expect(nonMember).toEqual(malformed);
@@ -130,30 +139,32 @@ describe("requireWorkspace", () => {
   });
 
   it("ignores X-Workspace-Id: the path's workspace wins", async () => {
-    const res = await probe(makeApp({ identity: ALICE }), "ws_acme", {
-      "X-Workspace-Id": "ws_other",
+    const res = await probe(makeApp({ identity: ALICE }), "ws_000f7ed6658f9d30", {
+      "X-Workspace-Id": "ws_005820c54ca342ad",
     });
     expect(res.status).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ workspaceId: "ws_acme" });
+    expect(JSON.parse(res.body)).toEqual({ workspaceId: "ws_000f7ed6658f9d30" });
   });
 
   it("does not let a header naming the caller's own workspace admit another", async () => {
     const app = makeApp({ identity: ALICE });
-    const refused = await probe(app, "ws_other");
-    const withHeader = await probe(app, "ws_other", { "X-Workspace-Id": "ws_acme" });
+    const refused = await probe(app, "ws_005820c54ca342ad");
+    const withHeader = await probe(app, "ws_005820c54ca342ad", {
+      "X-Workspace-Id": "ws_000f7ed6658f9d30",
+    });
     expect(withHeader).toEqual(refused);
   });
 
   it("admits no one when the request has no identity", async () => {
     const app = makeApp();
-    const refused = await probe(makeApp({ identity: ALICE }), "ws_nosuch");
-    expect(await probe(app, "ws_dev")).toEqual(refused);
-    expect(await probe(app, "ws_acme")).toEqual(refused);
+    const refused = await probe(makeApp({ identity: ALICE }), "ws_00515a687ea5ef98");
+    expect(await probe(app, "ws_002be648a4e7934d")).toEqual(refused);
+    expect(await probe(app, "ws_000f7ed6658f9d30")).toEqual(refused);
   });
 
   it("admits the dev user to its own workspace as a member, and to no other", async () => {
     const app = makeApp({ identity: DEV_IDENTITY });
-    expect((await probe(app, "ws_dev")).status).toBe(200);
-    expect((await probe(app, "ws_acme")).status).toBe(404);
+    expect((await probe(app, "ws_002be648a4e7934d")).status).toBe(200);
+    expect((await probe(app, "ws_000f7ed6658f9d30")).status).toBe(404);
   });
 });

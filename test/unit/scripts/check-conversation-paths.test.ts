@@ -119,7 +119,9 @@ describe("check-conversation-paths — isFlatConversationStringLiteral", () => {
   });
 
   test("does NOT match the workspace-owned conversation file literal", () => {
-    const src = parse(`const p = "/work/workspaces/ws_a/conversations/user_x/foo.jsonl";`);
+    const src = parse(
+      `const p = "/work/workspaces/ws_00079598e311c160/conversations/user_x/foo.jsonl";`,
+    );
     const node = findFirst(src, ts.isStringLiteral);
     expect(isFlatConversationStringLiteral(node!)).toBe(false);
   });

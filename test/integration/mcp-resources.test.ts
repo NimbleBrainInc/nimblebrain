@@ -86,7 +86,7 @@ function createFixtureServer(config: FixtureConfig): Server {
 // ---------------------------------------------------------------------------
 // Shared harness: one runtime, one server, two workspaces with different sources.
 // ---------------------------------------------------------------------------
-const OTHER_WORKSPACE_ID = "ws_other";
+const OTHER_WORKSPACE_ID = "ws_005820c54ca342ad";
 const testDir = join(tmpdir(), `nimblebrain-mcp-resources-${Date.now()}`);
 
 let runtime: Runtime;

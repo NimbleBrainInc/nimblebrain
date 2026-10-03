@@ -25,10 +25,14 @@ import type { ResolvedFeatures } from "../../../src/config/features.ts";
 
 const FAKE_FEATURES = {} as ResolvedFeatures;
 const SAMPLE_SID = "11111111-2222-3333-4444-555555555555";
-const SESSION_CTX = { identity: null, workspaceId: "ws_a", grant: "first_party" as const };
+const SESSION_CTX = {
+  identity: null,
+  workspaceId: "ws_00079598e311c160",
+  grant: "first_party" as const,
+};
 
 function postRequest(sessionId: string): Request {
-  return new Request("http://test/mcp/ws_a", {
+  return new Request("http://test/mcp/ws_00079598e311c160", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -71,7 +75,7 @@ describe("McpServerHost — session-miss classification", () => {
     await registry.create({
       sessionId: SAMPLE_SID,
       identityId: null,
-      workspaceId: "ws_a",
+      workspaceId: "ws_00079598e311c160",
       createdAt: Date.now(),
       lastAccessedAt: Date.now(),
     });

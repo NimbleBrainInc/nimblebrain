@@ -59,7 +59,7 @@ const installConnector = mock(async () => ({
   alreadyInstalled: false,
   serverName: "com-acme-tasks",
   scope: "workspace" as const,
-  wsId: "ws_test",
+  wsId: "ws_0076759dbbe19fcc",
   ...(installWarning ? { warning: installWarning } : {}),
 }));
 
@@ -90,7 +90,7 @@ function LocationProbe() {
 // comes through the real context: `mock.module` is process-wide in bun, so
 // mocking the role hook here would make every later web test's user an admin.
 const ADMIN_WORKSPACE = {
-  id: "ws_test",
+  id: "ws_0076759dbbe19fcc",
   name: "Acme",
   memberCount: 1,
   connectorCount: 0,
@@ -100,7 +100,7 @@ const ADMIN_WORKSPACE = {
 function Page() {
   return (
     <WorkspaceProvider initialWorkspaces={[ADMIN_WORKSPACE]} initialActiveId={ADMIN_WORKSPACE.id}>
-      <MemoryRouter initialEntries={["/w/acme/settings/connectors/browse"]}>
+      <MemoryRouter initialEntries={["/w/000f7ed6658f9d30/settings/connectors/browse"]}>
         <LocationProbe />
         <Routes>
           <Route path="/w/:slug/settings/connectors/browse" element={<ConnectorBrowsePage />} />
@@ -190,7 +190,9 @@ describe("Browse lists installed connectors", () => {
     mounted = await mount(<Page />);
     expect(installedSection(mounted.container)?.textContent).toContain("Acme Brokered");
     const link = card(mounted.container, "Acme Brokered").querySelector("a");
-    expect(link?.getAttribute("href")).toBe("/w/acme/settings/connectors/com-acme-brokered");
+    expect(link?.getAttribute("href")).toBe(
+      "/w/000f7ed6658f9d30/settings/connectors/com-acme-brokered",
+    );
   });
 });
 
@@ -210,7 +212,7 @@ describe("installing a provider connector", () => {
     const done = buttonIn(card(mounted.container, "Acme Tasks"));
     expect(done?.textContent).toContain("Installed");
     expect(done?.disabled).toBe(true);
-    expect(lastPath).toBe("/w/acme/settings/connectors/browse");
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/settings/connectors/browse");
     // Stays in the grid for this visit rather than jumping to the section.
     expect(installedSection(mounted.container)).toBeNull();
   });
@@ -224,6 +226,6 @@ describe("installing a provider connector", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(lastPath).toBe("/w/acme/settings/connectors/com-acme-tasks");
+    expect(lastPath).toBe("/w/000f7ed6658f9d30/settings/connectors/com-acme-tasks");
   });
 });

@@ -925,7 +925,7 @@ describe("composeSystemPrompt — matched-skill de-dup identity", () => {
         priority: 50,
       },
       body: "WORKSPACE-VOICE",
-      sourcePath: "/work/workspaces/ws_a/skills/voice.md",
+      sourcePath: "/work/workspaces/ws_00079598e311c160/skills/voice.md",
     };
     const result = composeSystemPrompt(
       [],
@@ -1005,7 +1005,7 @@ describe("composeSystemPromptTraced", () => {
       undefined,
       { displayName: "Mat", timezone: "Pacific/Honolulu", locale: "en-US" },
       false,
-      { id: "ws_test", name: "Test" },
+      { id: "ws_0076759dbbe19fcc", name: "Test" },
       overlays,
       [entry],
     );
@@ -1157,7 +1157,7 @@ describe("composeSystemPromptTraced", () => {
   it("totalTokens equals the sum of per-layer tokens", () => {
     const soul = makeContextSkill("soul", 0, "I am the soul.");
     const ctx = makeContextSkill("voice", 50, "Speak plainly.");
-    const wsCtx: WorkspaceContext = { id: "ws_test", name: "Test" };
+    const wsCtx: WorkspaceContext = { id: "ws_0076759dbbe19fcc", name: "Test" };
     const traced = composeSystemPromptTraced(
       [soul, ctx],
       null,
@@ -1186,7 +1186,7 @@ describe("composeSystemPrompt — files/conversations resolve to the current wor
   //     your files/conversations at once." That is false — both are
   //     workspace-owned — and it instructed the agent to enumerate across the
   //     wall the tools enforce.
-  const wsCtx: WorkspaceContext = { id: "ws_test", name: "Test" };
+  const wsCtx: WorkspaceContext = { id: "ws_0076759dbbe19fcc", name: "Test" };
 
   const focused = () =>
     composeSystemPrompt([], null, undefined, undefined, undefined, undefined, undefined, wsCtx);

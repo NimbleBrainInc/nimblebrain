@@ -23,7 +23,7 @@ import {
 import type { RunInput } from "../../../../src/platform/automations/scheduler.ts";
 import type { Automation, ScheduleSpec } from "../../../../src/platform/automations/types.ts";
 
-const WS = "ws_1";
+const WS = "ws_0002ee92e8791c13";
 const OWNER = "usr_admin";
 const ID = "reply-triage";
 const SOURCE = "precision-outbound";

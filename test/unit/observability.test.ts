@@ -47,7 +47,7 @@ function identityCtx(): RequestContext {
   };
   return {
     identity,
-    workspaceId: "ws_abc123",
+    workspaceId: "ws_000d299235755008",
     conversationId: "conv_9",
   };
 }
@@ -193,7 +193,7 @@ describe("runDetached", () => {
         const detached = await runDetached(() => fireLater(read));
 
         expect(inherited.traceId).toBe(callerTrace);
-        expect(inherited.ctx?.workspaceId).toBe("ws_abc123");
+        expect(inherited.ctx?.workspaceId).toBe("ws_000d299235755008");
         expect(detached.traceId).toBeUndefined();
         expect(detached.ctx).toBeUndefined();
       }),
@@ -220,7 +220,7 @@ describe("requestIdentityAttrs — trust + PII boundary", () => {
     runWithRequestContext(identityCtx(), () => {
       const attrs = requestIdentityAttrs();
       expect(attrs.user_id).toBe("user_123");
-      expect(attrs.workspace_id).toBe("ws_abc123");
+      expect(attrs.workspace_id).toBe("ws_000d299235755008");
       expect(attrs.conversation_id).toBe("conv_9");
       const serialized = JSON.stringify(attrs);
       expect(serialized).not.toContain(PII_EMAIL);
@@ -232,7 +232,12 @@ describe("requestIdentityAttrs — trust + PII boundary", () => {
     // A run has no conversation. Emitting its run id as `conversation_id` put a
     // value in that attribute that no conversation query can join against.
     runWithRequestContext(
-      { identity: null, workspaceId: "ws_abc123", runId: "run_a8f15601-0dd", unattended: true },
+      {
+        identity: null,
+        workspaceId: "ws_000d299235755008",
+        runId: "run_a8f15601-0dd",
+        unattended: true,
+      },
       () => {
         const attrs = requestIdentityAttrs();
         expect(attrs.run_id).toBe("run_a8f15601-0dd");
@@ -285,7 +290,7 @@ describe("structured logger (JSON mode)", () => {
     expect(rec.service).toBe("nimblebrain-runtime");
     expect(rec.message).toBe("turn.start");
     expect(rec.user_id).toBe("user_123");
-    expect(rec.workspace_id).toBe("ws_abc123");
+    expect(rec.workspace_id).toBe("ws_000d299235755008");
     expect(rec.iteration).toBe(1);
     // Trace correlation uses the OTel-standard `trace_id` field.
     expect(rec.trace_id).toMatch(/^[0-9a-f]{32}$/);
@@ -313,7 +318,7 @@ describe("structured logger (JSON mode)", () => {
         api_key: "sk-supersecret",
         authorization: "Bearer abc.def",
         nested: { password: "hunter2", safe: "ok" },
-        workspace_id: "ws_keep",
+        workspace_id: "ws_0041e7a597d6c5c6",
         // LLM usage telemetry — MUST survive (contains the substring "token").
         inputTokens: 1234,
         outputTokens: 56,
@@ -332,7 +337,7 @@ describe("structured logger (JSON mode)", () => {
     expect(rec.authorization).toBe("[redacted]");
     expect(rec.nested.password).toBe("[redacted]");
     expect(rec.nested.safe).toBe("ok");
-    expect(rec.workspace_id).toBe("ws_keep"); // non-secret key untouched
+    expect(rec.workspace_id).toBe("ws_0041e7a597d6c5c6"); // non-secret key untouched
     // Regression guard: LLM usage telemetry is NOT redacted by a `token`
     // substring rule. The next person who "simplifies" the regex trips this.
     expect(rec.inputTokens).toBe(1234);

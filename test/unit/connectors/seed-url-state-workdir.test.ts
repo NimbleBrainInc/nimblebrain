@@ -30,7 +30,7 @@ import {
 } from "../../helpers/credential-store.ts";
 import { seedWorkspaceRoot } from "../../helpers/test-workspace.ts";
 
-const WS = "ws_probe";
+const WS = "ws_006049df791a1f50";
 const SERVER = "remote-thing";
 
 let configuredWorkDir: string;
@@ -39,9 +39,9 @@ let priorEnv: string | undefined;
 
 beforeEach(() => {
   configuredWorkDir = mkdtempSync(join(tmpdir(), "nb-configured-"));
-  seedWorkspaceRoot(configuredWorkDir, "ws_probe");
+  seedWorkspaceRoot(configuredWorkDir, "ws_006049df791a1f50");
   defaultishWorkDir = mkdtempSync(join(tmpdir(), "nb-default-"));
-  seedWorkspaceRoot(defaultishWorkDir, "ws_probe");
+  seedWorkspaceRoot(defaultishWorkDir, "ws_006049df791a1f50");
   installTestCredentialStore(configuredWorkDir);
   priorEnv = process.env.NB_WORK_DIR;
   // The divergence under test: `defaultWorkDir()` resolves here, the runtime's

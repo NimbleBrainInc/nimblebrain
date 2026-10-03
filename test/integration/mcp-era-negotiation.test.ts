@@ -113,7 +113,7 @@ async function connect(url: string, opts: { connector?: boolean } = {}): Promise
     // handlers, which is what entitles it to claim the extension.
     opts.connector
       ? {
-          workspaceId: "ws_era",
+          workspaceId: "ws_0032146faed2deb5",
           connectorId: "era",
           hostResources: {
             read: async () => ({ contents: [] }),

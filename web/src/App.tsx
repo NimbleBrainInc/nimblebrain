@@ -3,7 +3,6 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from
 import {
   callTool,
   logout,
-  setActiveWorkspaceId,
   setAuthToken,
   setOnAuthError,
   setOnWorkspaceError,
@@ -42,6 +41,7 @@ import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
 import { type AppRouteState, isOpenAppCall, resolveAppRouteIn } from "./lib/open-app";
+import { routablePlacements } from "./lib/routable-placements";
 import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
@@ -357,20 +357,10 @@ function AuthenticatedAppContent({
     [forSlot, activeSlug],
   );
 
-  // Collect all routable placements from main + sidebar (deduplicated by route).
-  // Sidebar placements can have routes too (e.g., Conversations).
-  const mainPlacementRoutes = mainRoutes();
-  const sidebarRoutes = forSlot("sidebar").filter(
-    (p) => p.route && !p.slot.startsWith("sidebar.bottom"),
-  );
-  const seen = new Set<string>();
-  const allRoutable: PlacementEntry[] = [];
-  for (const p of [...sidebarRoutes, ...mainPlacementRoutes]) {
-    if (p.route && !seen.has(p.route)) {
-      seen.add(p.route);
-      allRoutable.push(p);
-    }
-  }
+  // Collect all routable placements from main + sidebar, one per route, a
+  // platform placement ahead of any connector's. Sidebar placements can have
+  // routes too (e.g., Conversations).
+  const allRoutable = routablePlacements(forSlot("sidebar"), mainRoutes());
 
   // App placements: everything routable except route "/", which is the shell's
   // own: `/` is `GlobalHomePage` (workspace-agnostic) and `/w/<slug>/` is
@@ -701,12 +691,9 @@ export function App() {
       setAuthToken("__cookie__");
       // onAuthError fires only after silent token refresh has already failed
       setOnAuthError(handleLogout);
-
-      if (data.activeWorkspace) {
-        setActiveWorkspaceId(data.activeWorkspace);
-      } else if (data.workspaces.length > 0) {
-        setActiveWorkspaceId(data.workspaces[0].id);
-      }
+      // The active workspace is not set here: WorkspaceProvider seeds it on
+      // mount and the route guard projects the URL onto it. A write from here
+      // lands whenever bootstrap resolves, which can be after the guard's.
 
       setPlatformVersion(data.version, data.buildSha);
       setBootstrap(data);
@@ -719,10 +706,15 @@ export function App() {
   // Bootstrap carries no workspace hint — the focused workspace is owned by
   // the URL (`/w/:slug`), and login lands on `/` (the workspace-agnostic home).
   useEffect(() => {
+    let cancelled = false;
     tryBootstrap().then((data) => {
+      if (cancelled) return;
       if (data) initFromBootstrap(data);
       setChecking(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [initFromBootstrap]);
 
   if (checking) {

@@ -29,7 +29,7 @@ import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../context/WorkspaceContext";
 import { useWorkspaceBriefing } from "../hooks/useWorkspaceBriefing";
 import { cn } from "../lib/utils";
-import { connectorSettingsPath, workspaceApps } from "../lib/workspace-apps";
+import { appsByConnector, connectorSettingsPath, workspaceApps } from "../lib/workspace-apps";
 import { toSlug } from "../lib/workspace-slug";
 import type { PlacementEntry } from "../types";
 
@@ -107,7 +107,9 @@ export function WorkspaceOverviewPage() {
           <div className="min-w-0">
             <h1 className="text-3xl font-heading font-medium text-foreground">{workspace.name}</h1>
             <p className="mt-2 text-sm text-muted-foreground italic">
-              {describeWorkspace(workspace, apps ? apps.length : null)}
+              {/* Counted in apps, as the sidebar counts them: a connector that
+                  places several views is one app with several cards below. */}
+              {describeWorkspace(workspace, apps ? appsByConnector(apps).length : null)}
             </p>
           </div>
           <Link

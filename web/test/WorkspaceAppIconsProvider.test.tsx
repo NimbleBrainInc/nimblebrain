@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
+import type * as ApiClient from "../src/api/client";
 import type { InstalledConnector } from "../src/api/client";
 import type { WorkspaceStreamEvents } from "../src/types";
 import { realClient } from "./setup";
@@ -15,8 +16,10 @@ import { realClient } from "./setup";
 //      can fire SSE events synchronously and assert which ones refetch.
 // ---------------------------------------------------------------------------
 
+type GetInstalledOpts = Parameters<typeof ApiClient.getInstalledConnectors>[0];
+
 const mockGetInstalled = mock(
-  (): Promise<{ installed: InstalledConnector[]; errors: unknown[] }> =>
+  (_opts?: GetInstalledOpts): Promise<{ installed: InstalledConnector[]; errors: unknown[] }> =>
     Promise.resolve({ installed: [], errors: [] }),
 );
 
@@ -30,10 +33,8 @@ const mockConnectEvents = mock((opts: { onEvent: typeof capturedOnEvent }) => {
 
 mock.module("../src/api/client", () => ({
   ...realClient,
-  // Provider calls getInstalledConnectors({ scope: "workspace" }); the mock
-  // ignores args (we only count invocations), so call it bare rather than
-  // spreading an unused arg list.
-  getInstalledConnectors: () => mockGetInstalled(),
+  // Forward the args so a test can assert which workspace a read names.
+  getInstalledConnectors: (opts?: GetInstalledOpts) => mockGetInstalled(opts),
 }));
 
 mock.module("../src/api/sse", () => ({
@@ -128,6 +129,8 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
       </WorkspaceAppIconsProvider>,
     );
     await waitFor(() => expect(seen).toEqual({ workspaceId: "ws-1", installed: [gmail] }));
+    // The read names the workspace it is tagged with, not the client's active one.
+    expect(mockGetInstalled.mock.calls).toEqual([[{ scope: "workspace", workspaceId: "ws-1" }]]);
   });
 
   it("still refetches on connector.installed / connector.uninstalled", async () => {

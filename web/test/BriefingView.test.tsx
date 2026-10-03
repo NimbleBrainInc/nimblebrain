@@ -127,7 +127,7 @@ interface Props {
 function view(p: Props = {}) {
   return (
     <BriefingView
-      workspaceId={p.workspaceId ?? "ws_test"}
+      workspaceId={p.workspaceId ?? "ws_0076759dbbe19fcc"}
       briefing={p.briefing === undefined ? makeBriefing() : p.briefing}
       connectors={p.connectors ?? []}
       loading={p.loading ?? false}
@@ -398,9 +398,9 @@ describe("BriefingView", () => {
     });
 
     test("is scoped to the workspace", async () => {
-      mounted = await mount(view({ briefing: one(2), workspaceId: "ws_a" }));
+      mounted = await mount(view({ briefing: one(2), workspaceId: "ws_00079598e311c160" }));
       await hideFirst();
-      await rerender(view({ briefing: one(2), workspaceId: "ws_b" }));
+      await rerender(view({ briefing: one(2), workspaceId: "ws_001c32f121060ff3" }));
       expect(rows()).toHaveLength(1);
     });
 

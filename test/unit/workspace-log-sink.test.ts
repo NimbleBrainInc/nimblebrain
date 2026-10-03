@@ -8,7 +8,7 @@ import { log } from "../../src/observability/log.ts";
 import { engineEvent, llmDonePayload, runStartPayload } from "../helpers/engine-events.ts";
 
 const connectorFields = {
-  wsId: "ws_test",
+  wsId: "ws_0076759dbbe19fcc",
   serverName: "foo",
   connectorName: "@test/foo",
 };
@@ -36,7 +36,7 @@ const WORKSPACE_EVENTS: EngineEvent[] = [
     ok: true,
     ms: 1,
     userId: null,
-    workspaceId: "ws_test",
+    workspaceId: "ws_0076759dbbe19fcc",
   }),
   engineEvent("http.error", {
     ts: "2026-01-01T00:00:00.000Z",
@@ -60,7 +60,7 @@ const WORKSPACE_EVENTS: EngineEvent[] = [
     key: "k",
     caller: "c",
     purpose: "p",
-    workspaceId: "ws_test",
+    workspaceId: "ws_0076759dbbe19fcc",
   }),
 ];
 

@@ -247,7 +247,7 @@ describe("EventSourcedConversationStore", () => {
     store.emit({ type: "text.delta", data: { runId: "r1", text: "hi" } });
     store.emit(
       engineEvent("connector.installed", {
-        wsId: "ws_test",
+        wsId: "ws_0076759dbbe19fcc",
         serverName: "test",
         connectorName: "test",
         version: "1.0.0",

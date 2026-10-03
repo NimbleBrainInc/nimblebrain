@@ -45,7 +45,7 @@ const TMP_DIR = join(tmpdir(), `automation-e2e-${Date.now()}`);
 // Automations are workspace-owned: stored at
 // `{workDir}/workspaces/<wsId>/automations/<ownerId>/`, the scheduler scans
 // `{workDir}/workspaces/*`. The harness acts as one workspace + owner.
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 
 /** Records of what the mock executor received. */

@@ -232,8 +232,8 @@ beforeEach(async () => {
 
   workspaceStore = new WorkspaceStore(workDir);
   for (const [name, id] of [
-    ["Tenant A", "ws_tenanta"],
-    ["Tenant B", "ws_tenantb"],
+    ["Tenant A", "ws_00741647fd740fac"],
+    ["Tenant B", "ws_0075ad1326581881"],
   ] as const) {
     await seedWorkspace(workspaceStore, id, {
       name,
@@ -253,10 +253,13 @@ afterEach(() => {
 
 describe("a catalog entry that binds a workspace secret to a header", () => {
   test("the persisted ref names the key and holds no value", async () => {
-    const result = await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
+    const result = await toolFor("ws_00741647fd740fac").handler({
+      action: "install",
+      entry: entry(),
+    });
     expect(result.isError).toBe(false);
 
-    const ref = persistedRef("ws_tenanta");
+    const ref = persistedRef("ws_00741647fd740fac");
     expect(ref.transport?.headers).toEqual({ [HEADER]: { ref: "credential", key: KEY } });
     expect(ref.transport?.auth).toMatchObject({ type: "provider", provider: MINTED_PROVIDER });
     expect(JSON.stringify(ref)).not.toContain("postgres://");
@@ -271,22 +274,22 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       },
     } as CatalogListing["install"];
 
-    await toolFor("ws_tenanta").handler({ action: "install", entry: forged });
-    expect(persistedRef("ws_tenanta").transport?.headers).toEqual({
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: forged });
+    expect(persistedRef("ws_00741647fd740fac").transport?.headers).toEqual({
       [HEADER]: { ref: "credential", key: KEY },
     });
   });
 
   test("both credentials ride one request, and each workspace sends its own secret", async () => {
-    await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
-    await toolFor("ws_tenantb").handler({ action: "install", entry: entry() });
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: entry() });
+    await toolFor("ws_0075ad1326581881").handler({ action: "install", entry: entry() });
 
-    await toolFor("ws_tenanta").handler({
+    await toolFor("ws_00741647fd740fac").handler({
       action: "set_secret",
       key: KEY,
       value: "postgres://a.acme.test/db",
     });
-    await toolFor("ws_tenantb").handler({
+    await toolFor("ws_0075ad1326581881").handler({
       action: "set_secret",
       key: KEY,
       value: "postgres://b.acme.test/db",
@@ -294,34 +297,36 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
 
     // The two persisted refs are byte-identical; the difference is entirely in
     // the store, which is what makes one catalog entry enough.
-    expect(persistedRef("ws_tenanta").transport).toEqual(persistedRef("ws_tenantb").transport);
+    expect(persistedRef("ws_00741647fd740fac").transport).toEqual(
+      persistedRef("ws_0075ad1326581881").transport,
+    );
 
-    const a = await send("ws_tenanta");
+    const a = await send("ws_00741647fd740fac");
     expect(a.get(HEADER)).toBe("postgres://a.acme.test/db");
-    expect(a.get("Authorization")).toBe("Bearer minted-for-ws_tenanta");
+    expect(a.get("Authorization")).toBe("Bearer minted-for-ws_00741647fd740fac");
 
-    const b = await send("ws_tenantb");
+    const b = await send("ws_0075ad1326581881");
     expect(b.get(HEADER)).toBe("postgres://b.acme.test/db");
-    expect(b.get("Authorization")).toBe("Bearer minted-for-ws_tenantb");
+    expect(b.get("Authorization")).toBe("Bearer minted-for-ws_0075ad1326581881");
   });
 
   test("rotating the key takes effect on the next resolve, with no config edit", async () => {
-    await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
-    await toolFor("ws_tenanta").handler({
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: entry() });
+    await toolFor("ws_00741647fd740fac").handler({
       action: "set_secret",
       key: KEY,
       value: "postgres://old.acme.test/db",
     });
-    const before = persistedRef("ws_tenanta");
-    expect((await send("ws_tenanta")).get(HEADER)).toBe("postgres://old.acme.test/db");
+    const before = persistedRef("ws_00741647fd740fac");
+    expect((await send("ws_00741647fd740fac")).get(HEADER)).toBe("postgres://old.acme.test/db");
 
-    await toolFor("ws_tenanta").handler({
+    await toolFor("ws_00741647fd740fac").handler({
       action: "set_secret",
       key: KEY,
       value: "postgres://new.acme.test/db",
     });
-    expect((await send("ws_tenanta")).get(HEADER)).toBe("postgres://new.acme.test/db");
-    expect(persistedRef("ws_tenanta")).toEqual(before);
+    expect((await send("ws_00741647fd740fac")).get(HEADER)).toBe("postgres://new.acme.test/db");
+    expect(persistedRef("ws_00741647fd740fac")).toEqual(before);
   });
 
   // ── Uninstall ───────────────────────────────────────────────────────
@@ -343,7 +348,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
   test("uninstalling removes the connector's declared secrets", async () => {
     // One tool for both actions: `toolFor` builds a fresh lifecycle per call,
     // and uninstall resolves the instance install seeded.
-    const tool = toolFor("ws_tenanta");
+    const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({ action: "install", entry: entry() });
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
     expect(structured(await tool.handler({ action: "list_secret_keys" })).keys).toHaveLength(1);
@@ -360,7 +365,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     // installed without supplying every value, so a reinstall re-collects and
     // overwrites — holding the key back would preserve a value the next
     // install replaces, and leave the orphan.
-    const tool = toolFor("ws_tenanta");
+    const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({ action: "install", entry: entry() });
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
 
@@ -377,7 +382,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
   test("only the uninstalled connector's own keys go", async () => {
     // The declaration is the bound. A key the workspace holds for something
     // else is not this connector's to resolve.
-    const tool = toolFor("ws_tenanta");
+    const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({ action: "install", entry: entry() });
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
     await tool.handler({ action: "set_secret", key: "unrelated.token", value: "keep-me" });
@@ -400,7 +405,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       secretHeaders: undefined,
     } as CatalogListing["install"];
 
-    const tool = toolFor("ws_tenanta");
+    const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({ action: "install", entry: plain });
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
 
@@ -416,7 +421,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
   test("a uninstall refused before it starts deletes no key", async () => {
     // The connector is not installed, so the uninstall is refused at the
     // pre-flight guard — before the keys are even resolved.
-    const tool = toolFor("ws_tenanta");
+    const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
 
     const result = await tool.handler({ action: "uninstall", serverName: SERVER_NAME });
@@ -430,7 +435,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     // there must leave a connector that is still installed holding a credential
     // it can still use.
     const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
-    const tool = toolFor("ws_tenanta", lifecycle);
+    const tool = toolFor("ws_00741647fd740fac", lifecycle);
     await tool.handler({ action: "install", entry: entry() });
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
 
@@ -446,7 +451,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     // The second declaration site. This entry binds no header at all — its one
     // credential is `providerAuth.config.key`, which the transport resolves per
     // request — so reading only `secretHeaders` would leave it behind.
-    const tool = toolFor("ws_tenanta");
+    const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({ action: "install", entry: directEntry() });
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
 
@@ -462,7 +467,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     // uninstall would break the survivor on its next request, naming a key whose
     // value is no longer recoverable — worse than the orphan being prevented.
     const lifecycle = new ConnectorLifecycleManager(new NoopEventSink());
-    const tool = toolFor("ws_tenanta", lifecycle);
+    const tool = toolFor("ws_00741647fd740fac", lifecycle);
     await tool.handler({ action: "install", entry: entry() });
     await tool.handler({ action: "install", entry: directEntry() });
     await tool.handler({ action: "set_secret", key: KEY, value: "postgres://a.acme.test/db" });
@@ -486,7 +491,7 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
     // uninstall. Without the referrer read, uninstalling the header connector
     // takes the operator app's secret with it and the static connector can no
     // longer complete a token exchange, on a value nothing returns.
-    const tool = toolFor("ws_tenanta");
+    const tool = toolFor("ws_00741647fd740fac");
     await tool.handler({
       action: "setup_operator",
       catalogId: OPERATOR_ID,
@@ -517,11 +522,14 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       },
     } as CatalogListing["install"];
 
-    const result = await toolFor("ws_tenanta").handler({ action: "install", entry: forged });
+    const result = await toolFor("ws_00741647fd740fac").handler({
+      action: "install",
+      entry: forged,
+    });
     expect(result.isError).toBe(false);
 
     const ws = JSON.parse(
-      readFileSync(join(workDir, "workspaces", "ws_tenanta", "workspace.json"), "utf-8"),
+      readFileSync(join(workDir, "workspaces", "ws_00741647fd740fac", "workspace.json"), "utf-8"),
     ) as { connectors: ConnectorRef[] };
     const ref = ws.connectors.find((b) => b.url === "https://mcp.acme.test/plain/mcp");
     expect(ref).toBeDefined();
@@ -538,15 +546,21 @@ describe("a catalog entry that binds a workspace secret to a header", () => {
       secretHeaders: undefined,
     } as CatalogListing["install"];
 
-    const result = await toolFor("ws_tenanta").handler({ action: "install", entry: literal });
+    const result = await toolFor("ws_00741647fd740fac").handler({
+      action: "install",
+      entry: literal,
+    });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toContain("X-Db-Url");
   });
 
   test("a workspace that never set the key fails its connection, naming the key", async () => {
-    await toolFor("ws_tenanta").handler({ action: "install", entry: entry() });
+    await toolFor("ws_00741647fd740fac").handler({ action: "install", entry: entry() });
     await expect(
-      resolveTransportCredential(persistedRef("ws_tenanta").transport, "ws_tenanta"),
-    ).rejects.toThrow(/acme\.db_url.*workspace:ws_tenanta/s);
+      resolveTransportCredential(
+        persistedRef("ws_00741647fd740fac").transport,
+        "ws_00741647fd740fac",
+      ),
+    ).rejects.toThrow(/acme\.db_url.*workspace:ws_00741647fd740fac/s);
   });
 });

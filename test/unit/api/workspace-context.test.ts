@@ -7,8 +7,8 @@ describe("ChatRequest workspaceId", () => {
   it("ChatRequest type accepts workspaceId field", () => {
     const req = {
       message: "test",
-      workspaceId: "ws_test",
+      workspaceId: "ws_0076759dbbe19fcc",
     } satisfies ChatRequest;
-    expect(req.workspaceId).toBe("ws_test");
+    expect(req.workspaceId).toBe("ws_0076759dbbe19fcc");
   });
 });

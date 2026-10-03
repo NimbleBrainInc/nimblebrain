@@ -30,8 +30,8 @@ import {
 } from "../../../src/identity/provider.ts";
 
 const ORIGIN = "https://nb.example.com";
-const WS_A = "ws_a";
-const WS_B = "ws_b";
+const WS_A = "ws_00079598e311c160";
+const WS_B = "ws_001c32f121060ff3";
 const CANONICAL_A = `${ORIGIN}/mcp/${WS_A}`;
 const CLIENT_ID = "client_test_0001";
 
@@ -59,7 +59,7 @@ const TOKENS: Record<string, VerifiedIdentity> = {
   "alice-aud-uppercase-host": { ...ALICE, grant: resource(`https://NB.EXAMPLE.COM/mcp/${WS_A}`) },
   "alice-aud-other-workspace": { ...ALICE, grant: resource(`${ORIGIN}/mcp/${WS_B}`) },
   "alice-aud-none": { ...ALICE, grant: resource() },
-  "alice-aud-unknown-ws": { ...ALICE, grant: resource(`${ORIGIN}/mcp/ws_nosuchworkspace`) },
+  "alice-aud-unknown-ws": { ...ALICE, grant: resource(`${ORIGIN}/mcp/ws_0052529305537a66`) },
   "mallory-aud-exact": { ...MALLORY, grant: resource(CANONICAL_A) },
 };
 
@@ -71,7 +71,7 @@ const WORKSPACES = new Map([
 /** What reached the MCP host, if anything. */
 let reached: McpSessionContext[] = [];
 
-function makeCtx(): AppContext {
+function makeCtx(mcpLimiter = new RequestRateLimiter(10_000, 60_000)): AppContext {
   const provider = {
     capabilities: {
       authCodeFlow: false,
@@ -104,13 +104,13 @@ function makeCtx(): AppContext {
         return Response.json({ ok: true });
       },
     },
-    // Generous enough that no test here meets the limit.
-    mcpLimiter: new RequestRateLimiter(10_000, 60_000),
+    // Generous by default, so no test here meets the limit unless it asks to.
+    mcpLimiter,
   } as unknown as AppContext;
 }
 
-function makeApp(): Hono {
-  const ctx = makeCtx();
+function makeApp(mcpLimiter?: RequestRateLimiter): Hono {
+  const ctx = makeCtx(mcpLimiter);
   const app = new Hono();
   app.route("/", mcpRoutes(ctx));
   // A REST route behind the same middleware every `/v1/*` group uses.
@@ -204,7 +204,7 @@ describe("membership authorizes; the answer never reveals whether a workspace ex
   it("refuses an exact aud for a non-member exactly like an unknown workspace", async () => {
     const app = makeApp();
     const nonMember = await post(app, `/mcp/${WS_A}`, "mallory-aud-exact");
-    const unknown = await post(app, "/mcp/ws_nosuchworkspace", "alice-aud-unknown-ws");
+    const unknown = await post(app, "/mcp/ws_0052529305537a66", "alice-aud-unknown-ws");
 
     expect(nonMember.status).toBe(404);
     expect(unknown.status).toBe(404);
@@ -215,7 +215,7 @@ describe("membership authorizes; the answer never reveals whether a workspace ex
   it("refuses a first-party non-member exactly like an unknown workspace", async () => {
     const app = makeApp();
     const nonMember = await post(app, `/mcp/${WS_A}`, "mallory-first-party");
-    const unknown = await post(app, "/mcp/ws_nosuchworkspace", "alice-first-party");
+    const unknown = await post(app, "/mcp/ws_0052529305537a66", "alice-first-party");
     const malformed = await post(app, "/mcp/not-a-workspace", "alice-first-party");
 
     expect(nonMember.status).toBe(404);
@@ -227,7 +227,7 @@ describe("membership authorizes; the answer never reveals whether a workspace ex
   });
 
   it("refuses an id that differs from the stored workspace only by case", async () => {
-    // A case-insensitive filesystem can resolve `WS_A` to ws_a's record; the
+    // A case-insensitive filesystem can resolve `WS_A` to ws_00079598e311c160's record; the
     // stored id must match the URL's exactly.
     const app = makeApp();
     const res = await post(app, "/mcp/WS_A", "alice-first-party");
@@ -261,5 +261,19 @@ describe("a token is valid only for its resource", () => {
   it("still accepts the first-party token on REST", async () => {
     const res = await post(makeApp(), `/v1/workspaces/${WS_A}/tools/call`, "alice-first-party");
     expect(res.status).toBe(200);
+  });
+});
+
+describe("/mcp/<wsId> rate limit", () => {
+  it("gives an external client and the user's own session separate buckets", async () => {
+    const app = makeApp(new RequestRateLimiter(2, 60_000));
+    // An external client signed in as Alice spends its whole budget.
+    expect((await post(app, `/mcp/${WS_A}`, "alice-aud-exact")).status).toBe(200);
+    expect((await post(app, `/mcp/${WS_A}`, "alice-aud-exact")).status).toBe(200);
+    expect((await post(app, `/mcp/${WS_A}`, "alice-aud-exact")).status).toBe(429);
+    // Alice's browser, the same user on a first-party session, is still served.
+    expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(200);
+    expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(200);
+    expect((await post(app, `/mcp/${WS_A}`, "alice-first-party")).status).toBe(429);
   });
 });

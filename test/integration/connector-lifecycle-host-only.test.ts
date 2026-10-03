@@ -49,8 +49,8 @@ import {
 } from "../helpers/fake-connector-server.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
-const ADMIN_WS = "ws_helix";
-const MEMBER_WS = "ws_orbit";
+const ADMIN_WS = "ws_003eba8844413cd9";
+const MEMBER_WS = "ws_00562f536b60bccc";
 const WORKSPACES = [ADMIN_WS, MEMBER_WS] as const;
 
 /** `slugifyServerName("ai.acme/scope")`: declares both lifecycle handlers. */

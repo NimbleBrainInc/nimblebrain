@@ -31,39 +31,49 @@ describe("workspaceConnectorsUrl", () => {
     // The whole point: connectors live at `/w/<slug>/settings/connectors`, NOT
     // the pre-scoping `/settings/workspace/connectors`. Slug = wsId minus `ws_`.
     process.env.NB_WEB_URL = "https://app.example.com";
-    expect(workspaceConnectorsUrl("ws_acme")).toBe(
-      "https://app.example.com/w/acme/settings/connectors",
+    expect(workspaceConnectorsUrl("ws_000f7ed6658f9d30")).toBe(
+      "https://app.example.com/w/000f7ed6658f9d30/settings/connectors",
     );
   });
 
   it("uses webOrigin: NB_WEB_URL wins over the derived/legacy origin", () => {
     // No NB_WEB_URL → webOrigin() falls through to publicOrigin() (derived host).
     process.env.NB_PLATFORM_HOST = "api.example.com";
-    expect(workspaceConnectorsUrl("ws_x")).toBe("https://api.example.com/w/x/settings/connectors");
+    expect(workspaceConnectorsUrl("ws_008bd230f095f38a")).toBe(
+      "https://api.example.com/w/008bd230f095f38a/settings/connectors",
+    );
     // NB_WEB_URL set → the user-facing SPA origin wins (the dev API/SPA-port split).
     process.env.NB_WEB_URL = "https://web.example.com";
-    expect(workspaceConnectorsUrl("ws_x")).toBe("https://web.example.com/w/x/settings/connectors");
+    expect(workspaceConnectorsUrl("ws_008bd230f095f38a")).toBe(
+      "https://web.example.com/w/008bd230f095f38a/settings/connectors",
+    );
   });
 
   it("returns the custom domain when it is the canonical origin", () => {
     process.env.NB_PLATFORM_HOST = "acme.nb.example.com";
     process.env.NB_CUSTOM_DOMAIN = "brain.acme.com";
-    expect(workspaceConnectorsUrl("ws_x")).toBe("https://brain.acme.com/w/x/settings/connectors");
+    expect(workspaceConnectorsUrl("ws_008bd230f095f38a")).toBe(
+      "https://brain.acme.com/w/008bd230f095f38a/settings/connectors",
+    );
   });
 
   it("falls back to the localhost dev origin when nothing is configured", () => {
-    expect(workspaceConnectorsUrl("ws_x")).toBe("http://localhost:27247/w/x/settings/connectors");
+    expect(workspaceConnectorsUrl("ws_008bd230f095f38a")).toBe(
+      "http://localhost:27247/w/008bd230f095f38a/settings/connectors",
+    );
   });
 
   it("trims a trailing slash on the base so the path isn't doubled", () => {
     process.env.NB_WEB_URL = "https://app.example.com/";
-    expect(workspaceConnectorsUrl("ws_x")).toBe("https://app.example.com/w/x/settings/connectors");
+    expect(workspaceConnectorsUrl("ws_008bd230f095f38a")).toBe(
+      "https://app.example.com/w/008bd230f095f38a/settings/connectors",
+    );
   });
 
   it("throws (fail-closed) on a tampered non-http(s) web origin", () => {
     // A `javascript:`/`data:` NB_WEB_URL must never reach the meta-refresh. The
     // origin seam asserts http(s) and throws at the boundary rather than degrade.
     process.env.NB_WEB_URL = "javascript:alert(1)";
-    expect(() => workspaceConnectorsUrl("ws_acme")).toThrow();
+    expect(() => workspaceConnectorsUrl("ws_000f7ed6658f9d30")).toThrow();
   });
 });

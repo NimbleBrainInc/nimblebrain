@@ -17,7 +17,7 @@ describe("CORS", () => {
   function preflight(allowed: Set<string> | null) {
     const app = new Hono();
     app.use("*", corsMiddleware(allowed));
-    return app.request(`${ORIGIN}/v1/workspaces/ws_acme/tools/call`, {
+    return app.request(`${ORIGIN}/v1/workspaces/ws_000f7ed6658f9d30/tools/call`, {
       method: "OPTIONS",
       headers: {
         Origin: PARTNER,
@@ -47,7 +47,10 @@ describe("rejectCrossSiteWrites", () => {
   }
 
   function send(app: Hono, method: string, headers: Record<string, string>) {
-    return app.request(`${ORIGIN}/v1/workspaces/ws_acme/tools/call`, { method, headers });
+    return app.request(`${ORIGIN}/v1/workspaces/ws_000f7ed6658f9d30/tools/call`, {
+      method,
+      headers,
+    });
   }
 
   it("refuses a same-site or cross-site browser write from an origin not allowlisted", async () => {

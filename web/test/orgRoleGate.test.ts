@@ -45,7 +45,7 @@ describe("org-admin gate for /org/skills (and every other /org/* route)", () => 
     // (org skills, org users, org registries) are reserved to identities
     // the IDP marked admin/owner, not to any workspace's admin.
     const session = makeSession("member");
-    const wsAdmin: Partial<WorkspaceInfo> = { id: "ws_x", userRole: "admin" };
+    const wsAdmin: Partial<WorkspaceInfo> = { id: "ws_008bd230f095f38a", userRole: "admin" };
     const role = resolveScopedRole(session, wsAdmin as WorkspaceInfo);
     expect(role).toBe("ws_admin");
     expect(roleAtLeast(role, "org_admin")).toBe(false);
@@ -53,7 +53,7 @@ describe("org-admin gate for /org/skills (and every other /org/* route)", () => 
 
   it("rejects ws_member against org_admin minimum (Phase 1 /org/skills surface)", () => {
     const session = makeSession("member");
-    const wsMember: Partial<WorkspaceInfo> = { id: "ws_x", userRole: "member" };
+    const wsMember: Partial<WorkspaceInfo> = { id: "ws_008bd230f095f38a", userRole: "member" };
     const role = resolveScopedRole(session, wsMember as WorkspaceInfo);
     expect(role).toBe("ws_member");
     expect(roleAtLeast(role, "org_admin")).toBe(false);

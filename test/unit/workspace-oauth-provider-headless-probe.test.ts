@@ -22,7 +22,7 @@ function makeProvider(
   onInteractiveAuthRequired: (url: string) => void,
 ): WorkspaceOAuthProvider {
   const provider = new WorkspaceOAuthProvider({
-    owner: { type: "workspace", wsId: "ws_test" },
+    owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
     serverName: "granola-test",
     workDir,
     callbackUrl: "https://hq.example/v1/mcp-auth/callback",

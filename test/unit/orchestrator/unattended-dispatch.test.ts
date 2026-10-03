@@ -127,7 +127,7 @@ function makeStubRuntime(opts: StubOpts): UnattendedDispatchRuntime {
 
 // ── Scaffolding ───────────────────────────────────────────────────
 
-const WS = "ws_helix";
+const WS = "ws_003eba8844413cd9";
 const PRINCIPAL = "usr_route_author";
 const REASON = "route:rt_outbound_slack";
 
@@ -135,7 +135,7 @@ let workDir = "";
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-unattended-dispatch-"));
   seedWorkspaceRoot(workDir, "ws_0123456789abcdef");
-  seedWorkspaceRoot(workDir, "ws_helix");
+  seedWorkspaceRoot(workDir, "ws_003eba8844413cd9");
 });
 afterEach(() => {
   try {

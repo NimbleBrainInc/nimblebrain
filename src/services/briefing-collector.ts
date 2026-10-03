@@ -16,6 +16,7 @@
 import type { ConnectorInstance } from "../connectors/runtime/types.ts";
 import { log } from "../observability/log.ts";
 import type { BriefingItem } from "../platform/schemas/home.ts";
+import { sanitizeLineField } from "../prompt/compose.ts";
 import type { McpSource } from "../tools/mcp-source.ts";
 import { createFacetCache, type FacetCache, type FacetReading } from "./briefing-cache.ts";
 import {
@@ -39,6 +40,8 @@ export const FACET_READ_TIMEOUT_MS = 5_000;
 export interface BriefingCollectorDeps {
   /** The workspace's own MCP source for a server, or null when it has none. */
   resolveSource: (wsId: string, serverName: string) => McpSource | null;
+  /** Each connector's display name (the catalog entry's title) by server name. */
+  connectorTitles: () => Promise<ReadonlyMap<string, string>>;
   now?: () => number;
   readTimeoutMs?: number;
 }
@@ -121,11 +124,13 @@ export function createBriefingCollector(deps: BriefingCollectorDeps): BriefingCo
     wsId: string,
     inst: ConnectorInstance,
     force: boolean,
+    titles: ReadonlyMap<string, string>,
   ): Promise<BriefingItem[]> {
     const source = deps.resolveSource(wsId, inst.serverName);
     if (!source) return [];
     const facets = await discover(wsId, source, force);
-    const app = inst.ui?.name ?? inst.connectorName;
+    // One line of display text that reaches the model in the tool's text result.
+    const app = sanitizeLineField(titles.get(inst.serverName) ?? inst.serverName);
     const route = inst.ui?.placements?.[0]?.route ?? null;
     const readings = await Promise.allSettled(
       facets.map((facet) =>
@@ -160,8 +165,9 @@ export function createBriefingCollector(deps: BriefingCollectorDeps): BriefingCo
       const running = instances
         .filter((inst) => inst.wsId === wsId && inst.state === "running")
         .sort((a, b) => appPriority(a) - appPriority(b));
+      const titles = running.length > 0 ? await deps.connectorTitles() : new Map<string, string>();
       const perConnector = await Promise.all(
-        running.map((inst) => collectConnector(wsId, inst, force)),
+        running.map((inst) => collectConnector(wsId, inst, force, titles)),
       );
       // Most urgent first; within a level, the order above (sort is stable).
       return perConnector

@@ -62,7 +62,7 @@ async function installConnector(name: string, placements: PlacementDeclaration[]
   const ref: ConnectorRef = {
     url: `https://${name}.example.com/mcp`,
     serverName: name,
-    ui: { name: `${name} App`, icon: `${name}-icon`, placements },
+    ui: { placements },
   };
   const lifecycle = runtime.getLifecycle();
   await lifecycle.seedInstance(name, ref.url, ref, undefined, TEST_WORKSPACE_ID);

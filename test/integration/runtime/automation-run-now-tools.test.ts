@@ -29,7 +29,7 @@ import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
-const WS = "ws_run_now_tools";
+const WS = "ws_0069b0bea4fbff54";
 const ADMIN_ONLY_TOOL = "nb__manage_users";
 const RUNS = 3;
 

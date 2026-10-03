@@ -11,6 +11,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  appsByConnector,
   connectorSettingsPath,
   iconMapFromInstalled,
   MAX_INLINE_APPS,
@@ -69,7 +70,7 @@ describe("workspaceApps", () => {
 
   test("MAX_INLINE_APPS is a small positive cap", () => {
     expect(MAX_INLINE_APPS).toBeGreaterThan(0);
-    expect(MAX_INLINE_APPS).toBeLessThanOrEqual(6);
+    expect(MAX_INLINE_APPS).toBeLessThanOrEqual(10);
   });
 });
 
@@ -93,10 +94,12 @@ describe("iconMapFromInstalled", () => {
 
 describe("connectorSettingsPath", () => {
   test("a connector's settings page in the workspace, its name encoded", () => {
-    expect(connectorSettingsPath("acme", "com-acme-tasks")).toBe(
-      "/w/acme/settings/connectors/com-acme-tasks",
+    expect(connectorSettingsPath("000f7ed6658f9d30", "com-acme-tasks")).toBe(
+      "/w/000f7ed6658f9d30/settings/connectors/com-acme-tasks",
     );
-    expect(connectorSettingsPath("acme", "a/b")).toBe("/w/acme/settings/connectors/a%2Fb");
+    expect(connectorSettingsPath("000f7ed6658f9d30", "a/b")).toBe(
+      "/w/000f7ed6658f9d30/settings/connectors/a%2Fb",
+    );
   });
 
   test("no workspace -> null", () => {
@@ -105,6 +108,28 @@ describe("connectorSettingsPath", () => {
   });
 
   test("an identity app has no workspace settings page -> null", () => {
-    expect(connectorSettingsPath("acme", "conversations")).toBeNull();
+    expect(connectorSettingsPath("000f7ed6658f9d30", "conversations")).toBeNull();
+  });
+});
+
+describe("appsByConnector", () => {
+  test("a connector that places several views is one app holding them in order", () => {
+    const apps = appsByConnector(
+      workspaceApps([
+        p({ serverName: "tasks", slot: "sidebar.apps", priority: 50 }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 11, route: "people/orgs" }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 10, route: "people" }),
+        p({ serverName: "people", slot: "sidebar.apps", priority: 60, route: "people/deals" }),
+      ]),
+    );
+    // Apps keep the order of their first view, so a later view of an earlier app
+    // does not move it.
+    expect(apps.map((a) => a.serverName)).toEqual(["people", "tasks"]);
+    expect(apps[0]?.views.map((v) => v.route)).toEqual(["people", "people/orgs", "people/deals"]);
+    expect(apps[1]?.views).toHaveLength(1);
+  });
+
+  test("no placements, no apps", () => {
+    expect(appsByConnector([])).toEqual([]);
   });
 });

@@ -33,10 +33,11 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
    * pattern as the workspace-switch refetch.
    */
   const refresh = useCallback(async () => {
+    const wsId = workspaceIdRef.current;
     try {
-      const data = await getShell();
+      const data = await getShell(wsId);
       setShell(data);
-      setShellWorkspaceId(workspaceIdRef.current);
+      setShellWorkspaceId(wsId);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load shell");
@@ -56,7 +57,7 @@ export function useShell(_token: string, workspaceId?: string, initialShell?: Sh
     if (!shell) setLoading(true);
     setError(null);
 
-    getShell()
+    getShell(workspaceId)
       .then((data) => {
         if (!cancelled) {
           setShell(data);

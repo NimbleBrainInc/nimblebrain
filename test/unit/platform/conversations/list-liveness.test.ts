@@ -20,7 +20,7 @@ import type { McpSource } from "../../../../src/tools/mcp-source.ts";
 
 const OWNER_ID = "usr_test";
 const OTHER_ID = "usr_other";
-const WS_ID = "ws_listlive0000000";
+const WS_ID = "ws_004349bc855d8f85";
 const LIVE_ID = "conv_live0000000001";
 const IDLE_ID = "conv_idle0000000001";
 const OTHERS_LIVE_ID = "conv_others00000001";

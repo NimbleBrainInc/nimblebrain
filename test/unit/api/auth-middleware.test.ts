@@ -86,7 +86,7 @@ describe("authenticateRequest — adapter mode", () => {
   };
 
   it("accepts valid Bearer token and returns identity", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: `Bearer ${validAdapterKey}` },
     });
     const result = await authenticateRequest(req, options);
@@ -100,7 +100,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("rejects invalid Bearer token with 401", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer wrong-key" },
     });
     const result = await authenticateRequest(req, options);
@@ -111,7 +111,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("rejects an unverified Bearer token on a workspace's chat route with 401", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/chat", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/chat", {
       method: "POST",
       headers: { Authorization: "Bearer not-a-provider-token" },
     });
@@ -123,7 +123,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("accepts valid session cookie via adapter", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Cookie: "nb_session=valid-session" },
     });
     const result = await authenticateRequest(req, options);
@@ -136,7 +136,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("rejects unauthenticated requests with 401", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/shell");
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell");
     const result = await authenticateRequest(req, options);
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
@@ -145,7 +145,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("does not leak user existence info in 401 response", async () => {
-    const req = makeRequest("/v1/workspaces/ws_a/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer bad-key" },
     });
     const result = await authenticateRequest(req, options);
@@ -169,7 +169,7 @@ describe("authenticateRequest — identity in return value", () => {
       eventSink: noopSink,
     };
 
-    const req = makeRequest("/v1/workspaces/ws_a/shell", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer my-key" },
     });
     const result = await authenticateRequest(req, options);
@@ -197,10 +197,10 @@ describe("authenticateRequest — identity in return value", () => {
       eventSink: noopSink,
     };
 
-    const req1 = makeRequest("/v1/workspaces/ws_a/shell", {
+    const req1 = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer key-1" },
     });
-    const req2 = makeRequest("/v1/workspaces/ws_a/shell", {
+    const req2 = makeRequest("/v1/workspaces/ws_00079598e311c160/shell", {
       headers: { Authorization: "Bearer key-2" },
     });
 

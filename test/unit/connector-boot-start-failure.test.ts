@@ -22,7 +22,7 @@ class CapturingSink implements EventSink {
   }
 }
 
-const WS = "ws_test";
+const WS = "ws_0076759dbbe19fcc";
 const SERVER = "ai-nimblebrain-memory-mcp";
 
 /**
