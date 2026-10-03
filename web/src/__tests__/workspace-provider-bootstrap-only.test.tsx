@@ -4,8 +4,9 @@
 // Every workspace-scoped request is addressed to `/v1/workspaces/<wsId>/…`, so
 // the list of workspaces cannot itself be fetched through one: there is no
 // workspace to address it to until the list names one. The provider takes the
-// list from bootstrap and never asks the server for it. With an empty list no
-// workspace is active, nothing goes out, and a workspace-scoped page shows its
+// list from bootstrap and never asks the server for it. Bootstrap names no
+// focus, so no workspace is active until one is named; with an empty list none
+// can be, nothing goes out, and a workspace-scoped page shows its
 // "No active workspace" state. Same plumbing as login-hands-over-bootstrap:
 // bun:test + react-dom/client + happy-dom. A tool call is recorded as well as
 // fetch, because `callTool` without an active workspace throws before fetching.
@@ -114,7 +115,19 @@ describe("WorkspaceProvider", () => {
     expect(byAttr(container, "data-testid", "scoped")).toBeNull();
   });
 
-  test("sendsNoRequest_andFocusesTheBootstrapDefault_whenBootstrapListsWorkspaces", async () => {
+  test("focusesNothing_whenBootstrapListsWorkspacesAndNoneIsNamed", async () => {
+    // Bootstrap names no focus: the URL does, through the route guard. A
+    // provider given workspaces and no id focuses none, never the first.
+    const requests = recordRequests();
+
+    const container = await mount([WS_A, WS_B]);
+
+    expect(callToolSpy).not.toHaveBeenCalled();
+    expect(requests).toEqual([]);
+    expect(byAttr(container, "data-testid", "active")?.textContent).toBe("none");
+  });
+
+  test("sendsNoRequest_andFocusesTheWorkspaceItIsGiven", async () => {
     const requests = recordRequests();
 
     const container = await mount([WS_A, WS_B], "ws_001c32f121060ff3");

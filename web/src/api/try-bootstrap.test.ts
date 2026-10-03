@@ -30,7 +30,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 const BOOTSTRAP_BODY = {
   identity: { id: "u_1", email: "u@example.com", displayName: "U" },
   workspaces: [{ id: "ws_0002ee92e8791c13", name: "Personal" }],
-  activeWorkspace: "ws_0002ee92e8791c13",
   features: {},
   version: "test",
   buildSha: null,
@@ -68,7 +67,7 @@ describe("tryBootstrap", () => {
     const result = await tryBootstrap();
 
     expect(result).not.toBeNull();
-    expect(result?.activeWorkspace).toBe("ws_0002ee92e8791c13");
+    expect(result?.workspaces[0]?.id).toBe("ws_0002ee92e8791c13");
     expect(calls.bootstrap).toBe(1);
     expect(calls.refresh).toBe(0);
   });
@@ -96,7 +95,7 @@ describe("tryBootstrap", () => {
     const result = await tryBootstrap();
 
     expect(result).not.toBeNull();
-    expect(result?.activeWorkspace).toBe("ws_0002ee92e8791c13");
+    expect(result?.workspaces[0]?.id).toBe("ws_0002ee92e8791c13");
     expect(calls.bootstrap).toBe(2); // original 401 + retry after refresh
     expect(calls.refresh).toBe(1);
   });

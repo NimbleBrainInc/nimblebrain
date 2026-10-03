@@ -1,6 +1,6 @@
 # 0039. The first workspace is an ordinary workspace
 
-- Status: Accepted; the id-retention rule superseded by ADR-0042
+- Status: Accepted; the id-retention rule superseded by ADR-0042, the landing preference by ADR-0044
 - Date: 2026-09-27
 - Serves: secure RBAC
 
@@ -30,16 +30,15 @@ members can be added to it like any other.
   belongs to no workspace — not on every authenticated request. A request that
   names no workspace is a caller error outside dev mode; the server does not
   choose one.
-- The workspace a user lands in when nothing names one is a user preference,
-  `preferences.defaultWorkspaceId`, set to the workspace provisioned for them.
-  It is ignored while they are not a member.
+- Nothing records a workspace for a user to land in: the URL names the
+  workspace, and `/` takes a user in exactly one workspace into it (ADR-0044).
 - A conversation's live title is delivered to its owner, not to the members of
   its workspace.
 - *Superseded by ADR-0042:* workspaces created as personal ones keep their
   ids.
-- The legacy fields are retired at boot: the owner's default is set to that workspace, a name still
-  equal to the one provisioning gave it is renamed to the new form, and
-  `isPersonal` / `ownerUserId` are removed.
+- The legacy fields are retired at boot: a name still equal to the one
+  provisioning gave it is renamed to the new form, and `isPersonal` /
+  `ownerUserId` are removed.
 
 ## Consequences
 
@@ -54,9 +53,6 @@ members can be added to it like any other.
 - *Superseded by ADR-0042:* a workspace provisioned before this keeps a
   `ws_user_<userId>` id. It is in URLs, `/mcp/<wsId>` endpoints configured in
   external clients, and on-disk paths, and ids are opaque, so it stays.
-- A bootstrap client reads `activeWorkspace` for the default. `isPersonal`
-  remains in the bootstrap payload, true for the default workspace, only until
-  its last reader moves off it.
 
 ## Alternatives considered
 

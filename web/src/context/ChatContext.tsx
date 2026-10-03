@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { callTool } from "../api/client";
+import { callToolWithoutWorkspace } from "../api/client";
 import { chatStore } from "../hooks/chat-store";
 import type { UseChatReturn } from "../hooks/useChat";
 import { useChat } from "../hooks/useChat";
@@ -277,7 +277,7 @@ export function ChatProvider({
   const fileLimits = initialConfig?.fileLimits;
 
   const fetchConfig = useCallback(() => {
-    callTool("nb", "get_config")
+    callToolWithoutWorkspace("nb", "get_config")
       .then((result) => {
         const data = extractConfigPayload(result) as ConfigInfo;
         setConfiguredProviders(data.configuredProviders);

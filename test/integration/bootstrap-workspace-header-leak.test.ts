@@ -1,15 +1,15 @@
 import type { ApiErrorBody, BootstrapResponse } from "../../src/api/schemas/responses.ts";
 import { readJson } from "../helpers/http.ts";
 /**
- * Bootstrap reads nothing from the request to choose a workspace, and routers
+ * Bootstrap chooses no workspace and reads none from the request, and routers
  * mounted beside it do not leak workspace middleware onto it or onto other
  * identity-scoped routes.
  *
  * The browser may still send an `X-Workspace-Id` header (a stale client, a
  * proxy); the server gives it no meaning anywhere:
- *   - `GET  /v1/bootstrap` answers with the caller's default workspace as
- *     `activeWorkspace`, whatever the header names — a workspace the caller
- *     belongs to, or one they do not.
+ *   - `GET  /v1/bootstrap` answers with the caller's workspaces and no focus,
+ *     whatever the header names — a workspace the caller belongs to, or one
+ *     they do not.
  *
  * The Hono **wildcard-leak** class: a sub-app's `.use("*")` middleware flattens
  * into a `/*` matcher that runs for every route mounted AFTER it on the same
@@ -85,7 +85,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
   let runtime: Runtime;
   let handle: ServerHandle;
   let baseUrl: string;
-  let defaultWs: string;
+  let ownWs: string;
   let sharedWs: string;
   let foreignWs: string;
 
@@ -108,16 +108,14 @@ describe("bootstrap ignores X-Workspace-Id", () => {
     );
 
     const wsStore = runtime.getWorkspaceStore();
-    // Alice's provisioned workspace, recorded as her default — the one
-    // bootstrap always answers with.
-    const provisioned = await ensureUserWorkspace(
-      wsStore,
-      { id: ALICE.id, displayName: ALICE.displayName },
-      runtime.getUserStore(),
-    );
-    defaultWs = provisioned[0]!.id;
-    // A shared workspace Alice belongs to — a header naming it must not move
-    // the active workspace.
+    // Alice's provisioned workspace.
+    const provisioned = await ensureUserWorkspace(wsStore, {
+      id: ALICE.id,
+      displayName: ALICE.displayName,
+    });
+    ownWs = provisioned[0]!.id;
+    // A shared workspace Alice belongs to — a header naming it must not make
+    // bootstrap choose it.
     const shared = await wsStore.create("Acme Corp");
     await wsStore.addMember(shared.id, ALICE.id, "member");
     sharedWs = shared.id;
@@ -149,11 +147,11 @@ describe("bootstrap ignores X-Workspace-Id", () => {
     return { status: res.status, body };
   }
 
-  test("a header naming another workspace the caller belongs to does not move activeWorkspace", async () => {
+  test("a header naming another workspace the caller belongs to chooses nothing", async () => {
     const { status, body } = await bootstrapWithHeader(sharedWs);
     expect(status).toBe(200);
-    expect(body.activeWorkspace).toBe(defaultWs);
-    expect(body.shell.chatEndpoint).toBe(`/v1/workspaces/${defaultWs}/chat/stream`);
+    expect("activeWorkspace" in body).toBe(false);
+    expect(body.workspaces.map((w) => w.id)).toContain(ownWs);
     // The shared workspace is still listed — the header just chooses nothing.
     expect(body.workspaces.map((w) => w.id)).toContain(sharedWs);
   });
@@ -161,7 +159,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
   test("a header naming a non-member workspace does not break bootstrap", async () => {
     const { status, body } = await bootstrapWithHeader(foreignWs);
     expect(status).toBe(200);
-    expect(body.activeWorkspace).toBe(defaultWs);
+    expect("activeWorkspace" in body).toBe(false);
     expect(body.workspaces.map((w) => w.id)).not.toContain(foreignWs);
   });
 
@@ -189,7 +187,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
-        "X-Workspace-Id": defaultWs,
+        "X-Workspace-Id": ownWs,
       },
       body: JSON.stringify({ message: "hello" }),
     });

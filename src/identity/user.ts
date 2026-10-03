@@ -18,12 +18,6 @@ export interface UserPreferences {
    * Widening this is a decision, not a fill-in.
    */
   models?: { default?: string };
-  /**
-   * The workspace this person lands in when nothing names one (bootstrap's
-   * default focus). Set to the workspace provisioned for them; ignored while
-   * they are not a member of it. See `defaultWorkspaceFor`.
-   */
-  defaultWorkspaceId?: string;
 }
 
 export interface User {

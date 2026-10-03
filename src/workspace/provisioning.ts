@@ -1,4 +1,3 @@
-import type { UserPreferences, UserStore } from "../identity/user.ts";
 import type { Workspace } from "./types.ts";
 import type { WorkspaceStore } from "./workspace-store.ts";
 
@@ -21,9 +20,8 @@ const inflight = new WeakMap<WorkspaceStore, Map<string, Promise<Workspace[]>>>(
  * A user who belongs to none — new, or removed from every one — gets a
  * workspace named for them (`provisionedWorkspaceName`) with themselves as
  * admin. It is an ordinary workspace: an opaque id from `WorkspaceStore.create`,
- * members can be added, and nothing records how it came to exist. It becomes
- * the user's default workspace (`preferences.defaultWorkspaceId`) when a
- * `users` store is given.
+ * members can be added, and nothing records how it came to exist, or makes it
+ * the one the user opens: which workspace to open is the URL's (ADR-0044).
  *
  * Concurrent calls for one user share one in-flight provisioning, so a burst
  * of first requests creates one workspace, not several. The guard is
@@ -33,7 +31,6 @@ const inflight = new WeakMap<WorkspaceStore, Map<string, Promise<Workspace[]>>>(
 export function ensureUserWorkspace(
   store: WorkspaceStore,
   identity: ProvisioningIdentity,
-  users?: UserStore,
 ): Promise<Workspace[]> {
   let byUser = inflight.get(store);
   if (!byUser) {
@@ -43,7 +40,7 @@ export function ensureUserWorkspace(
   const running = byUser.get(identity.id);
   if (running) return running;
 
-  const run = provision(store, identity, users).finally(() => byUser.delete(identity.id));
+  const run = provision(store, identity).finally(() => byUser.delete(identity.id));
   byUser.set(identity.id, run);
   return run;
 }
@@ -51,7 +48,6 @@ export function ensureUserWorkspace(
 async function provision(
   store: WorkspaceStore,
   identity: ProvisioningIdentity,
-  users: UserStore | undefined,
 ): Promise<Workspace[]> {
   const memberships = await store.getWorkspacesForUser(identity.id);
   if (memberships.length > 0) return memberships;
@@ -59,14 +55,6 @@ async function provision(
   const workspace = await store.create(provisionedWorkspaceName(identity.displayName), {
     members: [{ userId: identity.id, role: "admin" }],
   });
-  if (users) {
-    const user = await users.get(identity.id);
-    if (user) {
-      await users.update(identity.id, {
-        preferences: { ...user.preferences, defaultWorkspaceId: workspace.id },
-      });
-    }
-  }
   return [workspace];
 }
 
@@ -78,18 +66,4 @@ async function provision(
 export function provisionedWorkspaceName(displayName: string | undefined): string {
   const first = displayName?.trim().split(/\s+/)[0]?.split("@")[0];
   return first ? `${first}'s workspace` : "Workspace";
-}
-
-/**
- * The workspace a user lands in when nothing names one: their default
- * (`preferences.defaultWorkspaceId`) while they are still a member of it,
- * else their earliest membership. `memberships` must be non-empty and in
- * store order (`WorkspaceStore.list` sorts by `createdAt`).
- */
-export function defaultWorkspaceFor(
-  memberships: readonly Workspace[],
-  preferences: UserPreferences | undefined,
-): Workspace {
-  const preferred = preferences?.defaultWorkspaceId;
-  return memberships.find((ws) => ws.id === preferred) ?? memberships[0]!;
 }

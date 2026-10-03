@@ -48,19 +48,21 @@ const ARCHIVES = [
 
 mock.module("../api/client", () => ({
   ...realClient,
-  callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
-    calls.push({ tool, args });
-    if (args.action === "purge_archive") {
+  callToolWithoutWorkspace: mock(
+    async (_source: string, tool: string, args: Record<string, unknown>) => {
+      calls.push({ tool, args });
+      if (args.action === "purge_archive") {
+        return {
+          content: [{ type: "text", text: "Purged." }],
+          structuredContent: { purged: true, name: args.archive, sizeBytes: 2048 },
+        };
+      }
       return {
-        content: [{ type: "text", text: "Purged." }],
-        structuredContent: { purged: true, name: args.archive, sizeBytes: 2048 },
+        content: [{ type: "text", text: "2 archive(s)." }],
+        structuredContent: { archives: ARCHIVES },
       };
-    }
-    return {
-      content: [{ type: "text", text: "2 archive(s)." }],
-      structuredContent: { archives: ARCHIVES },
-    };
-  }),
+    },
+  ),
 }));
 
 let confirmReturn = true;
