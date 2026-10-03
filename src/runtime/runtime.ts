@@ -38,7 +38,7 @@ import {
 import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
-import { serverNameFromRef } from "../connectors/runtime/paths.ts";
+import { serverNameFromRef, slugifyServerName } from "../connectors/runtime/paths.ts";
 import { setConnectionRunningHandler } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
 import type { ConnectorInstance, PlacementDeclaration } from "../connectors/runtime/types.ts";
@@ -4205,7 +4205,7 @@ export class Runtime {
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
   ): Promise<ConnectorAdmission> {
-    return this.admissionWith(wsId, principal, await this.catalogGatesByServer(wsId));
+    return this.admissionWith(wsId, principal, await this.catalogGatesByServer());
   }
 
   /** {@link connectorAdmission} against gates the caller already resolved. */
@@ -4248,7 +4248,7 @@ export class Runtime {
     toolName: string,
     call: AdminToolCall,
   ): Promise<ToolResult | null> {
-    const declared = await this.catalogGatesByServer(wsId);
+    const declared = await this.catalogGatesByServer();
     if (isHostOnlyTool(declared.get(serverName)?.lifecycle, toolName)) {
       return hostOnlyToolDenial(serverName, toolName);
     }
@@ -4332,16 +4332,26 @@ export class Runtime {
     });
   }
 
-  /** The gating declarations (`admin_tools`, `lifecycle`) of each connector
-   *  installed in `wsId`, by source name, from the catalog entry it is
-   *  ({@link boundCatalogEntries}). A connector that declares neither is absent. */
-  private async catalogGatesByServer(
-    wsId: string,
-  ): Promise<Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>> {
+  /**
+   * The gating declarations (`admin_tools`, `lifecycle`) by source name: each
+   * catalog entry's, under the server name its id slugifies to. A connector that
+   * declares neither is absent.
+   *
+   * By name alone, NOT held to the ref's identity as every grant is
+   * ({@link boundCatalogEntries}). These are restrictions: they narrow who may
+   * call a tool, so applying one to a ref that is another server under the
+   * entry's name over-restricts that server and opens nothing, while skipping
+   * it would open the entry's admin tools to every member of a workspace whose
+   * ref stopped binding, for example after the entry's URL changed. The catalog
+   * read refuses colliding names, so a name is one entry.
+   */
+  private async catalogGatesByServer(): Promise<
+    Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>
+  > {
     const out = new Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>();
-    for (const [serverName, e] of await this.boundCatalogEntries(wsId)) {
+    for (const e of await this.getConnectorCatalog().catalogEntries()) {
       if (e.adminTools || e.lifecycle) {
-        out.set(serverName, {
+        out.set(slugifyServerName(e.id), {
           ...(e.adminTools ? { adminTools: e.adminTools } : {}),
           ...(e.lifecycle ? { lifecycle: e.lifecycle } : {}),
         });
@@ -4361,7 +4371,7 @@ export class Runtime {
   /**
    * The catalog entry each connector installed in `wsId` is, by source name.
    * Every catalog grant (host UI aside, which boot binds from the same rule)
-   * is read through here.
+   * is read through here; the restrictions are not ({@link catalogGatesByServer}).
    *
    * The installed ref does not persist the catalog id, so the entry is found by
    * the server name its id slugifies to and then held to the ref's identity —
@@ -4403,7 +4413,7 @@ export class Runtime {
     log.warn(
       `[connectors] "${serverName}" in ${wsId} carries the server name of catalog entry ` +
         `"${entry.id}" but is not its server (a different URL or broker); it runs without ` +
-        "that entry's host UI, hooks, lifecycle, admin_tools or outbox",
+        "that entry's host UI, hooks, lifecycle calls or outbox",
       { workspace_id: wsId, connector: serverName, catalog_id: entry.id },
     );
   }

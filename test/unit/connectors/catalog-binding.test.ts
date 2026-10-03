@@ -69,6 +69,12 @@ describe("bindCatalogEntry", () => {
     ).toBe("mismatch");
   });
 
+  it("refuses a native ref against a brokered entry, even at the entry's URL", () => {
+    expect(
+      bindCatalogEntry({ url: URL_, serverName: SN }, [entry({ auth: "composio" })]).kind,
+    ).toBe("mismatch");
+  });
+
   it("refuses a brokered ref against a runtime-native entry, even at the entry's URL", () => {
     const ref: ConnectorRef = {
       url: URL_,

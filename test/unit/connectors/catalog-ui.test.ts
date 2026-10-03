@@ -32,6 +32,7 @@ function entry(id: string, ui?: ConnectorUiMeta): ConnectorCatalogEntry {
     name: id,
     description: "",
     url: "https://example.test/mcp",
+    auth: "dcr",
     ui,
   } as ConnectorCatalogEntry;
 }

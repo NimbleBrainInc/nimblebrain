@@ -1,10 +1,10 @@
 /**
  * Which operator catalog entry an installed connector IS.
  *
- * A catalog entry is the trust root for what a connector may declare: its host
- * UI, the `hooks` that give it a public delivery URL, the `lifecycle` handlers
- * only the host may call, the `admin_tools` that narrow who may call it, and the
- * outbox the poller reads. Those grants belong to the server the entry names, so
+ * A catalog entry is the trust root for what a connector may declare. Its grants
+ * are its host UI, the `hooks` that give it a public delivery URL, the host's
+ * calls to its `lifecycle` handlers, and the outbox the poller reads. Those
+ * belong to the server the entry names, so
  * a ref receives them only when it is that server, not merely when it carries
  * that server's name:
  *
@@ -19,12 +19,15 @@
  *
  * A ref that carries an entry's name and fails the second test is a different
  * server under that name. It gets none of the entry's grants and runs as a plain
- * remote connector.
+ * remote connector. The entry's restrictions (`admin_tools`, host-only
+ * lifecycle handlers) still apply to it by name, because they narrow and open
+ * nothing.
  *
  * The lookup by name assumes one entry per name, which the catalog read
  * guarantees by refusing every entry whose name collides (`read.ts`).
  */
 
+import { isBrokeredAuthKind } from "../auth-kind.ts";
 import { brokeredRef } from "../runtime/brokered.ts";
 import { serverNameFromRef, slugifyServerName } from "../runtime/paths.ts";
 import type { ConnectorRef } from "../runtime/types.ts";
@@ -52,7 +55,7 @@ export function bindCatalogEntry(
   const brokered = brokeredRef(ref);
   const same = brokered
     ? brokered.provider === entry.auth && brokered.connectorId === entry.id
-    : sameRemoteUrl(ref.url, entry.url);
+    : !isBrokeredAuthKind(entry.auth) && sameRemoteUrl(ref.url, entry.url);
   return { kind: same ? "bound" : "mismatch", entry };
 }
 

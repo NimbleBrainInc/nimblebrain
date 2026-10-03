@@ -5,8 +5,10 @@
  * One `Runtime`, one catalog entry declaring `admin_tools`, a lifecycle handler
  * and a hook, and two workspaces where the dev identity is a member. Each holds
  * a ref under the entry's server name: one at the entry's URL, one at another
- * server's. The first is gated by the entry; the second runs as a plain remote
- * connector, with none of the entry's grants, and the operator is told once.
+ * server's. The first gets the entry's grants. The second runs as a plain remote
+ * connector with none of them, the operator is told once, and the entry's
+ * restrictions (`admin_tools`, host-only handlers) still hold for it, because a
+ * restriction opens nothing.
  */
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
@@ -147,14 +149,20 @@ describe("a connector at the catalog entry's URL", () => {
 });
 
 describe("a connector under the entry's name at another URL", () => {
+  it("is still held to the entry's admin_tools and lifecycle withholding", async () => {
+    const admin = await call(AT_OTHER_URL, "configure");
+    expect(admin.structuredContent).toMatchObject({ error: "workspace_admin_required" });
+    const hostOnly = await call(AT_OTHER_URL, "workspace_ready");
+    expect(hostOnly.isError).toBe(true);
+    expect(ran.get(AT_OTHER_URL)).toEqual([]);
+  });
+
   it("gets none of the entry's grants, still runs, and is reported once", async () => {
     const warn = spyOn(log, "warn");
     try {
-      const configure = await call(AT_OTHER_URL, "configure");
-      expect(configure.isError).toBe(false);
-      const ready = await call(AT_OTHER_URL, "workspace_ready");
-      expect(ready.isError).toBe(false);
-      expect(ran.get(AT_OTHER_URL)).toEqual(["configure", "workspace_ready"]);
+      const undeclared = await call(AT_OTHER_URL, "set_webhook_url");
+      expect(undeclared.isError).toBe(false);
+      expect(ran.get(AT_OTHER_URL)).toEqual(["set_webhook_url"]);
 
       expect(await runtime.getHookReconcileDeps().declarationsFor(AT_OTHER_URL, SERVER)).toEqual(
         [],
