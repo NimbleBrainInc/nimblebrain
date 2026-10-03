@@ -15,6 +15,7 @@
 // ones without (tools the agent uses, with nothing to open) share one row,
 // their icons and a count, that opens the installed list where each is
 // configured. So every install shows up, and screen-less ones cost one row.
+// With nothing installed, a member who may install sees an "Add an app" row.
 // The header's "+" opens the catalog. The identity views' TOOLS still
 // dispatch bare through the identity door (see lib/identity-apps); the slug
 // here is the focused workspace = view scope, not a tool namespace.
@@ -100,6 +101,14 @@ function WorkspaceViews({
     );
   }, [ready, connectors, workspace.id, apps]);
   const hasSection = shownApps.length > 0 || toolsOnly.length > 0 || canInstall;
+  // Nothing installed, known only once both lists name this workspace. The
+  // header's "+" hides at rest on a pointer device, so the empty section says
+  // what to do in a row of its own.
+  const empty =
+    ready &&
+    connectors?.workspaceId === workspace.id &&
+    apps.length === 0 &&
+    toolsOnly.length === 0;
   // A connector's display name (its catalog title), from the same installed list.
   const nameFor = (serverName: string) =>
     connectors?.workspaceId === workspace.id
@@ -162,6 +171,16 @@ function WorkspaceViews({
           afterApps={shownApps.length > 0}
           collapsed={collapsed}
         />
+      )}
+      {!collapsed && empty && canInstall && (
+        <Link
+          to={`/w/${slug}/settings/connectors/browse`}
+          data-testid="sidebar-workspace-apps-empty"
+          className={cn(rowClass(false, false), "text-muted-foreground")}
+        >
+          <Plus className="size-4 shrink-0" />
+          <span className="flex-1 truncate">Add an app</span>
+        </Link>
       )}
       {collapsed && canInstall && <AddLink slug={slug} collapsed />}
     </div>

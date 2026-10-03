@@ -22,6 +22,8 @@
 //      no "+" for anyone else.
 //   8. Installed connectors with no view share one row under the apps, to the
 //      installed list; one with a view is never counted there.
+//   9. With nothing installed, the expanded APPS section shows an "Add an app"
+//      row to the catalog, once the installed list names this workspace.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -558,6 +560,51 @@ describe("WorkspaceNav — add a connector", () => {
 
     expect(byTestId(mounted.container, "sidebar-add-connector")).toHaveLength(1);
     expect(byTestId(mounted.container, "sidebar-workspace-nav")[0]?.textContent).toContain("Apps");
+  });
+
+  test("a workspace with nothing installed shows an Add an app row", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      installed: [],
+    });
+
+    const empty = byTestId(mounted.container, "sidebar-workspace-apps-empty");
+    expect(empty).toHaveLength(1);
+    expect(empty[0]?.getAttribute("href")).toBe("/w/003eba8844413cd9/settings/connectors/browse");
+    expect(empty[0]?.textContent).toBe("Add an app");
+  });
+
+  test("no Add an app row before the installed list names this workspace", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+    });
+
+    expect(byTestId(mounted.container, "sidebar-workspace-apps-empty")).toHaveLength(0);
+  });
+
+  test("no Add an app row once an app is installed, or when collapsed", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      placements: [appPlacement("people")],
+      installed: [installedConnector("people")],
+    });
+    expect(byTestId(mounted.container, "sidebar-workspace-apps-empty")).toHaveLength(0);
+    mounted.unmount();
+
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      installed: [],
+      collapsed: true,
+    });
+    expect(byTestId(mounted.container, "sidebar-workspace-apps-empty")).toHaveLength(0);
   });
 
   test("a member who cannot write the workspace gets no +", async () => {
