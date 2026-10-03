@@ -109,8 +109,18 @@ import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { createIdentityProvider } from "../identity/provider.ts";
 import { UserStore } from "../identity/user.ts";
 import { InstructionsStore } from "../instructions/index.ts";
+import {
+  forgetLifecycleBinding,
+  type LifecycleSourceLike,
+  lifecycleBindingFor,
+  lifecycleContractWarnings,
+  resetLifecycleBindings,
+  snapshotLifecycleBinding,
+  type WireLifecycle,
+} from "../lifecycle/bindings.ts";
 import type { LifecycleNotifyDeps } from "../lifecycle/notify.ts";
 import { notifyReadyOnRunning, resetReadyNotifications } from "../lifecycle/notify.ts";
+import type { LifecycleBinding } from "../lifecycle/types.ts";
 import {
   getModelByString,
   getProviderFromModel,
@@ -208,6 +218,7 @@ import {
   type ConnectorPort,
   connectorPortForSource,
   stopAllToolSurfaceWatches,
+  watchToolSurface,
 } from "../tools/connector-surface.ts";
 import {
   type CredentialStore,
@@ -919,8 +930,11 @@ export class Runtime {
       // second reconcile rather than a step inside the first: the two ask
       // different questions of the connector and coalesce differently (see
       // `src/lifecycle/notify.ts`), so neither calls the other.
+      // The lifecycle binding is re-read first, so the notification that
+      // follows reads this connection's capabilities rather than the last one's.
       lifecycle.setConnectionRunningObserver((wsId, serverName) => {
         ensureHooksOnRunning(rt.getHookReconcileDeps(), wsId, serverName);
+        rt.watchLifecycleBinding(wsId, serverName);
         notifyReadyOnRunning(rt.getLifecycleNotifyDeps(), wsId, serverName);
       });
       rt._getIdentity = getIdentity;
@@ -4190,11 +4204,117 @@ export class Runtime {
    */
   getLifecycleNotifyDeps(): LifecycleNotifyDeps {
     return {
-      declarationFor: async (wsId: string, serverName: string) => {
-        const entry = await this.trustedCatalogEntryFor(wsId, serverName);
-        return entry?.lifecycle;
-      },
-      portFor: (wsId, serverName) => this.connectorPortFor(wsId, serverName),
+      declarationFor: (wsId: string, serverName: string) =>
+        this.lifecycleDeclarationFor(wsId, serverName),
+      // Inline: a lifecycle call is never task-augmented, on any connection.
+      portFor: (wsId, serverName) => this.connectorPortFor(wsId, serverName, { inline: true }),
+      contractWarningsFor: async (wsId: string, serverName: string) =>
+        lifecycleContractWarnings(
+          serverName,
+          await lifecycleBindingFor(wsId, serverName, this.lifecycleSourceFor(wsId, serverName)),
+        ),
+    };
+  }
+
+  /**
+   * The lifecycle declaration that governs `(wsId, serverName)`: one source per
+   * connection, never both.
+   *
+   * - **The server advertises `ai.nimblebrain/lifecycle`:** its wire binding,
+   *   even one with no handler (the server wants no events). A catalog
+   *   `lifecycle` block for the same connector is superseded, and that is
+   *   logged once.
+   * - **It does not:** the catalog block, read through the bound catalog entry
+   *   exactly as before the extension existed.
+   *
+   * Rediscovers when no binding is held, reconnecting a dropped connection
+   * first: the uninstall path reaches here inside `notifyRemoving`'s deadline,
+   * after the connection may have idle-closed. A connection that cannot be made
+   * leaves the binding unknown, and the catalog block applies, which is what
+   * the host did before it read the wire.
+   */
+  private async lifecycleDeclarationFor(
+    wsId: string,
+    serverName: string,
+  ): Promise<LifecycleBinding | undefined> {
+    const wire = await lifecycleBindingFor(
+      wsId,
+      serverName,
+      this.lifecycleSourceFor(wsId, serverName),
+      { rediscover: true },
+    );
+    const catalog = (await this.trustedCatalogEntryFor(wsId, serverName))?.lifecycle;
+    if (!wire?.advertised) return catalog;
+    if (catalog) this.warnCatalogLifecycleSuperseded(wsId, serverName);
+    return wire.binding;
+  }
+
+  /** Connectors already reported by {@link warnCatalogLifecycleSuperseded}, as `wsId/serverName`. */
+  private readonly catalogLifecycleSuperseded = new Set<string>();
+
+  /** Say once per (workspace, connector) that its wire binding supersedes its catalog block. */
+  private warnCatalogLifecycleSuperseded(wsId: string, serverName: string): void {
+    const key = `${wsId}/${serverName}`;
+    if (this.catalogLifecycleSuperseded.has(key)) return;
+    this.catalogLifecycleSuperseded.add(key);
+    log.info(
+      `[lifecycle] "${serverName}" advertises ai.nimblebrain/lifecycle; its catalog lifecycle ` +
+        "block is superseded for this connection",
+      { workspace_id: wsId, connector: serverName },
+    );
+  }
+
+  /**
+   * Re-read a workspace connector's lifecycle binding now, and again whenever
+   * its tool set changes. Called on each transition to `running`: the held
+   * binding is dropped first, so nothing reads the last connection's
+   * capabilities, and a reader that comes before the new snapshot discovers
+   * it on demand. The watch is dropped on uninstall with the connector's
+   * other tool-surface watches.
+   */
+  watchLifecycleBinding(wsId: string, serverName: string): void {
+    forgetLifecycleBinding(wsId, serverName);
+    const snapshot = () => {
+      const source = this.lifecycleSourceFor(wsId, serverName);
+      if (!source) return;
+      void snapshotLifecycleBinding(wsId, serverName, source).catch((err) => {
+        log.debug(
+          "lifecycle",
+          `[lifecycle] could not read ${serverName}'s binding: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    };
+    watchToolSurface(
+      "lifecycle-binding",
+      wsId,
+      serverName,
+      this.connectorPortFor(wsId, serverName),
+      snapshot,
+    );
+    snapshot();
+  }
+
+  /**
+   * The live MCP source of a workspace connector, as the lifecycle binding
+   * reads it, or `undefined` when none is registered.
+   *
+   * Workspace connectors only, the scope of the catalog block too: a personal
+   * connector is not in the workspace registry, so one that advertises the
+   * extension is neither notified nor has its handlers withheld.
+   */
+  private lifecycleSourceFor(wsId: string, serverName: string): LifecycleSourceLike | undefined {
+    const source = this._workspaceRegistries
+      .get(wsId)
+      ?.getSources()
+      .find((s) => s.name === serverName);
+    const mcp = source instanceof SharedSourceRef ? source.unwrap() : source;
+    if (!source || !(mcp instanceof McpSource)) return undefined;
+    const port = connectorPortForSource(source);
+    return {
+      connected: () => mcp.getNegotiatedProtocolVersion() !== undefined,
+      reconnect: () => mcp.ensureConnected(),
+      serverExtensions: () => mcp.serverExtensions(),
+      tools: () => port.tools(),
     };
   }
 
@@ -4217,7 +4337,7 @@ export class Runtime {
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
   ): Promise<ConnectorAdmission> {
-    return this.admissionWith(wsId, principal, await this.catalogGatesByServer());
+    return this.admissionWith(wsId, principal, await this.connectorGatesFor(wsId));
   }
 
   /** {@link connectorAdmission} against gates the caller already resolved. */
@@ -4260,7 +4380,7 @@ export class Runtime {
     toolName: string,
     call: AdminToolCall,
   ): Promise<ToolResult | null> {
-    const declared = await this.catalogGatesByServer();
+    const declared = await this.connectorGatesFor(wsId);
     if (isHostOnlyTool(declared.get(serverName)?.lifecycle, toolName)) {
       return hostOnlyToolDenial(serverName, toolName);
     }
@@ -4342,6 +4462,42 @@ export class Runtime {
       ...(entry.hooks ? { hooks: entry.hooks } : {}),
       ...(tools ? { tools } : {}),
     });
+  }
+
+  /**
+   * The gating declarations of `wsId`'s connectors: {@link catalogGatesByServer},
+   * with each lifecycle replaced by the one that won for that workspace's
+   * connection ({@link lifecycleDeclarationFor}'s rule). A connector that
+   * advertises `ai.nimblebrain/lifecycle` has its wire-declared handlers
+   * withheld, and its catalog block none; one that does not keeps its catalog
+   * block. One predicate, `isHostOnlyTool`, holds either.
+   *
+   * Reads only bindings that are held or readable from a live connection: a
+   * listing never dials a server. A connector whose connection has not come up
+   * has no tools to list or call, so its binding is read when it does.
+   */
+  private async connectorGatesFor(
+    wsId: string,
+  ): Promise<Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>> {
+    const declared = await this.catalogGatesByServer();
+    const sources = this._workspaceRegistries.get(wsId)?.getSources() ?? [];
+    const wires = await Promise.all(
+      sources.map(
+        async (s): Promise<[string, WireLifecycle | undefined]> => [
+          s.name,
+          await lifecycleBindingFor(wsId, s.name, this.lifecycleSourceFor(wsId, s.name)).catch(
+            () => undefined,
+          ),
+        ],
+      ),
+    );
+    const out = new Map(declared);
+    for (const [name, wire] of wires) {
+      if (!wire?.advertised) continue;
+      const { lifecycle: _superseded, ...rest } = declared.get(name) ?? {};
+      out.set(name, { ...rest, lifecycle: wire.binding });
+    }
+    return out;
   }
 
   /**
@@ -4432,7 +4588,11 @@ export class Runtime {
 
   /** The live source for `(wsId, serverName)` as a reconcile port, or undefined
    *  when it is not running. */
-  private connectorPortFor(wsId: string, serverName: string): ConnectorPort | undefined {
+  private connectorPortFor(
+    wsId: string,
+    serverName: string,
+    opts: { inline?: boolean } = {},
+  ): ConnectorPort | undefined {
     let registry: ToolRegistry;
     try {
       registry = this.getRegistryForWorkspace(wsId);
@@ -4441,7 +4601,7 @@ export class Runtime {
     }
     const source = registry.getSources().find((src) => src.name === serverName);
     if (!source) return undefined;
-    return connectorPortForSource(source);
+    return connectorPortForSource(source, opts);
   }
 
   /**
@@ -5678,6 +5838,7 @@ export class Runtime {
     // this process would otherwise inherit this one's suppressions.
     stopAllToolSurfaceWatches();
     resetReadyNotifications();
+    resetLifecycleBindings();
     // Abort every in-flight detached turn BEFORE removing the sources they
     // depend on. A detached turn's lifecycle is decoupled from any HTTP
     // request (it runs to completion server-side), so without this a turn

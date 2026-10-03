@@ -57,6 +57,56 @@ the tools you name are hidden from the model and from every other client,
 workspace admins included, and a direct call to one is refused with the
 structured error `host_only_tool`. Your other tools are unaffected.
 
+## Declaring handlers as an extension
+
+A server can instead declare its handlers itself, on the wire, as the
+`ai.nimblebrain/lifecycle` MCP extension. Advertise the extension in your server
+capabilities, and mark one tool per event in its `_meta`:
+
+```json title="server capabilities"
+{ "capabilities": { "tools": {}, "extensions": { "ai.nimblebrain/lifecycle": {} } } }
+```
+
+```json title="tools/list entry"
+{
+  "name": "scope_ready",
+  "inputSchema": {
+    "type": "object",
+    "properties": { "reason": { "type": "string", "enum": ["install", "resume"] } }
+  },
+  "_meta": { "ai.nimblebrain/lifecycle": { "event": "ready" } }
+}
+```
+
+`event` is `"ready"` (the `on_ready` call) or `"removing"` (the `on_removing`
+call). The events, delivery and failure semantics are the ones on this page,
+with these differences:
+
+- **The marker counts only when the extension is advertised** on that
+  connection. A marked tool on a server that does not advertise it is an
+  ordinary tool.
+- **`reason` is sent only to a `ready` handler whose `inputSchema` declares it.**
+  A handler that does not declare it is called with `{}`.
+- **`execution.taskSupport: "optional"` is allowed.** The host calls every
+  lifecycle handler inline. `"required"` makes that tool undeclared.
+- **An event marked on two tools is undeclared**, and so is a marked tool with a
+  required property. The host calls neither, and reports both, with an unknown
+  `event`, as install warnings.
+- **Where to advertise.** On a `2026-07-28` connection the host reads the
+  capability from `server/discover`. On a 2025-era connection it reads it from
+  `initialize`, and some SDKs leave it out of that result.
+
+The host advertises `ai.nimblebrain/lifecycle` in its own
+[client capabilities](/mcp/protocol-support/#client-capabilities-the-host-advertises),
+so your server can tell whether it will be called.
+
+**The catalog block still works.** A connector that advertises the extension has
+its handlers read from the wire, and a `lifecycle` block in its catalog entry is
+ignored for that connection. A connector that does not advertise it keeps the
+catalog block. The host never delivers an event through both, and handlers are
+host-only either way. Both apply to connectors installed in a workspace; a
+personal connector is neither called nor has its handlers withheld.
+
 ## The two events
 
 | Field | Called | Arguments |

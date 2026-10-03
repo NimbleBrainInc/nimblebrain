@@ -13,11 +13,16 @@ import { LIFECYCLE_EVENTS, type LifecycleDeclaration } from "../lifecycle/types.
  * included. The host's own calls (`src/lifecycle/notify.ts`) reach the source
  * through `connectorPortForSource` and pass no door, so they are unaffected.
  *
- * The declaration is read from the operator-trusted catalog entry and never
- * from anything the running server sends, as `admin_tools` is. The scope
- * matches `admin_tools` too: workspace connectors only. A personal connector
- * acts on its owner's own account, has no catalog `lifecycle` block, and is
- * never called by the host's lifecycle notifications.
+ * The declaration is whichever won for the connection
+ * (`Runtime.connectorGatesFor`): the handlers the server marks under the
+ * `ai.nimblebrain/lifecycle` extension when it advertises it, and otherwise the
+ * operator-trusted catalog block. Believing the server is safe because the
+ * declaration is about its own tools only: withholding protects the server's
+ * own handlers, so a server that lies exposes or hides nothing but its own.
+ * The scope matches `admin_tools`: workspace connectors only. A
+ * personal connector acts on its owner's own account, is never called by the
+ * host's lifecycle notifications, and has nothing withheld, whatever it
+ * advertises.
  */
 
 /** Whether `lifecycle` names `toolName` as a handler, so only the host may call it. */

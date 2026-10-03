@@ -45,6 +45,7 @@ import {
 import { requestIdentityAttrs, withSpan } from "../observability/index.ts";
 import { log } from "../observability/log.ts";
 import { facetsClientExtension } from "../services/facets-extension.ts";
+import { lifecycleClientExtension } from "../services/lifecycle-extension.ts";
 import {
   SKILLS_EXTENSION_ID,
   SKILLS_LIST_METHOD,
@@ -74,6 +75,7 @@ import {
   TaskNotFoundError,
   type TaskOwnerContext,
   type Tool,
+  type ToolExecuteOptions,
   type ToolSource,
 } from "./types.ts";
 import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
@@ -1025,6 +1027,17 @@ export class McpSource implements ToolSource {
     return this.client?.getServerCapabilities()?.extensions ?? {};
   }
 
+  /**
+   * Reconnect a connection that dropped (an idle close, a crash) without
+   * waiting for the next health tick, and say whether a client is up
+   * afterward. A deliberately stopped source stays stopped. For a reader that
+   * needs the server's capabilities before it makes a call, such as the
+   * lifecycle binding at uninstall; {@link execute} reconnects on its own.
+   */
+  async ensureConnected(): Promise<boolean> {
+    return this.reconnectOnDemand();
+  }
+
   private async cleanupOnStartFailure(): Promise<void> {
     // A start that never reached the "running" state is not a crash —
     // the caller is about to throw the real error. Suppress the
@@ -1133,13 +1146,20 @@ export class McpSource implements ToolSource {
    * `ai.nimblebrain/facets` is claimed on both eras for the same reason: the
    * briefing collector lists and reads facets over whichever era connected,
    * and the extension needs no server→client channel.
+   * `ai.nimblebrain/lifecycle` is claimed on both eras too: the runtime reads
+   * a connector's binding and calls its handlers over either era, so a server
+   * knows it will be told.
    */
   private static readonly CAPABILITIES: ClientCapabilities = {
     tasks: {
       requests: { tools: { call: {} } },
       cancel: {},
     },
-    extensions: { ...skillsClientExtension(), ...facetsClientExtension() },
+    extensions: {
+      ...skillsClientExtension(),
+      ...facetsClientExtension(),
+      ...lifecycleClientExtension(),
+    },
   };
 
   /**
@@ -1905,6 +1925,7 @@ export class McpSource implements ToolSource {
     toolName: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
+    options?: ToolExecuteOptions,
   ): Promise<ToolResult> {
     // A live client dispatches — even with `dead` set: a stale crash flag over a
     // working transport, or a torn one, both route their throw through recover()
@@ -1944,13 +1965,15 @@ export class McpSource implements ToolSource {
     // every call to a server advertising the tasks extension takes the task
     // path, which handles a complete answer as well. Either way the call
     // returns immediately with a task and we poll it to the final `result` or
-    // `error`. Everything else uses the inline path.
+    // `error`. Everything else uses the inline path, and so does a call that
+    // asks for it (`options.inline`, the host's lifecycle calls).
     const tool = this.findTool(toolName);
     const taskSupport = tool?.execution?.taskSupport;
     const isTaskAugmented =
-      this.protocolEra === "modern"
+      options?.inline !== true &&
+      (this.protocolEra === "modern"
         ? TASKS_EXTENSION_ID in this.serverExtensions()
-        : taskSupport === "optional" || taskSupport === "required";
+        : taskSupport === "optional" || taskSupport === "required");
 
     const dispatchArgs = this.prepareDispatchArgs(tool, input, toolName);
 
