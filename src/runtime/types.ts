@@ -12,6 +12,7 @@ import type { ProvidersConfig } from "../model/registry.ts";
 import type { NotificationsPollConfig } from "../notifications/poll-config.ts";
 import type { TokenUsage } from "../usage/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
+import type { AdmissionLease } from "./admission.ts";
 import type { RunTrigger } from "./run-spec.ts";
 
 /** Model slot configuration. Each slot maps to a provider:model-id string. */
@@ -489,8 +490,25 @@ export interface TaskRequest {
    * without it, callers racing the task against an external deadline
    * (notably the automations executor's `Promise.race` against
    * `maxRunDurationMs`) orphan in-flight LLM/tool work.
+   *
+   * A run still waiting for a run slot leaves the queue when it fires, and
+   * the call rejects with an `AbortError`.
    */
   signal?: AbortSignal;
+  /**
+   * An opaque key for run admission (`src/runtime/admission.ts`): a call whose
+   * key already holds a slot or waits for one is refused. The runtime never
+   * interprets it. Ignored when `admission` is passed.
+   */
+  admissionKey?: string;
+  /**
+   * A slot the caller already holds from `Runtime.getRunAdmission()`, for a
+   * caller that must know at request time whether its run started or queued
+   * and re-check its own state when the slot is granted. The run uses it
+   * instead of acquiring one, and releases it when it ends. A lease the pool
+   * does not hold is ignored, and the run acquires its own.
+   */
+  admission?: AdmissionLease;
 }
 
 /**

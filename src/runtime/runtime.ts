@@ -262,6 +262,7 @@ import { retireLegacyPersonalWorkspaces } from "../workspace/legacy-personal.ts"
 import { assertWorkspaceIdsConform } from "../workspace/migration-guard.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
+import { createRunAdmission, type RunAdmission } from "./admission.ts";
 import { chatResponseBody } from "./chat-response.ts";
 import {
   ConversationAccessDeniedError,
@@ -592,6 +593,9 @@ export class Runtime {
    * The turn's cancellation lives here too — client disconnect does NOT abort.
    */
   private readonly runBus = new RunBus();
+
+  /** Unattended-run admission; see {@link getRunAdmission}. */
+  private _runAdmission?: RunAdmission;
 
   private constructor(
     resolveModelFn: (modelString: string) => LanguageModelV4,
@@ -1469,17 +1473,51 @@ export class Runtime {
    *    refused; the runtime never chooses a workspace for it.
    *  - An abort returns what the run accomplished instead of throwing: nothing
    *    else records this run's events, so silent abandonment would lose them.
+   *  - The run is admitted first: it holds one of the runtime's unattended run
+   *    slots while it executes, and waits in the run queue when none is free
+   *    (`getRunAdmission`). A chat is never admitted.
    */
   async executeTask(request: TaskRequest, requestSink?: EventSink): Promise<TaskResult> {
-    // Identity resolution mirrors chat(): no identity throws. Scheduler
-    // callers pass `{ id: automation.ownerId }` as a minimal identity.
-    const requestIdentity = requireRequestIdentity(request.identity);
+    // A slot the caller already holds is this run's from here on, so it is
+    // released on every exit, the refusals below included.
+    let lease =
+      request.admission && this.getRunAdmission().owns(request.admission)
+        ? request.admission
+        : undefined;
+    try {
+      // Identity resolution mirrors chat(): no identity throws. Scheduler
+      // callers pass `{ id: automation.ownerId }` as a minimal identity.
+      const requestIdentity = requireRequestIdentity(request.identity);
+
+      // The run's single working workspace. Tool scope, skill/connector scope,
+      // connector overlays, model slots, and file provenance all key off it.
+      const runWsId = requireRequestWorkspace(request.workspaceId);
+
+      // Admission, before anything is built: every unattended run holds one of
+      // the runtime's run slots for as long as it executes, whatever source
+      // started it (ADR-0045). See `src/runtime/admission.ts`.
+      lease ??= await this.getRunAdmission().acquire(
+        {
+          workspaceId: runWsId,
+          ...(request.admissionKey !== undefined ? { key: request.admissionKey } : {}),
+        },
+        request.signal,
+      );
+
+      return await this.runTask(request, requestIdentity, runWsId, requestSink);
+    } finally {
+      lease?.release();
+    }
+  }
+
+  /** The admitted body of {@link executeTask}: hand the run to the door and shape its result. */
+  private async runTask(
+    request: TaskRequest,
+    requestIdentity: UserIdentity,
+    runWsId: string,
+    requestSink: EventSink | undefined,
+  ): Promise<TaskResult> {
     const ownerId = requestIdentity.id;
-
-    // The run's single working workspace. Tool scope, skill/connector scope,
-    // connector overlays, model slots, and file provenance all key off it.
-    const runWsId = requireRequestWorkspace(request.workspaceId);
-
     const handle = await this.startRun({
       // An automation fires as `schedule` (a cron tick) or `manual` (Run now);
       // anything driving the runtime directly is `api`.
@@ -5747,6 +5785,23 @@ export class Runtime {
     return resolveAutomationsConfig(this.config.automations);
   }
 
+  /**
+   * The pool every unattended run is admitted through (`executeTask`). Sized by
+   * `automations.maxConcurrentRuns` / `maxQueuedRuns`. Exposed so a source that
+   * must answer at request time whether its run started or queued can hold a
+   * slot itself and hand it to `executeTask` (`TaskRequest.admission`).
+   * Created on first use, so a prototype-built test double gets one too.
+   */
+  getRunAdmission(): RunAdmission {
+    if (!this._runAdmission) {
+      const { maxConcurrentRuns, maxQueuedRuns } = resolveAutomationsConfig(
+        this.config?.automations,
+      );
+      this._runAdmission = createRunAdmission({ maxConcurrentRuns, maxQueuedRuns });
+    }
+    return this._runAdmission;
+  }
+
   /** Get the resolved work directory path. */
   getWorkDir(): string {
     return resolveWorkDir(this.config);
@@ -5875,6 +5930,9 @@ export class Runtime {
         await reg.removeSource(name);
       }
     }
+    // Nothing drains the run queue once the sources are gone, so a run still
+    // waiting for a slot is refused rather than left waiting forever.
+    this._runAdmission?.stop();
     // Release the ledger last: a turn aborted just above can still be inside a
     // `doStream()` that has already spent, and that call is recordable until it
     // returns. Ownership-checked, so a sibling runtime that installed its own
