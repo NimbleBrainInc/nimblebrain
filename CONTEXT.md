@@ -198,6 +198,15 @@ call is re-issued once on a transport error, and a task call is **never**
 retried — it has already created server-side state, so replaying it would
 duplicate the side effect.
 
+### Task *(proposed, ADR-0043)*
+The unattended primitive: a definition (what to do, optional schemas and
+acceptance criteria, limits, and an **optional** trigger) and its **runs**. An
+automation is a task with a trigger; a one-off is a task run once with none; a
+batch is one task run over many inputs. A run's outcome has two parts:
+*execution* (how it ended) and *assessment* (whether the deliverable is
+acceptable). Not the same word as *task augmentation*: that is how a run travels
+over MCP, not what a run is.
+
 ### Skill
 A unit of guidance in the Agent Skills format. The file is the standard,
 unmodified, with the runtime's own configuration nested under
@@ -278,3 +287,4 @@ Orchestrate over remote MCP:
 - [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
 - [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
+- [0043](adr/0043-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
