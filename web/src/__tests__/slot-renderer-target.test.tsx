@@ -1,10 +1,13 @@
 // ---------------------------------------------------------------------------
 // SlotRenderer `target` — opening a view inside a placement.
 //
-// Pins: a target given at mount reaches the app as `ai.nimblebrain/navigate`
-// once its handshake completes (the bridge holds it until then), and a new
-// target `key` on a mounted placement sends again — the same view asked for
-// twice is sent twice, and an unchanged key is not resent.
+// Pins: a target reaches the app as `ai.nimblebrain/navigate` only once the
+// app is listening, which is once it has reported a location. The handshake
+// alone is too early: the app has not yet rendered the code that subscribes,
+// and it drops a notification nobody subscribed to. A target given at mount
+// waits for that first report; an app that never reports a trail is never sent
+// one. A new target `key` on a listening placement sends again (the same view
+// asked for twice is sent twice), and an unchanged key is not resent.
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
@@ -92,19 +95,50 @@ async function mountWithTarget(target: Target) {
   };
   const navigations = () =>
     inbox.filter((m) => (m as { method?: string }).method === NAVIGATE_METHOD);
-  return { navigations, rerender: async (t: Target) => act(async () => render(t)) };
+  /** The app reports where it is, as `useTrail` does once it is subscribed to `navigate`. */
+  const reportLocation = async () => {
+    send({
+      jsonrpc: "2.0",
+      method: "ai.nimblebrain/location",
+      params: { trail: [{ id: "people://contacts", label: "People" }] },
+    });
+    await settle();
+  };
+  return {
+    navigations,
+    reportLocation,
+    rerender: async (t: Target) => act(async () => render(t)),
+  };
 }
 
 describe("SlotRenderer target", () => {
-  test("a target given at mount reaches the app once its handshake completes", async () => {
-    const { navigations } = await mountWithTarget({ id: "people://contacts/1", key: "k1" });
+  test("a target given at mount waits for the app's first location, then reaches it", async () => {
+    const { navigations, reportLocation } = await mountWithTarget({
+      id: "people://contacts/1",
+      key: "k1",
+    });
+    // Handshake done, nothing reported: the app is not listening yet.
+    expect(navigations()).toEqual([]);
+
+    await reportLocation();
+    await reportLocation();
     expect(navigations()).toEqual([
       { jsonrpc: "2.0", method: NAVIGATE_METHOD, params: { id: "people://contacts/1" } },
     ]);
   });
 
+  test("an app that never reports a trail is never sent a target", async () => {
+    const { navigations, rerender } = await mountWithTarget({
+      id: "people://contacts/1",
+      key: "k1",
+    });
+    await rerender({ id: "people://contacts/2", key: "k2" });
+    expect(navigations()).toEqual([]);
+  });
+
   test("a new key sends again; the same key does not", async () => {
-    const { navigations, rerender } = await mountWithTarget(undefined);
+    const { navigations, rerender, reportLocation } = await mountWithTarget(undefined);
+    await reportLocation();
     expect(navigations()).toEqual([]);
 
     await rerender({ id: "people://contacts/2", key: "k2" });
