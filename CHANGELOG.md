@@ -231,6 +231,7 @@
 
 ### Fixed
 
+- **A browser's force-dark mode leaves the web client alone.** It has its own dark theme, so it now opts out of Dark Reader (and Firefox for iOS's website dark mode, built on it) and Chrome's auto-dark, which repainted a light-mode page into a half-dark one with an unreadable logo and white apps.
 - **A connector's lifecycle handlers can be called only by the host.** The tools a catalog `lifecycle` block names leave every tool listing and are refused on every door with `host_only_tool`, admins included, so no one can forge an install or removal event ([docs](https://docs.nimblebrain.ai/extensions/lifecycle/), [#1458](https://github.com/NimbleBrainInc/nimblebrain/issues/1458)).
 - **A connector skill loads for the tools it names, not every tool of its connector.** A server-published skill or curated overlay that declares `metadata.nimblebrain.tool-affinity` (bare tool names or globs) is bound to those tools under the connector's namespace; one that declares none still loads for any of the connector's tools. A declared pattern that matches none of the connector's tools is logged as a warning, and an overlay's `metadata.nimblebrain` block may carry `tool-affinity` alone ([#1467](https://github.com/NimbleBrainInc/nimblebrain/issues/1467)).
 - **An agent call naming an argument its tool's schema does not declare is refused before dispatch, with the valid arguments listed.** ([#1466](https://github.com/NimbleBrainInc/nimblebrain/issues/1466)).

@@ -95,6 +95,15 @@
  * this file, so it lives where the people writing those utilities will read it. */
 
 @layer base {
+  /* The browser draws its own parts (scrollbars, form controls, the canvas)
+     from `color-scheme`. index.html declares both, so this pins the one in use
+     to the shell's mode rather than the OS preference. */
+  :root {
+    color-scheme: light;
+  }
+  :root.dark {
+    color-scheme: dark;
+  }
   * {
     @apply border-border outline-ring/50;
     scrollbar-width: thin;
