@@ -519,7 +519,7 @@ export async function createTasksSource(
         {
           slot: "sidebar",
           resourceUri: "ui://tasks/panel",
-          route: "@nimblebraininc/tasks",
+          route: "@nimblebraininc/agent-tasks",
           label: "Tasks",
           icon: "clock",
           priority: 3,

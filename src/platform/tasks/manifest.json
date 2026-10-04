@@ -1,6 +1,6 @@
 {
   "manifest_version": "0.4",
-  "name": "@nimblebraininc/tasks",
+  "name": "@nimblebraininc/agent-tasks",
   "version": "0.1.0",
   "description": "Tasks: create, schedule, run, and monitor unattended agent runs",
   "author": {
@@ -14,7 +14,7 @@
         {
           "slot": "sidebar",
           "resourceUri": "ui://tasks/panel",
-          "route": "@nimblebraininc/tasks",
+          "route": "@nimblebraininc/agent-tasks",
           "label": "Tasks",
           "icon": "clock",
           "priority": 3

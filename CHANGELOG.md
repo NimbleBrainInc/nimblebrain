@@ -242,6 +242,7 @@
 
 ### Fixed
 
+- **The Tasks app keeps its sidebar page.** The built-in Tasks source routes at `@nimblebraininc/agent-tasks`, so it no longer takes `@nimblebraininc/tasks` from an installed Tasks app, whose placement had been dropped.
 - **Config startup lines log at their real level.** An applied override is `info`, and an ignored override key, an unknown key or a deprecated key is `warn`, so a clean boot no longer logs `error` lines that alerting counts ([#1545](https://github.com/NimbleBrainInc/nimblebrain/issues/1545)).
 - **Deleting from the Files app works again.** The app confirmed with `window.confirm`, which the app sandbox blocks without showing anything, so every delete was silently cancelled. It now confirms in the app.
 - **A browser's force-dark mode leaves the web client alone.** It has its own dark theme, so it now opts out of Dark Reader (and Firefox for iOS's website dark mode, built on it) and Chrome's auto-dark, which repainted a light-mode page into a half-dark one with an unreadable logo and white apps.
