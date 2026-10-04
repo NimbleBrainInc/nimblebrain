@@ -672,7 +672,7 @@ With `@nimblebrain/synapse`, call `uploadFiles(app, files)` (0.24.0+), and use `
 
 ### `ai.nimblebrain/notify`
 
-Show the user a notice: the toast the shell uses for its own saves and errors. Use it for what the user would otherwise miss, such as an export finishing or a background step failing. Use your own UI for anything the user is already looking at.
+Show the user a notice: the toast the shell uses for its own saves and errors. Use it to confirm an action that finished (a save, a move, an upload) and for what the user would otherwise miss, such as an export finishing or a background step failing. Keep in your own view what the user has to act on there, such as a field that failed validation or an item that could not be deleted.
 
 ```json
 {
@@ -693,7 +693,7 @@ Show the user a notice: the toast the shell uses for its own saves and errors. U
 | `title` | yes | 1–120 characters, trimmed. |
 | `description` | no | Up to 500 characters. |
 
-The host answers `{}` once the notice is shown. Every notice names the app that sent it. The name comes from your bundle's manifest (the placement's `label`, or the server name), never from the message, so the request cannot pick it. The host answers with an error, and shows nothing, for:
+The host answers `{}` once the notice is shown. Every notice names the app that sent it, by the name the sidebar shows for it: the connector's catalog title, else its sidebar view's `label`, else the server name. It is the same from your app's page and from a chat, and never comes from the message, so the request cannot pick it. The host answers with an error, and shows nothing, for:
 
 - `-32602` and the reason: an unknown `level`, an empty or over-long `title`, or an over-long `description`;
 - `-32000`: more than 5 notices from your app in 10 seconds.

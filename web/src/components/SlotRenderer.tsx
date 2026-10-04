@@ -15,6 +15,7 @@ import type { AppNotice, BridgeCallbacks } from "../bridge/types";
 import { useFileLimits } from "../context/ChatContext";
 import { useTheme } from "../context/ThemeContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { useAppDisplayName } from "../hooks/useAppDisplayName";
 import type { PlacementEntry } from "../types";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
 import { useNotice } from "./notices";
@@ -118,7 +119,8 @@ function mountPlacement(
   fitContent: boolean,
   onLocation: SlotRendererProps["onLocation"],
   onLocationReport: (bridge: BridgeHandle) => void,
-  notifyFromApp: (source: string, notice: AppNotice) => void,
+  /** Raise an app's notice; the caller names the app from `serverName`. */
+  notifyFromApp: (serverName: string, notice: AppNotice) => void,
 ): BridgeHandle {
   const { html, metaUi } = resource;
   const iframe = createAppIframe(fitContent ? buildSizedHtml(html) : html, entry.serverName, {
@@ -148,7 +150,7 @@ function mountPlacement(
   let bridge: BridgeHandle | null = null;
   const callbacks: BridgeCallbacks = {
     ...shared,
-    onNotify: (notice) => notifyFromApp(entry.label ?? entry.serverName, notice),
+    onNotify: (notice) => notifyFromApp(entry.serverName, notice),
     onLocation: (trail) => {
       if (bridge) onLocationReport(bridge);
       onLocation?.(trail, (id) => bridge?.navigate(id));
@@ -209,6 +211,7 @@ export function SlotRenderer({
   const notify = useNotice();
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
+  const nameApp = useAppDisplayName();
   const targetRef = useRef(target);
   targetRef.current = target;
   // The `key` of the last target delivered, so a target is delivered once
@@ -286,7 +289,7 @@ export function SlotRenderer({
           fitContent,
           (trail, navigate) => onLocationRef.current?.(trail, navigate),
           onLocationReport,
-          (source, notice) => notifyRef.current({ ...notice, source }),
+          (serverName, notice) => notifyRef.current({ ...notice, source: nameApp(serverName) }),
         );
       } catch (err) {
         console.warn(`Failed to load placement ${entry.resourceUri}:`, err);
