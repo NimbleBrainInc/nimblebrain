@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { ConversationIndex } from "../../../../src/platform/conversations/index-cache.ts";
 
 const TMP_DIR = join(import.meta.dir, ".tmp-index-cache");
+/** The workspace a fixture lives under when its spec names none. */
+const DEFAULT_WS = "ws_00859aff6f095b0e";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,12 +64,14 @@ function writeConvFile(spec: ConvSpec): string {
   }
 
   const filename = `conv_${spec.id}.jsonl`;
-  // The index takes an entry's workspace from its DIRECTORY, so a fixture that
-  // names a workspace has to live under it. A spec with no workspace stays flat
-  // (the legacy layout), which is under no workspace at all.
-  const dir = spec.workspaceId
-    ? join(TMP_DIR, spec.workspaceId, "conversations", spec.ownerId ?? "unknown")
-    : TMP_DIR;
+  // The index takes an entry's workspace from its DIRECTORY, so a fixture lives
+  // under the workspace it names, or under `DEFAULT_WS` when it names none.
+  const dir = join(
+    TMP_DIR,
+    spec.workspaceId ?? DEFAULT_WS,
+    "conversations",
+    spec.ownerId ?? "unknown",
+  );
   mkdirSync(dir, { recursive: true });
   const path = join(dir, filename);
   writeFileSync(path, lines.map((l) => `${l}\n`).join(""));
@@ -176,11 +180,13 @@ describe("build", () => {
       messages: [{ role: "user", content: "Hi", timestamp: "2025-01-01T00:01:00.000Z" }],
     });
 
+    const ownerDir = join(TMP_DIR, DEFAULT_WS, "conversations", "unknown");
+
     // Non-JSONL file
-    writeFileSync(join(TMP_DIR, "readme.txt"), "not a conversation");
+    writeFileSync(join(ownerDir, "readme.txt"), "not a conversation");
 
     // Malformed JSONL
-    writeFileSync(join(TMP_DIR, "conv_broken.jsonl"), "this is not valid json\n");
+    writeFileSync(join(ownerDir, "conv_broken.jsonl"), "this is not valid json\n");
 
     const index = new ConversationIndex();
     await index.build(TMP_DIR);

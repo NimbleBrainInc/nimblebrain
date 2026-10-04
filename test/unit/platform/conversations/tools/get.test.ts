@@ -70,7 +70,11 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
     meta,
     ...annotated.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt })),
   ];
-  writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
+  // `dir` is the workspaces root the index walks; the file goes in one owner
+  // partition of one workspace.
+  const ownerDir = join(dir, "ws_00164434d8dd7ffb", "conversations", "usr_test");
+  mkdirSync(ownerDir, { recursive: true });
+  writeFileSync(join(ownerDir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
 describe("conversations__get", () => {

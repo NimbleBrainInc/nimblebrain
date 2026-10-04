@@ -127,7 +127,10 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     ] as const;
     for (const newState of terminals) {
       const lc = new ConnectorLifecycleManager(new CapturingSink());
-      seedInstance(lc, "granola", "ws_0076759dbbe19fcc", { url: "https://example.test/mcp" });
+      seedInstance(lc, "granola", "ws_0076759dbbe19fcc", {
+        url: "https://example.test/mcp",
+        serverName: "granola",
+      });
       // Inject a fake in-flight flow
       const fake = Promise.resolve({ authorizationUrl: "x" });
       flowSlot(lc).set("granola|ws_0076759dbbe19fcc|_workspace", fake);
@@ -154,7 +157,10 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
   });
 
   test("recordConnectionStateChange does NOT release the slot on starting / pending_auth (the in-flight states the mutex exists to coalesce across)", () => {
-    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", { url: "https://example.test/mcp" });
+    seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", {
+      url: "https://example.test/mcp",
+      serverName: "granola",
+    });
     const fake = Promise.resolve({ authorizationUrl: "x" });
     flowSlot(lifecycle).set("granola|ws_0076759dbbe19fcc|_workspace", fake);
 
@@ -222,7 +228,10 @@ describe("ConnectorLifecycleManager.startAuth — authFlowsInFlight coalesce", (
     // permanently (every later startAuth returns the stale resolved promise → Reconnect
     // a silent no-op). Pin the invariant.
     const lifecycle = new ConnectorLifecycleManager(new CapturingSink());
-    seedInstance(lifecycle, "minted", "ws_0076759dbbe19fcc", { url: "https://example.test/mcp" });
+    seedInstance(lifecycle, "minted", "ws_0076759dbbe19fcc", {
+      url: "https://example.test/mcp",
+      serverName: "minted",
+    });
     flowSlot(lifecycle).set(
       "minted|ws_0076759dbbe19fcc|_workspace",
       Promise.resolve({ authorizationUrl: null }),

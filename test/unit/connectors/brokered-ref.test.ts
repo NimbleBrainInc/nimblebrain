@@ -42,11 +42,11 @@ describe("brokeredRef", () => {
 
 // ── Read-side shim ──────────────────────────────────────────────────
 //
-// Refs persisted by a runtime that wrote per-vendor blocks are mapped forward on
-// read, so an existing install survives a restart with no config edit and
-// nothing rewrites what is on disk. Delete these with the shim, one release on.
+// Refs persisted with the Composio block are mapped forward on read, so an
+// existing install survives a restart with no config edit and nothing rewrites
+// what is on disk. Delete these with the shim.
 
-describe("brokeredRef — legacy per-vendor blocks", () => {
+describe("brokeredRef — legacy composio block", () => {
   it("maps a legacy composio block forward", () => {
     const legacy = {
       url: "https://backend.composio.dev/v3/mcp/session-xyz",
@@ -56,28 +56,6 @@ describe("brokeredRef — legacy per-vendor blocks", () => {
     expect(brokeredRef(legacy)).toEqual({
       provider: "composio",
       connectorId: "com.google/gmail",
-    });
-  });
-
-  it("maps a legacy smithery block forward, coordinates and all", () => {
-    const legacy = {
-      url: "https://api.smithery.ai/connect/test-ns/nb-x/mcp",
-      serverName: "ai-bassethound-mcp",
-      smithery: {
-        connectorId: "ai.bassethound/mcp",
-        connectionId: "nb-x",
-        namespace: "test-ns",
-        baseUrl: "https://api.smithery.ai",
-      },
-    } as unknown as ConnectorRef;
-    expect(brokeredRef(legacy)).toEqual({
-      provider: "smithery",
-      connectorId: "ai.bassethound/mcp",
-      providerRef: {
-        connectionId: "nb-x",
-        namespace: "test-ns",
-        baseUrl: "https://api.smithery.ai",
-      },
     });
   });
 

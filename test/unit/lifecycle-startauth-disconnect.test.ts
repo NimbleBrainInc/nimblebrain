@@ -111,6 +111,7 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
   test("rejects when principal is not the workspace principal (Stage 2: user-scope removed)", async () => {
     seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     await expect(
       lifecycle.startAuth("granola", "ws_0076759dbbe19fcc", "user_alice", OPTS),
@@ -120,6 +121,7 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
   test("returns existing pending_auth URL without restarting (debounces double-click)", async () => {
     const instance = seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     const cachedUrl = "https://example.test/oauth/authorize?state=cached";
     lifecycle.recordConnectionStateChange(
@@ -140,6 +142,7 @@ describe("ConnectorLifecycleManager.startAuth — validation & idempotence", () 
   test("rejects re-auth when connection is already running (caller must disconnect first)", async () => {
     seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     lifecycle.recordConnectionStateChange(
       "granola",
@@ -185,6 +188,7 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
   test("transitions Connection to not_authenticated, drops the source, emits state_changed", async () => {
     const instance = seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     const registry = new ToolRegistry();
     registry.addSource(
@@ -229,6 +233,7 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
     seedWorkspaceRoot(workDir, "ws_0076759dbbe19fcc");
     seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     lifecycle.recordConnectionStateChange(
       "granola",
@@ -248,6 +253,7 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
   test("test_disconnect_urlConnector_logsOutcomeAndTransition", async () => {
     seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://example.test/mcp",
+      serverName: "granola",
     });
     lifecycle.bindWorkspaceRegistries(() => new Map([["ws_0076759dbbe19fcc", new ToolRegistry()]]));
     lifecycle.recordConnectionStateChange(
@@ -297,6 +303,7 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
     lifecycle.setManagedConnectorRegistry(managedConnectorRegistryOf([broker]));
     seedInstance(lifecycle, "granola", "ws_0076759dbbe19fcc", "workspace", {
       url: "https://broker.test/session/abc/mcp",
+      serverName: "granola",
       brokered: { provider: "example-broker", connectorId: "granola" },
     });
     lifecycle.bindWorkspaceRegistries(() => new Map([["ws_0076759dbbe19fcc", new ToolRegistry()]]));

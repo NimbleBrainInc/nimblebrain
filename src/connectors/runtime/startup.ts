@@ -14,7 +14,7 @@ import { WorkspaceContext } from "../../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../../workspace/workspace-store.ts";
 import { connectorHasStaticAuth } from "./connector-auth.ts";
 import { resolveStaticOAuthClient } from "./oauth-static-client.ts";
-import { defaultWorkDir, deriveServerName, validateServerName } from "./paths.ts";
+import { defaultWorkDir, validateServerName } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import type { ConnectorRef, RemoteTransportConfig, StartConnectorResult } from "./types.ts";
 import { validateConnectorUrl } from "./url-validator.ts";
@@ -453,7 +453,7 @@ async function startUrlConnectorSource(
   wsContext: WorkspaceContext | undefined,
   opts: StartConnectorOpts | undefined,
 ): Promise<StartConnectorResult> {
-  const serverName = ref.serverName ?? deriveServerName(ref.url);
+  const serverName = ref.serverName;
   validateServerName(serverName);
   const sourceName = serverName;
 

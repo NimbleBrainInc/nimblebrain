@@ -17,13 +17,6 @@ describe("resolveConnectorDataDirForRef", () => {
     expect(dir).toBe(`${workDir}/workspaces/ws_002fbb9fda6654ca/data/example-mcp`);
   });
 
-  it("without serverName: falls back to deriving the slug from the URL", () => {
-    const dir = resolveConnectorDataDirForRef(workDir, "ws_002fbb9fda6654ca", {
-      url: "https://mcp.example.com/sse",
-    });
-    expect(dir.startsWith(`${workDir}/workspaces/ws_002fbb9fda6654ca/data/`)).toBe(true);
-  });
-
   it("two workspaces with the same connector get separate directories", () => {
     const ref = { url: "https://mcp.example.com/sse", serverName: "example-mcp" };
     expect(resolveConnectorDataDirForRef(workDir, "ws_002fbb9fda6654ca", ref)).not.toBe(
@@ -60,38 +53,27 @@ describe("deriveConnectorDataDir", () => {
 });
 
 describe("serverNameFromRef", () => {
-  it("returns the persisted serverName when the ref carries one", () => {
+  it("returns the persisted serverName", () => {
     expect(serverNameFromRef({ url: "https://x.test/mcp", serverName: "com-x-mcp" })).toBe(
       "com-x-mcp",
     );
   });
 
-  it("derives from the url when the ref predates serverName persistence", () => {
-    expect(serverNameFromRef({ url: "https://mcp.example.com/echo" })).toBe("echo");
-  });
-
-  it("returns null for a row this build can neither name nor reach", () => {
-    // Disk holds rows the current type no longer describes. Returning a string
-    // meant `deriveServerName(undefined)` threw a bare TypeError out of
-    // whichever reader touched the row first — a webhook delivery, a personal
-    // connector listing, boot. Null makes the compiler name those readers.
+  it("returns null for a row that names no server", () => {
+    // A hand-edited or malformed row may carry no serverName. Null makes the
+    // compiler name every reader, so each skips the row instead of throwing.
     for (const row of [
+      { url: "https://mcp.example.com/echo" },
+      { url: "https://mcp.example.com/echo", serverName: "" },
       { name: "@acme/echo" },
-      { path: "/srv/echo" },
-      { url: "" },
-      { url: "   " },
-      { url: "..." },
-      { url: "ftp://x.test/mcp" },
     ]) {
       expect(serverNameFromRef(row as unknown as ConnectorRef)).toBeNull();
     }
   });
 
-  it("still names a legacy row that carries an explicit serverName", () => {
+  it("names a row with an explicit serverName even when its url is unusable", () => {
     // Identity, not reachability: such a row cannot be connected to, but every
     // lookup keyed on its name must still resolve it (uninstall, grant lists).
-    expect(
-      serverNameFromRef({ name: "@acme/echo", serverName: "acme-echo" } as unknown as ConnectorRef),
-    ).toBe("acme-echo");
+    expect(serverNameFromRef({ url: "", serverName: "acme-echo" })).toBe("acme-echo");
   });
 });

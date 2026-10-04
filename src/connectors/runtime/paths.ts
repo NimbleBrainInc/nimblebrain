@@ -5,7 +5,6 @@ import {
   isPersonalConnectorName,
   PERSONAL_CONNECTOR_PREFIX,
 } from "../../tools/identity-sources.ts";
-import { isHttpUrl } from "../../util/url.ts";
 import { WorkspaceContext } from "../../workspace/context.ts";
 import type { ConnectorRef } from "./types.ts";
 
@@ -86,19 +85,6 @@ export function validateServerName(serverName: string): void {
 }
 
 /**
- * Legacy short-slug derivation. Splits at `/` and takes the rightmost
- * segment, then alphanum-dashes. Used only as the fallback in
- * `serverNameFromRef` for refs that predate `serverName`-on-ref
- * persistence (workspace.json rows from before #195's slugify rule
- * landed). New installs always persist `slugifyServerName(entry.id)`
- * on the ref directly; don't introduce new call sites here.
- */
-export function deriveServerName(name: string): string {
-  const base = name.includes("/") ? name.split("/").pop()! : name;
-  return base.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-}
-
-/**
  * Slugify a canonical `ServerDetail.name` (reverse-DNS form, e.g.
  * `com.stripe/mcp`, `ai.nimblebrain/echo`) into a single-segment,
  * URL-safe, filesystem-safe identifier used as the `serverName`
@@ -135,44 +121,26 @@ export function slugifyServerName(canonicalName: string): string {
  * row cannot name one. Single authority for the install / boot / uninstall
  * paths so the registered source name matches what consumers later look up.
  *
- * Honors `ref.serverName` when present — that's the slugified canonical
- * reverse-DNS form set at install time from `ServerDetail.name`. Falls back to
- * `deriveServerName` only for refs that predate canonical-form persistence
- * (pre-#195), and only when the url is one this runtime could actually reach.
+ * The key is `ref.serverName`: the slugified canonical reverse-DNS form set at
+ * install time from `ServerDetail.name`.
  *
- * **Nullable on purpose.** Every caller reads a row off disk, and disk holds
- * rows this build's type no longer describes — a pre-URL `name:`/`path:`
- * entry, or a url that is blank or unparseable. Returning `string` meant
- * `deriveServerName(undefined)` threw from whichever reader touched the row
- * first, which is a `TypeError` naming neither the workspace nor the row, in a
- * caller that has no reason to expect one. The null makes the compiler name
- * the set of readers instead, which is the same argument the URL-only
- * `ConnectorRef` collapse rests on: put the invariant in the type and let it find
- * the sites.
+ * **Nullable on purpose.** Every caller reads a row off disk, and a hand-edited
+ * or malformed row may carry no `serverName`. The null makes the compiler name
+ * the set of readers, so each one skips the row instead of throwing a
+ * `TypeError` that names neither the workspace nor the row.
  */
 export function serverNameFromRef(ref: ConnectorRef): string | null {
-  if (ref.serverName) return ref.serverName;
-  return isHttpUrl(ref.url) ? deriveServerName(ref.url) : null;
+  return typeof ref.serverName === "string" && ref.serverName.length > 0 ? ref.serverName : null;
 }
 
 /**
- * Whether a persisted `workspace.json` row IS the named connector.
- *
- * `deriveServerName` needs a string; a legacy or malformed row has no `url`, and
- * throwing here would fail the uninstall of a *different*, healthy connector.
- * Such a row matches nothing, so it is left alone — which also makes it a
+ * Whether a persisted `workspace.json` row IS the named connector. A row with
+ * no `serverName` matches nothing, so it is left alone — which also makes it a
  * referrer for the reference check in `deletableSecretKeys`, the safe direction
  * for a row nothing can identify.
- *
- * Deliberately NOT `serverNameFromRef(row) === serverName`. That one gates on
- * `isHttpUrl`, so a row whose url this runtime could not reach names nothing;
- * this one still derives from any non-empty string, because a row that cannot
- * be STARTED must still be REMOVABLE.
  */
 export function matchesServerName(row: ConnectorRef, serverName: string): boolean {
-  if (row.serverName) return row.serverName === serverName;
-  if (typeof row.url !== "string" || row.url.length === 0) return false;
-  return deriveServerName(row.url) === serverName;
+  return serverNameFromRef(row) === serverName;
 }
 
 /**
@@ -212,6 +180,6 @@ export function resolveConnectorDataDirForRef(
 ): string {
   return new WorkspaceContext({ wsId, workDir }).getDataPath(
     "data",
-    deriveConnectorDataDir(ref.serverName ?? ref.url),
+    deriveConnectorDataDir(ref.serverName),
   );
 }

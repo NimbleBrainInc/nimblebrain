@@ -22,7 +22,7 @@ import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 /**
  * Project one tool-supplied connector row onto a `ConnectorRef`. Only the URL and
- * an optional explicit `serverName` are accepted from tool input: every other
+ * the `serverName` it registers under are accepted from tool input: every other
  * field on a ref (transport, OAuth client, broker coordinates) is
  * operator-catalog territory, set by the install path, never by a caller.
  */
@@ -38,10 +38,11 @@ function toConnectorRef(b: Record<string, unknown>): ConnectorRef {
       `Connector url must be an http(s) URL (got ${url === "" ? "an empty value" : `"${url}"`}).`,
     );
   }
-  return {
-    url,
-    ...(typeof b.serverName === "string" && b.serverName ? { serverName: b.serverName } : {}),
-  };
+  const serverName = typeof b.serverName === "string" ? b.serverName.trim() : "";
+  if (serverName === "") {
+    throw new Error(`Connector "${url}" needs a serverName to register it under.`);
+  }
+  return { url, serverName };
 }
 
 /**
@@ -140,10 +141,10 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
               url: { type: "string" },
               serverName: { type: "string" },
             },
-            required: ["url"],
+            required: ["url", "serverName"],
           },
           description:
-            "Connector references — the remote MCP endpoint URL, optionally with the server name to register it under (optional for create and update).",
+            "Connector references — the remote MCP endpoint URL and the server name to register it under (optional for create and update).",
         },
         userId: {
           type: "string",

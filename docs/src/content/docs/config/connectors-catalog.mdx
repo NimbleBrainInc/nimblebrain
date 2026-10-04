@@ -437,7 +437,7 @@ Operators upgrading from a release before the `ServerDetail` alignment landed sh
 
 - **`NB_CATALOG_PATH` and `NB_STDIO_CATALOG_PATH` removed.** Point `NB_CURATED_CATALOG_DIR` at a directory of `ServerDetail` YAML / JSON files.
 - **Catalog id format.** A catalog listing's `id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthOperatorApps[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
-- **Connector `serverName` slug.** New catalog installs persist a slugified canonical reverse-DNS form (`com-canva-mcp`) instead of a short brand slug. Existing installs keep their persisted `serverName` via a fallback. Operators querying by `serverName` (logs, audit) need both forms during the transition.
+- **Connector `serverName` slug.** A catalog install persists a slugified canonical reverse-DNS form (`com-canva-mcp`), and every connector entry carries its `serverName`.
 - **`packages[]`-only entries are not installable.** The runtime does not acquire or spawn a server's code, so a catalog entry advertising only `packages[]` never appears in Browse. Publish the server behind a URL and give the entry a `remotes[]` endpoint.
 
 ## Related

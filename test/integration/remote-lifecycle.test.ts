@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { deriveServerName } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
@@ -142,25 +141,6 @@ describe("startConnectorSource — remote url entries", () => {
     expect(tools.length).toBe(2);
 
     await registry.removeSource("startup-remote");
-  }, 15_000);
-
-  it("derives serverName from url when serverName not provided", async () => {
-    const registry = new ToolRegistry();
-    const ref: ConnectorRef = {
-      url: mockServer.url,
-    };
-
-    const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
-      allowInsecureRemotes: true,
-      wsId: "ws_0076759dbbe19fcc",
-    });
-    expect(meta).not.toBeNull();
-
-    // deriveServerName on a URL will produce something like "mcp"
-    const expected = deriveServerName(mockServer.url);
-    expect(registry.hasSource(expected)).toBe(true);
-
-    await registry.removeSource(expected);
   }, 15_000);
 
   it("failed remote startup is caught by allSettled (not fatal)", async () => {

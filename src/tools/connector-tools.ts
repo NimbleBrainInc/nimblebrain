@@ -2217,11 +2217,10 @@ function buildRemoteConnectorRef(
  * (already-installed, or a self-healed reattach when workspace.json has the
  * entry but the lifecycle lost the instance), or null for a fresh install.
  *
- * Dedups primarily on `serverName` — the canonical lifecycle key, derived from
+ * Dedups on `serverName` — the canonical lifecycle key, derived from
  * `entry.id` and stable across installs. Matching on `b.url` would miss
  * brokered connectors whose persisted `b.url` is the per-install session URL and
- * never equals the catalog placeholder `action.url`. Falls back to URL match
- * for legacy connectors persisted before slugify-on-install (no `serverName` field).
+ * never equals the catalog placeholder `action.url`.
  */
 async function handleDuplicateInstall(
   ctx: ManageConnectorsContext,
@@ -2233,23 +2232,18 @@ async function handleDuplicateInstall(
   trusted: ConnectorCatalogEntry | null,
 ): Promise<ToolResult | null> {
   const lifecycle = ctx.runtime.getLifecycle();
-  const dup = ws.connectors.find((b) => {
-    if (!("url" in b)) return false;
-    if ("serverName" in b && b.serverName) return b.serverName === serverName;
-    return b.url === action.url;
-  });
+  const dup = ws.connectors.find((b) => matchesServerName(b, serverName));
   if (!dup) return null;
-  const dupServerName = "serverName" in dup ? (dup.serverName ?? serverName) : serverName;
   // Self-heal: workspace.json says yes but lifecycle lost the instance (prior
   // uninstall that didn't clean workspace.json). Re-seed instead of reporting
   // alreadyInstalled — the latter would skip seedInstance and fail the next
   // OAuth initiate. The host UI comes from the catalog entry the stored ref is,
   // as it does at boot (`catalog-ui.ts`), not from the copy the original install
   // stored; with no catalog entry, the stored copy is all there is.
-  if (!lifecycle.getInstance(dupServerName, wsId)) {
+  if (!lifecycle.getInstance(serverName, wsId)) {
     const binding = bindCatalogEntry(dup, trusted ? [trusted] : []);
     await lifecycle.seedInstance(
-      dupServerName,
+      serverName,
       action.url,
       binding.kind === "uncatalogued"
         ? dup
@@ -2257,13 +2251,13 @@ async function handleDuplicateInstall(
       undefined,
       wsId,
     );
-    lifecycle.notifyInstalled(dupServerName, wsId);
+    lifecycle.notifyInstalled(serverName, wsId);
     return {
       content: textContent(`Reattached "${entry.name}" (recovered orphan entry).`),
       structuredContent: {
         ok: true,
         alreadyInstalled: false,
-        serverName: dupServerName,
+        serverName,
         scope: "workspace",
         wsId,
       },
@@ -2275,7 +2269,7 @@ async function handleDuplicateInstall(
     structuredContent: {
       ok: true,
       alreadyInstalled: true,
-      serverName: dupServerName,
+      serverName,
       scope: "workspace",
       wsId,
     },

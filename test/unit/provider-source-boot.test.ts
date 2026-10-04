@@ -34,19 +34,26 @@ describe("connectorHasStaticAuth", () => {
 
   test("bearer and header url connectors have static auth", () => {
     expect(
-      connectorHasStaticAuth({ url: "u", transport: { auth: { type: "bearer", token: "t" } } }),
+      connectorHasStaticAuth({
+        url: "u",
+        serverName: "s",
+        transport: { auth: { type: "bearer", token: "t" } },
+      }),
     ).toBe(true);
     expect(
       connectorHasStaticAuth({
         url: "u",
+        serverName: "s",
         transport: { auth: { type: "header", name: "X-Key", value: "v" } },
       }),
     ).toBe(true);
   });
 
   test("auth:none and no-auth url connectors are NOT static (they take the OAuth path)", () => {
-    expect(connectorHasStaticAuth({ url: "u", transport: { auth: { type: "none" } } })).toBe(false);
-    expect(connectorHasStaticAuth({ url: "u" })).toBe(false);
+    expect(
+      connectorHasStaticAuth({ url: "u", serverName: "s", transport: { auth: { type: "none" } } }),
+    ).toBe(false);
+    expect(connectorHasStaticAuth({ url: "u", serverName: "s" })).toBe(false);
   });
 
   test("named and local-path connectors are not static-auth url sources", () => {

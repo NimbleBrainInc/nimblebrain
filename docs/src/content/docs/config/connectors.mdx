@@ -35,7 +35,7 @@ NimbleBrain ships with no connectors by default. Platform capabilities (conversa
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | `string` | — | **Required.** The remote MCP endpoint. |
-| `serverName` | `string` | derived from `url` | The name the server registers under. Tools reach the agent as `<serverName>__<tool>`, so this is the stable identity every other surface looks the connector up by. Set automatically at install from the catalog entry's canonical id. |
+| `serverName` | `string` | — | **Required.** The name the server registers under. Tools reach the agent as `<serverName>__<tool>`, so this is the stable identity every other surface looks the connector up by. Set automatically at install from the catalog entry's canonical id. |
 | `transport` | `object` | `{ "type": "streamable-http" }` | How to reach the server. See [Remote transport configuration](#remote-transport-configuration). |
 | `ui` | `object \| null` | `null` | Host UI metadata, copied from the operator-trusted catalog entry at install. At every boot the runtime takes it from the catalog again, so a placement the catalog gains reaches connectors already installed; a connector no catalog entry names keeps this copy. |
 | `oauthScope` | `"workspace"` | `"workspace"` | Identity scope for the connection. One identity per (workspace, server), shared by the workspace's members. |

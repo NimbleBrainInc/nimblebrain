@@ -678,8 +678,8 @@ describe("nb__manage_workspaces", () => {
             serverName: "mail",
             brokered: { provider: "composio", connectorId: "com.example/mail" },
           },
-          // Uncatalogued and unnamed: falls back to the derived server name.
-          { url: "https://other.example.com/mcp" },
+          // Uncatalogued: reported by its server name.
+          { url: "https://other.example.com/mcp", serverName: "other" },
         ],
       });
 
@@ -687,8 +687,7 @@ describe("nb__manage_workspaces", () => {
         workspaces: Array<{ connectors: Array<Record<string, unknown>> }>;
       };
       const connectors = parsed.workspaces[0].connectors;
-      expect(connectors.map((c) => c.name)).toEqual(["Echo", "Mail", connectors[2].serverName]);
-      expect(connectors[2].serverName).toBeTruthy();
+      expect(connectors.map((c) => c.name)).toEqual(["Echo", "Mail", "other"]);
       expect(connectors.map((c) => c.iconUrl)).toEqual([
         "https://static.example.com/echo.svg",
         undefined,

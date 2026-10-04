@@ -4,10 +4,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseNamespacedToolName } from "../../../src/tools/namespace.ts";
-import {
-  assertWorkspaceIdsConform,
-  NonConformingWorkspaceIdError,
-} from "../../../src/workspace/migration-guard.ts";
 import type { Workspace } from "../../../src/workspace/types.ts";
 import { WORKSPACE_ID_RE } from "../../../src/workspace/workspace-id-pattern.ts";
 import {
@@ -100,45 +96,11 @@ describe("a workspace directory whose name is not a workspace id", () => {
     await writeFile(join(dir, "workspace.json"), JSON.stringify(record));
   }
 
-  test("listNonConformingIds names each one that holds a workspace.json, sorted", async () => {
-    await placeLegacy("ws_user_usr_alice");
-    await placeLegacy("ws_acme_corp");
-    await placeLegacy("ws_ABCDEF0123456789");
-    // A ws_ directory with no workspace.json is not a workspace.
-    await mkdir(join(workDir, "workspaces", "ws_scratch"), { recursive: true });
-    await seedWorkspace(store, "ws_3f9a1c7e0b2d4856");
-    expect(await store.listNonConformingIds()).toEqual([
-      "ws_ABCDEF0123456789",
-      "ws_acme_corp",
-      "ws_user_usr_alice",
-    ]);
-  });
-
   test("get refuses its id, and list skips it", async () => {
     await placeLegacy("ws_acme_corp");
     const ws = await seedWorkspace(store, "ws_3f9a1c7e0b2d4856");
     expect(await store.get("ws_acme_corp")).toBeNull();
     expect((await store.list()).map((w) => w.id)).toEqual([ws.id]);
-  });
-
-  test("assertWorkspaceIdsConform refuses, naming every offending id", async () => {
-    await placeLegacy("ws_acme_corp");
-    await placeLegacy("ws_user_usr_alice");
-    const err = await assertWorkspaceIdsConform(store).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(NonConformingWorkspaceIdError);
-    expect((err as NonConformingWorkspaceIdError).wsIds).toEqual([
-      "ws_acme_corp",
-      "ws_user_usr_alice",
-    ]);
-    expect((err as Error).message).toContain("ws_acme_corp, ws_user_usr_alice");
-    expect((err as Error).message).toContain("renamed to a generated id");
-  });
-
-  test("assertWorkspaceIdsConform passes when every workspace has a generated id", async () => {
-    await seedWorkspace(store, "ws_3f9a1c7e0b2d4856");
-    await store.create("Generated");
-    await mkdir(join(workDir, "workspaces", "ws_scratch"), { recursive: true });
-    await expect(assertWorkspaceIdsConform(store)).resolves.toBeUndefined();
   });
 });
 
@@ -443,27 +405,6 @@ describe("WorkspaceStore.update", () => {
     const ws = await store.create("Patch");
     const updated = await store.update(ws.id, { about: "new description" });
     expect(updated?.about).toBe("new description");
-  });
-
-  test("drops legacy isPersonal/ownerUserId from the record it writes", async () => {
-    const ws = await store.create("Mat's workspace", {
-      members: [{ userId: "user_alice", role: "admin" }],
-    });
-    const file = join(workDir, "workspaces", ws.id, "workspace.json");
-    const legacy = {
-      ...JSON.parse(await readFile(file, "utf-8")),
-      isPersonal: true,
-      ownerUserId: "user_alice",
-    };
-    await writeFile(file, JSON.stringify(legacy));
-
-    const updated = await store.update(ws.id, { about: "hi" });
-    expect(updated?.about).toBe("hi");
-    const raw = JSON.parse(await readFile(file, "utf-8"));
-    expect("isPersonal" in raw).toBe(false);
-    expect("ownerUserId" in raw).toBe(false);
-    expect(raw.id).toBe(ws.id);
-    expect(raw.members).toEqual([{ userId: "user_alice", role: "admin" }]);
   });
 
   test("ignores a members patch (membership changes go through the member operations)", async () => {

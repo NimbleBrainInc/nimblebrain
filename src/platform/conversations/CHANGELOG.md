@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Removed
+
+- **The flat layout reader.** `listConversationFiles` reads only the
+  workspace-owned layout, so `ConversationFileRef.wsId`,
+  `ConversationChange.wsId` and `IndexEntry.workspaceId` are always a
+  workspace id, never `null`.
+
 ### Changed
 
 - The streaming dot reads `active` from each `conversations__list` entry, which

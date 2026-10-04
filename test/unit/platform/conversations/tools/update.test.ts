@@ -5,7 +5,10 @@ import { ConversationIndex } from "../../../../../src/platform/conversations/ind
 import { readConversation } from "../../../../../src/platform/conversations/jsonl-reader.ts";
 import { handleUpdate } from "../../../../../src/platform/conversations/tools/update.ts";
 
-const TMP_DIR = join(import.meta.dir, ".tmp-update");
+/** The workspaces root the index walks. */
+const ROOT = join(import.meta.dir, ".tmp-update");
+/** One owner partition of one workspace, where the fixtures live. */
+const TMP_DIR = join(ROOT, "ws_00859aff6f095b0e", "conversations", "usr_test");
 
 function writeTmpFile(name: string, lines: string[]): string {
   const path = join(TMP_DIR, name);
@@ -61,7 +64,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  rmSync(TMP_DIR, { recursive: true, force: true });
+  rmSync(ROOT, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -75,7 +78,7 @@ describe("handleUpdate", () => {
     const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
     writeTmpFile("conv_test001.jsonl", lines);
 
-    await index.build(TMP_DIR);
+    await index.build(ROOT);
 
     const result = await handleUpdate({ id: "conv_test001", title: "New title" }, index);
 
@@ -102,7 +105,7 @@ describe("handleUpdate", () => {
     const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
     writeTmpFile("conv_test001.jsonl", lines);
 
-    await index.build(TMP_DIR);
+    await index.build(ROOT);
 
     await handleUpdate({ id: "conv_test001", title: "Updated" }, index);
 
@@ -125,7 +128,7 @@ describe("handleUpdate", () => {
     const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
     writeTmpFile("conv_test001.jsonl", lines);
 
-    await index.build(TMP_DIR);
+    await index.build(ROOT);
 
     await handleUpdate({ id: "conv_test001", title: "Integrity check" }, index);
 
@@ -156,7 +159,7 @@ describe("handleUpdate", () => {
     const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
     writeTmpFile("conv_test001.jsonl", lines);
 
-    await index.build(TMP_DIR);
+    await index.build(ROOT);
 
     await handleUpdate({ id: "conv_test001", title: "After" }, index);
 
@@ -171,7 +174,7 @@ describe("handleUpdate", () => {
   // ---------------------------------------------------------------------------
 
   test("throws error for non-existent conversation ID", async () => {
-    await index.build(TMP_DIR);
+    await index.build(ROOT);
 
     await expect(handleUpdate({ id: "conv_nonexistent", title: "Nope" }, index)).rejects.toThrow(
       "Conversation not found: conv_nonexistent",
@@ -186,7 +189,7 @@ describe("handleUpdate", () => {
     const meta = makeMeta({ id: "conv_empty" });
     writeTmpFile("conv_empty.jsonl", [JSON.stringify(meta)]);
 
-    await index.build(TMP_DIR);
+    await index.build(ROOT);
 
     const result = await handleUpdate({ id: "conv_empty", title: "Empty conv" }, index);
 
@@ -217,7 +220,7 @@ describe("handleUpdate", () => {
     writeFileSync(path, [JSON.stringify(meta), ...events.map((e) => JSON.stringify(e))].join("\n"));
     expect(readFileSync(path, "utf-8").endsWith("\n")).toBe(false);
 
-    await index.build(TMP_DIR);
+    await index.build(ROOT);
 
     await handleUpdate({ id: "conv_trunc", title: "Agent Set This" }, index);
 

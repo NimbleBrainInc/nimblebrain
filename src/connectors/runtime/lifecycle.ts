@@ -44,7 +44,7 @@ import {
 import { brokeredConnectionPresent, connectorHasStaticAuth } from "./connector-auth.ts";
 import { sanitizePlacements } from "./defaults.ts";
 import { resolveStaticOAuthClient, type StaticOAuthClient } from "./oauth-static-client.ts";
-import { defaultWorkDir, deriveServerName, validateServerName } from "./paths.ts";
+import { defaultWorkDir, validateServerName } from "./paths.ts";
 import { consumePendingAuth } from "./pending-auth-buffer.ts";
 import {
   buildUrlOAuthProvider,
@@ -89,38 +89,6 @@ type SeedManifestMeta = {
   ui: ConnectorUiMeta | null;
 };
 
-// ---------------------------------------------------------------------------
-// Hard-error on legacy `oauthScope: "user"` records read from disk.
-// ---------------------------------------------------------------------------
-
-/**
- * Thrown when a `ConnectorRef` read from disk carries the legacy
- * `oauthScope: "user"` literal. Stage 2 cut the literal from the schema;
- * the only legal value is `"workspace"`. The cure is the deploy runbook —
- * operators run `bun run migrate:user-creds` before deploying Stage 2.
- *
- * The runtime does NOT translate, normalize, or rewrite legacy data at
- * load. A skipped migration is operator error and surfaces here as a
- * hard boot failure naming the offending record, not a silent in-memory
- * fixup. See
- * the Stage 2 deploy runbook for the
- * operator contract.
- */
-export class LegacyOAuthScopeError extends Error {
-  readonly serverName: string;
-  readonly url: string | undefined;
-  constructor(serverName: string, url: string | undefined) {
-    super(
-      `[lifecycle] connector "${serverName}" carries legacy oauthScope: "user". ` +
-        "Run `bun run migrate:user-creds` before starting the platform. " +
-        "See the Stage 2 deploy runbook.",
-    );
-    this.name = "LegacyOAuthScopeError";
-    this.serverName = serverName;
-    this.url = url;
-  }
-}
-
 /**
  * A user-initiated interactive connect (`startIdentityAuth`) can't start a clean
  * OAuth flow because a start for the same `(userId, serverName)` is already in
@@ -138,20 +106,6 @@ export class ConnectorBusyError extends Error {
     this.name = "ConnectorBusyError";
     this.serverName = serverName;
     this.userId = userId;
-  }
-}
-
-/**
- * Assert a `ConnectorRef` read from disk conforms to the post-Stage-2 schema.
- * Throws `LegacyOAuthScopeError` on encounter — does not translate. The
- * deploy runbook is the operator contract; the runtime stays strict.
- */
-export function assertConnectorRefIsPostStage2(ref: ConnectorRef): void {
-  // Widen to the runtime-disk shape so we can detect a value that
-  // JSON.parse left in place but the static type rejects.
-  const widened: { oauthScope?: string } = ref as { oauthScope?: string };
-  if (widened.oauthScope === "user") {
-    throw new LegacyOAuthScopeError(ref.serverName ?? "(unknown)", ref.url);
   }
 }
 
@@ -614,7 +568,7 @@ export class ConnectorLifecycleManager {
     nameOrPath: string,
     wsId: string,
   ): { serverName: string; instance: ConnectorInstance | undefined } {
-    const serverName = deriveServerName(nameOrPath);
+    const serverName = nameOrPath;
     const direct = this.instances.get(`${serverName}|${wsId}`);
     if (direct) return { serverName, instance: direct };
     for (const inst of this.instances.values()) {
@@ -2073,11 +2027,7 @@ export class ConnectorLifecycleManager {
    * skipped for having no tokens, or that was attempted and failed
    * (`startError`), is seeded too — the state is derived below, not assumed.
    *
-   * Stage 2: every URL connector binds to its workspace explicitly. The
-   * disk-read boundary (`buildProcessInventory`) calls
-   * `assertConnectorRefIsPostStage2` and hard-errors on legacy
-   * `oauthScope: "user"` records — see the deploy runbook at
-   * the Stage 2 deploy runbook.
+   * Every URL connector binds to its workspace explicitly.
    */
   async seedInstance(
     serverName: string,
