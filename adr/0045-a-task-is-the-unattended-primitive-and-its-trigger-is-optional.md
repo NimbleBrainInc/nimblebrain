@@ -140,9 +140,9 @@ unrecovered tool failures never derives to "succeeded".
 **Acceptance criteria are written in natural language and judged through an MCP
 tool.** A task's criteria are a list of rules, each optionally typed as a yes/no,
 a level on an ordered rubric, or a choice. The tasks source sends the criteria,
-the input, and the deliverable to a grader tool the workspace has connected and
+the input, and the deliverable to a judge tool the workspace has connected and
 records the typed verdicts and confidences it returns. The runtime names no
-grader. A typed judging model and a general model prompted as a judge are two
+judge. A typed judging model and a general model prompted as a judge are two
 servers in the same slot, and a workspace with neither still gets schema
 validation and the unrecovered-failure signal.
 
@@ -190,8 +190,8 @@ period) and read a page at a time, so no read loads a task's whole history.
   once-at-T schedule.
 - Migrated automations lose today's cap on retained runs. Storage grows with use,
   and the partitioned, paged index is what keeps reading it bounded.
-- Assessment costs a grader call per run, and sending a deliverable to a grader
-  is a data flow. A workspace connects a grader the way it connects any server,
+- Assessment costs a judge call per run, and sending a deliverable to a judge
+  is a data flow. A workspace connects a judge the way it connects any server,
   with the same consent, so where the deliverable goes is the workspace's
   decision.
 - "Task" now names the domain primitive, and the MCP tasks extension is how a run
