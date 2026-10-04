@@ -7,14 +7,14 @@ import { log } from "../observability/log.ts";
 import { HOST_RESOURCES_MAX_READ_SIZE } from "./capability.ts";
 
 /**
- * MCP convention for "resource not found" responses to `resources/read`
- * requests. Not in the SDK's JSON-RPC ErrorCode enum (which only carries
- * the standard JSON-RPC numbers), but used by `resources/read` in the
- * spec. We deliberately surface the same code from
- * `ai.nimblebrain/resources/read` so a future upstream migration
- * (Layer 3) is a method-name rename, not an error-code rewrite.
+ * The specification's code for "resource not found" on `resources/read`:
+ * `-32602` with `{ uri }` as the data. `ai.nimblebrain/resources/read`
+ * answers with the same code, so a future upstream version of the method is
+ * a rename, not an error-code rewrite. The SDK's 2025 codec also rewrites a
+ * thrown `-32002` to `-32602` on the wire, so throwing the code that is sent
+ * keeps the log line and the wire in agreement.
  */
-const RESOURCE_NOT_FOUND = -32002;
+const RESOURCE_NOT_FOUND = -32602;
 
 /**
  * Impl-defined server-error code for "response too large." Sibling to
@@ -71,7 +71,7 @@ export interface HostResourcesResolver {
  * Files are workspace-owned: `getFileStore(wsId)` resolves the caller's store in one
  * workspace. The resolver passes `ctx.workspaceId` (the workspace the connector ran in), so a
  * `files://` read resolves in that workspace only — a file from another workspace is not
- * on disk there and collapses to `-32002`.
+ * on disk there and collapses to resource-not-found.
  */
 export class FileBackedHostResourcesResolver implements HostResourcesResolver {
   constructor(
@@ -97,7 +97,7 @@ export class FileBackedHostResourcesResolver implements HostResourcesResolver {
       // disk-side issue need visibility — log the actual error before
       // collapsing so the ops trail isn't blind.
       log.warn(
-        `[host-resources] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} failed (collapsing to -32002): ${err instanceof Error ? err.message : String(err)}`,
+        `[host-resources] [${ctx.connectorId}:${ctx.workspaceId}] read ${uri} failed (collapsing to resource-not-found): ${err instanceof Error ? err.message : String(err)}`,
       );
       throw new ProtocolError(RESOURCE_NOT_FOUND, "Resource not found", { uri });
     }

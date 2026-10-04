@@ -125,15 +125,15 @@ The whole list comes back in one response. Pagination is not supported, and a re
 
 A request resolves in **the workspace the calling connection belongs to**, for the user on whose behalf the tool is running. The URI names a file, never a workspace. The host takes the workspace from the connection, so a server cannot reach another workspace's files by constructing a URI.
 
-A file that does not exist, and a file that exists somewhere the caller cannot see, return the same `-32002`. A server cannot use reads to discover what exists outside its scope.
+A file that does not exist, and a file that exists somewhere the caller cannot see, return the same resource-not-found error (`-32602` with `{ uri }` as its data). A server cannot use reads to discover what exists outside its scope.
 
 ## Errors
 
-The error codes are the specification's where one exists, so a future upstream version of this extension keeps them.
+The error codes are the specification's where one exists, so a future upstream version of this extension keeps them. Resource not found and invalid params share `-32602`, as in the specification; `error.data` tells them apart.
 
 | Code | Meaning | `error.data` |
 |---|---|---|
-| `-32002` | Resource not found, or not visible to this caller | `{ uri }` |
+| `-32602` | Resource not found, or not visible to this caller | `{ uri }` |
 | `-32602` | Invalid params: unsupported scheme, a `cursor`, or a malformed filter | Scheme: `{ uri \| scheme, supported }`. Cursor: `{ cursor }`. Non-array `tags`: `{ receivedType }` |
 | `-32004` | Rate limited. Each server in each workspace has its own request budget. | `{ retryAfterMs }` |
 | `-32005` | Response too large: the resource exceeds `read.maxSize` | `{ uri, size, maxSize }` |
