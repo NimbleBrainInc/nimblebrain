@@ -19,6 +19,8 @@
 //   8. The list is newest first in pages: "Load older" continues below the
 //      oldest row, a link to an older item pages down to it, and the count of
 //      unread items needing attention covers the whole inbox.
+//   9. A level is urgency, not tone: only an urgent row is marked on screen,
+//      and a screen reader is told the level of every other row.
 //
 // The page reads its own list through `notifications__list` (the client's
 // `callTool`, stubbed here) and takes the unread total and `markRead` from the
@@ -75,6 +77,8 @@ mock.module("../api/client", () => ({
 }));
 
 const React = await import("react");
+const { NoticeProvider } = await import("../components/notices");
+const withNotices = (el: React.ReactNode) => React.createElement(NoticeProvider, null, el);
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useNavigate } = await import("react-router-dom");
@@ -196,35 +200,37 @@ async function mount(
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        MemoryRouter,
-        { initialEntries: [entry] },
-        React.createElement(WorkspaceProvider, {
-          initialWorkspaces: [WS],
-          initialActiveId: WS.id,
-          children: React.createElement(
-            ShellProvider,
-            {
-              value: {
-                forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
-                mainRoutes: () => [],
-                shellWorkspaceId: "ws_005b519ef7efc353",
-              },
-            },
-            React.createElement(
-              WorkspaceAppIconsContext.Provider,
+      withNotices(
+        React.createElement(
+          MemoryRouter,
+          { initialEntries: [entry] },
+          React.createElement(WorkspaceProvider, {
+            initialWorkspaces: [WS],
+            initialActiveId: WS.id,
+            children: React.createElement(
+              ShellProvider,
               {
                 value: {
-                  iconFor: () => undefined,
-                  connectors: { workspaceId: WS.id, installed },
+                  forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
+                  mainRoutes: () => [],
+                  shellWorkspaceId: "ws_005b519ef7efc353",
                 },
               },
-              live
-                ? React.createElement(LiveNotifications, { children: routes })
-                : React.createElement(NotificationsContext.Provider, { value }, routes),
+              React.createElement(
+                WorkspaceAppIconsContext.Provider,
+                {
+                  value: {
+                    iconFor: () => undefined,
+                    connectors: { workspaceId: WS.id, installed },
+                  },
+                },
+                live
+                  ? React.createElement(LiveNotifications, { children: routes })
+                  : React.createElement(NotificationsContext.Provider, { value }, routes),
+              ),
             ),
-          ),
-        }),
+          }),
+        ),
       ),
     );
   });
@@ -428,6 +434,37 @@ describe("a level the workspace ceiling clamped", () => {
   });
 });
 
+describe("a level is urgency, not tone", () => {
+  test("only an urgent row is marked; info and attention look alike and are named to a screen reader", async () => {
+    const { container } = await mount({
+      items: [
+        item({ id: "a:1", seq: 1, level: "info", title: "info-row" }),
+        item({ id: "a:2", seq: 2, level: "attention", title: "attention-row" }),
+        item({ id: "a:3", seq: 3, level: "urgent", title: "urgent-row" }),
+      ],
+    });
+    const byTitle = (title: string) => rows(container).find((r) => r.textContent?.includes(title))!;
+    const visible = (row: HTMLElement) => {
+      const copy = row.cloneNode(true) as HTMLElement;
+      for (const s of Array.from(copy.querySelectorAll(".sr-only"))) s.remove();
+      return copy.textContent ?? "";
+    };
+    const edge = (row: HTMLElement) => row.closest("li")?.className ?? "";
+    const spoken = (row: HTMLElement) => row.querySelector(".sr-only")?.textContent;
+
+    expect(visible(byTitle("urgent-row"))).toContain("Urgent");
+    expect(edge(byTitle("urgent-row"))).toContain("border-l-destructive");
+
+    for (const title of ["info-row", "attention-row"]) {
+      expect(visible(byTitle(title))).not.toContain("Urgent");
+      expect(visible(byTitle(title))).not.toContain("Attention");
+      expect(edge(byTitle(title))).toContain("border-l-transparent");
+    }
+    expect(spoken(byTitle("info-row"))).toBe("Info, unread");
+    expect(spoken(byTitle("attention-row"))).toBe("Attention, unread");
+  });
+});
+
 describe("ordering and the empty state", () => {
   test("newest first whatever the level, so a page loaded below never reorders the one above", async () => {
     const { container } = await mount({
@@ -505,6 +542,33 @@ describe("?item= — where a link from outside the shell lands", () => {
     });
     expect(container.textContent).not.toContain("DNS propagated.");
     expect(markRead).not.toHaveBeenCalled();
+  });
+});
+
+describe("subject", () => {
+  test("shows on the row only when the title does not already name it", async () => {
+    const { container } = await mount({
+      items: [
+        item({
+          id: "a:1",
+          seq: 1,
+          title: "acme-outreach.com is active",
+          subject: "acme-outreach.com",
+        }),
+        item({ id: "a:2", seq: 2, title: "Sequence finished", subject: "Q4 founders" }),
+      ],
+    });
+    const text = rows(container).map((r) => r.textContent ?? "");
+    expect(text[0]).toContain("Q4 founders");
+    expect(text[1]?.split("acme-outreach.com").length).toBe(2);
+  });
+
+  test("counts as named when only the case differs", async () => {
+    const { container } = await mount({
+      items: [item({ title: "Acme-Outreach.com is active", subject: "acme-outreach.com" })],
+    });
+    const text = (rows(container)[0]?.textContent ?? "").toLowerCase();
+    expect(text.split("acme-outreach.com").length).toBe(2);
   });
 });
 

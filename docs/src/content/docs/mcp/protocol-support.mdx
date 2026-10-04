@@ -47,10 +47,6 @@ On a 2025-era connection, `initialize` carries exactly these capabilities:
 ```json
 {
   "capabilities": {
-    "tasks": {
-      "requests": { "tools": { "call": {} } },
-      "cancel": {}
-    },
     "extensions": {
       "io.modelcontextprotocol/skills": {},
       "ai.nimblebrain/facets": {},
@@ -66,16 +62,12 @@ On a 2025-era connection, `initialize` carries exactly these capabilities:
 }
 ```
 
-On a `2026-07-28` connection, every request's envelope carries the same `tasks` block, Skills claim, facets claim, and lifecycle claim, and no `ai.nimblebrain/host-resources`:
+On a `2026-07-28` connection, every request's envelope carries the same Skills claim, facets claim, and lifecycle claim, and no `ai.nimblebrain/host-resources`:
 
 ```json
 {
   "_meta": {
     "io.modelcontextprotocol/clientCapabilities": {
-      "tasks": {
-        "requests": { "tools": { "call": {} } },
-        "cancel": {}
-      },
       "extensions": {
         "io.modelcontextprotocol/skills": {},
         "ai.nimblebrain/facets": {},
@@ -86,12 +78,9 @@ On a `2026-07-28` connection, every request's envelope carries the same `tasks` 
 }
 ```
 
-**`tasks`**: the host runs long-running tools as tasks and can cancel them. When the run that made a call is cancelled, the host sends `tasks/cancel`. A task-augmented call is never retried after a transport failure, because the task's state lives on the server and a retry would start the work twice. The host does not claim `tasks.list`, because it never lists tasks. How a call becomes a task depends on the era:
+**`io.modelcontextprotocol/tasks`**: the host runs long-running tools as tasks through the `2026-07-28` tasks extension, and only through it. When a server advertises the extension, each `tools/call` names it in that request's own client capabilities, and the server decides per call whether to answer outright or with a task. The host polls `tasks/get` and reads the result it inlines. When the run that made a call is cancelled, the host sends `tasks/cancel`. A task that asks for input (`input_required`) is cancelled and reported as an error, since the host has no one to ask. A task-augmented call is never retried after a transport failure, because the task's state lives on the server and a retry would start the work twice. The extension is claimed on those requests only, never on the connection, so it appears in neither block above.
 
-| Era | How the host opts a call in |
-|---|---|
-| 2025 | A tool that declares `execution.taskSupport` as `optional` or `required` is called with `params.task`. The host receives a `CreateTaskResult` right away, polls `tasks/get`, and reads the outcome from `tasks/result`. |
-| `2026-07-28` | The tasks extension (`io.modelcontextprotocol/tasks`). When the server advertises it, each `tools/call` names the extension in that request's own client capabilities, and the server decides per call whether to answer outright or with a task. The host polls `tasks/get` and reads the result it inlines. A task that asks for input (`input_required`) is cancelled and reported as an error, since the host has no one to ask. The extension is claimed on those requests only, never on the connection. |
+On a 2025-era connection the host never attaches a task. A tool that declares `execution.taskSupport` as `optional` is called as an ordinary blocking `tools/call`, so a call that outlasts a timeout in the path fails as any long request does. A tool that declares it as `required` cannot be called: the host refuses the call before sending it, with an error saying the tool needs the 2025-11-25 tasks utility. To run a long tool from NimbleBrain, serve it over `2026-07-28` with the tasks extension.
 
 **`io.modelcontextprotocol/skills`**: the MCP [Skills Extension](/using/skills/#skills-published-by-an-mcp-server), claimed on both eras because skill discovery runs on both. On a `2026-07-28` connection the host asks for `skills/list` only when the server advertises the extension. On a 2025-era connection it asks whether or not the server declared it, because some SDKs leave `capabilities.extensions` out of the legacy `initialize` result; a `-32601` (method not found) answer means the server publishes no skills.
 
@@ -103,6 +92,7 @@ On a `2026-07-28` connection, every request's envelope carries the same `tasks` 
 |---|---|
 | `sampling` | The specification is deprecating it. A server that needs a model should call one itself. |
 | `roots` | The specification is deprecating it. A server reaches workspace files through [host-resources](/extensions/host-resources/) instead. |
+| `tasks` (2025-11-25) | Task augmentation is the `2026-07-28` tasks extension only. On a 2025-era connection the host calls every tool inline and refuses one whose `execution.taskSupport` is `required`; see [`io.modelcontextprotocol/tasks`](#client-capabilities-the-host-advertises). |
 | `elicitation` | Elicitation asks the client to put a question to a person and wait for the answer. An agent here often runs with nobody present, such as a scheduled automation or a webhook-triggered run. Even when someone is present, they are at the far end of an event stream, not waiting behind the tool call. The host cannot honor "block until someone answers", so it does not claim to. A tool that needs input should return that as its result, and the agent will ask. |
 
 ### What the host reads from your server

@@ -1,13 +1,13 @@
 ---
 title: Automations
-description: Schedule the agent to run on its own — cron, interval, and event-triggered agent runs that produce deliverables.
+description: Schedule the agent to run on its own — cron, interval, once-at-a-time, event-triggered, and manual agent runs that produce deliverables.
 ---
 
 import { Steps, Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
 Automations are unattended agent runs. Instead of you typing a prompt, NimbleBrain runs a saved prompt on a schedule — a daily digest, a recurring report, a periodic check — or when a connector reports something worth acting on, and the agent executes it unattended, with access to your tools and connectors.
 
-Each automation is a prompt plus a schedule. When it fires, the runtime starts an agent run framed around producing a deliverable rather than a back-and-forth conversation.
+Each automation is a prompt plus an optional schedule. When it fires, or when you run it, the runtime starts an agent run framed around producing a deliverable rather than a back-and-forth conversation.
 
 ## What an automation is
 
@@ -15,7 +15,7 @@ An automation has:
 
 - **A name** — becomes a kebab-case ID (for example, "Weekly Report" → `weekly-report`)
 - **A prompt** — the instruction sent to the agent on each run
-- **A schedule** — a cron expression, a fixed interval, or a set of notifications to run on
+- **A schedule (optional)** — a cron expression, a fixed interval, one date and time, or a set of notifications to run on. With none, it runs only when you run it
 - **Optional run-time policy** — a model override, a forced skill match, iteration and token caps, a token budget, and the tools it may use
 
 ## Who an automation runs as
@@ -30,11 +30,25 @@ Automation runs use your **timezone** for cron scheduling. The default is `Pacif
 
 ## Schedules
 
-Three schedule types:
+Four schedule types, or none:
 
 - **Cron** — a standard 5-field cron expression (for example, `0 9 * * 1` for 9:00 AM every Monday). An expression that matches no future date, such as `0 9 31 2 *` (February 31), is refused, since it would never run
 - **Interval** — a fixed interval in milliseconds, minimum 60000 (one minute)
+- **Once** — one date and time, given as an ISO-8601 timestamp with an offset (for example, `2026-07-01T13:12:00-07:00`). See [Running once at a set time](#running-once-at-a-set-time)
 - **Event** — no time at all: the automation runs when a notification reaches it
+- **No schedule (manual only)** — nothing runs it on its own; it runs only when you, or the agent, run it. Use it for a saved procedure you run on demand
+
+Pausing and resuming (`enabled`) controls only the schedule. Run now works whatever the schedule and whether or not the automation is paused, subject to its token budget.
+
+### Running once at a set time
+
+A **once** schedule is for a single action at a known time: send this email at 1:12 PM on July 1. Do not write that as a cron with a fixed date (`12 13 1 7 *`): a cron recurs, so that one runs again every July 1.
+
+- **It fires once at its time**, then the automation turns itself off and has no next run. This happens whatever the run's outcome (success, failure, or timeout), so no cleanup step is needed in the prompt. The definition and its run history stay, and the automation shows as **Ran once at …**.
+- **A time that passes while the runtime is down** fires as soon as the runtime is back if it is at most an hour late. Later than that, the occurrence is recorded as skipped, the automation turns off, and it shows as **Missed its time**.
+- **A time that comes while every run slot is busy** waits for a slot, like any scheduled run, and fires when one frees, however long that takes.
+- **The time must be in the future** when you create the automation or change its time. A time with no offset is refused, since it means a different moment on every server.
+- **To run it again**, give it a new time: that re-arms it and turns it back on. Resume alone does not, since its time has passed. Run now runs it immediately and leaves its schedule as it was.
 
 ## Run slots and the queue
 
@@ -115,7 +129,7 @@ Every weekday at 8am, summarize my unread email and post it to the
 #daily channel.
 ```
 
-The agent creates the automation for you, generating the schedule and the prompt. You can ask it to list, pause, resume, or delete automations the same way.
+The agent creates the automation for you, generating the schedule and the prompt. You can ask it to list, pause, resume, or delete automations the same way. A one-time request ("send this at 3pm tomorrow") becomes a once schedule, and a procedure you only want to run on demand ("save this as an automation I can run whenever") gets no schedule.
 
 For an event automation, describe the trigger instead of a time:
 
@@ -146,7 +160,7 @@ Browse and manage automations from the **Automations** panel in the sidebar, or 
 
 <Steps>
 
-1. **List automations** — name, enabled state, schedule, source, last run status, and next run time.
+1. **List automations** — name, enabled state, schedule, source, last run status, and next run time. Automations made to be run once with no schedule (one-offs) are kept with their history but left out of the list unless asked for (`kind: "oneoff"` or `"all"`).
 
 2. **Inspect one automation** — its full definition (schedule, model, caps, prompt preview) and recent run history with per-run status, start time, iterations, and tool-call counts.
 
@@ -165,6 +179,8 @@ Pausing keeps the definition and its run history intact; the scheduler simply sk
 ## Run history
 
 Every run is recorded with its status, start and completion times, iteration count, tool calls, and any error. View it in the Automations panel or by asking the agent. If the runtime restarts while a run is in flight, the orphaned run is swept and marked failed so history stays accurate.
+
+Run history, including each run's full result, is kept indefinitely. The most recent 1,000 runs of each automation are read by default; older ones, with their results, are kept in monthly archives and read a page at a time: `automations__runs` with an `automationId` returns a `nextBefore` timestamp when older runs exist, and passing it back as `before` returns the next page.
 
 A run's status comes from what its tool calls did, not from what its final answer says:
 

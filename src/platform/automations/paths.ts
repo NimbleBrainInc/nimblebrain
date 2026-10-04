@@ -10,8 +10,14 @@
  * conveniences; the directory is authoritative.
  *
  *   workspaces/<wsId>/automations/<ownerId>/<automationId>.json              the definition
- *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index.jsonl  run summaries (append-only)
- *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  the run's deliverable
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index.jsonl  newest run summaries (the hot window)
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  a hot run's deliverable
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
+ *
+ * A run's summary and its deliverable move to the archive together, so the
+ * hot runs dir holds at most the hot window of sidecars plus `index.jsonl`
+ * and `archive/`, and listing it stays bounded however long history grows.
  *
  * An automation run is NOT a conversation: it leaves a *run result* (the final
  * output, the activity log, and refs to any files it wrote in the workspace file
@@ -87,6 +93,71 @@ export function automationRunIndexPath(
   automationId: string,
 ): string {
   return join(automationRunsDir(workDir, wsId, ownerId, automationId), "index.jsonl");
+}
+
+/** An archive month, `YYYY-MM`. */
+const ARCHIVE_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+const ARCHIVE_SEGMENT = "archive";
+
+/** Whether `name` is an archive month directory name (`YYYY-MM`). */
+export function isRunArchiveMonth(name: string): boolean {
+  return ARCHIVE_MONTH_RE.test(name);
+}
+
+/** The archive root for one automation: `…/runs/<automationId>/archive`. */
+export function automationRunArchiveRoot(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+): string {
+  return join(automationRunsDir(workDir, wsId, ownerId, automationId), ARCHIVE_SEGMENT);
+}
+
+/**
+ * One archive month: `…/runs/<automationId>/archive/<YYYY-MM>`, holding the
+ * summaries (`index.jsonl`) and deliverables of the runs that started that
+ * month (UTC) and rolled out of the hot index.
+ */
+export function automationRunArchiveDir(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  month: string,
+): string {
+  if (!isRunArchiveMonth(month)) {
+    throw new Error(`Invalid run archive month: ${JSON.stringify(month)}. Must be YYYY-MM.`);
+  }
+  return join(automationRunArchiveRoot(workDir, wsId, ownerId, automationId), month);
+}
+
+/** An archive month's run index: `…/archive/<YYYY-MM>/index.jsonl`. */
+export function automationRunSegmentPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  month: string,
+): string {
+  return join(automationRunArchiveDir(workDir, wsId, ownerId, automationId, month), "index.jsonl");
+}
+
+/** An archived run's result sidecar: `…/archive/<YYYY-MM>/<runId>.result.json`. */
+export function automationArchivedRunResultPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  month: string,
+  runId: string,
+): string {
+  validateRunId(runId);
+  return join(
+    automationRunArchiveDir(workDir, wsId, ownerId, automationId, month),
+    `${runId}.result.json`,
+  );
 }
 
 /** A single run's result sidecar: `…/runs/<automationId>/<runId>.result.json`. */

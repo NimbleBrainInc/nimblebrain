@@ -37,10 +37,10 @@ the next 25. Each row carries:
 |---|---|
 | **Unread dot** | At the end of the row, on an item nobody has read. Read items are dimmed. |
 | **Title** | One line the connector wrote. |
-| **App** | The connector that emitted it, by its icon and name. |
+| **App** | The connector that emitted it: its icon leads the row, and its name is under the title. |
 | **Timestamp** | When the connector says the fact happened. The expanded row also shows when this runtime received it. |
-| **Subject** | What the item is about, when the connector says. Free text, used for grouping. |
-| **Level** | `info`, `attention` or `urgent`, by icon, and a colored edge on `attention` and `urgent` rows. Advisory — the connector chose it. |
+| **Subject** | What the item is about, when the connector says and the title does not already name it. Free text, used for grouping. |
+| **Level** | Only `urgent` is marked, by a red edge and an **Urgent** label. `info` and `attention` rows look alike, because a level is urgency, not good or bad news ([levels](/using/notification-reference#levels)). Advisory — the connector chose it. |
 
 Open a row to see the **body** and the event name. Opening an item marks it read;
 **Mark all read** clears the rest, or **Mark shown read** when filters are on.
@@ -96,6 +96,10 @@ until an admin raises its ceiling. That is deliberate: installing a connector
 that declares an outbox costs you a poll and some inbox rows, and it should not
 also be a decision to let that connector reach your phone. Raising the ceiling is
 the second, separate decision.
+
+A ceiling saves as soon as you pick it, and the notice that confirms it offers
+**Undo**. Routes save together, with **Save routes**: a route is often half-built
+while you edit it.
 
 Lowering a ceiling does not hide anything — every item still lands in the inbox
 at the level the connector chose. The ceiling decides only how high an item may

@@ -419,12 +419,12 @@ function batchKey(wsId: string, ownerId: string, automationId: string): string {
 }
 
 function debounceMs(auto: Automation): number {
-  const declared = auto.schedule.debounceMs;
+  const declared = auto.schedule?.debounceMs;
   return typeof declared === "number" && declared > 0 ? declared : DEFAULT_EVENT_DEBOUNCE_MS;
 }
 
 function maxFiresPerHour(auto: Automation): number {
-  const declared = auto.schedule.maxFiresPerHour;
+  const declared = auto.schedule?.maxFiresPerHour;
   return typeof declared === "number" && declared > 0 ? declared : DEFAULT_EVENT_MAX_FIRES_PER_HOUR;
 }
 
@@ -453,7 +453,7 @@ function settleAll(batch: PendingBatch, result: EventWakeSettlement): void {
  * automation the operator can see is enabled.
  */
 export function automationWants(auto: Automation, item: Notification): boolean {
-  return matchesNotification(auto.schedule.match, {
+  return matchesNotification(auto.schedule?.match, {
     source: item.source,
     name: item.envelope.name,
     // The level the workspace's ceiling held this item to, which is the level a

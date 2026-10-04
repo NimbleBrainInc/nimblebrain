@@ -31,6 +31,8 @@ const getResources = mock(
 mock.module("../api/client", () => ({ ...realClient, getResources }));
 
 const React = await import("react");
+const { NoticeProvider } = await import("../components/notices");
+const withNotices = (el: React.ReactNode) => React.createElement(NoticeProvider, null, el);
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { ThemeProvider } = await import("../context/ThemeContext");
@@ -66,7 +68,9 @@ async function mount(placements: PlacementEntry[]): Promise<Mounted> {
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(ThemeProvider, null, React.createElement(SlotRenderer, { placements })),
+      withNotices(
+        React.createElement(ThemeProvider, null, React.createElement(SlotRenderer, { placements })),
+      ),
     );
   });
   // Let the async render loop settle (fetch → mount / error).

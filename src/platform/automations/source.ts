@@ -31,6 +31,7 @@ import {
   readAllRuns,
   readRunResult,
   readRuns,
+  readRunsPage,
   saveAutomation,
 } from "./store.ts";
 import type { Automation } from "./types.ts";
@@ -212,6 +213,7 @@ export async function createAutomationsSource(
       runNow: (id) => scheduler.requestRunNow(wsId, owner, id),
       cancelRun: (id) => scheduler.cancelRun(wsId, owner, id),
       readRuns: (id, opts) => readRuns(workDir, wsId, owner, id, opts),
+      readRunsPage: (id, opts) => readRunsPage(workDir, wsId, owner, id, opts),
       readAllRuns: (opts) => readAllRuns(workDir, wsId, owner, opts),
       readRunResult: (id, runId) => readRunResult(workDir, wsId, owner, id, runId),
       defaultTimezone,

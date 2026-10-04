@@ -14,7 +14,8 @@ import { useNotice } from "../components/notices";
  * Each field holds a draft and the value last saved. A field is committed —
  * sent through `save` — when the edit is complete: a select on change, a text
  * field on blur or Enter, a textarea on blur. Escape reverts a text field to its
- * saved value.
+ * saved value. An edit still pending when the form leaves the page is committed
+ * then, including one typed while its field's own save was in flight.
  *
  * Saves run one at a time, in the order they were committed, so two writes
  * never race to the server. A field committed again while its save is queued
@@ -85,9 +86,8 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
   // Undo raises `commit` from a notice created by an earlier render.
   const commitRef = useRef<(field: keyof V, value?: V[keyof V]) => void>(() => {});
 
-  // Whether the form is still on the page. Leaving it (following a link)
-  // blurs the field being edited, which starts its save, and then unmounts
-  // the form; a failure that lands after that has no field to show on.
+  // Whether the form is still on the page. A save can land after the form has
+  // left it, and a failure then has no field to show on.
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -95,6 +95,12 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
     return () => {
       mounted.current = false;
       for (const timer of pending.values()) clearTimeout(timer);
+      // Leaving without a blur (Back, a shortcut, a route change that keeps
+      // focus) never commits the field being typed in, so commit it here. The
+      // refs hold the latest state, and the save runs after the form is gone.
+      for (const [field, fieldStatus] of Object.entries(statusRef.current)) {
+        if (fieldStatus === "dirty") commitRef.current(field as keyof V);
+      }
     };
   }, []);
 
@@ -177,6 +183,12 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
       setError(field, null);
       if (!queued.current.has(field)) {
         setStatus(field, Object.is(draftRef.current[field], value) ? "saved" : "dirty");
+      }
+      // Typed during this save and the form has since left the page: the
+      // unmount commit skipped the field (it was saving), so send the newer
+      // text now, or it is lost with nothing to say so.
+      if (!mounted.current && !Object.is(draftRef.current[field], value)) {
+        commitRef.current(field);
       }
       opts.onSaved?.(field, value, previous);
       // The save an Undo makes raises no notice: it would offer Undo of the Undo.

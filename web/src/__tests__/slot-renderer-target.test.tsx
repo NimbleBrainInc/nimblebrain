@@ -22,6 +22,8 @@ mock.module("../api/client", () => ({
 }));
 
 const React = await import("react");
+const { NoticeProvider } = await import("../components/notices");
+const withNotices = (el: React.ReactNode) => React.createElement(NoticeProvider, null, el);
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { ThemeProvider } = await import("../context/ThemeContext");
@@ -103,10 +105,12 @@ async function mountWithTarget(target: Target) {
   const root = ReactDOMClient.createRoot(container);
   const render = (placement: PlacementEntry, t: Target) =>
     root.render(
-      React.createElement(
-        ThemeProvider,
-        null,
-        React.createElement(SlotRenderer, { placements: [placement], target: t }),
+      withNotices(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(SlotRenderer, { placements: [placement], target: t }),
+        ),
       ),
     );
   await act(async () => render(PEOPLE, target));

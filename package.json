@@ -100,9 +100,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
-    "@nimblebrain/synapse": "0.21.1",
+    "@nimblebrain/synapse": "0.25.1",
     "@types/bun": "latest",
     "happy-dom": "^20.0.0",
+    "mcp-sdk-v1-0": "npm:@modelcontextprotocol/sdk@1.0.4",
+    "mcp-sdk-v1-10": "npm:@modelcontextprotocol/sdk@1.10.2",
+    "mcp-sdk-v1-13": "npm:@modelcontextprotocol/sdk@1.13.3",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
@@ -116,11 +119,11 @@
     "@ai-sdk/xai": "^4.0.0",
     "@composio/core": "0.18.1",
     "@e965/xlsx": "0.20.3",
-    "@modelcontextprotocol/client": "^2.1.0",
-    "@modelcontextprotocol/core": "^2.1.0",
-    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/client": "^2.3.0",
+    "@modelcontextprotocol/core": "^2.3.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@modelcontextprotocol/server": "^2.1.0",
+    "@modelcontextprotocol/server": "^2.3.0",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/exporter-trace-otlp-http": "0.219.0",
     "@opentelemetry/resources": "2.8.0",
@@ -139,7 +142,8 @@
     "mammoth": "^1.12.0",
     "posthog-node": "^5.28.5",
     "prom-client": "^15.1.3",
-    "unpdf": "^1.6.0"
+    "unpdf": "^1.6.0",
+    "zod": "^4.2.0"
   },
   "overrides": {
     "@hono/node-server": ">=1.19.13"

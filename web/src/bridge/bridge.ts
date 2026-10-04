@@ -53,6 +53,7 @@ import {
   KEYDOWN_METHOD,
   LOCATION_METHOD,
   NAVIGATE_METHOD,
+  NOTIFY_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_APPS,
   UPLOAD_FILES_METHOD,
@@ -62,6 +63,7 @@ import { buildHostStyles, type UploadLimits } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
 import { getHostThemeMode, getSpecThemeTokens } from "./theme";
 import type {
+  AppNotice,
   BridgeCallbacks,
   ExtAppsHostContextChangedNotification,
   ExtAppsInitializeResponse,
@@ -156,6 +158,8 @@ export function createBridge(
   callbacks?: BridgeCallbacks,
 ): BridgeHandle {
   let destroyed = false;
+  // This app's notice budget; `ai.nimblebrain/notify` past it is refused.
+  const notifyLimiter = createNoticeLimiter();
   // This bridge's key in `appStateByBridge`, released in `destroy()`.
   const stateKey = Symbol(appName);
   const screenObserver =
@@ -415,6 +419,13 @@ export function createBridge(
         break;
 
       // -----------------------------------------------------------------
+      // Extension: ai.nimblebrain/notify — a notice, labelled with the app
+      // -----------------------------------------------------------------
+      case NOTIFY_METHOD:
+        postToIframe(handleNotify(msg.id, msg.params, notifyLimiter, callbacks));
+        break;
+
+      // -----------------------------------------------------------------
       // Extension: ai.nimblebrain/request-file — native file picker
       // -----------------------------------------------------------------
       case REQUEST_FILE_METHOD:
@@ -602,6 +613,67 @@ function supersedes(next: unknown, prev: unknown): boolean {
   if (a.method === "ui/notifications/host-context-changed") return true;
   if (a.method === TASK_STATUS_METHOD) return a.params?.taskId === b.params?.taskId;
   return JSON.stringify(next) === JSON.stringify(prev);
+}
+
+const NOTICE_LEVELS = new Set(["success", "info", "warning", "error"]);
+const MAX_NOTICE_TITLE = 120;
+const MAX_NOTICE_DESCRIPTION = 500;
+/** At most this many notices per app in any window of `NOTICE_WINDOW_MS`. */
+const NOTICE_BURST = 5;
+const NOTICE_WINDOW_MS = 10_000;
+
+/** A per-bridge limiter: true while the app is within its notice budget. */
+export function createNoticeLimiter(now: () => number = Date.now): () => boolean {
+  const sent: number[] = [];
+  return () => {
+    const t = now();
+    while (sent.length > 0 && t - (sent[0] as number) >= NOTICE_WINDOW_MS) sent.shift();
+    if (sent.length >= NOTICE_BURST) return false;
+    sent.push(t);
+    return true;
+  };
+}
+
+/**
+ * Answer an `ai.nimblebrain/notify` request. Level and lengths are checked
+ * here, not by the schema, so a bad value is answered with the reason rather
+ * than dropped and left waiting. A burst past the limit is refused, so one app
+ * cannot fill the screen.
+ */
+function handleNotify(
+  id: string | number,
+  params: { level: string; title: string; description?: string },
+  withinLimit: () => boolean,
+  callbacks: BridgeCallbacks | undefined,
+): Record<string, unknown> {
+  const refuse = (code: number, message: string) => ({
+    jsonrpc: "2.0",
+    id,
+    error: { code, message },
+  });
+  if (!NOTICE_LEVELS.has(params.level)) {
+    return refuse(-32602, "level must be one of success, info, warning, error");
+  }
+  const title = params.title.trim();
+  if (title.length === 0 || title.length > MAX_NOTICE_TITLE) {
+    return refuse(-32602, `title must be 1 to ${MAX_NOTICE_TITLE} characters`);
+  }
+  if (params.description !== undefined && params.description.length > MAX_NOTICE_DESCRIPTION) {
+    return refuse(-32602, `description must be at most ${MAX_NOTICE_DESCRIPTION} characters`);
+  }
+  if (!callbacks?.onNotify) return refuse(-32601, `${NOTIFY_METHOD} is not served here`);
+  if (!withinLimit()) {
+    return refuse(
+      -32000,
+      `Too many notices: at most ${NOTICE_BURST} in ${NOTICE_WINDOW_MS / 1000} seconds`,
+    );
+  }
+  callbacks.onNotify({
+    level: params.level as AppNotice["level"],
+    title,
+    ...(params.description ? { description: params.description } : {}),
+  });
+  return { jsonrpc: "2.0", id, result: {} };
 }
 
 /**

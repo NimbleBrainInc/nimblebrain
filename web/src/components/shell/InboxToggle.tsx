@@ -19,30 +19,20 @@
 // ---------------------------------------------------------------------------
 
 import { Popover } from "@base-ui/react/popover";
-import { AlertTriangle, Bell, Info, Zap } from "lucide-react";
+import { Bell, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  listNotifications,
-  type NotificationLevel,
-  type NotificationView,
-} from "../../api/notifications";
+import { listNotifications, type NotificationView } from "../../api/notifications";
 import { useNotifications } from "../../context/NotificationsContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
 import { INBOX_READ_MAX, LEVEL_RANK } from "../../lib/notification-levels";
-import { cn } from "../../lib/utils";
 import { toSlug } from "../../lib/workspace-slug";
+import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Tooltip } from "../ui/tooltip";
 
 /** How many unread items the preview shows. The rest are a click away. */
 export const INBOX_PREVIEW_SIZE = 5;
-
-const LEVEL_ICON: Record<NotificationLevel, { icon: typeof Info; className: string }> = {
-  info: { icon: Info, className: "text-muted-foreground" },
-  attention: { icon: AlertTriangle, className: "text-warning" },
-  urgent: { icon: Zap, className: "text-destructive" },
-};
 
 /**
  * "5 min ago", "3 h ago", "2 d ago". Relative here and absolute on the inbox
@@ -123,8 +113,10 @@ export function InboxToggle() {
 
   const inboxPath = `/w/${toSlug(activeWorkspace.id)}/notifications`;
   const label = unread > 0 ? `Inbox, ${unread} unread` : "Inbox";
-  const appName = (source: string) =>
-    connectors?.installed.find((c) => c.serverName === source)?.displayName ?? source;
+  const app = (source: string) => {
+    const found = connectors?.installed.find((c) => c.serverName === source);
+    return { name: found?.displayName ?? source, iconUrl: found?.iconUrl };
+  };
   const close = () => setOpen(false);
 
   return (
@@ -174,7 +166,7 @@ export function InboxToggle() {
               items={items}
               error={error}
               inboxPath={inboxPath}
-              appName={appName}
+              app={app}
               onOpen={close}
             />
 
@@ -200,13 +192,13 @@ function PreviewBody({
   items,
   error,
   inboxPath,
-  appName,
+  app,
   onOpen,
 }: {
   items: NotificationView[] | null;
   error: boolean;
   inboxPath: string;
-  appName: (source: string) => string;
+  app: (source: string) => { name: string; iconUrl?: string };
   onOpen: () => void;
 }) {
   const state = error
@@ -229,7 +221,9 @@ function PreviewBody({
   return (
     <ul className="divide-y divide-border/60">
       {items.slice(0, INBOX_PREVIEW_SIZE).map((item) => {
-        const level = LEVEL_ICON[item.level];
+        // Led by the connector, as on the inbox page: a level is urgency, not
+        // tone, so only urgent is marked (see `NotificationsPage.tsx`).
+        const { name, iconUrl } = app(item.source);
         return (
           <li key={item.id}>
             <Link
@@ -238,14 +232,21 @@ function PreviewBody({
               data-testid="inbox-preview-item"
               className="flex items-start gap-2.5 px-3 py-2.5 transition-colors hover:bg-foreground/5 focus-visible:bg-foreground/5 focus-visible:outline-none"
             >
-              <level.icon
-                aria-hidden="true"
-                className={cn("mt-0.5 size-4 shrink-0", level.className)}
+              <ConnectorIcon
+                name={name}
+                iconUrl={iconUrl}
+                className="mt-0.5 size-4 shrink-0 rounded-xs text-3xs"
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{item.title}</span>
-                <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                  {appName(item.source)}
+                <span className="mt-0.5 flex items-center gap-2 truncate text-xs text-muted-foreground">
+                  {item.level === "urgent" ? (
+                    <span className="flex items-center gap-1 font-medium text-destructive">
+                      <Zap aria-hidden="true" className="size-3.5" />
+                      Urgent
+                    </span>
+                  ) : null}
+                  <span className="truncate">{name}</span>
                 </span>
               </span>
               <time

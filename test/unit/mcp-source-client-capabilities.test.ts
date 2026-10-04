@@ -35,7 +35,7 @@ describe("McpSource client capabilities", () => {
     source = undefined;
   });
 
-  test("claims task-augmented tools/call and cancel, and does NOT claim tasks.list", async () => {
+  test("claims no task capability: the 2025-11-25 tasks utility is not spoken (ADR-0046)", async () => {
     source = await makeInProcessSource("caps", [
       {
         name: "noop",
@@ -45,15 +45,11 @@ describe("McpSource client capabilities", () => {
       },
     ]);
 
-    const tasks = declaredCapabilities(source)?.tasks as
-      | { requests?: { tools?: { call?: unknown } }; cancel?: unknown; list?: unknown }
-      | undefined;
-
-    // Both of these are exercised: `startToolAsTask` opens the stream,
-    // `cancelTask` cancels it.
-    expect(tasks?.requests?.tools?.call).toBeDefined();
-    expect(tasks?.cancel).toBeDefined();
-    expect(tasks?.list).toBeUndefined();
+    // The 2026-07-28 tasks extension is claimed per request by the task wire,
+    // never on the connection.
+    const declared = declaredCapabilities(source);
+    expect(declared?.tasks).toBeUndefined();
+    expect(declared?.extensions?.["io.modelcontextprotocol/tasks"]).toBeUndefined();
   });
 
   test("declares the Skills extension, which skill discovery consumes", async () => {
