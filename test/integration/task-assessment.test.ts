@@ -35,7 +35,7 @@ beforeAll(async () => {
   workDir = mkdtempSync(join(tmpdir(), "task-assessment-"));
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     telemetry: { enabled: false },
     workDir,
