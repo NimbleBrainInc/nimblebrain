@@ -1,4 +1,4 @@
-import { Lightbulb, Lock, Trash2 } from "lucide-react";
+import { Lock, Trash2 } from "lucide-react";
 import { type RefObject, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Streamdown } from "streamdown";
@@ -468,11 +468,10 @@ export function SkillsBrowser(props: SkillsBrowserProps) {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title="Skills"
         description={headerDescription(lockedScope, isWorkspaceSurface)}
-        icon={<Lightbulb className="h-5 w-5" />}
       />
 
       {/* Loading message only when we have nothing to render yet — a
@@ -1366,7 +1365,7 @@ function EditView({
   const valid = slug.length > 0 && body.trim().length > 0;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title={editViewTitle(loading, isNew)}
         // `onBack` (not `back`) because EditView is component state on

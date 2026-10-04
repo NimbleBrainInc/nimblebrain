@@ -274,7 +274,7 @@ export function WorkspaceWebhooksTab() {
   }, [load]);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title="Webhooks"
         description="Inbound delivery URLs for connectors in this workspace. Anyone holding one can send this workspace events, so treat a URL as a credential."

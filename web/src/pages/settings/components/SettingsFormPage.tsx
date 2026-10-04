@@ -9,9 +9,6 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  * (Profile, Model, WorkspaceGeneral). Owns:
  *
  *   - page header (title, description, optional back-nav, optional icon)
- *   - column width (`max-w-2xl` — narrower than list pages because forms
- *     read better at this width and the inputs don't benefit from wider
- *     space)
  *   - body spacing between sections
  *   - the save bar (Save / Reset / inline feedback) — gated on `dirty`
  *     and `saving`, with success/error messaging baked in
@@ -74,7 +71,7 @@ export function SettingsFormPage({
   children,
 }: SettingsFormPageProps) {
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title={title}
         description={description}

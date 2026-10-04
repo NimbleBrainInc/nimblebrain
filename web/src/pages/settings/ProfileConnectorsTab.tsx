@@ -197,7 +197,7 @@ export function ProfileConnectorsTab() {
   );
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title="Connectors"
         description="Your personal connections — remote MCP services like Granola. Grant one into a workspace to let your agent use it there."

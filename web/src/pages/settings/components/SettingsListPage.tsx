@@ -10,7 +10,6 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  * (Users, Workspaces, Members, Apps). Owns:
  *
  *   - page header (title, description, optional back-nav)
- *   - column width (`max-w-5xl` — wide enough for tables with 4-6 cols)
  *   - the reveal-create pattern (button-in-header → form-card-below)
  *     that was duplicated in three tabs with subtly different state shapes
  *   - the load-error banner and loading placeholder
@@ -85,7 +84,7 @@ export function SettingsListPage({
   ) : null;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title={title}
         description={description}

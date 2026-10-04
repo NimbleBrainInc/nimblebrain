@@ -262,7 +262,7 @@ export function ConnectorBrowsePage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <div>
         <Link to={backPath} className="text-xs text-muted-foreground hover:underline">
           ← Installed connectors

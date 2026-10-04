@@ -30,8 +30,11 @@ function readPreference(): "expanded" | "collapsed" {
   return stored === "collapsed" ? "collapsed" : "expanded";
 }
 
-/** Compute initial state synchronously to avoid flash on mobile. */
-function getInitialState(): SidebarState {
+/**
+ * Compute initial state synchronously to avoid flash on mobile. Exported for
+ * the app's loading frame, which draws the sidebar at the width it will open at.
+ */
+export function getInitialState(): SidebarState {
   if (typeof window === "undefined") return "expanded";
   if (window.matchMedia(BREAKPOINT_LG).matches) return readPreference();
   if (window.matchMedia(BREAKPOINT_MD).matches) return "collapsed";

@@ -10,6 +10,7 @@ import {
   tryBootstrap,
 } from "./api/client";
 import { closeEventsClient } from "./api/events-client";
+import { AppFrameSkeleton } from "./components/AppFrameSkeleton";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
@@ -712,13 +713,7 @@ export function App() {
     };
   }, [initFromBootstrap]);
 
-  if (checking) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-background text-muted-foreground text-sm">
-        Loading...
-      </div>
-    );
-  }
+  if (checking) return <AppFrameSkeleton />;
 
   if (!authenticated || !bootstrap) {
     return <Login onLogin={initFromBootstrap} />;

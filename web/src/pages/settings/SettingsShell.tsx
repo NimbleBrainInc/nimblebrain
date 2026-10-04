@@ -137,7 +137,14 @@ export function SettingsShell({ title, items, footer }: SettingsShellProps) {
       </nav>
 
       <div className="flex-1 overflow-y-auto p-4 md:p-6">
-        <Outlet />
+        {/* One width for every settings page, set here rather than per page so
+            tabs never change width as you move between them. Left-aligned, so
+            the content starts beside the nav on every tab instead of drifting
+            as the column widens; wide enough for a 5-column table, narrow
+            enough that a form's lines stay readable. */}
+        <div className="max-w-4xl">
+          <Outlet />
+        </div>
       </div>
     </div>
   );

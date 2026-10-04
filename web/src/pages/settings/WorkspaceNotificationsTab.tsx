@@ -119,7 +119,7 @@ function emptyDraft(): RouteDraft {
 
 export function WorkspaceNotificationsTab() {
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title="Notifications"
         description="What this workspace's connectors may report, and where it goes. A connector records facts on its own; nothing leaves this workspace until you raise its ceiling and write a route."
