@@ -70,7 +70,9 @@ export function useWorkspaceInstructions(wsId: string) {
     {
       save,
       labels: { body: "Workspace instructions" },
-      notices: { body: { undo: true } },
+      // Leaving the page blurs the editor, which starts the save, and then
+      // removes the field; a failure after that has nowhere else to show.
+      notices: { body: { undo: true, error: "notice" } },
     },
   );
   const { load } = form;
@@ -121,15 +123,15 @@ export function WorkspaceInstructions({
         label="Instructions"
         {...form.fieldState("body")}
         hint={
-          showCounter ? (
+          !canEdit ? (
+            "Only workspace admins can edit these instructions."
+          ) : showCounter ? (
             <span className={overLimit ? "text-destructive" : undefined}>
               {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()}{" "}
               characters
             </span>
-          ) : canEdit ? (
-            "Saves when you click away."
           ) : (
-            "Only workspace admins can edit these instructions."
+            "Saves when you click away."
           )
         }
       >

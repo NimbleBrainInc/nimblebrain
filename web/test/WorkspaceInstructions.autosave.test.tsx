@@ -44,9 +44,17 @@ const { WorkspaceInstructions, useWorkspaceInstructions } = await import(
   "../src/pages/settings/components/WorkspaceInstructions"
 );
 
-function Harness({ canEdit }: { canEdit: boolean }) {
+function Editor({ canEdit }: { canEdit: boolean }) {
   const instructions = useWorkspaceInstructions("ws_a");
   return React.createElement(WorkspaceInstructions, { wsId: "ws_a", canEdit, instructions });
+}
+
+/** Lets a test take the editor off the page, as following a sidebar link does. */
+let hideEditor: () => void = () => {};
+function Harness({ canEdit }: { canEdit: boolean }) {
+  const [shown, setShown] = React.useState(true);
+  hideEditor = () => setShown(false);
+  return shown ? React.createElement(Editor, { canEdit }) : null;
 }
 
 let unmount: (() => void) | null = null;
@@ -153,5 +161,34 @@ describe("the workspace instructions editor", () => {
     const c = await mount(false);
     expect(editor(c).disabled).toBe(true);
     expect(c.textContent).toContain("Only workspace admins can edit these instructions.");
+  });
+
+  test("Escape does not discard the edit", async () => {
+    const c = await mount();
+    await type(editor(c), "a long edit");
+    await act(async () => {
+      editor(c).dispatchEvent(new (win().KeyboardEvent)("keydown", { key: "Escape", bubbles: true }));
+    });
+    await flush();
+    expect(editor(c).value).toBe("a long edit");
+    expect(writes).toEqual([]);
+  });
+
+  // Following a link blurs the editor, which starts the save, and then takes
+  // the field off the page. A refusal that lands after that has no field to
+  // show on, so it has to reach the reader as a notice.
+  test("a save that fails after the editor has left the page still says so", async () => {
+    refusal = JSON.stringify({ error: "Instructions could not be saved." });
+    const c = await mount();
+    await type(editor(c), "new");
+    await act(async () => {
+      editor(c).dispatchEvent(new (win().FocusEvent)("focusout", { bubbles: true }));
+      hideEditor();
+    });
+    await flush();
+    expect(c.querySelector("textarea")).toBeNull();
+    const notice = document.body.querySelector("[data-testid='notice']");
+    expect(notice?.textContent).toContain("Couldn't save Workspace instructions");
+    expect(notice?.textContent).toContain("Instructions could not be saved.");
   });
 });
