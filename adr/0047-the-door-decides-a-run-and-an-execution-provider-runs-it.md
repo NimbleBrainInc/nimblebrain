@@ -12,11 +12,13 @@ walled tool set, the model, the limits, and, for an unattended run, admission an
 spend (ADR-0045). It then runs the engine loop in the runtime's own process.
 
 Running the loop in-process ties an unattended run's life to that process. A
-restart or rollout ends every run in flight, the admission queue is held in
-memory, and a batch's width is bounded by the runtime's own CPU and memory rather
-than by its budget. A durable job service can run work in isolated jobs that
-survive the runtime and scale on their own. Moving the loop there is attractive,
-and it is also where every guarantee the door makes could quietly stop holding.
+restart or rollout ends every run in flight, and the admission queue is held in
+memory. A durable job service can run work in isolated jobs that survive the
+runtime. Compute is not the pressure: an agent loop mostly waits on models and
+tools, and a batch's width is set by the admission pool, not by the runtime's
+CPU (internal measurement, available on request). Moving the loop to such a
+service is attractive for durability, and it is also where every guarantee the
+door makes could quietly stop holding.
 
 Each of those guarantees lives somewhere a remote loop would not be:
 
@@ -39,9 +41,9 @@ Each of those guarantees lives somewhere a remote loop would not be:
 
 **The door decides a run; an execution provider runs it.** The door resolves a
 run into a **resolved run specification**: the system prompt it composed, the
-walled tool list (names and schemas), the model, the per-run limits, and the
-run's spend accounts. It hands that specification to the configured execution
-provider, which runs the engine loop and reports the outcome. A provider may
+run's **tool bound** (its allowed-tool patterns and the unattended policy, not a
+fixed list), the model, the per-run limits, and the run's spend accounts. It hands that specification to the configured execution
+provider, which runs the engine loop and reports the outcome. An execution provider may
 narrow what the specification allows and may never widen it, which is what keeps
 it from being a second door. Which provider runs a run is installation
 configuration, never the task author's choice.
@@ -53,23 +55,35 @@ runs the same specifications against every provider and requires the same
 outcomes, so a remote provider is held to the in-process behavior, not to its own
 description of it.
 
-**A remote provider receives a specification and one run-scoped credential,
-nothing else.** The runtime mints the credential with a key of its own (not the
+**A remote execution provider receives a specification and one run-scoped
+credential, nothing else.** The runtime mints the credential with a key of its own (not the
 platform's signing key), when the run starts rather than when it is queued. Its
 audience is that one run, it expires with the run's maximum duration, and it is
-revoked when the run ends. The runtime both mints and verifies it. The provider
-holds no stored secret, no connector credential, and no model key.
+revoked when the run ends. The runtime both mints and verifies it. The execution
+provider holds no stored secret, no connector credential, and no model key. The
+credential carries the owner's unattended reach for the run's lifetime, so it is
+held only in the job's memory, never written to disk, logs, or the job service's
+own store, and the job's network reach is the runtime's `/mcp` and model endpoint
+and nothing else.
 
 **Tool calls come back through `/mcp`, bounded by the run.** `/mcp` recognizes a
 run-scoped credential and, instead of building an attended context, reads the
 run's stored specification and applies its bounds: the request context is
-unattended, the router is limited to the specification's tool list, and every
-call dispatches under the owner's identity through the same wall, consent and
+unattended, every call is checked against the specification's tool bound
+against the live tool set at the moment of the call, as an in-process run's is,
+and every call dispatches under the owner's identity through the same wall, consent and
 unattended policy as an in-process run. The credentials those tools need are used
 where they are stored.
 
-**Model calls come back through a runtime-hosted model endpoint.** The provider
-sends each model call to the runtime with the run credential. The door's spend
+**Tool discovery and promotion come back through `/mcp` too.** An in-process run
+can search for tools and promote one into its active set mid-run, and a connector
+that was down at start can come back. A remote loop does the same by calling those
+operations through `/mcp` under the run credential, so the runtime holds the run's
+active tool set, applies the bound to it, and answers the loop with the current
+set. The loop never keeps a tool set of its own.
+
+**Model calls come back through a runtime-hosted model endpoint.** The execution
+provider sends each model call to the runtime with the run credential. The door's spend
 check runs before the call, with the same reservation and settlement as an
 in-process call, and the usage ledger records it. Admission and spend therefore
 stay at the door whichever provider runs the loop.
@@ -90,9 +104,8 @@ call after a restart seeds the door's balance from current spend.
 
 ## Consequences
 
-- A remote run survives a runtime restart, and a batch's width becomes a budget
-  decision rather than a limit of the runtime's process. Nothing the door decides
-  moves out of the runtime to get there.
+- A remote run survives a runtime restart and a rollout, which is the reason to
+  have one. Nothing the door decides moves out of the runtime to get there.
 - Every tool and model call of a remote run is a network round trip to the
   runtime. A short run may finish faster in-process, and the runtime serves those
   calls, so its load grows with the provider's concurrency even though the loop
@@ -102,7 +115,9 @@ call after a restart seeds the door's balance from current spend.
   that derivation is a gap in the wall, so the conformance suite exercises the
   callback path, not only the loop.
 - The runtime gains a key it mints run credentials with, and that key needs the
-  storage and rotation any signing key needs.
+  storage and rotation any signing key needs. Left open, for the implementing
+  change: the model endpoint's shape (an MCP tool or a provider-compatible HTTP
+  route), and that key's storage and rotation.
 - A provider that cannot satisfy the conformance suite is not a provider. That
   includes any that would need a credential or a model key shipped to it.
 - The in-process provider stays the only one an installation without a job
