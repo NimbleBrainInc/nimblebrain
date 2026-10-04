@@ -1,6 +1,7 @@
-import { useApp, useFileUpload } from "@nimblebrain/synapse/react";
+import { useApp, useFileUpload, useNotify } from "@nimblebrain/synapse/react";
 import { useCallback, useState } from "react";
 import { errorText } from "./Dialogs";
+import { confirmAction } from "./notice";
 import { ROOT } from "./types";
 import { readUploadRefusal, type UploadRefusal } from "./upload";
 
@@ -28,10 +29,22 @@ export function useFileActions(reload: () => void) {
     [app],
   );
 
-  const flash = useCallback((message: string) => {
-    setNotice(message);
-    setTimeout(() => setNotice((n) => (n === message ? null : n)), NOTICE_MS);
-  }, []);
+  const notify = useNotify();
+
+  /**
+   * Confirm a finished action in the host's notice, so it reads like every
+   * other app's and the shell's own; the app's own pill only where the host
+   * shows none.
+   */
+  const flash = useCallback(
+    (message: string) => {
+      void confirmAction(notify, message, (own) => {
+        setNotice(own);
+        setTimeout(() => setNotice((n) => (n === own ? null : n)), NOTICE_MS);
+      });
+    },
+    [notify],
+  );
 
   const move = useCallback(
     async (ids: string[], target: string) => {
@@ -73,17 +86,19 @@ export function useFileActions(reload: () => void) {
       await call("create_folder", {
         manifest: { name, ...(parentId === ROOT ? {} : { parentId }) },
       });
+      flash(`Created folder ${name}`);
       reload();
     },
-    [call, reload],
+    [call, flash, reload],
   );
 
   const renameFolder = useCallback(
     async (id: string, name: string) => {
       await call("update_folder", { id, manifest: { name } });
+      flash(`Renamed folder to ${name}`);
       reload();
     },
-    [call, reload],
+    [call, flash, reload],
   );
 
   /**

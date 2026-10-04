@@ -700,8 +700,7 @@ These are non-negotiable patterns. Violating them causes production bugs:
 | `@ai-sdk/openai` | OpenAI provider |
 | `@ai-sdk/google` | Google Gemini provider |
 | `@modelcontextprotocol/client` | MCP client to connectors: negotiates the 2026-07-28 or a 2025 protocol revision per connection (Streamable HTTP, SSE, in-memory) |
-| `@modelcontextprotocol/server` | MCP servers: platform apps (in-memory) and the 2026-07-28 leg of `/mcp/<wsId>` |
-| `@modelcontextprotocol/sdk` | The 2025-era leg of `/mcp/<wsId>` and the iframe bridge, which carry the 2025-11-25 task vocabulary the v2 packages do not serve |
+| `@modelcontextprotocol/server` | MCP servers: platform apps (in-memory) and both legs of `/mcp/<wsId>` |
 | `ajv` + `ajv-formats` | JSON Schema validation for MCPB manifests |
 | `gray-matter` | YAML frontmatter parsing for skill files |
 | `posthog-node` | Anonymous product telemetry (server-side) |

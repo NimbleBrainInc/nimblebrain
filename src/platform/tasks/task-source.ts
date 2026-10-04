@@ -16,7 +16,7 @@
  * that does not exist are all the same `TaskNotFoundError`.
  */
 
-import type { Task } from "@modelcontextprotocol/sdk/types.js";
+import type { Task } from "@modelcontextprotocol/server";
 import type {
   IdentityTaskResult,
   IdentityTaskSource,

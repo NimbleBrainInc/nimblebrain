@@ -24,12 +24,45 @@ import {
   type Task,
 } from "@modelcontextprotocol/server";
 import { TASKS_EXTENSION_ID } from "../tools/mcp-task-client.ts";
-import { TaskAlreadyTerminalError, TaskNotFoundError } from "../tools/types.ts";
-import type { TaskAwareSource, TaskScope } from "./mcp-task-store.ts";
+import {
+  TaskAlreadyTerminalError,
+  TaskNotFoundError,
+  type TaskOwnerContext,
+} from "../tools/types.ts";
 import type { McpTaskAnswer, McpTaskAnswerBody } from "./schemas/responses.ts";
 import { json } from "./types.ts";
 
 export { TASKS_EXTENSION_ID };
+
+/**
+ * The task surface of a source the door can answer polls for: a connector's
+ * `McpSource`, or a kernel identity source's task surface. Each checks the
+ * caller's owner context against the one stamped when the task started.
+ */
+export interface TaskAwareSource {
+  getTaskStatus(taskId: string, opts: { ownerContext: TaskOwnerContext }): Promise<Task>;
+  awaitToolTaskResult(
+    taskId: string,
+    opts: { ownerContext: TaskOwnerContext },
+  ): Promise<{
+    content: unknown[];
+    structuredContent?: Record<string, unknown>;
+    isError?: boolean;
+    _meta?: Record<string, unknown>;
+  }>;
+  cancelTask(taskId: string, opts: { ownerContext: TaskOwnerContext }): Promise<Task>;
+}
+
+/**
+ * The one source a task request is for, in the workspace the request is bound
+ * to. The iframe bridge names the app's server this way; a scoped request finds
+ * only a task that source ran in that workspace.
+ */
+export interface TaskScope {
+  source: string;
+  /** The request's validated workspace. None reaches no workspace's task. */
+  workspaceId: string | undefined;
+}
 
 /** A task's own fields on the 2026-07-28 wire (SEP-2663 `Task`). */
 interface ModernTaskFields {

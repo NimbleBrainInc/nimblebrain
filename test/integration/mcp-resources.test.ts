@@ -273,7 +273,7 @@ describe("MCP /mcp — resources", () => {
     }
 
     // Drive the request at the raw HTTP layer too to confirm the transport
-    // surfaces a JSON-RPC `error` envelope with code -32002 instead of a 500.
+    // surfaces a JSON-RPC `error` envelope instead of a 500.
     const initRes = await fetch(`${baseUrl}/mcp/${TEST_WORKSPACE_ID}`, {
       method: "POST",
       headers: {
@@ -328,7 +328,8 @@ describe("MCP /mcp — resources", () => {
     const raw = await readRes.text();
     const payload = parseJsonOrSsePayload(raw);
     expect(payload.error).toBeDefined();
-    expect(payload.error?.code).toBe(-32002);
+    // -32602, not -32002: the SDK answers a resource miss -32602 on every revision, 2025 included.
+    expect(payload.error?.code).toBe(-32602);
   });
 
   it("SECURITY: a walled session cannot list or read another workspace's resources", async () => {

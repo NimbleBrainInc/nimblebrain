@@ -193,7 +193,10 @@ remote source. `dcr` and `static` are runtime-native and stay outside the seam.
 ### Task augmentation
 How a long-running tool call is made without holding a socket open: the
 2026-07-28 tasks extension, and only that (ADR-0046). The server decides per call
-whether to answer with a task; the runtime polls it and can cancel (ADR-0029). The retry policy inverts with it: an inline
+whether to answer with a task; the runtime polls it and can cancel (ADR-0029). A
+2025-era connection never carries a task, in either direction: `/mcp` runs its
+calls to completion, and the runtime calls a connector's tools inline or refuses
+one that requires a task. The retry policy inverts with it: an inline
 call is re-issued once on a transport error, and a task call is **never**
 retried — it has already created server-side state, so replaying it would
 duplicate the side effect.
@@ -275,13 +278,13 @@ Orchestrate over remote MCP:
 - [0020](adr/0020-the-runtime-connects-it-does-not-acquire.md) — the runtime orchestrates over remote MCP; it does not acquire or execute a server's code
 - [0021](adr/0021-one-run-start-door.md) — one run-start door; delegation is not a kernel capability
 - [0022](adr/0022-one-source-type-over-one-transport-union.md) — every source is one `McpSource` over one transport union
-- [0023](adr/0023-client-capability-advertisement.md) — the client advertises `tasks` and `extensions`, and nothing it does not serve
+- [0023](adr/0023-client-capability-advertisement.md) — the client advertises `extensions` and nothing it does not serve; `tasks` only as the 2026 extension (amended by 0046)
 - [0024](adr/0024-private-extensions-live-under-one-reverse-dns-namespace.md) — private extensions live under `ai.nimblebrain/*`, and reuse the spec's schemas
 - [0025](adr/0025-hook-declarations-come-from-the-operator-trusted-catalog.md) — hook declarations come from operator-trusted catalog metadata
 - [0026](adr/0026-a-brokered-provider-owns-auth-and-session-only.md) — a brokered provider owns auth-and-session only, never invocation
 - [0027](adr/0027-persisted-state-names-the-credential-not-the-value.md) — persisted state names *what* credential it needs, never *where* the value lives
 - [0028](adr/0028-two-disjoint-health-loops.md) — two disjoint health loops: process liveness and credential liveness
-- [0029](adr/0029-long-running-tools-are-task-augmented-and-never-retried.md) — long-running tools are task-augmented; task calls never retry
+- [0029](adr/0029-long-running-tools-are-task-augmented-and-never-retried.md) — long-running tools are task-augmented; task calls never retry (amended by 0046)
 - [0030](adr/0030-consuming-resource-update-notifications.md) — *(proposed)* how far resource-update consumption generalizes
 - [0031](adr/0031-which-tool-annotations-the-consent-model-reads.md) — *(proposed)* which spec `ToolAnnotations` the consent model reads
 - [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state

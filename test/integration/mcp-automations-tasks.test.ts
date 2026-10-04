@@ -14,13 +14,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import {
+  type CallToolResult,
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
+  Client,
   PROTOCOL_VERSION_META_KEY,
+  StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport as LegacyTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { type CallToolResult, CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { parseDoorTaskId, TASKS_EXTENSION_ID } from "../../src/api/mcp-modern-tasks.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
@@ -300,13 +300,15 @@ describe("tasks__run on the 2026-07-28 leg", () => {
 
 describe("tasks__run on the 2025-11-25 leg", () => {
   it("answers inline with the run, as before", async () => {
-    const client = new LegacyClient({ name: "automations-2025", version: "1.0.0" });
-    await client.connect(new LegacyTransport(mcpUrl()));
+    // The SDK v2 client's default connect is the plain 2025 `initialize` handshake.
+    const client = new Client({ name: "automations-2025", version: "1.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
     try {
-      const result = (await client.callTool(
-        { name: "tasks__run", arguments: { prompt: "Legacy inline." } },
-        CallToolResultSchema,
-      )) as CallToolResult;
+      expect(client.getNegotiatedProtocolVersion()).toBe("2025-11-25");
+      const result = await client.callTool({
+        name: "tasks__run",
+        arguments: { prompt: "Legacy inline." },
+      });
       expect(result.isError).toBeFalsy();
       const body = JSON.parse((result.content[0] as { text: string }).text);
       expect(body.run?.status).toBe("success");
