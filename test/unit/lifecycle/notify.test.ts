@@ -293,11 +293,8 @@ describe("on_removing", () => {
   });
 
   test("a handler that never answers does not hold the uninstall open", async () => {
-    // r2c1's regression test. `verifyLifecycleTools` runs on the READY path
-    // only — it warns, it does not gate this call — so a server advertising a
-    // task-augmented `on_removing` from its very first `tools/list` installs
-    // with a warning and then reaches `port.execute` at uninstall anyway, where
-    // the task API's await has no deadline of its own. Everything behind this
+    // Nothing but this deadline bounds the removal: a merely slow inline
+    // handler has no other bound. Everything behind this
     // call waits on it: the OAuth revoke, the teardown, the hook revoke, the
     // secret deletion. The bound has to live here.
     const deps: LifecycleNotifyDeps = {

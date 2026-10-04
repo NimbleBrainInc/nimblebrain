@@ -40,7 +40,6 @@ import { ensureHooks } from "../hooks/reconcile.ts";
 import type { ConnectorOwner } from "../identity/connector-owner.ts";
 import { IdentityConnectorStore } from "../identity/connector-store.ts";
 import type { UserIdentity } from "../identity/provider.ts";
-import { LifecycleContractError } from "../lifecycle/declaration.ts";
 import { notifyReady } from "../lifecycle/notify.ts";
 import { log } from "../observability/log.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
@@ -1845,7 +1844,6 @@ async function notifyConnectorReady(
     const { notice } = await notifyReady(deps, wsId, serverName, "install");
     return { ...(notice ? { notice } : {}), ...withRejected() };
   } catch (err) {
-    if (err instanceof LifecycleContractError) return withRejected(err.message);
     // Anything else (the source went away mid-install, a transient catalog
     // read) leaves the connector installed and the bundle un-notified — the
     // next transition to `running` tells it, with `resume`.

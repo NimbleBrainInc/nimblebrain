@@ -4,7 +4,7 @@ Scope: `src/lifecycle/` and the tool-surface watch in `src/tools/connector-surfa
 
 ## Connector lifecycle — the two callable moments
 
-`src/lifecycle/` (`bindings.ts` reads, `declaration.ts` checks, `notify.ts`
+`src/lifecycle/` (`bindings.ts` reads, `notify.ts`
 calls) tells a connector it became reachable in a workspace (`on_ready`, with
 `{ reason: "install" | "resume" }` when the handler declares `reason`) and that
 it is about to be removed (`on_removing`, no arguments).
@@ -60,8 +60,8 @@ Three rules that are load-bearing rather than stylistic:
   Every lifecycle call is a plain inline `tools/call` (the lifecycle port in
   `getLifecycleNotifyDeps` passes `inline`), so it never waits on a task, but a
   merely slow inline handler is bounded by nothing else, and with no binding
-  held the deadline also covers rediscovering it. Do not read
-  `verifyLifecycleTools` as the bound and delete the deadline as redundant;
+  held the deadline also covers rediscovering it. Do not read the binding's
+  `taskSupport` refusal as the bound and delete the deadline as redundant;
   the wait is held where the guarantee is made. It also may never
   arrive — the docs say so in those words, because
   a bundle that leaks a third-party resource without it is relying on a call
@@ -76,14 +76,12 @@ The kernel's own calls reach the source through `connectorPortForSource` and
 pass no door, so they need no exemption; never add one by caller name.
 `test/integration/connector-lifecycle-host-only.test.ts` pins both.
 
-The contract check (`verifyLifecycleTools`) mirrors `verifyRegisterTool` with a
-weaker predicate — the tool exists, takes no *required* argument, and is not
-`taskSupport: "required"` — and deliberately does **not** require `reason` in
-the schema: the runtime sends `reason` only to a handler that declares it. The
-binding's own rejections (duplicate marker, unknown event, required argument)
-are install warnings too.
-Like the hooks check it is a warning on a **successful** install, and an empty
-tool list is "not ready yet", not a violation.
+The binding is its own contract check (`selectLifecycleHandlers`): a marked
+tool with a required argument or `taskSupport: "required"`, a duplicate marker
+or an unknown event binds nothing, and each is an install warning on a
+**successful** install. `reason` is deliberately not required in the schema:
+the runtime sends it only to a handler that declares it. An empty tool list is
+"not ready yet", not a violation.
 
 `ConnectorPort` and the tool-surface watch both reconciles run on live in
 `src/tools/connector-surface.ts`. Three purposes subscribe independently

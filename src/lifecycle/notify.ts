@@ -7,7 +7,6 @@ import {
   watchToolSurface,
 } from "../tools/connector-surface.ts";
 import type { Tool } from "../tools/types.ts";
-import { LifecycleContractError, verifyLifecycleTools } from "./declaration.ts";
 import type { LifecycleBinding, LifecycleReadyReason } from "./types.ts";
 
 /**
@@ -96,22 +95,10 @@ export interface LifecycleNotifyDeps {
 /**
  * Tell a connector it is ready, once.
  *
- * Silent no-op — not an error — when the connector declares no `lifecycle`
- * block, when its source is not running, or when that source advertises no
+ * Silent no-op — not an error — when the connector does not advertise the
+ * extension, when its source is not running, or when that source advertises no
  * tools yet. All three are ordinary states rather than failures, and a
  * connector must install and work normally in every one of them.
- *
- * A {@link LifecycleContractError} propagates rather than being swallowed: a
- * declared handler that does not exist, or that cannot be called with no
- * arguments, is a server bug and the caller decides how loud it is. The
- * install path reports it as a warning on a successful install — it cannot
- * refuse an install that has already committed — and the connection-running
- * path logs it.
- *
- * **Both declared handlers are checked here, not only the one being called.**
- * An `on_removing` naming a tool that does not exist would otherwise surface at
- * uninstall, which is the one moment nobody is watching and the one moment a
- * retry does not come.
  */
 export async function notifyReady(
   deps: LifecycleNotifyDeps,
@@ -146,7 +133,6 @@ export async function notifyReady(
   // call races on the same change.
   const wire = selectLifecycleHandlers(tools);
   const current = wire.binding;
-  verifyLifecycleTools(tools, current, connector);
 
   const handler = current.on_ready;
   // A server may declare `on_removing` alone. Its contract is checked above;
@@ -268,7 +254,6 @@ function resumeInBackground(deps: LifecycleNotifyDeps, wsId: string, connector: 
         connector,
         workspace_id: wsId,
         reason: err instanceof Error ? err.message : String(err),
-        contract_error: err instanceof LifecycleContractError,
       });
     });
 }
