@@ -29,6 +29,7 @@ import {
   readAllRuns,
   readRunResult,
   readRuns,
+  readRunsPage,
   saveAutomation,
 } from "../../../../src/platform/automations/store.ts";
 import type { Automation, AutomationRun } from "../../../../src/platform/automations/types.ts";
@@ -118,6 +119,7 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
     },
     cancelRun: (_automationId: string) => false,
     readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
+    readRunsPage: (id, opts) => readRunsPage(TMP_DIR, WS, OWNER, id, opts),
     readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),
     readRunResult: (id, runId) => readRunResult(TMP_DIR, WS, OWNER, id, runId),
     defaultTimezone: "Pacific/Honolulu",

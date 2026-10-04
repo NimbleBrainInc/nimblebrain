@@ -45,6 +45,75 @@ export function parseToolList(value: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * The create tool's `manifest` from the form's fields. The server expects
+ * `{ manifest, body }`: the manifest carries config, the body the prompt. No
+ * schedule (manual only) sends none.
+ */
+function buildManifest(f: {
+  name: string;
+  schedule: ScheduleSpec | null;
+  enabled: boolean;
+  maxIterations: number;
+  maxRunDurationSec: number;
+  model: string;
+  /** null: no budget. */
+  budgetMaxInput: number | null;
+  allowedTools: string;
+}): Record<string, unknown> {
+  const manifest: Record<string, unknown> = {
+    name: f.name.trim(),
+    enabled: f.enabled,
+    maxIterations: f.maxIterations,
+    maxRunDurationMs: f.maxRunDurationSec * 1000,
+  };
+  if (f.schedule) manifest.schedule = f.schedule;
+  if (f.model.trim()) manifest.model = f.model.trim();
+  if (f.budgetMaxInput !== null) {
+    manifest.tokenBudget = { maxInputTokens: f.budgetMaxInput, period: "daily" as const };
+  }
+  const tools = parseToolList(f.allowedTools);
+  if (tools.length > 0) manifest.allowedTools = tools;
+  return manifest;
+}
+
+/** The test-run panel's confirm button: it enables a schedule, or just keeps a manual-only one. */
+function enableLabel(creating: boolean, schedule: ScheduleSpec | null): string {
+  if (creating) return "Enabling\u2026";
+  return schedule ? "Enable Schedule" : "Save";
+}
+
+/** What the chosen schedule means: how often and roughly what it costs, or that it runs once or on demand. */
+function ScheduleSummary({ schedule }: { schedule: ScheduleSpec | null }) {
+  if (!schedule) {
+    return (
+      <div style={hintStyle}>
+        Nothing runs it on its own. Run it with Run Now whenever you need it.
+      </div>
+    );
+  }
+  if (schedule.type === "once") {
+    return (
+      <div style={hintStyle}>
+        Runs once at that time, then turns off. Set a new time to run it again.
+      </div>
+    );
+  }
+  const runsPerDay =
+    schedule.type === "interval" && schedule.intervalMs ? 86_400_000 / schedule.intervalMs : 1;
+  // Sonnet default: $3/M input, $15/M output. ~20K input + ~500 output per run.
+  const costPerRun = (20_000 * 3 + 500 * 15) / 1_000_000;
+  const costPerDay = runsPerDay * costPerRun;
+  return (
+    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 6 }}>
+      ~{runsPerDay < 1 ? "<1" : Math.round(runsPerDay)} run{runsPerDay >= 2 ? "s" : ""}
+      /day
+      {costPerDay >= 0.01 &&
+        ` \u00b7 Est. ${formatCost(costPerDay)}/day (${formatCost(costPerDay * 30)}/mo)`}
+    </div>
+  );
+}
+
 export function CreateAutomationForm({
   onCreated,
   onCancel,
@@ -95,26 +164,21 @@ export function CreateAutomationForm({
   }, [initialTemplate]);
 
   async function doCreate(enabled: boolean): Promise<string | null> {
-    if (!name.trim() || !prompt.trim() || !schedule) {
-      setError("Name, prompt, and schedule are required.");
+    if (!name.trim() || !prompt.trim()) {
+      setError("Name and prompt are required.");
       return null;
     }
     setError(null);
-    // Server expects { manifest, body } — manifest carries config, body is
-    // the prompt text.
-    const manifest: Record<string, unknown> = {
-      name: name.trim(),
+    const manifest = buildManifest({
+      name,
       schedule,
       enabled,
       maxIterations,
-      maxRunDurationMs: maxRunDurationSec * 1000,
-    };
-    if (model.trim()) manifest.model = model.trim();
-    if (budgetEnabled) {
-      manifest.tokenBudget = { maxInputTokens: budgetMaxInput, period: "daily" as const };
-    }
-    const tools = parseToolList(allowedTools);
-    if (tools.length > 0) manifest.allowedTools = tools;
+      maxRunDurationSec,
+      model,
+      budgetMaxInput: budgetEnabled ? budgetMaxInput : null,
+      allowedTools,
+    });
 
     try {
       const result = await createTool.call({ manifest, body: prompt.trim() });
@@ -157,7 +221,7 @@ export function CreateAutomationForm({
     setTesting(false);
   }
 
-  const canSubmit = name.trim() && prompt.trim() && schedule && !creating && !testing;
+  const canSubmit = name.trim() && prompt.trim() && !creating && !testing;
 
   return (
     <div className="app">
@@ -238,30 +302,7 @@ export function CreateAutomationForm({
         <div className="detail-section">
           <div className="detail-section-title">Schedule</div>
           <SchedulePicker value={schedule} onChange={setSchedule} />
-          {schedule &&
-            (() => {
-              const runsPerDay =
-                schedule.type === "interval" && schedule.intervalMs
-                  ? 86_400_000 / schedule.intervalMs
-                  : 1;
-              // Sonnet default: $3/M input, $15/M output. ~20K input + ~500 output per run.
-              const costPerRun = (20_000 * 3 + 500 * 15) / 1_000_000;
-              const costPerDay = runsPerDay * costPerRun;
-              return (
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: "var(--color-text-secondary)",
-                    marginTop: 6,
-                  }}
-                >
-                  ~{runsPerDay < 1 ? "<1" : Math.round(runsPerDay)} run{runsPerDay >= 2 ? "s" : ""}
-                  /day
-                  {costPerDay >= 0.01 &&
-                    ` \u00b7 Est. ${formatCost(costPerDay)}/day (${formatCost(costPerDay * 30)}/mo)`}
-                </div>
-              );
-            })()}
+          <ScheduleSummary schedule={schedule} />
         </div>
 
         <div className="detail-section">
@@ -458,7 +499,7 @@ export function CreateAutomationForm({
                   color: "var(--color-text-accent)",
                 }}
               >
-                {creating ? "Enabling\u2026" : "Enable Schedule"}
+                {enableLabel(creating, schedule)}
               </button>
             </div>
           </div>

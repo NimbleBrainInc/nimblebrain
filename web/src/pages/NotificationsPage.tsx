@@ -1,4 +1,4 @@
-import { AlertTriangle, Bell, ChevronRight, Info, Search, Zap } from "lucide-react";
+import { Bell, ChevronRight, Search, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -54,31 +54,24 @@ import { EmptyState, InlineError } from "./settings/components";
  * Back returns to it.
  */
 
-const LEVEL_META: Record<
-  NotificationLevel,
-  { label: string; icon: typeof Info; className: string; edge: string }
-> = {
-  info: {
-    label: "Info",
-    icon: Info,
-    className: "text-muted-foreground",
-    // Transparent, not absent: every row carries the same edge width, so an
-    // info row's text lines up with the coloured rows around it.
-    edge: "border-l-2 border-l-transparent",
-  },
-  attention: {
-    label: "Attention",
-    icon: AlertTriangle,
-    className: "text-warning",
-    edge: "border-l-2 border-l-warning",
-  },
-  urgent: {
-    label: "Urgent",
-    icon: Zap,
-    className: "text-destructive",
-    edge: "border-l-2 border-l-destructive",
-  },
+/**
+ * A level is how hard an item asks for attention, not whether its news is good
+ * or bad: `attention` covers "your domain is live" and "a send failed" alike.
+ * So the row never borrows the warning palette to show it. Info and attention
+ * rows look the same, led by the connector that recorded them, and unread is
+ * what says "look at this". Only `urgent` is marked, in the destructive colour,
+ * because it alone means act now. The level still decides routing and order.
+ */
+const LEVEL_LABEL: Record<NotificationLevel, string> = {
+  info: "Info",
+  attention: "Attention",
+  urgent: "Urgent",
 };
+
+/** The urgent row's edge. Every row carries the same width, so titles line up. */
+function levelEdge(level: NotificationLevel): string {
+  return level === "urgent" ? "border-l-2 border-l-destructive" : "border-l-2 border-l-transparent";
+}
 
 /** The time filter's windows, by their URL value. */
 const WITHIN: Record<string, { label: string; ms: number }> = {
@@ -727,14 +720,13 @@ function NotificationRow({
   onToggle: () => void;
   href: string | null;
 }) {
-  const level = LEVEL_META[item.level];
   const ref = useScrollIntoViewWhen<HTMLLIElement>(focused);
   const { connectors } = useWorkspaceAppIcons();
   const app = connectors?.installed.find((c) => c.serverName === item.source);
   const appName = app?.displayName ?? item.source;
 
   return (
-    <li ref={ref} className={cn(rowChrome(focused), level.edge)}>
+    <li ref={ref} className={cn(rowChrome(focused), levelEdge(item.level))}>
       <NotificationRowHead
         item={item}
         expanded={expanded}
@@ -746,7 +738,7 @@ function NotificationRow({
       {expanded ? (
         // On a muted surface, so where the open item ends and the next row
         // begins is plain, and indented to the title's column (the row's
-        // padding, the level icon, and the gap after it).
+        // padding, the connector icon, and the gap after it).
         <div className="space-y-3 border-t border-border/60 bg-muted/50 py-3 pr-3 pl-9.5">
           {item.body ? (
             // `whitespace-pre-wrap` on a plain string. The server's newlines
@@ -800,8 +792,7 @@ function NotificationRowHead({
   appName: string;
   appIconUrl?: string;
 }) {
-  const level = LEVEL_META[item.level];
-  const LevelIcon = level.icon;
+  const urgent = item.level === "urgent";
   const unread = !item.readAt;
   return (
     <button
@@ -813,7 +804,11 @@ function NotificationRowHead({
       data-unread={unread ? "true" : "false"}
       className="w-full flex items-start gap-2.5 px-3 py-3 text-left hover:bg-foreground/5 transition-colors"
     >
-      <LevelIcon aria-hidden="true" className={cn("size-4 shrink-0 mt-0.5", level.className)} />
+      <ConnectorIcon
+        name={appName}
+        iconUrl={appIconUrl}
+        className="size-4 shrink-0 mt-0.5 rounded-xs text-3xs"
+      />
       <span className="min-w-0 flex-1">
         <span
           data-testid="notification-title"
@@ -825,14 +820,16 @@ function NotificationRowHead({
           {item.title}
         </span>
         <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <ConnectorIcon
-              name={appName}
-              iconUrl={appIconUrl}
-              className="size-3.5 rounded-xs text-3xs"
-            />
-            {appName}
-          </span>
+          {urgent ? (
+            <>
+              <span className="flex items-center gap-1 font-medium text-destructive">
+                <Zap aria-hidden="true" className="size-3.5" />
+                {LEVEL_LABEL.urgent}
+              </span>
+              <span aria-hidden="true">·</span>
+            </>
+          ) : null}
+          <span>{appName}</span>
           <span aria-hidden="true">·</span>
           <time dateTime={item.timestamp} title={formatInstantFull(item.timestamp)}>
             {formatInstant(item.timestamp)}
@@ -843,7 +840,13 @@ function NotificationRowHead({
               <span className="truncate">{item.subject}</span>
             </>
           ) : null}
-          <span className="sr-only">{`${level.label}${unread ? ", unread" : ""}`}</span>
+          {/* Urgent is named on screen above; the other levels look alike, so a
+              screen reader is told which one this is. */}
+          <span className="sr-only">
+            {[urgent ? null : LEVEL_LABEL[item.level], unread ? "unread" : null]
+              .filter(Boolean)
+              .join(", ")}
+          </span>
         </span>
       </span>
       {/* The bell's dot, on the row it stands for. On the trailing side, so a
