@@ -163,6 +163,10 @@ interface LiveBatch {
    * ends and frees its reservation.
    */
   waitForSettle?: boolean;
+  /** How many of the batch's runs that made a model call have ended in this process. */
+  settled: number;
+  /** `settled` when each outstanding run was asked for, by run id. */
+  settledAtRequest: Map<string, number>;
 }
 
 /** The spend account id of a batch. Opaque to the door. */
@@ -304,6 +308,8 @@ export class BatchDriver {
       pending: items.filter((it) => it.state === "pending").map((it) => it.index),
       outstanding: new Set(),
       withdrawn: new Set(),
+      settled: 0,
+      settledAtRequest: new Map(),
     };
   }
 
@@ -386,6 +392,8 @@ export class BatchDriver {
       pending: items.map((it) => it.index),
       outstanding: new Set(),
       withdrawn: new Set(),
+      settled: 0,
+      settledAtRequest: new Map(),
     };
     this.live.set(BatchDriver.keyOf(spec.wsId, spec.ownerId, batch.id), lb);
     this.activate(lb);
@@ -415,6 +423,8 @@ export class BatchDriver {
       pending: items.filter((it) => it.state === "pending").map((it) => it.index),
       outstanding: new Set(),
       withdrawn: new Set(),
+      settled: 0,
+      settledAtRequest: new Map(),
     };
     this.live.set(key, lb);
     return lb;
@@ -734,6 +744,7 @@ export class BatchDriver {
       return false;
     }
     lb.outstanding.add(index);
+    lb.settledAtRequest.set(requested.runId, lb.settled);
     this.setItem(lb, {
       ...item,
       state: ticket.state === "started" ? "running" : "queued",
@@ -802,10 +813,18 @@ export class BatchDriver {
       run.stopReason === "spend_limit" && run.spendAccountId === batchAccountId(lb.batch);
     // Any run ending frees its reservation, so a reserved-out item may run now.
     lb.waitForSettle = false;
-    const reservedOut = batchStop && this.reservedOut(lb);
+    // A batch run that ended after this one was asked for may have held the
+    // reservation that refused it, even though it is gone by now.
+    const endedSince = lb.settled > (lb.settledAtRequest.get(runId) ?? lb.settled);
+    lb.settledAtRequest.delete(runId);
+    // Only a run that made a model call ever held a reservation; counting a
+    // refused one would let two refused items keep re-asking for each other.
+    if (run.inputTokens > 0 || run.outputTokens > 0) lb.settled++;
+    const reservedOut = batchStop && this.reservedOut(lb, endedSince);
     this.settleItem(lb, index, run, batchStop, lb.withdrawn.delete(runId));
     if (reservedOut) {
-      lb.waitForSettle = true;
+      // Wait for a reservation still held to free; with none held, ask again now.
+      lb.waitForSettle = this.othersRunning(lb);
     } else if (batchStop) {
       this.pause(lb, "budget", "The batch's budget has too little left for another model call.");
     } else if (
@@ -855,17 +874,23 @@ export class BatchDriver {
    * rather than from spend. Only the batch's own running runs reserve against
    * its account (the driver's anchor never does), so with none of them still
    * running, a refusal means the actual balance cannot pay for one call: spent.
-   * With one running and actual balance left, its reservation may be what
-   * refused the call, and its end frees it.
+   * With one running, or one that ended since this run was asked for (its
+   * reservation may have refused the call before it ended), and actual balance
+   * left, the item gets another turn: a second refusal with nothing reserving
+   * is spend.
    */
-  private reservedOut(lb: LiveBatch): boolean {
+  private reservedOut(lb: LiveBatch, endedSince: boolean): boolean {
     const { batch } = lb;
     if (batch.budgetUsd === undefined) return false;
-    const othersRunning = [...lb.outstanding].some((i) => lb.items[i]?.state === "running");
-    if (!othersRunning) return false;
+    if (!endedSince && !this.othersRunning(lb)) return false;
     const actual =
       this.config.spend?.balance(batchAccountId(batch)) ?? batch.budgetUsd - batch.costUsd;
     return actual > 0;
+  }
+
+  /** Whether another of the batch's runs is running (and so may hold a reservation). */
+  private othersRunning(lb: LiveBatch): boolean {
+    return [...lb.outstanding].some((i) => lb.items[i]?.state === "running");
   }
 
   /** Pause the batch when its pass rate fell below its stop rule. */

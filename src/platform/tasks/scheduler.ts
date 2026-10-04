@@ -2033,7 +2033,10 @@ export class Scheduler {
     auto.cumulativeInputTokens = (auto.cumulativeInputTokens ?? 0) + run.inputTokens;
     auto.cumulativeOutputTokens = (auto.cumulativeOutputTokens ?? 0) + run.outputTokens;
 
-    applyConsecutiveErrors(auto, run, now);
+    // A batch item answers to its batch: its failures are the batch's to count
+    // (the stop rule, `rerun_failed`), never the task's own streak, which
+    // would back off and then disable the task's schedule.
+    if (!run.batchId) applyConsecutiveErrors(auto, run, now);
     if (!isOnceSchedule(auto.schedule)) {
       applyNextRunAt(auto, now, this.config.defaultTimezone);
     } else if ((trigger ?? run.trigger) === "scheduled" && auto.schedule?.at === firedOnceAt) {

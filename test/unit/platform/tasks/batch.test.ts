@@ -31,6 +31,7 @@ import type { ToolContext } from "../../../../src/platform/tasks/server.ts";
 import { batchPausedEnvelope } from "../../../../src/platform/tasks/source.ts";
 import {
   loadOwnerTasks,
+  loadTask,
   readRunResult,
   readRuns,
   readRunTicket,
@@ -124,6 +125,8 @@ interface HarnessOptions {
     writes?: number;
     /** Hold each run after its first call is reserved, until the test releases it. */
     holdAfterCheck?: boolean;
+    /** How long a refused run takes to return (so another run can end first). */
+    refusalDelayMs?: number;
   };
   /** The run's status for an input. */
   behave?: (input: unknown) => Partial<TaskRun>;
@@ -211,6 +214,7 @@ function harness(opts: HarnessOptions = {}): Harness {
         } finally {
           hold.release();
         }
+        if (stop && opts.door.refusalDelayMs) await Bun.sleep(opts.door.refusalDelayMs);
       }
       const id = runId ?? `run_${Math.random().toString(16).slice(2, 14)}`;
       const now = new Date().toISOString();
@@ -226,8 +230,9 @@ function harness(opts: HarnessOptions = {}): Harness {
             ? "skipped"
             : "failure"
           : "success",
-        inputTokens: 100,
-        outputTokens: 50,
+        // A run the door refused before any call reports no usage.
+        inputTokens: opts.door && costUsd === 0 ? 0 : 100,
+        outputTokens: opts.door && costUsd === 0 ? 0 : 50,
         toolCalls: 0,
         iterations: 1,
         stopReason: stop ? "spend_limit" : "complete",
@@ -621,6 +626,64 @@ describe("reserved-out versus spent-out", () => {
     expect(batch.pause?.reason).toBe("budget");
     expect(batch.counts).toMatchObject({ pass: 2, pending: 1 });
     expect(h.totalSpent()).toBeCloseTo(0.22, 9);
+  });
+});
+
+describe("reserved-out, ordering", () => {
+  it("retries an item whose blocking run ended before the item's refusal was processed", async () => {
+    const h = harness({
+      door: { calls: 1, writes: 10, holdAfterCheck: true, refusalDelayMs: 60 },
+      maxConcurrentRuns: 4,
+    });
+    makeTask();
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items("a", "b"), concurrency: 2, budgetUsd: 0.35 },
+      h.ctx,
+    );
+    // a holds its reservation; b is refused by it and is slow to return.
+    await waitFor(() => h.gates.length === 1, "a reserved");
+    await Bun.sleep(10);
+    // a ends first, so when b's refusal lands nothing is reserving any more.
+    h.gates[0]!.release();
+    await waitFor(() => h.gates.length === 2, "b asked for again and reserved");
+    h.gates[1]!.release();
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    expect(h.paused).toHaveLength(0);
+    expect(batchOf(h, out.batch.id).counts.pass).toBe(2);
+  });
+});
+
+describe("the task's own error streak", () => {
+  it("is not touched by failing batch runs, and still counts a failure of the task's own run", async () => {
+    const h = harness({
+      behave: () => ({
+        status: "failure",
+        stopReason: "error",
+        resultPreview: undefined,
+        error: "boom",
+      }),
+    });
+    makeTask({ schedule: { type: "interval", intervalMs: 3_600_000 } });
+    const out = handleRunBatch(
+      {
+        taskId: "enrich",
+        items: items(...Array.from({ length: 12 }, (_, i) => `x${i}`)),
+        concurrency: 4,
+      },
+      h.ctx,
+    );
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    expect(batchOf(h, out.batch.id).counts.failed).toBe(12);
+    const after = loadTask(workDir, WS, OWNER, "enrich")!;
+    expect(after.enabled).toBe(true);
+    expect(after.consecutiveErrors).toBe(0);
+    expect(after.disabledAt).toBeUndefined();
+
+    const ticket = h.scheduler.requestRunNow(WS, OWNER, "enrich");
+    if (ticket?.state !== "started")
+      throw new Error(`expected a started run, got ${ticket?.state}`);
+    await ticket.run;
+    expect(loadTask(workDir, WS, OWNER, "enrich")?.consecutiveErrors).toBe(1);
   });
 });
 
