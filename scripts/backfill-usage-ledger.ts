@@ -259,7 +259,8 @@ function fromAutomationRuns(path: string): UsageLedgerEntry[] {
 }
 
 /**
- * A run index: `automations/<ownerId>/runs/<automationId>/index.jsonl`.
+ * A run index: `tasks/<ownerId>/runs/<automationId>/index.jsonl` (`automations/` before
+ * the boot migration moved it).
  *
  * The automation id between `runs/` and the file is the part that matters.
  * Matching `runs/index.jsonl` — no id segment — matches nothing on a real tree,
@@ -285,7 +286,7 @@ export function collectEntries(roots: string[], skipAutomations: boolean): Usage
 
     // Refuse to look clean — but only on evidence the layout actually moved.
     //
-    // The discriminator is an `index.jsonl` under an automations tree that this
+    // The discriminator is an `index.jsonl` under a task tree that this
     // predicate did NOT match. That is a run history written somewhere else,
     // which is the failure being guarded. A definition with no `runs/` subtree
     // is not evidence of anything: the directory is created lazily on first
@@ -295,12 +296,15 @@ export function collectEntries(roots: string[], skipAutomations: boolean): Usage
     const runIndexes = walk(root, isRunIndex);
     const strayIndexes = walk(
       root,
-      (p) => p.includes(`${sep}automations${sep}`) && p.endsWith("index.jsonl") && !isRunIndex(p),
+      (p) =>
+        (p.includes(`${sep}tasks${sep}`) || p.includes(`${sep}automations${sep}`)) &&
+        p.endsWith("index.jsonl") &&
+        !isRunIndex(p),
     );
     if (strayIndexes.length > 0) {
       throw new LayoutMovedError(
         `${strayIndexes.length} run index/indexes under ${root} are not at ` +
-          `automations/<owner>/runs/<automation>/index.jsonl:\n` +
+          `tasks/<owner>/runs/<task>/index.jsonl:\n` +
           strayIndexes
             .slice(0, 3)
             .map((p) => `    ${p}`)

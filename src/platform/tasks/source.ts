@@ -10,6 +10,7 @@ import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-a
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { AutomationEventTrigger } from "./event-trigger.ts";
 import { createDirectExecutor, type ExecutorContext } from "./executor.ts";
+import { migrateTaskStorage } from "./migrate-storage.ts";
 import { countsAsEventFire, isOpenRun, Scheduler } from "./scheduler.ts";
 import { TOOL_SCHEMAS } from "./schemas.ts";
 import {
@@ -123,6 +124,9 @@ export async function createTasksSource(
   eventSink: EventSink,
 ): Promise<McpSource> {
   const workDir = runtime.getWorkDir();
+  // Storage written under `automations/` moves to `tasks/` before anything
+  // reads it, the scheduler included.
+  migrateTaskStorage(workDir);
   const defaultTimezone = resolveDefaultTimezone(process.env.NB_TIMEZONE);
   const automationsConfig = runtime.getAutomationsConfig();
   // The chat default is read per run: an admin can change it at runtime.

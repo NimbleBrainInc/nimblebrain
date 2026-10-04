@@ -32,6 +32,7 @@
 import { join, sep } from "node:path";
 
 const TASKS_SEGMENT = "tasks";
+const LEGACY_SEGMENT = "automations";
 const WORKSPACES_SEGMENT = "workspaces";
 const RUNS_SEGMENT = "runs";
 const TICKETS_SEGMENT = "run-tickets";
@@ -60,11 +61,26 @@ export function validateRunId(id: string): void {
 }
 
 /**
+ * Where a workspace's task storage lived before tasks were named tasks:
+ * `{workDir}/workspaces/<wsId>/automations`. Read only by the boot migration
+ * (`migrate-storage.ts`), which moves each owner dir under
+ * {@link workspaceTasksRoot}.
+ */
+export function legacyWorkspaceTaskRoot(workDir: string, wsId: string): string {
+  return join(workDir, WORKSPACES_SEGMENT, wsId, LEGACY_SEGMENT);
+}
+
+/** The directory holding every owner's tasks in one workspace: `{workDir}/workspaces/<wsId>/tasks`. */
+export function workspaceTasksRoot(workDir: string, wsId: string): string {
+  return join(workDir, WORKSPACES_SEGMENT, wsId, TASKS_SEGMENT);
+}
+
+/**
  * Directory holding one owner's automations in one workspace:
  * `{workDir}/workspaces/<wsId>/tasks/<ownerId>`.
  */
 export function workspaceTasksDir(workDir: string, wsId: string, ownerId: string): string {
-  return join(workDir, WORKSPACES_SEGMENT, wsId, TASKS_SEGMENT, ownerId);
+  return join(workspaceTasksRoot(workDir, wsId), ownerId);
 }
 
 /** The definition file: `…/tasks/<ownerId>/<automationId>.json`. */
