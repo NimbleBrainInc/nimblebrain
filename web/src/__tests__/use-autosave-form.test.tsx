@@ -52,7 +52,7 @@ afterEach(async () => {
   saves = [];
 });
 
-function Harness({ undo }: { undo: boolean }) {
+function Form({ undo }: { undo: boolean }) {
   form = useAutosaveForm<Values>(
     { name: "a", limit: "10" },
     {
@@ -65,6 +65,14 @@ function Harness({ undo }: { undo: boolean }) {
     },
   );
   return null;
+}
+
+/** Lets a test take the form off the page while the notices stay, as navigating does. */
+let removeForm: () => void = () => {};
+function Harness({ undo }: { undo: boolean }) {
+  const [shown, setShown] = React.useState(true);
+  removeForm = () => setShown(false);
+  return shown ? React.createElement(Form, { undo }) : null;
 }
 
 async function flush() {
@@ -196,5 +204,19 @@ describe("useAutosaveForm", () => {
     await flush();
     expect(document.body.querySelectorAll("[data-testid='notice']")).toHaveLength(0);
     expect(status("name")).toBe("saved");
+  });
+
+  // Following a link blurs the field, which starts its save, and then
+  // unmounts the form. A refusal after that has no field to show on, so it
+  // reaches the reader as a notice whatever the form's policy.
+  test("a save that fails after the form unmounts raises an error notice", async () => {
+    await mount();
+    await act(async () => form.commit("limit", "0"));
+    await act(async () => removeForm());
+    await act(async () => saves[0]!.reject(new Error("limit must be positive")));
+    await flush();
+    const notice = document.body.querySelector("[data-testid='notice']");
+    expect(notice?.textContent).toContain("Couldn't save Limit");
+    expect(notice?.textContent).toContain("limit must be positive");
   });
 });

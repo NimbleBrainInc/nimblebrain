@@ -70,9 +70,7 @@ export function useWorkspaceInstructions(wsId: string) {
     {
       save,
       labels: { body: "Workspace instructions" },
-      // Leaving the page blurs the editor, which starts the save, and then
-      // removes the field; a failure after that has nowhere else to show.
-      notices: { body: { undo: true, error: "notice" } },
+      notices: { body: { undo: true } },
     },
   );
   const { load } = form;

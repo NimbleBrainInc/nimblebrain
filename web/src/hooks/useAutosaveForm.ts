@@ -85,9 +85,15 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
   // Undo raises `commit` from a notice created by an earlier render.
   const commitRef = useRef<(field: keyof V, value?: V[keyof V]) => void>(() => {});
 
+  // Whether the form is still on the page. Leaving it (following a link)
+  // blurs the field being edited, which starts its save, and then unmounts
+  // the form; a failure that lands after that has no field to show on.
+  const mounted = useRef(true);
   useEffect(() => {
+    mounted.current = true;
     const pending = timers.current;
     return () => {
+      mounted.current = false;
       for (const timer of pending.values()) clearTimeout(timer);
     };
   }, []);
@@ -152,8 +158,9 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
       if (!queued.current.has(field)) setStatus(field, "error");
       const policy = { ...FIELD_ONLY, ...opts.notices?.[field] };
       // A failed Undo always says so: the reader acted on a notice, and the
-      // field may be scrolled out of view.
-      if (policy.error !== "notice" && !isUndo) return;
+      // field may be scrolled out of view. So does a save that fails after the
+      // form has left the page, or the edit is lost with nothing to say so.
+      if (policy.error !== "notice" && !isUndo && mounted.current) return;
       const label = opts.labels[field];
       const title = isUndo ? `Couldn't undo the change to ${label}` : `Couldn't save ${label}`;
       notify({ level: "error", title, description: message });
