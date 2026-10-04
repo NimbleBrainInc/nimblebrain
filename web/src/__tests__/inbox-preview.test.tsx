@@ -35,10 +35,19 @@ mock.module("../api/client", () => ({
   ...realClient,
   callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
     if (tool === "list") listArgs.push(args);
-    const notifications = args?.unreadOnly ? listed.filter((n) => !n.readAt) : listed;
-    return {
-      content: [{ type: "text", text: JSON.stringify({ notifications, unread: 0 }) }],
+    // Newest first, capped at `limit`, honouring `unreadOnly` and `level`.
+    const rank = { info: 0, attention: 1, urgent: 2 } as const;
+    const matching = [...listed]
+      .sort((a, b) => b.seq - a.seq)
+      .filter((n) => !args?.unreadOnly || !n.readAt)
+      .filter((n) => !args?.level || rank[n.level] >= rank[args.level as keyof typeof rank]);
+    const limit = (args?.limit as number | undefined) ?? 20;
+    const out = {
+      notifications: matching.slice(0, limit),
+      unread: 0,
+      hasMore: matching.length > limit,
     };
+    return { content: [{ type: "text", text: JSON.stringify(out) }] };
   }),
 }));
 
@@ -161,6 +170,14 @@ describe("the bell's preview", () => {
 });
 
 describe("order", () => {
+  test("an urgent item older than one read of the unread still leads", async () => {
+    await openPreview([
+      item(1, { level: "urgent", title: "on fire" }),
+      ...Array.from({ length: 120 }, (_, i) => item(i + 2)),
+    ]);
+    expect(allByTestId("inbox-preview-item")[0]?.textContent).toContain("on fire");
+  });
+
   test("an urgent item is shown ahead of newer routine ones", async () => {
     await openPreview([
       item(1, { level: "urgent", title: "on fire" }),
