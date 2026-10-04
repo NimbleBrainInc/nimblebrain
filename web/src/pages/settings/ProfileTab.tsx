@@ -1,5 +1,5 @@
 import { Monitor, Moon, Sun } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Badge } from "../../components/ui/badge";
@@ -65,7 +65,7 @@ const ALL_UNDO = Object.fromEntries(
  * The `set_preferences` patch for one field. An empty model is sent as `null`,
  * which clears the choice so the person follows the configured default.
  */
-export function profilePatch<K extends ProfileField>(
+function profilePatch<K extends ProfileField>(
   field: K,
   value: ProfileValues[K],
 ): Record<string, unknown> {
@@ -130,11 +130,19 @@ export function ProfileTab() {
       .finally(() => setLoading(false));
   }, [load, user?.displayName]);
 
-  // The theme follows the field, so an Undo switches it back too. Not before
-  // the settings load: the fallback would flash the system theme.
+  // The theme follows the field once the person changes it, so an Undo
+  // switches it back too. The value the page loads is not applied: with no
+  // theme stored it is the fallback "system", which would replace the theme
+  // this browser holds, and with one stored the shell has applied it already.
   const theme = form.values.theme;
+  const loadedThemeApplied = useRef(false);
   useEffect(() => {
-    if (!loading && !loadError) applyPreference(theme);
+    if (loading || loadError) return;
+    if (!loadedThemeApplied.current) {
+      loadedThemeApplied.current = true;
+      return;
+    }
+    applyPreference(theme);
   }, [theme, loading, loadError, applyPreference]);
 
   return (

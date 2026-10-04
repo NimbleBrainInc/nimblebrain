@@ -26,6 +26,8 @@ type CallToolArgs = { server: string; tool: string; args: Record<string, unknown
 const callToolCalls: CallToolArgs[] = [];
 
 let storedModel = "";
+/** The theme the server has stored for this person; `null` means none set. */
+let storedTheme: string | null = "system";
 let configFails = false;
 let saveRejects = false;
 
@@ -54,7 +56,12 @@ mock.module("../src/api/client", () => ({
               },
             ],
           },
-          preferences: { displayName: "P", timezone: "", theme: "system", model: storedModel },
+          preferences: {
+            displayName: "P",
+            timezone: "",
+            ...(storedTheme ? { theme: storedTheme } : {}),
+            model: storedModel,
+          },
         },
         isError: false,
       };
@@ -92,6 +99,7 @@ afterEach(async () => {
   mounted = null;
   callToolCalls.length = 0;
   storedModel = "";
+  storedTheme = "system";
   configFails = false;
   saveRejects = false;
 });
@@ -228,6 +236,20 @@ describe("each field saves alone", () => {
     await flush();
     expect(sets()).toEqual([{ theme: "dark" }]);
     expect(dark.getAttribute("aria-pressed")).toBe("true");
+    // A theme the person picks is applied, not just saved.
+    expect(localStorage.getItem("nb-theme")).toBe("dark");
+  });
+});
+
+describe("the theme", () => {
+  // With no theme saved on the server, the browser's own choice stands.
+  // Opening the page must not replace it with the form's fallback.
+  test("opening the page leaves a theme the person chose in this browser alone", async () => {
+    storedTheme = null;
+    localStorage.setItem("nb-theme", "dark");
+    mounted = await mount();
+    expect(localStorage.getItem("nb-theme")).toBe("dark");
+    expect(sets()).toEqual([]);
   });
 });
 
