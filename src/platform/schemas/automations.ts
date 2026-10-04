@@ -24,16 +24,28 @@ import { NotificationRouteMatch } from "./notifications.ts";
 
 const Schedule = Type.Object(
   {
-    type: StringEnum(["cron", "interval", "event"] as const, {
+    type: StringEnum(["cron", "interval", "event", "once"] as const, {
       description:
-        "`cron` and `interval` are positions in time. `event` has no next run: the automation " +
-        "fires when a notification a workspace admin routed to it arrives.",
+        "`cron` and `interval` recur. `once` fires one time, at `at`, and then the automation " +
+        "is disabled with no next run until a new `at` re-arms it: use it for a single action " +
+        "at a set time instead of a cron with a fixed date, which recurs every year. `event` " +
+        "has no next run: the automation fires when a notification a workspace admin routed to " +
+        "it arrives.",
     }),
     expression: Type.Optional(
       Type.String({ description: "5-field cron expression (when type=cron)." }),
     ),
     timezone: Type.Optional(
       Type.String({ description: "IANA timezone. Default: system timezone." }),
+    ),
+    at: Type.Optional(
+      Type.String({
+        description:
+          "When a once schedule fires (when type=once): an ISO-8601 timestamp with an explicit " +
+          "offset, e.g. 2026-07-01T13:12:00-07:00. Must be in the future. A once whose time " +
+          "passes while the runtime is down fires on restart if it is at most an hour late, " +
+          "and is recorded as skipped otherwise.",
+      }),
     ),
     intervalMs: Type.Optional(
       Type.Number({
@@ -117,7 +129,14 @@ const TokenBudget = Type.Object(
 const ManifestFields = {
   name: Type.String({ description: "Human-readable name. Becomes the kebab-case id." }),
   description: Type.Optional(Type.String({ description: "What this automation does." })),
-  schedule: Schedule,
+  schedule: Type.Optional(
+    Type.Object(Schedule.properties, {
+      required: ["type"],
+      description:
+        "What fires it unattended. Omit for an automation that runs only when someone runs it " +
+        "(automations__run).",
+    }),
+  ),
   enabled: Type.Optional(
     Type.Boolean({
       description:
@@ -174,14 +193,28 @@ const ManifestFields = {
     }),
   ),
   tokenBudget: Type.Optional(TokenBudget),
+  kind: Type.Optional(
+    StringEnum(["saved", "oneoff"] as const, {
+      description:
+        "`saved` (default) for an automation to keep and list. `oneoff` for one made to be run " +
+        "once with no schedule: it is kept with its run history but left out of " +
+        "automations__list unless asked for.",
+    }),
+  ),
 };
 
-// Update is a partial of the create-shape minus `name`. All fields except
-// schedule become optional; schedule is partial-by-omission since it's
-// already the only required field of the create-manifest beyond name.
+// Update is a partial of the create-shape minus `name` and `kind` (a one-off
+// does not become a saved automation by a patch). `schedule: null` clears the
+// schedule, leaving an automation that runs only when someone runs it.
 const UpdateManifestFields = {
   description: ManifestFields.description,
-  schedule: Type.Optional(Schedule),
+  schedule: Type.Optional(
+    Type.Union([Schedule, Type.Null()], {
+      description:
+        "New schedule, or null to remove it so nothing fires it unattended. Setting a new once " +
+        "`at` on an automation that already ran once (or missed its time) re-arms and enables it.",
+    }),
+  ),
   enabled: ManifestFields.enabled,
   skill: ManifestFields.skill,
   model: ManifestFields.model,
@@ -197,7 +230,7 @@ const UpdateManifestFields = {
 export const AutomationsCreateInput = Type.Object(
   {
     manifest: Type.Object(ManifestFields, {
-      required: ["name", "schedule"],
+      required: ["name"],
       description: "Automation definition: identity, schedule, run-time policy.",
     }),
     body: Type.String({ description: "The prompt sent on each scheduled run." }),
@@ -232,6 +265,11 @@ export const AutomationsListInput = Type.Object({
   enabled: Type.Optional(Type.Boolean({ description: "Filter by enabled status." })),
   source: Type.Optional(
     StringEnum(["user", "agent"] as const, { description: "Filter by source." }),
+  ),
+  kind: Type.Optional(
+    StringEnum(["saved", "oneoff", "all"] as const, {
+      description: "Which kind to list. Default `saved`; `oneoff` or `all` to include one-offs.",
+    }),
   ),
   limit: Type.Optional(
     // Default/cap mirror AUTOMATIONS_LIST_DEFAULT_LIMIT / AUTOMATIONS_LIST_MAX_LIMIT
@@ -276,6 +314,14 @@ export const AutomationsRunsInput = Type.Object({
   since: Type.Optional(
     Type.String({
       description: "ISO timestamp — only runs started on or after this time.",
+    }),
+  ),
+  before: Type.Optional(
+    Type.String({
+      description:
+        "ISO timestamp — only runs started before this time. Pages back through the full run " +
+        "history, which is kept indefinitely: pass the previous response's `nextBefore`. " +
+        "Without it, only the most recent runs (up to 1000 per automation) are read.",
     }),
   ),
   limit: Type.Optional(Type.Number({ description: "Max runs to return. Default: 20." })),
@@ -352,7 +398,11 @@ export interface AutomationSummary {
   id: string;
   name: string;
   description?: string;
+  /** Human-readable trigger, e.g. "Daily at 8:00 AM HST", "Once at …", "Manual only". */
   schedule: string;
+  /** The schedule's type, or `none` when nothing fires it unattended. */
+  scheduleType: "cron" | "interval" | "event" | "once" | "none";
+  kind: "saved" | "oneoff";
   enabled: boolean;
   source: "user" | "agent";
   runCount: number;
@@ -484,9 +534,10 @@ export interface AutomationTokenBudget {
  * Schedule spec block on a stored automation. Mirror of `ScheduleSpec`.
  */
 export interface AutomationScheduleSpec {
-  type: "cron" | "interval" | "event";
+  type: "cron" | "interval" | "event" | "once";
   expression?: string;
   timezone?: string;
+  at?: string;
   intervalMs?: number;
   match?: NotificationRouteMatch;
   debounceMs?: number;
@@ -505,7 +556,8 @@ export interface AutomationStatusDetail {
   name: string;
   description?: string;
   prompt: string;
-  schedule: AutomationScheduleSpec;
+  schedule?: AutomationScheduleSpec;
+  kind?: "saved" | "oneoff";
   scheduleHuman: string;
   enabled: boolean;
   source: "user" | "agent";
@@ -546,6 +598,11 @@ export interface AutomationsStatusOutput {
 export interface AutomationsRunsOutput {
   runs: AutomationRunRecord[];
   total: number;
+  /**
+   * Pass as `before` for the next older page of one automation's history;
+   * absent when nothing older remains (or when runs span every automation).
+   */
+  nextBefore?: string;
 }
 
 /**
@@ -620,7 +677,8 @@ export interface AutomationRecord {
   name: string;
   description?: string;
   prompt: string;
-  schedule: AutomationScheduleSpec;
+  schedule?: AutomationScheduleSpec;
+  kind?: "saved" | "oneoff";
   skill?: string;
   allowedTools?: string[];
   maxIterations?: number;

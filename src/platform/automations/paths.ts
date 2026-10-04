@@ -10,7 +10,8 @@
  * conveniences; the directory is authoritative.
  *
  *   workspaces/<wsId>/automations/<ownerId>/<automationId>.json              the definition
- *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index.jsonl  run summaries (append-only)
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index.jsonl  newest run summaries (the hot window)
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index-YYYY-MM.jsonl  older summaries, by start month
  *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  the run's deliverable
  *
  * An automation run is NOT a conversation: it leaves a *run result* (the final
@@ -87,6 +88,38 @@ export function automationRunIndexPath(
   automationId: string,
 ): string {
   return join(automationRunsDir(workDir, wsId, ownerId, automationId), "index.jsonl");
+}
+
+/** A run-index segment's month, `YYYY-MM`. */
+const SEGMENT_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** The file name of the segment holding runs started in `month` (`YYYY-MM`). */
+const segmentFileName = (month: string) => `index-${month}.jsonl`;
+
+/** Recovers the month from a segment's file name, or null for any other file. */
+const SEGMENT_FILE_RE = /^index-(\d{4}-(?:0[1-9]|1[0-2]))\.jsonl$/;
+
+/**
+ * A run-index segment: `…/runs/<automationId>/index-YYYY-MM.jsonl`, the run
+ * summaries that rolled out of the hot `index.jsonl`, grouped by the month
+ * each run started in (UTC).
+ */
+export function automationRunSegmentPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  month: string,
+): string {
+  if (!SEGMENT_MONTH_RE.test(month)) {
+    throw new Error(`Invalid run segment month: ${JSON.stringify(month)}. Must be YYYY-MM.`);
+  }
+  return join(automationRunsDir(workDir, wsId, ownerId, automationId), segmentFileName(month));
+}
+
+/** The month (`YYYY-MM`) a segment file name holds, or null when the name is not a segment's. */
+export function parseRunSegmentFileName(name: string): string | null {
+  return SEGMENT_FILE_RE.exec(name)?.[1] ?? null;
 }
 
 /** A single run's result sidecar: `…/runs/<automationId>/<runId>.result.json`. */

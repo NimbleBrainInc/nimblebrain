@@ -27,8 +27,11 @@
 import { computeBudgetResetAt, computeNextRunAt, setNextRunAt } from "./scheduler.ts";
 import {
   type Automation,
+  type AutomationKind,
   type AutomationSource,
   isEventSchedule,
+  isOnceSchedule,
+  onceRetirement,
   type ScheduleSpec,
   type TokenBudget,
 } from "./types.ts";
@@ -107,7 +110,9 @@ function resetBudgetWindowIfChanged(
 export interface DomainCreateInput {
   name: string;
   prompt: string;
-  schedule: ScheduleSpec;
+  /** Absent: nothing fires it unattended; it runs only when someone runs it. */
+  schedule?: ScheduleSpec;
+  kind?: AutomationKind;
   description?: string;
   skill?: string;
   model?: string;
@@ -126,7 +131,8 @@ export interface DomainCreateInput {
 /** Patch shape for update. Every field optional. */
 export interface DomainUpdatePatch {
   description?: string;
-  schedule?: ScheduleSpec;
+  /** `null` removes the schedule: nothing fires the automation unattended. */
+  schedule?: ScheduleSpec | null;
   prompt?: string;
   skill?: string;
   model?: string;
@@ -228,7 +234,8 @@ export function createAutomation(
     ownerId: input.ownerId,
     workspaceId: input.workspaceId,
     prompt: input.prompt,
-    schedule: input.schedule,
+    ...(input.schedule ? { schedule: input.schedule } : {}),
+    ...(input.kind ? { kind: input.kind } : {}),
     description: input.description,
     skill: input.skill,
     allowedTools: input.allowedTools,
@@ -308,6 +315,64 @@ function reanchorNextRunAt(automation: Automation, defaultTimezone?: string): vo
   setNextRunAt(automation, computeNextRunAt(automation, Date.now(), defaultTimezone));
 }
 
+/**
+ * Copy the patch's fields onto `automation`. `schedule: null` deletes the key,
+ * so the record reads as manual-only. Returns whether anything was written.
+ */
+function applyPatchFields(automation: Automation, patch: DomainUpdatePatch): boolean {
+  let changed = false;
+  for (const field of UPDATABLE_FIELDS) {
+    if (field === "schedule" && patch.schedule === null) continue;
+    if (field in patch && patch[field] !== undefined) {
+      (automation as unknown as Record<string, unknown>)[field] = patch[field];
+      changed = true;
+    }
+  }
+  if (patch.schedule === null) {
+    delete automation.schedule;
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * A new once time re-arms a once that already ran or missed its time: the edit
+ * is the request to run it again. A paused one stays paused, and an explicit
+ * `enabled: false` wins.
+ */
+function applyOnceRearm(
+  automation: Automation,
+  patch: DomainUpdatePatch,
+  wasRetiredOnce: boolean,
+): void {
+  if (!wasRetiredOnce || !isOnceSchedule(patch.schedule ?? undefined)) return;
+  if (patch.enabled === false) return;
+  automation.enabled = true;
+  automation.consecutiveErrors = 0;
+  automation.disabledAt = undefined;
+  automation.disabledReason = undefined;
+}
+
+/**
+ * Refuse to arm a once whose time has passed. Enabling one would fire a stale
+ * action at once (or, within the grace window, fire it a second time); it
+ * needs a new time.
+ */
+function assertOnceArmable(
+  automation: Automation,
+  patch: DomainUpdatePatch,
+  wasEnabled: boolean,
+): void {
+  if (!automation.enabled || !isOnceSchedule(automation.schedule)) return;
+  if (wasEnabled && patch.schedule === undefined) return;
+  const at = new Date(automation.schedule?.at ?? "").getTime();
+  if (at > Date.now()) return;
+  throw new Error(
+    `Automation "${automation.name}" runs once at ${automation.schedule?.at}, which has ` +
+      "passed. Set a new time in its schedule to run it again, or use automations__run to run it now.",
+  );
+}
+
 export function updateAutomation(
   name: string,
   patch: DomainUpdatePatch,
@@ -319,20 +384,17 @@ export function updateAutomation(
     throw new Error(`Automation not found: "${name}"`);
   }
 
-  assertEventScheduleAllowed(patch.schedule, automation.source, automation.name);
+  assertEventScheduleAllowed(patch.schedule ?? undefined, automation.source, automation.name);
 
   // Snapshot before the loop overwrites it — the window reset is gated on a real
   // budget change, not merely a write (see `tokenBudgetsEqual`).
   const prevTokenBudget = automation.tokenBudget;
   const wasEnabled = automation.enabled;
+  const wasRetiredOnce = onceRetirement(automation) !== null;
 
-  let changed = false;
-  for (const field of UPDATABLE_FIELDS) {
-    if (field in patch && patch[field] !== undefined) {
-      (automation as unknown as Record<string, unknown>)[field] = patch[field];
-      changed = true;
-    }
-  }
+  const changed = applyPatchFields(automation, patch);
+  applyOnceRearm(automation, patch, wasRetiredOnce);
+  assertOnceArmable(automation, patch, wasEnabled);
 
   // Clear disable state when re-enabling
   if (patch.enabled === true) {

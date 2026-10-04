@@ -14,8 +14,15 @@ function toggleButtonLabel(
   return isAutoDisabled ? "Re-enable" : "Resume";
 }
 
-/** Small label shown after the name when an automation is paused or auto-disabled. */
-function DisabledLabel({ isAutoDisabled }: { isAutoDisabled: boolean }) {
+/** Small label shown after the name when an automation is paused, auto-disabled, or done. */
+function DisabledLabel({ isAutoDisabled, isDone }: { isAutoDisabled: boolean; isDone: boolean }) {
+  if (isDone) {
+    return (
+      <span style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 400 }}>
+        (done)
+      </span>
+    );
+  }
   return (
     <span
       style={{
@@ -66,6 +73,7 @@ function CardActions({
   isRunning,
   disabled,
   toggleLabel,
+  toggleHidden,
   onRunNow,
   onToggle,
   onDelete,
@@ -75,6 +83,8 @@ function CardActions({
   isRunning: boolean;
   disabled: boolean;
   toggleLabel: string;
+  /** A once that is done re-arms by a new time, not by Resume. */
+  toggleHidden: boolean;
   onRunNow: () => void;
   onToggle: () => void;
   onDelete: () => void;
@@ -97,9 +107,11 @@ function CardActions({
           Run Now
         </button>
       )}
-      <button type="button" className="btn" disabled={disabled} onClick={onToggle}>
-        {toggleLabel}
-      </button>
+      {!toggleHidden && (
+        <button type="button" className="btn" disabled={disabled} onClick={onToggle}>
+          {toggleLabel}
+        </button>
+      )}
       <button type="button" className="btn btn-danger" disabled={disabled} onClick={onDelete}>
         Delete
       </button>
@@ -126,7 +138,10 @@ export function AutomationCard({
 }) {
   const a = automation;
   const hasBackoff = a.enabled && (a.consecutiveErrors ?? 0) > 0;
-  const isAutoDisabled = !a.enabled && !!a.disabledReason;
+  // A once schedule that has run (or missed its time) is done, not broken: its
+  // reason is the schedule's own record, so it is not shown as auto-disabled.
+  const isDone = !a.enabled && a.scheduleType === "once" && !!a.disabledReason;
+  const isAutoDisabled = !a.enabled && !!a.disabledReason && !isDone;
   const dotClass = hasBackoff
     ? "dot-backoff"
     : statusDotClass(a.lastRunStatus, a.enabled, a.consecutiveErrors);
@@ -153,7 +168,7 @@ export function AutomationCard({
           <div className="auto-card-name">
             <span className={`dot ${dotClass}`} />
             {a.name}
-            {!a.enabled && <DisabledLabel isAutoDisabled={isAutoDisabled} />}
+            {!a.enabled && <DisabledLabel isAutoDisabled={isAutoDisabled} isDone={isDone} />}
           </div>
           <div className="auto-card-schedule">{a.schedule}</div>
           {isAutoDisabled && a.disabledReason && (
@@ -174,6 +189,7 @@ export function AutomationCard({
           isRunning={isRunning}
           disabled={disabled}
           toggleLabel={toggleLabel}
+          toggleHidden={isDone}
           onRunNow={onRunNow}
           onToggle={onToggle}
           onDelete={onDelete}

@@ -3,6 +3,9 @@ export interface AutomationSummary {
   name: string;
   description?: string;
   schedule: string;
+  /** The schedule's type; `none` when nothing fires it unattended. */
+  scheduleType?: "cron" | "interval" | "event" | "once" | "none";
+  kind?: "saved" | "oneoff";
   enabled: boolean;
   source: string;
   runCount: number;
@@ -20,7 +23,8 @@ export interface AutomationDetail {
   name: string;
   description?: string;
   prompt: string;
-  schedule: Record<string, unknown>;
+  /** Absent: no schedule (manual only). */
+  schedule?: Record<string, unknown>;
   scheduleHuman: string;
   enabled: boolean;
   source: "user" | "agent";

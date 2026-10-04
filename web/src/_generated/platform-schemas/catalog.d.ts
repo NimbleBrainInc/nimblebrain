@@ -95,7 +95,7 @@ export declare const PlatformToolCatalog: {
         readonly report: {
             readonly input: import("@sinclair/typebox").TObject<{
                 scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
-                period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
+                period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "week" | "month">>;
                 from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "workspace" | "day" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "workspace" | "day" | "conversation" | "turn" | "origin" | "provider">>]>>;
@@ -135,10 +135,11 @@ export declare const PlatformToolCatalog: {
                 manifest: import("@sinclair/typebox").TObject<{
                     name: import("@sinclair/typebox").TString;
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                    schedule: import("@sinclair/typebox").TObject<{
-                        type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event">;
+                    schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                        type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
                         expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                         match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                             source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -147,7 +148,7 @@ export declare const PlatformToolCatalog: {
                         }>>;
                         debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                         maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    }>;
+                    }>>;
                     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
                     skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -160,6 +161,7 @@ export declare const PlatformToolCatalog: {
                         maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                         period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
                     }>>;
+                    kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
                 }>;
                 body: import("@sinclair/typebox").TString;
             }>;
@@ -169,10 +171,11 @@ export declare const PlatformToolCatalog: {
                 name: import("@sinclair/typebox").TString;
                 manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                     description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                    schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-                        type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event">;
+                    schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+                        type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
                         expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                         intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                         match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                             source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -181,7 +184,7 @@ export declare const PlatformToolCatalog: {
                         }>>;
                         debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                         maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-                    }>>;
+                    }>, import("@sinclair/typebox").TNull]>>;
                     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
                     skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                     model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -207,6 +210,7 @@ export declare const PlatformToolCatalog: {
             readonly input: import("@sinclair/typebox").TObject<{
                 enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"agent" | "user">>;
+                kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff" | "all">>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
                 cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
@@ -222,6 +226,7 @@ export declare const PlatformToolCatalog: {
                 automationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled">>;
                 since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             }>;
         };
@@ -274,7 +279,7 @@ export declare const PlatformToolCatalog: {
         };
         readonly stats: {
             readonly input: import("@sinclair/typebox").TObject<{
-                period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
+                period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "week" | "month">>;
             }>;
         };
         readonly export: {

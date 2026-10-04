@@ -6,8 +6,14 @@
  * has exactly one definition:
  *
  *   workspaces/<wsId>/automations/<ownerId>/<automationId>.json              the definition (one bare Automation)
- *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index.jsonl  run summaries (append-only, pruned at MAX_RUN_LINES)
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index.jsonl  the newest MAX_RUN_LINES run summaries (hot window)
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index-YYYY-MM.jsonl  older summaries, by start month (UTC)
  *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  the run's deliverable
+ *
+ * Run history is kept indefinitely. The hot index stays bounded so every
+ * append, recent-run read, and event fire check reads a small file; lines past
+ * the window roll into month segments, which are read only by a paged read
+ * that asks for older runs ({@link readRunsPage}).
  *
  * A run is NOT a conversation: it leaves a `AutomationRunResult` sidecar (final
  * output, activity log, output-file refs) under its `runs/` subtree.
@@ -31,8 +37,10 @@ import {
   automationFilePath,
   automationRunIndexPath,
   automationRunResultPath,
+  automationRunSegmentPath,
   automationRunsDir,
   parseAutomationPath,
+  parseRunSegmentFileName,
   validateAutomationId,
   workspaceAutomationsDir,
 } from "./paths.ts";
@@ -42,7 +50,8 @@ import type { Automation, AutomationRun, AutomationRunResult } from "./types.ts"
 // Constants
 // ---------------------------------------------------------------------------
 
-const MAX_RUN_LINES = 1000;
+/** Run summaries the hot `index.jsonl` holds; older ones roll into month segments. */
+export const MAX_RUN_LINES = 1000;
 const WORKSPACES_SEGMENT = "workspaces";
 const AUTOMATIONS_SEGMENT = "automations";
 const RUNS_SEGMENT = "runs";
@@ -219,12 +228,29 @@ export function loadAllAutomations(workDir: string): Automation[] {
 }
 
 // ---------------------------------------------------------------------------
-// Runs — runs/<automationId>/index.jsonl (append-only)
+// Runs — runs/<automationId>/index.jsonl (hot) + index-YYYY-MM.jsonl (segments)
 // ---------------------------------------------------------------------------
 
+/** The month (`YYYY-MM`, UTC) a run summary line belongs to: its run's start month. */
+function segmentMonthOf(line: string, fallbackMs: number): string {
+  let ms = Number.NaN;
+  try {
+    ms = new Date((JSON.parse(line) as AutomationRun).startedAt).getTime();
+  } catch {
+    // malformed line: kept, in the month it rolled over
+  }
+  return new Date(Number.isFinite(ms) ? ms : fallbackMs).toISOString().slice(0, 7);
+}
+
 /**
- * Append a run summary to the automation's JSONL index. Creates directories and
- * file if missing; prunes oldest lines when the file exceeds MAX_RUN_LINES.
+ * Append a run summary to the automation's hot index. Creates directories and
+ * the file if missing. When the hot index passes MAX_RUN_LINES, the oldest
+ * lines roll into the month segments of the runs they record; nothing is
+ * deleted, and result sidecars stay where they are.
+ *
+ * Segments are appended before the hot index is rewritten, so a crash between
+ * the two can repeat a line in a segment but never lose one; the paged reader
+ * drops repeated ids.
  */
 export function appendRun(
   workDir: string,
@@ -239,26 +265,28 @@ export function appendRun(
 
   appendFileSync(filePath, `${JSON.stringify(run)}\n`);
 
-  // Prune if over limit. Drop the oldest summary lines AND their result
-  // sidecars together, so the run dir's total size stays bounded — not just the
-  // index (an unpruned pile of `<runId>.result.json` would defeat the cap).
   const content = readFileSync(filePath, "utf-8").trimEnd();
   const lines = content.split("\n");
-  if (lines.length > MAX_RUN_LINES) {
-    const dropped = lines.slice(0, lines.length - MAX_RUN_LINES);
-    const trimmed = lines.slice(lines.length - MAX_RUN_LINES);
-    writeFileSync(filePath, `${trimmed.join("\n")}\n`);
-    for (const line of dropped) {
-      try {
-        const old = JSON.parse(line) as AutomationRun;
-        if (old.id) {
-          unlinkSync(automationRunResultPath(workDir, wsId, ownerId, automationId, old.id));
-        }
-      } catch {
-        // malformed line, or the sidecar is missing/already gone — best-effort
-      }
-    }
+  if (lines.length <= MAX_RUN_LINES) return;
+
+  const rolled = lines.slice(0, lines.length - MAX_RUN_LINES);
+  const kept = lines.slice(lines.length - MAX_RUN_LINES);
+  const byMonth = new Map<string, string[]>();
+  const now = Date.now();
+  for (const line of rolled) {
+    if (!line) continue;
+    const month = segmentMonthOf(line, now);
+    const group = byMonth.get(month);
+    if (group) group.push(line);
+    else byMonth.set(month, [line]);
   }
+  for (const [month, group] of byMonth) {
+    appendFileSync(
+      automationRunSegmentPath(workDir, wsId, ownerId, automationId, month),
+      `${group.join("\n")}\n`,
+    );
+  }
+  atomicWrite(filePath, `${kept.join("\n")}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -269,22 +297,19 @@ export interface ReadRunsOptions {
   limit?: number;
   since?: string; // ISO timestamp
   status?: AutomationRun["status"];
+  /**
+   * ISO timestamp: only runs started before it, read a page at a time back
+   * through the month segments ({@link readRunsPage}). Absent: the hot index
+   * alone.
+   */
+  before?: string;
 }
 
-/** Read run history for a single automation. Newest first, with optional filters. */
-export function readRuns(
-  workDir: string,
-  wsId: string,
-  ownerId: string,
-  automationId: string,
-  opts?: ReadRunsOptions,
-): AutomationRun[] {
-  const filePath = automationRunIndexPath(workDir, wsId, ownerId, automationId);
+/** Parse a JSONL run index; a missing or empty file reads as no runs. Malformed lines are skipped. */
+function readIndexFile(filePath: string): AutomationRun[] {
   if (!existsSync(filePath)) return [];
-
   const content = readFileSync(filePath, "utf-8").trimEnd();
   if (!content) return [];
-
   const runs: AutomationRun[] = [];
   for (const line of content.split("\n")) {
     try {
@@ -293,14 +318,169 @@ export function readRuns(
       // skip malformed
     }
   }
+  return runs;
+}
 
+/**
+ * Read run history for a single automation from its hot index: the newest
+ * MAX_RUN_LINES runs, newest first, with optional filters. With `before`, a
+ * paged read that also walks the month segments ({@link readRunsPage}).
+ */
+export function readRuns(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  opts?: ReadRunsOptions,
+): AutomationRun[] {
+  if (opts?.before !== undefined) {
+    return readRunsPage(workDir, wsId, ownerId, automationId, opts).runs;
+  }
+  const runs = readIndexFile(automationRunIndexPath(workDir, wsId, ownerId, automationId));
   runs.reverse(); // newest first
   return applyFilters(runs, opts);
 }
 
+/** Months (`YYYY-MM`) that have a run-index segment for the automation, newest first. */
+export function listRunSegmentMonths(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(automationRunsDir(workDir, wsId, ownerId, automationId));
+  } catch {
+    return [];
+  }
+  const months: string[] = [];
+  for (const name of names) {
+    const month = parseRunSegmentFileName(name);
+    if (month) months.push(month);
+  }
+  return months.sort().reverse();
+}
+
+/** Epoch ms of the first instant after `month` (`YYYY-MM`, UTC). */
+function monthEndMs(month: string): number {
+  const [y, m] = month.split("-").map(Number);
+  return Date.UTC(y!, m!, 1);
+}
+
+const startedMs = (r: AutomationRun) => new Date(r.startedAt).getTime();
+
+/**
+ * Read segments (`months`, newest first) into `picked` through `read` until no
+ * unread one can hold a run the page needs. Returns how many segments that
+ * might still hold matching runs were left unread.
+ */
+function walkSegments(
+  months: string[],
+  bounds: { beforeMs: number; sinceMs: number; limit: number },
+  picked: AutomationRun[],
+  read: (month: string) => void,
+): number {
+  let unread = months.length;
+  for (const month of months) {
+    const end = monthEndMs(month);
+    // Wholly before `since`: so is every older segment.
+    if (end <= bounds.sinceMs) return 0;
+    const start = Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 1);
+    if (start >= bounds.beforeMs) {
+      unread--;
+      continue;
+    }
+    // Full with runs newer than anything this segment (or an older one) holds.
+    if (picked.filter((r) => startedMs(r) >= end).length >= bounds.limit) break;
+    read(month);
+    unread--;
+  }
+  return unread;
+}
+
+export interface RunsPage {
+  /** Newest first. */
+  runs: AutomationRun[];
+  /**
+   * Pass as `before` for the next older page; absent when nothing older
+   * remains. A page that would end inside a group of runs sharing one start
+   * time takes the whole group, so the cursor never splits it.
+   */
+  nextBefore?: string;
+}
+
+/**
+ * One page of an automation's run history, newest first.
+ *
+ * Without `opts.before` it is the first page, read from the hot index alone,
+ * so it costs what {@link readRuns} costs; `nextBefore` is set when the hot
+ * index holds more matches or any segment exists (a directory listing, not a
+ * read). With `before`, it is runs started before it, across the hot index and
+ * the month segments.
+ *
+ * Reads the hot index, then segments newest month first, and stops as soon as
+ * the page is full of runs newer than every unread segment can hold: a segment
+ * for month M holds only runs started in M, so a page whose last run started
+ * after M ends needs nothing from it. A segment whose month starts after
+ * `before` is skipped unread.
+ */
+export function readRunsPage(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  opts: ReadRunsOptions = {},
+): RunsPage {
+  const limit = Math.max(1, opts.limit ?? 20);
+  const beforeMs = opts.before !== undefined ? new Date(opts.before).getTime() : Infinity;
+  if (Number.isNaN(beforeMs)) throw new Error(`Invalid before timestamp: "${opts.before}"`);
+  const sinceMs = opts.since !== undefined ? new Date(opts.since).getTime() : -Infinity;
+  const seen = new Set<string>();
+  const picked: AutomationRun[] = [];
+  const take = (runs: AutomationRun[]) => {
+    for (const r of runs) {
+      const t = startedMs(r);
+      if (!(t < beforeMs) || t < sinceMs) continue;
+      if (opts.status && r.status !== opts.status) continue;
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      picked.push(r);
+    }
+  };
+
+  take(readIndexFile(automationRunIndexPath(workDir, wsId, ownerId, automationId)));
+  const months = listRunSegmentMonths(workDir, wsId, ownerId, automationId);
+  // The first page reads no segment; a later one walks them newest first.
+  const unread =
+    opts.before === undefined
+      ? months.length
+      : walkSegments(months, { beforeMs, sinceMs, limit }, picked, (month) =>
+          take(
+            readIndexFile(automationRunSegmentPath(workDir, wsId, ownerId, automationId, month)),
+          ),
+        );
+
+  picked.sort((a, b) => startedMs(b) - startedMs(a));
+  let cut = Math.min(limit, picked.length);
+  // Never split a group of runs that share a start time across pages.
+  while (
+    cut > 0 &&
+    cut < picked.length &&
+    startedMs(picked[cut]!) === startedMs(picked[cut - 1]!)
+  ) {
+    cut++;
+  }
+  const runs = picked.slice(0, cut);
+  const more = cut < picked.length || unread > 0;
+  const last = runs[runs.length - 1];
+  return more && last ? { runs, nextBefore: last.startedAt } : { runs };
+}
+
 /**
  * Read runs across every automation owned by `ownerId` in `wsId`. Newest first,
- * with optional filters.
+ * with optional filters. Reads each automation's hot index; with `before`,
+ * pages back through each one's segments.
  */
 export function readAllRuns(
   workDir: string,
@@ -325,20 +505,14 @@ export function readAllRuns(
     } catch {
       continue; // skip stray dirs that aren't valid automation ids
     }
-    const filePath = automationRunIndexPath(workDir, wsId, ownerId, id);
-    if (!existsSync(filePath)) continue;
-    const content = readFileSync(filePath, "utf-8").trimEnd();
-    if (!content) continue;
-    for (const line of content.split("\n")) {
-      try {
-        allRuns.push(JSON.parse(line) as AutomationRun);
-      } catch {
-        // skip malformed
-      }
+    if (opts?.before !== undefined) {
+      allRuns.push(...readRunsPage(workDir, wsId, ownerId, id, opts).runs);
+      continue;
     }
+    allRuns.push(...readIndexFile(automationRunIndexPath(workDir, wsId, ownerId, id)));
   }
 
-  allRuns.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+  allRuns.sort((a, b) => startedMs(b) - startedMs(a));
   allRuns = applyFilters(allRuns, opts);
   return allRuns;
 }

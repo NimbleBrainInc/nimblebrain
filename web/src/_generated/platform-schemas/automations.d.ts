@@ -25,10 +25,11 @@ export declare const AutomationsCreateInput: import("@sinclair/typebox").TObject
     manifest: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        schedule: import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event">;
+        schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -37,7 +38,7 @@ export declare const AutomationsCreateInput: import("@sinclair/typebox").TObject
             }>>;
             debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        }>;
+        }>>;
         enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -50,6 +51,7 @@ export declare const AutomationsCreateInput: import("@sinclair/typebox").TObject
             maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
         }>>;
+        kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
     }>;
     body: import("@sinclair/typebox").TString;
 }>;
@@ -58,10 +60,11 @@ export declare const AutomationsUpdateInput: import("@sinclair/typebox").TObject
     name: import("@sinclair/typebox").TString;
     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event">;
+        schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -70,7 +73,7 @@ export declare const AutomationsUpdateInput: import("@sinclair/typebox").TObject
             }>>;
             debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        }>>;
+        }>, import("@sinclair/typebox").TNull]>>;
         enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -94,6 +97,7 @@ export type AutomationsDeleteInput = Static<typeof AutomationsDeleteInput>;
 export declare const AutomationsListInput: import("@sinclair/typebox").TObject<{
     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"agent" | "user">>;
+    kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff" | "all">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -107,6 +111,7 @@ export declare const AutomationsRunsInput: import("@sinclair/typebox").TObject<{
     automationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type AutomationsRunsInput = Static<typeof AutomationsRunsInput>;
@@ -141,7 +146,11 @@ export interface AutomationSummary {
     id: string;
     name: string;
     description?: string;
+    /** Human-readable trigger, e.g. "Daily at 8:00 AM HST", "Once at …", "Manual only". */
     schedule: string;
+    /** The schedule's type, or `none` when nothing fires it unattended. */
+    scheduleType: "cron" | "interval" | "event" | "once" | "none";
+    kind: "saved" | "oneoff";
     enabled: boolean;
     source: "user" | "agent";
     runCount: number;
@@ -254,9 +263,10 @@ export interface AutomationTokenBudget {
  * Schedule spec block on a stored automation. Mirror of `ScheduleSpec`.
  */
 export interface AutomationScheduleSpec {
-    type: "cron" | "interval" | "event";
+    type: "cron" | "interval" | "event" | "once";
     expression?: string;
     timezone?: string;
+    at?: string;
     intervalMs?: number;
     match?: NotificationRouteMatch;
     debounceMs?: number;
@@ -274,7 +284,8 @@ export interface AutomationStatusDetail {
     name: string;
     description?: string;
     prompt: string;
-    schedule: AutomationScheduleSpec;
+    schedule?: AutomationScheduleSpec;
+    kind?: "saved" | "oneoff";
     scheduleHuman: string;
     enabled: boolean;
     source: "user" | "agent";
@@ -313,6 +324,11 @@ export interface AutomationsStatusOutput {
 export interface AutomationsRunsOutput {
     runs: AutomationRunRecord[];
     total: number;
+    /**
+     * Pass as `before` for the next older page of one automation's history;
+     * absent when nothing older remains (or when runs span every automation).
+     */
+    nextBefore?: string;
 }
 /**
  * Discriminated union — `handleRun` returns one of two shapes:
@@ -385,7 +401,8 @@ export interface AutomationRecord {
     name: string;
     description?: string;
     prompt: string;
-    schedule: AutomationScheduleSpec;
+    schedule?: AutomationScheduleSpec;
+    kind?: "saved" | "oneoff";
     skill?: string;
     allowedTools?: string[];
     maxIterations?: number;

@@ -5,6 +5,7 @@ import {
   automationFilePath,
   automationRunIndexPath,
   automationRunResultPath,
+  automationRunSegmentPath,
   automationRunsDir,
   workspaceAutomationsDir,
 } from "../../../../src/platform/automations/paths.ts";
@@ -12,12 +13,15 @@ import {
   appendRun,
   deleteAutomation,
   deleteAutomationDefinition,
+  listRunSegmentMonths,
   loadAllAutomations,
   loadAutomation,
   loadOwnerAutomations,
+  MAX_RUN_LINES,
   readAllRuns,
   readRunResult,
   readRuns,
+  readRunsPage,
   saveAutomation,
   saveRunResult,
 } from "../../../../src/platform/automations/store.ts";
@@ -282,91 +286,154 @@ describe("run results", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Pruning
+// Rollover
 // ---------------------------------------------------------------------------
 
-describe("pruning", () => {
-  test("prunes oldest when exceeding 1000 lines", () => {
-    const filePath = automationRunIndexPath(TMP_DIR, WS, OWNER, "prune-test");
-    mkdirSync(automationRunsDir(TMP_DIR, WS, OWNER, "prune-test"), { recursive: true });
+describe("rollover — history is kept", () => {
+  const ID = "roll-test";
+  const JAN = Date.parse("2025-01-01T00:00:00Z");
 
+  /** Seed a full hot index: MAX_RUN_LINES runs one second apart from Jan 1. */
+  function seedFullIndex(): void {
+    mkdirSync(automationRunsDir(TMP_DIR, WS, OWNER, ID), { recursive: true });
     const lines: string[] = [];
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < MAX_RUN_LINES; i++) {
       lines.push(
         JSON.stringify(
           makeRun({
             id: `run_${String(i).padStart(4, "0")}`,
-            automationId: "prune-test",
-            startedAt: new Date(Date.parse("2025-01-01T00:00:00Z") + i * 1000).toISOString(),
+            automationId: ID,
+            startedAt: new Date(JAN + i * 1000).toISOString(),
           }),
         ),
       );
     }
-    writeFileSync(filePath, `${lines.join("\n")}\n`);
+    writeFileSync(automationRunIndexPath(TMP_DIR, WS, OWNER, ID), `${lines.join("\n")}\n`);
+  }
 
-    appendRun(
-      TMP_DIR,
-      WS,
-      OWNER,
-      "prune-test",
-      makeRun({
-        id: "run_1000",
-        automationId: "prune-test",
-        startedAt: "2025-02-01T00:00:00.000Z",
-      }),
-    );
+  function append(id: string, startedAt: string): void {
+    appendRun(TMP_DIR, WS, OWNER, ID, makeRun({ id, automationId: ID, startedAt }));
+  }
 
-    const resultLines = readFileSync(filePath, "utf-8").trimEnd().split("\n");
-    expect(resultLines.length).toBe(1000);
+  test("moves lines past the hot window into the month segment instead of deleting them", () => {
+    seedFullIndex();
+    append("run_1000", "2025-02-01T00:00:00.000Z");
 
-    const parsed = resultLines.map((l) => JSON.parse(l) as AutomationRun);
-    expect(parsed.find((r) => r.id === "run_0000")).toBeUndefined();
-    expect(parsed.find((r) => r.id === "run_1000")).toBeDefined();
+    const hot = readFileSync(automationRunIndexPath(TMP_DIR, WS, OWNER, ID), "utf-8")
+      .trimEnd()
+      .split("\n")
+      .map((l) => JSON.parse(l) as AutomationRun);
+    expect(hot.length).toBe(MAX_RUN_LINES);
+    expect(hot.find((r) => r.id === "run_0000")).toBeUndefined();
+    expect(hot.find((r) => r.id === "run_1000")).toBeDefined();
+
+    const segment = readFileSync(
+      automationRunSegmentPath(TMP_DIR, WS, OWNER, ID, "2025-01"),
+      "utf-8",
+    )
+      .trimEnd()
+      .split("\n")
+      .map((l) => JSON.parse(l) as AutomationRun);
+    expect(segment.map((r) => r.id)).toEqual(["run_0000"]);
+    expect(listRunSegmentMonths(TMP_DIR, WS, OWNER, ID)).toEqual(["2025-01"]);
   });
 
-  test("prunes a dropped run's result sidecar alongside the index line", () => {
-    mkdirSync(automationRunsDir(TMP_DIR, WS, OWNER, "prune-test"), { recursive: true });
-    // Seed a full index plus a result sidecar for the oldest run.
-    const lines: string[] = [];
-    for (let i = 0; i < 1000; i++) {
+  test("groups rolled lines by the month each run started in", () => {
+    mkdirSync(automationRunsDir(TMP_DIR, WS, OWNER, ID), { recursive: true });
+    const lines = [
+      makeRun({ id: "run_dec", automationId: ID, startedAt: "2024-12-31T23:59:00.000Z" }),
+      makeRun({ id: "run_jan", automationId: ID, startedAt: "2025-01-01T00:01:00.000Z" }),
+    ].map((r) => JSON.stringify(r));
+    for (let i = 0; i < MAX_RUN_LINES - 1; i++) {
       lines.push(
         JSON.stringify(
-          makeRun({
-            id: `run_${String(i).padStart(4, "0")}`,
-            automationId: "prune-test",
-            startedAt: new Date(Date.parse("2025-01-01T00:00:00Z") + i * 1000).toISOString(),
-          }),
+          makeRun({ id: `run_f${i}`, automationId: ID, startedAt: "2025-02-02T00:00:00.000Z" }),
         ),
       );
     }
+    writeFileSync(automationRunIndexPath(TMP_DIR, WS, OWNER, ID), `${lines.join("\n")}\n`);
+    append("run_new", "2025-02-03T00:00:00.000Z");
+
+    expect(listRunSegmentMonths(TMP_DIR, WS, OWNER, ID)).toEqual(["2025-01", "2024-12"]);
+    expect(
+      readFileSync(automationRunSegmentPath(TMP_DIR, WS, OWNER, ID, "2024-12"), "utf-8"),
+    ).toContain("run_dec");
+    expect(
+      readFileSync(automationRunSegmentPath(TMP_DIR, WS, OWNER, ID, "2025-01"), "utf-8"),
+    ).toContain("run_jan");
+  });
+
+  test("keeps a rolled run's result sidecar", () => {
+    seedFullIndex();
+    saveRunResult(TMP_DIR, WS, OWNER, ID, makeResult({ runId: "run_0000", automationId: ID }));
+    append("run_1000", "2025-02-01T00:00:00.000Z");
+
+    expect(existsSync(automationRunResultPath(TMP_DIR, WS, OWNER, ID, "run_0000"))).toBe(true);
+    expect(readRunResult(TMP_DIR, WS, OWNER, ID, "run_0000")?.output).toBe("The full deliverable.");
+  });
+
+  test("the default read stays on the hot window", () => {
+    seedFullIndex();
+    for (let i = 0; i < 5; i++) append(`run_x${i}`, `2025-02-0${i + 1}T00:00:00.000Z`);
+
+    const runs = readRuns(TMP_DIR, WS, OWNER, ID);
+    expect(runs.length).toBe(MAX_RUN_LINES);
+    expect(runs.find((r) => r.id === "run_0000")).toBeUndefined();
+    // readAllRuns is bounded the same way.
+    expect(readAllRuns(TMP_DIR, WS, OWNER).length).toBe(MAX_RUN_LINES);
+  });
+
+  test("a paged read walks back into the segments, a page at a time", () => {
+    seedFullIndex();
+    for (let i = 0; i < 3; i++) append(`run_x${i}`, `2025-02-0${i + 1}T00:00:00.000Z`);
+
+    // First page: hot only, with a cursor because older runs exist.
+    const first = readRunsPage(TMP_DIR, WS, OWNER, ID, { limit: 2 });
+    expect(first.runs.map((r) => r.id)).toEqual(["run_x2", "run_x1"]);
+    expect(first.nextBefore).toBe("2025-02-02T00:00:00.000Z");
+
+    // Walk every page; every run ever appended comes back exactly once.
+    const seen: string[] = [...first.runs.map((r) => r.id)];
+    let before = first.nextBefore;
+    let pages = 1;
+    while (before) {
+      const page = readRunsPage(TMP_DIR, WS, OWNER, ID, { limit: 250, before });
+      seen.push(...page.runs.map((r) => r.id));
+      before = page.nextBefore;
+      pages++;
+    }
+    expect(pages).toBeGreaterThan(2);
+    expect(new Set(seen).size).toBe(MAX_RUN_LINES + 3);
+    expect(seen).toContain("run_0000");
+    expect(seen.at(-1)).toBe("run_0000");
+  });
+
+  test("readRuns with `before` reaches a run that is only in a segment", () => {
+    seedFullIndex();
+    append("run_1000", "2025-02-01T00:00:00.000Z");
+    const page = readRuns(TMP_DIR, WS, OWNER, ID, {
+      before: new Date(JAN + 1000).toISOString(),
+      limit: 5,
+    });
+    expect(page.map((r) => r.id)).toEqual(["run_0000"]);
+  });
+
+  test("a page of newer runs does not read an older segment", () => {
+    seedFullIndex();
+    for (let i = 0; i < 3; i++) append(`run_x${i}`, `2025-02-0${i + 1}T00:00:00.000Z`);
+    // Plant a marker in the January segment that a read would surface at the
+    // top of the page. The hot window fills the page with runs newer than
+    // anything January can hold, so the walk must stop before reading it.
     writeFileSync(
-      automationRunIndexPath(TMP_DIR, WS, OWNER, "prune-test"),
-      `${lines.join("\n")}\n`,
+      automationRunSegmentPath(TMP_DIR, WS, OWNER, ID, "2025-01"),
+      `${JSON.stringify(makeRun({ id: "run_planted", startedAt: "2025-02-15T00:00:00.000Z" }))}\n`,
     );
-    saveRunResult(
-      TMP_DIR,
-      WS,
-      OWNER,
-      "prune-test",
-      makeResult({ runId: "run_0000", automationId: "prune-test" }),
-    );
-    const oldestSidecar = automationRunResultPath(TMP_DIR, WS, OWNER, "prune-test", "run_0000");
-    expect(existsSync(oldestSidecar)).toBe(true);
-
-    // Appending a 1001st run drops run_0000 from the index — its sidecar goes too.
-    appendRun(
-      TMP_DIR,
-      WS,
-      OWNER,
-      "prune-test",
-      makeRun({
-        id: "run_1000",
-        automationId: "prune-test",
-        startedAt: "2025-02-01T00:00:00.000Z",
-      }),
-    );
-
-    expect(existsSync(oldestSidecar)).toBe(false);
+    const page = readRunsPage(TMP_DIR, WS, OWNER, ID, {
+      limit: 3,
+      before: "2025-03-01T00:00:00.000Z",
+    });
+    expect(page.runs.map((r) => r.id)).toEqual(["run_x2", "run_x1", "run_x0"]);
+    expect(page.nextBefore).toBe(page.runs[2]!.startedAt);
   });
 });
 
