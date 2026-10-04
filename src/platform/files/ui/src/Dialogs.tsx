@@ -78,9 +78,12 @@ export function NameDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const trimmed = name.trim();
+  // One rule for the button and for Enter: a name, and no '/' (paths use it).
+  const valid = trimmed.length > 0 && !trimmed.includes("/");
+
   async function submit() {
-    const trimmed = name.trim();
-    if (!trimmed || busy) return;
+    if (!valid || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -95,34 +98,29 @@ export function NameDialog({
 
   return (
     <Modal title={title} onClose={onClose}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
+      {/* No <form>: the host's sandbox withholds allow-forms, so a submit is
+          blocked before any handler runs. Enter and the button call `submit`. */}
+      <input
+        className="text-input"
+        aria-label="Folder name"
+        value={name}
+        maxLength={255}
+        onChange={(e) => setName(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          // An Enter that commits an IME composition is not a submit.
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) submit();
         }}
-      >
-        <input
-          className="text-input"
-          aria-label="Folder name"
-          value={name}
-          maxLength={255}
-          onChange={(e) => setName(e.target.value)}
-          onFocus={(e) => e.currentTarget.select()}
-        />
-        {error && <div className="modal-error">{error}</div>}
-        <div className="modal-actions">
-          <button type="button" className="btn-ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="btn-primary"
-            disabled={busy || !name.trim() || name.includes("/")}
-          >
-            {busy ? "Saving…" : submitLabel}
-          </button>
-        </div>
-      </form>
+      />
+      {error && <div className="modal-error">{error}</div>}
+      <div className="modal-actions">
+        <button type="button" className="btn-ghost" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="btn-primary" disabled={busy || !valid} onClick={submit}>
+          {busy ? "Saving…" : submitLabel}
+        </button>
+      </div>
     </Modal>
   );
 }
