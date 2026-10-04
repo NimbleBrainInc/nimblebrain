@@ -317,7 +317,7 @@ In the Tasks panel, batches are listed in their own section with their progress,
 
 ### If the runtime restarts
 
-A batch's record and its items are kept beside the task's runs. When the runtime starts, every unfinished batch is reconciled from its items: an item whose run was still queued is asked for again (its old run is recorded `skipped`), an item whose run was in flight is recorded `failed`, since the run ended with the process, and is picked up by **Re-run failed**. Counts and cost are rebuilt, and running batches carry on. The budget's balance is rebuilt from what the batch's recorded runs cost, so spend by a run that was in flight when the process died is not counted against it.
+A batch's record and its items are kept beside the task's runs. When the runtime starts, every unfinished batch is reconciled from its items: an item whose run was still queued is asked for again (its old run is recorded `skipped`), an item whose run was in flight is recorded `failed`, since the run ended with the process (`cancelled` when the runtime stopped cleanly and stopped the run), and is picked up by **Re-run failed**. Counts and cost are rebuilt, and running batches carry on. The budget's balance is rebuilt from what the batch's recorded runs cost, so spend by a run that was in flight when the process died is not counted against it.
 
 ## What's next
 

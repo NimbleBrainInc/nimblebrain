@@ -746,7 +746,10 @@ export const TasksBatchInput = Type.Object(
   {
     batchId: BatchIdField,
     results: Type.Optional(
-      Type.Boolean({ description: "true: include item results, a page at a time." }),
+      Type.Boolean({
+        description:
+          "true: include item results, a page at a time. A verdict, cursor, or limit also asks for them.",
+      }),
     ),
     verdict: Type.Optional(BatchResultFilter),
     cursor: Type.Optional(
