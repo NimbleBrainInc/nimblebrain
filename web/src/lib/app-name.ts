@@ -2,9 +2,11 @@ import type { PlacementEntry } from "../types";
 
 /**
  * The name the shell shows for an app, wherever it shows one: an installed
- * connector's catalog title, else the label of its first sidebar view (the
- * built-in apps, such as Files), else its server name. One rule, so an app's
- * notice reads the same from its page and from a chat, and matches the sidebar.
+ * connector's display name (the server resolves it to the catalog title, else
+ * the server name), else, for an app that is not installed (the built-ins, such
+ * as Files), the label of its first sidebar view, else its server name. One
+ * rule, so an app's notice reads the same from its page and from a chat, and
+ * matches the sidebar.
  *
  * Never a name the app sends: a notice's label says who raised it, so it comes
  * from the bundle's manifest and the catalog, not from the message.

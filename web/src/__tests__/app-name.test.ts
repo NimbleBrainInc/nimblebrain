@@ -1,5 +1,6 @@
 // An app's notice is labelled with the name the sidebar shows for it, from its
-// page and from a chat alike: catalog title, else sidebar label, else server name.
+// page and from a chat alike: an installed connector's display name, else a
+// built-in's sidebar label, else server name.
 
 import { describe, expect, test } from "bun:test";
 import { appDisplayName } from "../lib/app-name";
