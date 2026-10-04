@@ -9,9 +9,9 @@
 //   4. The same trail's ancestors form a breadcrumb; each asks the app for its
 //      own entry. Past three ancestors the middle folds, root and parent stay.
 //   5. Chat sits in the bar on workspace routes only, where chat exists.
-//   6. The inbox's bell sits left of Chat on workspace routes, links to the
-//      focused workspace's inbox, and shows a dot only while something is
-//      unread, the count in its accessible name.
+//   6. The inbox's bell sits left of Chat on workspace routes and shows a dot
+//      only while something is unread, the count in its accessible name. What
+//      it opens is pinned in inbox-preview.test.tsx.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -227,12 +227,10 @@ describe("TopBar", () => {
     expect(byTestId("chat-chrome-open-button")).toBeUndefined();
   });
 
-  test("the bell sits left of Chat and links to the focused workspace's inbox", async () => {
+  test("the bell sits left of Chat on workspace routes", async () => {
     await mountBar("/w/000f7ed6658f9d30/");
     const bell = byTestId("top-bar-inbox");
-    expect(bell?.getAttribute("href")).toBe("/w/000f7ed6658f9d30/notifications");
     expect(bell?.getAttribute("aria-label")).toBe("Inbox");
-    expect(bell?.getAttribute("aria-current")).toBeNull();
     expect(byTestId("top-bar-inbox-dot")).toBeUndefined();
     const chat = byTestId("chat-chrome-open-button");
     expect(bell && chat && bell.compareDocumentPosition(chat)).toBe(
@@ -249,10 +247,5 @@ describe("TopBar", () => {
     await mountBar("/w/000f7ed6658f9d30/", 3);
     expect(byTestId("top-bar-inbox-dot")).toBeDefined();
     expect(byTestId("top-bar-inbox")?.getAttribute("aria-label")).toBe("Inbox, 3 unread");
-  });
-
-  test("on the inbox, the bell is the current page", async () => {
-    await mountBar("/w/000f7ed6658f9d30/notifications");
-    expect(byTestId("top-bar-inbox")?.getAttribute("aria-current")).toBe("page");
   });
 });
