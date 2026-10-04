@@ -1072,6 +1072,9 @@ export class Scheduler {
     const input: RunInput | undefined =
       requested?.input !== undefined ? { data: requested.input } : undefined;
     const admitted = this.admit(key, "manual", input, requested);
+    // Only an admitted run claims its idempotency key: a refused attempt
+    // leaves the key free, so the same call retried later runs.
+    if (requested && admitted.state !== "refused") this.recordKey(auto, requested);
     if (admitted.state === "started") {
       const run = this.dispatchRun(auto, "manual", input, admitted.lease, requested);
       return { state: "started", run: this.trackOpen(key, requested, run) };
@@ -1088,20 +1091,24 @@ export class Scheduler {
     };
   }
 
-  /** Write a requested run's first ticket (queued) and the idempotency key it was asked with. */
+  /** Record that a requested run admitted (started or queued) claims its idempotency key. */
+  private recordKey(auto: Automation, requested: RequestedRun): void {
+    const { workspaceId: wsId, ownerId } = auto;
+    if (!wsId || !ownerId || requested.idempotencyKey === undefined) return;
+    saveIdempotencyKey(
+      this.config.workDir,
+      wsId,
+      ownerId,
+      auto.id,
+      requested.idempotencyKey,
+      requested.runId,
+    );
+  }
+
+  /** Write a requested run's first ticket (queued). */
   private openTicket(auto: Automation, requested: RequestedRun): void {
     const { workspaceId: wsId, ownerId } = auto;
     if (!wsId || !ownerId) return;
-    if (requested.idempotencyKey !== undefined) {
-      saveIdempotencyKey(
-        this.config.workDir,
-        wsId,
-        ownerId,
-        auto.id,
-        requested.idempotencyKey,
-        requested.runId,
-      );
-    }
     this.writeTicket(wsId, ownerId, auto.id, requested, {
       id: requested.runId,
       automationId: auto.id,

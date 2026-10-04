@@ -977,7 +977,47 @@ function oneoffId(idempotencyKey: string | undefined): string {
   return `oneoff-${token}`;
 }
 
-/** Find or create the `oneoff` automation an inline `automations__run` names. */
+/** The fields of a one-off that make up its definition, for comparing two of them. */
+const ONEOFF_DEFINITION_FIELDS = [
+  "prompt",
+  "skill",
+  "inputSchema",
+  "outputSchema",
+  "allowedTools",
+  "maxIterations",
+  "maxInputTokens",
+  "maxRunDurationMs",
+  "tokenBudget",
+] as const;
+
+/** JSON with object keys sorted and undefined dropped, so equal definitions compare equal. */
+function canonicalJson(value: unknown): string {
+  const normalize = (v: unknown): unknown => {
+    if (v === null || typeof v !== "object") return v;
+    if (Array.isArray(v)) return v.map(normalize);
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v).sort()) {
+      const field = (v as Record<string, unknown>)[k];
+      if (field !== undefined) out[k] = normalize(field);
+    }
+    return out;
+  };
+  return JSON.stringify(normalize(value)) ?? "null";
+}
+
+function oneoffDefinition(
+  source: Partial<Pick<Automation, (typeof ONEOFF_DEFINITION_FIELDS)[number]>>,
+): string {
+  return canonicalJson(Object.fromEntries(ONEOFF_DEFINITION_FIELDS.map((f) => [f, source[f]])));
+}
+
+/**
+ * Find or create the `oneoff` automation an inline `automations__run` names.
+ * The definition and the run's input are checked before anything is written,
+ * so a refused call leaves no one-off behind. A key that already names a
+ * one-off with a different definition is refused rather than run against the
+ * old one.
+ */
 function ensureOneoff(args: RunArgs, ctx: ToolContext): Automation {
   if (!args.prompt && !args.skill) {
     throw new Error(
@@ -996,17 +1036,35 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Automation {
   const prompt =
     args.prompt ??
     `Carry out the "${args.skill}" skill on this run's input, and give its result as the deliverable.`;
+  const definition = {
+    prompt,
+    ...(args.skill ? { skill: args.skill } : {}),
+    ...(args.inputSchema ? { inputSchema: args.inputSchema } : {}),
+    ...(args.outputSchema ? { outputSchema: args.outputSchema } : {}),
+    ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
+    ...limits,
+    ...(args.budget ? { tokenBudget: args.budget } : {}),
+  };
+
+  checkRunInput(id, args.inputSchema, args.input);
+
+  const existing = ctx.definitions().get(id);
+  if (existing) {
+    if (oneoffDefinition(existing) !== oneoffDefinition(definition)) {
+      throw new Error(
+        "idempotencyKey reused with a different definition: this key already started a one-off " +
+          "with another prompt, skill, schema, tools, limits, or budget. Use a new key for a new " +
+          "definition, or repeat the original definition to get its run.",
+      );
+    }
+    return existing;
+  }
+
   const { automation } = createAutomation(
     {
       name: id,
-      prompt,
       kind: "oneoff",
-      ...(args.skill ? { skill: args.skill } : {}),
-      ...(args.inputSchema ? { inputSchema: args.inputSchema } : {}),
-      ...(args.outputSchema ? { outputSchema: args.outputSchema } : {}),
-      ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
-      ...limits,
-      ...(args.budget ? { tokenBudget: args.budget } : {}),
+      ...definition,
       source: "agent",
       ownerId: ctx.currentUserId,
       workspaceId: ctx.currentWorkspaceId,
@@ -1016,16 +1074,15 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Automation {
   return automation;
 }
 
-/** Refuse a run input that is too large or does not match the automation's `inputSchema`. */
-function checkRunInput(automation: Automation, input: unknown): void {
+/** Refuse a run input that is too large or does not match the `inputSchema` of the automation `name`. */
+function checkRunInput(
+  name: string,
+  inputSchema: Record<string, unknown> | undefined,
+  input: unknown,
+): void {
   if (input === undefined) {
-    if (automation.inputSchema) {
-      const verdict = checkAgainstSchema(automation.inputSchema, null);
-      if (!verdict.valid) {
-        throw new Error(
-          `"${automation.name}" takes an input matching its inputSchema; none was given.`,
-        );
-      }
+    if (inputSchema && !checkAgainstSchema(inputSchema, null).valid) {
+      throw new Error(`"${name}" takes an input matching its inputSchema; none was given.`);
     }
     return;
   }
@@ -1036,11 +1093,11 @@ function checkRunInput(automation: Automation, input: unknown): void {
         "Pass a reference (a file id or URL) instead of the content.",
     );
   }
-  if (!automation.inputSchema) return;
-  const verdict = checkAgainstSchema(automation.inputSchema, input);
+  if (!inputSchema) return;
+  const verdict = checkAgainstSchema(inputSchema, input);
   if (!verdict.valid) {
     throw new Error(
-      `input does not match the inputSchema of "${automation.name}": ${verdict.errors.join("; ")}`,
+      `input does not match the inputSchema of "${name}": ${verdict.errors.join("; ")}`,
     );
   }
 }
@@ -1075,11 +1132,11 @@ export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): 
     const found = findByName(ctx.definitions(), args.name);
     if (!found) throw new Error(`Automation not found: "${args.name}"`);
     automation = found;
+    checkRunInput(automation.name, automation.inputSchema, args.input);
   } else {
+    // Checks the input against the inline definition before creating anything.
     automation = ensureOneoff(args, ctx);
   }
-
-  checkRunInput(automation, args.input);
 
   if (key !== undefined) {
     const existing = ctx.findRunByKey?.(automation.id, key);

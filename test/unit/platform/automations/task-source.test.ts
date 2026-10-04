@@ -457,6 +457,79 @@ describe("automations__run as a task", () => {
     scheduler.stop();
   });
 
+  test("a refused run leaves its idempotency key free, so a retry runs", async () => {
+    const { executor, held } = heldExecutor();
+    const { scheduler, source } = harness({ executor });
+    seed("digest");
+    await startTask(source, { name: "digest" });
+
+    // Already running: refused, and the key is not claimed.
+    const refused = await startTask(source, { name: "digest", idempotencyKey: "retry-me" });
+    expect(refused.status).toBe("failed");
+    expect(readIdempotencyKey(workDir, WS, OWNER, "digest", "retry-me")).toBeNull();
+
+    held[0]?.finish("first");
+    await flush();
+    const retried = await startTask(source, { name: "digest", idempotencyKey: "retry-me" });
+    expect(retried.taskId).not.toBe(refused.taskId);
+    expect(retried.status).toBe("working");
+    expect(held).toHaveLength(2);
+
+    // Admitted, so the key now names this run.
+    const repeat = await startTask(source, { name: "digest", idempotencyKey: "retry-me" });
+    expect(repeat.taskId).toBe(retried.taskId);
+    expect(held).toHaveLength(2);
+
+    held[1]?.finish("second");
+    await flush();
+    scheduler.stop();
+  });
+
+  test("an inline run whose input is refused creates no one-off, and a corrected retry runs", async () => {
+    const { executor, held } = heldExecutor();
+    const { scheduler, source } = harness({ executor });
+    const definition = {
+      prompt: "Fetch the page.",
+      inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+      idempotencyKey: "page-1",
+    };
+
+    const refused = await source.startToolAsTask(
+      "run",
+      { ...definition, input: { link: "x" } },
+      { ownerContext: OWNED },
+    );
+    expect("result" in refused && refused.result.isError).toBe(true);
+    expect(loadOwnerAutomations(workDir, WS, OWNER).size).toBe(0);
+
+    const ok = await startTask(source, { ...definition, input: { url: "https://example.com" } });
+    expect(ok.status).toBe("working");
+    expect(loadOwnerAutomations(workDir, WS, OWNER).size).toBe(1);
+
+    held[0]?.finish("page");
+    await flush();
+    scheduler.stop();
+  });
+
+  test("a key reused with a different inline definition is refused", async () => {
+    const { executor, held } = heldExecutor();
+    const { scheduler, source } = harness({ executor });
+    await startTask(source, { prompt: "Version one.", idempotencyKey: "shared" });
+
+    const changed = await source.startToolAsTask(
+      "run",
+      { prompt: "Version two.", idempotencyKey: "shared" },
+      { ownerContext: OWNED },
+    );
+    expect("result" in changed && changed.result.isError).toBe(true);
+    expect(JSON.stringify(changed)).toContain("idempotencyKey reused with a different definition");
+    expect(held).toHaveLength(1);
+
+    held[0]?.finish("one");
+    await flush();
+    scheduler.stop();
+  });
+
   test("is refused inside an unattended run", async () => {
     const { executor, held } = heldExecutor();
     const { scheduler, source, setUnattended } = harness({ executor });
