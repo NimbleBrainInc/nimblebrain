@@ -15,6 +15,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -143,6 +144,12 @@ describe("planFileIdMigration", () => {
     const plan = planFileIdMigration(workDir);
     expect(plan.orphanRefs).toBe(1);
     expect(plan.rewrites.some((r) => r.path.endsWith("t.json"))).toBe(false);
+  });
+  test("skips symlinks, so a link loop neither recurses nor double-counts", () => {
+    symlinkSync("..", join(workDir, "workspaces", "ws_aaaaaaaaaaaaaaaa", "loop"));
+    const plan = planFileIdMigration(workDir);
+    expect(Object.keys(plan.mapping).sort()).toEqual([OLD_A, OLD_B].sort());
+    expect(plan.rewrites.every((r) => !r.path.includes("loop"))).toBe(true);
   });
 });
 

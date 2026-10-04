@@ -5,7 +5,9 @@
  *
  * The runtime serves only the current id form, so a file still on a legacy id
  * is unreachable until this has run. Run it once against a deployed instance's
- * work dir (the runtime's `NB_WORK_DIR`).
+ * work dir (the runtime's `NB_WORK_DIR`), with that instance's runtime stopped
+ * (scaled to 0) for `--apply`: the runtime appends to and rewrites conversation
+ * files, and a write racing the rewrite would be lost or would restore an old id.
  *
  * Usage:
  *   bun run migrate:file-ids <workDir>            # dry-run (default)
@@ -13,7 +15,9 @@
  *   bun run migrate:file-ids <workDir> --apply    # rename and rewrite in place
  *
  * The dry-run prints counts and an anonymised old → new plan, and exits
- * non-zero while anything is pending, so it doubles as a pre-deploy check.
+ * non-zero while anything is pending. A dry-run that prints "Nothing to do" and
+ * exits 0 is the check that the instance is ready for a runtime that serves only
+ * the current id form.
  * `--apply` writes `<workDir>/.migrations/file-ids/mapping.json` (the full
  * old → new audit record) first, backs up each file before rewriting it under
  * `.migrations/file-ids/backups/<run>/`, then rewrites references and renames
@@ -30,9 +34,6 @@ import {
   type FileIdPlan,
   planFileIdMigration,
 } from "./lib/migrate-file-ids.ts";
-import { acquireMigrationLock } from "./lib/migration-lock.ts";
-
-const MIGRATION_NAME = "file-ids";
 
 /** Replace the parts of a path that identify a tenant's workspace, owner, or conversation. */
 function anonymisePath(rel: string): string {
@@ -130,41 +131,33 @@ function main(): void {
     process.exit(1);
   }
 
-  // Dry-run reads only; the lock and every write belong to --apply.
-  const lock = apply ? acquireMigrationLock(workDir, MIGRATION_NAME) : null;
-  try {
-    const plan = planFileIdMigration(workDir);
-    const ids = Object.keys(plan.mapping).length;
-    const pending = plan.minted.length + plan.renames.length + plan.rewrites.length;
+  const plan = planFileIdMigration(workDir);
+  const ids = Object.keys(plan.mapping).length;
+  const pending = plan.minted.length + plan.renames.length + plan.rewrites.length;
 
-    printPlan(plan);
-    console.log(
-      `\n${ids} legacy file id(s) · ${plan.renames.length} rename(s) · ` +
-        `${plan.rewrites.length} file(s) to rewrite · ${plan.errors.length} error(s)`,
-    );
-    if (plan.errors.length > 0) process.exit(1);
+  printPlan(plan);
+  console.log(
+    `\n${ids} legacy file id(s) · ${plan.renames.length} rename(s) · ` +
+      `${plan.rewrites.length} file(s) to rewrite · ${plan.errors.length} error(s)`,
+  );
+  if (plan.errors.length > 0) process.exit(1);
 
-    if (!apply) {
-      console.log(
-        pending > 0 ? "Dry run: nothing written. Re-run with --apply." : "Nothing to do.",
-      );
-      if (pending > 0) process.exit(1);
-      return;
-    }
-    if (pending === 0) {
-      console.log("Nothing to do.");
-      return;
-    }
-    const runId = new Date().toISOString().replace(/[:.]/g, "-");
-    const result = applyFileIdMigration(workDir, plan, runId);
-    console.log(
-      `Applied: ${result.rewritten} file(s) rewritten (${result.refs} reference(s)), ` +
-        `${result.renamed} rename(s). Mapping: .migrations/file-ids/mapping.json · ` +
-        `backups: ${result.backupDir}`,
-    );
-  } finally {
-    lock?.release();
+  if (!apply) {
+    console.log(pending > 0 ? "Dry run: nothing written. Re-run with --apply." : "Nothing to do.");
+    if (pending > 0) process.exit(1);
+    return;
   }
+  if (pending === 0) {
+    console.log("Nothing to do.");
+    return;
+  }
+  const runId = new Date().toISOString().replace(/[:.]/g, "-");
+  const result = applyFileIdMigration(workDir, plan, runId);
+  console.log(
+    `Applied: ${result.rewritten} file(s) rewritten (${result.refs} reference(s)), ` +
+      `${result.renamed} rename(s). Mapping: .migrations/file-ids/mapping.json · ` +
+      `backups: ${result.backupDir}`,
+  );
 }
 
 try {

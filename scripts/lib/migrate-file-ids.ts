@@ -29,12 +29,12 @@
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
   statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
@@ -214,9 +214,11 @@ function* walkFiles(workDir: string, rel = ""): Generator<string> {
   for (const name of listDir(join(workDir, rel))) {
     const child = rel ? join(rel, name) : name;
     const abs = join(workDir, child);
-    let st: ReturnType<typeof statSync>;
+    // lstat, so a symlink is skipped rather than followed: a link loop would
+    // otherwise recurse without end, and a link out of the work dir is not its data.
+    let st: ReturnType<typeof lstatSync>;
     try {
-      st = statSync(abs);
+      st = lstatSync(abs);
     } catch {
       continue;
     }
@@ -321,20 +323,13 @@ export function planFileIdMigration(workDir: string): FileIdPlan {
 }
 
 /**
- * Write `text` over `abs` atomically, keeping its mode. Conversation logs are
- * appended to by the live runtime, so the file is re-checked just before the
- * rename: if it grew since it was read, the caller re-reads and retries rather
- * than drop the appended line.
+ * Write `text` over `abs` atomically, keeping its mode. `--apply` runs with the
+ * runtime stopped, so nothing else writes the file between the read and the rename.
  */
-function replaceIfUnchanged(abs: string, text: string, readSize: number): boolean {
+function replaceFile(abs: string, text: string): void {
   const tmp = `${abs}.${process.pid}.file-ids.tmp`;
   writeFileSync(tmp, text, { mode: statSync(abs).mode & 0o777 });
-  if (statSync(abs).size !== readSize) {
-    unlinkSync(tmp);
-    return false;
-  }
   renameSync(tmp, abs);
-  return true;
 }
 
 export interface ApplyResult {
@@ -372,17 +367,11 @@ export function applyFileIdMigration(
     const backup = join(backupDir, target.path);
     mkdirSync(dirname(backup), { recursive: true });
     copyFileSync(abs, backup);
-    for (let attempt = 0; ; attempt++) {
-      const original = readFileSync(abs, "utf-8");
-      const result = rewriteFileIds(original, byOld);
-      if (result.count === 0) break;
-      if (replaceIfUnchanged(abs, result.text, Buffer.byteLength(original))) {
-        rewritten++;
-        refs += result.count;
-        break;
-      }
-      if (attempt >= 5) throw new Error(`${target.path} kept changing during rewrite`);
-    }
+    const result = rewriteFileIds(readFileSync(abs, "utf-8"), byOld);
+    if (result.count === 0) continue;
+    replaceFile(abs, result.text);
+    rewritten++;
+    refs += result.count;
   }
 
   let renamed = 0;
