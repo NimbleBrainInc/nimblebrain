@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { handleChat, handleChatCancel, handleChatStart, handleChatStream } from "../handlers.ts";
+import { handleChatCancel, handleChatStart } from "../handlers.ts";
 import { requireAuth } from "../middleware/auth.ts";
 import { bodyLimit } from "../middleware/body-limit.ts";
 import { errorLog } from "../middleware/error-log.ts";
@@ -17,7 +17,7 @@ export function chatRoutes(ctx: AppContext) {
   });
   // A chat turn acts from the workspace in its URL. For a new conversation that
   // is the birth workspace; a resume re-resolves the conversation's own
-  // workspace server-side. It flows through `handleChat` into
+  // workspace server-side. It flows through `handleChatStart` into
   // `ChatRequest.workspaceId`, scoping tools and the prompt briefing to that one
   // workspace; the orchestrator's wall denies any other. See
   // `handlers.ts::parseChatBody`.
@@ -29,40 +29,6 @@ export function chatRoutes(ctx: AppContext) {
   const logErrors = errorLog(ctx);
   return (
     new Hono<AppEnv>()
-      .post(
-        `${WORKSPACE_ROUTE_PREFIX}/chat`,
-        auth,
-        logErrors,
-        chatBodyLimit,
-        rl,
-        requireWorkspace(ctx),
-        (c) =>
-          handleChat(
-            c.req.raw,
-            ctx.runtime,
-            ctx.features,
-            c.var.identity,
-            c.var.workspaceId,
-            ctx.conversationEventManager,
-          ),
-      )
-      .post(
-        `${WORKSPACE_ROUTE_PREFIX}/chat/stream`,
-        auth,
-        logErrors,
-        chatBodyLimit,
-        rl,
-        requireWorkspace(ctx),
-        (c) =>
-          handleChatStream(
-            c.req.raw,
-            ctx.runtime,
-            ctx.features,
-            c.var.identity,
-            c.var.workspaceId,
-            ctx.conversationEventManager,
-          ),
-      )
       // Server-authoritative entry point: starts a detached turn and returns
       // the conversation id immediately. The client then watches via
       // GET /v1/conversations/:id/events. Generation survives client disconnect.

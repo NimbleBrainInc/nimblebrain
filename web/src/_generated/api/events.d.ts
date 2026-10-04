@@ -146,8 +146,6 @@ export interface WorkspaceStreamEvents {
 }
 /** The first frame of every subscription. */
 export interface SubscribedEvent {
-    /** Pass as `X-Origin-Subscriber-Id` so a send skips this subscription. */
-    subscriberId: string;
     /** Whether a turn is in flight. */
     isActive: boolean;
     /** The in-flight turn's latest sequence number. */

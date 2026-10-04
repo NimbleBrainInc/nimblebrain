@@ -75,7 +75,7 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 
 /** POST a chat message to the workspace addressed by `wsSegment` (already URL-encoded). */
 function chatAt(wsSegment: string): Promise<Response> {
-  return fetch(`${baseUrl}/v1/workspaces/${wsSegment}/chat`, {
+  return fetch(`${baseUrl}/v1/workspaces/${wsSegment}/chat/start`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ message: "test" }),

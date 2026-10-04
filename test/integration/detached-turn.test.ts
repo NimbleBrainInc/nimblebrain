@@ -71,7 +71,7 @@ describe("detached turns (server-authoritative streaming)", () => {
     expect(events.length).toBeGreaterThan(0);
     // Sequence numbers are monotonic 1..n.
     expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
-    // `done` carries the same body as `POST …/chat`, cost included.
+    // `done` carries the finished turn's `ChatResponse`, cost included.
     const done = events[events.length - 1]?.data as ChatResponse;
     expect(done.conversationId).toBe(conversationId);
     expect(typeof done.inputTokens).toBe("number");

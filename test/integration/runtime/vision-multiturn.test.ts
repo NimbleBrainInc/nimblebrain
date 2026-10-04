@@ -22,6 +22,7 @@ import type {
 } from "@ai-sdk/provider";
 import { type ServerHandle, startServer } from "../../../src/api/server.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
+import { postChatTurn } from "../../helpers/chat-turn.ts";
 import { devProvider } from "../../helpers/dev-provider.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../../helpers/test-workspace.ts";
 
@@ -172,12 +173,8 @@ describe("vision survives the multi-turn agent loop", () => {
     const file = new File([new Uint8Array(PNG_BYTES)], "linkedin.png", { type: "image/png" });
     form.append("files", file);
 
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
-      body: form,
-    });
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, { body: form });
     expect(res.status).toBe(200);
-    await res.text();
 
     // Two iterations: turn 1 (model emits tool call) + turn 2 (model emits final text).
     expect(recorded.prompts.length).toBe(2);

@@ -43,7 +43,7 @@ beforeEach(() => {
     sent.push({ url, headers });
     const body = url.endsWith("/chat/start")
       ? { conversationId: "conv_0000000000000000" }
-      : { placements: [], chatEndpoint: "", eventsEndpoint: "" };
+      : { placements: [], eventsEndpoint: "" };
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { "content-type": "application/json" },

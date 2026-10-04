@@ -97,7 +97,6 @@ const WORKSPACE_ROUTES: Array<{
   body?: () => unknown;
 }> = [
   { router: "chat", method: "POST", suffix: "/chat/start", body: () => ({ message: "hi" }) },
-  { router: "chat", method: "POST", suffix: "/chat", body: () => ({ message: "hi" }) },
   {
     router: "tools",
     method: "POST",
@@ -187,9 +186,8 @@ describe("X-Workspace-Id has no effect on a workspace-scoped route", () => {
       headers: { "X-Workspace-Id": wsB },
     });
     expect(res.status).toBe(200);
-    expect((await readJson<ShellResponse>(res)).chatEndpoint).toBe(
-      `/v1/workspaces/${wsA}/chat/stream`,
-    );
+    const plain = await send("GET", `/v1/workspaces/${wsA}/shell`);
+    expect(await readJson<ShellResponse>(res)).toEqual(await readJson<ShellResponse>(plain));
   });
 
   it("a new conversation is born in the path's workspace", async () => {

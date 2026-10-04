@@ -4,7 +4,7 @@
  * The unit tests cover the pure helpers (planCompaction, summarizeMessages,
  * compactConversationMessages, reconstructMessages, fork). This test covers
  * the ROUTE the units don't: enabling `features.compaction` and driving real
- * `/v1/workspaces/<wsId>/chat` turns through a live Runtime + EventSourcedConversationStore until
+ * `/v1/workspaces/<wsId>/chat/start` turns through a live Runtime + EventSourcedConversationStore until
  * the accumulated history crosses the budget, then proving that
  * `Runtime.maybeCompactHistory` actually fired — it persisted a
  * `history.compacted` event, the model-facing projection is compacted, and the
@@ -26,6 +26,7 @@ import { reconstructMessages } from "../../src/conversation/event-reconstructor.
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { readJson } from "../helpers/http.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -104,8 +105,7 @@ function authHeaders(): Record<string, string> {
 }
 
 async function sendTurn(message: string, conversationId?: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-    method: "POST",
+  const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
     headers: authHeaders(),
     body: JSON.stringify(conversationId ? { message, conversationId } : { message }),
   });

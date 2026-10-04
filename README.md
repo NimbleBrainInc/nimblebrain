@@ -103,8 +103,6 @@ A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…
 |--------|------|------|-------------|
 | GET | /v1/health | No | Health check |
 | GET | /v1/bootstrap | Yes | Bootstrap workspace context (user, workspaces, shell config) |
-| POST | /v1/workspaces/:wsId/chat | Yes | Synchronous chat |
-| POST | /v1/workspaces/:wsId/chat/stream | Yes | SSE streaming chat |
 | POST | /v1/workspaces/:wsId/chat/start | Yes | Start a turn that runs to completion on the server |
 | POST | /v1/conversations/:id/cancel | Yes | Stop a conversation's in-flight turn |
 | GET | /v1/workspaces/:wsId/apps/:name/resources/:path | Yes | Fetch app UI resource |
@@ -132,7 +130,7 @@ Three port interfaces isolate concerns:
 |------|---------|----------------|
 | `ModelPort` | LLM provider | `AnthropicModelAdapter` (prompt caching), `EchoModelAdapter` (tests) |
 | `ToolRouter` | Tool discovery + execution | `ToolRegistry` (MCP sources + inline sources), `StaticToolRouter` (tests) |
-| `EventSink` | Observability | `StructuredLogSink`, `WorkspaceLogSink`, `SseEventManager`, `ConsoleEventSink`, `CallbackEventSink`, `DebugEventSink`, `NoopEventSink` |
+| `EventSink` | Observability | `StructuredLogSink`, `WorkspaceLogSink`, `SseEventManager`, `ConsoleEventSink`, `DebugEventSink`, `NoopEventSink` |
 
 ### System Tools
 
@@ -423,7 +421,6 @@ src/
 │   ├── structured-log-sink.ts   Per-conversation JSONL logs with cost
 │   ├── workspace-log-sink.ts    Workspace-level daily JSONL logs
 │   ├── console-events.ts        Stderr event logging
-│   ├── callback-events.ts       Callback-based events (in-process chat handler)
 │   ├── debug-events.ts          Verbose debug logging
 │   └── noop-events.ts           Silent event sink
 ├── files/                File context extraction
@@ -566,7 +563,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connection.state_changed`, `server.notification`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
 
-**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → ownership of the conversation (no workspace). Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
+**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → ownership of the conversation (no workspace). Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`.
 
 ### Web Client Internals
 
@@ -713,7 +710,6 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (connector lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).
-- **`CallbackEventSink`** — Bridges run events to the in-process chat handler (`POST /v1/workspaces/:wsId/chat`).
 - **`PostHogEventSink`** — Anonymous telemetry. No PII. Opt-out: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
 
 ## License

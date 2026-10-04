@@ -1087,11 +1087,6 @@ export class Runtime {
     }
   }
 
-  /** True if a chat() is currently in flight on this conversation. */
-  isConversationActive(conversationId: string): boolean {
-    return this.activeConversations.has(conversationId);
-  }
-
   /** Process a chat message. Optional per-request EventSink for SSE streaming. */
   async chat(request: ChatRequest, requestSink?: EventSink): Promise<ChatResult> {
     const lockedConvId = request.conversationId;

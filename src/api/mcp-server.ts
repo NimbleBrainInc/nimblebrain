@@ -332,8 +332,8 @@ export class McpServerHost {
    * Returning 405 is the spec-blessed escape hatch: the SDK explicitly
    * treats it as "server doesn't offer GET-style listening" and gracefully
    * runs POST-only (the Streamable HTTP client's `_startOrAuthSse`). If we ever start emitting standalone-stream
-   * notifications, switch this back to a real handler and add a heartbeat
-   * (see `src/api/sse-heartbeat.ts`).
+   * notifications, switch this back to a real handler and add a keepalive
+   * that keeps a silent stream under the proxy idle timeout.
    */
   async handle(
     request: Request,

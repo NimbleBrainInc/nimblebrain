@@ -2,7 +2,7 @@
 // The events the two SSE streams send to a client, by stream.
 //
 // `WorkspaceStreamEvents` is `GET /v1/events`; `ConversationStreamEvents` is
-// `GET /v1/conversations/:id/events` (and `POST …/chat/stream`). Each maps an
+// `GET /v1/conversations/:id/events`. Each maps an
 // SSE `event:` name to its `data:` payload.
 //
 // Each catalog is also the stream's allowlist: an engine event reaches a client
@@ -196,8 +196,6 @@ export interface WorkspaceStreamEvents {
 
 /** The first frame of every subscription. */
 export interface SubscribedEvent {
-  /** Pass as `X-Origin-Subscriber-Id` so a send skips this subscription. */
-  subscriberId: string;
   /** Whether a turn is in flight. */
   isActive: boolean;
   /** The in-flight turn's latest sequence number. */

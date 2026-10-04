@@ -3,8 +3,8 @@ import { estimateCost } from "../usage/cost.ts";
 import type { ChatResult } from "./types.ts";
 
 /**
- * A finished turn as every client sees it: the body of `POST …/chat`, and the
- * `done` event of both chat streams. One builder, so the three cannot disagree.
+ * A finished turn as every client sees it: the `done` event of the
+ * conversation stream.
  *
  * Cost is derived here, at the boundary, and never stored. There is no
  * result-level workspace: per-tool-call attribution is on each `tool.done`

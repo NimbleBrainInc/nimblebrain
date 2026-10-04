@@ -51,7 +51,7 @@ export interface AppContext {
   };
 }
 
-/** Chat request body for POST /v1/workspaces/:wsId/chat and POST /v1/workspaces/:wsId/chat/stream. */
+/** Chat request body for POST /v1/workspaces/:wsId/chat/start. */
 export interface ChatRequest {
   message: string;
   conversationId?: string;

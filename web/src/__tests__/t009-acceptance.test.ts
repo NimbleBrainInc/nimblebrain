@@ -4,7 +4,7 @@
 // Pins the contract the task spec calls out:
 //
 //   1. `ChatRequest` (the shape the chat composer POSTs to
-//      /v1/workspaces/<wsId>/chat/stream) has NO `workspaceId` field — matches T006's identity-bound session
+//      /v1/workspaces/<wsId>/chat/start) has NO `workspaceId` field — matches T006's identity-bound session
 //      contract. A type-level mutual-extends assertion catches future
 //      widening at compile time.
 //   2. `setActiveWorkspaceId` is exported (the sidebar's workspace switcher
