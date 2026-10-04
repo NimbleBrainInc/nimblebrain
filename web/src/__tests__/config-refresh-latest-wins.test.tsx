@@ -25,13 +25,18 @@ mock.module("../api/client", () => ({ ...realClient, callToolWithoutWorkspace })
 
 const { ChatProvider, useChatConfigContext } = await import("../context/ChatContext");
 
-const configWithTheme = (theme: string) =>
-  ({ content: [], structuredContent: { preferences: { theme } } }) as unknown as ToolCallResponse;
+const configWithTheme = (theme: string): ToolCallResponse => ({
+  content: [],
+  structuredContent: { preferences: { theme } },
+  isError: false,
+});
 
 function wrapper({ children }: { children: ReactNode }) {
   return (
     <MemoryRouter>
-      <ChatProvider initialConfig={{ preferences: { theme: "system" } }}>{children}</ChatProvider>
+      <ChatProvider initialConfig={{ configuredProviders: [], preferences: { theme: "system" } }}>
+        {children}
+      </ChatProvider>
     </MemoryRouter>
   );
 }
