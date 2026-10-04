@@ -19,19 +19,19 @@ import { NIMBLEBRAIN_EXTENSIONS, UPLOAD_FILES_APPS, UPLOAD_FILES_METHOD } from "
 import { serverCapabilities } from "./relayed-notifications";
 
 /**
- * The identifier MCP Tasks is registered under as an official MCP extension
- * (`modelcontextprotocol/ext-tasks`). Official extensions use the
- * `io.modelcontextprotocol` vendor prefix; a third party uses a reversed domain
- * it owns.
+ * The tasks extension's identifier (`io.modelcontextprotocol/tasks`, SEP-2663,
+ * MCP 2026-07-28). Official extensions use the `io.modelcontextprotocol`
+ * vendor prefix; a third party uses a reversed domain it owns.
  */
 export const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
 
-/** What the bridge answers of the tasks utility: `tasks/get`, `tasks/result`,
- *  `tasks/cancel`, and `tools/call` augmented with a task. */
-const TASKS_CAPABILITY = {
-  cancel: {},
-  requests: { tools: { call: {} } },
-} as const;
+/**
+ * The extension's capability: an empty object, which says the host serves the
+ * extension. An app opts a `tools/call` in by naming the extension in the
+ * request's `_meta` client capabilities, and polls `tasks/get` and cancels
+ * with `tasks/cancel`. The extension has no settings to declare.
+ */
+const TASKS_CAPABILITY = {} as const;
 
 /** The NimbleBrain extensions `appName` is offered: `upload-files` only to the apps in `UPLOAD_FILES_APPS`. */
 export function extensionsFor(appName: string): string[] {

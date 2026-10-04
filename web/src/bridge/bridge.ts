@@ -6,7 +6,7 @@
 //
 // Spec-compliant methods:
 //   tools/call, resources/read, resources/list, resources/templates/list,
-//   tasks/get, tasks/result, tasks/cancel,
+//   tasks/get, tasks/cancel (the tasks extension, io.modelcontextprotocol/tasks),
 //   ui/initialize, ui/notifications/initialized,
 //   ui/notifications/tool-result, ui/notifications/tool-input,
 //   ui/notifications/host-context-changed, ui/notifications/size-changed,
@@ -17,7 +17,6 @@
 // answers to its own requests; earlier notifications are held until then.
 //
 // Spec-compliant notifications forwarded host→iframe:
-//   notifications/tasks/status (subscribed once per bridge instance)
 //   the app server's own notifications on RELAYED_TO_VIEWS
 //     (relayed-notifications.ts), verbatim, via the `server.notification` SSE
 //     relay in hooks/useServerNotificationRelay.ts
@@ -28,24 +27,15 @@
 //   Each is served only because it is declared: see host-capabilities.ts.
 // ---------------------------------------------------------------------------
 
-import {
-  type CallToolRequest,
-  CallToolResultSchema,
-  type CancelTaskRequest,
-  CancelTaskResultSchema,
-  CreateTaskResultSchema,
-  ErrorCode,
-  type GetTaskPayloadRequest,
-  GetTaskPayloadResultSchema,
-  type GetTaskRequest,
-  GetTaskResultSchema,
-  McpError,
-  TaskStatusNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { getActiveWorkspaceId, uploadResource } from "../api/client";
 import { humanBytes } from "../api/format-error";
 import { appNameFromToolName } from "../lib/namespaced-tool";
-import { getMcpBridgeClient, withSessionRetry } from "../mcp-bridge-client";
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  type McpAnswer,
+  type McpError,
+  sendMcpRequest,
+} from "../mcp-bridge-client";
 import type { FileEntry } from "../types";
 import { openAppChannel } from "./app-channel";
 import {
@@ -58,7 +48,7 @@ import {
   UPLOAD_FILES_APPS,
   UPLOAD_FILES_METHOD,
 } from "./extensions";
-import { buildHostCapabilities } from "./host-capabilities";
+import { buildHostCapabilities, TASKS_EXTENSION_ID } from "./host-capabilities";
 import { buildHostStyles, type UploadLimits } from "./host-extensions";
 import type { LoggingMessageNotification } from "./schemas";
 import { getHostThemeMode, getSpecThemeTokens } from "./theme";
@@ -293,46 +283,15 @@ export function createBridge(
         break;
 
       // -----------------------------------------------------------------
-      // Spec: tasks/get — non-blocking fetch of current task state.
-      // Tasks surface is MCP-only; when the flag is off the iframe SDK
-      // won't call it (capability isn't advertised), so there's no REST
-      // fallback path here.
+      // The tasks extension (io.modelcontextprotocol/tasks, SEP-2663):
+      // tasks/get answers the flat task, its outcome inlined once terminal;
+      // tasks/cancel acknowledges. tasks/result and tasks/list are not part
+      // of it and fall through to `default` (-32601).
       // -----------------------------------------------------------------
-      case "tasks/get": {
-        const { id, params } = msg;
-        forwardTaskRequest(TASKS_GET_METHOD, params, GetTaskResultSchema, id, appName).then(
-          postToIframe,
-        );
+      case "tasks/get":
+      case "tasks/cancel":
+        forwardTaskRequest(msg.method, msg.params, msg.id, appName).then(postToIframe);
         break;
-      }
-
-      // -----------------------------------------------------------------
-      // Spec: tasks/result — blocks until terminal; returns the payload
-      // of the original request (for tools/call, a CallToolResult).
-      // -----------------------------------------------------------------
-      case "tasks/result": {
-        const { id, params } = msg;
-        forwardTaskRequest(
-          TASKS_RESULT_METHOD,
-          params,
-          GetTaskPayloadResultSchema,
-          id,
-          appName,
-        ).then(postToIframe);
-        break;
-      }
-
-      // -----------------------------------------------------------------
-      // Spec: tasks/cancel — best-effort cancel; returns the (final)
-      // task state. Cancelling a terminal task surfaces as `-32602`.
-      // -----------------------------------------------------------------
-      case "tasks/cancel": {
-        const { id, params } = msg;
-        forwardTaskRequest(TASKS_CANCEL_METHOD, params, CancelTaskResultSchema, id, appName).then(
-          postToIframe,
-        );
-        break;
-      }
 
       // -----------------------------------------------------------------
       // Spec: ui/message — { role, content: [{ type, text, _meta? }] }
@@ -476,58 +435,6 @@ export function createBridge(
 
   window.addEventListener("message", handleMessage);
 
-  // ---------------------------------------------------------------------
-  // Subscribe once to `notifications/tasks/status` on the MCP bridge
-  // client and forward each one verbatim to this iframe as a JSON-RPC
-  // notification. Multiple bridges share the singleton MCP client; each
-  // subscribes independently so every iframe sees every status, filtered
-  // on the iframe side by the taskId it owns. Teardown in `destroy()`
-  // removes this bridge's handler so post-destroy notifications do not
-  // reach the iframe.
-  //
-  // Notes:
-  //   - `_meta` is preserved (per spec, status notifications don't
-  //     require related-task meta, but we never strip what's there).
-  //   - The SDK's `setNotificationHandler` replaces any prior handler
-  //     for the same method; that's an intentional tradeoff — the most
-  //     recent bridge wins, but because each handler only `postToIframe`s
-  //     (and the bridge's own `destroyed` guard short-circuits after
-  //     teardown), multi-bridge behavior is correct as long as handlers
-  //     are added in the order they expect to receive.
-  //
-  // If the MCP client isn't available (e.g. token/workspace not ready),
-  // we silently skip subscription and never throw — task notifications
-  // are OPTIONAL in the spec and iframes fall back to polling via
-  // `tasks/get`.
-  // ---------------------------------------------------------------------
-  let notificationTeardown: (() => void) | null = null;
-  void subscribeTaskStatus();
-
-  async function subscribeTaskStatus(): Promise<void> {
-    try {
-      const client = await getMcpBridgeClient();
-      if (destroyed) return;
-      const handler = (
-        notification: Awaited<ReturnType<typeof TaskStatusNotificationSchema.parseAsync>>,
-      ): void => {
-        if (destroyed) return;
-        // Forward verbatim — preserve params._meta, including any
-        // progressToken or related-task entries the server attached.
-        postToIframe({
-          jsonrpc: "2.0",
-          method: notification.method,
-          params: notification.params,
-        });
-      };
-      client.setNotificationHandler(TaskStatusNotificationSchema, handler);
-      notificationTeardown = () => {
-        client.removeNotificationHandler(TASK_STATUS_METHOD);
-      };
-    } catch {
-      // Subscription is best-effort — polling is the contract.
-    }
-  }
-
   return {
     sendToolResult(result: ExtAppsToolResultNotification["params"]): void {
       postToIframe({
@@ -573,16 +480,6 @@ export function createBridge(
       screenObserver?.disconnect();
       closeChannel();
       window.removeEventListener("message", handleMessage);
-      // Unsubscribe from notifications/tasks/status so post-destroy
-      // emissions from the MCP client don't reach the iframe.
-      if (notificationTeardown) {
-        try {
-          notificationTeardown();
-        } catch {
-          // Swallow — teardown is best-effort, the iframe is going away.
-        }
-        notificationTeardown = null;
-      }
     },
   };
 }
@@ -603,15 +500,14 @@ function isResponse(data: unknown): boolean {
 
 /**
  * Whether notification `next` says everything held notification `prev` does.
- * The host sends a host context whole, a task status is that task's current
- * state, and any other notification repeated verbatim adds nothing.
+ * The host sends a host context whole, and any other notification repeated
+ * verbatim adds nothing.
  */
 function supersedes(next: unknown, prev: unknown): boolean {
-  const a = next as { method?: unknown; params?: { taskId?: unknown } };
-  const b = prev as { method?: unknown; params?: { taskId?: unknown } };
+  const a = next as { method?: unknown };
+  const b = prev as { method?: unknown };
   if (a.method !== b.method) return false;
   if (a.method === "ui/notifications/host-context-changed") return true;
-  if (a.method === TASK_STATUS_METHOD) return a.params?.taskId === b.params?.taskId;
   return JSON.stringify(next) === JSON.stringify(prev);
 }
 
@@ -693,12 +589,15 @@ function answerIfRequest(
   postToIframe({ jsonrpc: "2.0", id: msg.id, result });
 }
 
+/** JSON-RPC: the method does not exist or is not served. */
+const METHOD_NOT_FOUND = -32601;
+
 /**
  * Answer a message whose method this host does not serve. A request
- * (`prompts/list`, `sampling/createMessage`, …) gets JSON-RPC method-not-found,
- * so the view's call fails at once instead of waiting on a reply that never
- * comes. A notification needs no reply, and a message with no method is not a
- * request, so both are dropped.
+ * (`prompts/list`, `sampling/createMessage`, `tasks/result`, …) gets JSON-RPC
+ * method-not-found, so the view's call fails at once instead of waiting on a
+ * reply that never comes. A notification needs no reply, and a message with no
+ * method is not a request, so both are dropped.
  */
 function answerUnserved(msg: { method?: unknown; id?: unknown }, postToIframe: PostToIframe): void {
   if (typeof msg.method !== "string") return;
@@ -706,7 +605,7 @@ function answerUnserved(msg: { method?: unknown; id?: unknown }, postToIframe: P
   postToIframe({
     jsonrpc: "2.0",
     id: msg.id,
-    error: { code: ErrorCode.MethodNotFound, message: `Method not found: ${msg.method}` },
+    error: { code: METHOD_NOT_FOUND, message: `Method not found: ${msg.method}` },
   });
 }
 
@@ -884,8 +783,8 @@ function handleInitialize(
  *
  * Every app is scoped to its own server, whatever its name. A server the app
  * names in `_meta` or in a top-level `server` is ignored, and a qualified tool
- * name naming another server is refused. The browser holds ONE `/mcp` session
- * shared by every iframe and the agent, so the server sees no caller to
+ * name naming another server is refused. Every iframe's requests reach `/mcp`
+ * as one client with one credential, so the server sees no caller to
  * attribute a call to; the bridge names the app's server on the call
  * (`callToolViaMcp`), and `/mcp` holds it to that server and to tools whose
  * `ui.visibility` includes "app".
@@ -923,21 +822,11 @@ function handleToolsCall(
 }
 
 /**
- * The JSON-RPC error for a `tools/call` that returned no result. A server's
- * refusal (`McpError`: an unknown tool, a tool not callable from an app, a
- * denied workspace) keeps its code and `data`, so a view can read
- * `data.reason`; so does the SDK's own `McpError` for a timeout (`-32001`) or
- * a closed connection, after which the call may have run. Anything else
- * (transport, session) is `-32000` with its message.
+ * The JSON-RPC error for a `tools/call` that got no JSON-RPC answer from `/mcp`
+ * (a network failure, a body that is not one): `-32000` with its message. The
+ * call may have run.
  */
 function toolCallError(err: unknown): UiToolResultError["error"] {
-  if (err instanceof McpError) {
-    return {
-      code: err.code,
-      message: err.message,
-      ...(err.data !== undefined && { data: err.data }),
-    };
-  }
   return { code: -32000, message: err instanceof Error ? err.message : "Tool call failed" };
 }
 
@@ -984,8 +873,8 @@ export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
  * server and forward the result — pagination included — or a JSON-RPC error.
  *
  * Scoped like `resources/read` and `tools/call`: the app's own server, whatever
- * it names. The bridge alone knows which iframe asked (every iframe shares one
- * `/mcp` session), so it names the server in the request's `_meta` and `/mcp`
+ * it names. The bridge alone knows which iframe asked (every iframe's requests
+ * reach `/mcp` as one client), so it names the server in the request's `_meta` and `/mcp`
  * lists that one source. The iframe's own `_meta` is not forwarded; only its
  * `cursor` is.
  */
@@ -1001,14 +890,10 @@ function handleResourceListing(
     _meta: { [RESOURCE_SOURCE_META_KEY]: appName },
   };
 
-  withSessionRetry(async () => {
-    const client = await getMcpBridgeClient();
-    return method === "resources/list"
-      ? client.listResources(request)
-      : client.listResourceTemplates(request);
-  })
-    .then((result) => {
-      postToIframe({ jsonrpc: "2.0", id, result });
+  sendMcpRequest(method, request)
+    .then((answer) => {
+      if ("error" in answer) throw new Error(answer.error.message);
+      postToIframe({ jsonrpc: "2.0", id, result: answer.result });
     })
     .catch((err: unknown) => {
       const errorMsg = err instanceof Error ? err.message : "Resource listing failed";
@@ -1198,46 +1083,66 @@ function uploadError(err: unknown): { code: number; message: string; data?: Requ
 }
 
 // ---------------------------------------------------------------------------
-// MCP transport helpers — wire `tools/call` / `resources/read` through the
-// platform's `/mcp` streamable HTTP endpoint via the MCP SDK `Client`.
+// MCP transport helpers — every request an app makes of its server goes to the
+// 2026-07-28 leg of `/mcp/<wsId>` through `sendMcpRequest`.
 //
 // Rules:
-//   - All JSON-RPC dispatch goes through the SDK `Client` (no hand-crafted
-//     method strings or wire payloads).
-//   - Response shape forwarded to the iframe MUST match the spec'd MCP
-//     path: `{ content, structuredContent }` for tools (non-task),
-//     `{ contents }` for resources. For task-augmented calls the full
-//     CreateTaskResult is preserved as-is (see §Non-Negotiable Rule 4:
-//     CallToolResult / task results forwarded verbatim, never unwrapped).
-//   - A tool execution error is a result (`isError: true`, forwarded
-//     verbatim with its `structuredContent`), never a JSON-RPC error. A
-//     JSON-RPC error means no result came back: a server's refusal keeps its
-//     code and `data`; a transport failure is `-32000`; a timeout (`-32001`)
-//     may follow a call that ran.
-//   - the target-source authz is handled at the call site — this helper
-//     receives the already-resolved server name.
+//   - What reaches `/mcp` is built here from the fields the method needs, plus
+//     the app's own server under `RESOURCE_SOURCE_META_KEY`. Nothing else the
+//     iframe put in `_meta` is forwarded.
+//   - What reaches the iframe is the server's answer verbatim: a
+//     `CallToolResult` (`isError` and `structuredContent` included), a flat
+//     task, a `ReadResourceResult`. Never unwrapped or rebuilt.
+//   - A tool execution error is a result, never a JSON-RPC error. A JSON-RPC
+//     error means no result came back: a server's refusal keeps its code and
+//     `data`; a timeout (`-32001`) may follow a call that ran; no JSON-RPC
+//     answer at all is `-32000`.
+//   - the target-source authz is handled at the call site — these helpers
+//     receive the already-resolved server name.
 // ---------------------------------------------------------------------------
 
 /**
- * Shape of a `tools/call` dispatched from an iframe. We don't rely on the
- * bridge's typed union here because ext-apps permits a task-augmented
- * envelope whose `task` field is forwarded through to `/mcp` verbatim.
+ * Shape of a `tools/call` dispatched from an iframe. A 2025-era `task` field,
+ * or anything else beside `name` and `arguments`, is not forwarded.
  */
 interface ToolsCallParams {
   name: string;
   arguments?: Record<string, unknown>;
-  /** When present, the call is task-augmented per MCP draft 2025-11-25. */
-  task?: { ttl?: number; pollInterval?: number };
+  _meta?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 /**
- * Forward a `tools/call` through the MCP SDK bridge client. Builds the
- * iframe-facing response envelope so the caller can `postToIframe` directly.
+ * Whether an app's `tools/call` opts in to the tasks extension: its `_meta`
+ * client capabilities name `io.modelcontextprotocol/tasks`. Without that
+ * claim the call is an ordinary one, answered with a `CallToolResult`.
+ */
+function optsInToTasks(meta: Record<string, unknown> | undefined): boolean {
+  const capabilities = meta?.[CLIENT_CAPABILITIES_META_KEY] as
+    | { extensions?: Record<string, unknown> }
+    | undefined;
+  const extensions = capabilities?.extensions;
+  return (
+    typeof extensions === "object" &&
+    extensions !== null &&
+    extensions[TASKS_EXTENSION_ID] !== undefined
+  );
+}
+
+/** The iframe-facing JSON-RPC response for an answer from `/mcp`. */
+function toIframe(id: string | number, answer: McpAnswer): Record<string, unknown> {
+  return "error" in answer
+    ? { jsonrpc: "2.0", id, error: answer.error }
+    : { jsonrpc: "2.0", id, result: answer.result };
+}
+
+/**
+ * Forward a `tools/call` to `/mcp`. Builds the iframe-facing response envelope
+ * so the caller can `postToIframe` directly.
  *
- * Task-augmented calls (`params.task` present) route through the generic
- * `request()` path with `CreateTaskResultSchema` so the `CreateTaskResult`
- * reaches the iframe without being rejected by `CallToolResultSchema`.
+ * An app that opts in to the tasks extension is answered either a complete
+ * `CallToolResult` or a flat task (`resultType: "task"`), whichever the server
+ * chose; both pass through as they came.
  */
 async function callToolViaMcp(
   server: string,
@@ -1254,11 +1159,8 @@ async function callToolViaMcp(
   //      site (`handleToolsCall`) — which is where it must happen, because by
   //      here the app the call came from is no longer in scope.
   //   2. Scoped: BOTH doors dispatch the same bare `<source>__<tool>` form.
-  //      Identity apps (conversations, …) always did. Workspace apps used to
-  //      prefix `ws_<active>-`; they no longer do, because the workspace a call
-  //      lands in is the one in the session's URL (`/mcp/<wsId>`), not the
-  //      name. Restating it in the name only gave the model 39 opaque
-  //      characters to echo — and drop.
+  //      The workspace a call lands in is the one in the URL (`/mcp/<wsId>`),
+  //      not the name.
   //
   //      The active-workspace check stays: with no workspace there is no MCP
   //      endpoint to call, and failing here is a clearer error.
@@ -1288,158 +1190,77 @@ async function callToolViaMcp(
     } satisfies UiToolResultError;
   }
 
-  return withSessionRetry(async () => {
-    const client = await getMcpBridgeClient();
-
-    if (params.task) {
-      // Task-augmented: the server returns CreateTaskResult, not
-      // CallToolResult. The typed `client.callTool()` would reject that;
-      // use the generic `request()` path with the right schema and
-      // forward the result verbatim (Non-Negotiable Rule 4).
-      const method: CallToolRequest["method"] = "tools/call";
-      const result = await client.request(
-        {
-          method,
-          params: {
-            name: qualifiedName,
-            arguments: params.arguments ?? {},
-            task: params.task,
-            _meta: { [RESOURCE_SOURCE_META_KEY]: server },
-          },
-        },
-        CreateTaskResultSchema,
-      );
-      return { jsonrpc: "2.0", id, result };
-    }
-
-    const result = await client.callTool(
-      {
-        name: qualifiedName,
-        arguments: params.arguments ?? {},
-        _meta: { [RESOURCE_SOURCE_META_KEY]: server },
-      },
-      CallToolResultSchema,
-    );
-
-    // The CallToolResult verbatim. A tool execution error is a result with
-    // `isError: true` (MCP; ext-apps `callServerTool` returns it rather than
-    // throwing), so its `structuredContent` reaches the view intact.
-    //
-    // Cast: `callTool`'s return type also admits the legacy `{ toolResult }`
-    // compatibility shape, but parsing against `CallToolResultSchema` (above)
-    // guarantees `content`, so the value is always a `CallToolResult`.
-    return {
-      jsonrpc: "2.0",
-      id,
-      result: result as UiToolResultResponse["result"],
-    } satisfies UiToolResultResponse;
-  });
+  const answer = await sendMcpRequest(
+    "tools/call",
+    {
+      name: qualifiedName,
+      arguments: params.arguments ?? {},
+      _meta: { [RESOURCE_SOURCE_META_KEY]: server },
+    },
+    { tasks: optsInToTasks(params._meta) },
+  );
+  return toIframe(id, answer);
 }
 
 /**
- * Forward a `resources/read` through the MCP SDK bridge client, scoped to
- * `server` — the calling app's own.
- * Returns the ReadResourceResult shape (`{ contents }`) so the caller can
- * assemble the JSON-RPC response envelope for the iframe.
+ * Forward a `resources/read` to `/mcp`, scoped to `server` — the calling app's
+ * own. Resolves the ReadResourceResult (`{ contents }`); a JSON-RPC error from
+ * `/mcp` rejects with its message.
  */
-async function readResourceViaMcp(server: string, uri: string): Promise<{ contents: unknown[] }> {
+async function readResourceViaMcp(server: string, uri: string): Promise<Record<string, unknown>> {
   // `server` goes on the wire under `RESOURCE_SOURCE_META_KEY`, as it does for
   // listings, and `/mcp` reads from that one source. It is the only thing that
-  // can: every iframe shares one `/mcp` session, so without it a read resolves
-  // across the whole workspace and the user's files.
-  return withSessionRetry(async () => {
-    const client = await getMcpBridgeClient();
-    const result = await client.readResource({
-      uri,
-      _meta: { [RESOURCE_SOURCE_META_KEY]: server },
-    });
-    return { contents: result.contents as unknown[] };
+  // can: the bridge sends every iframe's requests as one client, so without it
+  // a read resolves across the whole workspace and the user's files.
+  const answer = await sendMcpRequest("resources/read", {
+    uri,
+    _meta: { [RESOURCE_SOURCE_META_KEY]: server },
   });
+  if ("error" in answer) throw new Error(answer.error.message);
+  return answer.result;
 }
 
 // ---------------------------------------------------------------------------
-// Tasks surface — `tasks/{get,result,cancel}` and status-notification
-// forwarding.
-//
-// Method-literal types are derived from the SDK request schemas so a spec
-// rename surfaces as a TypeScript error at the call sites rather than a
-// runtime 404 against `/mcp`. Never hand-type these strings.
+// Tasks — `tasks/get` and `tasks/cancel` of the tasks extension
 // ---------------------------------------------------------------------------
 
-const TASKS_GET_METHOD: GetTaskRequest["method"] = "tasks/get";
-const TASKS_RESULT_METHOD: GetTaskPayloadRequest["method"] = "tasks/result";
-const TASKS_CANCEL_METHOD: CancelTaskRequest["method"] = "tasks/cancel";
-/** Matches `TaskStatusNotificationSchema.method` — used for `removeNotificationHandler`. */
-const TASK_STATUS_METHOD = "notifications/tasks/status" as const;
+/** The task methods the bridge forwards. */
+type TaskMethod = "tasks/get" | "tasks/cancel";
 
-/** Params accepted on the three tasks/* iframe messages. */
+/** Params accepted on the two tasks/* iframe messages. */
 interface TasksParams {
   taskId: string;
   [key: string]: unknown;
 }
 
 /**
- * Translate an unknown error from the MCP SDK's `client.request()` into the
- * JSON-RPC error shape the iframe expects. Spec §8 mandates `-32602` for
- * "invalid taskId" / "not found" / "terminal-task cancel"; `-32603` for
- * internal server errors; and `-32000` as the catch-all we use elsewhere
- * in the bridge.
+ * Forward a `tasks/get` or `tasks/cancel` to `/mcp`, scoped to the app's own
+ * server. Returns the full JSON-RPC response (success or error) ready to
+ * `postToIframe`.
  *
- * We pass through any explicit numeric `code` the SDK surfaced from the
- * server (so server-authored `-32602` stays `-32602`). Everything else
- * degrades to `-32603` / `-32000` depending on whether the message hints
- * at a server-side internal error.
- */
-function translateTaskError(err: unknown): { code: number; message: string } {
-  // SDK errors expose `.code` / `.message` mirrors of the JSON-RPC error
-  // envelope when the server returned one. Preserve the server's code.
-  const maybeCoded = err as { code?: unknown; message?: unknown } | null | undefined;
-  if (maybeCoded && typeof maybeCoded.code === "number") {
-    const code = maybeCoded.code;
-    const message =
-      typeof maybeCoded.message === "string" ? maybeCoded.message : "Task request failed";
-    return { code, message };
-  }
-  const message = err instanceof Error ? err.message : "Task request failed";
-  return { code: -32603, message };
-}
-
-/**
- * Forward a `tasks/*` request through the MCP bridge client, scoped to the
- * server that ran the task. Returns the full JSON-RPC response (success or
- * error) ready to `postToIframe`.
- *
- * The caller picks the method constant + result schema. What reaches `/mcp` is
- * the `taskId` and the scope, and nothing else the iframe sent. The scope is
- * the app's own server, whatever it names, under `RESOURCE_SOURCE_META_KEY`, as
- * for a resource read. Every iframe shares one `/mcp` session, so without it
- * `/mcp` would answer for any task the session holds. Errors are mapped via
- * `translateTaskError`.
+ * What reaches `/mcp` is the `taskId` and the scope, and nothing else the
+ * iframe sent. The scope is the app's own server, whatever it names, under
+ * `RESOURCE_SOURCE_META_KEY`, as for a resource read: `/mcp` answers only a
+ * task that server ran, and any other as not found (`-32602`). The answer
+ * passes through: `tasks/get` the flat task, with `result` or `error` inlined
+ * once it is `completed` or `failed`; an `input_required` status too, which
+ * the app handles. A request that got no JSON-RPC answer is `-32000`.
  */
 async function forwardTaskRequest(
-  method: GetTaskRequest["method"] | GetTaskPayloadRequest["method"] | CancelTaskRequest["method"],
-  params: TasksParams,
-  schema:
-    | typeof GetTaskResultSchema
-    | typeof GetTaskPayloadResultSchema
-    | typeof CancelTaskResultSchema,
-  id: string,
+  method: TaskMethod,
+  params: TasksParams | undefined,
+  id: string | number,
   appName: string,
 ): Promise<Record<string, unknown>> {
-  const scoped = { taskId: params.taskId, _meta: { [RESOURCE_SOURCE_META_KEY]: appName } };
+  const scoped = { taskId: params?.taskId, _meta: { [RESOURCE_SOURCE_META_KEY]: appName } };
   try {
-    // `withSessionRetry` only re-runs on the specific session-not-found
-    // shape; any other error (incl. spec-mandated `-32602` for missing
-    // tasks) propagates through this catch and gets translated to the
-    // JSON-RPC error envelope the iframe expects.
-    return await withSessionRetry(async () => {
-      const client = await getMcpBridgeClient();
-      const result = await client.request({ method, params: scoped }, schema);
-      // Forward the result verbatim (Non-Negotiable Rule 4: never unwrap).
-      return { jsonrpc: "2.0", id, result };
-    });
+    return toIframe(id, await sendMcpRequest(method, scoped));
   } catch (err) {
-    return { jsonrpc: "2.0", id, error: translateTaskError(err) };
+    const error: McpError = {
+      code: -32000,
+      message: err instanceof Error ? err.message : "Task request failed",
+    };
+    return { jsonrpc: "2.0", id, error };
   }
 }
 

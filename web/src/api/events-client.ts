@@ -2,8 +2,8 @@
 // Workspace Event Stream — singleton client
 //
 // One `/v1/events` SSE connection per tab, fanned out to many subscribers
-// via the typed `subscribe` API. Same shape as `mcp-bridge-client.ts` —
-// lazy module-level singleton with lifecycle reset.
+// via the typed `subscribe` API: a lazy module-level singleton, reset on the
+// auth lifecycle hook in `api/client.ts`.
 //
 // Why this exists. Pre-singleton, `useEvents` opened its own
 // `connectEvents()` inside the hook's `useEffect`. Every component that

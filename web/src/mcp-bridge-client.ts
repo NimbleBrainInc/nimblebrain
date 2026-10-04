@@ -1,289 +1,276 @@
 // ---------------------------------------------------------------------------
-// MCP Bridge Client — one MCP SDK client, for the active workspace's
-// `/mcp/<wsId>`
+// MCP Bridge Client — one JSON-RPC request at a time to the active workspace's
+// `/mcp/<wsId>`, on the 2026-07-28 leg
 //
-// Lazily constructs an MCP SDK `Client` wired to a
-// `StreamableHTTPClientTransport` targeting the active workspace's MCP
-// endpoint. Used by the iframe bridge to route `tools/call`,
-// `resources/read`, and the tasks lifecycle through MCP instead of REST.
+// The iframe bridge sends every request it forwards for an app (`tools/call`,
+// `resources/read`, `resources/list`, `resources/templates/list`, `tasks/get`,
+// `tasks/cancel`) through `sendMcpRequest`. Each request carries the 2026-07-28
+// `_meta` envelope (protocol version, client info, client capabilities), which
+// is what routes it to the 2026 leg of `/mcp/<wsId>`. That leg is stateless:
+// there is no handshake and no session, so nothing here is cached between
+// requests, and a workspace switch or a logout needs no teardown. The URL is
+// read from the active workspace and the credentials from the auth state on
+// every request.
 //
-// The workspace is in the URL, so a session belongs to one workspace. The
-// client is keyed by it: a request for another workspace closes the current
-// session and opens one on that workspace's path, and never rides the
-// previous one.
-//
-// Auth headers are generated per-request via a custom `fetch` in the
-// transport options so token refresh via `api/fetch-with-refresh` is not
-// bypassed. Headers must NOT be cached at construction — the browser tab
-// outlives individual tokens.
+// The wire is driven here rather than by the SDK `Client` because the tasks
+// extension (`io.modelcontextprotocol/tasks`, SEP-2663) answers an opted-in
+// `tools/call` with a flat task (`resultType: "task"`), which the SDK v2
+// `Client` refuses, and the SDK sends no `tasks/*` request at all
+// (typescript-sdk#2189). The runtime's own task client
+// (`src/tools/mcp-task-client.ts`) drives the same wire for the same reason.
 // ---------------------------------------------------------------------------
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import {
-  addAuthLifecycleHandler,
-  addWorkspaceLifecycleHandler,
-  fetchWithRefresh,
-  getActiveWorkspaceId,
-  getAuthToken,
-} from "./api/client";
+import type { JSONRPCErrorResponse } from "@modelcontextprotocol/client";
+import { fetchWithRefresh, getActiveWorkspaceId, getAuthToken } from "./api/client";
+import { TASKS_EXTENSION_ID } from "./bridge/host-capabilities";
 
-// ---------------------------------------------------------------------------
-// Module-level singleton
-// ---------------------------------------------------------------------------
-
-interface Entry {
-  client: Client;
-  transport: StreamableHTTPClientTransport;
-}
-
-// We cache the in-flight Promise, not the resolved Client, so concurrent
-// callers race a single `initialize` handshake rather than creating duplicate
-// transports. A rejected init clears the cache so the next caller retries.
-// `workspaceId` is the workspace whose path the transport targets.
-let current: { workspaceId: string; pending: Promise<Entry> } | null = null;
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+/** The protocol revision whose `_meta` envelope routes a request to the 2026 leg. */
+export const MCP_PROTOCOL_VERSION = "2026-07-28";
 
 /**
- * Return the MCP bridge `Client` for the active workspace, initializing it on
- * first call.
- *
- * - Lazy: the transport and `initialize` handshake happen on first invocation.
- * - One per workspace: subsequent calls for the same workspace return the same
- *   `Client`. A call for another workspace closes the current one first, so a
- *   request always goes out on a session opened at its own workspace's path.
- * - Fresh after reset: `resetMcpBridgeClient()` closes the transport; the
- *   next `getMcpBridgeClient()` builds a new one.
- * - Failure mode: no active workspace, construction, or `initialize` errors
- *   surface as a rejected Promise (never a synchronous throw), and the cache
- *   is cleared so the caller can retry.
+ * The reserved `_meta` keys of the 2026-07-28 envelope. Spelled here, not
+ * imported from the SDK, so the backend unit suite (which loads this module
+ * through the bridge on root dependencies alone) gets no SDK value import.
  */
-export function getMcpBridgeClient(): Promise<Client> {
+export const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
+export const CLIENT_INFO_META_KEY = "io.modelcontextprotocol/clientInfo";
+export const CLIENT_CAPABILITIES_META_KEY = "io.modelcontextprotocol/clientCapabilities";
+
+/** Who sends the bridge's requests. */
+const CLIENT_INFO = { name: "nimblebrain-web", version: "1.0.0" } as const;
+
+/**
+ * How long a request waits for its answer. A call that outlasts it may still
+ * have run; it answers `-32001`, the code the MCP SDKs use for a request
+ * timeout. A long call is meant to run as a task, whose `tools/call` answers
+ * as soon as the task exists.
+ */
+export const MCP_REQUEST_TIMEOUT_MS = 60_000;
+
+/** JSON-RPC error codes this module answers with. */
+const REQUEST_TIMEOUT = -32001;
+
+/** A JSON-RPC error object. */
+export type McpError = JSONRPCErrorResponse["error"];
+
+/**
+ * What `/mcp` answered: the result, or the JSON-RPC error it sent instead. A
+ * request that got no answer at all (a network failure, a non-JSON-RPC body)
+ * rejects instead.
+ */
+export type McpAnswer = { result: Record<string, unknown> } | { error: McpError };
+
+export interface McpRequestOptions {
+  /** Opt this request in to the tasks extension, so the server may answer a `tools/call` with a task. */
+  tasks?: boolean;
+  /** Overrides {@link MCP_REQUEST_TIMEOUT_MS}. */
+  timeoutMs?: number;
+}
+
+let nextId = 0;
+
+/**
+ * Send one request to the active workspace's `/mcp/<wsId>` on the 2026 leg and
+ * resolve with its answer.
+ *
+ * Resolves `{ result }` or `{ error }` for every JSON-RPC answer, the server's
+ * refusals included, and `{ error: { code: -32001 } }` when no answer came
+ * within the timeout. Rejects when there is no active workspace or no
+ * JSON-RPC answer came back (a network failure, an unparseable body).
+ */
+export async function sendMcpRequest(
+  method: string,
+  params: Record<string, unknown>,
+  options: McpRequestOptions = {},
+): Promise<McpAnswer> {
   const workspaceId = getActiveWorkspaceId();
-  if (!workspaceId) {
-    return Promise.reject(new Error("No active workspace; there is no MCP endpoint to call."));
-  }
-  if (current && current.workspaceId !== workspaceId) resetMcpBridgeClient();
-  if (current) return current.pending.then((e) => e.client);
+  if (!workspaceId) throw new Error("No active workspace; there is no MCP endpoint to call.");
 
-  const slot = { workspaceId, pending: createClient(workspaceId) };
-  current = slot;
-
-  // Clear the cache on failure so the next caller can retry. We deliberately
-  // keep it on success — concurrent callers share it.
-  slot.pending.catch(() => {
-    if (current === slot) current = null;
-  });
-
-  return slot.pending.then((e) => e.client);
-}
-
-/**
- * Close the MCP bridge transport and clear the cache.
- *
- * The platform binds an `Mcp-Session-Id` to the identity and the workspace it
- * was initialized for, so both boundaries drop it:
- *
- *   - `setAuthToken(...)` (the logout / identity boundary), via the auth
- *     lifecycle handler below. Without it, logout would keep dispatching
- *     iframe tool calls against the previous identity's session.
- *   - `setActiveWorkspaceId(...)` (a workspace switch), via the workspace
- *     lifecycle handler below, so the old workspace's session closes as soon
- *     as the user leaves it rather than idling until its TTL.
- *
- * Safe to call when no client exists.
- */
-export function resetMcpBridgeClient(): void {
-  const previous = current;
-  current = null;
-  if (!previous) return;
-
-  // Fire-and-forget: we don't await the close. Any awaiter of the previous
-  // client that arrived after the reset can use the closed transport (it'll
-  // error, they'll retry). Reset is synchronous by contract.
-  previous.pending
-    .then((entry) => entry.client.close())
-    .catch(() => {
-      // Swallow close errors — the client is going away regardless.
-    });
-}
-
-// Register at module load — the side effect runs the first time anything
-// in the bridge dependency graph imports this file (which is exactly when
-// we'd want lifecycle resets to start firing). Multi-listener registration
-// so the SSE event clients can register their own teardown alongside ours
-// without one wiping the other.
-addAuthLifecycleHandler(resetMcpBridgeClient);
-addWorkspaceLifecycleHandler(resetMcpBridgeClient);
-
-// ---------------------------------------------------------------------------
-// Session-not-found recovery
-// ---------------------------------------------------------------------------
-
-/**
- * Run an MCP bridge operation, recovering once from a stale `Mcp-Session-Id`.
- *
- * The platform's `/mcp` endpoint may respond with a 404 + JSON-RPC `Session
- * not found` envelope after a server-side TTL eviction or process restart.
- * The bridge's cached `Client` keeps replaying the dead session id on every
- * subsequent request — every iframe call would fail with that error until
- * the user refreshed the page (issue #141).
- *
- * This wrapper catches the specific shape, drops the cached singleton via
- * `resetMcpBridgeClient`, and runs `op` once more. The retried operation
- * triggers a fresh `getMcpBridgeClient()` → fresh `initialize` → fresh
- * session id, and the original request goes out clean. Other errors (real
- * tool failures, network outages, auth) propagate without modification —
- * this is recovery scoped to the single failure mode it claims to fix.
- *
- * Single retry only. If the retry also fails for any reason, the caller
- * sees that second error. Looping would mask infrastructure problems.
- *
- * Note: retry is per-operation, not per-session. A session-augmented
- * `tasks/{get,result,cancel}` against a task that lived on the lost
- * session will get a fresh session AND a fresh (empty) task table — the
- * task-id will resolve to `-32602 task not found`. That's the correct
- * answer (the task really is gone); iframes that care must re-issue any
- * in-flight work after seeing it.
- */
-export async function withSessionRetry<T>(op: () => Promise<T>): Promise<T> {
-  try {
-    return await op();
-  } catch (err) {
-    if (!isSessionNotFoundError(err)) throw err;
-    resetMcpBridgeClient();
-    return await op();
-  }
-}
-
-/**
- * Detect the platform's session-miss 404 across the two shapes the SDK
- * surfaces it in:
- *
- *   1. `StreamableHTTPClientTransport` sees a non-2xx response and throws
- *      a generic `Error` whose `.message` embeds the JSON-RPC envelope
- *      verbatim (`Error POSTing to endpoint: {"jsonrpc":"2.0",...}`). The
- *      substring `Session not found` reliably distinguishes us from any
- *      other JSON the transport might wrap.
- *   2. Future SDK versions may parse the JSON-RPC envelope and expose
- *      `error.data.reason` directly. Forward-compat: match `not_found`
- *      and `unavailable` (the two reasons emitted by the post-#162
- *      session-store classifier).
- *
- * Both paths return the same boolean — the recovery is identical.
- */
-function isSessionNotFoundError(err: unknown): boolean {
-  if (!err) return false;
-
-  // Substring match on the SDK-wrapped transport error.
-  if (err instanceof Error && err.message.includes("Session not found")) {
-    return true;
-  }
-
-  // Parsed `error.data.reason` (post-#162 forward-compat).
-  if (typeof err === "object" && err !== null) {
-    const reason = (err as { data?: { reason?: unknown } }).data?.reason;
-    if (reason === "not_found" || reason === "unavailable") return true;
-  }
-
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-// Internals
-// ---------------------------------------------------------------------------
-
-/** The workspace's MCP endpoint path. */
-export function mcpEndpointPath(workspaceId: string): string {
-  return `/mcp/${encodeURIComponent(workspaceId)}`;
-}
-
-async function createClient(workspaceId: string): Promise<Entry> {
   // Resolve `/mcp/<wsId>` against the page origin. In dev, Vite proxies
   // `/mcp/*` to the API; in prod the web shell is served from the same origin.
   const url = new URL(
     mcpEndpointPath(workspaceId),
     globalThis.location?.origin ?? "http://localhost",
   );
+  const { headers, body } = buildMcpRequest(`nb-bridge-${++nextId}`, method, params, options);
 
-  const transport = new StreamableHTTPClientTransport(url, {
-    // Custom fetch: read the auth token per-request. This is the hook that
-    // keeps the MCP client aligned with `api/client.ts`'s token refresh cycle
-    // — do NOT capture headers at transport construction time, because tokens
-    // rotate.
-    fetch: mcpFetch,
-  });
-
-  const client = new Client(
-    {
-      name: "nimblebrain-web",
-      version: "1.0.0",
-    },
-    {
-      capabilities: {
-        // Advertise that this client handles `tasks/cancel`. The platform's
-        // ToolTaskHandler (Task 006) only permits task augmentation when the
-        // requestor declares the cancel capability.
-        tasks: {
-          cancel: {},
-        },
-      },
-    },
-  );
-
+  const timeoutMs = options.timeoutMs ?? MCP_REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    await client.connect(transport);
+    const response = await mcpFetch(url.toString(), {
+      method: "POST",
+      headers,
+      body,
+      signal: controller.signal,
+    });
+    return await readMcpAnswer(response);
   } catch (err) {
-    // Best-effort cleanup; the transport may hold an aborted fetch.
-    try {
-      await transport.close();
-    } catch {
-      // Ignore — we're already unwinding.
+    if (controller.signal.aborted) {
+      return {
+        error: { code: REQUEST_TIMEOUT, message: `Request timed out after ${timeoutMs}ms` },
+      };
     }
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
+}
 
-  return { client, transport };
+/** The workspace's MCP endpoint path. */
+export function mcpEndpointPath(workspaceId: string): string {
+  return `/mcp/${encodeURIComponent(workspaceId)}`;
 }
 
 /**
- * Per-request fetch wrapper. Injects the `Authorization` header on every call
- * so token refresh is not bypassed. The workspace is in the URL, not a header.
- *
- * Cookie-mode (`authToken === "__cookie__"`) falls through to
- * `credentials: "include"` — the browser sends the session cookie.
- *
- * Goes through the SHARED `fetchWithRefresh`, not `globalThis.fetch`.
- * Reading the token per-request only picks up a refresh somebody else already
- * performed; it never causes one. A user parked on a rendered app generates
- * nothing but bridge traffic, so with a bare `fetch` the session simply expires
- * underneath them and every `/mcp` call 401s until a page reload re-bootstraps
- * auth — the reported "unauthorized after a while, fixed by refresh" bug.
- *
- * Reusing the REST client's instance (rather than constructing another) is
- * deliberate: its single in-flight promise coalesces concurrent refreshes, so
- * bridge and REST traffic hitting 401 together perform ONE refresh instead of
- * racing two against a rotating refresh token.
+ * The headers and body of one 2026-07-28 request: the `_meta` envelope merged
+ * under the caller's own `_meta`, and the standard headers the server checks
+ * against the body (`MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` for a
+ * method that names its target). No credentials: `sendMcpRequest` adds them.
  */
-async function mcpFetch(input: string | URL, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
+export function buildMcpRequest(
+  id: string,
+  method: string,
+  params: Record<string, unknown>,
+  options: Pick<McpRequestOptions, "tasks"> = {},
+): { headers: Record<string, string>; body: string } {
+  const callerMeta = params._meta as Record<string, unknown> | undefined;
+  const body = {
+    jsonrpc: "2.0",
+    id,
+    method,
+    params: {
+      ...params,
+      _meta: {
+        ...callerMeta,
+        [PROTOCOL_VERSION_META_KEY]: MCP_PROTOCOL_VERSION,
+        [CLIENT_INFO_META_KEY]: CLIENT_INFO,
+        [CLIENT_CAPABILITIES_META_KEY]: options.tasks
+          ? { extensions: { [TASKS_EXTENSION_ID]: {} } }
+          : {},
+      },
+    },
+  };
+  const name = mcpNameOf(method, params);
+  return {
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": MCP_PROTOCOL_VERSION,
+      "mcp-method": method,
+      ...(name !== undefined ? { "mcp-name": encodeHeaderValue(name) } : {}),
+    },
+    body: JSON.stringify(body),
+  };
+}
 
-  const token = getAuthToken();
-  const useCookie = token === "__cookie__";
-  if (token && !useCookie) {
-    headers.set("Authorization", `Bearer ${token}`);
+/**
+ * The answer in a `/mcp` response: a JSON body, or the JSON-RPC response among
+ * the events of an SSE body. A JSON-RPC error is answered whatever the HTTP
+ * status (the 2026 leg answers a header mismatch `400` with one); a response
+ * that carries none rejects with its status.
+ */
+export async function readMcpAnswer(response: Response): Promise<McpAnswer> {
+  const text = await response.text();
+  const message = jsonRpcResponseIn(text, response.headers.get("content-type") ?? "");
+  if (message && "error" in message && isJsonRpcError(message.error)) {
+    return { error: message.error };
   }
+  if (message && response.ok && "result" in message && isObject(message.result)) {
+    return { result: message.result };
+  }
+  throw new Error(
+    `MCP request failed: HTTP ${response.status}${text ? ` ${text.slice(0, 200)}` : ""}`,
+  );
+}
 
-  return fetchWithRefresh(typeof input === "string" ? input : input.toString(), {
-    ...init,
-    headers,
-    // Always include credentials so cookie-mode auth works and same-origin
-    // requests forward session cookies. This is also what makes the
-    // interceptor's post-refresh retry correct here: the refreshed session
-    // rides the cookie, so replaying the original init picks it up.
-    credentials: init?.credentials ?? "include",
-  });
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+/** The target a method names, for `Mcp-Name`: a tool, a resource, a task. */
+function mcpNameOf(method: string, params: Record<string, unknown>): string | undefined {
+  const value =
+    method === "resources/read"
+      ? params.uri
+      : method.startsWith("tasks/")
+        ? params.taskId
+        : params.name;
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * An HTTP header value for `value`: verbatim when it is visible ASCII with no
+ * surrounding space, otherwise base64 of its UTF-8 inside the `=?base64?…?=`
+ * sentinel the server decodes (SEP-2243).
+ */
+function encodeHeaderValue(value: string): string {
+  const plain =
+    value.length > 0 &&
+    value === value.trim() &&
+    !(value.startsWith("=?base64?") && value.endsWith("?=")) &&
+    /^[\t\x20-\x7e]*$/.test(value);
+  if (plain) return value;
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `=?base64?${btoa(binary)}?=`;
+}
+
+type JsonRpcMessage = { id?: unknown; result?: unknown; error?: unknown };
+
+function jsonRpcResponseIn(text: string, contentType: string): JsonRpcMessage | null {
+  if (!contentType.includes("text/event-stream")) return parseObject(text);
+  // An SSE body: the response is the event that carries a result or an error.
+  // Any notification the server sent first is not the answer.
+  for (const event of text.split(/\r?\n\r?\n/)) {
+    const data = event
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).replace(/^ /, ""))
+      .join("\n");
+    const message = parseObject(data);
+    if (message && ("result" in message || "error" in message)) return message;
+  }
+  return null;
+}
+
+function parseObject(text: string): JsonRpcMessage | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    return isObject(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isJsonRpcError(value: unknown): value is McpError {
+  return isObject(value) && typeof value.code === "number" && typeof value.message === "string";
+}
+
+/**
+ * Fetch with the caller's credentials, read per request: tokens rotate, and the
+ * browser tab outlives any one of them. The workspace is in the URL, not a
+ * header.
+ *
+ * Cookie mode (`authToken === "__cookie__"`) sends no `Authorization` header;
+ * `credentials: "include"` carries the session cookie.
+ *
+ * Goes through the SHARED `fetchWithRefresh`, not `globalThis.fetch`. Reading
+ * the token per request only picks up a refresh somebody else performed. A
+ * user parked on a rendered app generates nothing but bridge traffic, so with a
+ * bare `fetch` the session expires underneath them and every `/mcp` call 401s
+ * until a page reload. The REST client's instance coalesces concurrent
+ * refreshes through one in-flight promise, so bridge and REST traffic hitting
+ * 401 together perform one refresh, not two racing a rotating refresh token.
+ */
+async function mcpFetch(url: string, init: RequestInit): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = getAuthToken();
+  if (token && token !== "__cookie__") headers.set("Authorization", `Bearer ${token}`);
+  return fetchWithRefresh(url, { ...init, headers, credentials: "include" });
 }

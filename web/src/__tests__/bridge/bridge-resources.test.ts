@@ -2,13 +2,14 @@
 // Bridge `resources/list` / `resources/templates/list`
 //
 // `ui/initialize` advertises `serverResources`, which promises the app its own
-// server's resource listings as well as reads. Every iframe shares one `/mcp`
-// session, so the bridge alone knows which app asked: it names that app's
+// server's resource listings as well as reads. Every iframe's requests reach
+// `/mcp` as one client, so the bridge alone knows which app asked: it names that app's
 // server in the request's `_meta`, forwards only the iframe's `cursor`, and
 // hands the server's answer back — `nextCursor` included — untouched.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realMcpBridgeClient } from "../../../test/setup";
 
 const listResources = mock(async (_params: unknown) => ({
   resources: [{ uri: "notes://0", name: "note 0" }],
@@ -19,17 +20,10 @@ const listResourceTemplates = mock(async (_params: unknown) => ({
 }));
 
 mock.module("../../mcp-bridge-client", () => ({
-  getMcpBridgeClient: async () => ({
-    callTool: async () => ({ content: [], structuredContent: {} }),
-    readResource: async () => ({ contents: [] }),
-    listResources,
-    listResourceTemplates,
-    request: async () => ({}),
-    setNotificationHandler: () => {},
-    removeNotificationHandler: () => {},
+  ...realMcpBridgeClient,
+  sendMcpRequest: async (method: string, params: Record<string, unknown>) => ({
+    result: await (method === "resources/list" ? listResources : listResourceTemplates)(params),
   }),
-  resetMcpBridgeClient: () => {},
-  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
 }));
 
 const { createBridge, RESOURCE_SOURCE_META_KEY } = await import("../../bridge/bridge");

@@ -15,13 +15,13 @@
 //   - `notifications/message`: reaches the console. The `logging` capability
 //     is advertised, so it has to land somewhere.
 //
-// Plus: the tasks capability is advertised where an app built on the spec's
-// own client can still see it — `hostCapabilities.experimental`, keyed by
-// identifier — as well as in the sibling field today's SDK reads.
+// Plus: the tasks extension is advertised where an app built on the spec's own
+// client can still see it — `hostCapabilities.experimental`, keyed by its
+// identifier.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { realClient } from "../../../test/setup";
+import { realClient, realMcpBridgeClient } from "../../../test/setup";
 import {
   LOCATION_METHOD,
   NAVIGATE_METHOD,
@@ -46,17 +46,8 @@ mock.module("../../api/client", () => ({
 }));
 
 mock.module("../../mcp-bridge-client", () => ({
-  getMcpBridgeClient: async () => ({
-    callTool: mock(async () => ({ content: [], structuredContent: {} })),
-    readResource: mock(async () => ({ contents: [] })),
-    request: mock(async () => ({})),
-    setNotificationHandler: mock(() => {}),
-    removeNotificationHandler: mock(() => {}),
-  }),
-  resetMcpBridgeClient: () => {
-    /* noop */
-  },
-  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
+  ...realMcpBridgeClient,
+  sendMcpRequest: mock(async () => ({ result: { content: [] } })),
 }));
 
 const { createBridge } = await import("../../bridge/bridge");
@@ -203,7 +194,9 @@ describe("ui/initialize — advertised capabilities", () => {
       },
     });
     const reply = (await frame.waitFor(isReplyTo("init-exp"))) as { result: unknown };
-    const tasks = { cancel: {}, requests: { tools: { call: {} } } };
+    // The tasks extension's capability is an empty object: an app opts each
+    // call in on the request, so there is nothing more to declare.
+    const tasks = {};
 
     const sent = reply.result as { hostCapabilities: Record<string, unknown> };
     // Every literal is pinned, not just its presence: each is the exact string
