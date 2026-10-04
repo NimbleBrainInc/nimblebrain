@@ -9,10 +9,6 @@ Tasks are unattended agent runs. Instead of you typing a prompt, NimbleBrain run
 
 Each task is a prompt plus an optional schedule. When it fires, or when you run it, the runtime starts an agent run framed around producing a deliverable rather than a back-and-forth conversation.
 
-<Aside type="note" title="The automations names">
-The `automations__*` tools still work for a deprecation window: each runs its `tasks__*` twin, under the same rules, and is not listed. Task handles minted under the old name still resolve, and storage written under `workspaces/<wsId>/automations/` moves to `tasks/` when the runtime starts.
-</Aside>
-
 ## What a task is
 
 A task has:

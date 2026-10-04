@@ -37,7 +37,7 @@
  * deliberately, and the skill validator warns about that one on its own.
  */
 
-import { canonicalIdentityToolName, PERSONAL_CONNECTOR_PREFIX } from "./identity-sources.ts";
+import { PERSONAL_CONNECTOR_PREFIX } from "./identity-sources.ts";
 import { bareToolName } from "./namespace.ts";
 
 /**
@@ -51,11 +51,8 @@ import { bareToolName } from "./namespace.ts";
 export function toolNameMatchesPattern(toolName: string, pattern: string): boolean {
   if (pattern === "") return false;
 
-  // A retired identity-source name (`automations__*`) is read as its twin
-  // (`tasks__*`) on both sides, so a stored list or a skill's affinity written
-  // against the old name keeps matching the same tools.
-  const normalizedPattern = canonicalIdentityToolName(bareToolName(pattern));
-  const normalizedName = canonicalIdentityToolName(bareToolName(toolName));
+  const normalizedPattern = bareToolName(pattern);
+  const normalizedName = bareToolName(toolName);
 
   // See the header: a pattern that CARRIED the retired prefix could not have
   // named a personal connector when it was authored, so stripping it must not

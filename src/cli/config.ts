@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { selectTaskRunConfig } from "../config/automations.ts";
 import { getValidator } from "../config/index.ts";
 import { deriveOverridePath, mergeConfigs, OVERRIDE_WRITABLE_KEYS } from "../config/overrides.ts";
 import { log } from "../observability/log.ts";
@@ -237,7 +236,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     features: fileConfig.features as RuntimeConfig["features"],
     connectors: fileConfig.connectors as RuntimeConfig["connectors"],
     files: fileConfig.files as RuntimeConfig["files"],
-    automations: selectTaskRunConfig(fileConfig),
+    automations: fileConfig.automations as RuntimeConfig["automations"],
     usage: fileConfig.usage as RuntimeConfig["usage"],
     sessionStore: fileConfig.sessionStore as RuntimeConfig["sessionStore"],
     notifications: fileConfig.notifications as RuntimeConfig["notifications"],

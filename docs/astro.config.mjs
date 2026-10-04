@@ -38,8 +38,6 @@ export default defineConfig({
     '/cli/reload': '/cli/overview/',
     '/cli/telemetry': '/using/telemetry/',
     '/cli/automation': '/using/tasks/',
-    // Automations are tasks; the page moved with the rename.
-    '/using/automations': '/using/tasks/',
     // Extension pages moved into their own section.
     '/apps/facets': '/extensions/facets/',
     '/apps/lifecycle': '/extensions/lifecycle/',

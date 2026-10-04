@@ -222,25 +222,6 @@ describe("dispatchUnattended — the unattended subtraction", () => {
     expect(automations.calls).toHaveLength(1);
   });
 
-  // A retired alias is the same tool, so it gets the same answer.
-  test("treats the retired automations__ names exactly as their tasks__ twins", async () => {
-    const automations = makeSpySource("tasks");
-    const runtime = makeStubRuntime({
-      workDir,
-      members: [PRINCIPAL],
-      identitySources: new Map([["tasks", automations]]),
-    });
-
-    const denied = await call(runtime, "automations__create");
-    expect(denied.outcome).toBe("denied");
-    expect(denied.classification).toBe("tool_not_allowed");
-    expect(automations.calls).toHaveLength(0);
-
-    const allowed = await call(runtime, "automations__list");
-    expect(allowed.outcome).toBe("ok");
-    expect(automations.calls).toHaveLength(1);
-  });
-
   // The skills half of the same allowlist. A skill is durable guidance that
   // loads itself into the principal's later sessions, so authoring one grows
   // exactly the capability the policy refuses to let a dispatch acquire.

@@ -21,7 +21,7 @@ import {
 import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport as LegacyTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { type CallToolResult, CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { doorTaskId, parseDoorTaskId, TASKS_EXTENSION_ID } from "../../src/api/mcp-modern-tasks.ts";
+import { parseDoorTaskId, TASKS_EXTENSION_ID } from "../../src/api/mcp-modern-tasks.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DEV_IDENTITY, DevIdentityProvider } from "../../src/identity/providers/dev.ts";
@@ -41,8 +41,6 @@ const MODERN_VERSION = "2026-07-28";
 const HOLD = "HOLD_THIS_RUN";
 /** A prompt word that makes the run call `tasks__run` from inside itself. */
 const NESTED = "CALL_RUN_FROM_INSIDE";
-/** As {@link NESTED}, under the retired name `automations__run`. */
-const NESTED_ALIAS = "CALL_ALIAS_FROM_INSIDE";
 
 class TwoIdentityProvider extends DevIdentityProvider {
   override async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
@@ -80,7 +78,6 @@ function scriptedModel(): LanguageModelV4 {
   const pick = (options: LanguageModelV4CallOptions) => {
     if (options.prompt.some((m) => m.role === "tool")) return echo;
     const text = userText(options);
-    if (text.includes(NESTED_ALIAS)) return nestedCall("automations__run");
     if (text.includes(NESTED)) return nestedCall("tasks__run");
     return echo;
   };
@@ -317,65 +314,5 @@ describe("tasks__run on the 2025-11-25 leg", () => {
     } finally {
       await client.close();
     }
-  });
-});
-
-describe("the retired automations__ names", () => {
-  it("lists only tasks__ tools", async () => {
-    const { result } = await modern("tools/list", {});
-    const names = ((result?.tools ?? []) as Array<{ name: string }>).map((t) => t.name);
-    expect(names).toContain("tasks__run");
-    expect(names.some((n) => n.startsWith("automations__"))).toBe(false);
-  });
-
-  it("runs automations__run as tasks__run, handing out a tasks handle", async () => {
-    const taskId = await startRun({ prompt: "Old name." }, "automations__run");
-    const runId = runIdOf(taskId);
-    const done = await untilStatus(taskId, "completed");
-    const { run } = (done.result as CallToolResult).structuredContent as { run: AutomationRun };
-    expect(run.id).toBe(runId);
-  });
-
-  it("resolves a handle minted under the automations source, for its owner only", async () => {
-    const taskId = await startRun({ prompt: "Minted before the rename." });
-    const oldHandle = doorTaskId("automations", runIdOf(taskId));
-    await untilStatus(taskId, "completed");
-
-    const { result } = await taskGet(oldHandle);
-    expect(result?.status).toBe("completed");
-    // The answer echoes the id the client holds.
-    expect(result?.taskId).toBe(oldHandle);
-    expect((await taskGet(oldHandle, { as: "other" })).error?.code).toBe(-32602);
-    expect((await modern("tasks/cancel", { taskId: oldHandle })).result).toEqual({
-      resultType: "complete",
-    });
-  });
-
-  it("answers automations__list on the REST tool call", async () => {
-    const res = await fetch(
-      `http://localhost:${handle.port}/v1/workspaces/${TEST_WORKSPACE_ID}/tools/call`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ server: "automations", tool: "list", arguments: {} }),
-      },
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { isError: boolean };
-    expect(body.isError).toBe(false);
-  });
-
-  it("refuses automations__run inside a run, as it refuses tasks__run", async () => {
-    const result = await runtime.executeTask({
-      prompt: `${NESTED_ALIAS}.`,
-      identity: DEV_IDENTITY,
-      workspaceId: TEST_WORKSPACE_ID,
-    });
-    const call = result.toolCalls.find((c) => c.name === "automations__run");
-    expect(call?.ok).toBe(false);
-    const prompts = [
-      ...loadOwnerAutomations(workDir, TEST_WORKSPACE_ID, DEV_IDENTITY.id).values(),
-    ].map((a) => a.prompt);
-    expect(prompts).not.toContain("spawned");
   });
 });

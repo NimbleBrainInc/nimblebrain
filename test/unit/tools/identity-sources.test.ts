@@ -1,8 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-  canonicalIdentitySource,
-  canonicalIdentityToolName,
-  IDENTITY_SOURCES,
   isIdentitySource,
   isTaskForbiddenIdentityTool,
   TASK_RUN_SAFE_TOOLS,
@@ -55,32 +52,6 @@ describe("task-forbidden identity tools", () => {
     for (const safe of TASK_RUN_SAFE_TOOLS) {
       expect(safe.startsWith("tasks__")).toBe(true);
       expect(isTaskForbiddenIdentityTool(safe)).toBe(false);
-    }
-  });
-});
-
-describe("the retired automations source name", () => {
-  it("names the tasks source, but is not a source of its own", () => {
-    expect(isIdentitySource("automations")).toBe(true);
-    expect(canonicalIdentitySource("automations")).toBe("tasks");
-    expect(canonicalIdentitySource("files")).toBe("files");
-    expect(IDENTITY_SOURCES.has("automations")).toBe(false);
-  });
-
-  it("rewrites the source segment of a tool name or pattern, and nothing else", () => {
-    expect(canonicalIdentityToolName("automations__run")).toBe("tasks__run");
-    expect(canonicalIdentityToolName("automations__*")).toBe("tasks__*");
-    expect(canonicalIdentityToolName("tasks__run")).toBe("tasks__run");
-    expect(canonicalIdentityToolName("my_automations__run")).toBe("my_automations__run");
-    expect(canonicalIdentityToolName("automations")).toBe("automations");
-  });
-
-  it("is judged by the in-run allowlist exactly as its twin", () => {
-    for (const tool of ["create", "update", "delete", "run", "anything_new"]) {
-      expect(isTaskForbiddenIdentityTool(`automations__${tool}`)).toBe(true);
-    }
-    for (const tool of ["list", "status", "runs", "run_result", "cancel"]) {
-      expect(isTaskForbiddenIdentityTool(`automations__${tool}`)).toBe(false);
     }
   });
 });

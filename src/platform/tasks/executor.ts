@@ -13,7 +13,6 @@
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/automations.ts";
 import { wrapContained } from "../../prompt/compose.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
-import { IDENTITY_SOURCE_ALIASES } from "../../tools/identity-sources.ts";
 import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
 import {
   type AutomationRunTrigger,
@@ -150,12 +149,6 @@ export interface ExecutorContext {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/** The tasks source's own name and every retired alias of it (`automations`). */
-const TASK_SOURCE_NAMES = [
-  "tasks",
-  ...[...IDENTITY_SOURCE_ALIASES].filter(([, twin]) => twin === "tasks").map(([alias]) => alias),
-];
-
 /**
  * Recursive-call guard. An automation whose `allowedTools` includes a
  * tool that creates more automations would spawn an unbounded loop on
@@ -169,12 +162,9 @@ const TASK_SOURCE_NAMES = [
  * dispatch by `identity-sources.ts::isTaskForbiddenIdentityTool` (ambient,
  * enforced in `IdentityToolRouter`), which is the authoritative list. Removing
  * this guard in favor of that one is tracked as a cleanup (see the automations
- * recursive-guard issue); until then, keep the two from drifting. The patterns
- * name the authoring tools under the current source name and each alias.
+ * recursive-guard issue); until then, keep the two from drifting.
  */
-const RECURSIVE_TOOL_PATTERNS = TASK_SOURCE_NAMES.flatMap((source) =>
-  ["create", "update", "delete"].map((tool) => `${source}__${tool}`),
-);
+const RECURSIVE_TOOL_PATTERNS = ["tasks__create", "tasks__update", "tasks__delete"];
 
 export function containsRecursiveTool(allowedTools: string[] | undefined): string | null {
   if (!allowedTools) return null;

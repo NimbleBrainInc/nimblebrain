@@ -58,14 +58,6 @@ describe("loadConfig", () => {
     });
   });
 
-  it("reads a tasks block as the automations block", () => {
-    const configPath = writeTestConfig("tasks-alias.json", {
-      tasks: { maxConcurrentRuns: 3 },
-    });
-    const config = loadConfig({ config: configPath });
-    expect(config.automations).toEqual({ maxConcurrentRuns: 3 });
-  });
-
   it("carries every top-level schema key through to the runtime config", () => {
     // A key the schema accepts but loadConfig does not copy is validated and
     // then silently ignored. Every schema key needs a row here; `$schema` and
@@ -101,18 +93,15 @@ describe("loadConfig", () => {
       connectors: {},
       notifications: { poll: { intervalMs: 30000 } },
       automations: {},
-      tasks: {},
       files: {},
     };
     const fileOnly = new Set(["$schema", "version"]);
-    // An alias block is carried under the key it stands for.
-    const carriedAs: Record<string, string> = { tasks: "automations" };
     const configurable = Object.keys(schema.properties).filter((k) => !fileOnly.has(k));
     expect(configurable.filter((k) => !(k in samples))).toEqual([]);
 
     const configPath = writeTestConfig("every-key.json", samples);
     const config = loadConfig({ config: configPath }) as unknown as Record<string, unknown>;
-    expect(configurable.filter((k) => config[carriedAs[k] ?? k] === undefined)).toEqual([]);
+    expect(configurable.filter((k) => config[k] === undefined)).toEqual([]);
     expect(config.usage).toEqual({ ledger: { retentionMonths: 6 } });
     expect(config.sessionStore).toEqual({ type: "memory", ttlSeconds: 60 });
     expect(config.notifications).toEqual({ poll: { intervalMs: 30000 } });

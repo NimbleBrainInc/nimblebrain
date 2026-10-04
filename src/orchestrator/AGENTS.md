@@ -8,7 +8,7 @@ A chat or task session reaches **exactly one workspace** plus the caller's ident
 
 - **Workspace tools** are bare `<source>__<tool>` — the per-workspace registries, including the platform `nb` source. The workspace is NOT in the name: it comes from the session's membership-validated `workspaceId`, so a caller cannot name another workspace at all. (`ws_<id>-<source>__<tool>` is the RETIRED form — neither emitted nor routed; a caller presenting one is rejected and told to re-list.)
 - **Personal connectors** carry a reserved `my_` marker (`my_gmail__send`). With workspace names bare, a workspace `gmail` and the caller's own `gmail` would otherwise be one string and two sets of credentials — a collision install-time checks cannot close, since the guard sees only the *caller's* connectors, never another member's. The marker is stripped at the door, so policy, events, and placements all still key on `serverName`.
-- **Identity tools** (kernel identity sources — `conversations`, `files`, `tasks`; see `src/tools/identity-sources.ts`, which also maps the retired `automations` name to `tasks`) are **bare** `<source>__<tool>`. They're owned by the user and live OUTSIDE any workspace, so they're NOT composed into workspace registries.
+- **Identity tools** (kernel identity sources — `conversations`, `files`, `tasks`; see `src/tools/identity-sources.ts`) are **bare** `<source>__<tool>`. They're owned by the user and live OUTSIDE any workspace, so they're NOT composed into workspace registries.
 
 `crm__search` (resolved in whichever workspace the session is bound to), `conversations__search`, and `my_gmail__send` can all be invoked in the same conversation — the source segment alone decides which door each takes.
 

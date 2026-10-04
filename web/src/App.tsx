@@ -43,7 +43,6 @@ import { useShell } from "./hooks/useShell";
 import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
 import { type AppRouteState, isOpenAppCall, resolveAppRouteIn } from "./lib/open-app";
-import { retiredIdentityAppRoutes } from "./lib/retired-identity-routes";
 import { routablePlacements } from "./lib/routable-placements";
 import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
@@ -411,9 +410,6 @@ function AuthenticatedAppContent({
                   element={<AppWithChat placement={p} />}
                 />
               ))}
-              {/* A renamed identity view's old segment redirects to the new one
-                  (`/w/<slug>/automations` → `/w/<slug>/tasks`). */}
-              {retiredIdentityAppRoutes()}
               {/* Apps within workspace */}
               {appPlacements.map((p) => (
                 <Route

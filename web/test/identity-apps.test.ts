@@ -4,7 +4,6 @@ import {
   identityAppRoute,
   identityAppSegment,
   isIdentityApp,
-  RETIRED_IDENTITY_APP_SEGMENTS,
 } from "../src/lib/identity-apps";
 
 // The web mirror of the backend identity-source set. These pin the contract
@@ -46,12 +45,5 @@ describe("identity-apps", () => {
 
   it("identity set is exactly { conversations, files, tasks }", () => {
     expect([...IDENTITY_APP_SOURCES]).toEqual(["conversations", "files", "tasks"]);
-  });
-});
-
-describe("retired identity app segments", () => {
-  it("sends the old automations view to tasks, which is not itself an identity app name", () => {
-    expect(RETIRED_IDENTITY_APP_SEGMENTS.get("automations")).toBe("tasks");
-    expect(isIdentityApp("automations")).toBe(false);
   });
 });

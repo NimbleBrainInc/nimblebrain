@@ -19,41 +19,9 @@
  */
 export const IDENTITY_SOURCES: ReadonlySet<string> = new Set(["conversations", "files", "tasks"]);
 
-/**
- * Retired identity-source names, each answered by the source that replaced it,
- * for a deprecation window. A call to `automations__<tool>` runs `tasks__<tool>`:
- * routing, the in-run allowlist, tool-name patterns and task handles all read
- * an alias exactly as its twin. An alias is never listed, so the model and
- * `tools/list` see only the current name; each use is logged once per caller
- * (`noteRetiredToolName`) so we can tell when callers have moved.
- */
-export const IDENTITY_SOURCE_ALIASES: ReadonlyMap<string, string> = new Map([
-  ["automations", "tasks"],
-]);
-
-/** The current name of an identity source: its twin for an alias, else the name itself. */
-export function canonicalIdentitySource(name: string): string {
-  return IDENTITY_SOURCE_ALIASES.get(name) ?? name;
-}
-
-/**
- * A bare `<source>__<tool>` name (or a pattern over one) with a retired
- * identity-source segment replaced by its twin; any other name unchanged.
- */
-export function canonicalIdentityToolName(name: string): string {
-  const sep = name.indexOf("__");
-  if (sep <= 0) return name;
-  const twin = IDENTITY_SOURCE_ALIASES.get(name.slice(0, sep));
-  return twin ? `${twin}${name.slice(sep)}` : name;
-}
-
-/**
- * Whether a source name addresses a kernel identity source, by its current
- * name or a retired alias of it. Iterate {@link IDENTITY_SOURCES} for the
- * sources themselves; an alias is a name, not another source.
- */
+/** Whether a source (by name) is a kernel identity source. */
 export function isIdentitySource(name: string): boolean {
-  return IDENTITY_SOURCES.has(canonicalIdentitySource(name));
+  return IDENTITY_SOURCES.has(name);
 }
 
 /**
@@ -144,7 +112,7 @@ export const TASK_RUN_SAFE_TOOLS: ReadonlySet<string> = new Set([
  * fire them — a foothold that outlives the run and is then scheduler-driven.
  *
  * Only the `tasks__*` namespace is gated — `conversations__*` / `files__*`
- * are safe in a run. A retired alias (`automations__*`) is judged as its twin. Within it, the check is an allowlist: anything not in
+ * are safe in a run. Within it, the check is an allowlist: anything not in
  * {@link TASK_RUN_SAFE_TOOLS} is forbidden, so a newly-added authoring
  * tool is denied by default rather than silently reopening the vector.
  *
@@ -158,6 +126,5 @@ export const TASK_RUN_SAFE_TOOLS: ReadonlySet<string> = new Set([
  * operator/connector-authored `allowedTools`.
  */
 export function isTaskForbiddenIdentityTool(name: string): boolean {
-  const canonical = canonicalIdentityToolName(name);
-  return canonical.startsWith("tasks__") && !TASK_RUN_SAFE_TOOLS.has(canonical);
+  return name.startsWith("tasks__") && !TASK_RUN_SAFE_TOOLS.has(name);
 }
