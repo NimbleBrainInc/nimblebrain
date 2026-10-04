@@ -260,12 +260,15 @@ export function NotificationsPage() {
 
   // Following a link to an item is reading it, on the same rule `toggle` uses.
   // Guarded on the item existing: a link to something pruned, or to another
-  // workspace's item, marks nothing and simply lands on the list.
+  // workspace's item, marks nothing and simply lands on the list. Keyed by the
+  // id, not latched once, because `?item=` changes under a mounted page when
+  // the bell's preview opens another item while the inbox is already showing.
   const focusPresent = focusId !== null && items.some((i) => i.id === focusId);
-  const marked = useRef(false);
+  const followed = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusPresent || marked.current) return;
-    marked.current = true;
+    if (!focusPresent || !focusId || followed.current === focusId) return;
+    followed.current = focusId;
+    setOpen((current) => (current.has(focusId) ? current : new Set(current).add(focusId)));
     const item = items.find((i) => i.id === focusId);
     if (item && !item.readAt) markIds([item.id]);
   }, [focusPresent, focusId, items, markIds]);

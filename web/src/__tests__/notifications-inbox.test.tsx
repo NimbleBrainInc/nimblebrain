@@ -61,7 +61,7 @@ mock.module("../api/client", () => ({
 const React = await import("react");
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
-const { MemoryRouter, Route, Routes } = await import("react-router-dom");
+const { MemoryRouter, Route, Routes, useNavigate } = await import("react-router-dom");
 const { NotificationsContext } = await import("../context/NotificationsContext");
 const { ShellProvider } = await import("../context/ShellContext");
 const { WorkspaceAppIconsContext } = await import("../context/WorkspaceAppIconsContext");
@@ -93,6 +93,13 @@ function item(over: Partial<NotificationView> = {}): NotificationView {
 }
 
 let unmount: (() => void) | null = null;
+
+/** The router's navigate, so a test can move `?item=` under a mounted page. */
+let navigate: ReturnType<typeof useNavigate>;
+function NavigateProbe() {
+  navigate = useNavigate();
+  return null;
+}
 
 const WS = {
   id: "ws_005b519ef7efc353",
@@ -156,12 +163,17 @@ async function mount(
     ...over,
   };
   const routes = React.createElement(
-    Routes,
+    React.Fragment,
     null,
-    React.createElement(Route, {
-      path: "/w/:slug/notifications",
-      element: React.createElement(NotificationsPage),
-    }),
+    React.createElement(NavigateProbe),
+    React.createElement(
+      Routes,
+      null,
+      React.createElement(Route, {
+        path: "/w/:slug/notifications",
+        element: React.createElement(NotificationsPage),
+      }),
+    ),
   );
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -439,6 +451,26 @@ describe("?item= — where a link from outside the shell lands", () => {
     expect(container.textContent).toContain("DNS propagated.");
     expect(markRead).toHaveBeenCalledTimes(1);
     expect(markRead.mock.calls[0]?.[0]).toEqual(["acme:evt_1"]);
+  });
+
+  test("a new ?item= on the open page opens and marks that row too", async () => {
+    // The bell's preview links to `?item=` while the inbox may already be the
+    // page on screen, so the page follows the parameter as it changes.
+    const { container, markRead } = await mount(
+      {
+        items: [
+          item({ id: "acme:evt_1", body: "DNS propagated." }),
+          item({ id: "acme:evt_2", seq: 2, body: "Mailbox warmed." }),
+        ],
+      },
+      [],
+      "/w/ws-outbound/notifications?item=acme%3Aevt_1",
+    );
+    await act(async () => {
+      navigate("/w/ws-outbound/notifications?item=acme%3Aevt_2");
+    });
+    expect(container.textContent).toContain("Mailbox warmed.");
+    expect(markRead.mock.calls.map((call) => call[0])).toEqual([["acme:evt_1"], ["acme:evt_2"]]);
   });
 
   test("an id that names nothing lands on the list and marks nothing", async () => {
