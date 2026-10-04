@@ -20,18 +20,22 @@ into an agent run is a **route**, and a workspace admin writes it.
 
 ## The inbox
 
-Open the inbox from the bell in the top bar, beside **Chat**. A dot on the bell
-means something is unread; its tooltip says how many. The inbox header shows the
-same count, for the whole inbox rather than the rows on screen.
+The bell in the top bar, beside **Chat**, carries a dot while something is unread;
+its tooltip says how many. Click it for the five most pressing unread items,
+urgent first, without leaving the page you are on. Opening the list marks
+nothing read; choose an item to open it in the inbox, or **Open the inbox** for
+all of it. The inbox header shows the same unread count, for the whole inbox
+rather than the rows on screen, and how many of those need attention: select
+that to list them.
 
 ![The workspace inbox, with one item expanded to show its body, event name and raw connector data](../../../assets/guide/notifications-inbox.png)
 
-Items are grouped by urgency and then by arrival: `urgent` and `attention` sort
-above `info`, and within a level the newest is first. Each row carries:
+Items are newest first, 25 at a time; **Load older** at the end of the list adds
+the next 25. Each row carries:
 
 | | |
 |---|---|
-| **Unread dot** | Marks an item nobody has read. Read items are dimmed. |
+| **Unread dot** | At the end of the row, on an item nobody has read. Read items are dimmed. |
 | **Title** | One line the connector wrote. |
 | **App** | The connector that emitted it, by its icon and name. |
 | **Timestamp** | When the connector says the fact happened. The expanded row also shows when this runtime received it. |
@@ -68,9 +72,9 @@ Under **Show details** is the connector's own structured payload, as raw JSON.
 The runtime never reads a field of it; it is passed through untouched, and shown
 here so you can see what the connector actually sent.
 
-The inbox holds 90 days. The view shows the most recent 100 items that match the
-filters; narrow them to reach older ones, or ask the agent ("what notifications
-came in last month from acme?") and it walks the backlog forward.
+The inbox holds 90 days, and **Load older** reaches all of it. A link to one item
+(the one a route puts in Slack or mail) opens that item, however far down it is.
+You can also ask the agent ("what notifications came in last month from acme?").
 
 ### Live updates
 

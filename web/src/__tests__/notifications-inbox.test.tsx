@@ -16,6 +16,9 @@
 //   6. Unread is visible on the row, and the header counts the shell's total.
 //   7. Each filter reaches the server as the list argument it stands for, from
 //      the URL, and a filtered view with nothing in it says so.
+//   8. The list is newest first in pages: "Load older" continues below the
+//      oldest row, a link to an older item pages down to it, and the count of
+//      unread items needing attention covers the whole inbox.
 //
 // The page reads its own list through `notifications__list` (the client's
 // `callTool`, stubbed here) and takes the unread total and `markRead` from the
@@ -44,17 +47,30 @@ import type { PlacementEntry } from "../types";
 
 let listed: NotificationView[] = [];
 let listArgs: Array<Record<string, unknown>> = [];
+/** The page's own list reads — one page each — apart from the needs-attention count's. */
+const pageReads = () => listArgs.filter((a) => a.limit === 25);
 
 mock.module("../api/client", () => ({
   ...realClient,
   callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
     if (tool === "list") listArgs.push(args);
-    // Honours `unreadOnly`, the one filter whose answer changes when a row is
-    // read — which is the case the held-rows test is about.
-    const notifications = args?.unreadOnly ? listed.filter((n) => !n.readAt) : listed;
-    return {
-      content: [{ type: "text", text: JSON.stringify({ notifications, unread: 0 }) }],
+    // Pages the way the store does — newest first, `before`, `limit`,
+    // `hasMore` — and honours the filters whose answer a test depends on:
+    // `unreadOnly` (the held-rows test), `level`, and `ids`.
+    const rank = { info: 0, attention: 1, urgent: 2 } as const;
+    const matching = [...listed]
+      .sort((a, b) => b.seq - a.seq)
+      .filter((n) => !args?.unreadOnly || !n.readAt)
+      .filter((n) => !args?.level || rank[n.level] >= rank[args.level as keyof typeof rank])
+      .filter((n) => args?.before === undefined || n.seq < (args.before as number))
+      .filter((n) => !args?.ids || (args.ids as string[]).includes(n.id));
+    const limit = (args?.limit as number | undefined) ?? 20;
+    const out = {
+      notifications: matching.slice(0, limit),
+      unread: 0,
+      hasMore: matching.length > limit,
     };
+    return { content: [{ type: "text", text: JSON.stringify(out) }] };
   }),
 }));
 
@@ -413,20 +429,18 @@ describe("a level the workspace ceiling clamped", () => {
 });
 
 describe("ordering and the empty state", () => {
-  test("urgent and attention sort above info, newest first within a level", async () => {
+  test("newest first whatever the level, so a page loaded below never reorders the one above", async () => {
     const { container } = await mount({
       items: [
         item({ id: "a:1", seq: 1, level: "info", title: "info-old" }),
         item({ id: "a:2", seq: 2, level: "urgent", title: "urgent-old" }),
         item({ id: "a:3", seq: 3, level: "info", title: "info-new" }),
-        item({ id: "a:4", seq: 4, level: "attention", title: "attention-new" }),
-        item({ id: "a:5", seq: 5, level: "urgent", title: "urgent-new" }),
       ],
     });
     const titles = rows(container).map(
       (r) => r.querySelector('[data-testid="notification-title"]')?.textContent,
     );
-    expect(titles).toEqual(["urgent-new", "urgent-old", "attention-new", "info-new", "info-old"]);
+    expect(titles).toEqual(["info-new", "urgent-old", "info-old"]);
   });
 
   test("an empty inbox says what fills it, not nothing", async () => {
@@ -524,7 +538,7 @@ describe("filters", () => {
       [],
       "/w/ws-outbound/notifications?status=unread&level=attention&app=acme&q=reply&within=7d",
     );
-    const args = listArgs.at(-1)!;
+    const args = pageReads().at(-1)!;
     expect(args.unreadOnly).toBe(true);
     expect(args.level).toBe("attention");
     expect(args.source).toBe("acme");
@@ -535,7 +549,7 @@ describe("filters", () => {
 
   test("no filters sends none", async () => {
     await mount();
-    expect(listArgs.at(-1)).toEqual({ limit: 100 });
+    expect(pageReads().at(-1)).toEqual({ limit: 25 });
   });
 
   test("a filtered view with nothing in it says so, with a way out", async () => {
@@ -601,5 +615,65 @@ describe("the app", () => {
     const select = container.querySelector<HTMLSelectElement>('select[aria-label="App"]');
     const values = Array.from(select?.options ?? []).map((o) => o.value);
     expect(values).toEqual(["", "acme", "beta"]);
+  });
+});
+
+describe("paging", () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      item({ id: `a:${i + 1}`, seq: i + 1, title: `item ${i + 1}`, body: `body ${i + 1}` }),
+    );
+  const loadOlderButton = (container: HTMLElement) =>
+    container.querySelector('[data-testid="inbox-load-older"]') as HTMLButtonElement | null;
+
+  test("shows a page of 25 and loads the next below the oldest row", async () => {
+    const { container } = await mount({ items: many(30) });
+    expect(rows(container)).toHaveLength(25);
+    await act(async () => {
+      loadOlderButton(container)?.click();
+    });
+    expect(pageReads().at(-1)?.before).toBe(6);
+    expect(rows(container)).toHaveLength(30);
+    expect(loadOlderButton(container)).toBeNull();
+  });
+
+  test("no Load older when the first page is all of it", async () => {
+    const { container } = await mount({ items: many(25) });
+    expect(rows(container)).toHaveLength(25);
+    expect(loadOlderButton(container)).toBeNull();
+  });
+
+  test("a link to an item older than the first page pages down to it and opens it", async () => {
+    const { container, markRead } = await mount(
+      { items: many(60) },
+      [],
+      "/w/ws-outbound/notifications?item=a%3A3",
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.textContent).toContain("body 3");
+    expect(markRead.mock.calls.map((call) => call[0])).toEqual([["a:3"]]);
+  });
+
+  test("counts the unread items needing attention across the inbox and links to them", async () => {
+    const items = [
+      item({ id: "a:1", seq: 1, level: "urgent", title: "old and urgent" }),
+      ...many(40)
+        .slice(1)
+        .map((n) => ({ ...n, id: `b:${n.seq}` })),
+    ];
+    const { container } = await mount({ items });
+    const link = container.querySelector(
+      '[data-testid="inbox-needs-attention"]',
+    ) as HTMLButtonElement | null;
+    expect(link?.textContent).toBe("1 need attention");
+    await act(async () => {
+      link?.click();
+    });
+    const args = pageReads().at(-1);
+    expect(args?.unreadOnly).toBe(true);
+    expect(args?.level).toBe("attention");
+    expect(container.textContent).toContain("old and urgent");
   });
 });

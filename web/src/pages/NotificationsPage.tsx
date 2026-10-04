@@ -17,6 +17,7 @@ import { useNotifications } from "../context/NotificationsContext";
 import { useShellContext } from "../context/ShellContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { formatInstant, formatInstantFull } from "../lib/format";
 import {
   appendOlderPage,
   EMPTY_PAGES,
@@ -57,7 +58,14 @@ const LEVEL_META: Record<
   NotificationLevel,
   { label: string; icon: typeof Info; className: string; edge: string }
 > = {
-  info: { label: "Info", icon: Info, className: "text-muted-foreground", edge: "" },
+  info: {
+    label: "Info",
+    icon: Info,
+    className: "text-muted-foreground",
+    // Transparent, not absent: every row carries the same edge width, so an
+    // info row's text lines up with the coloured rows around it.
+    edge: "border-l-2 border-l-transparent",
+  },
   attention: {
     label: "Attention",
     icon: AlertTriangle,
@@ -71,12 +79,6 @@ const LEVEL_META: Record<
     edge: "border-l-2 border-l-destructive",
   },
 };
-
-/** Absolute, not relative: "2 hours ago" hides the one thing an operator is checking. */
-function formatInstant(iso: string): string {
-  const at = new Date(iso);
-  return Number.isNaN(at.getTime()) ? iso : at.toLocaleString();
-}
 
 /** The time filter's windows, by their URL value. */
 const WITHIN: Record<string, { label: string; ms: number }> = {
@@ -429,43 +431,16 @@ export function NotificationsPage() {
 
         {error ? <InlineError message={error} /> : null}
 
-        {loading && items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : null}
-
-        {!loading && items.length === 0 && !error && filtered ? (
-          <EmptyState
-            message={
-              <>
-                Nothing matches these filters.{" "}
-                <button type="button" className="underline" onClick={clearFilters}>
-                  Clear filters
-                </button>
-              </>
-            }
+        {items.length === 0 && !error ? (
+          <InboxEmpty
+            loading={loading}
+            filtered={filtered}
+            onClearFilters={clearFilters}
+            slug={slug}
           />
         ) : null}
 
-        {!loading && items.length === 0 && !error && !filtered ? (
-          <EmptyState
-            message={
-              <>
-                Nothing yet. This fills when a connector that declares an outbox has something to
-                report — the runtime polls it and files what it finds here.{" "}
-                {slug ? (
-                  <Link className="underline" to={`/w/${slug}/settings/notifications`}>
-                    Notification settings
-                  </Link>
-                ) : (
-                  "Notification settings"
-                )}{" "}
-                lists the connectors in this workspace that do.
-              </>
-            }
-          />
-        ) : null}
-
-        <ul className="space-y-px">
+        <ul className="divide-y divide-border/60 overflow-hidden rounded-sm border border-border/60 bg-card empty:hidden">
           {items.map((item) => (
             <NotificationRow
               key={item.id}
@@ -495,6 +470,53 @@ export function NotificationsPage() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** What the list area says when it holds no rows: loading, or why it is empty. */
+function InboxEmpty({
+  loading,
+  filtered,
+  onClearFilters,
+  slug,
+}: {
+  loading: boolean;
+  filtered: boolean;
+  onClearFilters: () => void;
+  slug: string | undefined;
+}) {
+  if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (filtered) {
+    return (
+      <EmptyState
+        message={
+          <>
+            Nothing matches these filters.{" "}
+            <button type="button" className="underline" onClick={onClearFilters}>
+              Clear filters
+            </button>
+          </>
+        }
+      />
+    );
+  }
+  return (
+    <EmptyState
+      message={
+        <>
+          Nothing yet. This fills when a connector that declares an outbox has something to report —
+          the runtime polls it and files what it finds here.{" "}
+          {slug ? (
+            <Link className="underline" to={`/w/${slug}/settings/notifications`}>
+              Notification settings
+            </Link>
+          ) : (
+            "Notification settings"
+          )}{" "}
+          lists the connectors in this workspace that do.
+        </>
+      }
+    />
   );
 }
 
@@ -587,7 +609,7 @@ function InboxFilterBar({
   const selectClass = "h-8 w-auto";
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="inbox-filters">
-      <fieldset className="flex rounded-sm border border-input p-0.5">
+      <fieldset className="flex gap-0.5 rounded-sm border border-input bg-secondary p-0.5">
         <legend className="sr-only">Status</legend>
         {[
           { value: undefined, label: "All" },
@@ -603,8 +625,8 @@ function InboxFilterBar({
               className={cn(
                 "rounded-xs px-2.5 py-0.5 text-sm transition-colors",
                 active
-                  ? "bg-foreground/10 text-foreground"
-                  : "text-muted-foreground hover:bg-foreground/5",
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {option.label}
@@ -683,15 +705,12 @@ function useScrollIntoViewWhen<T extends HTMLElement>(active: boolean) {
 }
 
 /**
- * The row's own border, which doubles as the "this is the one you followed a
- * link to" marker. A named function rather than a ternary inside the row so the
- * row's complexity stays about the row.
+ * The rows share one bordered list and are split by its dividers, so a row
+ * draws a border only to mark "this is the one you followed a link to". Inset,
+ * so the ring sits inside the list's border instead of over a neighbour's.
  */
 function rowChrome(focused: boolean): string {
-  return cn(
-    "rounded-sm border bg-card",
-    focused ? "border-primary ring-1 ring-primary" : "border-border/60",
-  );
+  return cn(focused && "ring-1 ring-inset ring-primary");
 }
 
 function NotificationRow({
@@ -725,11 +744,14 @@ function NotificationRow({
       />
 
       {expanded ? (
-        <div className="px-3 pb-3 pt-0 space-y-3 border-t border-border/60">
+        // On a muted surface, so where the open item ends and the next row
+        // begins is plain, and indented to the title's column (the row's
+        // padding, the level icon, and the gap after it).
+        <div className="space-y-3 border-t border-border/60 bg-muted/50 py-3 pr-3 pl-9.5">
           {item.body ? (
             // `whitespace-pre-wrap` on a plain string. The server's newlines
             // survive; nothing else it wrote is interpreted.
-            <p className="text-sm whitespace-pre-wrap break-words pt-3">{item.body}</p>
+            <p className="text-sm whitespace-pre-wrap break-words">{item.body}</p>
           ) : null}
 
           {item.link ? <NotificationLink uri={item.link.resource} href={href} /> : null}
@@ -738,7 +760,7 @@ function NotificationRow({
             <dt>Event</dt>
             <dd className="font-mono text-foreground/80">{item.name}</dd>
             <dt>Received</dt>
-            <dd>{formatInstant(item.receivedAt)}</dd>
+            <dd>{formatInstantFull(item.receivedAt)}</dd>
             {/* Only when a ceiling actually held the item down. Shown here and
                 not on the row because it explains the ledger below it: a route
                 asking for a level above this one did not fire, and this is the
@@ -764,7 +786,7 @@ function NotificationRow({
   );
 }
 
-/** The row's always-visible line: unread dot, level, title, app, time, subject. */
+/** The row's always-visible line: level, title, app, time, subject, unread dot. */
 function NotificationRowHead({
   item,
   expanded,
@@ -789,15 +811,8 @@ function NotificationRowHead({
       data-testid="notification-row"
       data-level={item.level}
       data-unread={unread ? "true" : "false"}
-      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left rounded-sm hover:bg-muted/50 transition-colors"
+      className="w-full flex items-start gap-2.5 px-3 py-3 text-left hover:bg-foreground/5 transition-colors"
     >
-      {/* The bell's dot, on the row it stands for. Read rows keep the
-            slot so titles stay aligned. */}
-      <span
-        aria-hidden="true"
-        data-testid={unread ? "notification-unread-dot" : undefined}
-        className={cn("mt-1.5 size-2 shrink-0 rounded-full", unread && "bg-primary")}
-      />
       <LevelIcon aria-hidden="true" className={cn("size-4 shrink-0 mt-0.5", level.className)} />
       <span className="min-w-0 flex-1">
         <span
@@ -819,7 +834,9 @@ function NotificationRowHead({
             {appName}
           </span>
           <span aria-hidden="true">·</span>
-          <span>{formatInstant(item.timestamp)}</span>
+          <time dateTime={item.timestamp} title={formatInstantFull(item.timestamp)}>
+            {formatInstant(item.timestamp)}
+          </time>
           {item.subject ? (
             <>
               <span aria-hidden="true">·</span>
@@ -829,9 +846,19 @@ function NotificationRowHead({
           <span className="sr-only">{`${level.label}${unread ? ", unread" : ""}`}</span>
         </span>
       </span>
+      {/* The bell's dot, on the row it stands for. On the trailing side, so a
+          read row reserves no space for it and every title starts in one
+          column. */}
+      {unread ? (
+        <span
+          aria-hidden="true"
+          data-testid="notification-unread-dot"
+          className="size-2 shrink-0 self-center rounded-full bg-primary"
+        />
+      ) : null}
       <ChevronRight
         aria-hidden="true"
-        className={cn("size-4 shrink-0 mt-0.5 transition-transform", expanded && "rotate-90")}
+        className={cn("size-4 shrink-0 self-center transition-transform", expanded && "rotate-90")}
       />
     </button>
   );
