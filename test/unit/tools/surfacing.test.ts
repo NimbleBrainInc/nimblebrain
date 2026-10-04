@@ -43,7 +43,7 @@ function makeSkill(opts: { allowedTools?: string[] } = {}): Skill {
 describe("surfaceTools", () => {
   it("Tier 1: 10 total tools — all surfaced directly, nothing proxied", () => {
     const system = makeSystemTools();
-    const app = makeAppTools("tasks", 6);
+    const app = makeAppTools("todos", 6);
     const all = [...system, ...app];
 
     const result = surfaceTools(all, null);
@@ -54,7 +54,7 @@ describe("surfaceTools", () => {
 
   it("Tier 1: exactly maxDirectTools — all surfaced directly", () => {
     const system = makeSystemTools();
-    const app = makeAppTools("tasks", 26);
+    const app = makeAppTools("todos", 26);
     const all = [...system, ...app];
 
     const result = surfaceTools(all, null, { maxDirectTools: DEFAULT_MAX_DIRECT_TOOLS });
@@ -65,7 +65,7 @@ describe("surfaceTools", () => {
 
   it("Tier 2: 50 total tools, no skill — only nb__* direct, rest proxied", () => {
     const system = makeSystemTools(4);
-    const appA = makeAppTools("tasks", 23);
+    const appA = makeAppTools("todos", 23);
     const appB = makeAppTools("weather", 23);
     const all = [...system, ...appA, ...appB];
 
@@ -85,7 +85,7 @@ describe("surfaceTools", () => {
 
   it("Tier 2: skill matched but has no allowedTools — falls through to Tier 2", () => {
     const system = makeSystemTools(4);
-    const app = makeAppTools("tasks", 30);
+    const app = makeAppTools("todos", 30);
     const all = [...system, ...app];
     const skill = makeSkill(); // no allowedTools
 
@@ -97,11 +97,11 @@ describe("surfaceTools", () => {
 
   it("Tier 3: skill with allowed-tools glob — matching + system direct", () => {
     const system = makeSystemTools(4);
-    const tasks = makeAppTools("tasks", 10);
+    const tasks = makeAppTools("todos", 10);
     const weather = makeAppTools("weather", 10);
     const crm = makeAppTools("crm", 10);
     const all = [...system, ...tasks, ...weather, ...crm];
-    const skill = makeSkill({ allowedTools: ["tasks__*"] });
+    const skill = makeSkill({ allowedTools: ["todos__*"] });
 
     const result = surfaceTools(all, skill);
 
@@ -121,11 +121,11 @@ describe("surfaceTools", () => {
 
   it("Tier 3: skill with multiple allowed-tools globs", () => {
     const system = makeSystemTools(4);
-    const tasks = makeAppTools("tasks", 5);
+    const tasks = makeAppTools("todos", 5);
     const weather = makeAppTools("weather", 5);
     const crm = makeAppTools("crm", 5);
     const all = [...system, ...tasks, ...weather, ...crm];
-    const skill = makeSkill({ allowedTools: ["tasks__*", "crm__*"] });
+    const skill = makeSkill({ allowedTools: ["todos__*", "crm__*"] });
 
     const result = surfaceTools(all, skill);
 
@@ -136,9 +136,9 @@ describe("surfaceTools", () => {
 
   it("Tier 3: skill with exact tool name in allowedTools", () => {
     const system = makeSystemTools(4);
-    const tasks = makeAppTools("tasks", 5);
+    const tasks = makeAppTools("todos", 5);
     const all = [...system, ...tasks];
-    const skill = makeSkill({ allowedTools: ["tasks__tool_0"] });
+    const skill = makeSkill({ allowedTools: ["todos__tool_0"] });
 
     const result = surfaceTools(all, skill);
 
@@ -149,7 +149,7 @@ describe("surfaceTools", () => {
 
   it("custom maxDirectTools threshold", () => {
     const system = makeSystemTools(4);
-    const app = makeAppTools("tasks", 7);
+    const app = makeAppTools("todos", 7);
     const all = [...system, ...app];
 
     // 11 total tools, max 10 → Tier 2
@@ -161,7 +161,7 @@ describe("surfaceTools", () => {
 
   it("direct and proxied are mutually exclusive and cover all tools", () => {
     const system = makeSystemTools(4);
-    const app = makeAppTools("tasks", 40);
+    const app = makeAppTools("todos", 40);
     const all = [...system, ...app];
 
     const result = surfaceTools(all, null);
@@ -181,13 +181,13 @@ describe("surfaceTools", () => {
 describe("surfaceTools — focusedServerName", () => {
   it("Tier 2: focused app's tools promoted to direct, others remain proxied", () => {
     const system = makeSystemTools(4);
-    const tasks = makeAppTools("tasks", 20);
+    const tasks = makeAppTools("todos", 20);
     const weather = makeAppTools("weather", 20);
     const all = [...system, ...tasks, ...weather];
 
     expect(all).toHaveLength(44);
 
-    const result = surfaceTools(all, null, { focusedServerName: "tasks" });
+    const result = surfaceTools(all, null, { focusedServerName: "todos" });
 
     // 4 system + 20 tasks promoted = 24 direct
     expect(result.direct).toHaveLength(24);
@@ -208,11 +208,11 @@ describe("surfaceTools — focusedServerName", () => {
 
   it("Tier 3: focused app's tools in direct even if not in skill globs", () => {
     const system = makeSystemTools(4);
-    const tasks = makeAppTools("tasks", 10);
+    const tasks = makeAppTools("todos", 10);
     const weather = makeAppTools("weather", 10);
     const crm = makeAppTools("crm", 10);
     const all = [...system, ...tasks, ...weather, ...crm];
-    const skill = makeSkill({ allowedTools: ["tasks__*"] });
+    const skill = makeSkill({ allowedTools: ["todos__*"] });
 
     const result = surfaceTools(all, skill, { focusedServerName: "crm" });
 
@@ -235,10 +235,10 @@ describe("surfaceTools — focusedServerName", () => {
 
   it("Tier 1: no change when all tools already direct", () => {
     const system = makeSystemTools(4);
-    const app = makeAppTools("tasks", 6);
+    const app = makeAppTools("todos", 6);
     const all = [...system, ...app];
 
-    const result = surfaceTools(all, null, { focusedServerName: "tasks" });
+    const result = surfaceTools(all, null, { focusedServerName: "todos" });
 
     expect(result.direct).toHaveLength(10);
     expect(result.proxied).toHaveLength(0);
@@ -246,7 +246,7 @@ describe("surfaceTools — focusedServerName", () => {
 
   it("without focusedServerName: existing tier behavior unchanged", () => {
     const system = makeSystemTools(4);
-    const tasks = makeAppTools("tasks", 20);
+    const tasks = makeAppTools("todos", 20);
     const weather = makeAppTools("weather", 20);
     const all = [...system, ...tasks, ...weather];
 
@@ -259,7 +259,7 @@ describe("surfaceTools — focusedServerName", () => {
 
   it("nb__* tools always in direct regardless of focused app", () => {
     const system = makeSystemTools(4);
-    const tasks = makeAppTools("tasks", 20);
+    const tasks = makeAppTools("todos", 20);
     const weather = makeAppTools("weather", 20);
     const all = [...system, ...tasks, ...weather];
 
@@ -376,7 +376,7 @@ describe("surfaceTools — namespaced (cross-workspace) names", () => {
   it("Tier 2: namespaced nb__* tools are still classified as direct system tools", () => {
     const all = [
       ...makeNsSystemTools(4),
-      ...makeNsAppTools("tasks", 23),
+      ...makeNsAppTools("todos", 23),
       ...makeNsAppTools("weather", 23),
     ];
     expect(all).toHaveLength(50);
@@ -407,10 +407,10 @@ describe("surfaceTools — namespaced (cross-workspace) names", () => {
   it("Tier 3: a BARE allowedTools glob matches namespaced app tools", () => {
     const all = [
       ...makeNsSystemTools(4),
-      ...makeNsAppTools("tasks", 10),
+      ...makeNsAppTools("todos", 10),
       ...makeNsAppTools("weather", 10),
     ];
-    const skill = makeSkill({ allowedTools: ["tasks__*"] });
+    const skill = makeSkill({ allowedTools: ["todos__*"] });
 
     const result = surfaceTools(all, skill);
 
@@ -422,11 +422,11 @@ describe("surfaceTools — namespaced (cross-workspace) names", () => {
   it("focusedServerName (namespaced) promotes the focused app's namespaced tools", () => {
     const all = [
       ...makeNsSystemTools(4),
-      ...makeNsAppTools("tasks", 20),
+      ...makeNsAppTools("todos", 20),
       ...makeNsAppTools("weather", 20),
     ];
 
-    const result = surfaceTools(all, null, { focusedServerName: ns("tasks") });
+    const result = surfaceTools(all, null, { focusedServerName: ns("todos") });
 
     // 4 system + 20 tasks promoted = 24 direct
     expect(result.direct).toHaveLength(24);
@@ -449,9 +449,9 @@ describe("surfaceTools — kernel identity tools always direct", () => {
       makeTool("files__read"),
       makeTool("files__search"),
       makeTool("conversations__search"),
-      makeTool("automations__create"),
+      makeTool("tasks__create"),
     ];
-    const app = makeAppTools("tasks", 40); // non-kernel connector tools
+    const app = makeAppTools("todos", 40); // non-kernel connector tools
     const all = [...system, ...identity, ...app];
 
     const result = surfaceTools(all, null);
@@ -471,7 +471,7 @@ describe("surfaceTools — kernel identity tools always direct", () => {
     // the `files` identity source — a prefix check would wrongly promote them.
     const system = makeSystemTools(4);
     const lookalikes = [makeTool("filesystem__list"), makeTool("fileshare__get")];
-    const app = makeAppTools("tasks", 40);
+    const app = makeAppTools("todos", 40);
     const all = [...system, ...lookalikes, ...app];
 
     const result = surfaceTools(all, null);
@@ -486,10 +486,10 @@ describe("surfaceTools — kernel identity tools always direct", () => {
   it("Tier 3: identity tools stay direct even when a skill glob doesn't name them", () => {
     const system = makeSystemTools(4);
     const identity = [makeTool("files__read"), makeTool("conversations__search")];
-    const tasks = makeAppTools("tasks", 10);
+    const tasks = makeAppTools("todos", 10);
     const weather = makeAppTools("weather", 10);
     const all = [...system, ...identity, ...tasks, ...weather];
-    const skill = makeSkill({ allowedTools: ["tasks__*"] });
+    const skill = makeSkill({ allowedTools: ["todos__*"] });
 
     const result = surfaceTools(all, skill);
 
@@ -533,8 +533,8 @@ describe("surfaceTools — instructions write is app-only", () => {
 
   it("stays invisible under a skill glob that names it", () => {
     const system = makeSystemTools(4);
-    const tasks = makeAppTools("tasks", 10);
-    const skill = makeSkill({ allowedTools: ["instructions__*", "tasks__*"] });
+    const tasks = makeAppTools("todos", 10);
+    const skill = makeSkill({ allowedTools: ["instructions__*", "todos__*"] });
 
     const result = surfaceTools([...system, internalWrite, ...tasks], skill);
 
@@ -547,7 +547,7 @@ describe("surfaceTools — instructions write is app-only", () => {
     // instructions tool proxies like any other platform tool.
     const system = makeSystemTools(4);
     const plain = makeTool("instructions__write_instructions");
-    const app = makeAppTools("tasks", 40);
+    const app = makeAppTools("todos", 40);
 
     const result = surfaceTools([...system, plain, ...app], null);
 
@@ -561,7 +561,7 @@ describe("surfaceTools — instructions write is app-only", () => {
     // named in the bootstrap briefing instead of spent from the direct tier.
     const system = makeSystemTools(4);
     const skills = makeAppTools("skills", 10);
-    const app = makeAppTools("tasks", 40);
+    const app = makeAppTools("todos", 40);
 
     const result = surfaceTools([...system, ...skills, ...app], null);
 

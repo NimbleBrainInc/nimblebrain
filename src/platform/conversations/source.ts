@@ -115,7 +115,7 @@ export async function createConversationsSource(
    * thread lists its own workspace's chats no matter where the user is
    * focused), automation runs (provenance), `/mcp` (the
    * workspace in its URL), and REST (the workspace in its URL). Same seam
-   * `files__*` and `automations__*` use.
+   * `files__*` and `tasks__*` use.
    *
    * Deliberately NOT a tool argument. A caller-supplied workspace can be
    * omitted — which is exactly how the iframe's pre-handshake first call used

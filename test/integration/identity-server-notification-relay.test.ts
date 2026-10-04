@@ -191,12 +191,12 @@ describe("a person's own apps announce their writes to that person", () => {
     }
   });
 
-  it("automations: an automation created through /mcp reaches its owner's stream", async () => {
+  it("tasks: a task created through /mcp reaches its owner's stream", async () => {
     const own = await openOwnStream();
     const client = await createMcpClient();
     try {
       const result = await client.callTool({
-        name: "automations__create",
+        name: "tasks__create",
         arguments: {
           manifest: {
             name: "weekly-digest",
@@ -207,9 +207,9 @@ describe("a person's own apps announce their writes to that person", () => {
       });
       expect(result.isError).toBeFalsy();
 
-      await eventually(() => notificationsFor(own.frames, "automations").length > 0);
-      expect(notificationsFor(own.frames, "automations")[0]).toEqual({
-        server: "automations",
+      await eventually(() => notificationsFor(own.frames, "tasks").length > 0);
+      expect(notificationsFor(own.frames, "tasks")[0]).toEqual({
+        server: "tasks",
         userId: DEV_IDENTITY.id,
         method: LIST_CHANGED,
       });

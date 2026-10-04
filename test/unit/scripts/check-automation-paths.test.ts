@@ -77,8 +77,8 @@ describe("check-automation-paths — isIdentityAutomationsDataPath", () => {
     expect(isIdentityAutomationsDataPath(call!)).toBe(false);
   });
 
-  test("does NOT match the sanctioned `workspaceAutomationsDir(workDir, wsId, ownerId)`", () => {
-    const src = parse(`const dir = workspaceAutomationsDir(workDir, wsId, ownerId);`);
+  test("does NOT match the sanctioned `workspaceTasksDir(workDir, wsId, ownerId)`", () => {
+    const src = parse(`const dir = workspaceTasksDir(workDir, wsId, ownerId);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isIdentityAutomationsDataPath(call!)).toBe(false);
   });
@@ -104,8 +104,8 @@ describe("check-automation-paths — isUsersScopedAutomationsJoin", () => {
     expect(isUsersScopedAutomationsJoin(call!)).toBe(false);
   });
 
-  test("does NOT match the sanctioned `workspaceAutomationsDir(...)`", () => {
-    const src = parse(`const dir = workspaceAutomationsDir(workDir, wsId, ownerId);`);
+  test("does NOT match the sanctioned `workspaceTasksDir(...)`", () => {
+    const src = parse(`const dir = workspaceTasksDir(workDir, wsId, ownerId);`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isUsersScopedAutomationsJoin(call!)).toBe(false);
   });
@@ -125,7 +125,7 @@ describe("check-automation-paths — script self-invocation", () => {
     if (exitCode === 0) {
       expect(stdout).toContain("No identity-owned automations paths");
     } else {
-      expect(stderr).toContain("workspaceAutomationsDir");
+      expect(stderr).toContain("workspaceTasksDir");
     }
   });
 });

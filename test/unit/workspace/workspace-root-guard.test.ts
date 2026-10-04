@@ -32,12 +32,9 @@ import { parseNotificationEnvelope } from "../../../src/notifications/envelope.t
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { NotificationEnvelope } from "../../../src/notifications/types.ts";
 import { PermissionStore } from "../../../src/permissions/permission-store.ts";
-import {
-  automationRunsDir,
-  workspaceAutomationsDir,
-} from "../../../src/platform/automations/paths.ts";
-import { appendRun, saveAutomation } from "../../../src/platform/automations/store.ts";
-import type { Automation, AutomationRun } from "../../../src/platform/automations/types.ts";
+import { automationRunsDir, workspaceTasksDir } from "../../../src/platform/tasks/paths.ts";
+import { appendRun, saveAutomation } from "../../../src/platform/tasks/store.ts";
+import type { Automation, AutomationRun } from "../../../src/platform/tasks/types.ts";
 import { materializeConnectorSkill } from "../../../src/skills/connector-skill-store.ts";
 import { writeSkill } from "../../../src/skills/writer.ts";
 import { FileCredentialStore } from "../../../src/tools/credential-store.ts";
@@ -251,7 +248,7 @@ describe("the same write inside a live workspace", () => {
     new EventSourcedConversationStore({ dir: workspaceConversationsDir(workDir, WS, OWNER) });
     expect(existsSync(workspaceConversationsDir(workDir, WS, OWNER))).toBe(true);
 
-    expect(existsSync(workspaceAutomationsDir(workDir, WS, OWNER))).toBe(false);
+    expect(existsSync(workspaceTasksDir(workDir, WS, OWNER))).toBe(false);
     saveAutomation(workDir, WS, OWNER, automation());
     expect(existsSync(automationRunsDir(workDir, WS, OWNER, "daily-digest"))).toBe(false);
     appendRun(workDir, WS, OWNER, "daily-digest", run());

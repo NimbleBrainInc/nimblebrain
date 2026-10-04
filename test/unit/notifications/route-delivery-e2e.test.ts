@@ -32,9 +32,9 @@ import {
 import {
   AutomationEventTrigger,
   type AutomationEventTriggerDeps,
-} from "../../../src/platform/automations/event-trigger.ts";
-import type { RunInput } from "../../../src/platform/automations/scheduler.ts";
-import type { Automation, ScheduleSpec } from "../../../src/platform/automations/types.ts";
+} from "../../../src/platform/tasks/event-trigger.ts";
+import type { RunInput } from "../../../src/platform/tasks/scheduler.ts";
+import type { Automation, ScheduleSpec } from "../../../src/platform/tasks/types.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";

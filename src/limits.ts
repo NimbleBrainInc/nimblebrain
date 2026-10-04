@@ -33,7 +33,7 @@ export const DEFAULT_MAX_DIRECT_TOOLS = 30;
 // --- Automations ---
 
 /**
- * Page size for `automations__list`. A tenant's automation count grows without
+ * Page size for `tasks__list`. A tenant's automation count grows without
  * bound (one record per scheduled send), and an unpaged list is re-serialized
  * into the model's context on every call — at a few hundred records that is the
  * whole response budget, which is how a caller ends up silently working from a

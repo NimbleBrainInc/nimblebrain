@@ -15,8 +15,8 @@ export declare const FilesListInput: import("@sinclair/typebox").TObject<{
     folderId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     recursive: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    kinds: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"other" | "image" | "document" | "data" | "font">>>;
-    sources: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"agent" | "manual" | "chat" | "app">>>;
+    kinds: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"image" | "document" | "data" | "font" | "other">>>;
+    sources: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"chat" | "agent" | "app" | "manual">>>;
     conversationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     runId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     createdAfter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -24,7 +24,7 @@ export declare const FilesListInput: import("@sinclair/typebox").TObject<{
     tags: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     mimeType: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     sort: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"createdAt" | "filename" | "size">>;
-    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
+    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"asc" | "desc">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     offset: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;

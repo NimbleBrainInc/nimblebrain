@@ -1,5 +1,4 @@
 import type { Static, TSchema } from "@sinclair/typebox";
-import * as Automations from "./automations.ts";
 import * as Compose from "./compose.ts";
 import * as Conversations from "./conversations.ts";
 import * as Files from "./files.ts";
@@ -7,6 +6,7 @@ import * as Instructions from "./instructions.ts";
 import * as ManageTools from "./manage-tools.ts";
 import * as Notifications from "./notifications.ts";
 import * as Skills from "./skills.ts";
+import * as Tasks from "./tasks.ts";
 import * as Usage from "./usage.ts";
 
 // Registry mapping (source, tool) → input schema. The web client and any
@@ -38,15 +38,15 @@ export const PlatformToolCatalog = {
     effective_context: { input: Compose.ComposeEffectiveContextInput },
     assembled_context: { input: Compose.ComposeAssembledContextInput },
   },
-  automations: {
-    create: { input: Automations.AutomationsCreateInput },
-    update: { input: Automations.AutomationsUpdateInput },
-    delete: { input: Automations.AutomationsDeleteInput },
-    list: { input: Automations.AutomationsListInput },
-    status: { input: Automations.AutomationsStatusInput },
-    runs: { input: Automations.AutomationsRunsInput },
-    run: { input: Automations.AutomationsRunInput },
-    cancel: { input: Automations.AutomationsCancelInput },
+  tasks: {
+    create: { input: Tasks.AutomationsCreateInput },
+    update: { input: Tasks.AutomationsUpdateInput },
+    delete: { input: Tasks.AutomationsDeleteInput },
+    list: { input: Tasks.AutomationsListInput },
+    status: { input: Tasks.AutomationsStatusInput },
+    runs: { input: Tasks.AutomationsRunsInput },
+    run: { input: Tasks.AutomationsRunInput },
+    cancel: { input: Tasks.AutomationsCancelInput },
   },
   conversations: {
     list: { input: Conversations.ConversationsListInput },

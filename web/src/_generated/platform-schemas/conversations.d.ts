@@ -34,7 +34,7 @@ export declare const ConversationsForkInput: import("@sinclair/typebox").TObject
 }>;
 export type ConversationsForkInput = Static<typeof ConversationsForkInput>;
 export declare const ConversationsStatsInput: import("@sinclair/typebox").TObject<{
-    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "week" | "month">>;
+    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
 }>;
 export type ConversationsStatsInput = Static<typeof ConversationsStatsInput>;
 export declare const ConversationsExportInput: import("@sinclair/typebox").TObject<{

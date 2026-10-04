@@ -32,13 +32,10 @@ import type {
   UnattendedDispatchResult,
 } from "../../../src/orchestrator/unattended-dispatch.ts";
 import type {
-  EventWakeAck,
-  EventWakeRequest,
-} from "../../../src/platform/automations/event-trigger.ts";
-import type {
   DeliveryRecord,
   NotificationLevel,
 } from "../../../src/platform/schemas/notifications.ts";
+import type { EventWakeAck, EventWakeRequest } from "../../../src/platform/tasks/event-trigger.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 
@@ -363,7 +360,7 @@ describe("each dispatch outcome maps to a ledger row and an event", () => {
   });
 
   test("a route naming a tool the door refuses is denied by the door, not by this module", async () => {
-    // `automations__create` is barred by the unattended policy. This module
+    // `tasks__create` is barred by the unattended policy. This module
     // does not know that and must not: it makes the call and reads the answer.
     answers = [
       { outcome: "denied", classification: "tool_not_allowed", error: "not available unattended" },
@@ -374,14 +371,14 @@ describe("each dispatch outcome maps to a ledger row and an event", () => {
           id: "rt_auto",
           createdBy: AUTHOR,
           match: {},
-          deliver: [{ kind: "tool", tool: "automations__create", input: {} }],
+          deliver: [{ kind: "tool", tool: "tasks__create", input: {} }],
         },
       ],
     });
     const item = seed();
     await dispatcher().onItem(wsId, item);
 
-    expect(calls[0]?.tool).toBe("automations__create");
+    expect(calls[0]?.tool).toBe("tasks__create");
     expect(ledger(item)[0]).toMatchObject({
       outcome: "denied",
       classification: "tool_not_allowed",

@@ -29,12 +29,12 @@ import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
 import { resolveAutomationsConfig } from "../../../src/config/automations.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
-import { createAutomationsSource } from "../../../src/platform/automations/source.ts";
 import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
 import { createInstructionsSource } from "../../../src/platform/instructions/source.ts";
 import { createNotificationsSource } from "../../../src/platform/notifications/source.ts";
 import { createSkillsSource } from "../../../src/platform/skills/source.ts";
+import { createTasksSource } from "../../../src/platform/tasks/source.ts";
 import { createRunAdmission } from "../../../src/runtime/admission.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
@@ -93,7 +93,7 @@ const SOURCES = [
   { name: "instructions", factory: createInstructionsSource },
   { name: "files", factory: createFilesSource },
   { name: "conversations", factory: createConversationsSource },
-  { name: "automations", factory: createAutomationsSource },
+  { name: "automations", factory: createTasksSource },
   { name: "notifications", factory: createNotificationsSource },
   // The core `nb` tools are not a platform app, but they take the same input
   // conventions and `set_model_config` is the reference patch tool.

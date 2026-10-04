@@ -47,17 +47,17 @@ import type {
   UnattendedDispatchResult,
 } from "../orchestrator/unattended-dispatch.ts";
 import type {
-  EventWakeAck,
-  EventWakeRequest,
-  EventWakeSettlement,
-} from "../platform/automations/event-trigger.ts";
-import { backoffDelay } from "../platform/automations/scheduler.ts";
-import type {
   DeliveryOutcome,
   DeliveryRecord,
   NotificationDeliverTarget,
   NotificationLevel,
 } from "../platform/schemas/notifications.ts";
+import type {
+  EventWakeAck,
+  EventWakeRequest,
+  EventWakeSettlement,
+} from "../platform/tasks/event-trigger.ts";
+import { backoffDelay } from "../platform/tasks/scheduler.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { notificationInboxUrl } from "../workspace/workspace-url.ts";
 import { type NotificationRoute, readNotificationsConfig, setRouteDisabled } from "./config.ts";

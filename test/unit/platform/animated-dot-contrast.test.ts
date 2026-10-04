@@ -85,7 +85,7 @@ function derivedCandidates(): { file: string; selector: string }[] {
 const GUARDED = [
   {
     what: "automations running dot",
-    file: join(REPO, "src", "platform", "automations", "ui", "src", "styles.ts"),
+    file: join(REPO, "src", "platform", "tasks", "ui", "src", "styles.ts"),
     selector: ".dot-running",
   },
   {
@@ -103,7 +103,7 @@ const GUARDED = [
  */
 const EXEMPT: Record<string, string> = Object.fromEntries(
   [
-    ["automations", ".skel", "loading skeleton — 'not yet loaded', which the layout already shows"],
+    ["tasks", ".skel", "loading skeleton — 'not yet loaded', which the layout already shows"],
     ["conversations", ".skel", "loading skeleton — as above"],
     ["files", ".skel", "loading skeleton — as above"],
     ["files", ".detail-shimmer", "detail-pane placeholder — replaced by content"],
@@ -120,7 +120,7 @@ function exemptKey(file: string, selector: string): string {
  * Read a stylesheet the way the app does.
  *
  * A `.ts` entry is EVALUATED rather than slurped as text, because
- * `automations/ui/src/styles.ts` is one big template literal and a stray
+ * `tasks/ui/src/styles.ts` is one big template literal and a stray
  * backtick in a comment terminates it. That is not theoretical: it happened,
  * and nothing caught it — `vite build` connectors without evaluating, the root
  * tsconfig excludes `src/platform/*&#47;ui`, and a `readFileSync` guard is
@@ -259,7 +259,7 @@ for (const { what, selector, css } of LOADED) {
      * Every ground the indicator renders on, derived rather than listed.
      *
      * The page and the card are the obvious two. The third, where a connector has
-     * one, is the row hover fill: `automations` paints a 30% mix of the border
+     * one, is the row hover fill: `tasks` paints a 30% mix of the border
      * token in `.run-row:hover` and `.rail-auto-item:hover`, and every dot in
      * that rail and run list renders inside one of those rows
      * (`ui/src/components/RailItem.tsx:40`, `:72`,

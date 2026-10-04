@@ -13,16 +13,11 @@
  * read it. The web tier keeps a hand-mirror in `web/src/lib/identity-apps.ts`
  * (it can't import from `src/`); keep the two in lockstep.
  *
- * Set: `conversations`, `files` (Phase B), `automations` (Phase C) — all
- * identity-owned, each reached through the identity door (see ACCESS_MODEL).
- * Automations data lives at `users/{userId}/automations/`; a scheduled run
- * fires as its owner.
+ * Set: `conversations`, `files`, `tasks` — each identity-owned and reached
+ * through the identity door. Task data lives under the workspace
+ * (`workspaces/<wsId>/tasks/<ownerId>/`); a run fires as its owner.
  */
-export const IDENTITY_SOURCES: ReadonlySet<string> = new Set([
-  "conversations",
-  "files",
-  "automations",
-]);
+export const IDENTITY_SOURCES: ReadonlySet<string> = new Set(["conversations", "files", "tasks"]);
 
 /** Whether a source (by name) is a kernel identity source. */
 export function isIdentitySource(name: string): boolean {
@@ -93,37 +88,37 @@ export function personalConnectorWireName(name: string): string {
 }
 
 /**
- * Automations tools that stay reachable inside an unattended run: read-only
+ * Task tools that stay reachable inside an unattended run: read-only
  * introspection plus `cancel`. They surface run health without persisting a new
- * instruction. Everything else in the `automations__*` namespace — the authoring
+ * instruction. Everything else in the `tasks__*` namespace — the authoring
  * and run-triggering tools, and any tool added to the namespace later — is
  * barred, so the boundary fails CLOSED as the surface grows (an allowlist, not a
  * denylist).
  */
-export const AUTOMATIONS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
-  "automations__list",
-  "automations__status",
-  "automations__runs",
-  "automations__run_result",
-  "automations__cancel",
+export const TASK_RUN_SAFE_TOOLS: ReadonlySet<string> = new Set([
+  "tasks__list",
+  "tasks__status",
+  "tasks__runs",
+  "tasks__run_result",
+  "tasks__cancel",
 ]);
 
 /**
- * Whether an identity tool is barred from an unattended task run (an
- * automation). An automation fires as its owner with no human present to
+ * Whether an identity tool is barred from an unattended task run. A task run
+ * fires as its owner with no human present to
  * confirm, and routinely ingests untrusted content (email, web pages, tickets).
- * Reaching the automation-authoring surface from inside a run lets an injected
- * instruction rewrite the run's own prompt/schedule, spawn new automations, or
+ * Reaching the task-authoring surface from inside a run lets an injected
+ * instruction rewrite the run's own prompt/schedule, spawn new tasks, or
  * fire them — a foothold that outlives the run and is then scheduler-driven.
  *
- * Only the `automations__*` namespace is gated — `conversations__*` / `files__*`
+ * Only the `tasks__*` namespace is gated — `conversations__*` / `files__*`
  * are safe in a run. Within it, the check is an allowlist: anything not in
- * {@link AUTOMATIONS_TASK_SAFE_TOOLS} is forbidden, so a newly-added authoring
+ * {@link TASK_RUN_SAFE_TOOLS} is forbidden, so a newly-added authoring
  * tool is denied by default rather than silently reopening the vector.
  *
- * The boundary is enforced ambiently: the automations source refuses these
+ * The boundary is enforced ambiently: the tasks source refuses these
  * tools whenever `RequestContext.unattended` is set (see
- * `createAutomationsSource`), and that flag rides the request context down to
+ * `createTasksSource`), and that flag rides the request context down to
  * every tool the run dispatches. Surfacing subtraction in `executeTask` keeps
  * them out of the model's view; this predicate is the shared policy both layers
  * read.
@@ -131,5 +126,5 @@ export const AUTOMATIONS_TASK_SAFE_TOOLS: ReadonlySet<string> = new Set([
  * operator/connector-authored `allowedTools`.
  */
 export function isTaskForbiddenIdentityTool(name: string): boolean {
-  return name.startsWith("automations__") && !AUTOMATIONS_TASK_SAFE_TOOLS.has(name);
+  return name.startsWith("tasks__") && !TASK_RUN_SAFE_TOOLS.has(name);
 }

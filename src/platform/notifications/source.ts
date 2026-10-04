@@ -25,7 +25,6 @@ import type { Runtime } from "../../runtime/runtime.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { canWriteWorkspaceScoped } from "../../workspace/authz.ts";
-import { isEventSchedule } from "../automations/types.ts";
 import {
   NOTIFICATION_PLACEHOLDERS,
   NOTIFICATION_SOURCES_MAX,
@@ -40,6 +39,7 @@ import {
   NotificationsSettingsInput,
   type NotificationsSettingsOutput,
 } from "../schemas/notifications.ts";
+import { isEventSchedule } from "../tasks/types.ts";
 
 /**
  * The "notifications" platform source — the inbox, as an in-process MCP server.

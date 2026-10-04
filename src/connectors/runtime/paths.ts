@@ -36,7 +36,7 @@ const RESERVED_TOOL_PREFIXES = new Set(["nb"]);
  * predicate for callers that reject gracefully (returning a tool result);
  * `validateServerName` is the throwing form over the same set.
  *
- * The kernel identity sources (`conversations` / `files` / `automations`) are
+ * The kernel identity sources (`conversations` / `files` / `tasks`) are
  * reserved on the same footing. They are peers of `nb`, not children of it, and
  * they reach the model under the same bare `<source>__<tool>` shape a workspace
  * source now uses — so a workspace connector named `conversations` would be
@@ -78,7 +78,7 @@ export function validateServerName(serverName: string): void {
     // consults the identity door first, so such a source is unreachable anyway
     // — but the operator sees only this line, so it has to say what to do.
     throw new Error(
-      `Source name '${serverName}' is reserved for platform tools (nb, conversations, files, automations). ` +
+      `Source name '${serverName}' is reserved for platform tools (nb, conversations, files, tasks). ` +
         `Its tools would be shadowed by the identity door and unreachable. Reinstall the connector under a different ` +
         `source name, or set an explicit \`serverName\` on its ref.`,
     );

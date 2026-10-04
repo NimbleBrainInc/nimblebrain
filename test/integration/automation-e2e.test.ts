@@ -13,14 +13,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Scheduler } from "../../src/platform/automations/scheduler.ts";
+import type { AutomationsRunOutput } from "../../src/platform/schemas/tasks.ts";
+import { Scheduler } from "../../src/platform/tasks/scheduler.ts";
 import {
   handleCreate,
   handleRun,
   handleRuns,
   handleStatus,
   type ToolContext,
-} from "../../src/platform/automations/server.ts";
+} from "../../src/platform/tasks/server.ts";
 import {
   deleteAutomationDefinition,
   loadOwnerAutomations,
@@ -29,13 +30,12 @@ import {
   readRuns,
   readRunsPage,
   saveAutomation,
-} from "../../src/platform/automations/store.ts";
+} from "../../src/platform/tasks/store.ts";
 import type {
   Automation,
   AutomationRun,
   AutomationRunResult,
-} from "../../src/platform/automations/types.ts";
-import type { AutomationsRunOutput } from "../../src/platform/schemas/automations.ts";
+} from "../../src/platform/tasks/types.ts";
 import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const TMP_DIR = join(tmpdir(), `automation-e2e-${Date.now()}`);
 // Automations are workspace-owned: stored at
-// `{workDir}/workspaces/<wsId>/automations/<ownerId>/`, the scheduler scans
+// `{workDir}/workspaces/<wsId>/tasks/<ownerId>/`, the scheduler scans
 // `{workDir}/workspaces/*`. The harness acts as one workspace + owner.
 const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";

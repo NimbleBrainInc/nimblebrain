@@ -1,5 +1,5 @@
 /**
- * `automations__run` over `/mcp/<wsId>`: a run is an MCP task on the
+ * `tasks__run` over `/mcp/<wsId>`: a run is an MCP task on the
  * 2026-07-28 leg (the tasks extension). The handle names the run, the run's
  * record exists before the handle is returned, `tasks/get` and `tasks/cancel`
  * read and cancel the run for its owner only, and the handle outlives a
@@ -25,8 +25,8 @@ import { parseDoorTaskId, TASKS_EXTENSION_ID } from "../../src/api/mcp-modern-ta
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DEV_IDENTITY, DevIdentityProvider } from "../../src/identity/providers/dev.ts";
-import { loadOwnerAutomations, readRunTicket } from "../../src/platform/automations/store.ts";
-import type { AutomationRun } from "../../src/platform/automations/types.ts";
+import { loadOwnerAutomations, readRunTicket } from "../../src/platform/tasks/store.ts";
+import type { AutomationRun } from "../../src/platform/tasks/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
@@ -39,7 +39,7 @@ const MODERN_VERSION = "2026-07-28";
 
 /** A prompt word that holds the run's model call until the run is cancelled. */
 const HOLD = "HOLD_THIS_RUN";
-/** A prompt word that makes the run call `automations__run` from inside itself. */
+/** A prompt word that makes the run call `tasks__run` from inside itself. */
 const NESTED = "CALL_RUN_FROM_INSIDE";
 
 class TwoIdentityProvider extends DevIdentityProvider {
@@ -61,7 +61,7 @@ function userText(options: LanguageModelV4CallOptions): string {
 /**
  * The echo model, except: a run whose prompt says {@link HOLD} waits until
  * it is aborted; one that says {@link NESTED} first calls
- * `automations__run`, then answers.
+ * `tasks__run`, then answers.
  */
 function scriptedModel(): LanguageModelV4 {
   const echo = createEchoModel();
@@ -73,7 +73,7 @@ function scriptedModel(): LanguageModelV4 {
               toolCalls: [
                 {
                   toolCallId: "tc_nested",
-                  toolName: "automations__run",
+                  toolName: "tasks__run",
                   input: JSON.stringify({ prompt: "spawned" }),
                 },
               ],
@@ -182,7 +182,7 @@ async function modern(
 async function startRun(args: Record<string, unknown>): Promise<string> {
   const { result, error } = await modern(
     "tools/call",
-    { name: "automations__run", arguments: args },
+    { name: "tasks__run", arguments: args },
     { optIn: true },
   );
   if (error) throw new Error(`tools/call failed: ${error.message}`);
@@ -206,14 +206,14 @@ async function untilStatus(taskId: string, status: string): Promise<Record<strin
   throw new Error(`task ${taskId} never reached ${status}`);
 }
 
-/** The run id a door task id names, after checking it names the automations source. */
+/** The run id a door task id names, after checking it names the tasks source. */
 function runIdOf(taskId: string): string {
   const named = parseDoorTaskId(taskId);
-  expect(named?.source).toBe("automations");
+  expect(named?.source).toBe("tasks");
   return named?.taskId ?? "";
 }
 
-describe("automations__run on the 2026-07-28 leg", () => {
+describe("tasks__run on the 2026-07-28 leg", () => {
   it("returns a handle naming the run, whose record exists, and completes with the deliverable", async () => {
     const taskId = await startRun({ prompt: "Write one line.", input: { item: 7 } });
     const runId = runIdOf(taskId);
@@ -264,7 +264,7 @@ describe("automations__run on the 2026-07-28 leg", () => {
 
   it("answers inline, as before, when the client does not opt in", async () => {
     const { result } = await modern("tools/call", {
-      name: "automations__run",
+      name: "tasks__run",
       arguments: { prompt: "Inline please." },
     });
     expect(result?.resultType).toBe("complete");
@@ -274,13 +274,13 @@ describe("automations__run on the 2026-07-28 leg", () => {
     expect(body.run?.id).toMatch(/^run_/);
   });
 
-  it("refuses automations__run inside a run", async () => {
+  it("refuses tasks__run inside a run", async () => {
     const result = await runtime.executeTask({
       prompt: `${NESTED}.`,
       identity: DEV_IDENTITY,
       workspaceId: TEST_WORKSPACE_ID,
     });
-    const call = result.toolCalls.find((c) => c.name === "automations__run");
+    const call = result.toolCalls.find((c) => c.name === "tasks__run");
     expect(call?.ok).toBe(false);
     // The refused call created no one-off.
     const prompts = [
@@ -299,13 +299,13 @@ describe("automations__run on the 2026-07-28 leg", () => {
   });
 });
 
-describe("automations__run on the 2025-11-25 leg", () => {
+describe("tasks__run on the 2025-11-25 leg", () => {
   it("answers inline with the run, as before", async () => {
     const client = new LegacyClient({ name: "automations-2025", version: "1.0.0" });
     await client.connect(new LegacyTransport(mcpUrl()));
     try {
       const result = (await client.callTool(
-        { name: "automations__run", arguments: { prompt: "Legacy inline." } },
+        { name: "tasks__run", arguments: { prompt: "Legacy inline." } },
         CallToolResultSchema,
       )) as CallToolResult;
       expect(result.isError).toBeFalsy();

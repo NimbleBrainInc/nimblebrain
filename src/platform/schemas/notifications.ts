@@ -184,7 +184,7 @@ export interface DeliveryRecord {
    * The automation run this notification's batch started. Agent targets only,
    * and present only once a run actually started — which is exactly the
    * question an operator asks of a route that wakes an automation, and the
-   * answer `automations__run_result` is addressed with.
+   * answer `tasks__run_result` is addressed with.
    */
   runId?: string;
 }

@@ -12,7 +12,7 @@ const CONTRACTS: ToolContract[] = [
     name: "status",
     scopes: ["overview", "connectors", "skills", "config"],
   },
-  { source: "automations", name: "create", scopes: [] },
+  { source: "tasks", name: "create", scopes: [] },
 ];
 
 describe("check-core-skill-tool-refs — contract extraction", () => {
@@ -55,7 +55,7 @@ describe("check-core-skill-tool-refs — prompt validation", () => {
       "src/skills/core/bootstrap.md",
       [
         '- **nb__search** — use `scope: "tools"` or `scope: "catalog"`.',
-        "| `automations__create` | Create one |",
+        "| `tasks__create` | Create one |",
       ].join("\n"),
       CONTRACTS,
     );
@@ -94,7 +94,7 @@ describe("check-core-skill-tool-refs — prompt validation", () => {
         line: 1,
         token: "retired__tool",
         owner: "static tool source",
-        accepted: ["automations", "nb"],
+        accepted: ["nb", "tasks"],
       },
     ]);
   });
@@ -142,7 +142,7 @@ describe("check-core-skill-tool-refs — prompt validation", () => {
         line: 1,
         token: "retired__tool",
         owner: "static tool source",
-        accepted: ["automations", "nb"],
+        accepted: ["nb", "tasks"],
       },
     ]);
   });

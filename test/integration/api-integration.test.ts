@@ -446,7 +446,7 @@ describe("E2E: registered app -> tool call via API", () => {
     await provisionTestWorkspace(runtime);
 
     // Register an InlineSource to simulate an installed app with tools
-    const taskSource = await makeInProcessSource("tasks", [
+    const taskSource = await makeInProcessSource("todos", [
       {
         name: "create_task",
         description: "Create a new task",
@@ -488,7 +488,7 @@ describe("E2E: registered app -> tool call via API", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        server: "tasks",
+        server: "todos",
         tool: "create_task",
         arguments: { title: "Write tests" },
       }),

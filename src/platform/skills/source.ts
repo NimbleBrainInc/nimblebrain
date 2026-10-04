@@ -220,7 +220,7 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
  * half. Everything else in the namespace — the authoring tools, and any tool
  * added to it later — is barred, so the boundary fails CLOSED as the surface
  * grows (an allowlist, not a denylist), matching
- * {@link AUTOMATIONS_TASK_SAFE_TOOLS}.
+ * {@link TASK_RUN_SAFE_TOOLS}.
  *
  * A skill is durable, cross-conversation guidance the runtime composes into a
  * prompt on its own: `loading_strategy: always` reaches every later turn, and
@@ -484,7 +484,7 @@ export function createSkillsSource(
   // `unattended` rides the ambient request context (set by `executeTask`,
   // preserved across the per-call restamp), so the wall does not depend on
   // which router dispatched the call, or on the tool ever having been surfaced
-  // to the model. Same placement and reasoning as `createAutomationsSource` and
+  // to the model. Same placement and reasoning as `createTasksSource` and
   // `createInstructionsSource`.
   const walled: InProcessTool[] = enabled.map((tool) =>
     SKILLS_TASK_SAFE_TOOLS.has(tool.name)

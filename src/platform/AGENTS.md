@@ -182,7 +182,7 @@ wrapper that narrows the input and stamps `source: "agent"`. Internal
 callers (CLI, lifecycle.ts) call the domain directly via a runtime-
 exposed getter. **The CLI does not call the LLM-facing tool — that path
 silently no-ops or strips operator fields.** See
-`src/platform/automations/domain.ts` for the reference implementation
+`src/platform/tasks/domain.ts` for the reference implementation
 and `src/runtime/runtime.ts::registerAutomationsContext` for the wiring.
 
 The cost of doing this once per domain: one extra file. The cost of not
@@ -236,7 +236,7 @@ every consumer (CLI, integration tests, web client, future apps) imports
 the same name.**
 
 Why this matters: until this rule was enforced, every consumer redeclared
-response shapes inline with `as { … }`. The `automations__run` handler
+response shapes inline with `as { … }`. The `tasks__run` handler
 gained a `{ status: "dispatched" }` branch; the CLI was casting blindly to
 `{ run }` and crashed on every run that outlasted the 30 s sync-wait. Five
 review rounds on the same PR each surfaced one more drifted surface
@@ -246,20 +246,20 @@ is structural, not procedural: the type system enforces the contract.
 DO:
 
 ```ts
-// src/platform/schemas/automations.ts — named, exported, type-only OK
+// src/platform/schemas/tasks.ts — named, exported, type-only OK
 export type AutomationsRunOutput =
   | { run: AutomationRunRecord; enabled: boolean; message?: string }
   | { status: "dispatched"; automationId: string; startedAt: string; enabled: boolean; message: string };
 
-// src/platform/automations/server.ts — handler return type is the contract
+// src/platform/tasks/server.ts — handler return type is the contract
 export async function handleRun(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<AutomationsRunOutput> { ... }
 
 // a consumer module imports the same contract type
-import type { AutomationsRunOutput } from "../../platform/schemas/automations.ts";
-const data = (await callTool(runtime, "automations__run", { name })) as AutomationsRunOutput;
+import type { AutomationsRunOutput } from "../../platform/schemas/tasks.ts";
+const data = (await callTool(runtime, "tasks__run", { name })) as AutomationsRunOutput;
 if ("status" in data && data.status === "dispatched") { ... } else if ("run" in data) { ... }
 ```
 
@@ -267,7 +267,7 @@ DO NOT:
 
 ```ts
 // Inline cast — re-declares the shape, drifts the first time the handler changes.
-const data = (await callTool(runtime, "automations__run", { name })) as {
+const data = (await callTool(runtime, "tasks__run", { name })) as {
   run: { id: string; status: string; /* ... */ };
 };
 const r = data.run;  // crashes on dispatched envelope
@@ -281,7 +281,7 @@ branch.
 
 ### In-process platform-tool variant
 
-`src/platform/automations/server.ts`-style handlers return their
+`src/platform/tasks/server.ts`-style handlers return their
 domain object directly (`Promise<AutomationsRunOutput>`) and the
 framework wraps them as MCP `ToolResult` at registration time. That's
 the simplest §2.1 shape — the handler's return type IS the contract.
@@ -311,7 +311,7 @@ The discipline is the same — a named `XxxOutput` from `schemas/` —
 just expressed at the construction site rather than the handler
 signature. Either form satisfies §2.1; pick by which layer authored
 the handler. See `src/platform/skills/source.ts` for the
-handler-signature form; `src/platform/automations/server.ts` for the
+handler-signature form; `src/platform/tasks/server.ts` for the
 construction-site form.
 
 ### Output schemas vs input schemas

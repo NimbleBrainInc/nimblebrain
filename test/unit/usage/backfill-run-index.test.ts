@@ -25,10 +25,7 @@ import {
   LayoutMovedError,
   walk,
 } from "../../../scripts/backfill-usage-ledger.ts";
-import {
-  automationRunIndexPath,
-  automationRunsDir,
-} from "../../../src/platform/automations/paths.ts";
+import { automationRunIndexPath, automationRunsDir } from "../../../src/platform/tasks/paths.ts";
 
 const OWNER = "user_01ABC";
 const WS = "ws_00775c942f0fead1";

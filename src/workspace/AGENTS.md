@@ -1,6 +1,6 @@
 # Workspaces
 
-Scope: the workspace store, its on-disk root, ids, authorization, and provisioning (`src/workspace/`). The rules for what lives *inside* a workspace sit beside that code: conversations in `src/conversation/AGENTS.md`, files in `src/files/AGENTS.md`, automations in `src/platform/automations/AGENTS.md`, credentials in `src/tools/AGENTS.md`, the tool wall in `src/orchestrator/AGENTS.md`. Gating a write in the web tier is in `web/AGENTS.md`.
+Scope: the workspace store, its on-disk root, ids, authorization, and provisioning (`src/workspace/`). The rules for what lives *inside* a workspace sit beside that code: conversations in `src/conversation/AGENTS.md`, files in `src/files/AGENTS.md`, automations in `src/platform/tasks/AGENTS.md`, credentials in `src/tools/AGENTS.md`, the tool wall in `src/orchestrator/AGENTS.md`. Gating a write in the web tier is in `web/AGENTS.md`.
 
 ## Workspace roots
 

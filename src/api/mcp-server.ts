@@ -1283,7 +1283,7 @@ export function mapRouteToolError(err: unknown): never {
  * against the caller's identity, in the session's workspace. Entity reads are
  * gated by `canAccess` in the handler.
  *
- * A kernel identity source with a task surface (`automations__run`) runs as a
+ * A kernel identity source with a task surface (`tasks__run`) runs as a
  * task on the 2026-07-28 leg when the client opts in to the tasks extension:
  * the answer is a flat task whose id names the source beside the source's own
  * task id (the run id). Every other call, including any 2025-era one, runs

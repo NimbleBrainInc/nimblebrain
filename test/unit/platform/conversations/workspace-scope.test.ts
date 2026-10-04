@@ -3,7 +3,7 @@
  *
  * Conversations are workspace-owned, so every read resolves inside exactly one
  * workspace — `RequestContext.workspaceId`, set by the door the request came
- * through, exactly as it works for `files__*` and `automations__*` (see
+ * through, exactly as it works for `files__*` and `tasks__*` (see
  * `test/unit/platform/files/source.test.ts`).
  *
  * These tests pin the property that matters: the workspace a read lands in is

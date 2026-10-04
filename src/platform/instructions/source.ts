@@ -71,7 +71,7 @@ async function checkWritePermission(
   // would otherwise reach a durable cross-conversation write with nothing
   // standing between them.
   //
-  // Enforced HERE, at the source, for the reason `createAutomationsSource`
+  // Enforced HERE, at the source, for the reason `createTasksSource`
   // gives for the same wall: this is the single dispatch point every caller
   // funnels through, so it holds for every call the run makes. The tool is
   // internal and never reaches the model's

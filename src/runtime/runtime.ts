@@ -160,13 +160,13 @@ import {
   type PermissionOwner,
   PermissionStore,
 } from "../permissions/permission-store.ts";
-import type { AutomationDomainContext } from "../platform/automations/domain.ts";
+import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
+import type { AutomationDomainContext } from "../platform/tasks/domain.ts";
 import type {
   AutomationEventTrigger,
   EventWakeAck,
   EventWakeRequest,
-} from "../platform/automations/event-trigger.ts";
-import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
+} from "../platform/tasks/event-trigger.ts";
 import type {
   AppStateInfo,
   FocusedAppInfo,
@@ -6361,7 +6361,7 @@ function buildRunContext(
     // Unattended runs bar the automation-authoring surface at tool-dispatch
     // depth. Rides the ALS context and is preserved across the per-call
     // restamp, so the wall is enforced at the automations source rather than
-    // per-router-construction. See `createAutomationsSource`.
+    // per-router-construction. See `createTasksSource`.
     ...(attended ? {} : { unattended: true }),
   };
 }

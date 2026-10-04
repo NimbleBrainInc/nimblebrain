@@ -455,7 +455,7 @@ export async function handleChatStream(
         // back" contract. Binding the run to the connection would silently
         // abandon a prompt the moment a mobile client dropped. The one
         // caller that must cancel on a deadline — the automations executor —
-        // owns its own AbortController in platform/automations/executor.ts.
+        // owns its own AbortController in platform/tasks/executor.ts.
         .chat(parsed, sink)
         .then((result) => {
           const doneData = chatResponseBody(result);

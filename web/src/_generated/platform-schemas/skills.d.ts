@@ -17,7 +17,7 @@ import { type Static } from "@sinclair/typebox";
  */
 export declare const SkillPriority: import("@sinclair/typebox").TNumber;
 export declare const SkillsListInput: import("@sinclair/typebox").TObject<{
-    scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace" | "provided">>;
+    scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user" | "provided">>;
     layer: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<3 | 1>>;
     loading_strategy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"always" | "dynamic">>;
     tool_affinity: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -39,7 +39,7 @@ export declare const SkillsLoadingLogInput: import("@sinclair/typebox").TObject<
 }>;
 export type SkillsLoadingLogInput = Static<typeof SkillsLoadingLogInput>;
 export declare const SkillsCreateInput: import("@sinclair/typebox").TObject<{
-    scope: import("@sinclair/typebox").TUnsafe<"user" | "org" | "workspace">;
+    scope: import("@sinclair/typebox").TUnsafe<"org" | "workspace" | "user">;
     manifest: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
         description: import("@sinclair/typebox").TString;

@@ -3,9 +3,9 @@
  * Lint: automations are workspace-owned and reached through one constructor.
  *
  * Automations live under the workspace that owns them, with the owner as a
- * privacy sub-partition (`{workDir}/workspaces/<wsId>/automations/<ownerId>/`).
- * The dir is built only by `workspaceAutomationsDir()` in
- * `src/platform/automations/paths.ts`. Two regressions are forbidden in
+ * privacy sub-partition (`{workDir}/workspaces/<wsId>/tasks/<ownerId>/`).
+ * The dir is built only by `workspaceTasksDir()` in
+ * `src/platform/tasks/paths.ts`. Two regressions are forbidden in
  * `src/`:
  *
  *   1. `getIdentityContext(...).getDataPath("automations")` /
@@ -156,12 +156,12 @@ function scanFile(absPath: string, violations: Violation[]): void {
       if (isIdentityAutomationsDataPath(node)) {
         record(
           node,
-          'getIdentityContext(...).getDataPath("automations") — automations are workspace-owned; use workspaceAutomationsDir()',
+          'getIdentityContext(...).getDataPath("automations") — automations are workspace-owned; use workspaceTasksDir()',
         );
       } else if (isUsersScopedAutomationsJoin(node)) {
         record(
           node,
-          'join(..., "users", ..., "automations") — identity-scoped dir; use workspaceAutomationsDir()',
+          'join(..., "users", ..., "automations") — identity-scoped dir; use workspaceTasksDir()',
         );
       }
     }
@@ -191,9 +191,9 @@ async function main(): Promise<void> {
       console.error(`    ${v.snippet}\n`);
     }
     console.error(
-      "Automations are workspace-owned at `{workDir}/workspaces/<wsId>/automations/<ownerId>/` — build the",
+      "Automations are workspace-owned at `{workDir}/workspaces/<wsId>/tasks/<ownerId>/` — build the",
     );
-    console.error("dir only via `workspaceAutomationsDir()` (src/platform/automations/paths.ts).");
+    console.error("dir only via `workspaceTasksDir()` (src/platform/tasks/paths.ts).");
     console.error(
       `Legitimate exceptions (rare) require a // ${ALLOW_MARKER} comment on the line above.`,
     );

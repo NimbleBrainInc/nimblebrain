@@ -43,7 +43,7 @@ export type UserResourceLinkPart = {
  *
  *  - `chat`     — a person in a conversation (`/v1/workspaces/:wsId/chat*`, `startTurn`).
  *  - `schedule` — an automations cron tick (`Scheduler.dispatchRun`).
- *  - `manual`   — an operator pressing Run now (`automations__run`).
+ *  - `manual`   — an operator pressing Run now (`tasks__run`).
  *  - `event`    — a notification a workspace admin routed to an automation.
  *  - `api`      — a caller driving the runtime directly (embedded, CLI, evals).
  *

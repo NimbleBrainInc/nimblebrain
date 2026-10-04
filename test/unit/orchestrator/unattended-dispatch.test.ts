@@ -191,15 +191,15 @@ describe("dispatchUnattended — the unattended subtraction", () => {
   // Pins that the authoring surfaces are refused BY NAME, before routing. A
   // scheduled run gets this from surfacing (the tool is never shown); a single
   // dispatch has no listing to inherit it from, so the door has to say it.
-  test("denies automations__create, and it never reaches the source", async () => {
-    const automations = makeSpySource("automations");
+  test("denies tasks__create, and it never reaches the source", async () => {
+    const automations = makeSpySource("tasks");
     const runtime = makeStubRuntime({
       workDir,
       members: [PRINCIPAL],
-      identitySources: new Map([["automations", automations]]),
+      identitySources: new Map([["tasks", automations]]),
     });
 
-    const res = await call(runtime, "automations__create");
+    const res = await call(runtime, "tasks__create");
 
     expect(res.outcome).toBe("denied");
     expect(res.classification).toBe("tool_not_allowed");
@@ -208,15 +208,15 @@ describe("dispatchUnattended — the unattended subtraction", () => {
 
   // The read half of the same namespace stays reachable — the policy is an
   // allowlist over authoring, not a ban on the namespace.
-  test("allows automations__list, which is on the task-safe allowlist", async () => {
-    const automations = makeSpySource("automations");
+  test("allows tasks__list, which is on the task-safe allowlist", async () => {
+    const automations = makeSpySource("tasks");
     const runtime = makeStubRuntime({
       workDir,
       members: [PRINCIPAL],
-      identitySources: new Map([["automations", automations]]),
+      identitySources: new Map([["tasks", automations]]),
     });
 
-    const res = await call(runtime, "automations__list");
+    const res = await call(runtime, "tasks__list");
 
     expect(res.outcome).toBe("ok");
     expect(automations.calls).toHaveLength(1);

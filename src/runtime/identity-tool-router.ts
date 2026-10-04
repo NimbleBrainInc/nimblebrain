@@ -108,7 +108,7 @@ export interface IdentityToolRouterOptions {
  * than ambient state; the wall guarantees that is the same workspace the
  * session is bound to, so this is a re-assertion, not a widening. An
  * identity-routed call keeps the ambient workspace — every kernel identity
- * source (`files__*`, `automations__*`, `conversations__*`) owns
+ * source (`files__*`, `tasks__*`, `conversations__*`) owns
  * workspace-partitioned data and would otherwise have no workspace in scope
  * even when the chat set one. Workspace model overrides ride along unchanged
  * so session-scoped reads keep working.

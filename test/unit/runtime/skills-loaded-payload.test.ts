@@ -247,13 +247,13 @@ describe("collectLoadedSkills", () => {
     const out = collectLoadedSkills({
       toolAffinity: [
         {
-          skill: makeSkill("automation-authoring", {
+          skill: makeSkill("task-authoring", {
             strategy: "dynamic",
             vendored: true,
-            sourcePath: "/core/automation-authoring.md",
+            sourcePath: "/core/task-authoring.md",
           }),
           loadedBy: "tool_affinity",
-          reason: "tool-affinity matched automations__*",
+          reason: "tool-affinity matched tasks__*",
         },
         {
           skill: makeSkill("mpak-guide", { strategy: "dynamic", sourcePath: "/s/mpak.md" }),

@@ -31,7 +31,7 @@ export const THEMING_DOC = join(REPO, "docs", "src", "content", "docs", "apps", 
 
 /**
  * Every `.ts`/`.tsx`/`.css` file under a tree. All three extensions matter:
- * `automations` keeps its whole stylesheet in a `styles.ts` template string and
+ * `tasks` keeps its whole stylesheet in a `styles.ts` template string and
  * its components carry inline `style` props, so a `*.css` glob reads none of it
  * — which is how a sweep missed that app entirely.
  */

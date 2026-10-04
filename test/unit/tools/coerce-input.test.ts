@@ -104,7 +104,7 @@ describe("coerceInputForSchema — nested array recovery", () => {
 });
 
 describe("coerceInputForSchema — scalar string recovery", () => {
-  // Mirrors the real failure: automations__runs `limit` is Type.Number, the
+  // Mirrors the real failure: tasks__runs `limit` is Type.Number, the
   // model sent "5", and validation rejected the whole call.
   it("coerces a stringified number for a number param", () => {
     const schema = {

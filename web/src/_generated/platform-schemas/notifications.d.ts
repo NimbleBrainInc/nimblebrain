@@ -27,7 +27,7 @@ export declare const NotificationsListInput: import("@sinclair/typebox").TObject
     ids: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
+    order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"asc" | "desc">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
 export type NotificationsListInput = Static<typeof NotificationsListInput>;
@@ -105,7 +105,7 @@ export interface DeliveryRecord {
      * The automation run this notification's batch started. Agent targets only,
      * and present only once a run actually started — which is exactly the
      * question an operator asks of a route that wakes an automation, and the
-     * answer `automations__run_result` is addressed with.
+     * answer `tasks__run_result` is addressed with.
      */
     runId?: string;
 }

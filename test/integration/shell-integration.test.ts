@@ -90,9 +90,9 @@ async function createMcpClient(): Promise<Client> {
 describe("Install/uninstall → /v1/workspaces/:wsId/shell placement updates", () => {
   it("install connector with placements → GET /v1/workspaces/:wsId/shell includes them → uninstall → gone", async () => {
     const devRegistry = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID);
-    const serverName = await installConnector("tasks", [
-      { slot: "sidebar.apps", resourceUri: "ui://tasks/nav", priority: 30, label: "Tasks" },
-      { slot: "main", resourceUri: "ui://tasks/board", route: "tasks", label: "Task Board" },
+    const serverName = await installConnector("todos", [
+      { slot: "sidebar.apps", resourceUri: "ui://todos/nav", priority: 30, label: "Tasks" },
+      { slot: "main", resourceUri: "ui://todos/board", route: "todos", label: "Task Board" },
     ]);
 
     try {

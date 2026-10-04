@@ -53,7 +53,7 @@
  * their CSS — verified in `conversations/ui/dist`, which keeps its
  * five `color-mix()` declarations verbatim with no `@supports` block. Note this
  * is a property of the build, not of how the CSS is authored: four of the five
- * connectors ship a real `index.css`, and only `automations` is a template string.
+ * connectors ship a real `index.css`, and only `tasks` is a template string.
  * Non-colour properties are left alone — a degraded `border-color` or
  * `box-shadow` shifts an edge; a degraded `background` behind text removes the
  * text.

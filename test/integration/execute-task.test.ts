@@ -508,13 +508,13 @@ describe("runtime.executeTask", () => {
     // schema validation.
     const validSchedule = { type: "interval", intervalMs: 60_000 };
     const forbiddenCalls: Array<{ tool: string; input: unknown }> = [
-      { tool: "automations__update", input: { name: "target" } },
+      { tool: "tasks__update", input: { name: "target" } },
       {
-        tool: "automations__create",
+        tool: "tasks__create",
         input: { manifest: { name: "evil", schedule: validSchedule }, body: "x" },
       },
-      { tool: "automations__delete", input: { name: "target" } },
-      { tool: "automations__run", input: { name: "target" } },
+      { tool: "tasks__delete", input: { name: "target" } },
+      { tool: "tasks__run", input: { name: "target" } },
     ];
     for (const { tool, input } of forbiddenCalls) {
       runtime = await bootRuntime({
@@ -537,7 +537,7 @@ describe("runtime.executeTask", () => {
 
       expect(result.toolCalls[0]?.name).toBe(tool);
       expect(result.toolCalls[0]?.ok).toBe(false);
-      expect(result.toolCalls[0]?.output).toMatch(/unattended automation run/i);
+      expect(result.toolCalls[0]?.output).toMatch(/unattended task run/i);
 
       await runtime.shutdown();
       runtime = null;
@@ -554,7 +554,7 @@ describe("runtime.executeTask", () => {
       responses: [
         {
           toolCalls: [
-            { toolCallId: "call_list", toolName: "automations__list", input: JSON.stringify({}) },
+            { toolCallId: "call_list", toolName: "tasks__list", input: JSON.stringify({}) },
           ],
         },
         { text: "done" },
@@ -568,8 +568,8 @@ describe("runtime.executeTask", () => {
       identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
-    expect(result.toolCalls[0]?.name).toBe("automations__list");
-    expect(result.toolCalls[0]?.output).not.toMatch(/unattended automation run/i);
+    expect(result.toolCalls[0]?.name).toBe("tasks__list");
+    expect(result.toolCalls[0]?.output).not.toMatch(/unattended task run/i);
   });
 
   it("creates no conversation even when caller passes metadata", async () => {

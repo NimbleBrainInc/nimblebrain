@@ -59,7 +59,7 @@ import { WORKSPACE_ID_RE } from "../workspace/workspace-store.ts";
  *   - **identity** — bare `<toolName>` (no prefix). A *singleton* of the
  *     authenticated identity: platform system tools (`nb__*`) and the
  *     user's own entity apps (`conversations__*`, later `files__*` /
- *     `automations__*`). It carries no workspace; dispatched against the
+ *     `tasks__*`). It carries no workspace; dispatched against the
  *     identity context. The orchestrator validates the source against the
  *     kernel identity-source set before routing; entity reads are then
  *     gated by `canAccess` (owner ∪ shares) in the handler (see ACCESS_MODEL).

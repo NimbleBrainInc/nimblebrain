@@ -26,8 +26,8 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, ToolSchema } from "../../src/engine/types.ts";
 // NB-001 (automation): Automation ID path traversal
-import { appendRun, readRuns } from "../../src/platform/automations/store.ts";
-import type { AutomationRun } from "../../src/platform/automations/types.ts";
+import { appendRun, readRuns } from "../../src/platform/tasks/store.ts";
+import type { AutomationRun } from "../../src/platform/tasks/types.ts";
 // NB-002: Prompt injection — skill body XML containment
 // NB-007: App guide trust gating
 import { composeSystemPrompt, type FocusedAppInfo } from "../../src/prompt/compose.ts";
@@ -98,7 +98,7 @@ describe("Security Hardening Regression Tests", () => {
   // ---------------------------------------------------------------------------
 
   describe("NB-001 (automation): Automation ID path traversal", () => {
-    // Primary coverage: test/unit/platform/automations/store.test.ts
+    // Primary coverage: test/unit/platform/tasks/store.test.ts
     // (covers ../../etc/passwd, empty, slashes, dots, uppercase, leading/trailing hyphens)
 
     let tmpDir: string;
