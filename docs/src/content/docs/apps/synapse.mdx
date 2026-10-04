@@ -257,13 +257,9 @@ Codegen sources:
 
 ## Long-running tools
 
-For tools whose work exceeds the stock MCP request timeout (~60s) — research runs, batch imports, multi-stage analyses — use `callToolAsTask` instead of `callTool`. The host returns a `CreateTaskResult` immediately with a `taskId`; the actual `CallToolResult` is fetched separately via `tasks/result` once the task reaches a terminal state.
+For tools whose work exceeds the stock MCP request timeout (~60s) — research runs, batch imports, multi-stage analyses — use `callToolAsTask` instead of `callTool`. It returns a handle as soon as the server answers, and the handle picks up the result when the work finishes.
 
-This implements the [MCP 2025-11-25 tasks utility](https://modelcontextprotocol.io/specification/2025-11-25) end-to-end across the iframe SDK, the platform bridge, and the bundled MCP server. Between the host and your server, the host speaks whichever task vocabulary the connection negotiated: that utility on a 2025-era connection, the [tasks extension](https://github.com/modelcontextprotocol/ext-tasks) (`io.modelcontextprotocol/tasks`) on a `2026-07-28` one.
-
-<Aside type="caution">
-`callToolAsTask` is on `Synapse` (`createSynapse()`), not `App` (`connect()`). For task-aware apps, use `createSynapse()` and `<SynapseProvider>`. The `connect()` path is for short-running, request/response tools.
-</Aside>
+`callToolAsTask` speaks the MCP [tasks extension](https://github.com/modelcontextprotocol/ext-tasks) (`io.modelcontextprotocol/tasks`, protocol `2026-07-28`), the only task vocabulary NimbleBrain serves to apps. It needs `@nimblebrain/synapse` 0.27.0 or later. It declares the extension in the `tools/call` request's `_meta`, and the server decides per call: it runs the tool outright and answers with the result, or it answers with a task that the handle polls with `tasks/get`. Both come back as a handle, so your code has one path.
 
 ### When to reach for it
 
@@ -274,7 +270,7 @@ This implements the [MCP 2025-11-25 tasks utility](https://modelcontextprotocol.
 | Long-running, multi-phase, or progress-emitting | `callToolAsTask` / `useCallToolAsTask` |
 | Returns in milliseconds (CRUD, lookups) | `callTool` |
 
-The agent itself uses task augmentation automatically: on a 2025-era connection when a tool declares `execution.taskSupport: "optional"`, and on a `2026-07-28` connection whenever the server advertises the tasks extension, since that revision lets the server decide per call. This page is about the **iframe-side** API for UIs that need to fire long-running tools from a button click and reflect lifecycle in the UI.
+The agent itself uses the tasks extension automatically whenever the server advertises it. This section is about the **iframe-side** API for UIs that fire long-running tools from a button click and reflect the lifecycle in the UI.
 
 ### React hook (recommended)
 
@@ -283,13 +279,13 @@ import { useCallToolAsTask } from '@nimblebrain/synapse/react';
 
 function ResearchPanel() {
   const {
-    fire,         // Start (or restart) the task
+    fire,         // Start (or restart) the call
     task,         // Latest Task state, or null before fire()
-    result,       // ToolCallResult once terminal, otherwise null
-    error,        // Error on failure or rejection
-    isWorking,    // task.status ∈ {working, input_required}
-    isTerminal,   // task.status ∈ {completed, failed, cancelled}
-    cancel,       // Issue tasks/cancel for the active handle
+    result,       // ToolCallResult once completed, otherwise null
+    error,        // Error on failure, or a TaskError when the task ends without a result
+    isWorking,    // the hook is still following the task
+    isTerminal,   // the task has ended
+    cancel,       // Send tasks/cancel for the active task
   } = useCallToolAsTask<{ query: string }, { report: string }>('start_research');
 
   if (!task) {
@@ -305,75 +301,44 @@ function ResearchPanel() {
 }
 ```
 
-The hook subscribes to `notifications/tasks/status` for live updates and falls back to polling `tasks/get` if notifications don't arrive (the MCP spec marks status notifications as OPTIONAL — hosts MAY emit them but consumers MUST NOT depend on them).
+Wrap the tree in `<AppProvider>`. A task the user cancels ends with status `cancelled` and no `error`.
 
 ### Imperative API
 
 ```typescript
-import { createSynapse } from '@nimblebrain/synapse';
+import { callToolAsTask } from '@nimblebrain/synapse';
 
-const synapse = createSynapse({ name: 'research-app', version: '1.0.0' });
-await synapse.ready;
-
-const handle = await synapse.callToolAsTask<{ query: string }, { report: string }>(
+const handle = await callToolAsTask<{ query: string }, { report: string }>(
+  app,
   'start_research',
   { query: 'Q2 metrics' },
-  { ttl: 3600_000 }, // optional — receiver may override
 );
 
-// `handle.task` has the initial CreateTaskResult.task: taskId, status="working", ttl, ...
-console.log('Started task', handle.task.taskId);
-
-// Subscribe to live status (optional notifications)
+// `handle.task`: taskId, status, ttl, pollInterval, statusMessage.
+// A call the server answered outright gives a task that is already `completed`.
 const unsub = handle.onStatus((task) => {
   console.log('status:', task.status, task.statusMessage);
 });
 
-// Block until terminal
-const result = await handle.result();
+const result = await handle.result(); // polls tasks/get until the task ends
 unsub();
 
-// Or poll yourself
+// Or read the status once, or cancel
 const current = await handle.refresh();
-
-// Or cancel
 await handle.cancel();
 ```
 
+`result()` resolves with the tool's result, parsed the way `callTool` parses one. It rejects with a `TaskError` when the task fails (carrying the server's error), is cancelled, or asks for input (`input_required`); NimbleBrain never answers input requests, so Synapse cancels such a task before rejecting.
+
 ### Authoring task-aware tools
 
-The server side declares `execution.taskSupport: "optional"` (or `"required"`) on the tool's `tools/list` entry. With FastMCP (Python), `TaskConfig` does this in one decorator. On FastMCP 4, register the tasks extension too (`mcp.add_extension(TasksExtension(...))` from `fastmcp_tasks`); it serves tasks to `2026-07-28` clients only, so a 2025-era client runs the same tool inline:
-
-```python
-from fastmcp import FastMCP
-from fastmcp.server.tasks import TaskConfig
-
-mcp = FastMCP('research')
-
-@mcp.tool(task=TaskConfig(mode='optional'))
-async def start_research(query: str, ctx: Context) -> dict:
-    run = app.create_entity('research_run', { 'query': query, 'run_status': 'working' })
-    try:
-        for phase in phases:
-            await ctx.report_progress(phase.label)
-            app.update_entity('research_run', run['id'], { 'run_status': phase.label })
-            await phase.run()
-        app.update_entity('research_run', run['id'], { 'run_status': 'completed' })
-        return { 'run_id': run['id'], 'report': '...' }
-    except asyncio.CancelledError:
-        app.update_entity('research_run', run['id'], { 'run_status': 'cancelled' })
-        raise
-```
-
-- `mode="optional"` lets the same tool run inline (`callTool`) **or** as a task (`callToolAsTask`) — the client decides. Use this.
-- `mode="required"` rejects non-task calls with JSON-RPC `-32601`. Only use if you're certain every client supports tasks.
-- `mode="forbidden"` (the implicit default) never runs as a task.
+Nothing is required: a server without tasks support answers every call outright, and `callToolAsTask` still works. To have a slow tool run as a task, the server implements the tasks extension and answers that call with a task. With FastMCP 4 (Python), register the extension (`mcp.add_extension(TasksExtension(...))` from `fastmcp_tasks`) and see its documentation for marking a tool to run as a task.
 
 ### Dual-channel pattern
 
 Tasks that create durable entities (a research run, an import job) should deliver the entity ID through the **entity channel** (the server's `notifications/resources/list_changed`, heard by `useDataSync`), not the task result. The two channels carry different things:
 
-- **Task channel:** lifecycle (`working` → `completed`/`failed`/`cancelled`), progress messages, cancellation control.
+- **Task channel:** lifecycle (`working` → `completed`/`failed`/`cancelled`), status messages, cancellation control.
 - **Entity channel:** the durable record — survives the LLM losing interest mid-run, the client disconnecting, or the agent process bouncing.
 
 UIs that need to navigate to the new entity should re-read on `useDataSync` rather than awaiting `result()`. The server announces each write to the run, so the list refreshes as soon as the run exists:
@@ -408,29 +373,20 @@ This pattern means the UI navigates within ~1s of the click — as soon as the s
 
 ### Capability detection and graceful fallback
 
-Hosts that don't support the tasks utility won't advertise the `tasks.requests.tools.call` capability. `callToolAsTask` throws when the host hasn't advertised it; wrap in a try/catch to fall back to `callTool` if you need to support legacy hosts:
+A host that relays the extension declares `hostCapabilities.experimental["io.modelcontextprotocol/tasks"]` (an empty object; presence is the signal). On a host that does not, `callToolAsTask` rejects with `HostCapabilityError` without sending. Read `app.supportsTasks` to branch before firing:
 
 ```typescript
-try {
-  const handle = await synapse.callToolAsTask('start_research', { query });
-  // ...task-aware UI path
-} catch (err) {
-  if (String(err).includes('tasks.requests.tools.call')) {
-    // Legacy host — fall back to a blocking call. Loses cancel/progress.
-    const result = await synapse.callTool('start_research', { query });
-  } else {
-    throw err;
-  }
-}
+const result = app.supportsTasks
+  ? await (await callToolAsTask(app, 'start_research', { query })).result()
+  : await app.callTool('start_research', { query }); // blocking; no cancel or status
 ```
-
-You can also feature-detect via `synapse._hostTasksCapability` (tri-state: `null` pre-handshake, `undefined` if absent, `TasksCapability` if present).
 
 ### Polling and cancellation behavior
 
-- **Polling fallback.** `useCallToolAsTask` polls `tasks/get` every `pollInterval × 1.5` (default ~7.5s) when no `notifications/tasks/status` arrives. Polling stops automatically on terminal status, on `result()` settling, or after 5 consecutive refresh failures (host-side TTL eviction or bridge teardown).
-- **Cancel.** `handle.cancel()` issues `tasks/cancel`. Cancelling an already-terminal task surfaces a `-32602` error from the host.
-- **Unmount.** Unmounting a React component does **not** cancel the server-side task. The task continues; the user can re-fire to recover state. This is intentional — long-running work shouldn't disappear because someone navigated away briefly.
+- **Polling.** The handle polls `tasks/get` at the task's `pollInterval` (2s when the server names none, never faster than every 250ms). A terminal answer carries the outcome inline: the result when `completed`, the error when `failed`. There are no status notifications; `onStatus` and the hook's `task` are fed by these polls.
+- **Failed polls.** A failed poll is retried. `result()` rejects after three failures in a row, or at once when the host no longer knows the task (`-32602`).
+- **Cancel.** `cancel` sends `tasks/cancel`. Cancellation is cooperative: the task may report `working` a little longer before it reaches `cancelled`.
+- **Unmount.** Unmounting a component, or firing again, stops polling but does **not** cancel the server-side task. It keeps running until it ends or its `ttl` lapses; the user can re-fire to recover state. Pass `result({ signal })` an `AbortSignal` to stop waiting on a handle directly.
 
 ## Resize
 
