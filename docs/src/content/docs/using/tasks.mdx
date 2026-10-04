@@ -272,9 +272,9 @@ Accept or Reject on a run in the Tasks panel, or `tasks__assess` with `{ runId, 
 
 `onPoorResult` says what a `fail` does:
 
-- `notify` (the default): a notification in the workspace inbox naming the task and the criteria that failed, which the workspace's [notification routes](/using/notifications) can deliver. The inbox is the workspace's, so its other members can see it.
+- `notify` (the default): a notification in the workspace inbox saying a task run had a poor result, with the run's id, which the workspace's [notification routes](/using/notifications) can deliver. Every member of the workspace can read the inbox and a task is private to you, so the notification names no task, criterion, or rule and carries nothing of the deliverable; open the run in the Tasks panel (or `tasks__run_result`) for the detail.
 - `record`: nothing beyond the assessment.
-- `retry_once`: the task runs again, once, with the same input and the failed criteria given to it as guidance. The retry is an ordinary run (it takes a run slot and counts against the token budget) and records `retryOf`. If the retry fails too, or cannot start, the owner is notified instead.
+- `retry_once`: the task runs again, once, with the same input and the failed criteria given to it as guidance. The retry is an ordinary run (it takes a run slot and counts against the token budget) and records `retryOf`. If the retry fails too, or cannot start, the same notification is written instead.
 
 An `uncertain` run sets off nothing; it reads Needs review.
 

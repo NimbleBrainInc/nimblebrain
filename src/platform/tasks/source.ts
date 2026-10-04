@@ -1,6 +1,7 @@
 import { effectiveRunLimits } from "../../config/tasks.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
+import type { NotificationEnvelope } from "../../notifications/types.ts";
 import { log } from "../../observability/log.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
@@ -9,7 +10,6 @@ import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
-import { failedCriteria } from "./assessment.ts";
 import { TaskEventTrigger } from "./event-trigger.ts";
 import { applyOutputSchema, createDirectExecutor, type ExecutorContext } from "./executor.ts";
 import {
@@ -158,55 +158,50 @@ function createJudgePort(runtime: Runtime): JudgePort {
   };
 }
 
-/** Most criteria a poor-result notification lists by rule before it counts the rest. */
-const NOTIFY_MAX_CRITERIA = 5;
+/**
+ * The inbox item for a poor result (ADR-0008). The inbox is workspace-owned
+ * with no owner partition, so every member who can read it sees the item,
+ * while a task is private to its owner (ADR-0004). So the item is generic: it
+ * names no task, no criterion or rule, and nothing of the deliverable, only
+ * the run's id and its owner's id. The detail stays on the run, which only the
+ * owner can open (`tasks__run_result`, the Tasks panel).
+ */
+export function poorResultEnvelope(task: Task, run: TaskRun): NotificationEnvelope {
+  const body = [
+    `The task's owner can read run ${run.id} in Tasks.`,
+    run.retryOf ? `It retried run ${run.retryOf}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    eventId: `poor-result:${run.id}`,
+    name: "task.run.poor_result",
+    timestamp: new Date().toISOString(),
+    data: {
+      runId: run.id,
+      ownerId: task.ownerId ?? null,
+      ...(run.retryOf ? { retryOf: run.retryOf } : {}),
+    },
+    _meta: {
+      "ai.nimblebrain/notification": {
+        level: "attention",
+        title: "A task run had a poor result",
+        body,
+      },
+    },
+  };
+}
 
 /**
- * Put a poor result in the task's workspace inbox (ADR-0008), where the
- * owner's views and any route the workspace configured pick it up. Names the
- * task and the criteria that failed; the deliverable and the judge's reasons
- * stay on the run. Idempotent per run, and best-effort: a refused write is
- * logged and changes nothing about the run.
+ * Put a poor result in the task's workspace inbox, where the owner's views and
+ * any route the workspace configured pick it up. Idempotent per run, and
+ * best-effort: a refused write is logged and changes nothing about the run.
  */
 function notifyPoorResult(runtime: Runtime, task: Task, run: TaskRun): void {
   const wsId = task.workspaceId;
-  const assessment = run.assessment;
-  if (!wsId || !assessment) return;
+  if (!wsId || !run.assessment) return;
   try {
-    const failed = failedCriteria(task, assessment);
-    const schemaFailed = assessment.schema?.valid === false;
-    const lines = failed.slice(0, NOTIFY_MAX_CRITERIA).map((f) => `- ${f.rule}`);
-    if (failed.length > NOTIFY_MAX_CRITERIA) {
-      lines.push(`- and ${failed.length - NOTIFY_MAX_CRITERIA} more`);
-    }
-    const body = [
-      schemaFailed ? "The deliverable did not match the output schema." : "",
-      failed.length > 0 ? `Failed criteria:\n${lines.join("\n")}` : "",
-      run.retryOf ? `This was the retry of ${run.retryOf}.` : "",
-      `Run ${run.id}.`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    runtime.getNotificationStore(wsId).append("tasks", {
-      eventId: `poor-result:${run.id}`,
-      name: "task.run.poor_result",
-      timestamp: new Date().toISOString(),
-      data: {
-        taskId: task.id,
-        runId: run.id,
-        ownerId: task.ownerId ?? null,
-        failedCriteria: failed.map((f) => f.id),
-        schemaValid: !schemaFailed,
-      },
-      _meta: {
-        "ai.nimblebrain/notification": {
-          subject: task.name.slice(0, 200),
-          level: "attention",
-          title: `Poor result: ${task.name}`.slice(0, 200),
-          body: body.slice(0, 2000),
-        },
-      },
-    });
+    runtime.getNotificationStore(wsId).append("tasks", poorResultEnvelope(task, run));
   } catch (err) {
     log.warn("[tasks] could not write a poor-result notification", {
       taskId: task.id,

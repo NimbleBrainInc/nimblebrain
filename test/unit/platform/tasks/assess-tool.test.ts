@@ -273,3 +273,27 @@ describe("tasks__assess", () => {
     );
   });
 });
+
+describe("the poor-result notice is workspace-visible, so it is generic", () => {
+  it("names the run and the retried run, never the task, its rules, or its deliverable", async () => {
+    const { poorResultEnvelope } = await import("../../../../src/platform/tasks/source.ts");
+    const task = {
+      ...loadDefs().get("report"),
+      id: "quarterly-acme-report",
+      name: "Quarterly acme report",
+      ownerId: OWNER,
+      workspaceId: WS,
+      criteria: [
+        { id: "cites-sources", rule: "Every claim cites a source.", type: "boolean" as const },
+      ],
+    } as Parameters<typeof poorResultEnvelope>[0];
+    const run = seedRun({ id: "run_cccccccccccc", retryOf: "run_dddddddddddd" });
+    const envelope = poorResultEnvelope(task, run);
+    const visible = JSON.stringify(envelope);
+    expect(visible).toContain("run_cccccccccccc");
+    expect(visible).toContain("run_dddddddddddd");
+    for (const secret of ["Quarterly", "acme", "cites-sources", "Every claim", "the report"]) {
+      expect(visible).not.toContain(secret);
+    }
+  });
+});

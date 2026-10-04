@@ -109,7 +109,19 @@ describe("assessment through the runtime", () => {
     const inbox = runtime.getNotificationStore(TEST_WORKSPACE_ID).list({ source: "tasks" });
     const item = inbox.find((n) => n.envelope.eventId === `poor-result:${runId}`);
     expect(item?.envelope.name).toBe("task.run.poor_result");
-    expect(item?.envelope.data.failedCriteria).toEqual(["sourced"]);
+    // Every member reads the inbox, and the task is the owner's: the item
+    // names the run and nothing of the task, its rules, or its deliverable.
+    const visible = JSON.stringify(item);
+    expect(visible).toContain(runId);
+    for (const secret of [
+      "failing",
+      "oneoff-",
+      "sourced",
+      "Every claim cites a source",
+      "report",
+    ]) {
+      expect(visible).not.toContain(secret);
+    }
   });
 
   it("refuses tasks__assess inside an unattended run", async () => {
