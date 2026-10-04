@@ -543,7 +543,8 @@ function InboxSummary({
               type="button"
               data-testid="inbox-needs-attention"
               onClick={onShowAttention}
-              className="text-warning underline-offset-2 hover:underline"
+              // A filter link, not a warning: attention items include good news.
+              className="text-foreground underline-offset-2 hover:underline"
             >
               {`${attention.count}${attention.more ? "+" : ""} need attention`}
             </button>
