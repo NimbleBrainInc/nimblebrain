@@ -49,3 +49,13 @@ export function identityAppSegment(serverName: string): string {
 export function identityAppRoute(serverName: string, slug: string): string {
   return `/w/${slug}/${identityAppSegment(serverName)}`;
 }
+
+/**
+ * Path segments identity apps used before a rename, each with the segment it
+ * moved to. The router redirects the old one so a bookmark or a shared link
+ * still opens the view. Mirrors the backend's retired source names
+ * (`IDENTITY_SOURCE_ALIASES` in `src/tools/identity-sources.ts`).
+ */
+export const RETIRED_IDENTITY_APP_SEGMENTS: ReadonlyMap<string, string> = new Map([
+  ["automations", identityAppSegment("tasks")],
+]);

@@ -14,7 +14,7 @@ export function ConfirmDialog({
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation container */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation container */}
       <div className="confirm-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="confirm-title">Delete automation?</div>
+        <div className="confirm-title">Delete task?</div>
         <div className="confirm-desc">
           This will permanently remove <strong>{name}</strong>. Run history will be preserved.
         </div>

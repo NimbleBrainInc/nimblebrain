@@ -58,7 +58,7 @@ export function AutomationDetailView({
         setDetailRuns(runs);
       }
     } catch (err) {
-      setError(errorMessage(err, "Failed to load automation details"));
+      setError(errorMessage(err, "Failed to load task details"));
     } finally {
       setLoading(false);
     }

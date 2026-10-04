@@ -219,9 +219,9 @@ describe("mobile drawer — a navigation closes it", () => {
     await mount({ initialPath: "/w/0071a5bbf40116e6/" });
     await openDrawer();
 
-    await act(async () => probe.navigate("/w/0071a5bbf40116e6/automations"));
+    await act(async () => probe.navigate("/w/0071a5bbf40116e6/tasks"));
 
-    expect(probe.path).toBe("/w/0071a5bbf40116e6/automations");
+    expect(probe.path).toBe("/w/0071a5bbf40116e6/tasks");
     expect(probe.isDrawerOpen).toBe(false);
   });
 

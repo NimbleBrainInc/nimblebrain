@@ -80,7 +80,7 @@ export function ToolCallProvenance({
   const scope = parsed.scope;
 
   // Identity tool (bare `<source>__<tool>`): a personal, cross-workspace
-  // surface owned by the user (conversations / files / automations). No
+  // surface owned by the user (conversations / files / tasks). No
   // workspace badge — it doesn't belong to a workspace.
   if (scope.kind === "identity") {
     return (

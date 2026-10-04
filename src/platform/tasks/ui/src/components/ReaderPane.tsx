@@ -170,7 +170,7 @@ function ReaderHead({
             className="reader-head-name"
             onClick={() => !orphan && onOpenConfig(automationName)}
             disabled={orphan}
-            title={orphan ? "Automation has been deleted" : "Open config"}
+            title={orphan ? "Task has been deleted" : "Open config"}
           >
             {automationName}
           </button>

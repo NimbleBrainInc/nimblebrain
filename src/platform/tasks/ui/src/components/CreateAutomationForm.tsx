@@ -185,7 +185,7 @@ export function CreateAutomationForm({
       const data = asDict(result.data);
       return ((data.automation as Record<string, unknown>)?.name as string) ?? name;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create automation");
+      setError(err instanceof Error ? err.message : "Failed to create task");
       return null;
     }
   }
@@ -230,7 +230,7 @@ export function CreateAutomationForm({
           <button type="button" className="back-btn" onClick={onCancel}>
             <BackArrowIcon />
           </button>
-          <div className="detail-name">Create Automation</div>
+          <div className="detail-name">Create Task</div>
         </div>
       </div>
       <div className="content">

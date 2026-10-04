@@ -5,7 +5,7 @@
 // one workspace, so the nav shows only that one's views, and the way to see
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
-// Order: Overview, the identity views (Conversations / Automations / Files),
+// Order: Overview, the identity views (Conversations / Tasks / Files),
 // then APPS (People, Tasks, … — capped with a View-all overflow). Each routes
 // into `/w/<slug>/…`. An app that places several views is one entry; while it
 // is open its views list beneath it. The inbox is not here: it is the top
@@ -69,7 +69,7 @@ function WorkspaceViews({
   const canInstall = useCanWriteActiveWorkspace();
   const slug = toSlug(workspace.id);
 
-  // Identity views (Conversations / Automations / Files): the bare-"sidebar"
+  // Identity views (Conversations / Tasks / Files): the bare-"sidebar"
   // placements that are identity-owned, priority-ordered.
   const identityViews = useMemo(() => {
     const placements = shell?.forSlot("sidebar") ?? [];

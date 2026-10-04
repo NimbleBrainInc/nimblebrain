@@ -91,11 +91,11 @@ export function AutomationsUI() {
       // failure this panel's paging exists to avoid — so say so instead.
       if (!exhausted) {
         setError(
-          `Showing the first ${items.length} automations; more exist than this panel loads in one pass.`,
+          `Showing the first ${items.length} tasks; more exist than this panel loads in one pass.`,
         );
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load automations");
+      setError(err instanceof Error ? err.message : "Failed to load tasks");
     } finally {
       setLoading(false);
     }
@@ -311,7 +311,7 @@ export function AutomationsUI() {
       <div className="header">
         <div className="header-top">
           <div>
-            {!hostShowsTitle && <div className="header-title">Automations</div>}
+            {!hostShowsTitle && <div className="header-title">Tasks</div>}
             <div className="header-lede">Scheduled tasks that run on autopilot</div>
           </div>
           <button type="button" className="create-btn" onClick={handleCreate}>
@@ -325,7 +325,7 @@ export function AutomationsUI() {
 
       <div className="two-pane" data-show={paneShow}>
         <aside className="rail">
-          <RailSection label="Automations" count={automations.length} />
+          <RailSection label="Tasks" count={automations.length} />
           <AutomationsList
             loading={loading}
             automations={automations}
@@ -427,7 +427,7 @@ function AutomationsList({
   if (automations.length === 0) {
     return (
       <div className="rail-empty">
-        No automations yet. Start from a template:
+        No tasks yet. Start from a template:
         <div className="template-grid" style={{ marginTop: 8 }}>
           {TEMPLATES.map((t) => (
             <button
@@ -529,8 +529,8 @@ function ReaderArea({
           </div>
           <div className="reader-empty-desc">
             {automations.length === 0
-              ? "Create an automation from a template in the left panel to get started."
-              : "Your automations haven't run yet. Pick one and Run now, or wait for the schedule."}
+              ? "Create a task from a template in the left panel to get started."
+              : "Your tasks have not run yet. Pick one and Run now, or wait for the schedule."}
           </div>
         </div>
       </div>

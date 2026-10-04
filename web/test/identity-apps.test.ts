@@ -4,6 +4,7 @@ import {
   identityAppRoute,
   identityAppSegment,
   isIdentityApp,
+  RETIRED_IDENTITY_APP_SEGMENTS,
 } from "../src/lib/identity-apps";
 
 // The web mirror of the backend identity-source set. These pin the contract
@@ -11,10 +12,10 @@ import {
 // `Runtime.getIdentitySource` in src/.
 
 describe("identity-apps", () => {
-  it("recognizes conversations, files, and automations as kernel identity apps", () => {
+  it("recognizes conversations, files, and tasks as kernel identity apps", () => {
     expect(isIdentityApp("conversations")).toBe(true);
     expect(isIdentityApp("files")).toBe(true);
-    expect(isIdentityApp("automations")).toBe(true);
+    expect(isIdentityApp("tasks")).toBe(true);
   });
 
   it("treats workspace apps and the platform nb source as NOT identity apps", () => {
@@ -32,7 +33,7 @@ describe("identity-apps", () => {
   it("the route segment is the bare source name (relative under /w/:slug)", () => {
     expect(identityAppSegment("conversations")).toBe("conversations");
     expect(identityAppSegment("files")).toBe("files");
-    expect(identityAppSegment("automations")).toBe("automations");
+    expect(identityAppSegment("tasks")).toBe("tasks");
   });
 
   it("maps an identity app to its workspace-scoped view route", () => {
@@ -40,10 +41,17 @@ describe("identity-apps", () => {
     // tools still dispatch bare through the identity door.
     expect(identityAppRoute("conversations", "003eba8844413cd9")).toBe("/w/003eba8844413cd9/conversations");
     expect(identityAppRoute("files", "007dc0488ce56f9e")).toBe("/w/007dc0488ce56f9e/files");
-    expect(identityAppRoute("automations", "000f7ed6658f9d30")).toBe("/w/000f7ed6658f9d30/automations");
+    expect(identityAppRoute("tasks", "000f7ed6658f9d30")).toBe("/w/000f7ed6658f9d30/tasks");
   });
 
-  it("identity set is exactly { conversations, files, automations }", () => {
-    expect([...IDENTITY_APP_SOURCES]).toEqual(["conversations", "files", "automations"]);
+  it("identity set is exactly { conversations, files, tasks }", () => {
+    expect([...IDENTITY_APP_SOURCES]).toEqual(["conversations", "files", "tasks"]);
+  });
+});
+
+describe("retired identity app segments", () => {
+  it("sends the old automations view to tasks, which is not itself an identity app name", () => {
+    expect(RETIRED_IDENTITY_APP_SEGMENTS.get("automations")).toBe("tasks");
+    expect(isIdentityApp("automations")).toBe(false);
   });
 });

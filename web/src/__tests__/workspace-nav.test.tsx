@@ -228,7 +228,7 @@ function installedConnector(serverName: string, displayName = serverName): Insta
 
 const IDENTITY_PLACEMENTS: PlacementEntry[] = [
   identityPlacement("conversations", 1),
-  identityPlacement("automations", 2),
+  identityPlacement("tasks", 2),
   identityPlacement("files", 3),
 ];
 
@@ -302,7 +302,7 @@ describe("WorkspaceNav — the focused workspace only", () => {
       workspaces: [MINE, HELIX, ACME],
       activeId: "ws_003eba8844413cd9",
       initialPath: "/w/003eba8844413cd9/",
-      placements: [...IDENTITY_PLACEMENTS, appPlacement("people"), appPlacement("tasks")],
+      placements: [...IDENTITY_PLACEMENTS, appPlacement("people"), appPlacement("todos")],
     });
 
     const nav = byTestId(mounted.container, "sidebar-workspace-nav");
@@ -313,11 +313,11 @@ describe("WorkspaceNav — the focused workspace only", () => {
     expect(hrefs).toEqual([
       "/w/003eba8844413cd9/",
       "/w/003eba8844413cd9/conversations",
-      "/w/003eba8844413cd9/automations",
+      "/w/003eba8844413cd9/tasks",
       "/w/003eba8844413cd9/files",
       "/w/003eba8844413cd9/settings/connectors/browse",
       "/w/003eba8844413cd9/app/people",
-      "/w/003eba8844413cd9/app/tasks",
+      "/w/003eba8844413cd9/app/todos",
     ]);
     expect(nav[0]?.textContent).not.toContain("Acme");
     expect(nav[0]?.textContent).not.toContain("Mat's workspace");
@@ -397,14 +397,14 @@ describe("WorkspaceNav — app quick-list", () => {
       workspaces: [HELIX],
       activeId: "ws_003eba8844413cd9",
       initialPath: "/w/003eba8844413cd9/",
-      placements: [...people, appPlacement("tasks", { priority: 20 })],
+      placements: [...people, appPlacement("todos", { priority: 20 })],
     });
 
     // Closed: one row per app, opening on the app's first view, and no views listed.
     const closed = byTestId(mounted.container, "sidebar-workspace-app");
     expect(closed.map((a) => a.getAttribute("href"))).toEqual([
       "/w/003eba8844413cd9/app/people",
-      "/w/003eba8844413cd9/app/tasks",
+      "/w/003eba8844413cd9/app/todos",
     ]);
     expect(byTestId(mounted.container, "sidebar-workspace-app-view")).toHaveLength(0);
     mounted.unmount();
@@ -413,7 +413,7 @@ describe("WorkspaceNav — app quick-list", () => {
       workspaces: [HELIX],
       activeId: "ws_003eba8844413cd9",
       initialPath: "/w/003eba8844413cd9/app/people/organizations",
-      placements: [...people, appPlacement("tasks", { priority: 20 })],
+      placements: [...people, appPlacement("todos", { priority: 20 })],
     });
 
     // Open: its views list beneath it, and the view on screen is the current page.
@@ -490,7 +490,7 @@ describe("WorkspaceNav — app quick-list", () => {
           route: "people/opportunities",
           resourceUri: "ui://people/opportunities",
         }),
-        appPlacement("tasks", { priority: 20 }),
+        appPlacement("todos", { priority: 20 }),
         appPlacement("memory", { priority: 30 }),
       ],
     });
@@ -868,7 +868,7 @@ describe("WorkspaceNav — collapsed", () => {
     expect(links.map((a) => a.getAttribute("aria-label"))).toEqual([
       "Overview",
       "Conversations",
-      "Automations",
+      "Tasks",
       "Files",
       "people",
       "Add apps and tools",
