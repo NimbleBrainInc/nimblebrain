@@ -378,6 +378,27 @@ describe("nb__manage_workspaces", () => {
       }
     });
 
+    test("refuses a connector row with no serverName, on create and update", async () => {
+      const created = parseResult(await tool.handler({ action: "create", name: "Unnamed" })) as {
+        workspace: { id: string };
+      };
+      const row = { url: "https://echo.example.com/mcp" };
+
+      const onCreate = await tool.handler({ action: "create", name: "Other", connectors: [row] });
+      expect(onCreate.isError).toBe(true);
+      expect(resultText(onCreate)).toContain("needs a serverName");
+
+      for (const bad of [row, { ...row, serverName: "  " }]) {
+        const onUpdate = await tool.handler({
+          action: "update",
+          workspaceId: created.workspace.id,
+          connectors: [bad],
+        });
+        expect(onUpdate.isError).toBe(true);
+        expect(resultText(onUpdate)).toContain("needs a serverName");
+      }
+    });
+
     test("an archive failure names the teardown that already ran, not a no-op", async () => {
       const created = parseResult(await tool.handler({ action: "create", name: "Stuck" })) as {
         workspace: { id: string };
