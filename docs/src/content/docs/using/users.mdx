@@ -85,9 +85,7 @@ Deactivating a user revokes their access on the next request. Their existing con
 
 Org roles control who can manage users. **Workspace** membership controls who can use a given workspace's apps and tools. A user can belong to multiple workspaces, with a per-workspace role of **admin** or **member**.
 
-Manage membership through the agent (it uses the `manage_workspaces` tool):
-
-> "Add sarah@example.com to the Engineering workspace as a member"
+Manage membership from the workspace's **Settings → Members**: add someone in the organization by email, change a role, or remove someone. The agent cannot do this for you; the `manage_workspaces` tool behind that page is app-only.
 
 Workspace member management requires **admin** membership in that workspace, or an org role of **admin** or **owner**, which can manage the members of any workspace. Workspace roles:
 

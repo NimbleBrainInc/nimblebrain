@@ -146,8 +146,11 @@ function Inner({ ws }: { ws: WorkspaceInfo }) {
   const remove = useCallback(
     async (member: Member) => {
       // Throwing keeps the dialog open with the refusal shown (ConfirmDialog).
+      // On success the dialog is ours to close, before the re-read, so it doesn't
+      // hold on "Removing…" for a roster round-trip after the removal landed.
       parseToolResult(await call({ action: "remove_member", userId: member.userId }));
       notify({ level: "success", title: `${member.displayName} was removed from ${ws.name}` });
+      setRemoving(null);
       if (member.userId === currentUserId) {
         // You are no longer in this workspace: leave it before its guard does.
         afterOwnChange();

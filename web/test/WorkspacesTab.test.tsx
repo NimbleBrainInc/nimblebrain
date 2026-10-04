@@ -101,6 +101,30 @@ async function click(el: Element | null | undefined) {
 const buttonByText = (text: string) =>
   Array.from(document.body.querySelectorAll("button")).find((b) => b.textContent?.trim() === text);
 
+describe("creating a workspace", () => {
+  // The tool answers a refusal as a result, not a throw. Unchecked, the form
+  // closed and cleared the name as if the workspace had been made.
+  test("a refused create keeps the form open, with the name and the server's reason", async () => {
+    refusal = "A workspace name can be at most 80 characters.";
+    const c = await mount();
+    await click(buttonByText("New workspace"));
+
+    const input = c.querySelector<HTMLInputElement>("#create-ws-name")!;
+    expect(input.maxLength).toBe(80);
+    const win = (globalThis as unknown as { window: Window & typeof globalThis }).window;
+    const setter = Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(input, "Sales");
+      input.dispatchEvent(new win.Event("input", { bubbles: true }));
+    });
+    await click(buttonByText("Create workspace"));
+
+    expect(calls.some((x) => x.action === "create")).toBe(true);
+    expect(c.textContent).toContain("A workspace name can be at most 80 characters.");
+    expect(c.querySelector<HTMLInputElement>("#create-ws-name")?.value).toBe("Sales");
+  });
+});
+
 describe("the workspace list", () => {
   test("names each workspace with a link to its page, so a row opens from the keyboard", async () => {
     const c = await mount();

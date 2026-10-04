@@ -6,6 +6,14 @@ import type { ModelSlots } from "../runtime/types.ts";
 /** Workspace-level member roles. */
 export type WorkspaceRole = "admin" | "member";
 
+/**
+ * Longest workspace name, in characters (Unicode code points). Long enough for
+ * any real name, short enough to fit the sidebar and the switcher. The General
+ * tab's name field and the New workspace form cap input at the same number
+ * (`web/src/lib/workspace-name.ts`).
+ */
+export const MAX_WORKSPACE_NAME_CHARS = 80;
+
 /** A user's membership in a workspace. */
 export interface WorkspaceMember {
   userId: string;

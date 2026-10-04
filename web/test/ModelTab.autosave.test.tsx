@@ -177,7 +177,7 @@ describe("the Model tab", () => {
     );
     expect(c.textContent).toContain("Saved");
     expect(document.body.querySelector("[data-testid='notice']")?.textContent).toContain(
-      "Max Output Tokens updated",
+      "Max output tokens updated",
     );
   });
 
@@ -231,7 +231,7 @@ describe("the Model tab", () => {
     expect(saves()).toEqual([{ models: { default: "anthropic:claude-opus-5" } }]);
 
     const notice = document.body.querySelector("[data-testid='notice']");
-    expect(notice?.textContent).toContain("Default Model updated");
+    expect(notice?.textContent).toContain("Default model updated");
     const undo = Array.from(notice?.querySelectorAll("button") ?? []).find(
       (b) => b.textContent === "Undo",
     );

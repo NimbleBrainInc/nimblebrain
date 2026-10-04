@@ -220,6 +220,18 @@ describe("nb__manage_workspaces", () => {
       expect(resultText(result)).toContain("name is required");
     });
 
+    test("refuses a name over 80 characters, counting an emoji as one, and creates nothing", async () => {
+      const before = (await store.list()).length;
+      const result = await tool.handler({ action: "create", name: "x".repeat(81) });
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("at most 80 characters");
+      expect((await store.list()).length).toBe(before);
+
+      // 80 emoji are 80 characters, not 160 UTF-16 units.
+      const ok = await tool.handler({ action: "create", name: "🙂".repeat(80) });
+      expect(ok.isError).toBe(false);
+    });
+
     test("two creates with the same name get distinct generated ids", async () => {
       const a = parseResult(await tool.handler({ action: "create", name: "Dupe" })) as {
         workspace: { id: string };
@@ -549,6 +561,20 @@ describe("nb__manage_workspaces", () => {
 
       const result = await tool.handler({ action: "list_members", workspaceId: ws.id });
       expect(resultText(result)).toContain("don't have permission");
+    });
+
+    test("refuses a rename over 80 characters, and the name stays", async () => {
+      const ws = await store.create("Short");
+
+      const result = await tool.handler({
+        action: "update",
+        workspaceId: ws.id,
+        name: "y".repeat(81),
+      });
+
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("at most 80 characters");
+      expect((await store.get(ws.id))!.name).toBe("Short");
     });
 
     test("refuses an empty name", async () => {

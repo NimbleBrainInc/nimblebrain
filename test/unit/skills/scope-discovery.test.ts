@@ -69,8 +69,7 @@ describe("loadScopedSkills — stamping", () => {
   test("a legacy frontmatter with stray top-level keys is rejected (fail-soft skip)", () => {
     // `scope`/`type`/`version` are no longer top-level fields (scope is
     // dir-stamped; the rest moved under metadata.nimblebrain). The strict schema
-    // rejects them, so an unmigrated file is skipped — not crashed — until
-    // `migrate:skill-frontmatter` rewrites it.
+    // rejects them, so such a file is skipped, not crashed.
     const dir = join(root, "stamp-precedence");
     mkdirSync(dir, { recursive: true });
     writeFileSync(

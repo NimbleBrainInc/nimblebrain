@@ -75,12 +75,7 @@ export function usageInstanceId(bootId: string): string {
   return `${host}-${bootId}`;
 }
 
-/** True for a shard written by the backfill script rather than a live writer. */
+/** True for a pre-ledger history shard rather than one a live writer appends to. */
 export function isBackfillShard(filename: string): boolean {
   return filename === "backfill.jsonl";
-}
-
-/** The backfill script's shard for one month — rewritten wholesale on each run. */
-export function usageBackfillPath(workDir: string, month: string): string {
-  return join(usageMonthDir(workDir, month), "backfill.jsonl");
 }

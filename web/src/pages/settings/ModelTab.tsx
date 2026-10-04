@@ -77,14 +77,14 @@ const EMPTY: ModelConfigValues = {
 };
 
 const LABELS: Record<ModelConfigField, string> = {
-  defaultModel: "Default Model",
-  fastModel: "Fast Model",
-  maxIterations: "Max Iterations",
-  maxInputTokens: "Max Input Tokens",
-  maxOutputTokens: "Max Output Tokens",
+  defaultModel: "Default model",
+  fastModel: "Fast model",
+  maxIterations: "Max iterations",
+  maxInputTokens: "Max input tokens",
+  maxOutputTokens: "Max output tokens",
   thinking: "Thinking mode",
   thinkingEffort: "Thinking effort",
-  thinkingBudgetTokens: "Thinking Budget Tokens",
+  thinkingBudgetTokens: "Thinking budget tokens",
 };
 
 const ALL_UNDO = Object.fromEntries(
@@ -258,7 +258,7 @@ export function ModelTab() {
         </Section>
 
         <Section
-          title="Extended Thinking"
+          title="Extended thinking"
           description="Applies to every provider that supports reasoning. Billed as output tokens; adaptive only engages when the model judges it useful."
         >
           <div className="space-y-4">

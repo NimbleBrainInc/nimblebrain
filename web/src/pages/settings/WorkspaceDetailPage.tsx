@@ -4,8 +4,10 @@ import { useParams } from "react-router-dom";
 import { callToolWithoutWorkspace } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
+import { useNotice } from "../../components/notices";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
+import { ConfirmDialog } from "../../components/ui/confirm-dialog";
 import { Label } from "../../components/ui/label";
 import { RoleBadge } from "../../components/ui/role-badge";
 import { Select } from "../../components/ui/select";
@@ -17,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
+import { Tooltip } from "../../components/ui/tooltip";
 import { useSession } from "../../context/SessionContext";
 import { canManageWorkspaceMembers } from "../../hooks/useScopedRole";
 import {
@@ -101,6 +104,7 @@ export function WorkspaceDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const id = resolveWorkspaceId(slug);
   const session = useSession();
+  const notify = useNotice();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -116,7 +120,7 @@ export function WorkspaceDetailPage() {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<Member | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!id) return;
@@ -161,16 +165,28 @@ export function WorkspaceDetailPage() {
     fetchData();
   }, [fetchData]);
 
+  const memberName = useCallback(
+    (userId: string) => userMap.get(userId)?.displayName ?? userId,
+    [userMap],
+  );
+
   const handleAdd = useCallback(async () => {
     if (!addUserId || !id) return;
     setAdding(true);
     setAddError(null);
     try {
-      await callToolWithoutWorkspace("nb", "manage_workspaces", {
+      // A refusal comes back as a result, not a throw; parseToolResult throws on
+      // it, so the form keeps its values and shows the reason.
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
         action: "add_member",
         workspaceId: id,
         userId: addUserId,
         role: addRole,
+      });
+      parseToolResult(res);
+      notify({
+        level: "success",
+        title: `${memberName(addUserId)} was added to ${workspace?.name ?? "the workspace"}`,
       });
       setAddUserId("");
       setAddRole("member");
@@ -181,30 +197,29 @@ export function WorkspaceDetailPage() {
     } finally {
       setAdding(false);
     }
-  }, [addUserId, addRole, id, fetchData]);
+  }, [addUserId, addRole, id, fetchData, notify, memberName, workspace?.name]);
 
-  const handleRemove = useCallback(
-    async (userId: string) => {
+  // Throwing keeps the dialog open with the refusal shown (ConfirmDialog), and
+  // parseToolResult throws on a refusal, which the tool returns as a result.
+  // On success the dialog is ours to close, before the re-read, so a failed
+  // refresh never reports inside a dialog whose removal already landed.
+  const removeMember = useCallback(
+    async (member: Member) => {
       if (!id) return;
-      const user = userMap.get(userId);
-      const label = user?.displayName ?? userId;
-      const confirmed = window.confirm(`Remove "${label}" from this workspace?`);
-      if (!confirmed) return;
-      setRemovingId(userId);
-      try {
-        await callToolWithoutWorkspace("nb", "manage_workspaces", {
-          action: "remove_member",
-          workspaceId: id,
-          userId,
-        });
-        await fetchData();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to remove member");
-      } finally {
-        setRemovingId(null);
-      }
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
+        action: "remove_member",
+        workspaceId: id,
+        userId: member.userId,
+      });
+      parseToolResult(res);
+      notify({
+        level: "success",
+        title: `${memberName(member.userId)} was removed from ${workspace?.name ?? "the workspace"}`,
+      });
+      setRemoving(null);
+      await fetchData();
     },
-    [id, userMap, fetchData],
+    [id, notify, memberName, workspace?.name, fetchData],
   );
 
   const currentUserId = session?.user?.id;
@@ -328,11 +343,25 @@ export function WorkspaceDetailPage() {
               canManageMembers={canManageMembers}
               adminCount={adminCount}
               currentUserId={currentUserId}
-              removingId={removingId}
-              onRemove={handleRemove}
+              onRemove={setRemoving}
             />
           )}
         </div>
+
+        <ConfirmDialog
+          open={removing !== null}
+          onOpenChange={(open) => {
+            if (!open) setRemoving(null);
+          }}
+          title={`Remove ${removing ? memberName(removing.userId) : ""}?`}
+          description="They'll lose access to this workspace's conversations, files, and apps. You can add them back later."
+          confirmLabel="Remove"
+          pendingLabel="Removing…"
+          destructive
+          onConfirm={async () => {
+            if (removing) await removeMember(removing);
+          }}
+        />
       </Section>
 
       {/*
@@ -439,7 +468,6 @@ function MembersTable({
   canManageMembers,
   adminCount,
   currentUserId,
-  removingId,
   onRemove,
 }: {
   members: Member[];
@@ -447,8 +475,7 @@ function MembersTable({
   canManageMembers: boolean;
   adminCount: number;
   currentUserId: string | undefined;
-  removingId: string | null;
-  onRemove: (userId: string) => void;
+  onRemove: (member: Member) => void;
 }) {
   return (
     <Table>
@@ -465,7 +492,7 @@ function MembersTable({
           const user = userMap.get(m.userId);
           const isLastAdmin = m.role === "admin" && adminCount <= 1;
           const isSelfLastAdmin = m.userId === currentUserId && isLastAdmin;
-          const isRemoving = removingId === m.userId;
+          const name = user?.displayName ?? m.userId;
 
           return (
             <TableRow key={m.userId}>
@@ -476,20 +503,22 @@ function MembersTable({
               </TableCell>
               {canManageMembers && (
                 <TableCell>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={isSelfLastAdmin || isRemoving}
-                    title={
-                      isSelfLastAdmin
-                        ? "Cannot remove the last admin"
-                        : `Remove ${user?.displayName ?? m.userId}`
-                    }
-                    onClick={() => onRemove(m.userId)}
-                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <Tooltip label={isSelfLastAdmin ? "The last admin can't be removed" : "Remove"}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      // aria-disabled, not disabled: a disabled button takes no
+                      // pointer events, so its tooltip could not explain why.
+                      aria-disabled={isSelfLastAdmin}
+                      aria-label={`Remove ${name}`}
+                      onClick={() => {
+                        if (!isSelfLastAdmin) onRemove(m);
+                      }}
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive aria-disabled:opacity-40 aria-disabled:hover:text-muted-foreground"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </Tooltip>
                 </TableCell>
               )}
             </TableRow>
