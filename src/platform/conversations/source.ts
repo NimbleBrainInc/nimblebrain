@@ -113,7 +113,7 @@ export async function createConversationsSource(
    * one workspace: `RequestContext.workspaceId`, set on every door that can
    * reach this source — chat (the conversation's OWN workspace, so a resumed
    * thread lists its own workspace's chats no matter where the user is
-   * focused), automation runs (provenance), `/mcp` (the
+   * focused), task runs (provenance), `/mcp` (the
    * workspace in its URL), and REST (the workspace in its URL). Same seam
    * `files__*` and `tasks__*` use.
    *
@@ -149,7 +149,7 @@ export async function createConversationsSource(
    * `conv_<hex>`, minted by the store), and refusing it would buy a round-trip
    * to teach a distinction with no consequence.
    *
-   * Outside a chat — a REST tool call, an `/mcp` request, an automation run —
+   * Outside a chat — a REST tool call, an `/mcp` request, a task run —
    * there is no ambient conversation, so this errors rather than guessing.
    *
    * The ambient value is shape-checked rather than merely present-checked.

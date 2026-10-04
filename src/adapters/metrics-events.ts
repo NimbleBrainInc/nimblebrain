@@ -81,7 +81,7 @@ export class MetricsEventSink implements EventSink {
     recordLlmCall({ source: "main", model, usage, llmMs: data.llmMs, event: data });
     // Both latency histograms carry `origin` because latency means different
     // things depending on who is waiting: `chat` is a person watching a spinner,
-    // `task` is an automation nobody is watching. Blended, a p99 says neither —
+    // `task` is a task nobody is watching. Blended, a p99 says neither —
     // an alert on it fires the same for a slow overnight run as for a stalled
     // user turn.
     const origin = originOf();

@@ -381,7 +381,7 @@ describe("instructions source — role gates", () => {
 
 describe("instructions source — unattended runs", () => {
   // An instruction write persists into every later conversation in its scope,
-  // for every member. An automation run has no user to confirm that with, is
+  // for every member. A task run has no user to confirm that with, is
   // told to proceed without confirming, and routinely ingests untrusted
   // content — so the confirm-before-writing posture the tool relies on cannot
   // hold there. Enforced at the source, which is the single dispatch point,
@@ -401,7 +401,7 @@ describe("instructions source — unattended runs", () => {
 
     expect(result.isError).toBe(true);
     const { error } = parseStructured(result as never) as { error: string };
-    expect(error).toContain("unattended automation run");
+    expect(error).toContain("unattended task run");
 
     // Nothing landed — the refusal is before the store, not after it.
     expect(await runtime.getInstructionsStore().read({ wsId: "ws_002afe1142297ff4" })).toBe("");

@@ -20,7 +20,7 @@ import { recordingModel } from "../helpers/recording-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const TOOL = "crm__search";
-const dir = join(tmpdir(), `nimblebrain-automation-allowed-tools-${Date.now()}`);
+const dir = join(tmpdir(), `nimblebrain-task-allowed-tools-${Date.now()}`);
 let runtime: Runtime;
 let source: McpSource;
 let handlerCalls = 0;
@@ -109,7 +109,7 @@ describe("an unattended run's allowedTools", () => {
  * two `nb__` tools the list does not name.
  */
 describe("an unattended run's allowedTools and the nb__ tools", () => {
-  const nbDir = join(tmpdir(), `nimblebrain-automation-allowed-nb-${Date.now()}`);
+  const nbDir = join(tmpdir(), `nimblebrain-task-allowed-nb-${Date.now()}`);
   let nbRuntime: Runtime;
   const recorded = recordingModel(
     createEchoModel({

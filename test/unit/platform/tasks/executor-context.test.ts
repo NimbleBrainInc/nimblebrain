@@ -5,17 +5,17 @@ import {
   type TaskFnRequest,
 } from "../../../../src/platform/tasks/executor.ts";
 import { resolveExecutorContext } from "../../../../src/platform/tasks/source.ts";
-import type { Automation } from "../../../../src/platform/tasks/types.ts";
+import type { Task } from "../../../../src/platform/tasks/types.ts";
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 
-// The automation under test is owned by, and focused on, workspace A.
-const automation = {
+// The task under test is owned by, and focused on, workspace A.
+const task = {
   id: "nb-morning-sweep",
   name: "Morning sweep",
   prompt: "Sweep the inbox",
   ownerId: "usr_owner_a",
   workspaceId: "ws_0009cebdf778aef6",
-} as Automation;
+} as Task;
 
 // An org admin clicking Run now from another workspace: the context a manual
 // run is dispatched inside.
@@ -30,8 +30,8 @@ const adminElsewhere = {
 };
 
 describe("resolveExecutorContext", () => {
-  test("acts as the automation's owner, in the automation's workspace", () => {
-    const ctx = resolveExecutorContext(automation);
+  test("acts as the task's owner, in the task's workspace", () => {
+    const ctx = resolveExecutorContext(task);
     expect(ctx.workspaceId).toBe("ws_0009cebdf778aef6");
     expect(ctx.identity).toEqual({ id: "usr_owner_a" });
   });
@@ -40,7 +40,7 @@ describe("resolveExecutorContext", () => {
   // context some earlier request left behind. Who a run acts as never rests on
   // what that context holds.
   test("ignores an ambient request context for another workspace and person", () => {
-    const ctx = runWithRequestContext(adminElsewhere, () => resolveExecutorContext(automation));
+    const ctx = runWithRequestContext(adminElsewhere, () => resolveExecutorContext(task));
     expect(ctx.workspaceId).toBe("ws_0009cebdf778aef6");
     expect(ctx.identity).toEqual({ id: "usr_owner_a" });
   });
@@ -48,11 +48,11 @@ describe("resolveExecutorContext", () => {
   // The identity carries the owner's id and nothing else: no org role, so the
   // run's tools are the same however it was woken.
   test("carries no org role", () => {
-    expect(resolveExecutorContext(automation).identity).not.toHaveProperty("orgRole");
+    expect(resolveExecutorContext(task).identity).not.toHaveProperty("orgRole");
   });
 
-  test("an automation lacking owner/workspace yields undefined fields", () => {
-    const ctx = resolveExecutorContext({ id: "x" } as Automation);
+  test("a task lacking owner/workspace yields undefined fields", () => {
+    const ctx = resolveExecutorContext({ id: "x" } as Task);
     expect(ctx.workspaceId).toBeUndefined();
     expect(ctx.identity).toBeUndefined();
   });
@@ -75,8 +75,8 @@ describe("a manual run builds the scheduled run's context", () => {
       };
     }, resolveExecutorContext);
 
-    await runWithRequestContext(adminElsewhere, () => executor(automation, undefined, "manual"));
-    await executor(automation, undefined, "scheduled");
+    await runWithRequestContext(adminElsewhere, () => executor(task, undefined, "manual"));
+    await executor(task, undefined, "scheduled");
 
     const [manual, scheduled] = requests;
     expect(manual?.trigger).toBe("manual");

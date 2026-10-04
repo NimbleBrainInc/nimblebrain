@@ -1,4 +1,4 @@
-import { effectiveRunLimits } from "../../config/automations.ts";
+import { effectiveRunLimits } from "../../config/tasks.ts";
 import { textContent } from "../../engine/content-helpers.ts";
 import type { EventSink } from "../../engine/types.ts";
 import { log } from "../../observability/log.ts";
@@ -8,7 +8,7 @@ import type { TaskRequest } from "../../runtime/types.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
-import { AutomationEventTrigger } from "./event-trigger.ts";
+import { TaskEventTrigger } from "./event-trigger.ts";
 import { createDirectExecutor, type ExecutorContext } from "./executor.ts";
 import { migrateTaskStorage } from "./migrate-storage.ts";
 import { countsAsEventFire, isOpenRun, Scheduler } from "./scheduler.ts";
@@ -26,24 +26,24 @@ import {
   type ToolContext,
 } from "./server.ts";
 import {
-  deleteAutomationDefinition,
-  loadAutomation,
-  loadOwnerAutomations,
+  deleteTaskDefinition,
+  loadOwnerTasks,
+  loadTask,
   readAllRuns,
   readIdempotencyKey,
   readRunResult,
   readRuns,
   readRunsPage,
   readRunTicket,
-  saveAutomation,
+  saveTask,
 } from "./store.ts";
-import { createAutomationsTaskSource } from "./task-source.ts";
-import type { Automation, RunTicket } from "./types.ts";
-import { AUTOMATIONS_PANEL_HTML } from "./ui-resource.ts";
+import { createTaskRunSource } from "./task-source.ts";
+import type { RunTicket, Task } from "./types.ts";
+import { TASKS_PANEL_HTML } from "./ui-resource.ts";
 
 /**
- * Resolve WHO an automation run acts as: the automation's owner, focused on the
- * workspace the automation lives in, whatever woke the run.
+ * Resolve WHO a task run acts as: the task's owner, focused on the
+ * workspace the task lives in, whatever woke the run.
  *
  * A manual run (Run now) is the scheduled run, run now: the same workspace, the
  * same owner, and the same authority. The identity is `{ id: ownerId }` and no
@@ -54,12 +54,12 @@ import { AUTOMATIONS_PANEL_HTML } from "./ui-resource.ts";
  * The ambient request context is never read. The scheduler arms its timer
  * detached (`runDetached`), and an event run starts from the notifications
  * poller's tick, so an inherited context would otherwise run one tenant's
- * automation in another tenant's workspace.
+ * task in another tenant's workspace.
  */
-export function resolveExecutorContext(automation: Automation): ExecutorContext {
+export function resolveExecutorContext(task: Task): ExecutorContext {
   return {
-    workspaceId: automation.workspaceId ?? undefined,
-    identity: automation.ownerId ? { id: automation.ownerId } : undefined,
+    workspaceId: task.workspaceId ?? undefined,
+    identity: task.ownerId ? { id: task.ownerId } : undefined,
   };
 }
 
@@ -71,7 +71,7 @@ const FALLBACK_TIMEZONE = "Pacific/Honolulu";
  *
  * An unknown name would make every budget-window and next-run computation
  * throw (`Intl` refuses it), and a throw while recording a run leaves the run
- * unrecorded and the automation due, so it re-runs back to back. Checking at
+ * unrecorded and the task due, so it re-runs back to back. Checking at
  * the one place the value enters means neither path has to guard for it.
  */
 export function resolveDefaultTimezone(raw: string | undefined): string {
@@ -88,24 +88,24 @@ export function resolveDefaultTimezone(raw: string | undefined): string {
   }
 }
 
-/** Reconcile an automation map against the owner's on-disk store: write each (stamping its workspace + owner binding) and drop definitions no longer in the map. */
-function saveOwnerAutomations(
+/** Reconcile a task map against the owner's on-disk store: write each (stamping its workspace + owner binding) and drop definitions no longer in the map. */
+function saveOwnerTasks(
   workDir: string,
   wsId: string,
   owner: string,
-  map: Map<string, Automation>,
+  map: Map<string, Task>,
 ): void {
-  const onDisk = loadOwnerAutomations(workDir, wsId, owner);
+  const onDisk = loadOwnerTasks(workDir, wsId, owner);
   for (const auto of map.values()) {
     // Stamp the binding so a scheduled run resolves the same workspace + owner.
     if (!auto.workspaceId) auto.workspaceId = wsId;
     if (!auto.ownerId) auto.ownerId = owner;
-    saveAutomation(workDir, wsId, owner, auto);
+    saveTask(workDir, wsId, owner, auto);
   }
   for (const id of onDisk.keys()) {
-    // Definition-only removal — a deleted automation's run history (audit
-    // trail) is preserved (`deleteAutomation` is the hard-purge variant).
-    if (!map.has(id)) deleteAutomationDefinition(workDir, wsId, owner, id);
+    // Definition-only removal — a deleted task's run history (audit
+    // trail) is preserved (`deleteTask` is the hard-purge variant).
+    if (!map.has(id)) deleteTaskDefinition(workDir, wsId, owner, id);
   }
 }
 
@@ -114,7 +114,7 @@ function saveOwnerAutomations(
  *
  * Tools: create, update, delete, list, status, runs, run
  * Resources: ui://tasks/panel (React SPA)
- * Placements: sidebar automations link at priority 3
+ * Placements: sidebar tasks link at priority 3
  *
  * Delegates to the existing store, scheduler, and executor modules.
  * The scheduler is started on creation and stopped via source.stop().
@@ -124,14 +124,14 @@ export async function createTasksSource(
   eventSink: EventSink,
 ): Promise<McpSource> {
   const workDir = runtime.getWorkDir();
-  // Storage written under `automations/` moves to `tasks/` before anything
-  // reads it, the scheduler included.
+  // Storage written under the old `automations/` folder moves to `tasks/`
+  // before anything reads it, the scheduler included.
   migrateTaskStorage(workDir);
   const defaultTimezone = resolveDefaultTimezone(process.env.NB_TIMEZONE);
-  const automationsConfig = runtime.getAutomationsConfig();
+  const tasksConfig = runtime.getTasksConfig();
   // The chat default is read per run: an admin can change it at runtime.
-  const runLimitsOf = (automation: Automation) =>
-    effectiveRunLimits(automation, automationsConfig, runtime.getMaxIterations());
+  const runLimitsOf = (task: Task) =>
+    effectiveRunLimits(task, tasksConfig, runtime.getMaxIterations());
 
   // Direct executor: calls runtime.executeTask() in-process — the unattended
   // sibling of chat() that frames the agent as producing a deliverable, not a
@@ -144,7 +144,7 @@ export async function createTasksSource(
   const scheduler = new Scheduler(executor, {
     workDir,
     defaultTimezone,
-    // The runtime's run admission: automation runs share its slots and queue
+    // The runtime's run admission: task runs share its slots and queue
     // with every other unattended run.
     admission: runtime.getRunAdmission(),
     onRunRecorded: (owner) => runtime.announceIdentitySourceChange("tasks", owner),
@@ -154,34 +154,34 @@ export async function createTasksSource(
   // A workspace delete has to disarm what this scheduler holds for that
   // workspace before the subtree moves. The runtime cannot import the
   // scheduler, so it is handed over here.
-  runtime.registerAutomationQuiescer(scheduler);
+  runtime.registerTaskQuiescer(scheduler);
 
-  // The event trigger: the automations end of the path from a routed
+  // The event trigger: the tasks end of the path from a routed
   // notification to an agent run. It reads and writes through the same store
-  // and scheduler the tools do — there is no second copy of an automation's
+  // and scheduler the tools do — there is no second copy of a task's
   // state anywhere in it — and the runtime holds the reference so the
   // notifications source can reach it without either source importing the
   // other.
-  const eventTrigger = new AutomationEventTrigger({
-    automation: (wsId, owner, id) => loadAutomation(workDir, wsId, owner, id) ?? undefined,
+  const eventTrigger = new TaskEventTrigger({
+    task: (wsId, owner, id) => loadTask(workDir, wsId, owner, id) ?? undefined,
     eventRunsSince: (wsId, owner, id, since) =>
       readRuns(workDir, wsId, owner, id, { since: new Date(since).toISOString() }).filter(
         countsAsEventFire,
       ).length,
     run: (wsId, owner, id, input) => scheduler.runFromEvent(wsId, owner, id, input),
     disable: (wsId, owner, id, reason) => {
-      const auto = loadAutomation(workDir, wsId, owner, id);
+      const auto = loadTask(workDir, wsId, owner, id);
       if (!auto) return;
       auto.enabled = false;
       auto.disabledAt = new Date().toISOString();
       auto.disabledReason = reason;
       auto.updatedAt = auto.disabledAt;
-      saveAutomation(workDir, wsId, owner, auto);
+      saveTask(workDir, wsId, owner, auto);
       runtime.announceIdentitySourceChange("tasks", owner);
       scheduler.reload();
     },
   });
-  runtime.registerAutomationEventTrigger(eventTrigger);
+  runtime.registerTaskEventTrigger(eventTrigger);
 
   /**
    * A requested run's ticket. One that says the run is open while this
@@ -197,10 +197,10 @@ export async function createTasksSource(
   }
 
   /**
-   * The caller's owner id. Automations are workspace-owned with the owner as a
+   * The caller's owner id. Tasks are workspace-owned with the owner as a
    * privacy sub-partition: the tool path carries the caller's identity in the
    * request context; internal callers (CLI, connector lifecycle) resolve to the dev
-   * identity in dev. Mirrors files' owner resolution so an automation's store and
+   * identity in dev. Mirrors files' owner resolution so a task's store and
    * its scheduled run agree.
    */
   function ownerId(): string {
@@ -208,7 +208,7 @@ export async function createTasksSource(
   }
 
   /**
-   * Build a workspace-scoped ToolContext for per-request use. Automations are
+   * Build a workspace-scoped ToolContext for per-request use. Tasks are
    * workspace-owned: the store lives at `workspaces/<wsId>/tasks/<ownerId>/`,
    * so this needs both the owner (the authenticated identity) and the
    * workspace, which rides `RequestContext.workspaceId` — the same mechanism
@@ -222,11 +222,11 @@ export async function createTasksSource(
     }
     return {
       // The collection closures the domain + lifecycle depend on, backed by the
-      // per-automation store. `definitions` reads every `*.json` in the owner
+      // per-task store. `definitions` reads every `*.json` in the owner
       // dir; `save` reconciles the map against disk (write each, delete removed).
-      definitions: () => loadOwnerAutomations(workDir, wsId, owner),
+      definitions: () => loadOwnerTasks(workDir, wsId, owner),
       save: (map) => {
-        saveOwnerAutomations(workDir, wsId, owner, map);
+        saveOwnerTasks(workDir, wsId, owner, map);
         runtime.announceIdentitySourceChange("tasks", owner);
       },
       reloadScheduler: () => scheduler.reload(),
@@ -257,7 +257,7 @@ export async function createTasksSource(
   // lifecycle). The ToolContext is a superset; we expose only the four
   // fields the domain needs. See src/platform/AGENTS.md § 1.4 for
   // why internal callers don't go through the LLM-facing tool.
-  runtime.registerAutomationsContext(() => {
+  runtime.registerTasksContext(() => {
     const tc = getToolContext();
     return {
       definitions: tc.definitions,
@@ -283,7 +283,7 @@ export async function createTasksSource(
   // leg (the tasks extension). It reads and writes through the same store and
   // scheduler the tools do.
   runtime.registerIdentityTaskSource(
-    createAutomationsTaskSource({
+    createTaskRunSource({
       toolContext: getToolContext,
       readTicket: currentTicket,
       readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
@@ -320,8 +320,8 @@ export async function createTasksSource(
   const tools: InProcessTool[] = TOOL_SCHEMAS.map((schema) => ({
     ...schema,
     handler: withErrorHandling((input) => {
-      // Unattended-run wall. An automation must not reach the
-      // automation-authoring surface (create/update/delete/run, and any authoring
+      // Unattended-run wall. A task must not reach the
+      // task-authoring surface (create/update/delete/run, and any authoring
       // tool added later — the allowlist in `isTaskForbiddenIdentityTool` fails
       // closed). Enforced HERE, at the source, because it is the single dispatch
       // point every caller funnels through. `unattended` rides the ambient
@@ -356,7 +356,7 @@ export async function createTasksSource(
     }),
   }));
 
-  const resources = new Map([["ui://tasks/panel", AUTOMATIONS_PANEL_HTML]]);
+  const resources = new Map([["ui://tasks/panel", TASKS_PANEL_HTML]]);
 
   const source = defineInProcessApp(
     {

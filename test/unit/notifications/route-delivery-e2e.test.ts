@@ -30,11 +30,11 @@ import {
   type UnattendedDispatchRuntime,
 } from "../../../src/orchestrator/unattended-dispatch.ts";
 import {
-  AutomationEventTrigger,
-  type AutomationEventTriggerDeps,
+  TaskEventTrigger,
+  type TaskEventTriggerDeps,
 } from "../../../src/platform/tasks/event-trigger.ts";
 import type { RunInput } from "../../../src/platform/tasks/scheduler.ts";
-import type { Automation, ScheduleSpec } from "../../../src/platform/tasks/types.ts";
+import type { ScheduleSpec, Task } from "../../../src/platform/tasks/types.ts";
 import type { Tool, ToolSource } from "../../../src/tools/types.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
@@ -170,7 +170,7 @@ let inFlight: Array<Promise<void>>;
 /** The whole loop, wired the way `createNotificationsSource` wires it. */
 function loop(
   target: PollTarget,
-  trigger?: AutomationEventTrigger,
+  trigger?: TaskEventTrigger,
 ): { poller: NotificationPoller; routes: RouteDispatcher } {
   const runtime = dispatchRuntime();
   const routes = new RouteDispatcher({
@@ -178,7 +178,7 @@ function loop(
     storeFor,
     workspaceIds: async () => (await workspaceStore.list()).map((ws) => ws.id),
     dispatch: (opts) => dispatchUnattended(runtime, opts),
-    ...(trigger ? { wakeAutomation: (req) => trigger.offer(req) } : {}),
+    ...(trigger ? { wakeTask: (req) => trigger.offer(req) } : {}),
     eventSink: { emit: (event) => events.push(event) },
     now: () => clock,
   });
@@ -413,17 +413,17 @@ describe("a connector's fact reaching a Slack channel", () => {
   });
 });
 
-describe("a connector's fact reaching an automation", () => {
-  const AUTOMATION = "reply-triage";
+describe("a connector's fact reaching a task", () => {
+  const TASK = "reply-triage";
   /** Short enough that a batching test finishes in milliseconds. */
   const DEBOUNCE = 20;
 
   /** Every run the trigger started, and the input it carried. */
   let runs: RunInput[];
 
-  function automation(schedule: Partial<ScheduleSpec> = {}): Automation {
+  function task(schedule: Partial<ScheduleSpec> = {}): Task {
     return {
-      id: AUTOMATION,
+      id: TASK,
       name: "Reply triage",
       prompt: "Triage.",
       schedule: {
@@ -446,12 +446,12 @@ describe("a connector's fact reaching an automation", () => {
   }
 
   /** The real trigger, with only the store and the scheduler stubbed out. */
-  function trigger(over: Partial<AutomationEventTriggerDeps> = {}): AutomationEventTrigger {
+  function trigger(over: Partial<TaskEventTriggerDeps> = {}): TaskEventTrigger {
     runs = [];
-    const made = new AutomationEventTrigger({
+    const made = new TaskEventTrigger({
       // Scoped by owner: the route's author is who the dispatcher passes, and a
-      // mismatch is what makes another user's automation unreachable.
-      automation: (_ws, owner) => (owner === AUTHOR ? automation() : undefined),
+      // mismatch is what makes another user's task unreachable.
+      task: (_ws, owner) => (owner === AUTHOR ? task() : undefined),
       eventRunsSince: () => 0,
       run: async (_ws, _owner, _id, input) => {
         runs.push(input);
@@ -473,7 +473,7 @@ describe("a connector's fact reaching an automation", () => {
             id: "rt_triage",
             createdBy: AUTHOR,
             match: { source: OUTBOX_SOURCE, name: "domain.*" },
-            deliver: [{ kind: "agent", automation: AUTOMATION }],
+            deliver: [{ kind: "agent", task: TASK }],
           },
         ],
       },
@@ -540,14 +540,14 @@ describe("a connector's fact reaching an automation", () => {
     }
   });
 
-  test("a route naming a clock automation is refused, and the ledger says why", async () => {
+  test("a route naming a clock task is refused, and the ledger says why", async () => {
     await configureAgentRoute();
     const fixture = await outbox();
     const { poller } = loop(
       targetFor(fixture),
       trigger({
-        automation: () => ({
-          ...automation(),
+        task: () => ({
+          ...task(),
           schedule: { type: "cron", expression: "0 9 * * *" },
         }),
       }),
@@ -567,7 +567,7 @@ describe("a connector's fact reaching an automation", () => {
 
   test("the source ceiling holds the wake back exactly as it holds a tool back", async () => {
     // No `sources` entry, so the connector sits at the `info` default while the
-    // fixture emits `attention` and the automation's own match asks for it.
+    // fixture emits `attention` and the task's own match asks for it.
     await workspaceStore.update(wsId, {
       notifications: {
         routes: [
@@ -575,7 +575,7 @@ describe("a connector's fact reaching an automation", () => {
             id: "rt_triage",
             createdBy: AUTHOR,
             match: { source: OUTBOX_SOURCE, level: "attention" },
-            deliver: [{ kind: "agent", automation: AUTOMATION }],
+            deliver: [{ kind: "agent", task: TASK }],
           },
         ],
       },

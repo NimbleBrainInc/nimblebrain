@@ -1,15 +1,15 @@
 /**
- * The backfill's automation half, against the real on-disk layout.
+ * The backfill's task half, against the real on-disk layout.
  *
  * This branch had no test, and the one thing it needed to get right — where a
  * run index lives — it got wrong. The predicate looked for
- * `runs/index.jsonl`; the tree stores `automations/<owner>/runs/<automation>/index.jsonl`.
+ * `runs/index.jsonl`; the tree stores `tasks/<owner>/runs/<task>/index.jsonl`.
  * Matching nothing is indistinguishable from having nothing to match, so the
  * migration replayed conversations, reported success, and omitted every
- * automation run — on a deployment that leans on automations, most of the
+ * task run — on a deployment that leans on tasks, most of the
  * spend this ledger exists to surface.
  *
- * So the fixtures are built from `automations/src/paths.ts` — the writer's own
+ * So the fixtures are built from `tasks/src/paths.ts` — the writer's own
  * path builder — rather than from a hand-joined literal. A fixture that spells
  * the layout out checks the predicate against a copy of itself and stays green
  * when the layout moves, which is this bug reproduced one level up.
@@ -25,7 +25,7 @@ import {
   LayoutMovedError,
   walk,
 } from "../../../scripts/backfill-usage-ledger.ts";
-import { automationRunIndexPath, automationRunsDir } from "../../../src/platform/tasks/paths.ts";
+import { taskRunIndexPath, taskRunsDir } from "../../../src/platform/tasks/paths.ts";
 
 const OWNER = "user_01ABC";
 const WS = "ws_00775c942f0fead1";
@@ -37,22 +37,22 @@ function tmp(): string {
 /**
  * Seed a run index at the path the runtime itself writes.
  *
- * Built from `automationRunIndexPath`, not from a hand-joined literal. A
+ * Built from `taskRunIndexPath`, not from a hand-joined literal. A
  * fixture that spells the layout out only checks the predicate against a copy
  * of itself and stays green when the layout moves — which is the failure this
  * whole change exists to prevent, reproduced one level up in its own tests.
  */
-function seedRuns(root: string, automation: string, runs: Record<string, unknown>[]): string {
-  mkdirSync(automationRunsDir(root, WS, OWNER, automation), { recursive: true });
-  const path = automationRunIndexPath(root, WS, OWNER, automation);
+function seedRuns(root: string, task: string, runs: Record<string, unknown>[]): string {
+  mkdirSync(taskRunsDir(root, WS, OWNER, task), { recursive: true });
+  const path = taskRunIndexPath(root, WS, OWNER, task);
   writeFileSync(path, runs.map((r) => `${JSON.stringify(r)}\n`).join(""));
   return path;
 }
 
 describe("isRunIndex", () => {
-  test("matches the real layout, with an automation id between runs/ and the file", () => {
+  test("matches the real layout, with a task id between runs/ and the file", () => {
     const root = tmp();
-    expect(isRunIndex(automationRunIndexPath(root, WS, OWNER, "ce-inbox-triage"))).toBe(true);
+    expect(isRunIndex(taskRunIndexPath(root, WS, OWNER, "ce-inbox-triage"))).toBe(true);
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -60,7 +60,7 @@ describe("isRunIndex", () => {
     // Kept as a test rather than deleted with the bug: the old predicate looked
     // for exactly this, and asserting it is *not* the layout is what stops a
     // future simplification from reintroducing the silence.
-    expect(isRunIndex(join("a", "automations", OWNER, "runs", "index.jsonl"))).toBe(false);
+    expect(isRunIndex(join("a", "tasks", OWNER, "runs", "index.jsonl"))).toBe(false);
   });
 
   test("does not match an index.jsonl outside a runs/ directory", () => {
@@ -88,16 +88,16 @@ describe("a real tree is found end to end", () => {
 });
 
 describe("the guard fires only on evidence the layout moved", () => {
-  /** An automation definition with no runs/ subtree — created, never executed. */
+  /** A task definition with no runs/ subtree — created, never executed. */
   function seedDefinitionOnly(root: string, id: string): void {
-    const dir = join(root, "workspaces", WS, "automations", OWNER);
+    const dir = join(root, "workspaces", WS, "tasks", OWNER);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, `${id}.json`), JSON.stringify({ id }));
   }
 
-  test("a defined-but-never-run automation is not evidence of anything", () => {
+  test("a defined-but-never-run task is not evidence of anything", () => {
     // runs/<id>/ is created lazily on first execution, so this is what a healthy
-    // deployment looks like before an automation has fired. A guard that keys on
+    // deployment looks like before a task has fired. A guard that keys on
     // definitions cannot tell it from a layout move and takes the whole run down.
     const root = tmp();
     seedDefinitionOnly(root, "never-run");
@@ -125,7 +125,7 @@ describe("the guard fires only on evidence the layout moved", () => {
     // check has to be reachable in-process, which is why it throws rather than
     // exiting.
     const root = tmp();
-    const moved = join(root, "workspaces", WS, "automations", OWNER, "executions", "a");
+    const moved = join(root, "workspaces", WS, "tasks", OWNER, "executions", "a");
     mkdirSync(moved, { recursive: true });
     writeFileSync(join(moved, "index.jsonl"), '{"id":"r","ts":"2026-06-01T10:00:00Z"}\n');
 
@@ -134,10 +134,10 @@ describe("the guard fires only on evidence the layout moved", () => {
   });
 
   test("the original wrong shape also stops the run", () => {
-    // runs/index.jsonl with no automation id — the bug this PR fixes. If the
+    // runs/index.jsonl with no task id — the bug this PR fixes. If the
     // predicate ever regresses to it, the guard is the second line of defence.
     const root = tmp();
-    const dir = join(root, "workspaces", WS, "automations", OWNER, "runs");
+    const dir = join(root, "workspaces", WS, "tasks", OWNER, "runs");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "index.jsonl"), '{"id":"r","ts":"2026-06-01T10:00:00Z"}\n');
 
@@ -145,7 +145,7 @@ describe("the guard fires only on evidence the layout moved", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test("--skip-automations collects nothing from the automations tree", () => {
+  test("--skip-tasks collects nothing from the tasks tree", () => {
     const root = tmp();
     seedRuns(root, "ce-inbox-triage", [
       { id: "run_1", ts: "2026-06-01T10:00:00Z", inputTokens: 10, outputTokens: 1 },

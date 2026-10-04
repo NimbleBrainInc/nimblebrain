@@ -4,7 +4,7 @@
  */
 
 import { expect, test } from "bun:test";
-import { parseToolList } from "./CreateAutomationForm.tsx";
+import { parseToolList } from "./CreateTaskForm.tsx";
 
 test("splits on commas and trims each pattern", () => {
   expect(parseToolList(" gmail__* , files__read")).toEqual(["gmail__*", "files__read"]);

@@ -17,7 +17,7 @@ const tools: ToolSchema[] = [
 ];
 
 /**
- * A run shaped like a long automation: each model call's input grows by
+ * A run shaped like a long task: each model call's input grows by
  * 1,000 tokens (call k reports k × 1,000), and the model asks for a tool on
  * every call until the fifth, which answers. Uncapped, the run spends
  * 1k + 2k + 3k + 4k + 5k = 15,000 input tokens over 5 calls.

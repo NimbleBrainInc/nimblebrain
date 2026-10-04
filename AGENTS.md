@@ -2,7 +2,7 @@
 
 > This file is read by agents. Keep edits terse, imperative, token-aware. No long-form prose; bullets with concrete triggers and examples.
 
-Self-hosted platform for MCP Apps and agent automations, built on Bun. Agentic loop + MCP connector management + interactive UI host + cron-scheduled automations + skill-driven prompt composition + HTTP API + web client.
+Self-hosted platform for MCP Apps and agent tasks, built on Bun. Agentic loop + MCP connector management + interactive UI host + scheduled tasks + skill-driven prompt composition + HTTP API + web client.
 
 > This file is the operating manual — *how to work here* (build, conventions, gotchas).
 > The domain model — *what the nouns mean and the invariants* — lives in
@@ -66,7 +66,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 | Guide | Covers |
 |---|---|
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, update tools as patches where `null` clears, named output types, `ui://` MIME type |
-| [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage and its boot migration from `automations/`, per-run membership gate, run results, how the scheduler uses run admission, budget, per-run caps |
+| [`src/platform/tasks/AGENTS.md`](./src/platform/tasks/AGENTS.md) | Task storage and its one-time boot migration from the old directory, per-run membership gate, run results, how the scheduler uses run admission, budget, per-run caps |
 | [`src/runtime/AGENTS.md`](./src/runtime/AGENTS.md) | Run admission at the run-start door: slots, queue, fair share, leases; spend accounts reserved before each model call |
 | [`src/workspace/AGENTS.md`](./src/workspace/AGENTS.md) | Workspace roots and `assertWorkspaceRootExists`, write authorization, opaque ids, provisioning the first workspace |
 | [`src/orchestrator/AGENTS.md`](./src/orchestrator/AGENTS.md) | The workspace wall: tool-name shape as scope, `routeToolCall`, name parsing, skill walling |

@@ -50,7 +50,7 @@ export async function runServe(opts: ServeOptions, telemetry: TelemetryManager):
   if (sessionStoreConfig.type === "redis") {
     log.warn(
       "[nimblebrain] sessionStore=redis detected. Run platform.replicas: 1; more " +
-        "than one replica is not supported (automations and notifications run once " +
+        "than one replica is not supported (tasks and notifications run once " +
         "per pod, writes to workspace data race, and caches and live events stay on " +
         "the pod that made them).",
     );

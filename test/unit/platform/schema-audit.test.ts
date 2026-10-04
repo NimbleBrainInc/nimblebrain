@@ -29,11 +29,11 @@ import { validateToolInput } from "../../../src/tools/validate-input.ts";
  * Minimal runtime stub sufficient for every synchronous / lazy platform
  * factory.
  *
- * Coverage gap: automations is excluded. Its factory starts a `Scheduler`
+ * Coverage gap: tasks is excluded. Its factory starts a `Scheduler`
  * at construction that the resulting `InlineSource` doesn't expose a stop
  * hook for, so including it here leaks timers across tests. Its schemas
  * are exercised indirectly by the real tests in test/unit/platform/
- * automations/. Tracked by #30 — closing this gap cleanly means giving
+ * tasks/. Tracked by #30 — closing this gap cleanly means giving
  * `InlineSource` an optional onStop callback factories can wire through.
  */
 function makeRuntime(workDir: string): Runtime {

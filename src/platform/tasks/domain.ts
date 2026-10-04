@@ -1,5 +1,5 @@
 /**
- * Automations domain API — internal CRUD operations on Automations.
+ * Tasks domain API — internal CRUD operations on Tasks.
  *
  * The LLM-facing tool handlers (`handleCreate` / `handleUpdate` /
  * `handleDelete` in `server.ts`) are thin schema-translators that
@@ -26,13 +26,13 @@
 
 import { computeBudgetResetAt, computeNextRunAt, setNextRunAt } from "./scheduler.ts";
 import {
-  type Automation,
-  type AutomationKind,
-  type AutomationSource,
   isEventSchedule,
   isOnceSchedule,
   onceRetirement,
   type ScheduleSpec,
+  type Task,
+  type TaskKind,
+  type TaskSource,
   type TokenBudget,
 } from "./types.ts";
 
@@ -41,25 +41,25 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * What the domain needs to read/write the automation store and trigger
+ * What the domain needs to read/write the task store and trigger
  * scheduler reloads. Both the platform source's `ToolContext` and the
- * runtime's `getAutomationsApi()` helper satisfy this shape.
+ * runtime's `getTasksApi()` helper satisfy this shape.
  */
-export interface AutomationDomainContext {
-  definitions: () => Map<string, Automation>;
-  save: (defs: Map<string, Automation>) => void;
+export interface TaskDomainContext {
+  definitions: () => Map<string, Task>;
+  save: (defs: Map<string, Task>) => void;
   reloadScheduler: () => void;
   defaultTimezone: string;
 }
 
 /**
- * The forward budget-reset boundary for an automation's current `tokenBudget`,
+ * The forward budget-reset boundary for a task's current `tokenBudget`,
  * or `undefined` for a periodless (lifetime) budget. Anchored at write time so
  * the scheduler's window can roll from the first run rather than being seeded
  * lazily at end-of-run (which left pre-budget spend counting forever).
  */
-function budgetResetBoundary(automation: Automation, defaultTimezone?: string): string | undefined {
-  const period = automation.tokenBudget?.period;
+function budgetResetBoundary(task: Task, defaultTimezone?: string): string | undefined {
+  const period = task.tokenBudget?.period;
   return period ? computeBudgetResetAt(period, Date.now(), defaultTimezone) : undefined;
 }
 
@@ -86,15 +86,15 @@ function tokenBudgetsEqual(a: TokenBudget | undefined, b: TokenBudget | undefine
  * on a real change. A no-op (`next` absent or equal) leaves the window intact.
  */
 function resetBudgetWindowIfChanged(
-  automation: Automation,
+  task: Task,
   prev: TokenBudget | undefined,
   next: TokenBudget | undefined,
   defaultTimezone?: string,
 ): void {
   if (next === undefined || tokenBudgetsEqual(prev, next)) return;
-  automation.cumulativeInputTokens = 0;
-  automation.cumulativeOutputTokens = 0;
-  automation.budgetResetAt = budgetResetBoundary(automation, defaultTimezone);
+  task.cumulativeInputTokens = 0;
+  task.cumulativeOutputTokens = 0;
+  task.budgetResetAt = budgetResetBoundary(task, defaultTimezone);
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ export interface DomainCreateInput {
   prompt: string;
   /** Absent: nothing fires it unattended; it runs only when someone runs it. */
   schedule?: ScheduleSpec;
-  kind?: AutomationKind;
+  kind?: TaskKind;
   description?: string;
   skill?: string;
   model?: string;
@@ -125,7 +125,7 @@ export interface DomainCreateInput {
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   // Operator/runtime fields:
-  source?: AutomationSource;
+  source?: TaskSource;
   ownerId?: string;
   workspaceId?: string;
 }
@@ -133,7 +133,7 @@ export interface DomainCreateInput {
 /** Patch shape for update. Every field optional. */
 export interface DomainUpdatePatch {
   description?: string;
-  /** `null` removes the schedule: nothing fires the automation unattended. */
+  /** `null` removes the schedule: nothing fires the task unattended. */
   schedule?: ScheduleSpec | null;
   prompt?: string;
   skill?: string;
@@ -155,10 +155,10 @@ export interface DomainUpdatePatch {
 // ---------------------------------------------------------------------------
 
 /**
- * Who may own an automation that wakes on events.
+ * Who may own a task that wakes on events.
  *
  * A person, or the agent acting on a person's instruction. Not a bundle: a
- * connector that could give itself an automation subscribed to its own outbox
+ * connector that could give itself a task subscribed to its own outbox
  * would have written a self-wake loop with no operator anywhere in it, and the
  * whole reason this path is safe is that an operator authored both ends of it.
  *
@@ -166,10 +166,10 @@ export interface DomainUpdatePatch {
  * provenance added later is refused until somebody decides otherwise — a list
  * of exclusions silently admits whatever it has not heard of.
  */
-const EVENT_SCHEDULE_SOURCES: readonly AutomationSource[] = ["user", "agent"];
+const EVENT_SCHEDULE_SOURCES: readonly TaskSource[] = ["user", "agent"];
 
 /**
- * Refuse an event schedule on an automation whose provenance may not have one.
+ * Refuse an event schedule on a task whose provenance may not have one.
  *
  * Enforced here rather than in the tool schema because the tool schema does not
  * carry `source` at all — it is an operator/runtime field, so the only caller
@@ -177,15 +177,15 @@ const EVENT_SCHEDULE_SOURCES: readonly AutomationSource[] = ["user", "agent"];
  */
 export function assertEventScheduleAllowed(
   schedule: ScheduleSpec | undefined,
-  source: AutomationSource | undefined,
+  source: TaskSource | undefined,
   name: string,
 ): void {
   if (!isEventSchedule(schedule)) return;
   if (source !== undefined && !EVENT_SCHEDULE_SOURCES.includes(source)) {
     throw new Error(
-      `Automation "${name}" has source "${source}" and cannot run on events. ` +
+      `Task "${name}" has source "${source}" and cannot run on events. ` +
         "An event schedule is reachable only through a delivery route a workspace admin " +
-        "wrote, and only a user or the agent acting for one may own the automation it names.",
+        "wrote, and only a user or the agent acting for one may own the task it names.",
     );
   }
 }
@@ -198,7 +198,7 @@ export function toKebabCase(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function findByName(defs: Map<string, Automation>, name: string): Automation | undefined {
+function findByName(defs: Map<string, Task>, name: string): Task | undefined {
   // Match either the kebab-case id or the human-readable name (case-sensitive).
   const id = toKebabCase(name);
   return defs.get(id) ?? Array.from(defs.values()).find((a) => a.name === name);
@@ -209,15 +209,12 @@ function findByName(defs: Map<string, Automation>, name: string): Automation | u
 // ---------------------------------------------------------------------------
 
 export interface CreateResult {
-  automation: Automation;
+  task: Task;
   created: boolean;
   message: string;
 }
 
-export function createAutomation(
-  input: DomainCreateInput,
-  ctx: AutomationDomainContext,
-): CreateResult {
+export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): CreateResult {
   const id = toKebabCase(input.name);
   const defs = ctx.definitions();
 
@@ -225,16 +222,16 @@ export function createAutomation(
   const existing = defs.get(id);
   if (existing) {
     return {
-      automation: existing,
+      task: existing,
       created: false,
-      message: `Automation "${input.name}" already exists (id: ${id}). Returning existing.`,
+      message: `Task "${input.name}" already exists (id: ${id}). Returning existing.`,
     };
   }
 
   assertEventScheduleAllowed(input.schedule, input.source ?? "agent", input.name);
 
   const now = new Date().toISOString();
-  const automation: Automation = {
+  const task: Task = {
     id,
     name: input.name,
     ownerId: input.ownerId,
@@ -263,9 +260,9 @@ export function createAutomation(
   };
 
   // Compute initial nextRunAt
-  const nextRun = computeNextRunAt(automation, Date.now(), ctx.defaultTimezone);
+  const nextRun = computeNextRunAt(task, Date.now(), ctx.defaultTimezone);
   if (nextRun !== null) {
-    automation.nextRunAt = new Date(nextRun).toISOString();
+    task.nextRunAt = new Date(nextRun).toISOString();
   }
 
   // Anchor the budget window at write time, exactly as nextRunAt is anchored
@@ -273,28 +270,28 @@ export function createAutomation(
   // qualifying run, so tokens spent before that first run accumulate against
   // the budget forever (the window never rolls). Periodless budgets resolve to
   // undefined and stay lifetime-cumulative by design.
-  automation.budgetResetAt = budgetResetBoundary(automation, ctx.defaultTimezone);
+  task.budgetResetAt = budgetResetBoundary(task, ctx.defaultTimezone);
 
-  defs.set(id, automation);
+  defs.set(id, task);
   ctx.save(defs);
   ctx.reloadScheduler();
 
   return {
-    automation,
+    task,
     created: true,
-    message: `Automation "${input.name}" created (id: ${id}).`,
+    message: `Task "${input.name}" created (id: ${id}).`,
   };
 }
 
 export interface UpdateResult {
-  automation: Automation;
+  task: Task;
   updated: boolean;
   message: string;
 }
 
 /**
- * Apply a partial patch to an existing automation. Field order matches
- * the `Automation` declaration order in `types.ts`; iteration over this
+ * Apply a partial patch to an existing task. Field order matches
+ * the `Task` declaration order in `types.ts`; iteration over this
  * array tracks the type. Do not alphabetize.
  */
 const UPDATABLE_FIELDS = [
@@ -314,31 +311,31 @@ const UPDATABLE_FIELDS = [
 ] as const satisfies readonly (keyof DomainUpdatePatch)[];
 
 /**
- * Move `nextRunAt` onto the schedule the automation now has.
+ * Move `nextRunAt` onto the schedule the task now has.
  *
  * A schedule with no next run (an event schedule, or a cron with no future
  * date) clears one left over from the schedule it replaced: kept, a past value
  * would stay due forever, and a moment nothing will ever act on is worse than
  * none.
  */
-function reanchorNextRunAt(automation: Automation, defaultTimezone?: string): void {
-  setNextRunAt(automation, computeNextRunAt(automation, Date.now(), defaultTimezone));
+function reanchorNextRunAt(task: Task, defaultTimezone?: string): void {
+  setNextRunAt(task, computeNextRunAt(task, Date.now(), defaultTimezone));
 }
 
 /** Patch fields where `null` deletes the key rather than storing a null. */
 const CLEARABLE_FIELDS = ["schedule", "inputSchema", "outputSchema"] as const satisfies readonly (
   | keyof DomainUpdatePatch
-  | keyof Automation
+  | keyof Task
 )[];
 
 /**
- * Copy the patch's fields onto `automation`. `null` on a clearable field
+ * Copy the patch's fields onto `task`. `null` on a clearable field
  * (`schedule`, `inputSchema`, `outputSchema`) deletes the key, so a schedule
  * cleared reads as manual-only. Returns whether anything was written.
  */
-function applyPatchFields(automation: Automation, patch: DomainUpdatePatch): boolean {
+function applyPatchFields(task: Task, patch: DomainUpdatePatch): boolean {
   let changed = false;
-  const record = automation as unknown as Record<string, unknown>;
+  const record = task as unknown as Record<string, unknown>;
   for (const field of UPDATABLE_FIELDS) {
     if (!(field in patch) || patch[field] === undefined) continue;
     if (patch[field] === null && (CLEARABLE_FIELDS as readonly string[]).includes(field)) {
@@ -356,19 +353,15 @@ function applyPatchFields(automation: Automation, patch: DomainUpdatePatch): boo
  * is the request to run it again. A paused one stays paused, and an explicit
  * `enabled: false` wins.
  */
-function applyOnceRearm(
-  automation: Automation,
-  patch: DomainUpdatePatch,
-  wasRetiredOnce: boolean,
-): void {
+function applyOnceRearm(task: Task, patch: DomainUpdatePatch, wasRetiredOnce: boolean): void {
   // Any new schedule (or none) ends the old occurrence's record.
-  if (patch.schedule !== undefined) delete automation.onceDone;
+  if (patch.schedule !== undefined) delete task.onceDone;
   if (!wasRetiredOnce || !isOnceSchedule(patch.schedule ?? undefined)) return;
   if (patch.enabled === false) return;
-  automation.enabled = true;
-  automation.consecutiveErrors = 0;
-  automation.disabledAt = undefined;
-  automation.disabledReason = undefined;
+  task.enabled = true;
+  task.consecutiveErrors = 0;
+  task.disabledAt = undefined;
+  task.disabledReason = undefined;
 }
 
 /**
@@ -376,78 +369,74 @@ function applyOnceRearm(
  * action at once (or, within the grace window, fire it a second time); it
  * needs a new time.
  */
-function assertOnceArmable(
-  automation: Automation,
-  patch: DomainUpdatePatch,
-  wasEnabled: boolean,
-): void {
-  if (!automation.enabled || !isOnceSchedule(automation.schedule)) return;
+function assertOnceArmable(task: Task, patch: DomainUpdatePatch, wasEnabled: boolean): void {
+  if (!task.enabled || !isOnceSchedule(task.schedule)) return;
   if (wasEnabled && patch.schedule === undefined) return;
-  const at = new Date(automation.schedule?.at ?? "").getTime();
+  const at = new Date(task.schedule?.at ?? "").getTime();
   if (at > Date.now()) return;
   throw new Error(
-    `Automation "${automation.name}" runs once at ${automation.schedule?.at}, which has ` +
+    `Task "${task.name}" runs once at ${task.schedule?.at}, which has ` +
       "passed. Set a new time in its schedule to run it again, or use tasks__run to run it now.",
   );
 }
 
-export function updateAutomation(
+export function updateTask(
   name: string,
   patch: DomainUpdatePatch,
-  ctx: AutomationDomainContext,
+  ctx: TaskDomainContext,
 ): UpdateResult {
   const defs = ctx.definitions();
-  const automation = findByName(defs, name);
-  if (!automation) {
-    throw new Error(`Automation not found: "${name}"`);
+  const task = findByName(defs, name);
+  if (!task) {
+    throw new Error(`Task not found: "${name}"`);
   }
 
-  assertEventScheduleAllowed(patch.schedule ?? undefined, automation.source, automation.name);
+  assertEventScheduleAllowed(patch.schedule ?? undefined, task.source, task.name);
 
   // Snapshot before the loop overwrites it — the window reset is gated on a real
   // budget change, not merely a write (see `tokenBudgetsEqual`).
-  const prevTokenBudget = automation.tokenBudget;
-  const wasEnabled = automation.enabled;
-  const wasRetiredOnce = onceRetirement(automation) !== null;
+  const prevTokenBudget = task.tokenBudget;
+  const wasEnabled = task.enabled;
+  const wasRetiredOnce = onceRetirement(task) !== null;
 
-  const changed = applyPatchFields(automation, patch);
-  applyOnceRearm(automation, patch, wasRetiredOnce);
-  assertOnceArmable(automation, patch, wasEnabled);
+  const changed = applyPatchFields(task, patch);
+  applyOnceRearm(task, patch, wasRetiredOnce);
+  assertOnceArmable(task, patch, wasEnabled);
 
   // Clear disable state when re-enabling
   if (patch.enabled === true) {
-    automation.consecutiveErrors = 0;
-    automation.disabledAt = undefined;
-    automation.disabledReason = undefined;
+    task.consecutiveErrors = 0;
+    task.disabledAt = undefined;
+    task.disabledReason = undefined;
     // A past `nextRunAt` the schedule really fires at reads as a run still owed
     // (the scheduler keeps one deferred at its concurrency limit). One kept
     // through a pause is not owed: a one-off paused before its date and resumed
     // after it would fire the stale action at once. A recurring schedule keeps
     // its past value and catches up once, as it always has.
-    if (!wasEnabled && computeNextRunAt(automation, Date.now(), ctx.defaultTimezone) === null) {
-      setNextRunAt(automation, null);
+    if (!wasEnabled && computeNextRunAt(task, Date.now(), ctx.defaultTimezone) === null) {
+      setNextRunAt(task, null);
     }
   }
 
   if (changed) {
-    automation.updatedAt = new Date().toISOString();
+    task.updatedAt = new Date().toISOString();
 
-    if ("schedule" in patch) reanchorNextRunAt(automation, ctx.defaultTimezone);
+    if ("schedule" in patch) reanchorNextRunAt(task, ctx.defaultTimezone);
 
     // A CHANGED budget starts a fresh accounting window (cf. the nextRunAt
     // recompute on a schedule change above): spend from the prior budget must
     // not count against the new ceiling.
-    resetBudgetWindowIfChanged(automation, prevTokenBudget, patch.tokenBudget, ctx.defaultTimezone);
+    resetBudgetWindowIfChanged(task, prevTokenBudget, patch.tokenBudget, ctx.defaultTimezone);
 
-    defs.set(automation.id, automation);
+    defs.set(task.id, task);
     ctx.save(defs);
     ctx.reloadScheduler();
   }
 
   return {
-    automation,
+    task,
     updated: changed,
-    message: changed ? `Automation "${name}" updated.` : `No changes applied to "${name}".`,
+    message: changed ? `Task "${name}" updated.` : `No changes applied to "${name}".`,
   };
 }
 
@@ -457,20 +446,20 @@ export interface DeleteResult {
   message: string;
 }
 
-export function deleteAutomation(name: string, ctx: AutomationDomainContext): DeleteResult {
+export function deleteTask(name: string, ctx: TaskDomainContext): DeleteResult {
   const defs = ctx.definitions();
-  const automation = findByName(defs, name);
-  if (!automation) {
-    throw new Error(`Automation not found: "${name}"`);
+  const task = findByName(defs, name);
+  if (!task) {
+    throw new Error(`Task not found: "${name}"`);
   }
 
-  defs.delete(automation.id);
+  defs.delete(task.id);
   ctx.save(defs);
   ctx.reloadScheduler();
 
   return {
     deleted: true,
-    id: automation.id,
-    message: `Automation "${name}" deleted. Run history preserved.`,
+    id: task.id,
+    message: `Task "${name}" deleted. Run history preserved.`,
   };
 }

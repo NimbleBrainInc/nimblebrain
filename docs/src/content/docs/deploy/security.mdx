@@ -236,7 +236,7 @@ same gates. What differs is only where the caller's identity comes from.
 
 | Door | Who is calling | Where the workspace comes from |
 |---|---|---|
-| Chat and automation runs | The authenticated user, captured when the session opened | The conversation's own workspace, or the run's provenance workspace |
+| Chat and task runs | The authenticated user, captured when the session opened | The conversation's own workspace, or the run's provenance workspace |
 | `/mcp/<workspaceId>` | The authenticated client's user | The URL, validated against that user's membership on every request |
 | Unattended dispatch | A user id stored in workspace configuration by an admin | The workspace that configuration belongs to |
 
@@ -252,16 +252,16 @@ Before that call runs:
 - **The principal must be a current member of the workspace.** A user who has
   since been removed does not get a denial — the call is *skipped* and recorded
   as `owner_not_member`, and it starts working again by itself if they are added
-  back. This is the same rule that governs a scheduled automation whose owner
+  back. This is the same rule that governs a scheduled task whose owner
   leaves.
 - **The tool must not widen the caller's own reach.** Creating or modifying
-  automations, authoring skills, and installing or disconnecting connectors are
-  all refused. A new automation fires again later as the same principal, a new
+  tasks, authoring skills, and installing or disconnecting connectors are
+  all refused. A new task fires again later as the same principal, a new
   skill loads itself into their later sessions, and a new connector adds tools
   and credentials that were not reachable before — so each is a way an
   unattended call could come back with more than it started with. Writing a
   workspace's custom instructions is refused for the same reason, by the same
-  rule that already refuses it inside a scheduled automation run. Ordinary
+  rule that already refuses it inside a scheduled task run. Ordinary
   writes — sending a message, updating a record — are not refused; that is what
   the door is for.
 - **The per-connector permission table applies**, exactly as it does in chat: a

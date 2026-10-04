@@ -14,11 +14,11 @@ describe("throwIfToolError", () => {
 
   it("throws a tool error with the tool's text", () => {
     const result = {
-      data: "Automation not found",
+      data: "Task not found",
       isError: true,
-      content: [{ type: "text", text: "Automation not found" }],
+      content: [{ type: "text", text: "Task not found" }],
     };
-    expect(() => throwIfToolError(result)).toThrow("Automation not found");
+    expect(() => throwIfToolError(result)).toThrow("Task not found");
   });
 
   it("throws a generic message when the error has no text", () => {

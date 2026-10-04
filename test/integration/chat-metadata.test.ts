@@ -74,7 +74,7 @@ describe("POST /v1/workspaces/:wsId/chat/start — metadata passthrough", () => 
       headers: authHeaders(),
       body: JSON.stringify({
         message: "Hello with metadata",
-        metadata: { source: "test", automationId: "auto-123" },
+        metadata: { source: "test", taskId: "auto-123" },
       }),
     });
 

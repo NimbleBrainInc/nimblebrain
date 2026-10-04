@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { ChevronIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
-import type { AutomationRun } from "../types.ts";
+import type { TaskRun } from "../types.ts";
 import { formatDuration, formatTokens, relativeTime, statusDotClass } from "../utils.ts";
 
-export function RunRow({ run, showName }: { run: AutomationRun; showName?: boolean }) {
+export function RunRow({ run, showName }: { run: TaskRun; showName?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const dotClass = statusDotClass(run.status, true);
   return (
@@ -24,7 +24,7 @@ export function RunRow({ run, showName }: { run: AutomationRun; showName?: boole
       >
         <ChevronIcon open={expanded} />
         <span className={`dot ${dotClass}`} />
-        <span className="run-name">{showName ? run.automationId || "unknown" : run.status}</span>
+        <span className="run-name">{showName ? run.taskId || "unknown" : run.status}</span>
         <span className="run-time">{relativeTime(run.startedAt)}</span>
         <span className="run-duration">{formatDuration(run.startedAt, run.completedAt)}</span>
       </div>

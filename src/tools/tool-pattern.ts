@@ -16,7 +16,7 @@
  *
  * **The retired `ws_<id>-` prefix is stripped from BOTH sides.** Names are bare
  * now, so a pattern authored against the prefix would match nothing — and those
- * patterns live in skill frontmatter and automation records this repo cannot
+ * patterns live in skill frontmatter and task records this repo cannot
  * migrate.
  *
  * **The `my_` personal-connector marker is stripped from NEITHER.** It is the

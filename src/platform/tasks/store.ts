@@ -1,15 +1,15 @@
 /**
- * Persistence layer for automations — workspace-owned, one file per automation.
+ * Persistence layer for tasks — workspace-owned, one file per task.
  *
  * The workspace owns the directory; the owner is a privacy sub-partition. Every
  * path is constructed via `paths.ts` (the single sanctioned site), so the layout
  * has exactly one definition:
  *
- *   workspaces/<wsId>/tasks/<ownerId>/<automationId>.json              the definition (one bare Automation)
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/index.jsonl  the newest MAX_RUN_LINES run summaries (hot window)
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/<runId>.result.json  a hot run's deliverable
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
+ *   workspaces/<wsId>/tasks/<ownerId>/<taskId>.json              the definition (one bare Task)
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/index.jsonl  the newest MAX_RUN_LINES run summaries (hot window)
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/<runId>.result.json  a hot run's deliverable
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
  *
  * Run history and results are kept indefinitely. The hot index stays bounded
  * so every append, recent-run read, and event fire check reads a small file;
@@ -17,13 +17,13 @@
  * month of the run's start, which is read only by a paged read that asks for
  * older runs ({@link readRunsPage}) or a result lookup that misses the hot dir.
  *
- * A run is NOT a conversation: it leaves a `AutomationRunResult` sidecar (final
+ * A run is NOT a conversation: it leaves a `TaskRunResult` sidecar (final
  * output, activity log, output-file refs) under its `runs/` subtree.
  *
  * A run requested by id (`tasks__run`) also has a ticket,
  * `run-tickets/<runId>.json`, holding its current record from the moment it is
  * asked for, and an idempotency key it was asked with is recorded under
- * `runs/<automationId>/keys/`. Both are kept like the rest of the history.
+ * `runs/<taskId>/keys/`. Both are kept like the rest of the history.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -41,23 +41,23 @@ import {
 import { dirname, join } from "node:path";
 import { ensureWorkspaceDir } from "../../workspace/context.ts";
 import {
-  automationArchivedRunResultPath,
-  automationFilePath,
-  automationIdempotencyKeyPath,
-  automationRunArchiveDir,
-  automationRunArchiveRoot,
-  automationRunIndexPath,
-  automationRunResultPath,
-  automationRunSegmentPath,
-  automationRunsDir,
-  automationRunTicketPath,
   isRunArchiveMonth,
-  parseAutomationPath,
-  validateAutomationId,
+  parseTaskPath,
+  taskArchivedRunResultPath,
+  taskFilePath,
+  taskIdempotencyKeyPath,
+  taskRunArchiveDir,
+  taskRunArchiveRoot,
+  taskRunIndexPath,
+  taskRunResultPath,
+  taskRunSegmentPath,
+  taskRunsDir,
+  taskRunTicketPath,
   validateRunId,
+  validateTaskId,
   workspaceTasksDir,
 } from "./paths.ts";
-import type { Automation, AutomationRun, AutomationRunResult, RunTicket } from "./types.ts";
+import type { RunTicket, Task, TaskRun, TaskRunResult } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -96,21 +96,17 @@ function listSubdirNames(dir: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Definitions — one bare Automation object per `<id>.json`
+// Definitions — one bare Task object per `<id>.json`
 // ---------------------------------------------------------------------------
 
 /**
- * Load every automation owned by `ownerId` in `wsId`, keyed by id. Reads each
+ * Load every task owned by `ownerId` in `wsId`, keyed by id. Reads each
  * `*.json` in the owner dir (skipping the `runs/` subdir). Missing dir → empty
  * map; malformed files are skipped.
  */
-export function loadOwnerAutomations(
-  workDir: string,
-  wsId: string,
-  ownerId: string,
-): Map<string, Automation> {
+export function loadOwnerTasks(workDir: string, wsId: string, ownerId: string): Map<string, Task> {
   const dir = workspaceTasksDir(workDir, wsId, ownerId);
-  const map = new Map<string, Automation>();
+  const map = new Map<string, Task>();
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -121,7 +117,7 @@ export function loadOwnerAutomations(
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     try {
       const content = readFileSync(join(dir, entry.name), "utf-8");
-      const auto = JSON.parse(content) as Automation;
+      const auto = JSON.parse(content) as Task;
       if (auto && typeof auto.id === "string") map.set(auto.id, auto);
     } catch {
       // skip malformed
@@ -130,48 +126,38 @@ export function loadOwnerAutomations(
   return map;
 }
 
-/** Load a single automation, or null if it doesn't exist / is malformed. */
-export function loadAutomation(
-  workDir: string,
-  wsId: string,
-  ownerId: string,
-  id: string,
-): Automation | null {
-  const filePath = automationFilePath(workDir, wsId, ownerId, id);
+/** Load a single task, or null if it doesn't exist / is malformed. */
+export function loadTask(workDir: string, wsId: string, ownerId: string, id: string): Task | null {
+  const filePath = taskFilePath(workDir, wsId, ownerId, id);
   if (!existsSync(filePath)) return null;
   try {
-    return JSON.parse(readFileSync(filePath, "utf-8")) as Automation;
+    return JSON.parse(readFileSync(filePath, "utf-8")) as Task;
   } catch {
     return null;
   }
 }
 
-/** Save a single automation atomically (temp + rename) to its own `<id>.json`. */
-export function saveAutomation(
-  workDir: string,
-  wsId: string,
-  ownerId: string,
-  automation: Automation,
-): void {
+/** Save a single task atomically (temp + rename) to its own `<id>.json`. */
+export function saveTask(workDir: string, wsId: string, ownerId: string, task: Task): void {
   const dir = workspaceTasksDir(workDir, wsId, ownerId);
   ensureWorkspaceDir(dir);
-  const filePath = automationFilePath(workDir, wsId, ownerId, automation.id);
-  atomicWrite(filePath, `${JSON.stringify(automation, null, 2)}\n`);
+  const filePath = taskFilePath(workDir, wsId, ownerId, task.id);
+  atomicWrite(filePath, `${JSON.stringify(task, null, 2)}\n`);
 }
 
 /**
- * Delete only a single automation's `<id>.json`, preserving its run history.
+ * Delete only a single task's `<id>.json`, preserving its run history.
  * This is what the tool/domain delete path uses — the audit trail
  * (`runs/<id>/`) outlives the definition, matching the "Run history preserved"
  * contract.
  */
-export function deleteAutomationDefinition(
+export function deleteTaskDefinition(
   workDir: string,
   wsId: string,
   ownerId: string,
   id: string,
 ): void {
-  const filePath = automationFilePath(workDir, wsId, ownerId, id);
+  const filePath = taskFilePath(workDir, wsId, ownerId, id);
   try {
     if (existsSync(filePath)) unlinkSync(filePath);
   } catch {
@@ -180,14 +166,14 @@ export function deleteAutomationDefinition(
 }
 
 /**
- * Hard-delete a single automation: its `<id>.json` AND, best-effort, its entire
+ * Hard-delete a single task: its `<id>.json` AND, best-effort, its entire
  * `runs/<id>/` subtree (run index + result sidecars). A full purge — use
- * {@link deleteAutomationDefinition} when run history must be kept.
+ * {@link deleteTaskDefinition} when run history must be kept.
  */
-export function deleteAutomation(workDir: string, wsId: string, ownerId: string, id: string): void {
-  deleteAutomationDefinition(workDir, wsId, ownerId, id);
+export function deleteTask(workDir: string, wsId: string, ownerId: string, id: string): void {
+  deleteTaskDefinition(workDir, wsId, ownerId, id);
   try {
-    const runsDir = automationRunsDir(workDir, wsId, ownerId, id);
+    const runsDir = taskRunsDir(workDir, wsId, ownerId, id);
     if (existsSync(runsDir)) rmSync(runsDir, { recursive: true, force: true });
   } catch {
     // best-effort — run history removal is not load-bearing
@@ -195,13 +181,13 @@ export function deleteAutomation(workDir: string, wsId: string, ownerId: string,
 }
 
 /**
- * Load every automation across every workspace + owner. The scheduler's
+ * Load every task across every workspace + owner. The scheduler's
  * cross-workspace load: walk every `workspaces/<wsId>/tasks/<ownerId>`, recover wsId/ownerId
- * authoritatively from the path (`parseAutomationPath`), and backfill those onto
+ * authoritatively from the path (`parseTaskPath`), and backfill those onto
  * each record when the stored value is missing — the directory is the binding.
  */
 /** Stamp the directory binding onto a record when its stored wsId/ownerId is missing. */
-function backfillBinding(auto: Automation, wsId: string, ownerId: string): void {
+function backfillBinding(auto: Task, wsId: string, ownerId: string): void {
   if (typeof auto.workspaceId !== "string" || auto.workspaceId.length === 0) {
     auto.workspaceId = wsId;
   }
@@ -210,38 +196,34 @@ function backfillBinding(auto: Automation, wsId: string, ownerId: string): void 
   }
 }
 
-/** One owner's automations, with wsId/ownerId recovered from the path binding and backfilled. */
-function loadOwnerAutomationsResolved(
-  workDir: string,
-  wsId: string,
-  ownerId: string,
-): Automation[] {
+/** One owner's tasks, with wsId/ownerId recovered from the path binding and backfilled. */
+function loadOwnerTasksResolved(workDir: string, wsId: string, ownerId: string): Task[] {
   // Recover the binding from the path, not the record.
-  const parsed = parseAutomationPath(workspaceTasksDir(workDir, wsId, ownerId));
+  const parsed = parseTaskPath(workspaceTasksDir(workDir, wsId, ownerId));
   const resolvedWsId = parsed?.wsId ?? wsId;
   const resolvedOwnerId = parsed?.ownerId ?? ownerId;
-  const owned: Automation[] = [];
-  for (const auto of loadOwnerAutomations(workDir, resolvedWsId, resolvedOwnerId).values()) {
+  const owned: Task[] = [];
+  for (const auto of loadOwnerTasks(workDir, resolvedWsId, resolvedOwnerId).values()) {
     backfillBinding(auto, resolvedWsId, resolvedOwnerId);
     owned.push(auto);
   }
   return owned;
 }
 
-export function loadAllAutomations(workDir: string): Automation[] {
+export function loadAllTasks(workDir: string): Task[] {
   const wsRoot = join(workDir, WORKSPACES_SEGMENT);
-  const out: Automation[] = [];
+  const out: Task[] = [];
   for (const wsId of listSubdirNames(wsRoot)) {
     const autoRoot = join(wsRoot, wsId, TASKS_SEGMENT);
     for (const ownerId of listSubdirNames(autoRoot)) {
-      out.push(...loadOwnerAutomationsResolved(workDir, wsId, ownerId));
+      out.push(...loadOwnerTasksResolved(workDir, wsId, ownerId));
     }
   }
   return out;
 }
 
 // ---------------------------------------------------------------------------
-// Runs — runs/<automationId>/index.jsonl (hot) + archive/<YYYY-MM>/ (older)
+// Runs — runs/<taskId>/index.jsonl (hot) + archive/<YYYY-MM>/ (older)
 // ---------------------------------------------------------------------------
 
 /**
@@ -252,7 +234,7 @@ function archiveSlotOf(line: string, fallbackMs: number): { month: string; runId
   let ms = Number.NaN;
   let runId: string | undefined;
   try {
-    const run = JSON.parse(line) as AutomationRun;
+    const run = JSON.parse(line) as TaskRun;
     ms = new Date(run.startedAt).getTime();
     if (typeof run.id === "string") runId = run.id;
   } catch {
@@ -267,15 +249,15 @@ function archiveRunResult(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   month: string,
   runId: string,
 ): void {
   let from: string;
   let to: string;
   try {
-    from = automationRunResultPath(workDir, wsId, ownerId, automationId, runId);
-    to = automationArchivedRunResultPath(workDir, wsId, ownerId, automationId, month, runId);
+    from = taskRunResultPath(workDir, wsId, ownerId, taskId, runId);
+    to = taskArchivedRunResultPath(workDir, wsId, ownerId, taskId, month, runId);
   } catch {
     return; // an id that is not a valid run id has no sidecar
   }
@@ -284,7 +266,7 @@ function archiveRunResult(
 }
 
 /**
- * Append a run summary to the automation's hot index. Creates directories and
+ * Append a run summary to the task's hot index. Creates directories and
  * the file if missing. When the hot index passes MAX_RUN_LINES, the oldest
  * lines roll into the archive months of the runs they record, and each rolled
  * run's result sidecar moves with it. Nothing is deleted.
@@ -298,12 +280,12 @@ export function appendRun(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
-  run: AutomationRun,
+  taskId: string,
+  run: TaskRun,
 ): void {
-  const dir = automationRunsDir(workDir, wsId, ownerId, automationId);
+  const dir = taskRunsDir(workDir, wsId, ownerId, taskId);
   ensureWorkspaceDir(dir);
-  const filePath = automationRunIndexPath(workDir, wsId, ownerId, automationId);
+  const filePath = taskRunIndexPath(workDir, wsId, ownerId, taskId);
 
   appendFileSync(filePath, `${JSON.stringify(run)}\n`);
 
@@ -327,13 +309,13 @@ export function appendRun(
     if (runId) group.runIds.push(runId);
   }
   for (const [month, group] of byMonth) {
-    ensureWorkspaceDir(automationRunArchiveDir(workDir, wsId, ownerId, automationId, month));
+    ensureWorkspaceDir(taskRunArchiveDir(workDir, wsId, ownerId, taskId, month));
     appendFileSync(
-      automationRunSegmentPath(workDir, wsId, ownerId, automationId, month),
+      taskRunSegmentPath(workDir, wsId, ownerId, taskId, month),
       `${group.lines.join("\n")}\n`,
     );
     for (const runId of group.runIds) {
-      archiveRunResult(workDir, wsId, ownerId, automationId, month, runId);
+      archiveRunResult(workDir, wsId, ownerId, taskId, month, runId);
     }
   }
   atomicWrite(filePath, `${kept.join("\n")}\n`);
@@ -346,7 +328,7 @@ export function appendRun(
 export interface ReadRunsOptions {
   limit?: number;
   since?: string; // ISO timestamp
-  status?: AutomationRun["status"];
+  status?: TaskRun["status"];
   /**
    * ISO timestamp: only runs started before it, read a page at a time back
    * through the month segments ({@link readRunsPage}). Absent: the hot index
@@ -356,14 +338,14 @@ export interface ReadRunsOptions {
 }
 
 /** Parse a JSONL run index; a missing or empty file reads as no runs. Malformed lines are skipped. */
-function readIndexFile(filePath: string): AutomationRun[] {
+function readIndexFile(filePath: string): TaskRun[] {
   if (!existsSync(filePath)) return [];
   const content = readFileSync(filePath, "utf-8").trimEnd();
   if (!content) return [];
-  const runs: AutomationRun[] = [];
+  const runs: TaskRun[] = [];
   for (const line of content.split("\n")) {
     try {
-      runs.push(JSON.parse(line) as AutomationRun);
+      runs.push(JSON.parse(line) as TaskRun);
     } catch {
       // skip malformed
     }
@@ -372,7 +354,7 @@ function readIndexFile(filePath: string): AutomationRun[] {
 }
 
 /**
- * Read run history for a single automation from its hot index: the newest
+ * Read run history for a single task from its hot index: the newest
  * MAX_RUN_LINES runs, newest first, with optional filters. With `before`, a
  * paged read that also walks the month segments ({@link readRunsPage}).
  */
@@ -380,28 +362,28 @@ export function readRuns(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   opts?: ReadRunsOptions,
-): AutomationRun[] {
+): TaskRun[] {
   if (opts?.before !== undefined) {
-    return readRunsPage(workDir, wsId, ownerId, automationId, opts).runs;
+    return readRunsPage(workDir, wsId, ownerId, taskId, opts).runs;
   }
-  const runs = readIndexFile(automationRunIndexPath(workDir, wsId, ownerId, automationId));
+  const runs = readIndexFile(taskRunIndexPath(workDir, wsId, ownerId, taskId));
   runs.reverse(); // newest first
   return applyFilters(runs, opts);
 }
 
 /**
- * Months (`YYYY-MM`) the automation has an archive for, newest first. Lists
+ * Months (`YYYY-MM`) the task has an archive for, newest first. Lists
  * `archive/` only, never the hot runs dir.
  */
 export function listRunSegmentMonths(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
 ): string[] {
-  return listSubdirNames(automationRunArchiveRoot(workDir, wsId, ownerId, automationId))
+  return listSubdirNames(taskRunArchiveRoot(workDir, wsId, ownerId, taskId))
     .filter(isRunArchiveMonth)
     .sort()
     .reverse();
@@ -413,7 +395,7 @@ function monthEndMs(month: string): number {
   return Date.UTC(y!, m!, 1);
 }
 
-const startedMs = (r: AutomationRun) => new Date(r.startedAt).getTime();
+const startedMs = (r: TaskRun) => new Date(r.startedAt).getTime();
 
 /**
  * Read segments (`months`, newest first) into `picked` through `read` until no
@@ -423,7 +405,7 @@ const startedMs = (r: AutomationRun) => new Date(r.startedAt).getTime();
 function walkSegments(
   months: string[],
   bounds: { beforeMs: number; sinceMs: number; limit: number },
-  picked: AutomationRun[],
+  picked: TaskRun[],
   read: (month: string) => void,
 ): number {
   let unread = months.length;
@@ -446,7 +428,7 @@ function walkSegments(
 
 export interface RunsPage {
   /** Newest first. */
-  runs: AutomationRun[];
+  runs: TaskRun[];
   /**
    * Pass as `before` for the next older page; absent when nothing older
    * remains. A page that would end inside a group of runs sharing one start
@@ -456,7 +438,7 @@ export interface RunsPage {
 }
 
 /**
- * One page of an automation's run history, newest first.
+ * One page of a task's run history, newest first.
  *
  * Without `opts.before` it is the first page, read from the hot index alone,
  * so it costs what {@link readRuns} costs; `nextBefore` is set when the hot
@@ -474,7 +456,7 @@ export function readRunsPage(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   opts: ReadRunsOptions = {},
 ): RunsPage {
   const limit = Math.max(1, opts.limit ?? 20);
@@ -482,8 +464,8 @@ export function readRunsPage(
   if (Number.isNaN(beforeMs)) throw new Error(`Invalid before timestamp: "${opts.before}"`);
   const sinceMs = opts.since !== undefined ? new Date(opts.since).getTime() : -Infinity;
   const seen = new Set<string>();
-  const picked: AutomationRun[] = [];
-  const take = (runs: AutomationRun[]) => {
+  const picked: TaskRun[] = [];
+  const take = (runs: TaskRun[]) => {
     for (const r of runs) {
       const t = startedMs(r);
       if (!(t < beforeMs) || t < sinceMs) continue;
@@ -494,8 +476,8 @@ export function readRunsPage(
     }
   };
 
-  take(readIndexFile(automationRunIndexPath(workDir, wsId, ownerId, automationId)));
-  const months = listRunSegmentMonths(workDir, wsId, ownerId, automationId);
+  take(readIndexFile(taskRunIndexPath(workDir, wsId, ownerId, taskId)));
+  const months = listRunSegmentMonths(workDir, wsId, ownerId, taskId);
   // The first page reads no segment; a later one walks them newest first.
   // The first page reads no archive month; one that `since` rules out does not
   // count as more history either.
@@ -503,9 +485,7 @@ export function readRunsPage(
     opts.before === undefined
       ? months.filter((m) => monthEndMs(m) > sinceMs).length
       : walkSegments(months, { beforeMs, sinceMs, limit }, picked, (month) =>
-          take(
-            readIndexFile(automationRunSegmentPath(workDir, wsId, ownerId, automationId, month)),
-          ),
+          take(readIndexFile(taskRunSegmentPath(workDir, wsId, ownerId, taskId, month))),
         );
 
   picked.sort((a, b) => startedMs(b) - startedMs(a));
@@ -525,8 +505,8 @@ export function readRunsPage(
 }
 
 /**
- * Read runs across every automation owned by `ownerId` in `wsId`. Newest first,
- * with optional filters. Reads each automation's hot index; with `before`,
+ * Read runs across every task owned by `ownerId` in `wsId`. Newest first,
+ * with optional filters. Reads each task's hot index; with `before`,
  * pages back through each one's segments.
  */
 export function readAllRuns(
@@ -534,29 +514,29 @@ export function readAllRuns(
   wsId: string,
   ownerId: string,
   opts?: ReadRunsOptions,
-): AutomationRun[] {
+): TaskRun[] {
   const runsRoot = ownerRunsRoot(workDir, wsId, ownerId);
-  let automationIds: string[];
+  let taskIds: string[];
   try {
-    automationIds = readdirSync(runsRoot, { withFileTypes: true })
+    taskIds = readdirSync(runsRoot, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
   } catch {
     return [];
   }
 
-  let allRuns: AutomationRun[] = [];
-  for (const id of automationIds) {
+  let allRuns: TaskRun[] = [];
+  for (const id of taskIds) {
     try {
-      validateAutomationId(id);
+      validateTaskId(id);
     } catch {
-      continue; // skip stray dirs that aren't valid automation ids
+      continue; // skip stray dirs that aren't valid task ids
     }
     if (opts?.before !== undefined) {
       allRuns.push(...readRunsPage(workDir, wsId, ownerId, id, opts).runs);
       continue;
     }
-    allRuns.push(...readIndexFile(automationRunIndexPath(workDir, wsId, ownerId, id)));
+    allRuns.push(...readIndexFile(taskRunIndexPath(workDir, wsId, ownerId, id)));
   }
 
   allRuns.sort((a, b) => startedMs(b) - startedMs(a));
@@ -564,7 +544,7 @@ export function readAllRuns(
   return allRuns;
 }
 
-function applyFilters(runs: AutomationRun[], opts?: ReadRunsOptions): AutomationRun[] {
+function applyFilters(runs: TaskRun[], opts?: ReadRunsOptions): TaskRun[] {
   let result = runs;
 
   if (opts?.since) {
@@ -584,7 +564,7 @@ function applyFilters(runs: AutomationRun[], opts?: ReadRunsOptions): Automation
 }
 
 // ---------------------------------------------------------------------------
-// Run results — runs/<automationId>/<runId>.result.json (the deliverable)
+// Run results — runs/<taskId>/<runId>.result.json (the deliverable)
 // ---------------------------------------------------------------------------
 
 /** Persist a run's full result sidecar atomically (temp + rename). */
@@ -592,12 +572,12 @@ export function saveRunResult(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
-  result: AutomationRunResult,
+  taskId: string,
+  result: TaskRunResult,
 ): void {
-  const dir = automationRunsDir(workDir, wsId, ownerId, automationId);
+  const dir = taskRunsDir(workDir, wsId, ownerId, taskId);
   ensureWorkspaceDir(dir);
-  const filePath = automationRunResultPath(workDir, wsId, ownerId, automationId, result.runId);
+  const filePath = taskRunResultPath(workDir, wsId, ownerId, taskId, result.runId);
   atomicWrite(filePath, `${JSON.stringify(result, null, 2)}\n`);
 }
 
@@ -610,25 +590,23 @@ export function readRunResult(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   runId: string,
-): AutomationRunResult | null {
+): TaskRunResult | null {
   try {
     validateRunId(runId);
   } catch {
     return null; // invalid run id
   }
-  const hot = automationRunResultPath(workDir, wsId, ownerId, automationId, runId);
+  const hot = taskRunResultPath(workDir, wsId, ownerId, taskId, runId);
   const filePath = existsSync(hot)
     ? hot
-    : listRunSegmentMonths(workDir, wsId, ownerId, automationId)
-        .map((month) =>
-          automationArchivedRunResultPath(workDir, wsId, ownerId, automationId, month, runId),
-        )
+    : listRunSegmentMonths(workDir, wsId, ownerId, taskId)
+        .map((month) => taskArchivedRunResultPath(workDir, wsId, ownerId, taskId, month, runId))
         .find((p) => existsSync(p));
   if (!filePath) return null;
   try {
-    return JSON.parse(readFileSync(filePath, "utf-8")) as AutomationRunResult;
+    return JSON.parse(readFileSync(filePath, "utf-8")) as TaskRunResult;
   } catch {
     return null;
   }
@@ -645,7 +623,7 @@ export function saveRunTicket(
   ownerId: string,
   ticket: RunTicket,
 ): void {
-  const filePath = automationRunTicketPath(workDir, wsId, ownerId, ticket.runId);
+  const filePath = taskRunTicketPath(workDir, wsId, ownerId, ticket.runId);
   ensureWorkspaceDir(dirname(filePath));
   atomicWrite(filePath, `${JSON.stringify(ticket, null, 2)}\n`);
 }
@@ -662,7 +640,7 @@ export function readRunTicket(
 ): RunTicket | null {
   let filePath: string;
   try {
-    filePath = automationRunTicketPath(workDir, wsId, ownerId, runId);
+    filePath = taskRunTicketPath(workDir, wsId, ownerId, runId);
   } catch {
     return null;
   }
@@ -676,48 +654,36 @@ export function readRunTicket(
 }
 
 // ---------------------------------------------------------------------------
-// Idempotency keys — runs/<automationId>/keys/<sha256(key)>.json
+// Idempotency keys — runs/<taskId>/keys/<sha256(key)>.json
 // ---------------------------------------------------------------------------
 
 function keyDigest(key: string): string {
   return createHash("sha256").update(key, "utf-8").digest("hex");
 }
 
-/** Record that `key` started `runId` on this automation. */
+/** Record that `key` started `runId` on this task. */
 export function saveIdempotencyKey(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   key: string,
   runId: string,
 ): void {
-  const filePath = automationIdempotencyKeyPath(
-    workDir,
-    wsId,
-    ownerId,
-    automationId,
-    keyDigest(key),
-  );
+  const filePath = taskIdempotencyKeyPath(workDir, wsId, ownerId, taskId, keyDigest(key));
   ensureWorkspaceDir(dirname(filePath));
   atomicWrite(filePath, `${JSON.stringify({ key, runId })}\n`);
 }
 
-/** The run `key` started on this automation, or null when it started none. */
+/** The run `key` started on this task, or null when it started none. */
 export function readIdempotencyKey(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   key: string,
 ): string | null {
-  const filePath = automationIdempotencyKeyPath(
-    workDir,
-    wsId,
-    ownerId,
-    automationId,
-    keyDigest(key),
-  );
+  const filePath = taskIdempotencyKeyPath(workDir, wsId, ownerId, taskId, keyDigest(key));
   if (!existsSync(filePath)) return null;
   try {
     const entry = JSON.parse(readFileSync(filePath, "utf-8")) as { key?: unknown; runId?: unknown };

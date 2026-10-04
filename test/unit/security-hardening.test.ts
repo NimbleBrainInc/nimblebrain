@@ -25,9 +25,9 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 // NB-003: Engine input validation
 import { AgentEngine } from "../../src/engine/engine.ts";
 import type { EngineConfig, ToolSchema } from "../../src/engine/types.ts";
-// NB-001 (automation): Automation ID path traversal
+// NB-001 (task): Task ID path traversal
 import { appendRun, readRuns } from "../../src/platform/tasks/store.ts";
-import type { AutomationRun } from "../../src/platform/tasks/types.ts";
+import type { TaskRun } from "../../src/platform/tasks/types.ts";
 // NB-002: Prompt injection — skill body XML containment
 // NB-007: App guide trust gating
 import { composeSystemPrompt, type FocusedAppInfo } from "../../src/prompt/compose.ts";
@@ -44,10 +44,10 @@ function freshTmpDir(prefix: string): string {
   return dir;
 }
 
-function makeRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
+function makeRun(overrides: Partial<TaskRun> = {}): TaskRun {
   return {
     id: `run_${Math.random().toString(36).slice(2, 8)}`,
-    automationId: "test-auto",
+    taskId: "test-auto",
     startedAt: new Date().toISOString(),
     status: "success",
     inputTokens: 100,
@@ -94,10 +94,10 @@ describe("Security Hardening Regression Tests", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // NB-001 (automation): Automation ID path traversal
+  // NB-001 (task): Task ID path traversal
   // ---------------------------------------------------------------------------
 
-  describe("NB-001 (automation): Automation ID path traversal", () => {
+  describe("NB-001 (task): Task ID path traversal", () => {
     // Primary coverage: test/unit/platform/tasks/store.test.ts
     // (covers ../../etc/passwd, empty, slashes, dots, uppercase, leading/trailing hyphens)
 
@@ -107,24 +107,24 @@ describe("Security Hardening Regression Tests", () => {
       tmpDir = freshTmpDir("auto-pt");
     });
 
-    it("rejects null byte injection in automation ID", () => {
-      const run = makeRun({ automationId: "valid\x00../../etc/passwd" });
+    it("rejects null byte injection in task ID", () => {
+      const run = makeRun({ taskId: "valid\x00../../etc/passwd" });
       expect(() =>
         appendRun(tmpDir, "ws_0076759dbbe19fcc", "usr_test", "valid\x00../../etc/passwd", run),
-      ).toThrow(/Invalid automation id/i);
+      ).toThrow(/Invalid task id/i);
     });
 
-    it("rejects URL-encoded path traversal in automation ID", () => {
-      const run = makeRun({ automationId: "%2e%2e%2fpasswd" });
+    it("rejects URL-encoded path traversal in task ID", () => {
+      const run = makeRun({ taskId: "%2e%2e%2fpasswd" });
       expect(() =>
         appendRun(tmpDir, "ws_0076759dbbe19fcc", "usr_test", "%2e%2e%2fpasswd", run),
-      ).toThrow(/Invalid automation id/i);
+      ).toThrow(/Invalid task id/i);
     });
 
     it("validation applies to readRuns with traversal payload", () => {
       expect(() =>
         readRuns(tmpDir, "ws_0076759dbbe19fcc", "usr_test", "../../../etc/shadow"),
-      ).toThrow(/Invalid automation id/i);
+      ).toThrow(/Invalid task id/i);
     });
   });
 

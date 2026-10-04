@@ -71,7 +71,7 @@ function toolSource(t: ToolSchema): string {
 
 /**
  * A tool is a KERNEL tool if it's the `nb__` system core or belongs to a
- * kernel identity source (`files`/`conversations`/`automations`, per
+ * kernel identity source (`files`/`conversations`/`tasks`, per
  * {@link isIdentitySource}). Kernel tools are always surfaced DIRECT:
  * they are the substrate the model reaches for unprompted, so they belong in
  * the stable, cached tool prefix rather than being proxied and promoted on

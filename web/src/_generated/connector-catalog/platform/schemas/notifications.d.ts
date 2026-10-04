@@ -40,16 +40,16 @@ export type NotificationsMarkReadInput = Static<typeof NotificationsMarkReadInpu
  *
  * Four of the six are terminal because retrying changes nothing until
  * configuration does, and the split is the delivering side's own — the
- * unattended dispatch's for a tool, the automations event trigger's for an
+ * unattended dispatch's for a tool, the tasks event trigger's for an
  * agent — read rather than re-derived:
  *
  * | Outcome | Terminal | Means |
  * |---|---|---|
  * | `pending` | no | a tool target, written before the attempt; a retry is due |
- * | `deferred` | no | an agent target inside its automation's debounce window |
- * | `delivered` | yes | the tool ran, or the automation's run started |
- * | `denied` | yes | a gate refused the author this tool, or the route names no automation of theirs that takes events |
- * | `skipped` | yes | the author is no longer a member, or the automation is off or declined the item |
+ * | `deferred` | no | an agent target inside its task's debounce window |
+ * | `delivered` | yes | the tool ran, or the task's run started |
+ * | `denied` | yes | a gate refused the author this tool, or the route names no task of theirs that takes events |
+ * | `skipped` | yes | the author is no longer a member, or the task is off or declined the item |
  * | `failed` | yes | the work was owed and did not happen |
  *
  * The two non-terminal outcomes are what make the ledger the delivery state
@@ -82,7 +82,7 @@ export type DeliveryOutcome = "pending" | "delivered" | "deferred" | "denied" | 
 export interface DeliveryRecord {
     /** The route that matched, from the workspace record. */
     routeId: string;
-    /** What the route aimed at — a tool name, or an automation id. */
+    /** What the route aimed at — a tool name, or a task id. */
     target: string;
     /** Position in the route's `deliver` list. Part of the row's identity. */
     index: number;
@@ -102,9 +102,9 @@ export interface DeliveryRecord {
     /** ISO 8601 instant the next attempt is due. Present only while `pending`. */
     nextAttemptAt?: string;
     /**
-     * The automation run this notification's batch started. Agent targets only,
+     * The task run this notification's batch started. Agent targets only,
      * and present only once a run actually started — which is exactly the
-     * question an operator asks of a route that wakes an automation, and the
+     * question an operator asks of a route that wakes a task, and the
      * answer `tasks__run_result` is addressed with.
      */
     runId?: string;
@@ -244,7 +244,7 @@ export declare const NotificationDeliverTarget: import("@sinclair/typebox").TUni
     input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
 }>, import("@sinclair/typebox").TObject<{
     kind: import("@sinclair/typebox").TLiteral<"agent">;
-    automation: import("@sinclair/typebox").TString;
+    task: import("@sinclair/typebox").TString;
 }>]>;
 export type NotificationDeliverTarget = Static<typeof NotificationDeliverTarget>;
 /** Most targets one route may fan out to. */
@@ -283,7 +283,7 @@ export declare const NotificationRouteInput: import("@sinclair/typebox").TObject
         input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
     }>, import("@sinclair/typebox").TObject<{
         kind: import("@sinclair/typebox").TLiteral<"agent">;
-        automation: import("@sinclair/typebox").TString;
+        task: import("@sinclair/typebox").TString;
     }>]>>;
 }>;
 export type NotificationRouteInput = Static<typeof NotificationRouteInput>;
@@ -301,7 +301,7 @@ export declare const NotificationsSetRoutesInput: import("@sinclair/typebox").TO
             input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
         }>, import("@sinclair/typebox").TObject<{
             kind: import("@sinclair/typebox").TLiteral<"agent">;
-            automation: import("@sinclair/typebox").TString;
+            task: import("@sinclair/typebox").TString;
         }>]>>;
     }>>;
 }>;
@@ -397,14 +397,14 @@ export interface NotificationsSettingsOutput {
     /** Tool names a `kind: "tool"` target may name — this workspace's installed set. */
     deliverableTools: string[];
     /**
-     * Automations the caller owns in this workspace, for a `kind: "agent"`
+     * Tasks the caller owns in this workspace, for a `kind: "agent"`
      * target, with whether each one is actually wakeable.
      *
-     * An automation without an event schedule can be named by a route and will
+     * A task without an event schedule can be named by a route and will
      * refuse every item it is sent, so the editor can say so at write time rather
      * than leaving an operator to find it in the ledger.
      */
-    automations: {
+    tasks: {
         id: string;
         name: string;
         eventScheduled: boolean;
@@ -413,7 +413,7 @@ export interface NotificationsSettingsOutput {
     placeholders: readonly string[];
     /**
      * Whether a matching route's targets actually run. True for both kinds: a
-     * tool target dispatches, and an agent target wakes the automation it names.
+     * tool target dispatches, and an agent target wakes the task it names.
      *
      * Kept as a field rather than dropped now that it is unconditionally true —
      * the editor reads it to decide what to say about a saved route, and a client

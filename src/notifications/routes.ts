@@ -91,7 +91,7 @@ export const RETRY_TICK_MS = 20_000;
 /** What a matched target is, flattened out of its union for the ledger. */
 interface ResolvedTarget {
   kind: "tool" | "agent";
-  /** The tool's wire name, or the automation's id. */
+  /** The tool's wire name, or the task's id. */
   name: string;
   /** Its position in the route's `deliver` list. Half of a ledger row's identity. */
   index: number;
@@ -122,14 +122,14 @@ export interface RouteDispatcherDeps {
    */
   dispatch: (opts: UnattendedDispatchOptions) => Promise<UnattendedDispatchResult>;
   /**
-   * The automations end of a `kind: "agent"` target — the only path from a
+   * The tasks end of a `kind: "agent"` target — the only path from a
    * delivery to an agent run, and injected for the reason `dispatch` is: this
    * module must not be able to reach a scheduler on its own.
    *
-   * Absent in a runtime built without automations, in which case a route naming
+   * Absent in a runtime built without tasks, in which case a route naming
    * one gets a ledger row saying so rather than silence.
    */
-  wakeAutomation?: (req: EventWakeRequest) => EventWakeAck;
+  wakeTask?: (req: EventWakeRequest) => EventWakeAck;
   /**
    * Every workspace with an inbox, for the one-time resume scan.
    *
@@ -419,7 +419,7 @@ export class RouteDispatcher {
     if (!this.#writeLedger(wsId, ref, seeded)) return;
 
     // Agent targets first and without awaiting anything: handing an item to the
-    // automations source is a synchronous offer into a debounce window, and it
+    // tasks source is a synchronous offer into a debounce window, and it
     // must not queue behind a tool target's minute-long timeout — the whole
     // point of the window is that a burst arriving together lands in one batch.
     for (const { route, target } of matched) {
@@ -437,12 +437,12 @@ export class RouteDispatcher {
   // -- an agent target ---------------------------------------------------
 
   /**
-   * Offer one item to the automation a route names.
+   * Offer one item to the task a route names.
    *
    * The seeded row already says `deferred`, so an accepted offer writes
    * nothing: the item is in a batch and the row is honest about it until the
    * batch settles. A refusal is terminal and is written straight away, with the
-   * outcome the automations side chose rather than one derived from its reason
+   * outcome the tasks side chose rather than one derived from its reason
    * — the same split the tool path has with the unattended dispatch.
    */
   #wake(
@@ -452,17 +452,17 @@ export class RouteDispatcher {
     route: NotificationRoute,
     target: ResolvedTarget,
   ): void {
-    const wake = this.#deps.wakeAutomation;
+    const wake = this.#deps.wakeTask;
     let ack: EventWakeAck;
     try {
       ack = wake
         ? wake({
             wsId,
-            automationId: target.name,
-            // The route's author owns the automation: the settings surface only
-            // offers a route the caller's own, and an automation is stored under
+            taskId: target.name,
+            // The route's author owns the task: the settings surface only
+            // offers a route the caller's own, and a task is stored under
             // its owner. So this is the lookup's scope, not just its principal —
-            // an automation belonging to somebody else is not found at all.
+            // a task belonging to somebody else is not found at all.
             ownerId: route.createdBy,
             item,
             settle: (result) => this.#settleWake(wsId, ref, route, target, result),
@@ -470,8 +470,8 @@ export class RouteDispatcher {
         : {
             accepted: false,
             outcome: "denied",
-            classification: "automations_unavailable",
-            reason: "this runtime has no automations source, so nothing can be woken",
+            classification: "tasks_unavailable",
+            reason: "this runtime has no tasks source, so nothing can be woken",
           };
     } catch (err) {
       ack = {
@@ -657,7 +657,7 @@ export class RouteDispatcher {
   /**
    * Close out an agent row whose batch did not survive a restart.
    *
-   * `failed` rather than `skipped`: work was owed — the automation had accepted
+   * `failed` rather than `skipped`: work was owed — the task had accepted
    * these items — and it did not happen. An operator reading the ledger should
    * see that, not a row that reads as though nothing was ever due.
    */
@@ -667,7 +667,7 @@ export class RouteDispatcher {
       outcome: "failed",
       classification: "batch_not_resumed",
       lastError:
-        "the runtime restarted before this notification's batch reached its automation; " +
+        "the runtime restarted before this notification's batch reached its task; " +
         "batches are not re-formed across a restart",
       updatedAt: new Date(this.#now()).toISOString(),
     };
@@ -831,7 +831,7 @@ function matchTargets(routes: readonly NotificationRoute[], item: Notification):
  * The ledger rows a match produces, before anything has been attempted.
  *
  * A tool target starts `pending` and due now. An agent target starts
- * `deferred`, which is honest for however long the automation's debounce window
+ * `deferred`, which is honest for however long the task's debounce window
  * stays open, and is rewritten when the batch settles — or straight away if the
  * offer was refused. Both carry `updatedAt` from one instant, so the rows for
  * one item share a timestamp rather than drifting across the loop.
@@ -866,7 +866,7 @@ function seedRows(matched: readonly MatchedTarget[], at: string): DeliveryRecord
  * Whether one route's `match` admits one item, at the level routes see it at.
  *
  * The rules themselves are in {@link matchesNotification}, shared with the
- * automation-side match an event schedule carries: both read the same grammar
+ * task-side match an event schedule carries: both read the same grammar
  * out of the same schema, and a second copy of it is a second place for a
  * defect in it to hide.
  */
@@ -885,7 +885,7 @@ export function routeMatches(
 /** Flatten a stored target's union into the shape the ledger and the call need. */
 function resolveTarget(target: NotificationDeliverTarget, index: number): ResolvedTarget {
   return target.kind === "agent"
-    ? { kind: "agent", name: target.automation, index }
+    ? { kind: "agent", name: target.task, index }
     : { kind: "tool", name: target.tool, index, ...(target.input ? { input: target.input } : {}) };
 }
 
@@ -952,7 +952,7 @@ function ledgerOutcome(result: UnattendedDispatchResult, attempts: number): Deli
  * How long to wait before attempt `attempts + 1`.
  *
  * The ladder is this slice's; the indexing is the scheduler's, reused rather
- * than rewritten. The delays are not: an automation backs off toward an hour
+ * than rewritten. The delays are not: a task backs off toward an hour
  * because a failing schedule should be asked less and less often, while a
  * notification that has not been delivered in five minutes is one nobody is
  * still waiting for.

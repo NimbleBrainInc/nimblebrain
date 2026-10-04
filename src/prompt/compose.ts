@@ -195,7 +195,7 @@ Be concise and direct. Lead with actions, not explanations.
 IMPORTANT: Only use tools that are provided to you via the tools parameter. Never fabricate tool calls as XML, JSON, or any other text format.`;
 
 /**
- * Identity framing for task-mode invocations (e.g. scheduled automations,
+ * Identity framing for task-mode invocations (e.g. scheduled tasks,
  * eval runs, future webhook-triggered jobs). Prepended above the core
  * skills when `composeSystemPrompt({ mode: "task" })`. The runtime owns
  * this contract; connectors cannot spoof it by wrapping the user message.
@@ -210,7 +210,7 @@ Produce a finished, self-contained deliverable as your final response. Format as
 You still have full access to tools and can call them as many times as the task needs. The deliverable is your final assistant message, not an intermediate one.`;
 
 /** Invocation mode. `chat` is the conversational surface; `task` is the
- *  unattended artifact-production surface (automations, evals, etc.). */
+ *  unattended artifact-production surface (tasks, evals, etc.). */
 export type ComposeMode = "chat" | "task";
 
 /** Lightweight app descriptor for system prompt injection. */

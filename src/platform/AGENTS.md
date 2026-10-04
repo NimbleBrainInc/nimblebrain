@@ -101,10 +101,10 @@ Tools that author a persistent thing use:
 ```
 
 - `manifest` mirrors the on-disk metadata field-for-field. For skills,
-  it's the YAML frontmatter; for automations, the stored Automation
+  it's the YAML frontmatter; for tasks, the stored Task
   config; for files, the FileEntry metadata.
 - `body` is the content payload — markdown for skills, prompt for
-  automations, base64 for files.
+  tasks, base64 for files.
 - `scope` (when present) selects where to write — typically
   `"org" | "workspace" | "user"`. Omit when there's only one valid scope.
 
@@ -183,7 +183,7 @@ callers (CLI, lifecycle.ts) call the domain directly via a runtime-
 exposed getter. **The CLI does not call the LLM-facing tool — that path
 silently no-ops or strips operator fields.** See
 `src/platform/tasks/domain.ts` for the reference implementation
-and `src/runtime/runtime.ts::registerAutomationsContext` for the wiring.
+and `src/runtime/runtime.ts::registerTasksContext` for the wiring.
 
 The cost of doing this once per domain: one extra file. The cost of not
 doing it: connector install loses connector-contributed schedules, CLI pause/
@@ -247,19 +247,19 @@ DO:
 
 ```ts
 // src/platform/schemas/tasks.ts — named, exported, type-only OK
-export type AutomationsRunOutput =
-  | { run: AutomationRunRecord; enabled: boolean; message?: string }
-  | { status: "dispatched"; automationId: string; startedAt: string; enabled: boolean; message: string };
+export type TasksRunOutput =
+  | { run: TaskRunRecord; enabled: boolean; message?: string }
+  | { status: "dispatched"; taskId: string; startedAt: string; enabled: boolean; message: string };
 
 // src/platform/tasks/server.ts — handler return type is the contract
 export async function handleRun(
   args: Record<string, unknown>,
   ctx: ToolContext,
-): Promise<AutomationsRunOutput> { ... }
+): Promise<TasksRunOutput> { ... }
 
 // a consumer module imports the same contract type
-import type { AutomationsRunOutput } from "../../platform/schemas/tasks.ts";
-const data = (await callTool(runtime, "tasks__run", { name })) as AutomationsRunOutput;
+import type { TasksRunOutput } from "../../platform/schemas/tasks.ts";
+const data = (await callTool(runtime, "tasks__run", { name })) as TasksRunOutput;
 if ("status" in data && data.status === "dispatched") { ... } else if ("run" in data) { ... }
 ```
 
@@ -282,7 +282,7 @@ branch.
 ### In-process platform-tool variant
 
 `src/platform/tasks/server.ts`-style handlers return their
-domain object directly (`Promise<AutomationsRunOutput>`) and the
+domain object directly (`Promise<TasksRunOutput>`) and the
 framework wraps them as MCP `ToolResult` at registration time. That's
 the simplest §2.1 shape — the handler's return type IS the contract.
 
@@ -329,7 +329,7 @@ shape moves and consumers move together, not separately.
 ### Tests must use the shared types too
 
 Integration tests and consumer-pattern unit tests import the same
-`AutomationsXxxOutput` names. Inline `as { … }` in tests has the same
+`TasksXxxOutput` names. Inline `as { … }` in tests has the same
 drift problem as in production code — and is harder to find because tests
 that pass are easy to assume correct.
 
@@ -345,7 +345,7 @@ expect(result.run.toolCalls).toBe(3);
 // Bad — `as { run }` narrows without runtime evidence; future regressions
 // (handler returns dispatched envelope under load) pass with undefined
 // dereferences.
-const result = (await handleRun({ name: "Foo" }, ctx)) as { run: AutomationRun };
+const result = (await handleRun({ name: "Foo" }, ctx)) as { run: TaskRun };
 expect(result.run.toolCalls).toBe(3);
 ```
 
@@ -370,16 +370,16 @@ passed, production stayed broken. Match the production type strictly.
 |---|---|
 | Bare `{ type: "object" }` | Model invents structure; serializes nested objects as JSON strings |
 | `name` at root, `description` in manifest | Splits identity; model packs everything into one place and gets it wrong |
-| `allowedTools: string[]` as anything but a run's enforced allowlist | Leaky abstraction — couples identity to connector names that change. An automation takes one because narrowing its runs' tools is the point and the run's tool router enforces it; describe it with `<connector>__*` globs |
+| `allowedTools: string[]` as anything but a run's enforced allowlist | Leaky abstraction — couples identity to connector names that change. A task takes one because narrowing its runs' tools is the point and the run's tool router enforces it; describe it with `<connector>__*` globs |
 | `source`, `ownerId` in input schema | Runtime fields the LLM has no business setting |
 | Designed-but-not-enforced placeholder fields | Confuses callers; schema lies about what's load-bearing |
 | Multiple casings accepted in handler | Hides the contract; one casing won, document it |
 | `clearX: true` flag, or `""`, to unset a field | A second spelling of `null`; the clear is `null` (§1.3) |
 | Update tool that replaces the whole record | A caller that changes one field must resend every other one, and an omitted field is lost; take a patch (§1.3) |
-| Defensive `validateAutomationFields(args)` after schema validation | Validator already ran; redundant code that drifts from the schema |
+| Defensive `validateTaskFields(args)` after schema validation | Validator already ran; redundant code that drifts from the schema |
 | Storing config in `manifest` AND a flat field at root | Two sources of truth; one will get out of sync |
 | Inline `as { … }` on a `callTool(...)` / `handleX(...)` return | Re-declares the contract; drifts the first time the handler changes. Import the named output type from `schemas/` (§2.1). |
-| Handler typed as `Promise<object>` / `: object` | The return type IS the contract — give it a name. `: AutomationsRunOutput` catches drift at compile time across every consumer. |
+| Handler typed as `Promise<object>` / `: object` | The return type IS the contract — give it a name. `: TasksRunOutput` catches drift at compile time across every consumer. |
 | `as { run }` on a discriminated-union return | Narrows without runtime evidence; bypasses the only check that would catch a new branch. Narrow via `"run" in data` / `data.status === "..."` instead. |
 | Test mocks plain `{ message: "..." }` for an `McpError` | SDK constructs real `McpError` instances; plain objects don't match the production wire shape and mask bugs. Use `new McpError(code, message)`. |
 
@@ -389,7 +389,7 @@ passed, production stayed broken. Match the production type strictly.
 
 1. **Define `inputSchema`.** Follow the storage-symmetric shape (1.3).
    Strong types throughout (1.2). For shared fields (skills' manifest,
-   automations' schedule), pull into a top-of-file const so create + update
+   tasks' schedule), pull into a top-of-file const so create + update
    reference the same definition.
 2. **Define `interface XxxInput`.** Match the schema 1:1.
 3. **Define output types.** Named `XxxOutput` exports in the same

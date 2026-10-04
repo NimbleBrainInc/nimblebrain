@@ -227,7 +227,7 @@ export declare const PlatformToolCatalog: {
         };
         readonly runs: {
             readonly input: import("@sinclair/typebox").TObject<{
-                automationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled">>;
                 since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -354,7 +354,7 @@ export declare const PlatformToolCatalog: {
                         input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
                     }>, import("@sinclair/typebox").TObject<{
                         kind: import("@sinclair/typebox").TLiteral<"agent">;
-                        automation: import("@sinclair/typebox").TString;
+                        task: import("@sinclair/typebox").TString;
                     }>]>>;
                 }>>;
             }>;

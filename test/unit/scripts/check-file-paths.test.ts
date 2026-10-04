@@ -96,8 +96,8 @@ describe("check-file-paths — isIdentityFilesDataPath", () => {
     expect(isIdentityFilesDataPath(call!)).toBe(true);
   });
 
-  test("does NOT match `getIdentityContext(owner).getDataPath('automations')` (different subdir)", () => {
-    const src = parse(`const dir = getIdentityContext(owner).getDataPath("automations");`);
+  test("does NOT match `getIdentityContext(owner).getDataPath('tasks')` (different subdir)", () => {
+    const src = parse(`const dir = getIdentityContext(owner).getDataPath("tasks");`);
     const call = findFirst(
       src,
       (n): n is ts.CallExpression =>

@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import {
-  effectiveRunLimits,
-  resolveAutomationsConfig,
-} from "../../../../src/config/automations.ts";
+import { effectiveRunLimits, resolveTasksConfig } from "../../../../src/config/tasks.ts";
 import type { RunNowTicket } from "../../../../src/platform/tasks/scheduler.ts";
 import {
   estimateRunsPerDay,
@@ -20,45 +17,45 @@ import {
   handleUpdate,
   type ToolContext,
   toKebabCase,
-  validateAutomationFields,
+  validateTaskFields,
 } from "../../../../src/platform/tasks/server.ts";
 import {
   appendRun,
-  deleteAutomationDefinition,
-  loadOwnerAutomations,
+  deleteTaskDefinition,
+  loadOwnerTasks,
   readAllRuns,
   readRunResult,
   readRuns,
   readRunsPage,
-  saveAutomation,
+  saveTask,
 } from "../../../../src/platform/tasks/store.ts";
-import type { Automation, AutomationRun } from "../../../../src/platform/tasks/types.ts";
+import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 
-/** Load this test's single workspace+owner automations. */
-function loadDefs(): Map<string, Automation> {
-  return loadOwnerAutomations(TMP_DIR, WS, OWNER);
+/** Load this test's single workspace+owner tasks. */
+function loadDefs(): Map<string, Task> {
+  return loadOwnerTasks(TMP_DIR, WS, OWNER);
 }
 
-/** Reconcile a definitions map to the per-automation store (write each, delete removed). */
-function saveDefs(map: Map<string, Automation>): void {
-  const onDisk = loadOwnerAutomations(TMP_DIR, WS, OWNER);
+/** Reconcile a definitions map to the per-task store (write each, delete removed). */
+function saveDefs(map: Map<string, Task>): void {
+  const onDisk = loadOwnerTasks(TMP_DIR, WS, OWNER);
   for (const auto of map.values()) {
     if (!auto.workspaceId) auto.workspaceId = WS;
     if (!auto.ownerId) auto.ownerId = OWNER;
-    saveAutomation(TMP_DIR, WS, OWNER, auto);
+    saveTask(TMP_DIR, WS, OWNER, auto);
   }
   for (const id of onDisk.keys()) {
-    if (!map.has(id)) deleteAutomationDefinition(TMP_DIR, WS, OWNER, id);
+    if (!map.has(id)) deleteTaskDefinition(TMP_DIR, WS, OWNER, id);
   }
 }
 
 /** Append a run summary for this test's workspace+owner. */
-function seedRun(automationId: string, run: AutomationRun): void {
-  appendRun(TMP_DIR, WS, OWNER, automationId, run);
+function seedRun(taskId: string, run: TaskRun): void {
+  appendRun(TMP_DIR, WS, OWNER, taskId, run);
 }
 
 // ---------------------------------------------------------------------------
@@ -84,7 +81,7 @@ function updateArgs(name: string, patch: Record<string, unknown> = {}): Record<s
   return out;
 }
 
-const TMP_DIR = join(import.meta.dir, ".tmp-automation-server");
+const TMP_DIR = join(import.meta.dir, ".tmp-task-server");
 
 let schedulerReloaded: boolean;
 
@@ -99,12 +96,12 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
     reloadScheduler: () => {
       schedulerReloaded = true;
     },
-    runNow: (automationId: string): RunNowTicket | null => {
-      const auto = loadDefs().get(automationId);
+    runNow: (taskId: string): RunNowTicket | null => {
+      const auto = loadDefs().get(taskId);
       if (!auto) return null;
-      const run: AutomationRun = {
+      const run: TaskRun = {
         id: `run_test${Date.now()}`,
-        automationId,
+        taskId,
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
         status: "success",
@@ -114,10 +111,10 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
         iterations: 1,
         resultPreview: "Test run completed",
       };
-      seedRun(automationId, run);
+      seedRun(taskId, run);
       return { state: "started", run: Promise.resolve(run) };
     },
-    cancelRun: (_automationId: string) => false,
+    cancelRun: (_taskId: string) => false,
     readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
     readRunsPage: (id, opts) => readRunsPage(TMP_DIR, WS, OWNER, id, opts),
     readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),
@@ -127,10 +124,10 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
   };
 }
 
-function makeRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
+function makeRun(overrides: Partial<TaskRun> = {}): TaskRun {
   return {
     id: `run_${Math.random().toString(36).slice(2, 8)}`,
-    automationId: "daily-report",
+    taskId: "daily-report",
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
     status: "success",
@@ -236,7 +233,7 @@ describe("toKebabCase", () => {
   });
 
   test("strips special chars", () => {
-    expect(toKebabCase("My Automation!@#$%")).toBe("my-automation");
+    expect(toKebabCase("My Task!@#$%")).toBe("my-task");
   });
 
   test("handles multiple spaces", () => {
@@ -249,7 +246,7 @@ describe("toKebabCase", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleCreate", () => {
-  test("creates automation with defaults", () => {
+  test("creates task with defaults", () => {
     const ctx = makeCtx();
     const result = handleCreate(
       {
@@ -263,14 +260,14 @@ describe("handleCreate", () => {
     );
 
     expect(result.created).toBe(true);
-    expect(result.automation.id).toBe("daily-report");
-    expect(result.automation.name).toBe("Daily Report");
-    expect(result.automation.enabled).toBe(true);
-    expect(result.automation.source).toBe("agent");
-    expect(result.automation.runCount).toBe(0);
-    expect(result.automation.consecutiveErrors).toBe(0);
-    expect(result.automation.createdAt).toBeDefined();
-    expect(result.automation.updatedAt).toBeDefined();
+    expect(result.task.id).toBe("daily-report");
+    expect(result.task.name).toBe("Daily Report");
+    expect(result.task.enabled).toBe(true);
+    expect(result.task.source).toBe("agent");
+    expect(result.task.runCount).toBe(0);
+    expect(result.task.consecutiveErrors).toBe(0);
+    expect(result.task.createdAt).toBeDefined();
+    expect(result.task.updatedAt).toBeDefined();
     expect(schedulerReloaded).toBe(true);
   });
 
@@ -301,8 +298,8 @@ describe("handleCreate", () => {
     );
 
     expect(second.created).toBe(false);
-    expect(second.automation.id).toBe(first.automation.id);
-    expect(second.automation.prompt).toBe("Generate daily report"); // original prompt
+    expect(second.task.id).toBe(first.task.id);
+    expect(second.task.prompt).toBe("Generate daily report"); // original prompt
   });
 });
 
@@ -311,7 +308,7 @@ describe("handleCreate", () => {
 // ---------------------------------------------------------------------------
 
 describe("create → list", () => {
-  test("created automation appears in list", () => {
+  test("created task appears in list", () => {
     const ctx = makeCtx();
     handleCreate(
       {
@@ -325,13 +322,13 @@ describe("create → list", () => {
     );
 
     const result = handleList({}, ctx) as {
-      automations: Array<{ id: string; name: string; schedule: string }>;
+      tasks: Array<{ id: string; name: string; schedule: string }>;
       total: number;
     };
 
     expect(result.total).toBe(1);
-    expect(result.automations[0]!.name).toBe("Daily Report");
-    expect(result.automations[0]!.schedule).toBe("Every 30 minutes");
+    expect(result.tasks[0]!.name).toBe("Daily Report");
+    expect(result.tasks[0]!.schedule).toBe("Every 30 minutes");
   });
 });
 
@@ -341,7 +338,7 @@ describe("create → list", () => {
 
 describe("handleList paging", () => {
   type ListResult = {
-    automations: Array<{ id: string; name: string }>;
+    tasks: Array<{ id: string; name: string }>;
     total: number;
     returned: number;
     nextCursor: string | null;
@@ -350,7 +347,7 @@ describe("handleList paging", () => {
   };
 
   /**
-   * Seed n automations as one map through a single save. Paging needs only
+   * Seed n tasks as one map through a single save. Paging needs only
    * records on disk; the create path has its own tests. Seeding through
    * `handleCreate` costs O(n²) disk work, because each create reads every
    * definition and `save` rewrites every one, so 105 records take ~2s.
@@ -358,7 +355,7 @@ describe("handleList paging", () => {
    */
   function seed(ctx: ToolContext, n: number): void {
     const now = new Date().toISOString();
-    const map = new Map<string, Automation>();
+    const map = new Map<string, Task>();
     for (let i = 0; i < n; i++) {
       const name = `Seeded ${String(i).padStart(3, "0")}`;
       const id = toKebabCase(name);
@@ -391,7 +388,7 @@ describe("handleList paging", () => {
     // `total` as "what I received" is exactly the bug this guards.
     expect(r.total).toBe(105);
     expect(r.returned).toBe(100);
-    expect(r.automations).toHaveLength(100);
+    expect(r.tasks).toHaveLength(100);
     expect(r.hasMore).toBe(true);
   });
 
@@ -402,10 +399,10 @@ describe("handleList paging", () => {
     const ctx = makeCtx();
     seed(ctx, 12);
 
-    const ids = (handleList({ limit: 12 }, ctx) as ListResult).automations.map((a) => a.id);
+    const ids = (handleList({ limit: 12 }, ctx) as ListResult).tasks.map((a) => a.id);
     expect(ids).toEqual([...ids].sort());
     // Stable across calls, not merely sorted once.
-    const again = (handleList({ limit: 12 }, ctx) as ListResult).automations.map((a) => a.id);
+    const again = (handleList({ limit: 12 }, ctx) as ListResult).tasks.map((a) => a.id);
     expect(again).toEqual(ids);
   });
 
@@ -454,11 +451,11 @@ describe("handleList paging", () => {
     seed(ctx, 30);
 
     const first = handleList({ limit: 10 }, ctx) as ListResult;
-    handleDelete({ name: first.automations[0]!.name }, ctx);
+    handleDelete({ name: first.tasks[0]!.name }, ctx);
     const second = handleList({ limit: 10, cursor: first.nextCursor as string }, ctx) as ListResult;
 
-    const seen = new Set([...first.automations, ...second.automations].map((a) => a.id));
-    const wanted = (handleList({ limit: 500 }, ctx) as ListResult).automations
+    const seen = new Set([...first.tasks, ...second.tasks].map((a) => a.id));
+    const wanted = (handleList({ limit: 500 }, ctx) as ListResult).tasks
       .map((a) => a.id)
       .slice(0, 19);
     for (const id of wanted) expect(seen.has(id)).toBe(true);
@@ -468,7 +465,7 @@ describe("handleList paging", () => {
     const ctx = makeCtx();
     seed(ctx, 5);
 
-    const r = handleList({ cursor: "no-such-automation" }, ctx) as ListResult;
+    const r = handleList({ cursor: "no-such-task" }, ctx) as ListResult;
     expect(r.returned).toBe(5);
     expect(r.total).toBe(5);
   });
@@ -534,13 +531,13 @@ describe("handleUpdate", () => {
     const result = handleUpdate(updateArgs("Daily Report", { enabled: false }), ctx);
 
     expect(result.updated).toBe(true);
-    expect(result.automation.enabled).toBe(false);
+    expect(result.task.enabled).toBe(false);
 
     // Verify reflected in list
     const listResult = handleList({}, ctx) as {
-      automations: Array<{ enabled: boolean }>;
+      tasks: Array<{ enabled: boolean }>;
     };
-    expect(listResult.automations[0]!.enabled).toBe(false);
+    expect(listResult.tasks[0]!.enabled).toBe(false);
   });
 
   test("updates schedule and reloads scheduler", () => {
@@ -558,9 +555,9 @@ describe("handleUpdate", () => {
     expect(schedulerReloaded).toBe(true);
   });
 
-  test("throws for nonexistent automation", () => {
+  test("throws for nonexistent task", () => {
     const ctx = makeCtx();
-    expect(() => handleUpdate(updateArgs("Nonexistent"), ctx)).toThrow("Automation not found");
+    expect(() => handleUpdate(updateArgs("Nonexistent"), ctx)).toThrow("Task not found");
   });
   test("sets allowedTools", () => {
     const ctx = makeCtx();
@@ -568,10 +565,10 @@ describe("handleUpdate", () => {
 
     const result = handleUpdate(updateArgs("Scoped", { allowedTools: ["crm__*"] }), ctx);
 
-    expect(result.automation.allowedTools).toEqual(["crm__*"]);
+    expect(result.task.allowedTools).toEqual(["crm__*"]);
   });
 
-  test("refuses allowedTools that name an automation-authoring tool", () => {
+  test("refuses allowedTools that name a task-authoring tool", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
 
@@ -582,7 +579,7 @@ describe("handleUpdate", () => {
 });
 
 describe("handleCreate — allowedTools", () => {
-  test("stores the list on the automation", () => {
+  test("stores the list on the task", () => {
     const ctx = makeCtx();
     const result = handleCreate(
       createArgs(
@@ -596,7 +593,7 @@ describe("handleCreate — allowedTools", () => {
       ctx,
     );
 
-    expect(result.automation.allowedTools).toEqual(["crm__*", "files__read"]);
+    expect(result.task.allowedTools).toEqual(["crm__*", "files__read"]);
   });
 
   test("refuses a list that names tasks__create", () => {
@@ -622,7 +619,7 @@ describe("handleCreate — allowedTools", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleDelete", () => {
-  test("removes automation from list", () => {
+  test("removes task from list", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Temp", "Temporary", { type: "interval", intervalMs: 60_000 }), ctx);
 
@@ -633,9 +630,9 @@ describe("handleDelete", () => {
     expect(listResult.total).toBe(0);
   });
 
-  test("throws for nonexistent automation", () => {
+  test("throws for nonexistent task", () => {
     const ctx = makeCtx();
-    expect(() => handleDelete({ name: "Nope" }, ctx)).toThrow("Automation not found");
+    expect(() => handleDelete({ name: "Nope" }, ctx)).toThrow("Task not found");
   });
 });
 
@@ -646,8 +643,8 @@ describe("handleDelete", () => {
 describe("handleList filters", () => {
   // `source` is set by the runtime, not by the tool input — the LLM-facing
   // schema doesn't accept it. To exercise filter-by-source, seed the store
-  // directly with automations whose `source` is set as an operator would.
-  function seedAutomations(ctx: ToolContext): void {
+  // directly with tasks whose `source` is set as an operator would.
+  function seedTasks(ctx: ToolContext): void {
     handleCreate(createArgs("Active Operator", "p", { type: "interval", intervalMs: 60_000 }), ctx);
     handleCreate(
       createArgs(
@@ -668,14 +665,14 @@ describe("handleList filters", () => {
 
   test("filter enabled: true", () => {
     const ctx = makeCtx();
-    seedAutomations(ctx);
+    seedTasks(ctx);
 
     const result = handleList({ enabled: true }, ctx) as {
-      automations: Array<{ enabled: boolean }>;
+      tasks: Array<{ enabled: boolean }>;
       total: number;
     };
     expect(result.total).toBe(2);
-    expect(result.automations.every((a) => a.enabled)).toBe(true);
+    expect(result.tasks.every((a) => a.enabled)).toBe(true);
   });
 
   // A definition written before a source value left the union still loads: the
@@ -684,41 +681,41 @@ describe("handleList filters", () => {
   // resting on the absence of a validation pass nobody has added yet.
   test("a definition whose source is outside the union still lists", () => {
     const ctx = makeCtx();
-    seedAutomations(ctx);
+    seedTasks(ctx);
     const defs = ctx.definitions();
     defs.get("active-agent")!.source = "retired-source" as never;
     ctx.save(defs);
 
     const result = handleList({}, ctx) as {
-      automations: Array<{ id: string; source: string }>;
+      tasks: Array<{ id: string; source: string }>;
       total: number;
     };
     expect(result.total).toBe(3);
-    expect(result.automations.find((a) => a.id === "active-agent")?.source).toBe("retired-source");
+    expect(result.tasks.find((a) => a.id === "active-agent")?.source).toBe("retired-source");
   });
 
   test("filter source: user", () => {
     const ctx = makeCtx();
-    seedAutomations(ctx);
+    seedTasks(ctx);
 
     const result = handleList({ source: "user" }, ctx) as {
-      automations: Array<{ source: string }>;
+      tasks: Array<{ source: string }>;
       total: number;
     };
     expect(result.total).toBe(1);
-    expect(result.automations[0]!.source).toBe("user");
+    expect(result.tasks[0]!.source).toBe("user");
   });
 
   test("filter enabled: false", () => {
     const ctx = makeCtx();
-    seedAutomations(ctx);
+    seedTasks(ctx);
 
     const result = handleList({ enabled: false }, ctx) as {
-      automations: Array<{ enabled: boolean }>;
+      tasks: Array<{ enabled: boolean }>;
       total: number;
     };
     expect(result.total).toBe(1);
-    expect(result.automations[0]!.enabled).toBe(false);
+    expect(result.tasks[0]!.enabled).toBe(false);
   });
 });
 
@@ -727,25 +724,25 @@ describe("handleList filters", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleStatus", () => {
-  test("returns automation with recent runs (newest first)", () => {
+  test("returns task with recent runs (newest first)", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Status Test", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
     // Seed some runs
     const runs = [
       makeRun({
-        automationId: "status-test",
+        taskId: "status-test",
         startedAt: "2025-06-15T10:00:00.000Z",
         status: "success",
       }),
       makeRun({
-        automationId: "status-test",
+        taskId: "status-test",
         startedAt: "2025-06-15T11:00:00.000Z",
         status: "failure",
         error: "something broke",
       }),
       makeRun({
-        automationId: "status-test",
+        taskId: "status-test",
         startedAt: "2025-06-15T12:00:00.000Z",
         status: "success",
       }),
@@ -755,21 +752,21 @@ describe("handleStatus", () => {
     }
 
     const result = handleStatus({ name: "Status Test", limit: 5 }, ctx) as {
-      automation: Automation & { scheduleHuman: string };
-      recentRuns: AutomationRun[];
+      task: Task & { scheduleHuman: string };
+      recentRuns: TaskRun[];
     };
 
-    expect(result.automation.id).toBe("status-test");
-    expect(result.automation.scheduleHuman).toBe("Every 1 minute");
+    expect(result.task.id).toBe("status-test");
+    expect(result.task.scheduleHuman).toBe("Every 1 minute");
     expect(result.recentRuns.length).toBe(3);
     // Newest first
     expect(result.recentRuns[0]!.startedAt).toBe("2025-06-15T12:00:00.000Z");
     expect(result.recentRuns[2]!.startedAt).toBe("2025-06-15T10:00:00.000Z");
   });
 
-  test("throws for nonexistent automation", () => {
+  test("throws for nonexistent task", () => {
     const ctx = makeCtx();
-    expect(() => handleStatus({ name: "Nope" }, ctx)).toThrow("Automation not found");
+    expect(() => handleStatus({ name: "Nope" }, ctx)).toThrow("Task not found");
   });
 });
 
@@ -785,7 +782,7 @@ describe("handleRuns", () => {
     seedRun(
       "run-filter-test",
       makeRun({
-        automationId: "run-filter-test",
+        taskId: "run-filter-test",
         status: "success",
         startedAt: "2025-06-15T10:00:00.000Z",
       }),
@@ -793,7 +790,7 @@ describe("handleRuns", () => {
     seedRun(
       "run-filter-test",
       makeRun({
-        automationId: "run-filter-test",
+        taskId: "run-filter-test",
         status: "failure",
         error: "oops",
         startedAt: "2025-06-15T11:00:00.000Z",
@@ -802,14 +799,14 @@ describe("handleRuns", () => {
     seedRun(
       "run-filter-test",
       makeRun({
-        automationId: "run-filter-test",
+        taskId: "run-filter-test",
         status: "success",
         startedAt: "2025-06-15T12:00:00.000Z",
       }),
     );
 
-    const result = handleRuns({ automationId: "run-filter-test", status: "failure" }, ctx) as {
-      runs: AutomationRun[];
+    const result = handleRuns({ taskId: "run-filter-test", status: "failure" }, ctx) as {
+      runs: TaskRun[];
       total: number;
     };
 
@@ -817,15 +814,15 @@ describe("handleRuns", () => {
     expect(result.runs[0]!.status).toBe("failure");
   });
 
-  test("queries across all automations", () => {
+  test("queries across all tasks", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("A", "p", { type: "interval", intervalMs: 60_000 }), ctx);
     handleCreate(createArgs("B", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    seedRun("a", makeRun({ automationId: "a", startedAt: "2025-06-15T10:00:00.000Z" }));
-    seedRun("b", makeRun({ automationId: "b", startedAt: "2025-06-15T11:00:00.000Z" }));
+    seedRun("a", makeRun({ taskId: "a", startedAt: "2025-06-15T10:00:00.000Z" }));
+    seedRun("b", makeRun({ taskId: "b", startedAt: "2025-06-15T11:00:00.000Z" }));
 
-    const result = handleRuns({}, ctx) as { runs: AutomationRun[]; total: number };
+    const result = handleRuns({}, ctx) as { runs: TaskRun[]; total: number };
     expect(result.total).toBe(2);
   });
 });
@@ -843,15 +840,15 @@ describe("handleRun", () => {
 
     // Narrow the discriminated union explicitly. `as { run }` is the
     // anti-pattern that masked the dispatched-envelope branch — see
-    // `AutomationsRunOutput` in src/platform/schemas/tasks.ts.
+    // `TasksRunOutput` in src/platform/schemas/tasks.ts.
     if (!("run" in result)) {
       throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
     }
-    expect(result.run.automationId).toBe("immediate");
+    expect(result.run.taskId).toBe("immediate");
     expect(result.run.status).toBe("success");
   });
 
-  test("runs a disabled automation and says it is disabled", async () => {
+  test("runs a disabled task and says it is disabled", async () => {
     const ctx = makeCtx();
     handleCreate(
       createArgs("Paused", "Run now", { type: "interval", intervalMs: 60_000 }, { enabled: false }),
@@ -868,7 +865,7 @@ describe("handleRun", () => {
     expect(result.message).toContain("is disabled");
   });
 
-  test("an enabled automation's run carries no disabled message", async () => {
+  test("an enabled task's run carries no disabled message", async () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Live", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
 
@@ -883,7 +880,7 @@ describe("handleRun", () => {
 
   test("reports enabled as it stands after the run, when the run disabled it", async () => {
     // A run that trips the failure auto-disable or the token budget leaves
-    // the automation disabled; the response must say so.
+    // the task disabled; the response must say so.
     const base = makeCtx();
     const ctx = makeCtx({
       runNow: (id) => {
@@ -905,9 +902,9 @@ describe("handleRun", () => {
     expect(result.message).toContain("is disabled");
   });
 
-  test("a disabled automation's dispatched envelope says it is disabled", async () => {
-    let resolveRun: ((value: AutomationRun) => void) | undefined;
-    const runPromise = new Promise<AutomationRun>((resolve) => {
+  test("a disabled task's dispatched envelope says it is disabled", async () => {
+    let resolveRun: ((value: TaskRun) => void) | undefined;
+    const runPromise = new Promise<TaskRun>((resolve) => {
       resolveRun = resolve;
     });
     const slowCtx = makeCtx({
@@ -932,14 +929,14 @@ describe("handleRun", () => {
     }
   });
 
-  test("throws for nonexistent automation", async () => {
+  test("throws for nonexistent task", async () => {
     const ctx = makeCtx();
-    await expect(handleRun({ name: "Nope" }, ctx)).rejects.toThrow("Automation not found");
+    await expect(handleRun({ name: "Nope" }, ctx)).rejects.toThrow("Task not found");
   });
 
   test("returns 'dispatched' envelope when run outlasts the sync-wait window", async () => {
     // Regression for the production failure where `tasks__run` on a
-    // multi-minute automation collided with the SDK's 60s MCP request
+    // multi-minute task collided with the SDK's 60s MCP request
     // timeout and surfaced to the agent as a false -32001 failure. With
     // the bounded sync-wait, long-running calls return a dispatched
     // envelope instead of hanging the request.
@@ -948,8 +945,8 @@ describe("handleRun", () => {
     // test cleans up its own timer instead of leaving a long setTimeout
     // pending past the assertion. Pattern matters — copy-pasted tests
     // with leaked timers add up.
-    let resolveRun: ((value: AutomationRun) => void) | undefined;
-    const runPromise = new Promise<AutomationRun>((resolve) => {
+    let resolveRun: ((value: TaskRun) => void) | undefined;
+    const runPromise = new Promise<TaskRun>((resolve) => {
       resolveRun = resolve;
     });
     const slowCtx = makeCtx({
@@ -970,7 +967,7 @@ describe("handleRun", () => {
       if (!("status" in result) || result.status !== "dispatched") {
         throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
       }
-      expect(result.automationId).toBe("slow");
+      expect(result.taskId).toBe("slow");
       expect(result.enabled).toBe(true);
       expect(Number.isNaN(Date.parse(result.startedAt))).toBe(false);
       // Says the run is still going, and where its result will appear.
@@ -990,8 +987,8 @@ describe("handleRun", () => {
   });
 
   test("a run that waits for a slot returns the queued envelope at once", async () => {
-    let resolveRun: ((value: AutomationRun) => void) | undefined;
-    const run = new Promise<AutomationRun>((resolve) => {
+    let resolveRun: ((value: TaskRun) => void) | undefined;
+    const run = new Promise<TaskRun>((resolve) => {
       resolveRun = resolve;
     });
     const ctx = makeCtx({ runNow: () => ({ state: "queued", position: 3, run }) });
@@ -1003,7 +1000,7 @@ describe("handleRun", () => {
         throw new Error(`expected queued envelope, got ${JSON.stringify(result)}`);
       }
       expect(result.position).toBe(3);
-      expect(result.automationId).toBe("waits");
+      expect(result.taskId).toBe("waits");
       expect(result.message).toContain("queued at position 3");
       expect(result.message).toContain("tasks__cancel");
       expect(result.message).toContain(result.queuedAt);
@@ -1014,7 +1011,7 @@ describe("handleRun", () => {
 
   test("a refused run returns its skipped record and says why", async () => {
     const skipped = makeRun({
-      automationId: "refused",
+      taskId: "refused",
       status: "skipped",
       error: "Already queued (runNow)",
     });
@@ -1034,12 +1031,12 @@ describe("handleRun", () => {
 // ---------------------------------------------------------------------------
 
 describe("create and update report effective run limits", () => {
-  const ceilings = resolveAutomationsConfig({
+  const ceilings = resolveTasksConfig({
     maxRunIterations: 10,
     maxRunInputTokens: 50_000,
     maxRunDurationMs: 60_000,
   });
-  const runLimitsOf = (auto: Automation) => effectiveRunLimits(auto, ceilings, 25);
+  const runLimitsOf = (auto: Task) => effectiveRunLimits(auto, ceilings, 25);
 
   test("create reports caps above the ceiling as clamped", () => {
     const ctx = makeCtx({ runLimitsOf });
@@ -1061,10 +1058,10 @@ describe("create and update report effective run limits", () => {
     expect(result.message).toContain("maxInputTokens 900000 is above");
     expect(result.message).toContain("maxRunDurationMs 300000 is above");
     // The definition keeps what the caller asked for; the ceiling applies at run time.
-    expect(result.automation.maxIterations).toBe(40);
+    expect(result.task.maxIterations).toBe(40);
   });
 
-  test("create reports the defaults an automation runs under when it sets no caps", () => {
+  test("create reports the defaults a task runs under when it sets no caps", () => {
     const result = handleCreate(
       createArgs("Plain", "p", { type: "interval", intervalMs: 60_000 }),
       makeCtx(),
@@ -1075,7 +1072,7 @@ describe("create and update report effective run limits", () => {
     expect(result.message).not.toContain("is above");
   });
 
-  test("create reports a configured input ceiling for an automation that sets no cap", () => {
+  test("create reports a configured input ceiling for a task that sets no cap", () => {
     const result = handleCreate(
       createArgs("Bounded", "p", { type: "interval", intervalMs: 60_000 }),
       makeCtx({ runLimitsOf }),
@@ -1102,13 +1099,13 @@ describe("delete preserves run history", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Deletable", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    seedRun("deletable", makeRun({ automationId: "deletable", status: "success" }));
+    seedRun("deletable", makeRun({ taskId: "deletable", status: "success" }));
 
     handleDelete({ name: "Deletable" }, ctx);
 
     // Runs still accessible via runs tool
-    const result = handleRuns({ automationId: "deletable" }, ctx) as {
-      runs: AutomationRun[];
+    const result = handleRuns({ taskId: "deletable" }, ctx) as {
+      runs: TaskRun[];
       total: number;
     };
     expect(result.total).toBe(1);
@@ -1136,7 +1133,7 @@ describe("handleCreate — new fields", () => {
       ctx,
     );
 
-    const auto = result.automation as Automation;
+    const auto = result.task as Task;
     expect(auto.maxRunDurationMs).toBe(60_000);
     expect(auto.tokenBudget).toEqual({ maxInputTokens: 10000, period: "daily" });
     expect(auto.cumulativeInputTokens).toBe(0);
@@ -1151,7 +1148,7 @@ describe("handleCreate — new fields", () => {
 describe("handleUpdate — re-enable clears disable state", () => {
   test("enabled=true clears disabledAt, disabledReason, and consecutiveErrors", () => {
     const ctx = makeCtx();
-    // Create an automation first
+    // Create a task first
     handleCreate(
       createArgs("Disabled Test", "test", { type: "interval", intervalMs: 60_000 }),
       ctx,
@@ -1168,7 +1165,7 @@ describe("handleUpdate — re-enable clears disable state", () => {
 
     // Re-enable
     const result = handleUpdate(updateArgs("Disabled Test", { enabled: true }), ctx);
-    const updated = result.automation as Automation;
+    const updated = result.task as Task;
     expect(updated.enabled).toBe(true);
     expect(updated.consecutiveErrors).toBe(0);
     expect(updated.disabledAt).toBeUndefined();
@@ -1199,7 +1196,7 @@ describe("handleCancel", () => {
     expect(cancelledId).toBe("cancel-target");
   });
 
-  test("throws for non-existent automation", () => {
+  test("throws for non-existent task", () => {
     const ctx = makeCtx();
     expect(() => handleCancel({ name: "Nonexistent" }, ctx)).toThrow("not found");
   });
@@ -1226,20 +1223,20 @@ describe("handleList — disable info", () => {
     saveDefs(defs);
 
     const result = handleList({}, ctx);
-    const automations = result.automations;
-    const entry = automations.find((a) => a.id === "list-disabled")!;
+    const tasks = result.tasks;
+    const entry = tasks.find((a) => a.id === "list-disabled")!;
     expect(entry.disabledReason).toBe("Token budget exceeded");
   });
 });
 
 // ---------------------------------------------------------------------------
-// validateAutomationFields
+// validateTaskFields
 // ---------------------------------------------------------------------------
 
-describe("validateAutomationFields", () => {
+describe("validateTaskFields", () => {
   test("rejects intervalMs below 60000", () => {
     expect(() =>
-      validateAutomationFields({
+      validateTaskFields({
         schedule: { type: "interval", intervalMs: 30_000 },
       }),
     ).toThrow("at least 1 minute");
@@ -1247,7 +1244,7 @@ describe("validateAutomationFields", () => {
 
   test("accepts intervalMs at 60000", () => {
     expect(() =>
-      validateAutomationFields({
+      validateTaskFields({
         schedule: { type: "interval", intervalMs: 60_000 },
       }),
     ).not.toThrow();
@@ -1255,7 +1252,7 @@ describe("validateAutomationFields", () => {
 
   test("rejects interval type without intervalMs", () => {
     expect(() =>
-      validateAutomationFields({
+      validateTaskFields({
         schedule: { type: "interval" },
       }),
     ).toThrow("intervalMs is required");
@@ -1263,7 +1260,7 @@ describe("validateAutomationFields", () => {
 
   test("rejects cron type without expression", () => {
     expect(() =>
-      validateAutomationFields({
+      validateTaskFields({
         schedule: { type: "cron" },
       }),
     ).toThrow("expression is required");
@@ -1271,7 +1268,7 @@ describe("validateAutomationFields", () => {
 
   test("rejects invalid cron expression", () => {
     expect(() =>
-      validateAutomationFields({
+      validateTaskFields({
         schedule: { type: "cron", expression: "not a cron" },
       }),
     ).toThrow("Invalid cron expression");
@@ -1279,50 +1276,50 @@ describe("validateAutomationFields", () => {
 
   test("accepts valid cron expression", () => {
     expect(() =>
-      validateAutomationFields({
+      validateTaskFields({
         schedule: { type: "cron", expression: "0 8 * * *" },
       }),
     ).not.toThrow();
   });
 
   test("rejects maxIterations below 1", () => {
-    expect(() => validateAutomationFields({ maxIterations: 0 })).toThrow("between 1 and 50");
+    expect(() => validateTaskFields({ maxIterations: 0 })).toThrow("between 1 and 50");
   });
 
   test("rejects maxIterations above 50", () => {
-    expect(() => validateAutomationFields({ maxIterations: 51 })).toThrow("between 1 and 50");
+    expect(() => validateTaskFields({ maxIterations: 51 })).toThrow("between 1 and 50");
   });
 
   test("accepts maxIterations at the 50 cap", () => {
-    expect(() => validateAutomationFields({ maxIterations: 50 })).not.toThrow();
+    expect(() => validateTaskFields({ maxIterations: 50 })).not.toThrow();
   });
 
   test("accepts maxIterations at 25", () => {
-    expect(() => validateAutomationFields({ maxIterations: 25 })).not.toThrow();
+    expect(() => validateTaskFields({ maxIterations: 25 })).not.toThrow();
   });
 
   test("rejects maxInputTokens below 1000", () => {
-    expect(() => validateAutomationFields({ maxInputTokens: 500 })).toThrow(
+    expect(() => validateTaskFields({ maxInputTokens: 500 })).toThrow(
       "between 1,000 and 1,000,000",
     );
   });
 
   test("accepts maxInputTokens at 200000", () => {
-    expect(() => validateAutomationFields({ maxInputTokens: 200_000 })).not.toThrow();
+    expect(() => validateTaskFields({ maxInputTokens: 200_000 })).not.toThrow();
   });
 
   test("rejects maxRunDurationMs below 10000", () => {
-    expect(() => validateAutomationFields({ maxRunDurationMs: 5_000 })).toThrow(
+    expect(() => validateTaskFields({ maxRunDurationMs: 5_000 })).toThrow(
       "between 10 seconds and 10 minutes",
     );
   });
 
   test("accepts maxRunDurationMs at 120000", () => {
-    expect(() => validateAutomationFields({ maxRunDurationMs: 120_000 })).not.toThrow();
+    expect(() => validateTaskFields({ maxRunDurationMs: 120_000 })).not.toThrow();
   });
 
   test("passes with no validation-relevant fields", () => {
-    expect(() => validateAutomationFields({})).not.toThrow();
+    expect(() => validateTaskFields({})).not.toThrow();
   });
 });
 
@@ -1440,14 +1437,14 @@ describe("handleUpdate — validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Automation ownership (ownerId / workspaceId)
+// Task ownership (ownerId / workspaceId)
 // ---------------------------------------------------------------------------
 
-describe("automation ownership", () => {
+describe("task ownership", () => {
   test("handleCreate sets ownerId from context", () => {
     const ctx = makeCtx({ currentUserId: "usr_alice" });
     const result = handleCreate(
-      createArgs("Owned Automation", "do something", {
+      createArgs("Owned Task", "do something", {
         type: "interval",
         intervalMs: 60_000,
       }),
@@ -1455,13 +1452,13 @@ describe("automation ownership", () => {
     );
 
     expect(result.created).toBe(true);
-    expect(result.automation.ownerId).toBe("usr_alice");
+    expect(result.task.ownerId).toBe("usr_alice");
   });
 
   test("handleCreate sets workspaceId from context", () => {
     const ctx = makeCtx({ currentWorkspaceId: "ws_0030a37f450693bf" });
     const result = handleCreate(
-      createArgs("Workspace Automation", "do something", {
+      createArgs("Workspace Task", "do something", {
         type: "interval",
         intervalMs: 60_000,
       }),
@@ -1469,7 +1466,7 @@ describe("automation ownership", () => {
     );
 
     expect(result.created).toBe(true);
-    expect(result.automation.workspaceId).toBe("ws_0030a37f450693bf");
+    expect(result.task.workspaceId).toBe("ws_0030a37f450693bf");
   });
 
   test("handleCreate sets both ownerId and workspaceId", () => {
@@ -1478,7 +1475,7 @@ describe("automation ownership", () => {
       currentWorkspaceId: "ws_0055880db5dd7ef1",
     });
     const result = handleCreate(
-      createArgs("Full Context Automation", "do something", {
+      createArgs("Full Context Task", "do something", {
         type: "cron",
         expression: "0 9 * * *",
       }),
@@ -1486,17 +1483,17 @@ describe("automation ownership", () => {
     );
 
     expect(result.created).toBe(true);
-    expect(result.automation.ownerId).toBe("usr_bob");
-    expect(result.automation.workspaceId).toBe("ws_0055880db5dd7ef1");
+    expect(result.task.ownerId).toBe("usr_bob");
+    expect(result.task.workspaceId).toBe("ws_0055880db5dd7ef1");
   });
 
   test("create without an explicit context still binds owner+workspace from the store path", () => {
-    // Automations are workspace-owned: even when the create context carries no
+    // Tasks are workspace-owned: even when the create context carries no
     // currentUserId/currentWorkspaceId, the save path stamps the binding from
-    // the dir the automation is written to (the path is the wall).
+    // the dir the task is written to (the path is the wall).
     const ctx = makeCtx(); // no currentUserId or currentWorkspaceId
     const result = handleCreate(
-      createArgs("Legacy Automation", "do something", {
+      createArgs("Legacy Task", "do something", {
         type: "interval",
         intervalMs: 120_000,
       }),
@@ -1504,8 +1501,8 @@ describe("automation ownership", () => {
     );
 
     expect(result.created).toBe(true);
-    expect(result.automation.ownerId).toBe(OWNER);
-    expect(result.automation.workspaceId).toBe(WS);
+    expect(result.task.ownerId).toBe(OWNER);
+    expect(result.task.workspaceId).toBe(WS);
   });
 });
 
@@ -1533,32 +1530,30 @@ describe("event schedules", () => {
   });
 
   test("require a match", () => {
-    expect(() => validateAutomationFields({ schedule: { type: "event" } })).toThrow(
-      /match is required/,
-    );
-    expect(() => validateAutomationFields({ schedule: { type: "event", match } })).not.toThrow();
+    expect(() => validateTaskFields({ schedule: { type: "event" } })).toThrow(/match is required/);
+    expect(() => validateTaskFields({ schedule: { type: "event", match } })).not.toThrow();
   });
 
   test("bound the debounce window on both sides", () => {
     expect(() =>
-      validateAutomationFields({ schedule: { type: "event", match, debounceMs: 500 } }),
+      validateTaskFields({ schedule: { type: "event", match, debounceMs: 500 } }),
     ).toThrow(/debounceMs/);
     expect(() =>
-      validateAutomationFields({ schedule: { type: "event", match, debounceMs: 900_001 } }),
+      validateTaskFields({ schedule: { type: "event", match, debounceMs: 900_001 } }),
     ).toThrow(/debounceMs/);
     expect(() =>
-      validateAutomationFields({ schedule: { type: "event", match, debounceMs: 60_000 } }),
+      validateTaskFields({ schedule: { type: "event", match, debounceMs: 60_000 } }),
     ).not.toThrow();
   });
 
   test("bound the fire ceiling on both sides, and require a whole number", () => {
     for (const maxFiresPerHour of [0, 61, 2.5]) {
       expect(() =>
-        validateAutomationFields({ schedule: { type: "event", match, maxFiresPerHour } }),
+        validateTaskFields({ schedule: { type: "event", match, maxFiresPerHour } }),
       ).toThrow(/maxFiresPerHour/);
     }
     expect(() =>
-      validateAutomationFields({ schedule: { type: "event", match, maxFiresPerHour: 6 } }),
+      validateTaskFields({ schedule: { type: "event", match, maxFiresPerHour: 6 } }),
     ).not.toThrow();
   });
 
@@ -1577,17 +1572,17 @@ describe("event schedules", () => {
     expect(created.created).toBe(true);
 
     const status = await handleStatus({ name: "Reply triage" }, ctx);
-    expect(status.automation.schedule).toEqual({
+    expect(status.task.schedule).toEqual({
       type: "event",
       match,
       debounceMs: 60_000,
       maxFiresPerHour: 6,
     });
-    expect(status.automation.scheduleHuman).toBe(
+    expect(status.task.scheduleHuman).toBe(
       "On notifications from precision-outbound, matching reply.*",
     );
-    expect(status.automation.nextRunAt).toBeUndefined();
-    expect(status.automation.estimatedCostPerDay).toBe(0);
+    expect(status.task.nextRunAt).toBeUndefined();
+    expect(status.task.estimatedCostPerDay).toBe(0);
   });
 });
 
@@ -1619,17 +1614,17 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
     expect(requested.idempotencyKey).toBe("k-1");
   });
 
-  test("an inline definition creates a oneoff automation with no schedule", async () => {
+  test("an inline definition creates a oneoff task with no schedule", async () => {
     const ctx = makeCtx({ currentUserId: OWNER, currentWorkspaceId: WS });
     const result = await handleRun({ prompt: "Summarize the input.", input: "text" }, ctx);
     if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
 
-    const oneoff = loadDefs().get(result.run.automationId);
+    const oneoff = loadDefs().get(result.run.taskId);
     expect(oneoff?.kind).toBe("oneoff");
     expect(oneoff?.schedule).toBeUndefined();
     expect(oneoff?.prompt).toBe("Summarize the input.");
-    // Left out of the default list, which holds saved automations.
-    expect(handleList({}, ctx).automations).toHaveLength(0);
+    // Left out of the default list, which holds saved tasks.
+    expect(handleList({}, ctx).tasks).toHaveLength(0);
   });
 
   test("refuses both a name and an inline definition", async () => {
@@ -1656,7 +1651,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
     );
   });
 
-  test("an automation with an inputSchema refuses a run with no input", async () => {
+  test("a task with an inputSchema refuses a run with no input", async () => {
     const ctx = makeCtx();
     handleCreate(
       createArgs(
@@ -1674,7 +1669,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
 
   test("a repeated idempotency key returns the earlier run without asking for another", async () => {
     let asked = 0;
-    const existing = makeRun({ automationId: "keyed", status: "success", idempotencyKey: "k" });
+    const existing = makeRun({ taskId: "keyed", status: "success", idempotencyKey: "k" });
     const ctx = makeCtx({
       runNow: () => {
         asked++;
@@ -1684,7 +1679,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
         id === "keyed" && key === "k"
           ? {
               runId: existing.id,
-              automationId: "keyed",
+              taskId: "keyed",
               requestedAt: existing.startedAt,
               run: existing,
             }
@@ -1701,11 +1696,11 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
 });
 
 describe("create and update — input and output schemas", () => {
-  test("create keeps both schemas on the automation", () => {
+  test("create keeps both schemas on the task", () => {
     const ctx = makeCtx();
     const inputSchema = { type: "object", properties: { url: { type: "string" } } };
     const outputSchema = { type: "array", items: { type: "string" } };
-    const { automation } = handleCreate(
+    const { task } = handleCreate(
       createArgs(
         "Schemas",
         "p",
@@ -1717,8 +1712,8 @@ describe("create and update — input and output schemas", () => {
       ),
       ctx,
     );
-    expect(automation.inputSchema).toEqual(inputSchema);
-    expect(automation.outputSchema).toEqual(outputSchema);
+    expect(task.inputSchema).toEqual(inputSchema);
+    expect(task.outputSchema).toEqual(outputSchema);
   });
 
   test("create refuses a schema that does not compile", () => {
@@ -1750,8 +1745,8 @@ describe("create and update — input and output schemas", () => {
       ),
       ctx,
     );
-    const { automation } = handleUpdate(updateArgs("Clearable", { outputSchema: null }), ctx);
-    expect(automation.outputSchema).toBeUndefined();
+    const { task } = handleUpdate(updateArgs("Clearable", { outputSchema: null }), ctx);
+    expect(task.outputSchema).toBeUndefined();
     expect("outputSchema" in (loadDefs().get("clearable") ?? {})).toBe(false);
   });
 });

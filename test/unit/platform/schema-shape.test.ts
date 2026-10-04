@@ -27,7 +27,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../../src/adapters/noop-events.ts";
-import { resolveAutomationsConfig } from "../../../src/config/automations.ts";
+import { resolveTasksConfig } from "../../../src/config/tasks.ts";
 import { resolvePollConfig } from "../../../src/notifications/poll-config.ts";
 import { createConversationsSource } from "../../../src/platform/conversations/source.ts";
 import { createFilesSource } from "../../../src/platform/files/source.ts";
@@ -66,13 +66,13 @@ function makeRuntimeStub(workDir: string): unknown {
     getContextSkills: () => [],
     getMatchableSkills: () => [],
     loadConversationSkills: () => [],
-    // Automations source registers a domain-context getter at construction.
+    // Tasks source registers a domain-context getter at construction.
     // Capture-and-discard for the lint test — we never invoke handlers.
-    registerAutomationsContext: () => {},
-    // Same shape for the event trigger, which the automations source also
+    registerTasksContext: () => {},
+    // Same shape for the event trigger, which the tasks source also
     // hands to the runtime at construction.
-    registerAutomationEventTrigger: () => {},
-    registerAutomationQuiescer: () => {},
+    registerTaskEventTrigger: () => {},
+    registerTaskQuiescer: () => {},
     registerIdentityTaskSource: () => {},
     // The notifications source builds its poller at construction. It is
     // stopped with the source in `afterEach`, and with no instances to
@@ -80,7 +80,7 @@ function makeRuntimeStub(workDir: string): unknown {
     getLifecycle: () => ({ getInstances: () => [] }),
     getNotificationsDeclaration: async () => undefined,
     getNotificationsPollConfig: () => resolvePollConfig(),
-    getAutomationsConfig: () => resolveAutomationsConfig(),
+    getTasksConfig: () => resolveTasksConfig(),
     getRunAdmission: () => createRunAdmission(),
     getMaxIterations: () => 25,
   };
@@ -93,7 +93,7 @@ const SOURCES = [
   { name: "instructions", factory: createInstructionsSource },
   { name: "files", factory: createFilesSource },
   { name: "conversations", factory: createConversationsSource },
-  { name: "automations", factory: createTasksSource },
+  { name: "tasks", factory: createTasksSource },
   { name: "notifications", factory: createNotificationsSource },
   // The core `nb` tools are not a platform app, but they take the same input
   // conventions and `set_model_config` is the reference patch tool.

@@ -393,7 +393,7 @@ async function handleCreate(
   const folderId = await placeIn(manifest.folder ?? "");
   const saved = await store.saveFile(decoded, manifest.filename, mimeType);
   // Provenance comes from the request, never the caller: the conversation in a
-  // chat, the run in an unattended automation run.
+  // chat, the run in an unattended task run.
   const ctx = getRequestContext();
   const entry: FileEntry = {
     id: saved.id,
@@ -471,7 +471,7 @@ export function createFilesSource(runtime: Runtime, eventSink: EventSink): McpSo
    */
   function partition(): { key: string; store: FileStore } {
     // Resolve the owner through the one shared rule (`resolveRequestUserId`) —
-    // the same path automations' source, the REST file handlers, and chat
+    // the same path tasks' source, the REST file handlers, and chat
     // rehydration use, so "who am I" never drifts between sources. Fail-closed:
     // a request with no identity throws.
     const ownerId = runtime.resolveRequestUserId(runtime.getCurrentIdentity() ?? undefined);

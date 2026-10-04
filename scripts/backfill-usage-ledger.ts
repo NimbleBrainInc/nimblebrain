@@ -8,7 +8,7 @@
  *   conversation JSONL  — exact. `llm.response` and `aux.usage` carry `ts`,
  *                         `model` and the full usage struct; owner and
  *                         workspace come from the path.
- *   automation runs     — approximate. The run record has `{inputTokens,
+ *   task runs     — approximate. The run record has `{inputTokens,
  *                         outputTokens, iterations}` and no model, so the line
  *                         is written per RUN rather than per call, with
  *                         `model: "unknown"`. The reader reports those as
@@ -40,7 +40,7 @@
  * substitutes.
  *
  * Usage:
- *   bun run migrate:usage-ledger -- --work-dir <dir> [--before <ISO-8601>] [--skip-automations] [--dry-run]
+ *   bun run migrate:usage-ledger -- --work-dir <dir> [--before <ISO-8601>] [--skip-tasks] [--dry-run]
  */
 
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -74,7 +74,7 @@ export class LayoutMovedError extends Error {
 interface Args {
   workDir: string;
   before?: string;
-  skipAutomations: boolean;
+  skipTasks: boolean;
   dryRun: boolean;
 }
 
@@ -85,13 +85,13 @@ function parseArgs(argv: string[]): Args {
   };
   const workDir = get("--work-dir");
   if (!workDir) {
-    console.error("usage: --work-dir <dir> [--before <ISO-8601>] [--skip-automations] [--dry-run]");
+    console.error("usage: --work-dir <dir> [--before <ISO-8601>] [--skip-tasks] [--dry-run]");
     process.exit(1);
   }
   return {
     workDir,
     ...(get("--before") ? { before: get("--before") as string } : {}),
-    skipAutomations: argv.includes("--skip-automations"),
+    skipTasks: argv.includes("--skip-tasks"),
     dryRun: argv.includes("--dry-run"),
   };
 }
@@ -216,7 +216,7 @@ function fromConversation(path: string): UsageLedgerEntry[] {
 }
 
 /**
- * Replay one automation's run index.
+ * Replay one task's run index.
  *
  * Approximate, and the limit this cannot design away: the record carries
  * `{inputTokens, outputTokens, iterations}` with no model and no per-call
@@ -224,7 +224,7 @@ function fromConversation(path: string): UsageLedgerEntry[] {
  * counts those as unpriced — tokens without a dollar figure — rather than
  * pricing them at zero, which would read as free.
  */
-function fromAutomationRuns(path: string): UsageLedgerEntry[] {
+function fromTaskRuns(path: string): UsageLedgerEntry[] {
   const entries: UsageLedgerEntry[] = [];
   for (const line of readFileSync(path, "utf-8").split("\n")) {
     if (!line) continue;
@@ -259,30 +259,30 @@ function fromAutomationRuns(path: string): UsageLedgerEntry[] {
 }
 
 /**
- * A run index: `tasks/<ownerId>/runs/<automationId>/index.jsonl` (`automations/` before
- * the boot migration moved it).
+ * A run index: `tasks/<ownerId>/runs/<taskId>/index.jsonl` (`automations/`
+ * before the boot migration moved it).
  *
- * The automation id between `runs/` and the file is the part that matters.
+ * The task id between `runs/` and the file is the part that matters.
  * Matching `runs/index.jsonl` — no id segment — matches nothing on a real tree,
  * and finding nothing is indistinguishable from having nothing to find: the
- * migration reports success having omitted every automation run, which on a
- * deployment that leans on automations is most of the spend this ledger exists
+ * migration reports success having omitted every task run, which on a
+ * deployment that leans on tasks is most of the spend this ledger exists
  * to show.
  */
 export function isRunIndex(path: string): boolean {
   if (basename(path) !== "index.jsonl") return false;
-  // The grandparent, because the automation id sits between `runs/` and the file.
+  // The grandparent, because the task id sits between `runs/` and the file.
   return basename(dirname(dirname(path))) === "runs";
 }
 
 /** Every replayable line under the given roots. */
-export function collectEntries(roots: string[], skipAutomations: boolean): UsageLedgerEntry[] {
+export function collectEntries(roots: string[], skipTasks: boolean): UsageLedgerEntry[] {
   const entries: UsageLedgerEntry[] = [];
   for (const root of roots) {
     const isConversation = (p: string) =>
       p.includes(`${sep}conversations${sep}`) && p.endsWith(".jsonl");
     for (const path of walk(root, isConversation)) entries.push(...fromConversation(path));
-    if (skipAutomations) continue;
+    if (skipTasks) continue;
 
     // Refuse to look clean — but only on evidence the layout actually moved.
     //
@@ -290,14 +290,14 @@ export function collectEntries(roots: string[], skipAutomations: boolean): Usage
     // predicate did NOT match. That is a run history written somewhere else,
     // which is the failure being guarded. A definition with no `runs/` subtree
     // is not evidence of anything: the directory is created lazily on first
-    // execution, so an automation created and never run looks exactly like one
+    // execution, so a task created and never run looks exactly like one
     // whose runs moved. A guard keyed on definitions cannot tell them apart and
     // takes down a healthy tree, and the conversation half with it.
     const runIndexes = walk(root, isRunIndex);
     const strayIndexes = walk(
       root,
       (p) =>
-        (p.includes(`${sep}tasks${sep}`) || p.includes(`${sep}automations${sep}`)) &&
+        (p.includes(`${sep}tasks${sep}`) || p.includes(`${sep}tasks${sep}`)) &&
         p.endsWith("index.jsonl") &&
         !isRunIndex(p),
     );
@@ -313,7 +313,7 @@ export function collectEntries(roots: string[], skipAutomations: boolean): Usage
           `which is the spend this ledger exists to show.`,
       );
     }
-    for (const path of runIndexes) entries.push(...fromAutomationRuns(path));
+    for (const path of runIndexes) entries.push(...fromTaskRuns(path));
   }
   return entries;
 }
@@ -350,21 +350,20 @@ async function main(): Promise<void> {
   const workspacesRoot = join(args.workDir, "workspaces");
   const archivedRoot = join(args.workDir, "archived");
 
-  const entries = collectEntries([workspacesRoot, archivedRoot], args.skipAutomations);
+  const entries = collectEntries([workspacesRoot, archivedRoot], args.skipTasks);
   // What was scanned, not only what will be written. A count of zero for either
   // source is the signal that a predicate stopped matching, and it is invisible
   // in a summary that reports written lines alone.
   const bySource = entries.reduce(
     (acc, e) => {
-      if (e.origin === "task") acc.automation++;
+      if (e.origin === "task") acc.task++;
       else acc.conversation++;
       return acc;
     },
-    { conversation: 0, automation: 0 },
+    { conversation: 0, task: 0 },
   );
   console.log(
-    `  scanned: ${bySource.conversation} conversation call(s), ` +
-      `${bySource.automation} automation run(s)`,
+    `  scanned: ${bySource.conversation} conversation call(s), ` + `${bySource.task} task run(s)`,
   );
   const liveStarts = liveStartsByMonth(args.workDir);
   const { byMonth, skipped } = partitionByMonth(entries, args.before, liveStarts);

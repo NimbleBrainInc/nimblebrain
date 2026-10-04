@@ -233,7 +233,7 @@ const SKILLS_DEACTIVATE_DESCRIPTION =
  * wall, and it is stronger here: instructions are one document a scope opts
  * into, while a skill can auto-load on a tool match and there can be many.
  *
- * Reads stay open deliberately. An automation that audits the catalog and
+ * Reads stay open deliberately. A task that audits the catalog and
  * reports what it found — stale skills, overlapping guidance, a recommendation
  * to retire one — is useful and changes nothing; it hands its conclusions to a
  * human who makes the change from an interactive session.
@@ -496,7 +496,7 @@ export function createSkillsSource(
               return errorResult(
                 new Error(
                   `Tool "${SKILLS_SOURCE_NAME}__${tool.name}" is not available inside an ` +
-                    "unattended automation run. A skill is durable guidance that loads " +
+                    "unattended task run. A skill is durable guidance that loads " +
                     "itself into later conversations, and there is no one present to " +
                     "confirm the change. Read and report from the run; write the skill " +
                     "from an interactive session.",

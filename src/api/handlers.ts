@@ -524,7 +524,7 @@ function mapArtifactReadError(err: unknown, uri: string, workspaceId: string): R
 
 /**
  * Read a resource from a kernel identity source (conversations, files,
- * automations) for POST /v1/workspaces/:wsId/resources/read. Every kernel
+ * tasks) for POST /v1/workspaces/:wsId/resources/read. Every kernel
  * identity source's data is workspace-owned, so the read resolves in the
  * workspace in the URL.
  */

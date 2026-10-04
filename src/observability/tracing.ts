@@ -40,7 +40,7 @@ let provider: NodeTracerProvider | undefined;
 
 /**
  * Install tracing for this process. Idempotent — safe to call from every entry
- * point (serve, dev, automations, tests). Reads two operator knobs:
+ * point (serve, dev, tasks, tests). Reads two operator knobs:
  *   - `OTEL_EXPORTER_OTLP_ENDPOINT` — collector base URL; unset = no export.
  *   - `NB_TENANT_ID` — this deployment's tenant; stamped on the Resource so
  *     every span carries it and it cannot be spoofed by a request.

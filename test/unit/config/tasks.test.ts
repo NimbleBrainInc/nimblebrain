@@ -2,12 +2,12 @@ import { describe, expect, it } from "bun:test";
 import {
   describeClampedLimits,
   effectiveRunLimits,
-  resolveAutomationsConfig,
-} from "../../../src/config/automations.ts";
+  resolveTasksConfig,
+} from "../../../src/config/tasks.ts";
 
-describe("resolveAutomationsConfig", () => {
+describe("resolveTasksConfig", () => {
   it("fills every key with its default when the block is absent, leaving no input ceiling", () => {
-    const resolved = resolveAutomationsConfig();
+    const resolved = resolveTasksConfig();
     expect(resolved).toEqual({
       maxConcurrentRuns: 2,
       maxQueuedRuns: 50,
@@ -19,17 +19,15 @@ describe("resolveAutomationsConfig", () => {
   });
 
   it("accepts an input ceiling far above the create range, up to its own maximum", () => {
-    expect(resolveAutomationsConfig({ maxRunInputTokens: 20_000_000 }).maxRunInputTokens).toBe(
+    expect(resolveTasksConfig({ maxRunInputTokens: 20_000_000 }).maxRunInputTokens).toBe(
       20_000_000,
     );
-    expect(resolveAutomationsConfig({ maxRunInputTokens: 5e9 }).maxRunInputTokens).toBe(
-      100_000_000,
-    );
-    expect(resolveAutomationsConfig({ maxRunInputTokens: 10 }).maxRunInputTokens).toBe(1_000);
+    expect(resolveTasksConfig({ maxRunInputTokens: 5e9 }).maxRunInputTokens).toBe(100_000_000);
+    expect(resolveTasksConfig({ maxRunInputTokens: 10 }).maxRunInputTokens).toBe(1_000);
   });
 
   it("keeps values inside their range and clamps the rest", () => {
-    const resolved = resolveAutomationsConfig({
+    const resolved = resolveTasksConfig({
       maxConcurrentRuns: 0,
       maxQueuedRuns: 5000,
       maxRunIterations: 80,
@@ -46,7 +44,7 @@ describe("resolveAutomationsConfig", () => {
   });
 
   it("falls back to the default for a value that is not a number", () => {
-    const resolved = resolveAutomationsConfig({
+    const resolved = resolveTasksConfig({
       maxConcurrentRuns: "4" as unknown as number,
       maxQueuedRuns: Number.NaN,
     });
@@ -55,12 +53,12 @@ describe("resolveAutomationsConfig", () => {
   });
 
   it("allows a zero-length queue", () => {
-    expect(resolveAutomationsConfig({ maxQueuedRuns: 0 }).maxQueuedRuns).toBe(0);
+    expect(resolveTasksConfig({ maxQueuedRuns: 0 }).maxQueuedRuns).toBe(0);
   });
 });
 
 describe("effectiveRunLimits", () => {
-  const ceilings = resolveAutomationsConfig({
+  const ceilings = resolveTasksConfig({
     maxRunIterations: 10,
     maxRunInputTokens: 50_000,
     maxRunDurationMs: 60_000,
@@ -76,7 +74,7 @@ describe("effectiveRunLimits", () => {
   });
 
   it("uses the runtime default for unset iterations and duration, and no input cap", () => {
-    const limits = effectiveRunLimits({}, resolveAutomationsConfig(), 25);
+    const limits = effectiveRunLimits({}, resolveTasksConfig(), 25);
     expect(limits).toEqual({ maxIterations: 25, maxRunDurationMs: 120_000 });
     expect("maxInputTokens" in limits).toBe(false);
   });

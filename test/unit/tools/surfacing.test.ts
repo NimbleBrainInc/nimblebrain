@@ -437,7 +437,7 @@ describe("surfaceTools — namespaced (cross-workspace) names", () => {
 // --- Kernel identity sources are always-direct (§4.2) ---
 //
 // The always-direct set is KERNEL tools = nb__ system core ∪ identity sources
-// (files / conversations / automations). Identity tools are hot substrate the
+// (files / conversations / tasks). Identity tools are hot substrate the
 // model reaches for unprompted; proxying them forces a promote on first use,
 // and every promote mutates the tools block ahead of the messages — busting
 // the conversation's cached prefix. Keeping them direct keeps the prefix stable.

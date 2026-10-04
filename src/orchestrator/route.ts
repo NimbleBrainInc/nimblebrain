@@ -547,10 +547,10 @@ async function resolveWorkspaceSource(
   let source = registry.getSource(sourceName);
   // Self-heal. An installed connector's source can be transiently absent from the
   // registry: a failed credential respawn or a remote-OAuth teardown removes it
-  // WITHOUT re-adding, and nothing on the chat / automation hot path
+  // WITHOUT re-adding, and nothing on the chat / task hot path
   // re-registers it — so the workspace stays toolless until a platform restart
   // (the failure that bricked a workspace's Dropbox tools mid-run for both chat
-  // and its scheduled automations). Give the runtime ONE best-effort,
+  // and its scheduled tasks). Give the runtime ONE best-effort,
   // cooldown-guarded chance to re-spawn the source from its persisted ref, then
   // re-resolve against the same registry. A still-missing source falls through
   // to the same `UnknownToolSource` — recovery only repairs a recoverable

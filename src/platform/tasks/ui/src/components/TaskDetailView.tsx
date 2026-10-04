@@ -2,7 +2,7 @@ import { useDataSync } from "@nimblebrain/synapse/react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { BackArrowIcon, WarningIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
-import type { AutomationDetail, AutomationRun } from "../types.ts";
+import type { TaskDetail, TaskRun } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import {
   asDict,
@@ -17,8 +17,8 @@ import { RunRow } from "./RunRow.tsx";
 import { ScheduleEditor } from "./ScheduleEditor.tsx";
 import { SkeletonCards } from "./Skeleton.tsx";
 
-export function AutomationDetailView({
-  automationName,
+export function TaskDetailView({
+  taskName,
   onBack,
   actionInProgress,
   onRunNow: _onRunNow,
@@ -27,7 +27,7 @@ export function AutomationDetailView({
   onCancel,
   onUpdate,
 }: {
-  automationName: string;
+  taskName: string;
   onBack: () => void;
   actionInProgress?: string;
   onRunNow: () => void;
@@ -38,12 +38,12 @@ export function AutomationDetailView({
 }) {
   const statusTool = useTool<string>("status");
   const runNowTool = useTool<string>("run");
-  const [detail, setDetail] = useState<AutomationDetail | null>(null);
-  const [detailRuns, setDetailRuns] = useState<AutomationRun[]>([]);
+  const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [detailRuns, setDetailRuns] = useState<TaskRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<AutomationRun | null>(null);
+  const [testResult, setTestResult] = useState<TaskRun | null>(null);
   const [testRunning, setTestRunning] = useState(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: statusTool.call is stable, adding it would cause infinite re-renders
@@ -51,10 +51,10 @@ export function AutomationDetailView({
     setLoading(true);
     setError(null);
     try {
-      const result = await statusTool.call({ name: automationName, limit: 20 });
-      const { automation, runs } = parseStatusResult(asDict(result.data));
-      if (automation) {
-        setDetail(automation);
+      const result = await statusTool.call({ name: taskName, limit: 20 });
+      const { task, runs } = parseStatusResult(asDict(result.data));
+      if (task) {
+        setDetail(task);
         setDetailRuns(runs);
       }
     } catch (err) {
@@ -62,7 +62,7 @@ export function AutomationDetailView({
     } finally {
       setLoading(false);
     }
-  }, [automationName]);
+  }, [taskName]);
 
   useEffect(() => {
     loadDetail();
@@ -77,7 +77,7 @@ export function AutomationDetailView({
     setEditing(null);
     setError(null);
     try {
-      await onUpdate(automationName, { [field]: value });
+      await onUpdate(taskName, { [field]: value });
       // Refresh ONLY on success. loadDetail() calls setError(null) before its
       // first await, so calling it after a failed save runs in the same
       // synchronous continuation as the catch's setError(message) — React
@@ -94,9 +94,9 @@ export function AutomationDetailView({
     setTestRunning(true);
     setTestResult(null);
     try {
-      const result = await runNowTool.call({ name: automationName });
+      const result = await runNowTool.call({ name: taskName });
       const data = asDict(result.data);
-      const run = data.run as AutomationRun | undefined;
+      const run = data.run as TaskRun | undefined;
       setTestResult(run ?? null);
       loadDetail(); // refresh status
     } catch {
@@ -108,12 +108,7 @@ export function AutomationDetailView({
 
   if (!detail) {
     return (
-      <DetailLoadingState
-        loading={loading}
-        error={error}
-        automationName={automationName}
-        onBack={onBack}
-      />
+      <DetailLoadingState loading={loading} error={error} taskName={taskName} onBack={onBack} />
     );
   }
 
@@ -168,14 +163,14 @@ function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
 
-/** Splits the `status` tool payload into the automation detail and its recent runs. */
+/** Splits the `status` tool payload into the task detail and its recent runs. */
 function parseStatusResult(data: Record<string, unknown>): {
-  automation: AutomationDetail | undefined;
-  runs: AutomationRun[];
+  task: TaskDetail | undefined;
+  runs: TaskRun[];
 } {
   return {
-    automation: data.automation as AutomationDetail | undefined,
-    runs: (data.recentRuns as AutomationRun[]) ?? [],
+    task: data.task as TaskDetail | undefined,
+    runs: (data.recentRuns as TaskRun[]) ?? [],
   };
 }
 
@@ -187,7 +182,7 @@ function cancelButtonLabel(actionInProgress: string | undefined, testRunning: bo
 }
 
 /** Label for the pause/resume/re-enable toggle button. */
-function toggleButtonLabel(actionInProgress: string | undefined, d: AutomationDetail): string {
+function toggleButtonLabel(actionInProgress: string | undefined, d: TaskDetail): string {
   if (actionInProgress === "pausing") return "Pausing…";
   if (actionInProgress === "resuming") return "Resuming…";
   if (d.enabled) return "Pause";
@@ -198,12 +193,12 @@ function toggleButtonLabel(actionInProgress: string | undefined, d: AutomationDe
 function DetailLoadingState({
   loading,
   error,
-  automationName,
+  taskName,
   onBack,
 }: {
   loading: boolean;
   error: string | null;
-  automationName: string;
+  taskName: string;
   onBack: () => void;
 }) {
   if (loading) {
@@ -231,7 +226,7 @@ function DetailLoadingState({
             <button type="button" className="back-btn" onClick={onBack}>
               <BackArrowIcon />
             </button>
-            <div className="detail-name">{automationName}</div>
+            <div className="detail-name">{taskName}</div>
           </div>
         </div>
         <div className="content">
@@ -244,7 +239,7 @@ function DetailLoadingState({
 }
 
 /** Detail header: back button, status dot, name, paused/auto-disabled tag, description, and any disabled reason. */
-function DetailHeader({ d, onBack }: { d: AutomationDetail; onBack: () => void }) {
+function DetailHeader({ d, onBack }: { d: TaskDetail; onBack: () => void }) {
   return (
     <div className="header">
       <div className="detail-header">
@@ -301,7 +296,7 @@ function DetailActions({
   onToggle,
   onDelete,
 }: {
-  d: AutomationDetail;
+  d: TaskDetail;
   actionInProgress: string | undefined;
   testRunning: boolean;
   disabled: boolean;
@@ -338,13 +333,7 @@ function DetailActions({
 }
 
 /** Result card for the most recent manual ("Run Now") execution. */
-function ManualRunResult({
-  result,
-  onDismiss,
-}: {
-  result: AutomationRun | null;
-  onDismiss: () => void;
-}) {
+function ManualRunResult({ result, onDismiss }: { result: TaskRun | null; onDismiss: () => void }) {
   if (!result) return null;
   return (
     <div className="detail-section">
@@ -410,7 +399,7 @@ function ManualRunResult({
   );
 }
 
-/** Prompt section: click-to-edit textarea for the automation's prompt. */
+/** Prompt section: click-to-edit textarea for the task's prompt. */
 function PromptSection({
   prompt,
   isEditing,
@@ -442,7 +431,7 @@ function PromptSection({
 }
 
 /** Cumulative token usage, actual spend, and per-period budget row. */
-function TokenUsageRow({ d }: { d: AutomationDetail }) {
+function TokenUsageRow({ d }: { d: TaskDetail }) {
   return (
     <div className="detail-status-row" style={{ fontSize: 11 }}>
       <span>
@@ -470,7 +459,7 @@ function TokenUsageRow({ d }: { d: AutomationDetail }) {
 }
 
 /** Status section: enabled state, run count, error backoff, timing, cost, token usage, and provenance. */
-function StatusSection({ d }: { d: AutomationDetail }) {
+function StatusSection({ d }: { d: TaskDetail }) {
   return (
     <div className="detail-section">
       <div className="detail-section-title">Status</div>
@@ -541,7 +530,7 @@ function ConfigSection({
   onSave,
   onCancelEdit,
 }: {
-  d: AutomationDetail;
+  d: TaskDetail;
   editing: string | null;
   onEdit: (field: string) => void;
   onSave: (field: string, value: unknown) => void;
@@ -654,8 +643,8 @@ function ConfigSection({
   );
 }
 
-/** Recent runs list, or an empty state when the automation has never run. */
-function RecentRuns({ runs }: { runs: AutomationRun[] }) {
+/** Recent runs list, or an empty state when the task has never run. */
+function RecentRuns({ runs }: { runs: TaskRun[] }) {
   return (
     <div className="detail-section">
       <div className="detail-section-title">Recent Runs</div>

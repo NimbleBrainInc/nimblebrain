@@ -84,7 +84,7 @@ test("a task run's spend reaches the report — the defect the ledger exists to 
   const report = await aggregateUsage(workDir, "month", "origin");
   expect(report.totals.llmCalls).toBe(lines.length);
   // Counted as a run, not a conversation — `sessionId` holds a run id here, so
-  // conflating the two would report an automation as someone chatting.
+  // conflating the two would report a task as someone chatting.
   expect(report.totals.runs).toBe(1);
   expect(report.totals.conversations).toBe(0);
   expect(report.breakdown.find((b) => b.key === "task")).toBeDefined();
@@ -133,7 +133,7 @@ test("an unpriced line reports its tokens and is counted, not billed as zero", a
 
   // Unpriced lines arise from backfill, not from live writes: the writer
   // resolves rates whenever the catalog knows the model, and a backfilled
-  // automation run has no model recorded at all. So this writes the shape
+  // task run has no model recorded at all. So this writes the shape
   // backfill produces and reads it back, which is where the distinction has to
   // hold — the reader is what decides whether "no price" reads as "free".
   const month = usageMonthOf(new Date());

@@ -11,10 +11,10 @@ import { MetricsEventSink } from "../adapters/metrics-events.ts";
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
-import { type ResolvedAutomationsConfig, resolveAutomationsConfig } from "../config/automations.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
+import { type ResolvedTasksConfig, resolveTasksConfig } from "../config/tasks.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import {
   ConnectorCatalog,
@@ -131,6 +131,7 @@ import {
 } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
+import { migrateAgentTargetKeys } from "../notifications/config.ts";
 import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
 import { positionOutbox } from "../notifications/position.ts";
 import { NotificationStore } from "../notifications/store.ts";
@@ -161,11 +162,11 @@ import {
   PermissionStore,
 } from "../permissions/permission-store.ts";
 import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
-import type { AutomationDomainContext } from "../platform/tasks/domain.ts";
+import type { TaskDomainContext } from "../platform/tasks/domain.ts";
 import type {
-  AutomationEventTrigger,
   EventWakeAck,
   EventWakeRequest,
+  TaskEventTrigger,
 } from "../platform/tasks/event-trigger.ts";
 import type {
   AppStateInfo,
@@ -416,16 +417,16 @@ export interface ConversationChange extends ConversationMutation {
 }
 
 /**
- * What a workspace delete needs from the automations scheduler.
+ * What a workspace delete needs from the tasks scheduler.
  *
  * A structural interface `Scheduler` already satisfies, so the scheduler is
- * handed over by the automations source at construction (like the event
+ * handed over by the tasks source at construction (like the event
  * trigger) rather than imported here — `src/runtime/` may not reach into
- * `src/platform/`, and a runtime without automations simply has nothing
+ * `src/platform/`, and a runtime without tasks simply has nothing
  * registered.
  */
-export interface AutomationQuiescer {
-  /** Forget every automation belonging to `wsId`; returns how many. */
+export interface TaskQuiescer {
+  /** Forget every task belonging to `wsId`; returns how many. */
   dropWorkspace(wsId: string): number;
 }
 
@@ -504,9 +505,9 @@ export class Runtime {
    *
    * The run doors (`startRun`, `dispatchUnattended`) wait on it. Nothing reaches
    * them over HTTP before `start()` returns, but the sources started inside
-   * `start()` (the automations scheduler, the notifications dispatcher) run
+   * `start()` (the tasks scheduler, the notifications dispatcher) run
    * their timers from the moment they are created, and a scheduler that boots
-   * with an overdue automation fires it at once.
+   * with an overdue task fires it at once.
    */
   private readonly _bootReady = bootBarrier();
   // Protected sources are captured in start() and passed to startWorkspaceConnectors directly.
@@ -528,15 +529,15 @@ export class Runtime {
    */
   private _workspaceSources: ToolSource[] = [];
   /**
-   * Domain-context getter for the automations app. Set by the automations
+   * Domain-context getter for the tasks app. Set by the tasks
    * source factory; consumed by an internal caller that needs the full
    * domain shape — including the operator-only `source` field the
    * LLM-facing tool schema deliberately doesn't expose. See
    * `src/platform/AGENTS.md` § 1.4.
    */
-  private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
-  private _automationEventTrigger: AutomationEventTrigger | null = null;
-  private _automationQuiescer: AutomationQuiescer | null = null;
+  private _tasksContextGetter: (() => TaskDomainContext) | null = null;
+  private _taskEventTrigger: TaskEventTrigger | null = null;
+  private _taskQuiescer: TaskQuiescer | null = null;
   /** Identity sources' task surfaces, by source name (see {@link registerIdentityTaskSource}). */
   private readonly _identityTaskSources = new Map<string, IdentityTaskSource>();
   /**
@@ -709,7 +710,7 @@ export class Runtime {
 
     // Register built-in transport credential providers (e.g. `minted`) at the
     // ONE composition root every entry point shares — serve, the no-subcommand
-    // TUI/headless boot, and the automation runner all reach here before
+    // TUI/headless boot, and the task runner all reach here before
     // startWorkspaceConnectors. Idempotent (last-writer-wins); doing it here instead
     // of per-entry-point avoids a provider-auth source failing to boot under any
     // path that forgot to register.
@@ -758,6 +759,12 @@ export class Runtime {
     const workspaceStore = new WorkspaceStore(workDir);
     await assertWorkspaceIdsConform(workspaceStore);
     await retireLegacyPersonalWorkspaces(workspaceStore, userStore);
+    // Route targets stored under their old key take the `task` key once, before
+    // anything reads a route.
+    const retargeted = await migrateAgentTargetKeys(workspaceStore);
+    if (retargeted > 0) {
+      log.info("[runtime] rewrote agent route targets to the task key", { workspaces: retargeted });
+    }
     // The runtime is the one owner of the identity provider: the server
     // authenticates with this one, and every permission check here judges the
     // identity it verified. There is no runtime without one: no `instance.json`
@@ -1450,13 +1457,13 @@ export class Runtime {
 
   /**
    * Unattended agent execution. Sibling door to `chat()` for scheduled
-   * automations, operator-run automations, eval runs, and embedded callers.
+   * tasks, operator-run tasks, eval runs, and embedded callers.
    *
    * Contract differences vs. `chat()`:
    *  - Each call is a one-shot run that produces a deliverable, not a
    *    conversation: nothing is persisted to a conversation store, there is no
    *    resume, and no concurrency lock (a re-entrant scheduler tick on the same
-   *    automation is two runs, which is the correct semantic — each tick is its
+   *    task is two runs, which is the correct semantic — each tick is its
    *    own run).
    *  - The prompt goes in as a plain user message — no content parts, no file
    *    refs, and no trigger matching: a task description is not a phrase a skill
@@ -1486,7 +1493,7 @@ export class Runtime {
         : undefined;
     try {
       // Identity resolution mirrors chat(): no identity throws. Scheduler
-      // callers pass `{ id: automation.ownerId }` as a minimal identity.
+      // callers pass `{ id: task.ownerId }` as a minimal identity.
       const requestIdentity = requireRequestIdentity(request.identity);
 
       // The run's single working workspace. Tool scope, skill/connector scope,
@@ -1519,7 +1526,7 @@ export class Runtime {
   ): Promise<TaskResult> {
     const ownerId = requestIdentity.id;
     const handle = await this.startRun({
-      // An automation fires as `schedule` (a cron tick) or `manual` (Run now);
+      // A task fires as `schedule` (a cron tick) or `manual` (Run now);
       // anything driving the runtime directly is `api`.
       trigger: request.trigger ?? "api",
       principal: { identity: requestIdentity, ownerId },
@@ -1560,7 +1567,7 @@ export class Runtime {
    * The run-start door — the one place an agent run is established.
    *
    * Every trigger describes its run as a {@link RunSpec} and comes through
-   * here: chat, an automations cron tick, an operator's Run now, an embedded
+   * here: chat, a tasks cron tick, an operator's Run now, an embedded
    * caller. What the door owns, once, for all of them:
    *
    *  - the membership re-check for the workspace the run acts in;
@@ -1591,8 +1598,8 @@ export class Runtime {
 
     // ── The gate ────────────────────────────────────────────────────────────
     // Current membership of the workspace the run acts in, for every run that
-    // CONTINUES something established earlier — a resumed conversation, an
-    // automation authored weeks ago. Their workspace was membership-validated
+    // CONTINUES something established earlier — a resumed conversation, a
+    // task authored weeks ago. Their workspace was membership-validated
     // when they were created, and that is precisely the check that goes stale:
     // without this, a member offboarded from the workspace keeps acting in it,
     // through its tools and its connectors, for as long as the resource lives.
@@ -1608,7 +1615,7 @@ export class Runtime {
     // written and before any tool is bound, so a refused run touches nothing.
     //
     // The two refusals differ because the callers' contracts do, not because
-    // the check does: a chat resume is a 403 to a person; an automation run is
+    // the check does: a chat resume is a 403 to a person; a task run is
     // a SKIPPED run the scheduler retries, self-healing the moment the owner is
     // re-added.
     if (
@@ -2186,7 +2193,7 @@ export class Runtime {
    *
    * An unattended run can ingest untrusted content with nobody watching, so
    * both durable-authoring surfaces are subtracted: it must not rewrite, spawn,
-   * or fire automations (`isTaskForbiddenIdentityTool`), nor author a skill
+   * or fire tasks (`isTaskForbiddenIdentityTool`), nor author a skill
    * (`isTaskForbiddenSkillTool` — durable guidance that would load itself into
    * later conversations). An attended run keeps both; there is a human in the
    * loop. Neither filter needs its own `unattended` check — `attended` is the
@@ -2660,7 +2667,7 @@ export class Runtime {
       identityId,
       workspaceId,
       runtime: this,
-      caller: attended ? "chat" : "automation",
+      caller: attended ? "chat" : "task",
       ...(allowedTools
         ? { isToolAllowed: (name: string) => isToolAllowedForRun(name, allowedTools) }
         : {}),
@@ -3538,7 +3545,7 @@ export class Runtime {
 
   /**
    * Resolve a kernel identity-scoped source by name. v1 set: `conversations`
-   * (Files / Automations join when their data moves to identity ownership).
+   * (Files / Tasks join when their data moves to identity ownership).
    * Returns `undefined` for an unknown or non-identity source. No workspace:
    * these dispatch with identity authority and gate reads via `canAccess`.
    */
@@ -3974,7 +3981,7 @@ export class Runtime {
   /**
    * True if `principalId` is currently a member of `wsId`. The one "is this principal still allowed in this workspace"
    * check behind every gate that asks it: the run-start door (`startRun`, for a
-   * conversation resume and an automation run alike) and the unattended
+   * conversation resume and a task run alike) and the unattended
    * dispatch (ADR-0007).
    *
    * Public because the second of those lives outside this file
@@ -4088,15 +4095,15 @@ export class Runtime {
    */
   async deleteWorkspace(wsId: string): Promise<WorkspaceDeleteResult> {
     // First, before the teardown and long before the rename: disarm this
-    // workspace's automations. The scheduler holds them in memory and nothing
+    // workspace's tasks. The scheduler holds them in memory and nothing
     // else drops them, so one firing mid-teardown would run against
     // half-removed connectors, and one firing after the rename would have its
     // store re-create the archived directory. Dropping them is what makes the
     // correct behaviour independent of a write failing — the guard in
     // `ensureWorkspaceDir` is the floor under it, not the mechanism.
-    const disarmed = this._automationQuiescer?.dropWorkspace(wsId) ?? 0;
+    const disarmed = this._taskQuiescer?.dropWorkspace(wsId) ?? 0;
     if (disarmed > 0)
-      log.info("[runtime] disarmed automations for deleted workspace", { wsId, disarmed });
+      log.info("[runtime] disarmed tasks for deleted workspace", { wsId, disarmed });
 
     const ws = await this.getWorkspaceStore().get(wsId);
     const connectors: ConnectorTeardownOutcome[] = [];
@@ -4770,53 +4777,51 @@ export class Runtime {
   }
 
   /**
-   * Register the automations domain context getter. Called by the
-   * automations platform source during construction. Internal callers
-   * (CLI, lifecycle) read it back via `getAutomationsContext()` to bypass
+   * Register the tasks domain context getter. Called by the
+   * tasks platform source during construction. Internal callers
+   * (CLI, lifecycle) read it back via `getTasksContext()` to bypass
    * the LLM-facing tool surface and call the domain API directly.
    */
-  registerAutomationsContext(getter: () => AutomationDomainContext): void {
-    this._automationsContextGetter = getter;
+  registerTasksContext(getter: () => TaskDomainContext): void {
+    this._tasksContextGetter = getter;
   }
 
   /**
-   * Get a workspace-scoped automations domain context. Throws if the
-   * automations source isn't registered (e.g. minimal test runtimes).
+   * Get a workspace-scoped tasks domain context. Throws if the
+   * tasks source isn't registered (e.g. minimal test runtimes).
    * Each call returns a fresh context bound to the current request's
    * workspace — workspace switching between calls is safe.
    */
-  getAutomationsContext(): AutomationDomainContext {
-    if (!this._automationsContextGetter) {
-      throw new Error(
-        "Automations source not registered — runtime started without platform sources?",
-      );
+  getTasksContext(): TaskDomainContext {
+    if (!this._tasksContextGetter) {
+      throw new Error("Tasks source not registered — runtime started without platform sources?");
     }
-    return this._automationsContextGetter();
+    return this._tasksContextGetter();
   }
 
   /**
-   * Register the automations event trigger. Called by the automations platform
+   * Register the tasks event trigger. Called by the tasks platform
    * source during construction; the notifications source reads it back through
-   * {@link wakeAutomationOnNotification}.
+   * {@link wakeTaskOnNotification}.
    *
    * A registration rather than a direct import for the reason
-   * {@link registerAutomationsContext} is one: the two sources are built
+   * {@link registerTasksContext} is one: the two sources are built
    * independently and neither may depend on the other's construction order. A
-   * runtime without automations simply has no trigger, and a route naming one
+   * runtime without tasks simply has no trigger, and a route naming one
    * gets a ledger row saying so.
    */
-  registerAutomationEventTrigger(trigger: AutomationEventTrigger): void {
-    this._automationEventTrigger = trigger;
+  registerTaskEventTrigger(trigger: TaskEventTrigger): void {
+    this._taskEventTrigger = trigger;
   }
 
   /**
-   * Register the automations scheduler as the thing {@link deleteWorkspace}
-   * quiesces. Called by the automations platform source during construction,
+   * Register the tasks scheduler as the thing {@link deleteWorkspace}
+   * quiesces. Called by the tasks platform source during construction,
    * for the same reason the two registrations above are: the runtime may not
    * import the app that owns the scheduler.
    */
-  registerAutomationQuiescer(quiescer: AutomationQuiescer): void {
-    this._automationQuiescer = quiescer;
+  registerTaskQuiescer(quiescer: TaskQuiescer): void {
+    this._taskQuiescer = quiescer;
   }
 
   /**
@@ -4835,22 +4840,22 @@ export class Runtime {
   }
 
   /**
-   * Hand one routed notification to an automation.
+   * Hand one routed notification to a task.
    *
    * The only path from a delivery to an agent run, and it starts at a route a
    * workspace admin wrote — this function does not decide that a path exists,
    * it carries an item down one that already does.
    */
-  wakeAutomationOnNotification(req: EventWakeRequest): EventWakeAck {
-    if (!this._automationEventTrigger) {
+  wakeTaskOnNotification(req: EventWakeRequest): EventWakeAck {
+    if (!this._taskEventTrigger) {
       return {
         accepted: false,
         outcome: "denied",
-        classification: "automations_unavailable",
-        reason: "this runtime has no automations source, so nothing can be woken",
+        classification: "tasks_unavailable",
+        reason: "this runtime has no tasks source, so nothing can be woken",
       };
     }
-    return this._automationEventTrigger.offer(req);
+    return this._taskEventTrigger.offer(req);
   }
 
   /** Get the loaded InstanceConfig (null when no instance.json exists). */
@@ -5803,25 +5808,23 @@ export class Runtime {
   }
 
   /**
-   * The automations block, resolved with its defaults and clamps. Read once,
-   * when the automations source builds its scheduler and executor.
+   * The tasks block, resolved with its defaults and clamps. Read once,
+   * when the tasks source builds its scheduler and executor.
    */
-  getAutomationsConfig(): ResolvedAutomationsConfig {
-    return resolveAutomationsConfig(this.config.automations);
+  getTasksConfig(): ResolvedTasksConfig {
+    return resolveTasksConfig(this.config.tasks);
   }
 
   /**
    * The pool every unattended run is admitted through (`executeTask`). Sized by
-   * `automations.maxConcurrentRuns` / `maxQueuedRuns`. Exposed so a source that
+   * `tasks.maxConcurrentRuns` / `maxQueuedRuns`. Exposed so a source that
    * must answer at request time whether its run started or queued can hold a
    * slot itself and hand it to `executeTask` (`TaskRequest.admission`).
    * Created on first use, so a prototype-built test double gets one too.
    */
   getRunAdmission(): RunAdmission {
     if (!this._runAdmission) {
-      const { maxConcurrentRuns, maxQueuedRuns } = resolveAutomationsConfig(
-        this.config?.automations,
-      );
+      const { maxConcurrentRuns, maxQueuedRuns } = resolveTasksConfig(this.config?.tasks);
       this._runAdmission = createRunAdmission({ maxConcurrentRuns, maxQueuedRuns });
     }
     return this._runAdmission;
@@ -5978,7 +5981,7 @@ export class Runtime {
 
 /**
  * The workspace a request runs in. Every door names one: the HTTP doors from
- * the URL (ADR-0037), the scheduler from the automation's own workspace, an
+ * the URL (ADR-0037), the scheduler from the task's own workspace, an
  * in-process caller explicitly. A request naming none is a caller bug, under
  * every identity provider; the runtime never chooses a workspace for it.
  */
@@ -6319,9 +6322,9 @@ function buildRunContext(
     // run id when it doesn't, so every reader asking for the current
     // conversation of a one-shot run correctly gets nothing.
     ...(spec.conversation ? { conversationId: spec.conversation.conversation.id } : { runId }),
-    // Unattended runs bar the automation-authoring surface at tool-dispatch
+    // Unattended runs bar the task-authoring surface at tool-dispatch
     // depth. Rides the ALS context and is preserved across the per-call
-    // restamp, so the wall is enforced at the automations source rather than
+    // restamp, so the wall is enforced at the tasks source rather than
     // per-router-construction. See `createTasksSource`.
     ...(attended ? {} : { unattended: true }),
   };
@@ -6369,7 +6372,7 @@ function buildOpeningMessage(input: RunSpec["input"]): StoredMessage {
  * throws and discards it (engine.ts `run.error` path). A run with nothing else
  * persisting its events therefore has to reconstruct the totals from the events
  * it emitted — the same `llm.done` / `tool.done` shape `PostHogEventSink` reads
- * — and retain them across the throw, so a timed-out automation reports the work
+ * — and retain them across the throw, so a timed-out task reports the work
  * it actually did instead of 0/0/0/0. Drops with the process: a real SIGKILL
  * still reports zero, and the persisted run result is the post-mortem.
  */
@@ -6392,7 +6395,7 @@ function createPartialRunAccumulator(): {
         const { data } = event;
         // `errorReason` is intentionally absent here: this accumulator only
         // feeds the abort/timeout path, which always returns
-        // `stopReason: "aborted"` (never "complete"), so the automations
+        // `stopReason: "aborted"` (never "complete"), so the tasks
         // de-masker's `status === "success"` guard never reads it. (The
         // `tool.done` event doesn't carry `errorReason` either — no point
         // threading it through for a path that can't de-mask.)
