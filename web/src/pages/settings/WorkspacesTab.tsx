@@ -19,6 +19,7 @@ import {
 import { Tooltip } from "../../components/ui/tooltip";
 import { useSession } from "../../context/SessionContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { MAX_WORKSPACE_NAME_LENGTH } from "../../lib/workspace-name";
 import { toSlug } from "../../lib/workspace-slug";
 import { EmptyState, InlineError, SettingsListPage } from "./components";
 
@@ -71,6 +72,7 @@ function CreateWorkspaceForm({
         <Input
           id="create-ws-name"
           value={name}
+          maxLength={MAX_WORKSPACE_NAME_LENGTH}
           onChange={(e) => onNameChange(e.target.value)}
           placeholder="e.g. Sales team"
           onKeyDown={(e) => {
@@ -292,10 +294,14 @@ export function WorkspacesTab() {
     setCreating(true);
     setCreateError(null);
     try {
-      await callToolWithoutWorkspace("nb", "manage_workspaces", {
+      // A refusal (a name over the limit, a missing permission) comes back as a
+      // result, not a throw; parseToolResult throws on it, so the form keeps the
+      // name and shows the reason instead of closing as if it had worked.
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
         action: "create",
         name: createName.trim(),
       });
+      parseToolResult(res);
       setCreateName("");
       setShowCreate(false);
       await Promise.all([fetchWorkspaces(), refreshWorkspaces()]);

@@ -147,7 +147,7 @@ function UsersTable({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Display Name</TableHead>
+          <TableHead>Display name</TableHead>
           <TableHead>Email</TableHead>
           <TableHead>Role</TableHead>
           <TableHead>Created</TableHead>
@@ -271,7 +271,7 @@ export function UsersTab() {
       loadingMessage="Loading users..."
       loadError={error}
       create={{
-        label: "Create User",
+        label: "Create user",
         icon: <UserPlus className="mr-1 h-4 w-4" />,
         showing: showCreate,
         onToggle: () => {
@@ -292,7 +292,7 @@ export function UsersTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="create-name">Display Name</Label>
+                <Label htmlFor="create-name">Display name</Label>
                 <Input
                   id="create-name"
                   value={createName}
@@ -318,7 +318,7 @@ export function UsersTab() {
               onClick={handleCreate}
               disabled={creating || !createEmail.trim() || !createName.trim()}
             >
-              {creating ? "Creating..." : "Create User"}
+              {creating ? "Creating..." : "Create user"}
             </Button>
           </>
         ),

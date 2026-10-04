@@ -49,7 +49,7 @@ interface ProfileValues {
 type ProfileField = keyof ProfileValues;
 
 const LABELS: Record<ProfileField, string> = {
-  displayName: "Display Name",
+  displayName: "Display name",
   timezone: "Timezone",
   model: "Your model",
   theme: "Theme",

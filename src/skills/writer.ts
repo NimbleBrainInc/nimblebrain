@@ -105,11 +105,9 @@ function manifestToFrontmatter(manifest: SkillManifest): Record<string, unknown>
 
 /**
  * Atomically write a file: write to a `.tmp` sibling, then rename over
- * the target. If the rename fails the original file is untouched. Exported so
- * the one-time frontmatter migration (`scripts/migrate-skill-frontmatter.ts`)
- * rewrites tenant skill files atomically through the same path.
+ * the target. If the rename fails the original file is untouched.
  */
-export function atomicWriteFile(filePath: string, content: string): void {
+function atomicWriteFile(filePath: string, content: string): void {
   const tmpPath = `${filePath}.tmp`;
   writeFileSync(tmpPath, content, "utf-8");
   renameSync(tmpPath, filePath);
@@ -117,11 +115,9 @@ export function atomicWriteFile(filePath: string, content: string): void {
 
 /**
  * Serialize a manifest + body into a complete skill markdown string
- * (YAML frontmatter + body). Exported so the one-time frontmatter migration
- * (`scripts/migrate-skill-frontmatter.ts`) emits byte-identical canonical
- * output to a freshly-written skill — no second serializer to drift.
+ * (YAML frontmatter + body).
  */
-export function serializeSkill(manifest: SkillManifest, body: string): string {
+function serializeSkill(manifest: SkillManifest, body: string): string {
   const fm = manifestToFrontmatter(manifest);
   return matter.stringify(`\n${body}\n`, fm);
 }

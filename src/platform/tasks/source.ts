@@ -19,7 +19,6 @@ import {
   type JudgePort,
   judgeWarnings,
 } from "./judge.ts";
-import { migrateTaskStorage } from "./migrate-storage.ts";
 import { countsAsEventFire, isOpenRun, Scheduler } from "./scheduler.ts";
 import { TOOL_SCHEMAS } from "./schemas.ts";
 import {
@@ -229,9 +228,6 @@ export async function createTasksSource(
   eventSink: EventSink,
 ): Promise<McpSource> {
   const workDir = runtime.getWorkDir();
-  // Storage written under the old `automations/` folder moves to `tasks/`
-  // before anything reads it, the scheduler included.
-  migrateTaskStorage(workDir);
   const defaultTimezone = resolveDefaultTimezone(process.env.NB_TIMEZONE);
   const tasksConfig = runtime.getTasksConfig();
   // The chat default is read per run: an admin can change it at runtime.

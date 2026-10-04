@@ -640,10 +640,10 @@ function shardsForMonth(dir: string): string[] {
 /**
  * Read the ledger lines in range, oldest month first.
  *
- * A month's directory holds one shard per writer plus, after a migration,
- * `backfill.jsonl`. All are read: the backfill shard covers the period before
- * the live writer existed, and its cutoff is what keeps the two from
- * overlapping (see `scripts/backfill-usage-ledger.ts`).
+ * A month's directory holds one shard per writer plus, on a deployment that
+ * predates the live writer, `backfill.jsonl`. All are read: the backfill shard
+ * covers the period before the live writer existed and stops at the writer's
+ * first line, so the two do not overlap.
  */
 async function readLedger(
   workDir: string,
