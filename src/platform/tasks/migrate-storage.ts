@@ -13,7 +13,8 @@
  *   no such key and is left alone, so a crash mid-rewrite is finished by the
  *   next boot. The rewrite runs only on the old dir: a record written
  *   directly under `tasks/` by a runtime that predates the field rename keeps
- *   `automationId` and reads as a run of an unknown task.
+ *   `automationId`, so its task can't be resolved from it: the run reads as
+ *   one of an unknown task, and its result can't be fetched by run id.
  * - **One rename per owner dir** when the owner has no `tasks/` dir yet. A
  *   rename is atomic, so a crash leaves each owner either moved or not.
  * - **A merge, file by file, when both exist** (a process still on the old
