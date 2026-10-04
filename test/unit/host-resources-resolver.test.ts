@@ -18,10 +18,11 @@ import { blobOf, textOf } from "../helpers/resource-contents.ts";
 // in) — passing it to the factory so a `files://` read resolves in that
 // workspace's partition only. The URI is bare (carries just the file id); the
 // scope rides on the ctx, never the URI. It enforces the scheme allowlist and
-// surfaces the MCP-standard error codes (`-32602` for invalid scheme, `-32002`
-// for resource not found).
+// surfaces the specification's error code, `-32602`, for both an invalid scheme
+// and a resource not found; the data tells them apart (`{ uri }` alone means
+// not found).
 
-const RESOURCE_NOT_FOUND = -32002;
+const RESOURCE_NOT_FOUND = -32602;
 const INVALID_PARAMS = -32602;
 
 let rootDir: string;
@@ -134,7 +135,7 @@ describe("FileBackedHostResourcesResolver.read", () => {
     expect(data?.supported).toContain("files");
   });
 
-  it("returns -32002 for unknown file ids (workspace has the id space, but id not present)", async () => {
+  it("returns resource-not-found for unknown file ids (workspace has the id space, but id not present)", async () => {
     let caught: ProtocolError | null = null;
     try {
       await makeResolver().read("files://fl_doesnotexist", ctxA);
@@ -142,9 +143,10 @@ describe("FileBackedHostResourcesResolver.read", () => {
       caught = e as ProtocolError;
     }
     expect(caught?.code).toBe(RESOURCE_NOT_FOUND);
+    expect(caught?.data).toEqual({ uri: "files://fl_doesnotexist" });
   });
 
-  it("collapses cross-workspace lookups into -32002 (no info leak)", async () => {
+  it("collapses cross-workspace lookups into resource-not-found (no info leak)", async () => {
     // A connector running in workspace A asking for a file id that EXISTS in
     // workspace B. The resolver passes `ctx.workspaceId` to the factory, yields
     // A's store, which doesn't have it — "not found", the SAME response a
@@ -171,7 +173,7 @@ describe("FileBackedHostResourcesResolver.read", () => {
     expect(textOf(okA.contents[0])).toBe("ws_00079598e311c160 only");
 
     // The SAME id under ctx workspace B: the resolver passes `ctx.workspaceId`
-    // to the store factory, which lands in storeB (no such file) → -32002. If
+    // to the store factory, which lands in storeB (no such file) → resource-not-found. If
     // the resolver stopped honoring `ctx.workspaceId` (the regression this
     // guards), B would read A's store and leak the file across workspaces.
     let caught: ProtocolError | null = null;
