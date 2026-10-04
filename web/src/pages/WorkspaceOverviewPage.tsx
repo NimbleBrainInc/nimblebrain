@@ -132,7 +132,7 @@ export function WorkspaceOverviewPage() {
             </h1>
             {canInvite && (
               <Link
-                to={`${slugPath}/settings/members`}
+                to={`${slugPath}/settings/members?add`}
                 data-testid="workspace-overview-invite"
                 className="mt-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >

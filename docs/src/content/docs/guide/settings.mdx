@@ -42,6 +42,7 @@ This section reflects the workspace you're currently focused on. Switch workspac
 
 The workspace ID sits in the page's top-right corner; click it to copy.
 
+- **Name** — what the workspace is called in the sidebar, the switcher, and everywhere else. An admin member of this workspace or an organization admin can rename it; it saves when you press Enter or click away, with **Undo** in the notice. Renaming never changes the workspace's ID or URL.
 - **Workspace instructions** — custom instructions, up to 8,192 characters, injected into every conversation focused on this workspace. Only an **admin member of this workspace** can edit; everyone else reads — an organization admin who is not an admin member here gets no bypass. Guidance meant for every workspace in the organization belongs in an org-tier skill (Organization → Skills), not here. The instructions save when you click away from the editor, not as you pause while typing; a save shows a notice with **Undo**, and a save that fails shows one too.
 
 <Aside type="tip">
@@ -50,7 +51,15 @@ The workspace ID sits in the page's top-right corner; click it to copy.
 
 ### Members (`/w/<id>/settings/members`)
 
-The list of who belongs to this workspace and their role. Managing membership requires being an **admin member of that workspace** — an organization admin who is not a member of it cannot add or remove people there, or view its roster.
+Who belongs to this workspace and their role. Every member can see the list.
+
+An admin member of this workspace, or an organization admin, can also manage it:
+
+- **Add member** — enter the email of someone who already has an account in your organization, and pick their role.
+- **Role** — change a member's role from the list; it saves at once, with **Undo** in the notice.
+- **Remove** — asks before taking someone's access away. Removing yourself leaves the workspace.
+
+The workspace's last admin can't be demoted or removed, so a workspace always has someone who can manage it.
 
 ### Connectors (`/w/<id>/settings/connectors`)
 

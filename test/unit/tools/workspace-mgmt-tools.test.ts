@@ -453,6 +453,67 @@ describe("nb__manage_workspaces", () => {
     });
   });
 
+  describe("rename", () => {
+    function actAs(id: string) {
+      currentIdentity = makeIdentity({
+        id,
+        email: `${id}@example.com`,
+        displayName: id,
+        orgRole: "member",
+      });
+      tool = createManageWorkspacesTool(makeCtx());
+    }
+
+    test("a workspace admin who is not an org admin renames their workspace", async () => {
+      const ws = await store.create("Before");
+      await store.addMember(ws.id, "usr_wsadmin0000001", "admin");
+      actAs("usr_wsadmin0000001");
+
+      const result = await tool.handler({ action: "update", workspaceId: ws.id, name: "  After " });
+
+      expect(result.isError).toBe(false);
+      expect((await store.get(ws.id))!.name).toBe("After");
+    });
+
+    test("a plain member's rename is refused as an error, and the name stays", async () => {
+      const ws = await store.create("Kept");
+      await store.addMember(ws.id, "usr_member00000001", "member");
+      actAs("usr_member00000001");
+
+      const result = await tool.handler({ action: "update", workspaceId: ws.id, name: "Taken" });
+
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("permission to rename");
+      expect((await store.get(ws.id))!.name).toBe("Kept");
+    });
+
+    test("a workspace admin cannot change connectors through update", async () => {
+      const ws = await store.create("Connectors stay with org admins");
+      await store.addMember(ws.id, "usr_wsadmin0000001", "admin");
+      actAs("usr_wsadmin0000001");
+
+      const result = await tool.handler({
+        action: "update",
+        workspaceId: ws.id,
+        name: "Renamed",
+        connectors: [],
+      });
+
+      expect(resultText(result)).toContain("don't have permission");
+      expect((await store.get(ws.id))!.name).toBe("Connectors stay with org admins");
+    });
+
+    test("refuses an empty name", async () => {
+      const ws = await store.create("Named");
+
+      const result = await tool.handler({ action: "update", workspaceId: ws.id, name: "   " });
+
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain("cannot be empty");
+      expect((await store.get(ws.id))!.name).toBe("Named");
+    });
+  });
+
   describe("delete", () => {
     test("deletes workspace and removes directory", async () => {
       const createResult = await tool.handler({

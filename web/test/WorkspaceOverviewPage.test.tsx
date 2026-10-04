@@ -215,7 +215,7 @@ describe("WorkspaceOverviewPage — actions", () => {
   test("a workspace admin alone in it is offered an invite, and Add app", async () => {
     mounted = await mount(harness(SOLO.id, [appPlacement({})], SOLO));
     const invite = findByTestId(mounted.container, "workspace-overview-invite");
-    expect(invite?.getAttribute("href")).toBe(`/w/${toSlug(SOLO.id)}/settings/members`);
+    expect(invite?.getAttribute("href")).toBe(`/w/${toSlug(SOLO.id)}/settings/members?add`);
     expect(findByTestId(mounted.container, "workspace-overview-add-app")).not.toBeNull();
   });
 
