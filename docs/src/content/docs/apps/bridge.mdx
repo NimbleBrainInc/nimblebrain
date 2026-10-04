@@ -66,6 +66,7 @@ These have no spec equivalent. Each name is both the method and the identifier t
 | Method | Direction | Description |
 |--------|-----------|-------------|
 | `ai.nimblebrain/action` | App → Host | Request a semantic action from the shell. |
+| `ai.nimblebrain/notify` | App → Host | Show the user a notice (success, info, warning or error), labelled with your app; answered `{}`. See [below](#ainimblebrainnotify). |
 | `ai.nimblebrain/request-file` | App → Host | Open native file picker; the host persists each chosen file to the workspace store and returns `{ files: [...] }`. See [below](#ainimblebrainrequest-file). |
 | `ai.nimblebrain/upload-files` | App → Host | Store `File`s the app already holds (dropped on it, say), the way a pick is stored; answered `{ files: [...] }`. Offered only to the platform's Files app. See [below](#ainimblebrainupload-files). |
 | `ai.nimblebrain/keydown` | App → Host | Forward keyboard shortcuts to the host. |
@@ -642,6 +643,36 @@ A sandboxed app cannot reach the upload endpoint itself, and a tool call is no w
 `files` holds 1 to 100 `File`s; an entry that is not a `File` refuses the whole request before anything is stored. `maxSize` is optional and, as for a pick, can lower the instance's per-file limit but not raise it. From there it is a pick: the same total limit, the same `{ files: [...] }` answer, and the same refusal, a JSON-RPC error whose `data` lists the files stored anyway and why each other was refused.
 
 With `@nimblebrain/synapse`, call `uploadFiles(app, files)` (0.24.0+), and use `hostSupports(app, "uploadFiles")` to decide whether to offer a drop target. The host declares it as `experimental["ai.nimblebrain/upload-files"]` to the Files app alone.
+
+### `ai.nimblebrain/notify`
+
+Show the user a notice: the toast the shell uses for its own saves and errors. Use it for what the user would otherwise miss, such as an export finishing or a background step failing. Use your own UI for anything the user is already looking at.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "ai.nimblebrain/notify",
+  "params": {
+    "level": "success",
+    "title": "Report exported",
+    "description": "Saved to Files."
+  }
+}
+```
+
+| Param | Required | |
+|-------|----------|---|
+| `level` | yes | `success`, `info`, `warning` or `error`. It sets the notice's colour and icon, how long it stays (success 5 s, info 6 s; warning and error until dismissed), and whether a screen reader announces it at once (error) or politely. |
+| `title` | yes | 1–120 characters, trimmed. |
+| `description` | no | Up to 500 characters. |
+
+The host answers `{}` once the notice is shown. Every notice names the app that sent it, and an app cannot set that label, so a notice never passes for one from NimbleBrain itself. The host answers with an error, and shows nothing, for:
+
+- `-32602` and the reason: an unknown `level`, an empty or over-long `title`, or an over-long `description`;
+- `-32000`: more than 5 notices from your app in 10 seconds.
+
+The MCP Apps spec has no notice. Its `notifications/message` is a log line for the host's console (see [above](#notificationsmessage)) and is never shown as a notice. Send `ai.nimblebrain/notify` only where the host declared `experimental["ai.nimblebrain/notify"]`.
 
 ### `ai.nimblebrain/keydown`
 

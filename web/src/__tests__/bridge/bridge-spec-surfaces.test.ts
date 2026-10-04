@@ -213,6 +213,7 @@ describe("ui/initialize — advertised capabilities", () => {
     expect(sent.hostCapabilities.experimental).toEqual({
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
+      "ai.nimblebrain/notify": {},
       "ai.nimblebrain/request-file": {},
       "ai.nimblebrain/keydown": {},
       "ai.nimblebrain/location": {},
@@ -226,6 +227,7 @@ describe("ui/initialize — advertised capabilities", () => {
     expect(parsed.hostCapabilities.experimental).toEqual({
       "io.modelcontextprotocol/tasks": tasks,
       "ai.nimblebrain/action": {},
+      "ai.nimblebrain/notify": {},
       "ai.nimblebrain/request-file": {},
       "ai.nimblebrain/keydown": {},
       "ai.nimblebrain/location": {},

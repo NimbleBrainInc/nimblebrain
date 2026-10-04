@@ -58,8 +58,17 @@ export const LOCATION_METHOD = "ai.nimblebrain/location";
 export const NAVIGATE_METHOD = "ai.nimblebrain/navigate";
 
 /** Every extension this host serves, and therefore declares. */
+/**
+ * App → host request: show the reader a notice, labelled with the app that
+ * sent it. Answered `{}`, or an error naming why it was refused. The MCP Apps
+ * spec has no notice, and `notifications/message` is a log line for debugging
+ * (and deprecated in core 2026-07-28), so this is an extension.
+ */
+export const NOTIFY_METHOD = "ai.nimblebrain/notify";
+
 export const NIMBLEBRAIN_EXTENSIONS = [
   ACTION_METHOD,
+  NOTIFY_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_METHOD,
   KEYDOWN_METHOD,

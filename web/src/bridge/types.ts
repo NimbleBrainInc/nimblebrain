@@ -49,6 +49,13 @@ export type {
 // Bridge callbacks
 // ---------------------------------------------------------------------------
 
+/** A notice an app asked to show, as the bridge passes it on. */
+export interface AppNotice {
+  level: "success" | "info" | "warning" | "error";
+  title: string;
+  description?: string;
+}
+
 /** Callbacks the bridge invokes when the iframe sends messages. */
 export interface BridgeCallbacks {
   /** Called when the iframe sends a ui/message with chat content. */
@@ -64,6 +71,12 @@ export interface BridgeCallbacks {
    * `ai.nimblebrain/location`. Each call replaces the last.
    */
   onLocation?: (trail: AppTrailEntry[]) => void;
+  /**
+   * Called when the app asks to show a notice (`ai.nimblebrain/notify`), after
+   * the bridge has checked it. The caller shows it labelled with the app; the
+   * app never chooses its own label, so it cannot pose as the host.
+   */
+  onNotify?: (notice: AppNotice) => void;
   /**
    * Provide NimbleBrain-specific extensions to merge into the ext-apps
    * `hostContext` at handshake time (e.g. `{ workspace: { id, name } }`).

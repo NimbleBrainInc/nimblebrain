@@ -50,6 +50,8 @@ mock.module("../bridge/bridge", () => ({
 }));
 
 const React = await import("react");
+const { NoticeProvider } = await import("../components/notices");
+const withNotices = (el: React.ReactNode) => React.createElement(NoticeProvider, null, el);
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter } = await import("react-router-dom");
@@ -107,26 +109,28 @@ async function mountApp(): Promise<void> {
   root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        MemoryRouter,
-        { initialEntries: ["/w/00079598e311c160/app/notes"] },
+      withNotices(
         React.createElement(
-          ThemeProvider,
-          null,
-          React.createElement(WorkspaceProvider, {
-            initialWorkspaces: [WS_A],
-            initialActiveId: "ws_00079598e311c160",
-            children: React.createElement(ChatProvider, {
-              currentUserId: "u1",
-              initialConfig: { configuredProviders: ["anthropic"] },
-              children: React.createElement(
-                ChatPanelProvider,
-                null,
-                React.createElement(PanelProbe),
-                React.createElement(AppWithChat, { placement: PLACEMENT }),
-              ),
+          MemoryRouter,
+          { initialEntries: ["/w/00079598e311c160/app/notes"] },
+          React.createElement(
+            ThemeProvider,
+            null,
+            React.createElement(WorkspaceProvider, {
+              initialWorkspaces: [WS_A],
+              initialActiveId: "ws_00079598e311c160",
+              children: React.createElement(ChatProvider, {
+                currentUserId: "u1",
+                initialConfig: { configuredProviders: ["anthropic"] },
+                children: React.createElement(
+                  ChatPanelProvider,
+                  null,
+                  React.createElement(PanelProbe),
+                  React.createElement(AppWithChat, { placement: PLACEMENT }),
+                ),
+              }),
             }),
-          }),
+          ),
         ),
       ),
     );
@@ -291,7 +295,7 @@ describe("AppWithChat — the top bar's trail belongs to the app on screen", () 
     container = document.createElement("div");
     document.body.appendChild(container);
     root = ReactDOMClient.createRoot(container);
-    await act(async () => root.render(tree(PLACEMENT)));
+    await act(async () => root.render(withNotices(tree(PLACEMENT))));
     await settle();
 
     const frame = iframe();
@@ -312,7 +316,7 @@ describe("AppWithChat — the top bar's trail belongs to the app on screen", () 
     await act(async () => window.dispatchEvent(event));
     expect(location.appLocation?.trail.map((e) => e.label)).toEqual(["Notes", "Note one"]);
 
-    await act(async () => root.render(tree(PLACEMENT_B)));
+    await act(async () => root.render(withNotices(tree(PLACEMENT_B))));
     await settle();
 
     expect(location.appLocation).toBeNull();

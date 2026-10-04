@@ -75,6 +75,8 @@ mock.module("../api/client", () => ({
 }));
 
 const React = await import("react");
+const { NoticeProvider } = await import("../components/notices");
+const withNotices = (el: React.ReactNode) => React.createElement(NoticeProvider, null, el);
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes, useNavigate } = await import("react-router-dom");
@@ -196,35 +198,37 @@ async function mount(
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(
-        MemoryRouter,
-        { initialEntries: [entry] },
-        React.createElement(WorkspaceProvider, {
-          initialWorkspaces: [WS],
-          initialActiveId: WS.id,
-          children: React.createElement(
-            ShellProvider,
-            {
-              value: {
-                forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
-                mainRoutes: () => [],
-                shellWorkspaceId: "ws_005b519ef7efc353",
-              },
-            },
-            React.createElement(
-              WorkspaceAppIconsContext.Provider,
+      withNotices(
+        React.createElement(
+          MemoryRouter,
+          { initialEntries: [entry] },
+          React.createElement(WorkspaceProvider, {
+            initialWorkspaces: [WS],
+            initialActiveId: WS.id,
+            children: React.createElement(
+              ShellProvider,
               {
                 value: {
-                  iconFor: () => undefined,
-                  connectors: { workspaceId: WS.id, installed },
+                  forSlot: (slot: string) => (slot === "sidebar" ? placements : []),
+                  mainRoutes: () => [],
+                  shellWorkspaceId: "ws_005b519ef7efc353",
                 },
               },
-              live
-                ? React.createElement(LiveNotifications, { children: routes })
-                : React.createElement(NotificationsContext.Provider, { value }, routes),
+              React.createElement(
+                WorkspaceAppIconsContext.Provider,
+                {
+                  value: {
+                    iconFor: () => undefined,
+                    connectors: { workspaceId: WS.id, installed },
+                  },
+                },
+                live
+                  ? React.createElement(LiveNotifications, { children: routes })
+                  : React.createElement(NotificationsContext.Provider, { value }, routes),
+              ),
             ),
-          ),
-        }),
+          }),
+        ),
       ),
     );
   });
