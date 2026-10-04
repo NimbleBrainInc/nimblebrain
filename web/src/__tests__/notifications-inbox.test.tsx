@@ -19,6 +19,8 @@
 //   8. The list is newest first in pages: "Load older" continues below the
 //      oldest row, a link to an older item pages down to it, and the count of
 //      unread items needing attention covers the whole inbox.
+//   9. A level is urgency, not tone: only an urgent row is marked on screen,
+//      and a screen reader is told the level of every other row.
 //
 // The page reads its own list through `notifications__list` (the client's
 // `callTool`, stubbed here) and takes the unread total and `markRead` from the
@@ -425,6 +427,37 @@ describe("a level the workspace ceiling clamped", () => {
     const { container } = await mount({ items: [item({ level: "urgent" })] });
     await click(rows(container)[0]!);
     expect(container.querySelector('[data-testid="effective-level"]')).toBeNull();
+  });
+});
+
+describe("a level is urgency, not tone", () => {
+  test("only an urgent row is marked; info and attention look alike and are named to a screen reader", async () => {
+    const { container } = await mount({
+      items: [
+        item({ id: "a:1", seq: 1, level: "info", title: "info-row" }),
+        item({ id: "a:2", seq: 2, level: "attention", title: "attention-row" }),
+        item({ id: "a:3", seq: 3, level: "urgent", title: "urgent-row" }),
+      ],
+    });
+    const byTitle = (title: string) => rows(container).find((r) => r.textContent?.includes(title))!;
+    const visible = (row: HTMLElement) => {
+      const copy = row.cloneNode(true) as HTMLElement;
+      for (const s of Array.from(copy.querySelectorAll(".sr-only"))) s.remove();
+      return copy.textContent ?? "";
+    };
+    const edge = (row: HTMLElement) => row.closest("li")?.className ?? "";
+    const spoken = (row: HTMLElement) => row.querySelector(".sr-only")?.textContent;
+
+    expect(visible(byTitle("urgent-row"))).toContain("Urgent");
+    expect(edge(byTitle("urgent-row"))).toContain("border-l-destructive");
+
+    for (const title of ["info-row", "attention-row"]) {
+      expect(visible(byTitle(title))).not.toContain("Urgent");
+      expect(visible(byTitle(title))).not.toContain("Attention");
+      expect(edge(byTitle(title))).toContain("border-l-transparent");
+    }
+    expect(spoken(byTitle("info-row"))).toBe("Info, unread");
+    expect(spoken(byTitle("attention-row"))).toBe("Attention, unread");
   });
 });
 
