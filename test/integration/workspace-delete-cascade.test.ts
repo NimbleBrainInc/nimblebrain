@@ -30,10 +30,11 @@ import { brokeredConnectorDir } from "../../src/connectors/runtime/brokered.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
-import type { Tool, ToolResult, ToolSource } from "../../src/tools/types.ts";
+import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { ARCHIVE_MARKER_FILENAME } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import { marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN = { id: "usr_admin", email: "admin@example.test" };
@@ -63,9 +64,9 @@ let delivered: Delivered[];
 let failingStops: Set<string>;
 
 /**
- * Two catalog entries declaring `on_removing`. Read through the real projection
- * (`NB_CURATED_CATALOG_DIR`), so the declaration reaches the teardown the same
- * way an operator-published one does.
+ * Two catalog entries, read through the real projection
+ * (`NB_CURATED_CATALOG_DIR`), so the connectors bind the way an installed
+ * catalog connector does.
  */
 function writeCatalog(dir: string): void {
   writeFileSync(
@@ -86,10 +87,6 @@ ${[
     _meta:
       ai.nimblebrain/connector:
         auth: dcr
-      ai.nimblebrain/host:
-        host_version: "1.4"
-        lifecycle:
-          on_removing: ${REMOVING}
 `,
   )
   .join("")}`,
@@ -97,37 +94,37 @@ ${[
 }
 
 /**
- * A source standing in for a running connector: it answers the lifecycle
- * handler and records whether the workspace subtree was still live when the
- * call arrived.
+ * A running connector that binds `removing` through `ai.nimblebrain/lifecycle`,
+ * and records whether the workspace subtree was still live when the call
+ * arrived.
  *
  * `stop` is the failure injection point — `ToolRegistry.removeSource` awaits
  * it, so a throwing `stop` is a teardown that fails at the step the tool's own
  * try/catch wraps.
  */
-function fakeSource(name: string): ToolSource {
-  return {
-    name,
-    start: async () => {},
-    stop: async () => {
-      // Driven by a live set rather than a one-shot latch: the delete stops a
-      // source TWICE (the upstream revoke tears the connection's source down,
-      // then `lifecycle.uninstall` removes it from the registry), and a latch
-      // spent on the first would leave the second — the step the guarded block
-      // actually wraps — succeeding. The test clears the set before shutdown.
-      if (failingStops.has(name)) throw new Error(`${name} would not stop`);
-    },
-    tools: async (): Promise<Tool[]> => [
-      { name: REMOVING, description: "Lifecycle handler", inputSchema: {}, source: name },
-    ],
-    execute: async (): Promise<ToolResult> => {
+async function fakeSource(name: string): Promise<McpSource> {
+  const { source } = await startLifecycleSource(name, { tools: [marked(REMOVING, "removing")] });
+  const stop = source.stop.bind(source);
+  // Driven by a live set rather than a one-shot latch: the delete stops a
+  // source TWICE (the upstream revoke tears the connection's source down, then
+  // `lifecycle.uninstall` removes it from the registry), and a latch spent on
+  // the first would leave the second — the step the guarded block actually
+  // wraps — succeeding. The test clears the set before shutdown.
+  source.stop = async () => {
+    if (failingStops.has(name)) throw new Error(`${name} would not stop`);
+    await stop();
+  };
+  const execute = source.execute.bind(source);
+  source.execute = (tool, ...rest) => {
+    if (tool === REMOVING) {
       delivered.push({
         connector: name,
         subtreeStillLive: existsSync(join(workDir, "workspaces", WS_ID)),
       });
-      return { content: [{ type: "text", text: "ok" }], isError: false };
-    },
+    }
+    return execute(tool, ...rest);
   };
+  return source;
 }
 
 function refFor(serverName: string, url: string): ConnectorRef {
@@ -154,7 +151,7 @@ async function seedConnectors(): Promise<void> {
   const registry = await runtime.ensureWorkspaceRegistry(WS_ID);
   for (const ref of refs) {
     const name = ref.serverName as string;
-    registry.addSource(fakeSource(name));
+    registry.addSource(await fakeSource(name));
     await runtime.getLifecycle().seedInstance(name, ref.url as string, ref, undefined, WS_ID);
   }
 }
@@ -274,7 +271,7 @@ test("reaches the broker's revoke for a brokered connector, and clears its crede
   };
   await runtime.getWorkspaceStore().update(WS_ID, { connectors: [ref] });
   const registry = await runtime.ensureWorkspaceRegistry(WS_ID);
-  registry.addSource(fakeSource(GAMMA));
+  registry.addSource(await fakeSource(GAMMA));
   await runtime.getLifecycle().seedInstance(GAMMA, ref.url as string, ref, undefined, WS_ID);
 
   // Provider-owned local state, at the directory rule the kernel owns.

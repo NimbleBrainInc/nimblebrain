@@ -259,7 +259,7 @@ Codegen sources:
 
 For tools whose work exceeds the stock MCP request timeout (~60s) — research runs, batch imports, multi-stage analyses — use `callToolAsTask` instead of `callTool`. It returns a handle as soon as the server answers, and the handle picks up the result when the work finishes.
 
-`callToolAsTask` speaks the MCP [tasks extension](https://github.com/modelcontextprotocol/ext-tasks) (`io.modelcontextprotocol/tasks`, protocol `2026-07-28`), the only task vocabulary NimbleBrain serves to apps. It needs `@nimblebrain/synapse` 0.27.0 or later. It declares the extension in the `tools/call` request's `_meta`, and the server decides per call: it runs the tool outright and answers with the result, or it answers with a task that the handle polls with `tasks/get`. Both come back as a handle, so your code has one path.
+`callToolAsTask` speaks the MCP [tasks extension](https://github.com/modelcontextprotocol/ext-tasks) (`io.modelcontextprotocol/tasks`, protocol `2026-07-28`), the only task vocabulary NimbleBrain serves to apps. It needs `@nimblebrain/synapse` 0.27.0 or later. It declares the extension in the `tools/call` request's `_meta`, and the server decides per call: it runs the tool outright and answers with the result, or it answers with a task that the handle polls with `tasks/get`. Both come back as a handle, so your code has one path. The 2025-11-25 tasks utility is not served: a task runs only when your server speaks `2026-07-28` and advertises the extension, and on a 2025-era connection the host calls a tool inline and refuses one whose `execution.taskSupport` is `"required"` (see the [bridge reference](/apps/bridge/)).
 
 ### When to reach for it
 

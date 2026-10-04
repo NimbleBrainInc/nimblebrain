@@ -19,9 +19,9 @@ import { toToolSchema } from "./types.ts";
 /**
  * Structural check for "looks like an McpSource task-aware surface".
  *
- * The `/mcp` task handlers (Task 002) need a source that exposes the
- * per-phase task methods so they can route `tasks/get`, `tasks/result`,
- * and `tasks/cancel` back to the originating McpSource. We probe by shape
+ * The `/mcp` door needs a source that exposes the per-phase task methods so
+ * it can route `tasks/get` and `tasks/cancel` back to the originating
+ * McpSource (`mcp-modern-tasks.ts`). We probe by shape
  * rather than `instanceof` to stay friendly to `SharedSourceRef`-wrapped
  * sources and to test doubles.
  */

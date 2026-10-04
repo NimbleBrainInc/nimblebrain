@@ -36,7 +36,6 @@ describe("selectLifecycleHandlers", () => {
       tool("workspace_ready"),
     ]);
     expect(binding).toEqual({
-      declaredBy: "extension",
       on_ready: "scope_ready",
       on_removing: "scope_removing",
     });
@@ -45,7 +44,7 @@ describe("selectLifecycleHandlers", () => {
 
   test("an advertised extension with no marked tool binds no event", () => {
     expect(selectLifecycleHandlers([tool("search")])).toEqual({
-      binding: { declaredBy: "extension" },
+      binding: {},
       rejected: [],
     });
   });
@@ -56,7 +55,7 @@ describe("selectLifecycleHandlers", () => {
       marked("b_ready", "ready"),
       marked("scope_removing", "removing"),
     ]);
-    expect(binding).toEqual({ declaredBy: "extension", on_removing: "scope_removing" });
+    expect(binding).toEqual({ on_removing: "scope_removing" });
     expect(rejected).toHaveLength(1);
     expect(rejected[0]?.reason).toContain('"a_ready", "b_ready"');
     expect(rejected[0]?.reason).toContain("undeclared");
@@ -89,7 +88,7 @@ describe("selectLifecycleHandlers", () => {
       marked("scope_ready", "ready", { execution: { taskSupport: "required" } }),
       marked("scope_removing", "removing", { execution: { taskSupport: "optional" } }),
     ]);
-    expect(binding).toEqual({ declaredBy: "extension", on_removing: "scope_removing" });
+    expect(binding).toEqual({ on_removing: "scope_removing" });
     expect(rejected.map((r) => r.tool)).toEqual(["scope_ready"]);
   });
 
@@ -99,7 +98,7 @@ describe("selectLifecycleHandlers", () => {
       tool("odd", { meta: { [LIFECYCLE_EXTENSION_ID]: "ready" } }),
       marked("scope_ready", "ready"),
     ]);
-    expect(binding).toEqual({ declaredBy: "extension", on_ready: "scope_ready" });
+    expect(binding).toEqual({ on_ready: "scope_ready" });
     expect(rejected.map((r) => r.tool)).toEqual(["scope_paused", "odd"]);
     expect(rejected[0]?.reason).toContain("unknown event");
   });

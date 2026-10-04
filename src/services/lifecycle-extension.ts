@@ -83,7 +83,7 @@ export function selectLifecycleHandlers(tools: readonly Tool[]): {
 
   // Duplicates are counted before each tool is checked: two marked tools for
   // one event leave it undeclared even when only one of them is callable.
-  const binding: LifecycleBinding = { declaredBy: "extension" };
+  const binding: LifecycleBinding = {};
   for (const [event, candidates] of marked) {
     const [only, ...others] = candidates;
     if (!only) continue;

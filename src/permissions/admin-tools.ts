@@ -4,7 +4,7 @@ import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
 import type { HookDeclaration } from "../hooks/types.ts";
 import type { UserIdentity } from "../identity/provider.ts";
-import { LIFECYCLE_EVENTS, type LifecycleDeclaration } from "../lifecycle/types.ts";
+import { LIFECYCLE_EVENTS, type LifecycleBinding } from "../lifecycle/types.ts";
 import { log } from "../observability/log.ts";
 import { summarizeToolNames } from "../tools/connector-surface.ts";
 import type { Tool } from "../tools/types.ts";
@@ -261,7 +261,7 @@ export function adminToolDenial(serverName: string, toolName: string): ToolResul
 export function adminToolsContractWarnings(opts: {
   connector: string;
   adminTools: AdminToolsDeclaration | undefined;
-  lifecycle?: LifecycleDeclaration;
+  lifecycle?: LifecycleBinding;
   hooks?: readonly HookDeclaration[];
   tools?: Tool[];
 }): string[] {
@@ -300,7 +300,7 @@ export function adminToolsContractWarnings(opts: {
 /** The tools the kernel itself calls on a connector, each with the role it
  *  plays and what a direct call to it meets, for the overlap warning. */
 function kernelCalledTools(
-  lifecycle: LifecycleDeclaration | undefined,
+  lifecycle: LifecycleBinding | undefined,
   hooks: readonly HookDeclaration[] | undefined,
 ): Map<string, { role: string; direct: string }> {
   const out = new Map<string, { role: string; direct: string }>();

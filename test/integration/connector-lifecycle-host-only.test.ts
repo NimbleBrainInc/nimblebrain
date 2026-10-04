@@ -1,7 +1,7 @@
 import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import { readJson } from "../helpers/http.ts";
 /**
- * A connector's declared lifecycle handlers are host-only: absent from every
+ * A connector's lifecycle handlers, bound through `ai.nimblebrain/lifecycle`, are host-only: absent from every
  * listing and refused on every door, for a workspace admin as well as a member,
  * while the host's own `on_ready` / `on_removing` calls still reach them.
  *
@@ -13,8 +13,9 @@ import { readJson } from "../helpers/http.ts";
  * unattended `executeTask`), the unattended dispatch, `/mcp/<wsId>`
  * `tools/list` and `tools/call`, an app's `tools/call` over `/mcp`, and REST
  * `tools/call` (`ToolRegistry.execute`). Plus what the gate must NOT touch: the
- * host's own lifecycle calls, the connector's other tools, a connector with no
- * `lifecycle` block, and a personal connector.
+ * host's own lifecycle calls, the connector's other tools, a connector that
+ * marks the same tools without advertising the extension, and a personal
+ * connector.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
@@ -24,10 +25,8 @@ import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
-import { textContent } from "../../src/engine/content-helpers.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import {
@@ -40,22 +39,22 @@ import { dispatchUnattended } from "../../src/orchestrator/unattended-dispatch.t
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
-import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 import {
   type FakeConnectorServer,
   startFakeConnectorServer,
 } from "../helpers/fake-connector-server.ts";
+import { type FixtureCall, marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN_WS = "ws_003eba8844413cd9";
 const MEMBER_WS = "ws_00562f536b60bccc";
 const WORKSPACES = [ADMIN_WS, MEMBER_WS] as const;
 
-/** `slugifyServerName("ai.acme/scope")`: declares both lifecycle handlers. */
+/** `slugifyServerName("ai.acme/scope")`: advertises the extension and marks both handlers. */
 const SCOPED = "ai-acme-scope";
-/** `slugifyServerName("ai.acme/plain")`: no lifecycle block, same tool names. */
+/** `slugifyServerName("ai.acme/plain")`: marks the same tools, advertises nothing. */
 const PLAIN = "ai-acme-plain";
 const HANDLERS = ["scope_ready", "scope_removing"] as const;
 
@@ -65,7 +64,7 @@ const catalogDir = join(testDir, "catalog");
 const CATALOG_YAML = `servers:
   - name: ai.acme/scope
     title: Acme Scope
-    description: Test connector that declares lifecycle handlers
+    description: Test connector that binds lifecycle handlers
     version: "1.0.0"
     remotes:
       - type: streamable-http
@@ -73,14 +72,9 @@ const CATALOG_YAML = `servers:
     _meta:
       ai.nimblebrain/connector:
         auth: dcr
-      ai.nimblebrain/host:
-        host_version: "1.5"
-        lifecycle:
-          on_ready: scope_ready
-          on_removing: scope_removing
   - name: ai.acme/plain
     title: Acme Plain
-    description: Test connector with no lifecycle block
+    description: Test connector that does not advertise the extension
     version: "1.0.0"
     remotes:
       - type: streamable-http
@@ -91,32 +85,27 @@ const CATALOG_YAML = `servers:
 `;
 
 /** What each connector's server actually ran, per workspace. */
-const calls = new Map<string, string[]>();
+const calls = new Map<string, FixtureCall[]>();
 
 function ran(wsId: string, server: string = SCOPED): string[] {
-  return calls.get(`${wsId}/${server}`) ?? [];
+  return (calls.get(`${wsId}/${server}`) ?? []).map((c) => c.tool);
 }
 
 function resetCalls(): void {
   for (const log of calls.values()) log.length = 0;
 }
 
-function buildSource(wsId: string, server: string) {
-  const log: string[] = [];
-  calls.set(`${wsId}/${server}`, log);
-  const tool = (name: string): InProcessTool => ({
-    name,
-    description: `Acme ${name}.`,
-    inputSchema: { type: "object", properties: {} },
-    handler: async () => {
-      log.push(name);
-      return { content: textContent(`${name} ok`), isError: false };
-    },
+async function startSource(wsId: string, server: string) {
+  const { source, calls: log } = await startLifecycleSource(server, {
+    advertises: server === SCOPED,
+    tools: [
+      marked("scope_ready", "ready"),
+      marked("scope_removing", "removing"),
+      { name: "search" },
+    ],
   });
-  return defineInProcessApp(
-    { name: server, version: "1.0.0", tools: [...HANDLERS, "search"].map(tool) },
-    new NoopEventSink(),
-  );
+  calls.set(`${wsId}/${server}`, log);
+  return source;
 }
 
 /** The tool names each model call was offered, most recent last. */
@@ -166,11 +155,9 @@ beforeAll(async () => {
   for (const wsId of WORKSPACES) {
     const registry = await runtime.ensureWorkspaceRegistry(wsId);
     for (const server of [SCOPED, PLAIN]) {
-      const source = buildSource(wsId, server);
-      await source.start();
-      registry.addSource(source);
+      registry.addSource(await startSource(wsId, server));
     }
-    // Installed at the catalog entries' URLs: a catalog gate binds to the ref.
+    // Installed at the catalog entries' URLs, as a catalog connector is.
     await wsStore.update(wsId, {
       connectors: [
         { url: "https://scope.acme.test/mcp", serverName: SCOPED },
@@ -399,7 +386,7 @@ describe("what the gate leaves alone", () => {
     }
   });
 
-  it("lists and runs the same names on a connector with no lifecycle block", async () => {
+  it("lists and runs the same names on a connector that does not advertise the extension", async () => {
     resetCalls();
     const client = await mcpClient(MEMBER_WS);
     try {

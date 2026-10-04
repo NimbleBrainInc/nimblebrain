@@ -29,9 +29,6 @@
     "notifications": {
       "$ref": "#/$defs/NotificationsDeclaration"
     },
-    "lifecycle": {
-      "$ref": "#/$defs/LifecycleDeclaration"
-    },
     "admin_tools": {
       "type": "array",
       "maxItems": 64,
@@ -73,23 +70,6 @@
             "type": "string"
           },
           "description": "Rename inbound headers before the forward, as { from: to }. The forward strips the header class a caller could use to assert identity (authorization, x-api-key, x-tenant-id, x-workspace-id, …) — the same class the fleet edge strips — and the browser's session credential, cookie. A vendor that authenticates its deliveries on one of the identity headers cannot otherwise reach its own verifier, so declaring a rename moves the value to a header the strip list does not cover. cookie cannot be renamed through: no vendor signs a delivery with it, so a rename from cookie is ignored. A rename whose target is itself in the stripped class is ignored."
-        }
-      }
-    },
-    "LifecycleDeclaration": {
-      "type": "object",
-      "description": "DEPRECATED: a server advertises the ai.nimblebrain/lifecycle MCP extension and marks its handler tools instead, and this block is ignored on a connection where it does (https://docs.nimblebrain.ai/extensions/lifecycle/). The two moments the host can tell this server about its own installation. Each value names a tool on THIS server. Both optional; a server may declare either alone. The host calls on_ready the first time the connector is reachable in a workspace and on every later transition to running, and on_removing immediately before the connector's source is torn down. There is no pre_install and no post_uninstall: the notification is a tool call on the server itself, so before it is reachable and after it is gone there is nothing to call — extension at those moments is declarative (manifest fields the host acts on), and callable only in between. Both calls are best-effort: a failed on_ready never fails the install, a failed on_removing never fails the uninstall (which waits a few seconds for the call, then proceeds without it), and neither is retried except by the next event. A declared tool that the server does not advertise, that requires any argument, or that advertises execution.taskSupport \"optional\" or \"required\", is a warning on a successful install — the host awaits these calls, so a handler must be an ordinary inline tool it can bound. The named tools are host-only: the host removes them from every tool listing and refuses a direct call to them from anyone, workspace admins included, with the structured error host_only_tool. Only a catalog connector's declaration is withheld this way.",
-      "additionalProperties": false,
-      "properties": {
-        "on_ready": {
-          "type": "string",
-          "maxLength": 128,
-          "description": "Tool called when the connector becomes reachable in a workspace, with { reason: \"install\" | \"resume\" } — \"install\" for the install that created it, \"resume\" for every other cause (a boot, a reconnect, a re-auth, a redeploy). Delivery is AT LEAST ONCE per connector per host boot in which its source comes up, and a fresh install delivers TWO calls in a racy order, so the handler must be idempotent. The handler must accept a call with no arguments and must ignore arguments it does not declare: the host sends reason whether or not the schema mentions it. Its text result is surfaced to the user as a notice on the install."
-        },
-        "on_removing": {
-          "type": "string",
-          "maxLength": 128,
-          "description": "Tool called with no arguments immediately before the connector is uninstalled, while its source is still reachable. This is the only moment a server can release per-workspace state it holds at a third party. It is best-effort and may not arrive at all — a server that leaks a third-party resource when it does not is relying on a call the host does not guarantee."
         }
       }
     },

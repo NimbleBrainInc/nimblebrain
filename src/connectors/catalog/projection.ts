@@ -19,7 +19,6 @@
 import { brokeredCatalogConfig, type ConnectorAuthKind } from "../../connectors/auth-kind.ts";
 import { hostMetaToUiMeta, sanitizePlacements } from "../../connectors/runtime/defaults.ts";
 import { parseHookDeclarations } from "../../hooks/declaration.ts";
-import { parseLifecycleDeclaration } from "../../lifecycle/declaration.ts";
 import { parseNotificationsDeclaration } from "../../notifications/declaration.ts";
 import { parseAdminToolsDeclaration } from "../../permissions/admin-tools.ts";
 import { validateAdditionalAuthorizationParams } from "../../util/oauth-params.ts";
@@ -153,7 +152,6 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const ui = hostMetaToUiMeta(getNimbleBrainHostMeta(s));
   const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
   const notifications = parseNotificationsDeclaration(getNimbleBrainHostMeta(s));
-  const lifecycle = parseLifecycleDeclaration(getNimbleBrainHostMeta(s));
   const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(s), s.name);
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
@@ -177,7 +175,6 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(ui ? { ui } : {}),
     ...(hooks.length > 0 ? { hooks } : {}),
     ...(notifications ? { notifications } : {}),
-    ...(lifecycle ? { lifecycle } : {}),
     ...(adminTools ? { adminTools } : {}),
   };
 }
