@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  automationArchivedRunResultPath,
   automationFilePath,
   automationRunIndexPath,
   automationRunResultPath,
@@ -363,13 +364,47 @@ describe("rollover — history is kept", () => {
     ).toContain("run_jan");
   });
 
-  test("keeps a rolled run's result sidecar", () => {
+  test("moves a rolled run's result sidecar into its archive month, and still finds it", () => {
     seedFullIndex();
     saveRunResult(TMP_DIR, WS, OWNER, ID, makeResult({ runId: "run_0000", automationId: ID }));
+    saveRunResult(TMP_DIR, WS, OWNER, ID, makeResult({ runId: "run_0999", automationId: ID }));
     append("run_1000", "2025-02-01T00:00:00.000Z");
 
-    expect(existsSync(automationRunResultPath(TMP_DIR, WS, OWNER, ID, "run_0000"))).toBe(true);
+    expect(existsSync(automationRunResultPath(TMP_DIR, WS, OWNER, ID, "run_0000"))).toBe(false);
+    expect(
+      existsSync(automationArchivedRunResultPath(TMP_DIR, WS, OWNER, ID, "2025-01", "run_0000")),
+    ).toBe(true);
+    // A run still in the hot window keeps its sidecar in the hot dir.
+    expect(existsSync(automationRunResultPath(TMP_DIR, WS, OWNER, ID, "run_0999"))).toBe(true);
+    // run_result reads either place.
     expect(readRunResult(TMP_DIR, WS, OWNER, ID, "run_0000")?.output).toBe("The full deliverable.");
+    expect(readRunResult(TMP_DIR, WS, OWNER, ID, "run_0999")?.output).toBe("The full deliverable.");
+    expect(readRunResult(TMP_DIR, WS, OWNER, ID, "run_nope")).toBeNull();
+  });
+
+  test("the hot runs dir holds only the hot window's sidecars, the index, and archive/", () => {
+    seedFullIndex();
+    for (let i = 0; i < 20; i++) {
+      const runId = `run_${String(i).padStart(4, "0")}`;
+      saveRunResult(TMP_DIR, WS, OWNER, ID, makeResult({ runId, automationId: ID }));
+    }
+    for (let i = 0; i < 20; i++) {
+      const runId = `run_y${i}`;
+      append(runId, `2025-03-0${(i % 9) + 1}T00:00:00.000Z`);
+      saveRunResult(TMP_DIR, WS, OWNER, ID, makeResult({ runId, automationId: ID }));
+    }
+
+    const hotIds = new Set(readRuns(TMP_DIR, WS, OWNER, ID).map((r) => r.id));
+    const entries = readdirSync(automationRunsDir(TMP_DIR, WS, OWNER, ID));
+    for (const name of entries) {
+      if (name === "index.jsonl" || name === "archive") continue;
+      expect(name.endsWith(".result.json")).toBe(true);
+      expect(hotIds.has(name.replace(/\.result\.json$/, ""))).toBe(true);
+    }
+    expect(entries).toContain("archive");
+    expect(readdirSync(join(automationRunsDir(TMP_DIR, WS, OWNER, ID), "archive"))).toEqual([
+      "2025-01",
+    ]);
   });
 
   test("the default read stays on the hot window", () => {

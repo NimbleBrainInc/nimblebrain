@@ -233,7 +233,11 @@ export const AutomationsCreateInput = Type.Object(
       required: ["name"],
       description: "Automation definition: identity, schedule, run-time policy.",
     }),
-    body: Type.String({ description: "The prompt sent on each scheduled run." }),
+    body: Type.String({
+      description:
+        "The prompt that opens every run, whatever starts it: its schedule, an event, or " +
+        "someone running it.",
+    }),
   },
   { required: ["manifest", "body"] },
 );

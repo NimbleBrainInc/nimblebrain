@@ -288,6 +288,53 @@ describe("a once schedule", () => {
     expect(loadDefs().get(auto.id)?.enabled).toBe(true);
   });
 
+  test("an `at` changed during the run stays armed, and fires at its new time", async () => {
+    const at = Date.now() - 1000;
+    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
+    saveAutomation(workDir, WS, OWNER, auto);
+    let finish!: () => void;
+    const gate = new Promise<void>((r) => {
+      finish = r;
+    });
+    let calls = 0;
+    const executor = mock(async (a: Automation, _signal: AbortSignal, trigger) => {
+      calls++;
+      if (calls === 1) await gate;
+      return { run: makeRun(a.id, "success", trigger), result: null };
+    }) as Executor;
+    const scheduler = new Scheduler(executor, { workDir });
+    scheduler.start();
+
+    const tick1 = scheduler.onTimer();
+    // While the first occurrence runs, the owner moves the time out by an hour.
+    const newAt = iso(Date.now() + 3_600_000);
+    handleUpdate(
+      { name: "Send It", manifest: { schedule: { type: "once", at: newAt } } },
+      makeCtx(),
+    );
+    finish();
+    await tick1;
+
+    const afterFirst = loadDefs().get(auto.id)!;
+    expect(afterFirst.enabled).toBe(true);
+    expect(afterFirst.onceDone).toBeUndefined();
+    expect(afterFirst.nextRunAt).toBe(newAt);
+
+    const realNow = Date.now;
+    try {
+      Date.now = () => new Date(newAt).getTime() + 1000;
+      scheduler.reload();
+      await scheduler.onTimer();
+    } finally {
+      Date.now = realNow;
+      scheduler.stop();
+    }
+    expect(calls).toBe(2);
+    const done = loadDefs().get(auto.id)!;
+    expect(done.onceDone?.outcome).toBe("ran");
+    expect(done.enabled).toBe(false);
+  });
+
   test("Run now on an armed once runs it and leaves it armed", async () => {
     const at = Date.now() + 3_600_000;
     const auto = makeAutomation({ schedule: { type: "once", at: iso(at) } });
@@ -607,6 +654,27 @@ describe("kind", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleRuns pages back through archived history", () => {
+  test("the first page hands no cursor when `since` rules out every archive month", () => {
+    const ctx = makeCtx();
+    const base = Date.parse("2025-01-01T00:00:00Z");
+    for (let i = 0; i < MAX_RUN_LINES + 5; i++) {
+      appendRun(workDir, WS, OWNER, "busy", {
+        ...makeRun("busy", "success"),
+        id: `run_${i}`,
+        // The first five roll into January; the rest start in March.
+        startedAt: iso(i < 5 ? base + i * 60_000 : Date.parse("2025-03-01T00:00:00Z") + i * 60_000),
+      });
+    }
+    const page = handleRuns(
+      { automationId: "busy", since: "2025-02-15T00:00:00Z", limit: 2000 },
+      ctx,
+    );
+    expect(page.runs.length).toBe(MAX_RUN_LINES);
+    expect(page.nextBefore).toBeUndefined();
+    // Without `since`, the January archive is more history.
+    expect(handleRuns({ automationId: "busy", limit: 2000 }, ctx).nextBefore).toBeDefined();
+  });
+
   test("the first page reads the recent runs and hands a cursor into the archive", () => {
     const ctx = makeCtx();
     const base = Date.parse("2025-01-01T00:00:00Z");

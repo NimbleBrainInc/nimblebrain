@@ -338,11 +338,8 @@ export interface ToolContext {
   cancelRun: (automationId: string) => boolean;
   /** Read one automation's run history (workspace + owner bound at construction). */
   readRuns: (automationId: string, opts?: ReadRunsOptions) => AutomationRun[];
-  /**
-   * Read one page of an automation's full history, back through its archived
-   * segments. Absent: `readRuns` serves `before` without a next-page cursor.
-   */
-  readRunsPage?: (automationId: string, opts: ReadRunsOptions) => RunsPage;
+  /** Read one page of an automation's full history, back through its archive months. */
+  readRunsPage: (automationId: string, opts: ReadRunsOptions) => RunsPage;
   /** Read run history across this owner's automations in the focused workspace. */
   readAllRuns: (opts?: ReadRunsOptions) => AutomationRun[];
   /** Read one run's full result sidecar (the deliverable). */
@@ -807,7 +804,7 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Aut
   // One automation's history pages back through its archive with a cursor.
   // The first page (no `before`) reads only the hot index; its `nextBefore`
   // says older runs exist.
-  if (automationId && ctx.readRunsPage) {
+  if (automationId) {
     const page = ctx.readRunsPage(automationId, { limit, status, since, before });
     return {
       runs: page.runs,
@@ -816,9 +813,7 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Aut
     };
   }
 
-  const runs = automationId
-    ? ctx.readRuns(automationId, { limit, status, since, before })
-    : ctx.readAllRuns({ limit, status, since, before });
+  const runs = ctx.readAllRuns({ limit, status, since, before });
   return { runs, total: runs.length };
 }
 

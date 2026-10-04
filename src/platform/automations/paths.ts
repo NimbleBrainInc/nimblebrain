@@ -11,8 +11,13 @@
  *
  *   workspaces/<wsId>/automations/<ownerId>/<automationId>.json              the definition
  *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index.jsonl  newest run summaries (the hot window)
- *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index-YYYY-MM.jsonl  older summaries, by start month
- *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  the run's deliverable
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  a hot run's deliverable
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
+ *
+ * A run's summary and its deliverable move to the archive together, so the
+ * hot runs dir holds at most the hot window of sidecars plus `index.jsonl`
+ * and `archive/`, and listing it stays bounded however long history grows.
  *
  * An automation run is NOT a conversation: it leaves a *run result* (the final
  * output, the activity log, and refs to any files it wrote in the workspace file
@@ -90,20 +95,45 @@ export function automationRunIndexPath(
   return join(automationRunsDir(workDir, wsId, ownerId, automationId), "index.jsonl");
 }
 
-/** A run-index segment's month, `YYYY-MM`. */
-const SEGMENT_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+/** An archive month, `YYYY-MM`. */
+const ARCHIVE_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-/** The file name of the segment holding runs started in `month` (`YYYY-MM`). */
-const segmentFileName = (month: string) => `index-${month}.jsonl`;
+const ARCHIVE_SEGMENT = "archive";
 
-/** Recovers the month from a segment's file name, or null for any other file. */
-const SEGMENT_FILE_RE = /^index-(\d{4}-(?:0[1-9]|1[0-2]))\.jsonl$/;
+/** Whether `name` is an archive month directory name (`YYYY-MM`). */
+export function isRunArchiveMonth(name: string): boolean {
+  return ARCHIVE_MONTH_RE.test(name);
+}
+
+/** The archive root for one automation: `…/runs/<automationId>/archive`. */
+export function automationRunArchiveRoot(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+): string {
+  return join(automationRunsDir(workDir, wsId, ownerId, automationId), ARCHIVE_SEGMENT);
+}
 
 /**
- * A run-index segment: `…/runs/<automationId>/index-YYYY-MM.jsonl`, the run
- * summaries that rolled out of the hot `index.jsonl`, grouped by the month
- * each run started in (UTC).
+ * One archive month: `…/runs/<automationId>/archive/<YYYY-MM>`, holding the
+ * summaries (`index.jsonl`) and deliverables of the runs that started that
+ * month (UTC) and rolled out of the hot index.
  */
+export function automationRunArchiveDir(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  month: string,
+): string {
+  if (!isRunArchiveMonth(month)) {
+    throw new Error(`Invalid run archive month: ${JSON.stringify(month)}. Must be YYYY-MM.`);
+  }
+  return join(automationRunArchiveRoot(workDir, wsId, ownerId, automationId), month);
+}
+
+/** An archive month's run index: `…/archive/<YYYY-MM>/index.jsonl`. */
 export function automationRunSegmentPath(
   workDir: string,
   wsId: string,
@@ -111,15 +141,23 @@ export function automationRunSegmentPath(
   automationId: string,
   month: string,
 ): string {
-  if (!SEGMENT_MONTH_RE.test(month)) {
-    throw new Error(`Invalid run segment month: ${JSON.stringify(month)}. Must be YYYY-MM.`);
-  }
-  return join(automationRunsDir(workDir, wsId, ownerId, automationId), segmentFileName(month));
+  return join(automationRunArchiveDir(workDir, wsId, ownerId, automationId, month), "index.jsonl");
 }
 
-/** The month (`YYYY-MM`) a segment file name holds, or null when the name is not a segment's. */
-export function parseRunSegmentFileName(name: string): string | null {
-  return SEGMENT_FILE_RE.exec(name)?.[1] ?? null;
+/** An archived run's result sidecar: `…/archive/<YYYY-MM>/<runId>.result.json`. */
+export function automationArchivedRunResultPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  month: string,
+  runId: string,
+): string {
+  validateRunId(runId);
+  return join(
+    automationRunArchiveDir(workDir, wsId, ownerId, automationId, month),
+    `${runId}.result.json`,
+  );
 }
 
 /** A single run's result sidecar: `…/runs/<automationId>/<runId>.result.json`. */

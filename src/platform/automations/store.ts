@@ -7,13 +7,15 @@
  *
  *   workspaces/<wsId>/automations/<ownerId>/<automationId>.json              the definition (one bare Automation)
  *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index.jsonl  the newest MAX_RUN_LINES run summaries (hot window)
- *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/index-YYYY-MM.jsonl  older summaries, by start month (UTC)
- *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  the run's deliverable
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  a hot run's deliverable
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
  *
- * Run history is kept indefinitely. The hot index stays bounded so every
- * append, recent-run read, and event fire check reads a small file; lines past
- * the window roll into month segments, which are read only by a paged read
- * that asks for older runs ({@link readRunsPage}).
+ * Run history and results are kept indefinitely. The hot index stays bounded
+ * so every append, recent-run read, and event fire check reads a small file;
+ * lines past the window roll, with their result sidecars, into the archive
+ * month of the run's start, which is read only by a paged read that asks for
+ * older runs ({@link readRunsPage}) or a result lookup that misses the hot dir.
  *
  * A run is NOT a conversation: it leaves a `AutomationRunResult` sidecar (final
  * output, activity log, output-file refs) under its `runs/` subtree.
@@ -34,14 +36,18 @@ import {
 import { join } from "node:path";
 import { ensureWorkspaceDir } from "../../workspace/context.ts";
 import {
+  automationArchivedRunResultPath,
   automationFilePath,
+  automationRunArchiveDir,
+  automationRunArchiveRoot,
   automationRunIndexPath,
   automationRunResultPath,
   automationRunSegmentPath,
   automationRunsDir,
+  isRunArchiveMonth,
   parseAutomationPath,
-  parseRunSegmentFileName,
   validateAutomationId,
+  validateRunId,
   workspaceAutomationsDir,
 } from "./paths.ts";
 import type { Automation, AutomationRun, AutomationRunResult } from "./types.ts";
@@ -228,29 +234,58 @@ export function loadAllAutomations(workDir: string): Automation[] {
 }
 
 // ---------------------------------------------------------------------------
-// Runs — runs/<automationId>/index.jsonl (hot) + index-YYYY-MM.jsonl (segments)
+// Runs — runs/<automationId>/index.jsonl (hot) + archive/<YYYY-MM>/ (older)
 // ---------------------------------------------------------------------------
 
-/** The month (`YYYY-MM`, UTC) a run summary line belongs to: its run's start month. */
-function segmentMonthOf(line: string, fallbackMs: number): string {
+/**
+ * The archive month (`YYYY-MM`, UTC) a run summary line belongs to, its run's
+ * start month, and the run id when the line has one.
+ */
+function archiveSlotOf(line: string, fallbackMs: number): { month: string; runId?: string } {
   let ms = Number.NaN;
+  let runId: string | undefined;
   try {
-    ms = new Date((JSON.parse(line) as AutomationRun).startedAt).getTime();
+    const run = JSON.parse(line) as AutomationRun;
+    ms = new Date(run.startedAt).getTime();
+    if (typeof run.id === "string") runId = run.id;
   } catch {
     // malformed line: kept, in the month it rolled over
   }
-  return new Date(Number.isFinite(ms) ? ms : fallbackMs).toISOString().slice(0, 7);
+  const month = new Date(Number.isFinite(ms) ? ms : fallbackMs).toISOString().slice(0, 7);
+  return runId ? { month, runId } : { month };
+}
+
+/** Move a rolled run's result sidecar from the hot dir into its archive month, when it has one. */
+function archiveRunResult(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  month: string,
+  runId: string,
+): void {
+  let from: string;
+  let to: string;
+  try {
+    from = automationRunResultPath(workDir, wsId, ownerId, automationId, runId);
+    to = automationArchivedRunResultPath(workDir, wsId, ownerId, automationId, month, runId);
+  } catch {
+    return; // an id that is not a valid run id has no sidecar
+  }
+  if (!existsSync(from)) return;
+  renameSync(from, to);
 }
 
 /**
  * Append a run summary to the automation's hot index. Creates directories and
  * the file if missing. When the hot index passes MAX_RUN_LINES, the oldest
- * lines roll into the month segments of the runs they record; nothing is
- * deleted, and result sidecars stay where they are.
+ * lines roll into the archive months of the runs they record, and each rolled
+ * run's result sidecar moves with it. Nothing is deleted.
  *
- * Segments are appended before the hot index is rewritten, so a crash between
- * the two can repeat a line in a segment but never lose one; the paged reader
- * drops repeated ids.
+ * Archive indexes are appended, then sidecars moved, then the hot index
+ * rewritten, so a crash part way can repeat a line in the archive but never
+ * lose one; the paged reader drops repeated ids, and a result lookup finds a
+ * sidecar on either side of the move.
  */
 export function appendRun(
   workDir: string,
@@ -271,20 +306,28 @@ export function appendRun(
 
   const rolled = lines.slice(0, lines.length - MAX_RUN_LINES);
   const kept = lines.slice(lines.length - MAX_RUN_LINES);
-  const byMonth = new Map<string, string[]>();
+  const byMonth = new Map<string, { lines: string[]; runIds: string[] }>();
   const now = Date.now();
   for (const line of rolled) {
     if (!line) continue;
-    const month = segmentMonthOf(line, now);
-    const group = byMonth.get(month);
-    if (group) group.push(line);
-    else byMonth.set(month, [line]);
+    const { month, runId } = archiveSlotOf(line, now);
+    let group = byMonth.get(month);
+    if (!group) {
+      group = { lines: [], runIds: [] };
+      byMonth.set(month, group);
+    }
+    group.lines.push(line);
+    if (runId) group.runIds.push(runId);
   }
   for (const [month, group] of byMonth) {
+    ensureWorkspaceDir(automationRunArchiveDir(workDir, wsId, ownerId, automationId, month));
     appendFileSync(
       automationRunSegmentPath(workDir, wsId, ownerId, automationId, month),
-      `${group.join("\n")}\n`,
+      `${group.lines.join("\n")}\n`,
     );
+    for (const runId of group.runIds) {
+      archiveRunResult(workDir, wsId, ownerId, automationId, month, runId);
+    }
   }
   atomicWrite(filePath, `${kept.join("\n")}\n`);
 }
@@ -341,25 +384,20 @@ export function readRuns(
   return applyFilters(runs, opts);
 }
 
-/** Months (`YYYY-MM`) that have a run-index segment for the automation, newest first. */
+/**
+ * Months (`YYYY-MM`) the automation has an archive for, newest first. Lists
+ * `archive/` only, never the hot runs dir.
+ */
 export function listRunSegmentMonths(
   workDir: string,
   wsId: string,
   ownerId: string,
   automationId: string,
 ): string[] {
-  let names: string[];
-  try {
-    names = readdirSync(automationRunsDir(workDir, wsId, ownerId, automationId));
-  } catch {
-    return [];
-  }
-  const months: string[] = [];
-  for (const name of names) {
-    const month = parseRunSegmentFileName(name);
-    if (month) months.push(month);
-  }
-  return months.sort().reverse();
+  return listSubdirNames(automationRunArchiveRoot(workDir, wsId, ownerId, automationId))
+    .filter(isRunArchiveMonth)
+    .sort()
+    .reverse();
 }
 
 /** Epoch ms of the first instant after `month` (`YYYY-MM`, UTC). */
@@ -452,9 +490,11 @@ export function readRunsPage(
   take(readIndexFile(automationRunIndexPath(workDir, wsId, ownerId, automationId)));
   const months = listRunSegmentMonths(workDir, wsId, ownerId, automationId);
   // The first page reads no segment; a later one walks them newest first.
+  // The first page reads no archive month; one that `since` rules out does not
+  // count as more history either.
   const unread =
     opts.before === undefined
-      ? months.length
+      ? months.filter((m) => monthEndMs(m) > sinceMs).length
       : walkSegments(months, { beforeMs, sinceMs, limit }, picked, (month) =>
           take(
             readIndexFile(automationRunSegmentPath(workDir, wsId, ownerId, automationId, month)),
@@ -554,7 +594,11 @@ export function saveRunResult(
   atomicWrite(filePath, `${JSON.stringify(result, null, 2)}\n`);
 }
 
-/** Read a run's full result sidecar, or null if it doesn't exist / is malformed. */
+/**
+ * Read a run's full result sidecar, or null if it doesn't exist / is malformed.
+ * Looks in the hot runs dir first, then in each archive month, newest first:
+ * a run id carries no date, so the month is found by one stat per month.
+ */
 export function readRunResult(
   workDir: string,
   wsId: string,
@@ -562,13 +606,20 @@ export function readRunResult(
   automationId: string,
   runId: string,
 ): AutomationRunResult | null {
-  let filePath: string;
   try {
-    filePath = automationRunResultPath(workDir, wsId, ownerId, automationId, runId);
+    validateRunId(runId);
   } catch {
     return null; // invalid run id
   }
-  if (!existsSync(filePath)) return null;
+  const hot = automationRunResultPath(workDir, wsId, ownerId, automationId, runId);
+  const filePath = existsSync(hot)
+    ? hot
+    : listRunSegmentMonths(workDir, wsId, ownerId, automationId)
+        .map((month) =>
+          automationArchivedRunResultPath(workDir, wsId, ownerId, automationId, month, runId),
+        )
+        .find((p) => existsSync(p));
+  if (!filePath) return null;
   try {
     return JSON.parse(readFileSync(filePath, "utf-8")) as AutomationRunResult;
   } catch {
