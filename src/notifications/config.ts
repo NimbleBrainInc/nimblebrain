@@ -192,47 +192,6 @@ export function validateRoutes(
   return { ok: true, routes };
 }
 
-/** The key an `agent` target named its task by before tasks were named tasks. */
-const LEGACY_AGENT_TARGET_KEY = "automation";
-
-/**
- * Boot reconcile: an `agent` route target stored as `{ kind: "agent",
- * automation: <id> }` is rewritten once to `{ kind: "agent", task: <id> }`, so
- * every reader sees one shape. Works on the raw stored block (nothing is
- * dropped or re-derived), only touches a workspace that holds such a target,
- * and returns how many workspaces it rewrote. A second run finds none.
- */
-export async function migrateAgentTargetKeys(store: WorkspaceStore): Promise<number> {
-  let rewritten = 0;
-  for (const ws of await store.list()) {
-    const block = ws.notifications as unknown as Record<string, unknown> | undefined;
-    const routes = block?.routes;
-    if (!Array.isArray(routes)) continue;
-    let changed = false;
-    const nextRoutes = routes.map((route: unknown) => {
-      const deliver = (route as { deliver?: unknown } | null)?.deliver;
-      if (!Array.isArray(deliver)) return route;
-      const nextDeliver = deliver.map((target: unknown) => {
-        if (!target || typeof target !== "object") return target;
-        const t = target as Record<string, unknown>;
-        if (t.kind !== "agent" || !(LEGACY_AGENT_TARGET_KEY in t) || "task" in t) return target;
-        changed = true;
-        const { [LEGACY_AGENT_TARGET_KEY]: id, ...rest } = t;
-        return { ...rest, task: id };
-      });
-      return { ...(route as object), deliver: nextDeliver };
-    });
-    if (!changed) continue;
-    await serializePerWorkspace(ws.id, () =>
-      store.update(ws.id, {
-        notifications: { ...block, routes: nextRoutes } as unknown as WorkspaceNotificationsConfig,
-      }),
-    );
-    rewritten += 1;
-  }
-  return rewritten;
-}
-
 /** Apply a mutation to one workspace's notifications block and persist it. */
 export async function updateNotificationsConfig(
   store: WorkspaceStore,

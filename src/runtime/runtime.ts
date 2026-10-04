@@ -131,7 +131,6 @@ import {
 } from "../model/catalog.ts";
 import { buildModelResolver, resolveModelString } from "../model/registry.ts";
 import { type ModelSlot, parseModelSlotRef } from "../model/slots.ts";
-import { migrateAgentTargetKeys } from "../notifications/config.ts";
 import { type ResolvedPollConfig, resolvePollConfig } from "../notifications/poll-config.ts";
 import { positionOutbox } from "../notifications/position.ts";
 import { NotificationStore } from "../notifications/store.ts";
@@ -755,12 +754,6 @@ export class Runtime {
     const instanceConfig = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
-    // Route targets stored under their old key take the `task` key once, before
-    // anything reads a route.
-    const retargeted = await migrateAgentTargetKeys(workspaceStore);
-    if (retargeted > 0) {
-      log.info("[runtime] rewrote agent route targets to the task key", { workspaces: retargeted });
-    }
     // The runtime is the one owner of the identity provider: the server
     // authenticates with this one, and every permission check here judges the
     // identity it verified. There is no runtime without one: no `instance.json`
