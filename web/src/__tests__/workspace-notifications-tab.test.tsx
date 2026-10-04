@@ -32,6 +32,7 @@ import type { WorkspaceInfo } from "../context/WorkspaceContext";
 interface ToolCall {
   tool: string;
   args: Record<string, unknown>;
+  workspaceId?: string;
 }
 
 let calls: ToolCall[] = [];
@@ -45,6 +46,8 @@ const DELIVERED_NOTHING: Record<string, unknown> = {
   deliveries: [],
 };
 let testSendResult: Record<string, unknown> | Error = DELIVERED_NOTHING;
+/** When set, `set_source_level` refuses with this text. */
+let levelRefusal: string | null = null;
 
 function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -68,14 +71,24 @@ function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 mock.module("../api/client", () => ({
   ...realClient,
-  callTool: mock(async (_source: string, tool: string, args: Record<string, unknown>) => {
-    calls.push({ tool, args });
-    if (tool === "send_test") {
-      if (testSendResult instanceof Error) throw testSendResult;
-      return { content: [{ type: "text", text: JSON.stringify(testSendResult) }] };
-    }
-    return { content: [{ type: "text", text: JSON.stringify(current) }] };
-  }),
+  callTool: mock(
+    async (
+      _source: string,
+      tool: string,
+      args: Record<string, unknown>,
+      opts?: { workspaceId?: string },
+    ) => {
+      calls.push({ tool, args, workspaceId: opts?.workspaceId });
+      if (tool === "set_source_level" && levelRefusal) {
+        return { content: [{ type: "text", text: levelRefusal }], isError: true };
+      }
+      if (tool === "send_test") {
+        if (testSendResult instanceof Error) throw testSendResult;
+        return { content: [{ type: "text", text: JSON.stringify(testSendResult) }] };
+      }
+      return { content: [{ type: "text", text: JSON.stringify(current) }] };
+    },
+  ),
 }));
 
 const React = await import("react");
@@ -83,6 +96,7 @@ const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { WorkspaceProvider } = await import("../context/WorkspaceContext");
 const { WorkspaceNotificationsTab } = await import("../pages/settings/WorkspaceNotificationsTab");
+const { NoticeProvider, NoticeViewport } = await import("../components/notices");
 
 const WS: WorkspaceInfo = {
   id: "ws_005b519ef7efc353",
@@ -100,11 +114,16 @@ async function mount(): Promise<HTMLDivElement> {
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
     root.render(
-      React.createElement(WorkspaceProvider, {
-        initialWorkspaces: [WS],
-        initialActiveId: WS.id,
-        children: React.createElement(WorkspaceNotificationsTab),
-      }),
+      React.createElement(
+        NoticeProvider,
+        null,
+        React.createElement(NoticeViewport),
+        React.createElement(WorkspaceProvider, {
+          initialWorkspaces: [WS],
+          initialActiveId: WS.id,
+          children: React.createElement(WorkspaceNotificationsTab),
+        }),
+      ),
     );
   });
   unmount = () => {
@@ -160,12 +179,17 @@ async function setValue(el: HTMLSelectElement | HTMLTextAreaElement, value: stri
   });
 }
 
+async function flushAll(): Promise<void> {
+  for (let i = 0; i < 4; i++) await act(async () => await Promise.resolve());
+}
+
 afterEach(() => {
   unmount?.();
   unmount = null;
   calls = [];
   current = settings();
   testSendResult = DELIVERED_NOTHING;
+  levelRefusal = null;
 });
 
 describe("what the page tells an admin about routes", () => {
@@ -235,6 +259,34 @@ describe("the ceiling", () => {
 
     const write = calls.find((c) => c.tool === "set_source_level");
     expect(write?.args).toEqual({ source: "acme", maxLevel: "urgent" });
+    // Named, so a save that runs after a workspace switch lands where it was made.
+    expect(write?.workspaceId).toBe(WS.id);
+    await flushAll();
+    expect(document.body.querySelector("[data-testid='notice']")?.textContent).toContain(
+      "Acme ceiling updated",
+    );
+  });
+
+  test("a refused ceiling shows the reason on the field", async () => {
+    levelRefusal = "Only workspace admins can change a ceiling.";
+    const container = await mount();
+    await setValue(selectLabelled(container, "Level ceiling for Acme"), "urgent");
+    await flushAll();
+    expect(container.textContent).toContain("Only workspace admins can change a ceiling.");
+    expect(container.textContent).toContain("Not saved");
+  });
+
+  // A ceiling save takes only the sources from its answer: the route drafts
+  // are unsaved work, and the answer's routes are what is stored.
+  test("changing a ceiling keeps an unsaved route draft", async () => {
+    const container = await mount();
+    await click(buttonLabelled(container, "Add route"));
+    const before = container.querySelectorAll("[data-testid='route-editor']").length;
+    expect(before).toBe(1);
+
+    await setValue(selectLabelled(container, "Level ceiling for Acme"), "urgent");
+    await flushAll();
+    expect(container.querySelectorAll("[data-testid='route-editor']").length).toBe(before);
   });
 });
 
@@ -259,6 +311,11 @@ describe("saving routes", () => {
 
     const write = calls.find((c) => c.tool === "set_routes");
     if (!write) throw new Error("Save routes sent no set_routes call");
+    expect(write.workspaceId).toBe(WS.id);
+    await flushAll();
+    expect(document.body.querySelector("[data-testid='notice']")?.textContent).toContain(
+      "Routes saved",
+    );
     const sent = (write.args.routes as Array<Record<string, unknown>>)[0];
     expect(sent).toEqual({
       id: "rt_1",

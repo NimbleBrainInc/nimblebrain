@@ -15,14 +15,19 @@ import {
   setNotificationRoutes,
   setNotificationSourceLevel,
 } from "../../api/notifications";
+import { useNotice } from "../../components/notices";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Select } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
+import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { useAutosaveForm } from "../../hooks/useAutosaveForm";
 import { NOTIFICATION_LEVELS } from "../../lib/notification-levels";
 import { cn } from "../../lib/utils";
 import {
+  AutosaveField,
+  AutosaveStatus,
   EmptyState,
   InlineError,
   RequireActiveWorkspace,
@@ -114,11 +119,64 @@ function emptyDraft(): RouteDraft {
 }
 
 export function WorkspaceNotificationsTab() {
+  return (
+    <div className="max-w-5xl mx-auto space-y-6">
+      <SettingsPageHeader
+        title="Notifications"
+        description="What this workspace's connectors may report, and where it goes. A connector records facts on its own; nothing leaves this workspace until you raise its ceiling and write a route."
+      />
+      <RequireActiveWorkspace>
+        <ForActiveWorkspace />
+      </RequireActiveWorkspace>
+    </div>
+  );
+}
+
+/**
+ * Keyed by the workspace, so a switch starts fresh: the route keeps this
+ * element mounted across `/w/:slug` changes, and one workspace's drafts must
+ * never stand in for another's. Every read and write names `wsId`, so a save
+ * queued behind another still lands in the workspace it was made in.
+ */
+function ForActiveWorkspace() {
+  const { activeWorkspace } = useWorkspaceContext();
+  // RequireActiveWorkspace guarantees activeWorkspace is non-null here.
+  const ws = activeWorkspace!;
+  return <NotificationSettings key={ws.id} wsId={ws.id} />;
+}
+
+/** Each source's ceiling, keyed by source id. */
+type Ceilings = Record<string, NotificationLevel>;
+
+function NotificationSettings({ wsId }: { wsId: string }) {
+  const notify = useNotice();
   const [settings, setSettings] = useState<NotificationsSettingsOutput | null>(null);
   const [routes, setRoutes] = useState<RouteDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+
+  // A ceiling saves as it changes; it is one value with nothing to complete.
+  // Its save takes only the sources from the answer: the route drafts are the
+  // admin's unsaved work, and the answer's routes are what is stored.
+  const saveCeiling = useCallback(
+    async (source: string, maxLevel: NotificationLevel) => {
+      const next = await setNotificationSourceLevel({ source, maxLevel }, wsId);
+      setSettings(next);
+    },
+    [wsId],
+  );
+  const ceilingLabels = Object.fromEntries(
+    (settings?.sources ?? []).map((s) => [s.source, `${s.label} ceiling`]),
+  );
+  const ceilings = useAutosaveForm<Ceilings>(
+    {},
+    {
+      save: saveCeiling,
+      labels: ceilingLabels,
+      notices: Object.fromEntries(Object.keys(ceilingLabels).map((s) => [s, { undo: true }])),
+    },
+  );
+  const { load: loadCeilings } = ceilings;
 
   const apply = useCallback((next: NotificationsSettingsOutput) => {
     setSettings(next);
@@ -128,7 +186,9 @@ export function WorkspaceNotificationsTab() {
 
   const load = useCallback(async () => {
     try {
-      apply(await readNotificationSettings());
+      const next = await readNotificationSettings(wsId);
+      apply(next);
+      loadCeilings(Object.fromEntries(next.sources.map((s) => [s.source, s.maxLevel])));
     } catch (err) {
       setError(
         err instanceof Error
@@ -136,28 +196,20 @@ export function WorkspaceNotificationsTab() {
           : "Could not read this workspace's notification settings",
       );
     }
-  }, [apply]);
+  }, [apply, loadCeilings, wsId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const changeLevel = async (source: string, maxLevel: NotificationLevel) => {
-    setSaved(false);
-    try {
-      apply(await setNotificationSourceLevel({ source, maxLevel }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not change the ceiling");
-    }
-  };
-
+  // Routes keep an explicit save: a route is often half-built while it is
+  // edited, and the list is written as a whole.
   const save = async () => {
     setSaving(true);
-    setSaved(false);
     try {
       const payload = routes.map(materialize);
-      apply(await setNotificationRoutes({ routes: payload }));
-      setSaved(true);
+      apply(await setNotificationRoutes({ routes: payload }, wsId));
+      notify({ level: "success", title: "Routes saved" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the routes");
     } finally {
@@ -166,67 +218,61 @@ export function WorkspaceNotificationsTab() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <SettingsPageHeader
-        title="Notifications"
-        description="What this workspace's connectors may report, and where it goes. A connector records facts on its own; nothing leaves this workspace until you raise its ceiling and write a route."
-      />
-      <RequireActiveWorkspace>
-        {error ? <InlineError message={error} /> : null}
+    <>
+      {error ? <InlineError message={error} /> : null}
 
-        {settings ? <RoutesExecutedNotice executed={settings.routesExecuted} /> : null}
+      {settings ? <RoutesExecutedNotice executed={settings.routesExecuted} /> : null}
 
-        <Section
-          flush
-          title="Sources"
-          description="Every connector in this workspace that declares an outbox. The ceiling is the highest level its notifications may reach a route at — a new source starts at info, so a route asking for attention or urgency never fires for it until you raise this."
-        >
-          {settings ? <SourceList sources={settings.sources} onChange={changeLevel} /> : null}
-        </Section>
+      <Section
+        flush
+        title="Sources"
+        description="Every connector in this workspace that declares an outbox. The ceiling is the highest level its notifications may reach a route at — a new source starts at info, so a route asking for attention or urgency never fires for it until you raise this."
+        action={settings?.sources.length ? <AutosaveStatus status={ceilings.status} /> : null}
+      >
+        {settings ? <SourceList sources={settings.sources} ceilings={ceilings} /> : null}
+      </Section>
 
-        <Section
-          title="Routes"
-          description="A route matches notifications and delivers them. Match on source, on the event name the connector chose, and on a minimum level; deliver to a tool this workspace has installed, or wake one of your automations."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setRoutes((current) => [...current, emptyDraft()])}
-            >
-              <Plus className="size-3.5 mr-1.5" />
-              Add route
+      <Section
+        title="Routes"
+        description="A route matches notifications and delivers them. Match on source, on the event name the connector chose, and on a minimum level; deliver to a tool this workspace has installed, or wake one of your automations."
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setRoutes((current) => [...current, emptyDraft()])}
+          >
+            <Plus className="size-3.5 mr-1.5" />
+            Add route
+          </Button>
+        }
+      >
+        <div className="space-y-4">
+          {routes.length === 0 ? (
+            <EmptyState message="No routes. Notifications still arrive in the inbox — a route is what sends one somewhere else." />
+          ) : null}
+          {routes.map((route, i) => (
+            <RouteEditor
+              key={route.key}
+              route={route}
+              settings={settings}
+              onChange={(next) =>
+                setRoutes((current) => current.map((r, j) => (j === i ? next : r)))
+              }
+              onRemove={() => setRoutes((current) => current.filter((_, j) => j !== i))}
+            />
+          ))}
+          <div className="flex items-center gap-3">
+            <Button size="sm" onClick={() => void save()} disabled={saving || settings === null}>
+              {saving ? "Saving…" : "Save routes"}
             </Button>
-          }
-        >
-          <div className="space-y-4">
-            {routes.length === 0 ? (
-              <EmptyState message="No routes. Notifications still arrive in the inbox — a route is what sends one somewhere else." />
-            ) : null}
-            {routes.map((route, i) => (
-              <RouteEditor
-                key={route.key}
-                route={route}
-                settings={settings}
-                onChange={(next) =>
-                  setRoutes((current) => current.map((r, j) => (j === i ? next : r)))
-                }
-                onRemove={() => setRoutes((current) => current.filter((_, j) => j !== i))}
-              />
-            ))}
-            <div className="flex items-center gap-3">
-              <Button size="sm" onClick={() => void save()} disabled={saving || settings === null}>
-                {saving ? "Saving…" : "Save routes"}
-              </Button>
-              {saved ? <span className="text-xs text-muted-foreground">Saved.</span> : null}
-              <span className="text-xs text-muted-foreground">
-                Saving replaces this workspace's whole route list, and stamps you as the author of
-                every route in it — the identity each one would dispatch under.
-              </span>
-            </div>
+            <span className="text-xs text-muted-foreground">
+              Saving replaces this workspace's whole route list, and stamps you as the author of
+              every route in it — the identity each one would dispatch under.
+            </span>
           </div>
-        </Section>
-      </RequireActiveWorkspace>
-    </div>
+        </div>
+      </Section>
+    </>
   );
 }
 
@@ -262,10 +308,10 @@ function RoutesExecutedNotice({ executed }: { executed: boolean }) {
 
 function SourceList({
   sources,
-  onChange,
+  ceilings,
 }: {
   sources: NotificationSourceView[];
-  onChange: (source: string, level: NotificationLevel) => void;
+  ceilings: ReturnType<typeof useAutosaveForm<Ceilings>>;
 }) {
   if (sources.length === 0) {
     return (
@@ -288,20 +334,26 @@ function SourceList({
               <p className="mt-1 text-sm text-muted-foreground">{source.description}</p>
             ) : null}
           </div>
-          <div className="w-40 shrink-0 space-y-1">
-            <Label className="text-xs text-muted-foreground">Ceiling</Label>
-            <Select
-              aria-label={`Level ceiling for ${source.label}`}
-              value={source.maxLevel}
-              onChange={(e) => onChange(source.source, e.target.value as NotificationLevel)}
+          <div className="w-48 shrink-0">
+            <AutosaveField
+              id={`ceiling-${source.source}`}
+              label="Ceiling"
+              {...ceilings.fieldState(source.source)}
+              hint={source.configured ? undefined : "Default"}
             >
-              {NOTIFICATION_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </Select>
-            {!source.configured ? <p className="text-2xs text-muted-foreground">Default</p> : null}
+              <Select
+                id={`ceiling-${source.source}`}
+                aria-label={`Level ceiling for ${source.label}`}
+                {...ceilings.selectProps(source.source)}
+                value={ceilings.values[source.source] ?? source.maxLevel}
+              >
+                {NOTIFICATION_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </Select>
+            </AutosaveField>
           </div>
         </li>
       ))}

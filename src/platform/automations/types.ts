@@ -12,6 +12,21 @@ import type { NotificationRouteMatch } from "../schemas/notifications.ts";
 /** Who created this automation. */
 export type AutomationSource = "user" | "agent";
 
+/** How a once schedule's one occurrence ended, and when (see {@link Automation.onceDone}). */
+export interface OnceDone {
+  /** ISO time the occurrence was settled: the run's start, or when it was judged missed. */
+  at: string;
+  outcome: "ran" | "missed";
+}
+
+/** Whether an automation is a kept definition or a one-off (see {@link Automation.kind}). */
+export type AutomationKind = "saved" | "oneoff";
+
+/** An automation's kind, reading an absent one as `saved`. */
+export function kindOf(automation: Pick<Automation, "kind">): AutomationKind {
+  return automation.kind ?? "saved";
+}
+
 export interface Automation {
   /** Unique identifier. Kebab-case, derived from name. */
   id: string;
@@ -25,8 +40,26 @@ export interface Automation {
   /** The message that opens each run. */
   prompt: string;
 
-  /** When to run. */
-  schedule: ScheduleSpec;
+  /**
+   * What fires it unattended. Absent: nothing does, and it runs only when
+   * someone runs it (Run now, `automations__run`).
+   */
+  schedule?: ScheduleSpec;
+
+  /**
+   * `saved`: a definition someone keeps and lists. `oneoff`: made to be run
+   * once with no trigger, kept with its run history but left out of the
+   * default list. Absent reads as `saved`.
+   */
+  kind?: AutomationKind;
+
+  /**
+   * Set when a once schedule's occurrence is over: it fired (`ran`, whatever
+   * the run's outcome) or was too late to fire (`missed`). The automation is
+   * then inert until a new `at` re-arms it, which clears this. Absent on every
+   * other automation, and on a once still to come.
+   */
+  onceDone?: OnceDone;
 
   /** Force a specific skill match (bypass trigger/keyword matching). */
   skill?: string;
@@ -162,26 +195,50 @@ export const MAX_EVENT_MAX_FIRES_PER_HOUR = 60;
 export const EVENT_FIRE_CEILING_REASON = "event_fire_ceiling";
 
 /**
+ * How late a once schedule may still fire after the runtime was down at its
+ * time. Judged once, when the scheduler starts: a once whose `at` passed more
+ * than this long ago is recorded as skipped and goes inert, because a one-time
+ * action hours after its time is more often wrong than useful (an email sent
+ * the next morning). A once deferred while running because every run slot is
+ * busy is never judged late; it waits for a slot however long that takes.
+ */
+export const ONCE_GRACE_MS = 3_600_000;
+
+/** What `disabledReason` (display text only) starts with once a once schedule has fired. */
+export const ONCE_RAN_REASON = "Ran once at ";
+
+/** What `disabledReason` (display text only) starts with when a once schedule missed its time. */
+export const ONCE_MISSED_REASON = "Missed its one time at ";
+
+/**
  * When an automation runs.
  *
- * Three kinds, discriminated by `type`, with each kind's own fields optional on
+ * Four kinds, discriminated by `type`, with each kind's own fields optional on
  * the shared shape — the arrangement `cron` and `interval` already had.
  *
- * `cron` and `interval` are positions in time and the scheduler's timer arms
- * itself to them. `event` is not: it has no next run, the timer never arms for
+ * `cron`, `interval`, and `once` are positions in time and the scheduler's
+ * timer arms itself to them. A `once` fires at `at` and then leaves the
+ * automation inert (disabled, no next run) until a new `at` re-arms it. `event`
+ * is not a position in time: it has no next run, the timer never arms for
  * it, and it fires when a notification the workspace routed to it arrives.
  * Reaching an automation that way is an operator's decision twice over — an
  * admin writes the route that names it, and the automation's own `match` says
  * which of the routed items it wants — so neither half alone opens the path.
  */
 export interface ScheduleSpec {
-  type: "cron" | "interval" | "event";
+  type: "cron" | "interval" | "event" | "once";
 
   /** Standard 5-field cron expression. Required when type is "cron". */
   expression?: string;
 
   /** IANA timezone. Defaults to home.timezone or system timezone. */
   timezone?: string;
+
+  /**
+   * The moment a `once` schedule fires: an ISO-8601 timestamp with an explicit
+   * offset (`2026-07-01T13:12:00-07:00` or `…Z`). Required when type is "once".
+   */
+  at?: string;
 
   /** Interval in milliseconds. Required when type is "interval". Minimum: 60_000 (1 min). */
   intervalMs?: number;
@@ -213,6 +270,23 @@ export interface ScheduleSpec {
 /** Whether a schedule fires from notifications rather than from the clock. */
 export function isEventSchedule(schedule: ScheduleSpec | undefined): boolean {
   return schedule?.type === "event";
+}
+
+/** Whether a schedule fires once, at `at`. */
+export function isOnceSchedule(schedule: ScheduleSpec | undefined): boolean {
+  return schedule?.type === "once";
+}
+
+/**
+ * Whether a once automation has fired (`ran`) or missed its time (`missed`)
+ * and is inert until re-armed, or null when it is not a once automation or is
+ * still to come. Read from {@link Automation.onceDone}.
+ */
+export function onceRetirement(
+  automation: Pick<Automation, "schedule" | "onceDone">,
+): "ran" | "missed" | null {
+  if (!isOnceSchedule(automation.schedule)) return null;
+  return automation.onceDone?.outcome ?? null;
 }
 
 // ---------------------------------------------------------------------------

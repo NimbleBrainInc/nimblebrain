@@ -1,16 +1,19 @@
 import { useState } from "react";
 
 export interface ScheduleSpec {
-  type: "cron" | "interval";
+  type: "cron" | "interval" | "once";
   expression?: string;
   timezone?: string;
   intervalMs?: number;
+  /** When a `once` fires: an ISO-8601 instant (the picker emits UTC, `…Z`). */
+  at?: string;
 }
 // NOTE: if you add a field here, add it to `specEqual` below — the reconcile
 // relies on a structural compare, and an unaccounted field silently reintroduces
 // the display-desync bug this component was fixed for.
 
-export type ScheduleMode = "interval" | "daily" | "weekly" | "cron";
+/** `manual` is no schedule at all: the picker emits `null`, and only Run now runs it. */
+export type ScheduleMode = "interval" | "daily" | "weekly" | "cron" | "once" | "manual";
 
 export const DAYS = [
   { value: "1", label: "Monday" },
@@ -36,8 +39,9 @@ function namesOneMoment(field: string | undefined, max: number): boolean {
 }
 
 export function detectMode(spec: ScheduleSpec | null): ScheduleMode {
-  if (!spec) return "interval";
+  if (!spec) return "manual";
   if (spec.type === "interval") return "interval";
+  if (spec.type === "once") return "once";
   if (!spec.expression) return "cron";
   const parts = spec.expression.trim().split(/\s+/);
   if (parts.length !== 5) return "cron";
@@ -95,8 +99,44 @@ export function specEqual(a: ScheduleSpec | null, b: ScheduleSpec | null): boole
     a.type === b.type &&
     a.expression === b.expression &&
     a.timezone === b.timezone &&
-    a.intervalMs === b.intervalMs
+    a.intervalMs === b.intervalMs &&
+    a.at === b.at
   );
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * An ISO instant as a `datetime-local` input value (`YYYY-MM-DDTHH:MM`) in the
+ * browser's own time zone, or "" when it is not a valid instant.
+ */
+export function localInputFromIso(iso: string | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return (
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` +
+    `T${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  );
+}
+
+/**
+ * A `datetime-local` value, read in the browser's own time zone, as a UTC ISO
+ * instant: the offset-qualified form the server requires. "" when empty or
+ * unparseable, which the server refuses with a message saying what it needs.
+ */
+export function isoFromLocalInput(local: string): string {
+  if (!local) return "";
+  const d = new Date(local);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+}
+
+/** The default time a new once schedule offers: the next whole hour, local time. */
+export function defaultOnceLocal(now: number = Date.now()): string {
+  const d = new Date(now);
+  d.setMinutes(0, 0, 0);
+  d.setHours(d.getHours() + 1);
+  return localInputFromIso(d.toISOString());
 }
 
 export function SchedulePicker({
@@ -104,8 +144,9 @@ export function SchedulePicker({
   onChange,
   timezone = "Pacific/Honolulu",
 }: {
+  /** `null`: no schedule (manual only). */
   value: ScheduleSpec | null;
-  onChange: (spec: ScheduleSpec) => void;
+  onChange: (spec: ScheduleSpec | null) => void;
   timezone?: string;
 }) {
   const [mode, setMode] = useState<ScheduleMode>(() => detectMode(value));
@@ -115,6 +156,7 @@ export function SchedulePicker({
   const [time, setTime] = useState(() => parseTime(value));
   const [dow, setDow] = useState(() => parseDow(value));
   const [cronExpr, setCronExpr] = useState(() => value?.expression ?? "");
+  const [onceAt, setOnceAt] = useState(() => localInputFromIso(value?.at) || defaultOnceLocal());
 
   // Reconcile display state to externally-driven `value` changes (e.g. choosing
   // a template pre-fills the parent's schedule after this picker has mounted).
@@ -140,11 +182,23 @@ export function SchedulePicker({
     setTime(parseTime(value));
     setDow(parseDow(value));
     setCronExpr(value?.expression ?? "");
+    if (value?.type === "once") setOnceAt(localInputFromIso(value.at));
   }
 
-  function emit(m: ScheduleMode, mins: number, t: string, d: string, cron: string) {
-    let spec: ScheduleSpec;
-    if (m === "interval") {
+  function emit(
+    m: ScheduleMode,
+    mins: number,
+    t: string,
+    d: string,
+    cron: string,
+    once: string = onceAt,
+  ) {
+    let spec: ScheduleSpec | null;
+    if (m === "manual") {
+      spec = null;
+    } else if (m === "once") {
+      spec = { type: "once", at: isoFromLocalInput(once) };
+    } else if (m === "interval") {
       spec = { type: "interval", intervalMs: Math.max(1, mins) * 60_000 };
     } else if (m === "daily" || m === "weekly") {
       spec = { type: "cron", expression: cronFor(m, t, d), timezone };
@@ -285,6 +339,41 @@ export function SchedulePicker({
           placeholder="0 8 * * *"
           style={{ ...inputStyle, width: 120 }}
         />
+      </label>
+
+      {/* Once at a date and time, then it stops */}
+      <label style={radioStyle}>
+        <input
+          type="radio"
+          name="schedule-mode"
+          checked={mode === "once"}
+          onChange={() => handleMode("once")}
+        />
+        <span>Once at</span>
+        <input
+          type="datetime-local"
+          value={onceAt}
+          onChange={(e) => {
+            setOnceAt(e.target.value);
+            if (mode === "once") emit("once", minutes, time, dow, cronExpr, e.target.value);
+          }}
+          onFocus={() => handleMode("once")}
+          style={{ ...inputStyle, width: 190 }}
+        />
+      </label>
+
+      {/* No schedule */}
+      <label style={radioStyle}>
+        <input
+          type="radio"
+          name="schedule-mode"
+          checked={mode === "manual"}
+          onChange={() => handleMode("manual")}
+        />
+        <span>Manual only</span>
+        <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+          runs only when you run it
+        </span>
       </label>
     </div>
   );

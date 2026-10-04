@@ -12,6 +12,7 @@ const RUN_STATUS_LABEL: Record<string, string> = {
 };
 
 function automationStatusLabel(s: AutomationSummary): string {
+  if (s.onceDone) return s.schedule;
   if (!s.enabled) return "Paused";
   if (s.disabledAt) return `Auto-disabled${s.disabledReason ? `: ${s.disabledReason}` : ""}`;
   if (!s.lastRunStatus) return "No runs yet";

@@ -14,7 +14,17 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { cronFor, detectMode, parseDow, parseTime, type ScheduleSpec } from "./SchedulePicker.tsx";
+import {
+  cronFor,
+  defaultOnceLocal,
+  detectMode,
+  isoFromLocalInput,
+  localInputFromIso,
+  parseDow,
+  parseTime,
+  type ScheduleSpec,
+  specEqual,
+} from "./SchedulePicker.tsx";
 
 function cron(expression: string): ScheduleSpec {
   return { type: "cron", expression };
@@ -125,5 +135,46 @@ describe("switching a cron-mode schedule to a structured mode", () => {
     // would reject; the seed falls back to the default instead.
     expect(parseTime(cron("0 25 * * *"))).toBe("08:00");
     expect(detectMode(cron("0 25 * * *"))).toBe("cron");
+  });
+});
+
+describe("once and manual-only modes", () => {
+  test("no schedule is manual only", () => {
+    expect(detectMode(null)).toBe("manual");
+  });
+
+  test("a once schedule shows in once mode", () => {
+    expect(detectMode({ type: "once", at: "2099-07-01T20:12:00.000Z" })).toBe("once");
+  });
+
+  test("the date-time input round-trips an instant", () => {
+    const at = "2099-07-01T20:12:00.000Z";
+    const local = localInputFromIso(at);
+    expect(local).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(isoFromLocalInput(local)).toBe(at);
+  });
+
+  test("what the picker emits for once names its offset, as the server requires", () => {
+    expect(isoFromLocalInput("2099-07-01T13:12")).toMatch(/Z$/);
+  });
+
+  test("an empty or broken input emits no time, so the server says what it needs", () => {
+    expect(isoFromLocalInput("")).toBe("");
+    expect(isoFromLocalInput("not a time")).toBe("");
+    expect(localInputFromIso("nope")).toBe("");
+  });
+
+  test("a new once defaults to the next whole hour", () => {
+    const now = new Date(2099, 6, 1, 13, 12).getTime();
+    expect(defaultOnceLocal(now)).toBe("2099-07-01T14:00");
+  });
+
+  test("two once schedules differ by their time", () => {
+    expect(
+      specEqual(
+        { type: "once", at: "2099-07-01T20:12:00.000Z" },
+        { type: "once", at: "2099-07-02T20:12:00.000Z" },
+      ),
+    ).toBe(false);
   });
 });

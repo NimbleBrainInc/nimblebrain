@@ -557,7 +557,7 @@ function ConfigSection({
           onActivate={() => onEdit("schedule")}
           editor={
             <ScheduleEditor
-              schedule={d.schedule as Record<string, unknown>}
+              schedule={(d.schedule as Record<string, unknown> | undefined) ?? null}
               onSave={(spec) => onSave("schedule", spec)}
               onCancel={onCancelEdit}
             />

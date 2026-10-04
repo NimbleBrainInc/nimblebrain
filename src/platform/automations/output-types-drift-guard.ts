@@ -123,12 +123,14 @@ export type DriftStatusSharedB = AssertAssignable<
 type StatusUnexpected = Exclude<keyof AutomationStatusDetail, keyof Automation | StatusOverlay>;
 export type DriftStatusUnexpected = AssertNever<StatusUnexpected>;
 
-// AutomationSummary — overlays are: derived fields (cost estimate),
-// formatted fields (schedule rendered to string, timestamps to relative
-// strings), and coerced optionals (`disabledAt`, `disabledReason`,
-// `lastRunStatus` get the `?? null` treatment).
+// AutomationSummary — overlays are: derived fields (cost estimate, the
+// schedule's type), formatted fields (schedule rendered to string, timestamps
+// to relative strings), and coerced optionals (`disabledAt`, `disabledReason`,
+// `lastRunStatus` get the `?? null` treatment; an absent `kind` reads `saved`).
 type SummaryOverlay =
   | "schedule"
+  | "scheduleType"
+  | "kind"
   | "lastRunAt"
   | "nextRunAt"
   | "lastRunStatus"
