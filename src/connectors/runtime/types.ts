@@ -1,5 +1,4 @@
 import type { HookDeclaration } from "../../hooks/types.ts";
-import type { LifecycleDeclaration } from "../../lifecycle/types.ts";
 import type { NotificationsDeclaration } from "../../notifications/types.ts";
 import type { CredentialRef, CredentialValue } from "../../tools/credential-ref.ts";
 import type { Connection, ConnectionState } from "./connection.ts";
@@ -296,25 +295,6 @@ export interface HostManifestMeta {
    * See `src/notifications/types.ts`.
    */
   notifications?: NotificationsDeclaration;
-  /**
-   * The two moments the runtime can tell this server about its own
-   * installation — `on_ready` when it first becomes reachable in a workspace,
-   * `on_removing` immediately before its source is torn down. Each names a tool
-   * on this same server.
-   *
-   * The same line {@link HostManifestMeta.hooks} holds applies here with more
-   * force: nothing in this block describes what either event MEANS. The kernel
-   * says *you were installed*; what a bundle does about it — mint a vendor
-   * tenancy, release one, nothing at all — is the bundle's business. A block
-   * describing what to provision would be a vendor taxonomy in the kernel.
-   *
-   * The named tools are host-only: the kernel removes them from every listing
-   * and refuses a direct call on every door, for every caller (see
-   * `src/permissions/host-only-tools.ts`).
-   *
-   * See `src/lifecycle/types.ts`.
-   */
-  lifecycle?: LifecycleDeclaration;
   /**
    * Bare names of tools on this same server that only a workspace admin may
    * call.

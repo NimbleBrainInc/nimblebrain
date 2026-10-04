@@ -9,7 +9,7 @@ import {
   validateRoutes,
   type WorkspaceNotificationsConfig,
 } from "../../notifications/config.ts";
-import { NotificationPoller } from "../../notifications/poller.ts";
+import { NotificationPoller, type PollTarget } from "../../notifications/poller.ts";
 import { RouteDispatcher } from "../../notifications/routes.ts";
 import { sendTestNotification } from "../../notifications/send-test.ts";
 import type {
@@ -126,6 +126,21 @@ function listOptionsFrom(args: NotificationsListInput): NotificationListOptions 
     ...(args.limit !== undefined ? { limit: args.limit } : {}),
     ...(args.order !== undefined ? { order: args.order } : {}),
   };
+}
+
+/**
+ * The outboxes one poller sweep may read.
+ *
+ * One catalog per sweep, shared by every installed connector's lookup. A
+ * catalog read is synchronous, and the sweep resolves a declaration for each
+ * `(workspace, connector)` pair, so a read per lookup blocks the event loop
+ * for the length of the whole sweep on a tenant with many installs.
+ */
+export function pollTargets(runtime: Runtime): Promise<PollTarget[]> {
+  const catalog = runtime.getConnectorCatalog();
+  return collectPollTargets(runtime.getLifecycle(), (wsId, serverName) =>
+    runtime.getNotificationsDeclaration(wsId, serverName, catalog),
+  );
 }
 
 export function createNotificationsSource(runtime: Runtime, eventSink: EventSink): McpSource {
@@ -479,10 +494,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   // listeners, and is benign; the asymmetry between "poller error" and "leaked
   // transport" is what the guard is for.
   const poller = new NotificationPoller({
-    targets: () =>
-      collectPollTargets(runtime.getLifecycle(), (wsId, serverName) =>
-        runtime.getNotificationsDeclaration(wsId, serverName),
-      ),
+    targets: () => pollTargets(runtime),
     storeFor: (wsId) => runtime.getNotificationStore(wsId),
     workspaceStore: runtime.getWorkspaceStore(),
     // Fired and not awaited. The poll's job ends when an envelope is durable,

@@ -24,10 +24,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
-import { textContent } from "../../src/engine/content-helpers.ts";
 import type { AdminToolCallPayload } from "../../src/engine/schemas/events.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import { ensureHooks } from "../../src/hooks/reconcile.ts";
@@ -38,9 +36,9 @@ import { REDACTED_ARGUMENT } from "../../src/permissions/admin-tools.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
-import { defineInProcessApp, type InProcessTool } from "../../src/tools/in-process-app.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
+import { type FixtureCall, marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const ADMIN_WS = "ws_003eba8844413cd9";
@@ -54,9 +52,10 @@ const testDir = join(tmpdir(), `nb-admin-tools-${Date.now()}`);
 const catalogDir = join(testDir, "catalog");
 
 /**
- * The catalog entry. `configure`, the lifecycle handler and the hook
- * registration tool are declared; `ghost` is declared and never advertised;
- * `search` is not declared.
+ * The catalog entry. `configure`, the lifecycle handler (which the server
+ * binds through `ai.nimblebrain/lifecycle`) and the hook registration tool are
+ * declared admin tools; `ghost` is declared and never advertised; `search` is
+ * not declared.
  */
 const CATALOG_YAML = `servers:
   - name: ai.acme/crm
@@ -72,8 +71,6 @@ const CATALOG_YAML = `servers:
       ai.nimblebrain/host:
         host_version: "1.5"
         admin_tools: [configure, workspace_ready, set_webhook_url, ghost]
-        lifecycle:
-          on_ready: workspace_ready
         hooks:
           - vendor: acme
             route: /ingest/acme
@@ -81,47 +78,28 @@ const CATALOG_YAML = `servers:
 `;
 
 /** Per-workspace record of what the connector's server actually ran. */
-const calls = new Map<string, string[]>();
+const calls = new Map<string, FixtureCall[]>();
 
-function buildSource(wsId: string) {
-  const log: string[] = [];
-  calls.set(wsId, log);
-  const tool = (
-    name: string,
-    meta?: Record<string, unknown>,
-    properties: Record<string, unknown> = {},
-  ): InProcessTool => ({
-    name,
-    description: `Acme ${name}.`,
-    inputSchema: { type: "object", properties },
-    ...(meta ? { meta } : {}),
-    handler: async () => {
-      log.push(name);
-      return { content: textContent(`${name} ok`), isError: false };
-    },
+async function startSource(wsId: string) {
+  const { source, calls: log } = await startLifecycleSource(SERVER, {
+    tools: [
+      // The server claims, in its own tool `_meta`, the opposite of what the
+      // catalog says. Neither claim may move the gate.
+      {
+        name: "configure",
+        meta: { "ai.nimblebrain/host": { admin_tools: [] } },
+        properties: { mode: { type: "string" }, api_key: { type: "string", writeOnly: true } },
+      },
+      { name: "search", meta: { "ai.nimblebrain/host": { admin_tools: ["search"] } } },
+      marked("workspace_ready", "ready"),
+      {
+        name: "set_webhook_url",
+        properties: { vendor: { type: "string" }, url: { type: "string" } },
+      },
+    ],
   });
-  return defineInProcessApp(
-    {
-      name: SERVER,
-      version: "1.0.0",
-      tools: [
-        // The server claims, in its own tool `_meta`, the opposite of what the
-        // catalog says. Neither claim may move the gate.
-        tool(
-          "configure",
-          { "ai.nimblebrain/host": { admin_tools: [] } },
-          { mode: { type: "string" }, api_key: { type: "string", writeOnly: true } },
-        ),
-        tool("search", { "ai.nimblebrain/host": { admin_tools: ["search"] } }),
-        tool("workspace_ready"),
-        tool("set_webhook_url", undefined, {
-          vendor: { type: "string" },
-          url: { type: "string" },
-        }),
-      ],
-    },
-    new NoopEventSink(),
-  );
+  calls.set(wsId, log);
+  return source;
 }
 
 /** The tool names each model call was offered, most recent last. */
@@ -179,9 +157,7 @@ beforeAll(async () => {
   await wsStore.addMember(MEMBER_WS, DEV_IDENTITY.id, "member");
 
   for (const wsId of [ADMIN_WS, MEMBER_WS]) {
-    const source = buildSource(wsId);
-    await source.start();
-    (await runtime.ensureWorkspaceRegistry(wsId)).addSource(source);
+    (await runtime.ensureWorkspaceRegistry(wsId)).addSource(await startSource(wsId));
     // Installed, because the hook reconcile reads the connector's MCP endpoint from its ref.
     await wsStore.update(wsId, {
       connectors: [{ url: "https://crm.acme.test/mcp", serverName: SERVER }],
@@ -202,7 +178,7 @@ afterAll(async () => {
 });
 
 function ran(wsId: string): string[] {
-  return calls.get(wsId) ?? [];
+  return (calls.get(wsId) ?? []).map((c) => c.tool);
 }
 
 function resetCalls(): void {

@@ -1,12 +1,11 @@
 /**
- * The host reading `ai.nimblebrain/lifecycle` from the wire, with the catalog
- * block as the fallback, through a real `Runtime` and real MCP connections on
- * both eras.
+ * The host reading `ai.nimblebrain/lifecycle` from the wire, through a real
+ * `Runtime` and real MCP connections on both eras.
  *
  * Pinned here:
  *  - a connector that advertises the extension gets both events through the
- *    tools it marked, and its catalog `lifecycle` block is not used (and is
- *    reported superseded once);
+ *    tools it marked; a `lifecycle` block left in its catalog entry is inert,
+ *    neither called nor withheld;
  *  - a marker from a server that does not advertise is not a handler;
  *  - the binding is read from a 2025-era `initialize` and from a 2026-07-28
  *    `server/discover`;
@@ -18,12 +17,9 @@
  *    for a handler marked `taskSupport: "optional"`;
  *  - an uninstall with no binding held and the connection idle-closed still
  *    reaches `removing`.
- *
- * The catalog-only path is pinned, unchanged, by
- * `connector-lifecycle-notify.test.ts` and `connector-lifecycle-host-only.test.ts`.
  */
 
-import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,7 +39,6 @@ import {
   notifyRemoving,
   resetReadyNotifications,
 } from "../../src/lifecycle/notify.ts";
-import { log } from "../../src/observability/log.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
@@ -63,7 +58,7 @@ const ADMIN_WS = "ws_003eba8844413cd9";
 const MEMBER_WS = "ws_00562f536b60bccc";
 const WORKSPACES = [ADMIN_WS, MEMBER_WS] as const;
 
-/** `slugifyServerName("ai.acme/wired")`: advertises the extension, and the catalog declares other handlers. */
+/** `slugifyServerName("ai.acme/wired")`: advertises the extension; its catalog entry carries a stale `lifecycle` block. */
 const WIRED = "ai-acme-wired";
 /** Marks the same tools, advertises nothing. */
 const QUIET = "ai-acme-quiet";
@@ -80,7 +75,7 @@ const catalogDir = join(testDir, "catalog");
 const CATALOG_YAML = `servers:
   - name: ai.acme/wired
     title: Acme Wired
-    description: Test connector whose catalog block the wire supersedes
+    description: Test connector whose catalog entry carries a stale block
     version: "1.0.0"
     remotes:
       - type: streamable-http
@@ -138,7 +133,7 @@ beforeAll(async () => {
     marked("scope_ready", "ready"),
     // A 2025-era task marker: the call must still go inline.
     marked("scope_removing", "removing", { taskSupport: "optional" }),
-    // What the catalog block names: unmarked, and superseded.
+    // What the stale catalog block names: unmarked, so ordinary tools.
     { name: "catalog_ready" },
     { name: "catalog_removing" },
     { name: "search" },
@@ -171,7 +166,7 @@ beforeAll(async () => {
       sources.set(`${wsId}/${name}`, source);
       registry.addSource(source);
     }
-    // Installed at the catalog entry's URL, so the catalog block binds to it.
+    // Installed at the catalog entry's URL, so the entry binds to it.
     await wsStore.update(wsId, {
       connectors: [
         { url: "https://wired.acme.test/mcp", serverName: WIRED },
@@ -222,29 +217,19 @@ describe("the host's calls, declared on the wire", () => {
     expect(source?.getNegotiatedProtocolVersion()?.startsWith("2025-")).toBe(true);
   });
 
-  it("delivers both events to the marked tools, not the catalog's, and says so once", async () => {
+  it("delivers both events to the marked tools, never to what a catalog block names", async () => {
     resetCalls();
-    const info = spyOn(log, "info");
-    try {
-      const deps = runtime.getLifecycleNotifyDeps();
-      await notifyReady(deps, ADMIN_WS, WIRED, "install");
-      await notifyRemoving(deps, ADMIN_WS, WIRED);
-      await notifyReady(deps, ADMIN_WS, WIRED, "resume");
-      // `reason` is not in scope_ready's schema; every call is inline, the
-      // `taskSupport: "optional"` handler's included.
-      expect(ran(ADMIN_WS, WIRED)).toEqual([
-        { tool: "scope_ready", args: {}, task: false },
-        { tool: "scope_removing", args: {}, task: false },
-        { tool: "scope_ready", args: {}, task: false },
-      ]);
-      const superseded = info.mock.calls.filter(
-        ([msg]) =>
-          typeof msg === "string" && msg.includes(`"${WIRED}"`) && msg.includes("superseded"),
-      );
-      expect(superseded).toHaveLength(1);
-    } finally {
-      info.mockRestore();
-    }
+    const deps = runtime.getLifecycleNotifyDeps();
+    await notifyReady(deps, ADMIN_WS, WIRED, "install");
+    await notifyRemoving(deps, ADMIN_WS, WIRED);
+    await notifyReady(deps, ADMIN_WS, WIRED, "resume");
+    // `reason` is not in scope_ready's schema; every call is inline, the
+    // `taskSupport: "optional"` handler's included.
+    expect(ran(ADMIN_WS, WIRED)).toEqual([
+      { tool: "scope_ready", args: {}, task: false },
+      { tool: "scope_removing", args: {}, task: false },
+      { tool: "scope_ready", args: {}, task: false },
+    ]);
   });
 
   it("reads the binding from server/discover on 2026-07-28 and calls inline though tasks are advertised", async () => {
@@ -313,7 +298,7 @@ describe("withholding wire-declared handlers", () => {
   for (const wsId of WORKSPACES) {
     const role = wsId === ADMIN_WS ? "an admin" : "a member";
 
-    it(`leaves them out of ${role}'s /mcp tools/list, and lists the superseded catalog names`, async () => {
+    it(`leaves them out of ${role}'s /mcp tools/list, and lists what the stale catalog block names`, async () => {
       const client = await mcpClient(wsId);
       try {
         const names = (await client.listTools()).tools.map((t) => t.name);

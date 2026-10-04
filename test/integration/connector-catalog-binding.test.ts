@@ -2,13 +2,13 @@
  * A catalog entry's grants reach an installed connector only when the ref IS
  * the entry's server: the entry's name AND the entry's URL.
  *
- * One `Runtime`, one catalog entry declaring `admin_tools`, a lifecycle handler
- * and a hook, and two workspaces where the dev identity is a member. Each holds
+ * One `Runtime`, one catalog entry declaring `admin_tools` and a hook, and two
+ * workspaces where the dev identity is a member. Each holds
  * a ref under the entry's server name: one at the entry's URL, one at another
  * server's. The first gets the entry's grants. The second runs as a plain remote
  * connector with none of them, the operator is told once, and the entry's
- * restrictions (`admin_tools`, host-only handlers) still hold for it, because a
- * restriction opens nothing.
+ * restriction (`admin_tools`) still holds for it, because a restriction opens
+ * nothing.
  */
 
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
@@ -51,8 +51,6 @@ const CATALOG_YAML = `servers:
       ai.nimblebrain/host:
         host_version: "1.5"
         admin_tools: [configure]
-        lifecycle:
-          on_ready: workspace_ready
         hooks:
           - vendor: acme
             route: /ingest/acme
@@ -77,7 +75,7 @@ function buildSource(wsId: string) {
     {
       name: SERVER,
       version: "1.0.0",
-      tools: [tool("configure"), tool("workspace_ready"), tool("set_webhook_url")],
+      tools: [tool("configure"), tool("set_webhook_url")],
     },
     new NoopEventSink(),
   );
@@ -132,28 +130,22 @@ async function call(wsId: string, tool: string) {
 }
 
 describe("a connector at the catalog entry's URL", () => {
-  it("is held to the entry's admin_tools and lifecycle", async () => {
+  it("is held to the entry's admin_tools", async () => {
     const admin = await call(AT_ENTRY_URL, "configure");
     expect(admin.structuredContent).toMatchObject({ error: "workspace_admin_required" });
-    const hostOnly = await call(AT_ENTRY_URL, "workspace_ready");
-    expect(hostOnly.isError).toBe(true);
     expect(ran.get(AT_ENTRY_URL)).toEqual([]);
   });
 
-  it("gets the entry's hook and lifecycle declarations", async () => {
+  it("gets the entry's hook declarations", async () => {
     const hooks = await runtime.getHookReconcileDeps().declarationsFor(AT_ENTRY_URL, SERVER);
     expect(hooks.map((h) => h.vendor)).toEqual(["acme"]);
-    const lifecycle = await runtime.getLifecycleNotifyDeps().declarationFor(AT_ENTRY_URL, SERVER);
-    expect(lifecycle?.on_ready).toBe("workspace_ready");
   });
 });
 
 describe("a connector under the entry's name at another URL", () => {
-  it("is still held to the entry's admin_tools and lifecycle withholding", async () => {
+  it("is still held to the entry's admin_tools", async () => {
     const admin = await call(AT_OTHER_URL, "configure");
     expect(admin.structuredContent).toMatchObject({ error: "workspace_admin_required" });
-    const hostOnly = await call(AT_OTHER_URL, "workspace_ready");
-    expect(hostOnly.isError).toBe(true);
     expect(ran.get(AT_OTHER_URL)).toEqual([]);
   });
 
@@ -167,9 +159,6 @@ describe("a connector under the entry's name at another URL", () => {
       expect(await runtime.getHookReconcileDeps().declarationsFor(AT_OTHER_URL, SERVER)).toEqual(
         [],
       );
-      expect(
-        await runtime.getLifecycleNotifyDeps().declarationFor(AT_OTHER_URL, SERVER),
-      ).toBeUndefined();
 
       const reported = warn.mock.calls.filter((c) =>
         String(c[0]).includes(`"${SERVER}" in ${AT_OTHER_URL} carries the server name`),
