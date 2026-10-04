@@ -93,12 +93,16 @@ export function isToolEnabled(toolName: string, features: ResolvedFeatures): boo
  * Tools that require org-level admin or owner to be visible.
  * Non-admin users should never see these tools in the tool list.
  * Both prefixed and unprefixed names are included.
+ *
+ * `manage_workspaces` is not here: it serves workspace admins (rename, member
+ * changes) and every member (reading the roster) as well as org admins, and its
+ * handler gates each action itself (`src/workspace/authz.ts`). A role gate here
+ * would refuse those callers before that check ran. It is app-only, so it never
+ * reaches the model's tool list either way.
  */
 const ADMIN_ONLY_TOOLS = new Set([
-  "nb__manage_workspaces",
   "nb__manage_users",
   "nb__set_model_config",
-  "manage_workspaces",
   "manage_users",
   "set_model_config",
 ]);

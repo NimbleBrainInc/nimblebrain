@@ -160,6 +160,41 @@ describe("handleToolCall — the workspace is the one in the URL", () => {
     expect(executed).toEqual(["synapse-collateral__preview"]);
   });
 
+  // Workspace admins and members who are not org admins rename, manage, and
+  // read rosters through manage_workspaces, so the REST role gate lets it
+  // through to the handler's own per-action check. manage_users stays gated.
+  it("lets an org member's manage_workspaces call through to the handler; manage_users stays refused", async () => {
+    const { runtime, executed } = makeToolCallRuntime({
+      sourceName: "nb",
+      toolNames: ["nb__manage_workspaces", "nb__manage_users"],
+    });
+    const opts = { workspaceId: "ws_007dc0488ce56f9e", identity: identityU1 };
+    // Both flags on, so a refusal here can only be the role gate's.
+    const enabled = {
+      workspaceManagement: true,
+      userManagement: true,
+    } as unknown as ResolvedFeatures;
+
+    const listed = await handleToolCall(
+      toolReq({ server: "nb", tool: "manage_workspaces", arguments: { action: "list_members" } }),
+      runtime,
+      enabled,
+      opts,
+    );
+    expect(listed.status).toBe(200);
+    expect(executed).toEqual(["nb__manage_workspaces"]);
+
+    const users = await handleToolCall(
+      toolReq({ server: "nb", tool: "manage_users", arguments: { action: "list" } }),
+      runtime,
+      enabled,
+      opts,
+    );
+    expect(users.status).toBe(403);
+    expect((await readJson<ApiErrorBody>(users)).error).toBe("forbidden");
+    expect(executed).toEqual(["nb__manage_workspaces"]);
+  });
+
   it("resolves a bare source in the workspace from the URL", async () => {
     const { runtime, executed, registryWs } = makeToolCallRuntime({ sourceName: "calendar" });
     const res = await handleToolCall(

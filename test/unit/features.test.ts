@@ -60,8 +60,9 @@ describe("isToolVisibleToRole", () => {
     expect(isToolVisibleToRole("nb__set_model_config", "owner")).toBe(true);
   });
 
-  it("hides manage_workspaces from non-admin users", () => {
-    expect(isToolVisibleToRole("nb__manage_workspaces", "member")).toBe(false);
+  it("lets a non-admin reach manage_workspaces, whose handler gates each action", () => {
+    expect(isToolVisibleToRole("nb__manage_workspaces", "member")).toBe(true);
+    expect(isToolVisibleToRole("manage_workspaces", "member")).toBe(true);
   });
 
   it("shows non-admin tools to all roles", () => {
