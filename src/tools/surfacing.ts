@@ -103,7 +103,7 @@ export function filterTools(tools: ToolSchema[], patterns: string[]): ToolSchema
  *
  * - Tier 1 (≤maxDirectTools total): all tools direct, nothing proxied.
  * - Tier 2 (>maxDirectTools, no skill or skill has no allowedTools): only KERNEL tools
- *   direct (nb__* system core + identity sources — files/conversations/automations),
+ *   direct (nb__* system core + identity sources — files/conversations/tasks),
  *   rest proxied.
  * - Tier 3 (skill matched with allowedTools): tools matching skill globs + kernel tools direct, rest proxied.
  *

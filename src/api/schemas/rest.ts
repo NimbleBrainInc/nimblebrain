@@ -22,7 +22,7 @@ import { CONVERSATION_ID_RE } from "../../conversation/types.ts";
 export const ToolCallRequestEnvelope = Type.Object(
   {
     server: Type.String({
-      description: "Tool source name (e.g. `skills`, `home`, `automations`).",
+      description: "Tool source name (e.g. `skills`, `home`, `tasks`).",
     }),
     tool: Type.String({
       description:

@@ -2,7 +2,7 @@
  * Eval: Platform Capability Discovery
  *
  * Tests that the agent correctly discovers and uses built-in platform
- * capabilities (files, conversations, automations) via nb__search.
+ * capabilities (files, conversations, tasks) via nb__search.
  *
  * Run:
  *   ANTHROPIC_API_KEY=sk-ant-... bun test test/eval/platform-capabilities.eval.test.ts
@@ -65,15 +65,15 @@ describe("platform capability discovery", () => {
   // Automations
   // -----------------------------------------------------------------------
 
-  describe("automations", () => {
+  describe("tasks", () => {
     it("discovers automation tools when asked to schedule", async () => {
       const result = await runEval("schedule a daily summary at 9am");
-      assertSearchedFor(result, "automations");
+      assertSearchedFor(result, "tasks");
     }, 30_000);
 
     it("discovers automation tools when asked about recurring tasks", async () => {
       const result = await runEval("what automations are currently running?");
-      assertSearchedFor(result, "automations");
+      assertSearchedFor(result, "tasks");
     }, 30_000);
   });
 

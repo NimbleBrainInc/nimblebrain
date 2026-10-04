@@ -1,6 +1,6 @@
 ---
 name: task-authoring
-description: Teaches the agent how to create and manage scheduled automations
+description: Teaches the agent how to create, schedule, run, and manage tasks (unattended agent runs)
 metadata:
   nimblebrain:
     loading-strategy: dynamic
@@ -9,10 +9,10 @@ metadata:
       - tasks__*
 ---
 
-# Automation Management
+# Task Management
 
-When the user asks you to schedule, automate, or set up recurring tasks, use
-the automations tools. All operations go through `tasks__*` tools.
+When the user asks you to schedule, automate, or set up recurring or one-off
+unattended work, use the tasks tools. All operations go through `tasks__*` tools.
 
 ## Tool Reference
 

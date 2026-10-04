@@ -76,7 +76,7 @@ export class WorkspaceAccessDenied extends Error {
  * Thrown when an identity-scoped session with NO workspace (e.g. a `/mcp`
  * session, which is identity-bound and carries no workspace) attempts a
  * workspace-scoped tool call. Workspace tools are unreachable on such a session
- * — only the caller's identity tools (conversations / files / automations) are.
+ * — only the caller's identity tools (conversations / files / tasks) are.
  * Subclasses `WorkspaceAccessDenied` so the existing error mapping applies
  * unchanged.
  */
@@ -126,7 +126,7 @@ export class UnknownToolSource extends Error {
  * Thrown when a bare (identity-scoped) tool name's source isn't in the
  * kernel identity-source set — the identity-side parallel to
  * `UnknownToolSource`. A bare `<source>__<tool>` whose `<source>` is not a
- * recognized identity source (conversations / files / automations) is a
+ * recognized identity source (conversations / files / tasks) is a
  * mis-namespaced call, surfaced rather than silently treated as workspace.
  */
 export class UnknownIdentitySource extends Error {
@@ -215,7 +215,7 @@ export interface OrchestratorRuntime {
 
   /**
    * Resolve a kernel identity-scoped source by name (`conversations`, and
-   * later `files` / `automations`). Returns `undefined` for an unknown or
+   * later `files` / `tasks`). Returns `undefined` for an unknown or
    * non-identity source — the orchestrator turns that into
    * `UnknownIdentitySource`. No workspace: these dispatch with identity
    * authority and gate their own reads via `canAccess`.
@@ -370,7 +370,7 @@ export async function routeToolCall(opts: {
   // Bare `<source>__<tool>` — the current wire form for BOTH doors. The source
   // segment decides which, in priority order:
   //
-  //   1. a kernel identity source (`conversations` / `files` / `automations`),
+  //   1. a kernel identity source (`conversations` / `files` / `tasks`),
   //      which is excluded from every workspace registry by construction, so it
   //      can never be shadowed by a workspace source of the same name;
   //   2. the reserved personal-connector prefix, which a workspace source may
@@ -437,7 +437,7 @@ export async function routeToolCall(opts: {
  * Route a bare `<source>__<tool>` against the caller's identity. Two source
  * classes, in priority order:
  *
- *   1. A **kernel identity source** (`conversations` / `files` / `automations`)
+ *   1. A **kernel identity source** (`conversations` / `files` / `tasks`)
  *      — the caller's own data, always reachable, gated per-entity by
  *      `canAccess`.
  *   2. A **personal connector** — an MCP connection the caller installed on their

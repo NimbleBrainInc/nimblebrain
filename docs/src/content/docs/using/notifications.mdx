@@ -193,7 +193,7 @@ damage but does not remove it.
 
 ### Deliver to an automation
 
-Pick one of your [automations](/using/automations) and the route wakes it,
+Pick one of your [automations](/using/tasks) and the route wakes it,
 handing it the matched notifications as its input.
 
 The automation has to be expecting them. An **event** automation — one whose
@@ -209,7 +209,7 @@ notification to the run it caused.
 
 An event automation also carries a **fire ceiling** — by default twelve runs an
 hour — and exceeding it disables the automation rather than throttling it. See
-[Automations](/using/automations#the-fire-ceiling) for why that is the shape.
+[Tasks](/using/tasks#the-fire-ceiling) for why that is the shape.
 
 ### Check it works, before you need it
 
@@ -316,5 +316,5 @@ them: it cannot raise a ceiling and it cannot author a route.
 - [Connectors](/using/connectors) — installing the connector a route delivers through.
 - [Personal connectors](/using/personal-connectors) — what a `my_` tool in a route needs.
 - [Workspaces](/using/workspaces) — who can see and configure what.
-- [Automations](/using/automations) — what a route can wake.
+- [Tasks](/using/tasks) — what a route can wake.
 - [workspace.json](/config/workspace-json) — where the ceilings and routes are stored.

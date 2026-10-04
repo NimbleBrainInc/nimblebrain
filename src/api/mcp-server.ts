@@ -765,7 +765,7 @@ export class McpServerHost {
  *
  * The session is walled to its one workspace (`sessionCtx.workspaceId`, from
  * the URL). `tools/list` serves that workspace's tools (bare) plus the caller's
- * identity tools (conversations / files / automations). Every `tools/call`
+ * identity tools (conversations / files / tasks). Every `tools/call`
  * routes through `routeToolCall`, and no name can address another workspace:
  * the `ws_<id>-` form is retired and refused as `invalid_tool_name`.
  *
@@ -1002,7 +1002,7 @@ function createHandlers(
   // iframe bridge reads for an app — every iframe shares one `/mcp` session, so
   // the key is the only thing that says which app is reading.
   //
-  // Without it, identity resources (files, conversations, automations) resolve
+  // Without it, identity resources (files, conversations, tasks) resolve
   // first (below), then the session's one workspace — never a sweep across
   // every workspace the identity belongs to. We deliberately do not distinguish "doesn't exist" from "exists
   // but out of reach": per MCP spec guidance, avoid leaking existence.
@@ -1015,7 +1015,7 @@ function createHandlers(
     const scoped = scopedSourceName(request.params._meta);
     if (scoped !== undefined) return readFromOneSource(runtime, sessionCtx, scoped, uri);
 
-    // Identity sources (files, conversations, automations) are owned by the
+    // Identity sources (files, conversations, tasks) are owned by the
     // user and live OUTSIDE every workspace registry, so the workspace sweep
     // below can't see them — `files://<id>` would never resolve. Try them
     // first, within the identity request context so the source reads the
@@ -1185,7 +1185,7 @@ function requestedTask(
 /**
  * Where a 2026 task request resolves: the request's (workspace, identity), and
  * the task-aware sources it can reach: a kernel identity source's task surface
- * (`automations` runs) by that name, else a connector in that workspace. Null
+ * (`tasks` runs) by that name, else a connector in that workspace. Null
  * without a runtime or an identity, which reach no task. Either kind checks the
  * task's (workspace, identity, source) owner against the request's.
  */
@@ -1985,7 +1985,7 @@ async function tryReadResource(
 }
 
 /**
- * Try the caller's kernel identity sources (files, conversations, automations)
+ * Try the caller's kernel identity sources (files, conversations, tasks)
  * for `uri`, each within the identity request context. Returns the first result
  * that carries contents, or null.
  */

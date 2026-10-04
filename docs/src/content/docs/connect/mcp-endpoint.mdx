@@ -174,7 +174,7 @@ Spec-compliant clients re-initialize on either reason.
 For the workspace in the URL, the endpoint exposes:
 
 - **Workspace tools** — `<source>__<tool>`, from the connectors installed and running in that workspace. The workspace is not in the name: it is the one in the URL.
-- **Identity tools** — your conversations, files, and automations (bare `<source>__<tool>`), over that workspace's data.
+- **Identity tools** — your conversations, files, and tasks (bare `<source>__<tool>`), over that workspace's data.
 - **Tool execution** — `tools/call` runs a tool in that workspace or an identity tool. A name cannot address a **different** workspace; the retired `ws_<id>-` form is refused with `-32602 invalid_tool_name`. A bare name resolves against that workspace's sources; your personal connectors are reachable only under their `my_`-marked names. A bare name naming neither is refused with `-32602 unknown_tool_source`.
 
 Two filters apply to both `tools/list` and `tools/call`:

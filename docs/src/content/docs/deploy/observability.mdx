@@ -119,7 +119,7 @@ In Kubernetes, point a `ServiceMonitor` (or your scrape config) at the platform 
 
 | Metric | Type | Labels | What it says |
 |---|---|---|---|
-| `nb_automation_runs_total` | counter | `status` | Automation runs recorded, by status: `success`, `degraded`, `failure`, `timeout`, `cancelled`, `skipped`. See [run history](/using/automations/#run-history) for what each means. |
+| `nb_automation_runs_total` | counter | `status` | Automation runs recorded, by status: `success`, `degraded`, `failure`, `timeout`, `cancelled`, `skipped`. See [run history](/using/tasks/#run-history) for what each means. |
 
 `degraded` counts runs that finished with a tool call that failed and was never retried to success: an email that was not sent, or a record that was not written. Alert on the ratio of `failure` to all runs. Leave `degraded` out of a paging alert and read it in the run list: most degraded runs are an automation acting on something its user deleted, such as a draft or message that no longer exists, which the user fixes and on-call cannot. There is no automation or workspace label: both are unbounded, and the run record names the automation.
 

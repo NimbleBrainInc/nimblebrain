@@ -919,7 +919,7 @@ export async function handleReadResource(
     return apiError(400, "bad_request", "'server' is required");
   }
 
-  // Identity sources (conversations, files, automations) live OUTSIDE any
+  // Identity sources (conversations, files, tasks) live OUTSIDE any
   // workspace registry — they're reached through the identity door, the same
   // decision the orchestrator and `handleToolCall` make. Their data is
   // workspace-owned, so the read resolves in the workspace in the URL.

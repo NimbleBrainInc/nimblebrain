@@ -75,7 +75,7 @@ Any client that implements Streamable HTTP transport and OAuth 2.0 with resource
 
 ## What's exposed
 
-A client gets the tools installed in the workspace its URL names (named `<source>__<tool>`, for example `crm__search`), plus your identity tools (`conversations__*`, `files__*`, `automations__*`) over that workspace's data — the same tools the agent uses in the web UI. Your own personal connectors carry a `my_` marker (`my_gmail__send`) so they stay distinguishable from a workspace connector of the same name. No tool name can reach another workspace; connect to that workspace's URL instead.
+A client gets the tools installed in the workspace its URL names (named `<source>__<tool>`, for example `crm__search`), plus your identity tools (`conversations__*`, `files__*`, `tasks__*`) over that workspace's data — the same tools the agent uses in the web UI. Your own personal connectors carry a `my_` marker (`my_gmail__send`) so they stay distinguishable from a workspace connector of the same name. No tool name can reach another workspace; connect to that workspace's URL instead.
 
 Two filters apply:
 

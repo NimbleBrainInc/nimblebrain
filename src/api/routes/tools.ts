@@ -15,7 +15,7 @@ import type { AppContext, AppEnv } from "../types.ts";
 export function toolRoutes(ctx: AppContext) {
   // A tool call under `/v1/workspaces/:wsId/` is workspace-scoped whatever its
   // source: a workspace source dispatches into that workspace's registry, and
-  // an identity source (conversations, files, automations) reads and writes
+  // an identity source (conversations, files, tasks) reads and writes
   // that workspace's partition. `/v1/tools/call` names no workspace (see its
   // route below). `/v1/files/:fileId` is identity-scoped: the file id locates
   // its workspace, within the caller's own files.

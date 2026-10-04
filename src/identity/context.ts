@@ -11,7 +11,7 @@ import { join } from "node:path";
  *
  * The orchestrator constructs one when routing an identity-scoped tool
  * name (bare `<tool>` — global scope; see `src/tools/namespace.ts`). Identity-scoped tools
- * (the `nb` system source; later conversations / files / automations)
+ * (the `nb` system source; later conversations / files / tasks)
  * dispatch against it instead of a workspace context, so they carry NO
  * ambient workspace authority — the trust boundary is the authenticated
  * identity, which is the actual scope of the data.

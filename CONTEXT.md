@@ -99,20 +99,20 @@ A tool name's shape is its scope (ADR-0005). **Workspace tools** are bare
 `<source>__<tool>` — the workspace is not in the name, so another one cannot be
 addressed. **Personal connectors** carry a reserved `my_` marker
 (`my_gmail__send`). **Identity tools** (kernel sources — conversations, files,
-automations) are bare too, owned by the user, outside any workspace. The source
+tasks) are bare too, owned by the user, outside any workspace. The source
 segment alone decides which door a call takes.
 
 **Two senses of "owned" meet here.** A kernel source is *identity*-owned — the
 tool is the user's and takes the identity door in every workspace. The data it
-reaches is *workspace*-owned — each conversation, file, and automation sits in
+reaches is *workspace*-owned — each conversation, file, and task sits in
 one workspace's partition (ADR-0003). Identity-owned door, workspace-owned
 data; both are true at once, and the wall is the second one.
 
-### Primitive (conversation / file / automation)
+### Primitive (conversation / file / task)
 Workspace-owned, stored at `workspaces/<wsId>/<primitive>/<ownerId>/`
 (ADR-0003). The path is authoritative; `workspaceId`/`ownerId` on the record are
 denormalised. Private to the owner by default (ADR-0004). **Active use**
-(resuming a conversation, running an automation, reaching the workspace's tools)
+(resuming a conversation, running a task, reaching the workspace's tools)
 requires **current membership** of the primitive's workspace — checked at session
 establishment, so offboarding revokes reach; **reading** your own authored
 primitive stays owner-gated (ADR-0007).
@@ -136,7 +136,7 @@ fields it defined and never the server's opaque `data`.
 ### Source
 Any tool/resource provider behind the MCP boundary. Every source is one
 `McpSource` over one transport union (ADR-0022): a remote server over HTTPS, or
-one of the kernel's own capabilities — conversations, files, automations,
+one of the kernel's own capabilities — conversations, files, tasks,
 skills — served by a real MCP server on an in-memory linked-pair transport. The
 platform's own capabilities are MCP servers to themselves, so nothing above the
 source can tell them apart.
@@ -153,7 +153,7 @@ the process, which is what host-owned `_meta` markers are conditioned on
 
 ### Platform app
 One of the kernel's own capabilities, expressed as a source:
-conversations, files, automations, usage, skills, instructions, hooks,
+conversations, files, tasks, usage, skills, instructions, hooks,
 notifications, compose. Each is an in-process MCP server the runtime hosts
 rather than connects to — there is no URL, no credential, and no connection
 to supervise, so none of what the *Connection* entry below describes applies

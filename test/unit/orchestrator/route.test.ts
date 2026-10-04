@@ -652,7 +652,7 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
   });
 
   test("a kernel identity source wins over a personal connector of the same name", async () => {
-    // Shadowing guard: the kernel source (conversations/files/automations) is
+    // Shadowing guard: the kernel source (conversations/files/tasks) is
     // resolved first, so a personal connector can never shadow it.
     const kernel = makeStubSource("files");
     const runtime = makeStubRuntime({

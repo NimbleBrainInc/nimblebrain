@@ -14,7 +14,7 @@ The shell layout has the following slots:
 | Slot | Where it renders | Description |
 |------|------------------|-------------|
 | `sidebar.<group>` | Left sidebar, under the focused workspace's **Apps** heading, and the workspace overview's app grid | Your app's entry in the workspace. Every `sidebar.<group>` placement renders in the one **Apps** group, whatever the group name. Give it a `route`. |
-| `sidebar` | No nav entry for a connector | Reserved for the host's own views (Conversations, Automations, Files). A connector's `sidebar` placement with a `route` still registers that route. |
+| `sidebar` | No nav entry for a connector | Reserved for the host's own views (Conversations, Tasks, Files). A connector's `sidebar` placement with a `route` still registers that route. |
 | `sidebar.bottom` | The bottom of the mobile navigation drawer | A pinned item. It does not render in the desktop sidebar. |
 | `main` | A route, with no nav entry | A full-page view. Requires a `route`. Reachable by URL or when your app navigates to it. |
 | `settings` | The connector's settings page | Your connector's settings component, rendered under a Settings heading on **Settings → Connectors → your connector**, after its connection sections and before tool permissions. See [Settings sections](/extensions/settings-sections/). |
@@ -99,7 +99,7 @@ The virtual `primary` resource path resolves to the **first declared placement's
 
 Under the focused workspace, the sidebar shows:
 
-1. **The host's views**: Conversations, Automations, Files, and the Inbox.
+1. **The host's views**: Conversations, Tasks, Files, and the Inbox.
 2. **Apps**: `sidebar.<group>` placements, one entry per server, sorted by the priority of its first placement and capped at four with a **View all** link. A server's other placements list beneath its entry while it is open.
 3. **Connectors without a sidebar placement**: one shared row after the apps, showing their icons and a count, that links to the workspace's installed connectors.
 
@@ -132,7 +132,7 @@ The `size` field (`"compact"`, `"full"`, `"auto"`) is accepted as a hint. The sh
 
 The `PlacementRegistry` is an in-memory store that tracks all active placements. It is updated when connectors are installed or uninstalled.
 
-Every entry is either **ambient** (no `wsId` — platform apps like Conversations, Files, Automations; always present inside any workspace) or **workspace-scoped** (installed connectors, visible only to members of that workspace). The registry exposes a single read method, `forWorkspace(wsId)`, which returns ambient + scoped entries merged and sorted. There is deliberately no "return everything" accessor — in a multi-tenant host, no legitimate caller wants placements unrelated to a workspace.
+Every entry is either **ambient** (no `wsId` — platform apps like Conversations, Files, Tasks; always present inside any workspace) or **workspace-scoped** (installed connectors, visible only to members of that workspace). The registry exposes a single read method, `forWorkspace(wsId)`, which returns ambient + scoped entries merged and sorted. There is deliberately no "return everything" accessor — in a multi-tenant host, no legitimate caller wants placements unrelated to a workspace.
 
 **Registration** — When a connector starts, its declared `placements` are registered via `register(serverName, placements, wsId)` against the installing workspace's `wsId`. Platform apps register ambient (no `wsId`). The virtual `primary` resource path then resolves to the first registered placement's `resourceUri`.
 
