@@ -21,6 +21,7 @@ import type {
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { ToolSource } from "../../src/tools/types.ts";
+import { ledgerCostOfTaskRuns } from "../../src/usage/aggregate.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -98,6 +99,16 @@ describe("batches through the runtime", () => {
     const runs = await call<TasksRunsOutput>("runs", { taskId });
     expect(runs.data.runs.map((r) => r.batchId)).toEqual([id, id, id]);
     expect(runs.data.runs.map((r) => r.batchIndex).sort()).toEqual([0, 1, 2]);
+    // The usage ledger names each model call's task run by the batch run's id,
+    // which is what a batch budget is seeded from.
+    const today = new Date().toISOString().slice(0, 10);
+    const ledger = ledgerCostOfTaskRuns(
+      workDir,
+      new Set(runs.data.runs.map((r) => r.id)),
+      { from: today, to: today },
+      TEST_WORKSPACE_ID,
+    );
+    expect(ledger).toBeGreaterThan(0);
     const without = await call<TasksRunsOutput>("runs", { taskId, excludeBatchRuns: true });
     expect(without.data.runs).toHaveLength(0);
 

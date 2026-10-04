@@ -4,6 +4,7 @@ import type { EventSink } from "../../engine/types.ts";
 import type { NotificationEnvelope } from "../../notifications/types.ts";
 import { log } from "../../observability/log.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
+import { ledgerCostOfTaskRuns } from "../../usage/aggregate.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import type { TaskRequest } from "../../runtime/types.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
@@ -327,6 +328,15 @@ export async function createTasksSource(
     spend: runtime.getSpendBalances(),
     onChange: (owner) => runtime.announceIdentitySourceChange("tasks", owner),
     notifyPaused: (batch) => notifyBatchPaused(runtime, batch),
+    // The usage ledger, so a batch's budget counts every model call its runs
+    // made, a run lost in a crash included.
+    ledgerSpent: (batch, runIds) =>
+      ledgerCostOfTaskRuns(
+        workDir,
+        runIds,
+        { from: batch.createdAt.slice(0, 10), to: new Date().toISOString().slice(0, 10) },
+        batch.workspaceId,
+      ),
   });
   // After the scheduler has loaded the tasks the batches run.
   batchDriver.start();

@@ -42,6 +42,8 @@ import type {
 import { createRunAdmission, type RunAdmission } from "../../../../src/runtime/admission.ts";
 import { createSpendBalances, type SpendBalances } from "../../../../src/runtime/spend.ts";
 import { isTaskForbiddenIdentityTool } from "../../../../src/tools/identity-sources.ts";
+import { ledgerCostOfTaskRuns } from "../../../../src/usage/aggregate.ts";
+import { UsageLedger } from "../../../../src/usage/ledger.ts";
 import type { UsageRates } from "../../../../src/usage/types.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
@@ -116,6 +118,8 @@ interface HarnessOptions {
   behave?: (input: unknown) => Partial<TaskRun>;
   spend?: SpendBalances;
   admission?: RunAdmission;
+  /** Seed the batch account from the usage ledger, as the tasks source does. */
+  ledger?: boolean;
 }
 
 interface Harness {
@@ -234,6 +238,17 @@ function harness(opts: HarnessOptions = {}): Harness {
     spend,
     notifyPaused: (batch) => paused.push(batch),
     retryDelayMs: 20,
+    ...(opts.ledger
+      ? {
+          ledgerSpent: (batch: Batch, runIds: ReadonlySet<string>) =>
+            ledgerCostOfTaskRuns(
+              workDir,
+              runIds,
+              { from: batch.createdAt.slice(0, 10), to: new Date().toISOString().slice(0, 10) },
+              batch.workspaceId,
+            ),
+        }
+      : {}),
   });
   driver.start();
   toStop.push(driver, scheduler);
@@ -652,6 +667,50 @@ describe("tasks__batch_control", () => {
     await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
   });
 
+  it("pause takes the batch's runs still queued at the door back to pending; resume asks for them again", async () => {
+    const h = harness({ gated: true, maxConcurrentRuns: 1 });
+    makeTask();
+    h.scheduler.reload();
+    const created = h.driver.create({
+      wsId: WS,
+      ownerId: OWNER,
+      task: makeTask(),
+      inputs: items("a", "b", "c"),
+      concurrency: 2,
+      createdBy: OWNER,
+    });
+    await waitFor(() => h.gates.length === 1, "first run");
+    const queued = readBatchItems(workDir, WS, OWNER, created.id)[1]!;
+    expect(queued.state).toBe("queued");
+
+    handleBatchControl({ batchId: created.id, action: "pause" }, h.ctx);
+    expect(h.admission.queued()).toHaveLength(0);
+    await waitFor(
+      () => readBatchItems(workDir, WS, OWNER, created.id)[1]?.state === "pending",
+      "the queued item back to pending",
+    );
+    const back = readBatchItems(workDir, WS, OWNER, created.id)[1]!;
+    expect(back.previousRunIds).toEqual([queued.runId!]);
+    const withdrawn = readRuns(workDir, WS, OWNER, "enrich").find((r) => r.id === queued.runId);
+    expect(withdrawn?.status).toBe("skipped");
+    expect(withdrawn?.error).toContain("batch paused");
+
+    // The running run finishes; nothing new starts while paused.
+    h.gates[0]!.release();
+    await waitFor(() => batchOf(h, created.id).counts.running === 0, "running run to end");
+    await Bun.sleep(30);
+    expect(h.gates).toHaveLength(1);
+    expect(batchOf(h, created.id).counts).toMatchObject({ pass: 1, pending: 2 });
+
+    handleBatchControl({ batchId: created.id, action: "resume" }, h.ctx);
+    await waitFor(() => h.gates.length === 2, "second run");
+    h.gates[1]!.release();
+    await waitFor(() => h.gates.length === 3, "third run");
+    h.gates[2]!.release();
+    await waitFor(() => batchOf(h, created.id).state === "completed", "completion");
+    expect(batchOf(h, created.id).counts.pass).toBe(3);
+  });
+
   it("cancel cancels the queued and the running runs and every pending item", async () => {
     const h = harness({ gated: true, maxConcurrentRuns: 1 });
     makeTask();
@@ -777,6 +836,65 @@ describe("restart", () => {
       handleBatchControl({ batchId: created.id, action: "rerun_failed" }, second.ctx).affected,
     ).toBe(1);
     await waitFor(() => batchOf(second, created.id).counts.pass === 3, "rerun of the lost item");
+    for (const g of first.gates) g.release();
+  });
+
+  it("seeds the batch budget from the usage ledger, so spend by a run lost in a crash still counts", async () => {
+    const first = harness({ gated: true, ledger: true });
+    makeTask();
+    first.scheduler.reload();
+    const created = first.driver.create({
+      wsId: WS,
+      ownerId: OWNER,
+      task: makeTask(),
+      inputs: items("a", "b"),
+      concurrency: 1,
+      budgetUsd: 1,
+      createdBy: OWNER,
+    });
+    await waitFor(() => first.gates.length === 1, "first run");
+    const lost = readBatchItems(workDir, WS, OWNER, created.id)[0]!;
+    // The run's model calls reach the ledger as they complete ($0.60), then
+    // the process dies before the run's record is written.
+    new UsageLedger(workDir, "crashed").append({
+      ts: new Date().toISOString(),
+      source: "main",
+      origin: "task",
+      model: "m",
+      usage: { inputTokens: 300, outputTokens: 300 },
+      llmMs: 1,
+      workspaceId: WS,
+      taskRunId: lost.runId!,
+      rates: RATES,
+    });
+    // Another batch's run in the same ledger is not this batch's spend.
+    new UsageLedger(workDir, "other").append({
+      ts: new Date().toISOString(),
+      source: "main",
+      origin: "task",
+      model: "m",
+      usage: { inputTokens: 5000, outputTokens: 0 },
+      llmMs: 1,
+      workspaceId: WS,
+      taskRunId: "run_unrelated00",
+      rates: RATES,
+    });
+    toStop.splice(0);
+
+    const second = harness({ gated: true, ledger: true });
+    await waitFor(() => second.gates.length === 1, "the pending item's run");
+    const batch = batchOf(second, created.id);
+    // Recorded cost knows nothing of the lost run; the ledger does.
+    expect(batch.costUsd).toBe(0);
+    expect(second.spend.balance(batchAccountId(batch))).toBeCloseTo(0.4, 9);
+    expect(readBatchItems(workDir, WS, OWNER, created.id)[0]?.execution).toBe("failed");
+    // A new budget is held above the ledger's spend too.
+    handleBatchControl({ batchId: created.id, action: "pause" }, second.ctx);
+    second.gates[0]!.release();
+    await waitFor(() => batchOf(second, created.id).counts.running === 0, "run to end");
+    expect(() =>
+      handleBatchControl({ batchId: created.id, action: "resume", budgetUsd: 0.5 }, second.ctx),
+    ).toThrow(/more than the \$0\.6/);
     for (const g of first.gates) g.release();
   });
 

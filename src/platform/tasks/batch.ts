@@ -14,10 +14,14 @@
  *   balance per account id across every run naming it, so concurrent runs
  *   cannot together pass the budget. While the batch is running the driver
  *   holds the account open itself (an anchor hold that never spends), so the
- *   balance lives across the gaps between runs and is seeded once, from the
- *   budget minus what the batch's recorded runs cost. When the balance is spent,
+ *   balance lives across the gaps between runs. It is seeded when the driver
+ *   opens it (create, resume, boot) from the budget minus what the usage ledger
+ *   says the batch's runs cost, so a run lost in a crash still counts. When the
+ *   balance is spent,
  *   or a run is stopped by the batch's account (or the task's token budget), no
  *   new item starts and the batch pauses with reason `budget`.
+ * - **Pause.** No new item starts, and runs still queued at the door are
+ *   withdrawn, their items back to pending; running runs finish.
  * - **Stop rule.** After `stopWhen.afterItems` assessed runs (pass, fail, or
  *   uncertain), a pass rate of pass / (pass + fail) under `minPassRate` pauses
  *   the batch (`pass_rate`) and notifies. Uncertain is excluded, so judge doubt
@@ -89,6 +93,7 @@ export interface BatchScheduler {
     options: BatchRunOptions,
   ): BatchRunTicket;
   cancelRunById(wsId: string, ownerId: string, runId: string): boolean;
+  withdrawQueuedRun(wsId: string, ownerId: string, runId: string): boolean;
   settleLostRun(wsId: string, ownerId: string, ticket: RunTicket): RunTicket;
 }
 
@@ -107,6 +112,14 @@ export interface BatchDriverConfig {
   notifyPaused?: (batch: Batch) => void;
   /** Override the wait after a full queue (tests). */
   retryDelayMs?: number;
+  /**
+   * What the usage ledger says the batch's runs (`runIds`, every run it ever
+   * started) cost, in USD. The ledger records each model call as it completes,
+   * so a run lost in a crash before its record still counts. Read each time
+   * the driver opens the batch's spend account (start, resume, boot). Absent:
+   * only recorded runs count.
+   */
+  ledgerSpent?: (batch: Batch, runIds: ReadonlySet<string>) => number;
 }
 
 /** What `create` is given, already validated. */
@@ -142,6 +155,10 @@ interface LiveBatch {
   outstanding: Set<number>;
   anchor?: SpendHold;
   retryTimer?: ReturnType<typeof setTimeout>;
+  /** What the ledger said the batch's runs cost when its account was last opened. */
+  ledgerSpentUsd?: number;
+  /** Runs a pause took out of the queue: their items go back to pending. */
+  withdrawn: Set<string>;
 }
 
 /** The spend account id of a batch. Opaque to the door. */
@@ -164,6 +181,25 @@ export function isRerunnable(item: BatchItem): boolean {
     item.execution === "cancelled" ||
     item.verdict === "fail"
   );
+}
+
+/** Every run a batch's items have had, current and replaced. */
+function runIdsOf(items: readonly BatchItem[]): Set<string> {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (item.runId) ids.add(item.runId);
+    for (const id of item.previousRunIds ?? []) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * What the batch has spent, for its budget: the ledger's figure from when its
+ * account was opened, or the recorded runs' total when that is higher (a run
+ * recorded since, or a ledger that is switched off).
+ */
+function spentOf(lb: LiveBatch): number {
+  return Math.max(lb.batch.costUsd, lb.ledgerSpentUsd ?? 0);
 }
 
 function newBatchId(): string {
@@ -277,6 +313,7 @@ export class BatchDriver {
       items,
       pending: items.filter((it) => it.state === "pending").map((it) => it.index),
       outstanding: new Set(),
+      withdrawn: new Set(),
     };
   }
 
@@ -339,6 +376,7 @@ export class BatchDriver {
       items,
       pending: items.map((it) => it.index),
       outstanding: new Set(),
+      withdrawn: new Set(),
     };
     this.live.set(BatchDriver.keyOf(spec.wsId, spec.ownerId, batch.id), lb);
     this.activate(lb);
@@ -367,6 +405,7 @@ export class BatchDriver {
       items,
       pending: items.filter((it) => it.state === "pending").map((it) => it.index),
       outstanding: new Set(),
+      withdrawn: new Set(),
     };
     this.live.set(key, lb);
     return lb;
@@ -470,9 +509,10 @@ export class BatchDriver {
    */
   private setBudget(lb: LiveBatch, budgetUsd: number): void {
     const { batch } = lb;
-    if (!(budgetUsd > batch.costUsd)) {
+    const spent = Math.max(spentOf(lb), this.config.ledgerSpent?.(batch, runIdsOf(lb.items)) ?? 0);
+    if (!(budgetUsd > spent)) {
       throw new Error(
-        `budgetUsd must be more than the $${batch.costUsd.toFixed(4)} the batch has already spent.`,
+        `budgetUsd must be more than the $${spent.toFixed(4)} the batch has already spent.`,
       );
     }
     if (batch.budgetUsd === budgetUsd) return;
@@ -552,6 +592,9 @@ export class BatchDriver {
   /** Hold the batch's account open while it runs, then ask for items. */
   private activate(lb: LiveBatch): void {
     const { batch } = lb;
+    if (batch.budgetUsd !== undefined && !lb.anchor && this.config.ledgerSpent) {
+      lb.ledgerSpentUsd = this.config.ledgerSpent(batch, runIdsOf(lb.items));
+    }
     if (this.config.spend && batch.budgetUsd !== undefined && !lb.anchor) {
       lb.anchor = this.config.spend.open(this.accountsFor(lb), { model: "", rates: null });
     }
@@ -571,7 +614,7 @@ export class BatchDriver {
       {
         id: batchAccountId(batch),
         unit: "usd",
-        remaining: Math.max(0, batch.budgetUsd - batch.costUsd),
+        remaining: Math.max(0, batch.budgetUsd - spentOf(lb)),
       },
     ];
   }
@@ -580,8 +623,7 @@ export class BatchDriver {
   private budgetSpent(lb: LiveBatch): boolean {
     const { batch } = lb;
     if (batch.budgetUsd === undefined) return false;
-    const left =
-      this.config.spend?.balance(batchAccountId(batch)) ?? batch.budgetUsd - batch.costUsd;
+    const left = this.config.spend?.balance(batchAccountId(batch)) ?? batch.budgetUsd - spentOf(lb);
     return left <= 0;
   }
 
@@ -715,9 +757,14 @@ export class BatchDriver {
     const accountId = batchAccountId(batch);
     const spendStop = run.stopReason === "spend_limit" ? run.spendAccountId : undefined;
     const settled = this.outcomeOf(item, run);
+    const withdrawn = lb.withdrawn.delete(runId);
     if (!run.trigger && this.stopping) {
       // Dropped from the queue as the runtime stopped: ask again next boot.
       this.setItem(lb, backToPending(settled));
+    } else if (!run.trigger && withdrawn) {
+      // Taken out of the queue by a pause: asked for again on resume.
+      this.setItem(lb, backToPending(settled));
+      lb.pending.unshift(index);
     } else if (spendStop === accountId && settled.execution === "failed") {
       // Stopped by the batch's budget before it produced anything: it runs
       // again when the batch resumes under a raised budget.
@@ -761,6 +808,15 @@ export class BatchDriver {
     batch.pause = { reason, message, at: new Date().toISOString() };
     if (lb.retryTimer) clearTimeout(lb.retryTimer);
     lb.retryTimer = undefined;
+    // Runs still waiting at the door give their places back; running ones finish.
+    for (const index of lb.outstanding) {
+      const item = lb.items[index];
+      if (item?.state !== "queued" || !item.runId) continue;
+      lb.withdrawn.add(item.runId);
+      if (!this.config.scheduler.withdrawQueuedRun(batch.workspaceId, batch.ownerId, item.runId)) {
+        lb.withdrawn.delete(item.runId);
+      }
+    }
     this.releaseAnchor(lb);
     this.persistBatch(lb);
     if (reason === "budget" || reason === "pass_rate") this.config.notifyPaused?.({ ...batch });

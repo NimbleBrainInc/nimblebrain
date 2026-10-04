@@ -19,7 +19,7 @@
  * cannot price is reported as unpriced rather than as zero.
  */
 
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -826,4 +826,45 @@ export async function aggregateUsage(
     breakdown,
     breakdowns,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Spend of named task runs
+// ---------------------------------------------------------------------------
+
+/**
+ * What the ledger says a set of task runs cost, in USD: every line in the
+ * range whose task run is one of `taskRunIds` (and, when given, bound to
+ * `workspaceId`), priced the way the report prices it (stored rates first,
+ * then the catalog; an unpriced line adds nothing). A line is written as each
+ * model call completes, so a run that never reached its record (lost in a
+ * crash) is counted too. Synchronous, for a caller that seeds a spend account
+ * while it holds no await point; it reads only the months the range spans.
+ */
+export function ledgerCostOfTaskRuns(
+  workDir: string,
+  taskRunIds: ReadonlySet<string>,
+  range: { from: string; to: string },
+  workspaceId?: string,
+): number {
+  if (taskRunIds.size === 0) return 0;
+  let total = 0;
+  for (const month of usageMonthsInRange(range.from, range.to)) {
+    const dir = usageMonthDir(workDir, month);
+    for (const shard of shardsForMonth(dir)) {
+      let text: string;
+      try {
+        text = readFileSync(join(dir, shard), "utf-8");
+      } catch {
+        continue; // Shard vanished between listing and read (retention sweep).
+      }
+      const filters = workspaceId !== undefined ? { workspaceId } : {};
+      for (const record of parseShard(text, range, undefined, filters)) {
+        const runId = taskRunOf(record);
+        if (!runId || !taskRunIds.has(runId)) continue;
+        total += costBreakdown(record.model, record.usage, record.rates).total;
+      }
+    }
+  }
+  return total;
 }

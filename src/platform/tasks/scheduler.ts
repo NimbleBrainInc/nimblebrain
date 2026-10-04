@@ -76,6 +76,9 @@ const ADMISSION_KEY_PREFIX = "task:";
 /** The withdrawal reason `dropWorkspace` gives the runs it takes out of the queue. */
 const WORKSPACE_DELETED = "workspace_deleted";
 
+/** The withdrawal reason a paused batch gives its runs still waiting in the queue. */
+const BATCH_PAUSED = "batch_paused";
+
 /** What `runFromEvent` answers when the task already has a run. */
 const EVENT_DUPLICATE_ANSWER = {
   "Already running": "a previous run of this task is still in flight",
@@ -1512,7 +1515,9 @@ export class Scheduler {
       ? "Cancelled by user while queued"
       : reason === WORKSPACE_DELETED
         ? "the workspace was deleted"
-        : "Queued run dropped: the runtime stopped before a run slot freed";
+        : reason === BATCH_PAUSED
+          ? "Withdrawn from the queue: its batch paused before a run slot freed"
+          : "Queued run dropped: the runtime stopped before a run slot freed";
     const status = cancelled ? "cancelled" : "skipped";
     try {
       entry.resolve(
@@ -1571,6 +1576,17 @@ export class Scheduler {
    */
   cancelRun(wsId: string, ownerId: string, taskId: string): boolean {
     return this.cancelKey(Scheduler.keyOf({ id: taskId, ownerId, workspaceId: wsId }));
+  }
+
+  /**
+   * Take a requested run out of the queue when this process carries it for that
+   * owner in that workspace and it has not started: recorded skipped (its
+   * batch paused), with no `trigger`. False when it is not queued.
+   */
+  withdrawQueuedRun(wsId: string, ownerId: string, runId: string): boolean {
+    const open = this.openRuns.get(runId);
+    if (!open?.key.startsWith(`${wsId}/${ownerId}/`)) return false;
+    return this.admission.cancel(Scheduler.admissionOf(open.key).key, BATCH_PAUSED);
   }
 
   /** Abort the run held under `key` (a task's, or a batch run's own), or take it out of the queue. */

@@ -771,7 +771,7 @@ export const TasksBatchControlInput = Type.Object(
     batchId: BatchIdField,
     action: StringEnum(["pause", "resume", "cancel", "rerun_failed"] as const, {
       description:
-        "pause: no new item starts (runs already asked for finish). resume: start items again. " +
+        "pause: no new item starts; runs still queued are taken back, runs in flight finish. resume: start items again. " +
         "cancel: stop for good, cancelling queued and running runs. rerun_failed: run again, " +
         "each as a new run, every item that failed, was skipped or cancelled, or was judged fail.",
     }),
