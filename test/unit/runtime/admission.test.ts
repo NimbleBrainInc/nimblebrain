@@ -346,11 +346,11 @@ describe("Runtime.executeTask — admission at the door", () => {
     const gates: Array<PromiseWithResolvers<void>> = [];
     const specs: RunSpec[] = [];
     const fields = rt as unknown as {
-      config: { automations: { maxConcurrentRuns: number } };
+      config: { tasks: { maxConcurrentRuns: number } };
       resolveRequestModelString: (m?: string) => string;
       startRun: (spec: RunSpec) => Promise<unknown>;
     };
-    fields.config = { automations: { maxConcurrentRuns } };
+    fields.config = { tasks: { maxConcurrentRuns } };
     fields.resolveRequestModelString = () => "test:model";
     fields.startRun = async (spec) => {
       specs.push(spec);

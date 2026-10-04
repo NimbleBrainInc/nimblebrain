@@ -3,7 +3,7 @@
 //
 // Pins:
 //   1. The nav shows only the focused workspace, flat: Overview, its identity
-//      views (Conversations / Automations / Files) routed to `/w/<slug>/<view>`,
+//      views (Conversations / Tasks / Files) routed to `/w/<slug>/<view>`,
 //      and its apps routed to `/w/<slug>/app/<route>`. No other
 //      workspace appears in it.
 //   2. The app quick-list caps at MAX_INLINE_APPS with a View-all overflow to

@@ -1,9 +1,9 @@
 /**
- * Automation tool handlers + helpers for the in-process `automations` platform
+ * Task tool handlers + helpers for the in-process `tasks` platform
  * source (`src/platform/tasks/source.ts`). Exposes the create / update /
  * delete / list / status / runs / run_result / run / cancel handlers and the
  * `ToolContext` they run against. The former standalone stdio MCP server was
- * removed when automations moved in-process and workspace-owned; this file is
+ * removed when tasks moved in-process and workspace-owned; this file is
  * handlers + formatting only.
  */
 
@@ -13,35 +13,27 @@ import {
   describeClampedLimits,
   type EffectiveRunLimits,
   effectiveRunLimits,
-} from "../../config/automations.ts";
-import {
-  AUTOMATIONS_LIST_DEFAULT_LIMIT,
-  AUTOMATIONS_LIST_MAX_LIMIT,
-  MAX_ITERATIONS,
-} from "../../limits.ts";
+} from "../../config/tasks.ts";
+import { MAX_ITERATIONS, TASKS_LIST_DEFAULT_LIMIT, TASKS_LIST_MAX_LIMIT } from "../../limits.ts";
 import type {
-  AutomationEffectiveLimits,
-  AutomationSummary,
-  AutomationsCancelOutput,
-  AutomationsCreateOutput,
-  AutomationsDeleteOutput,
-  AutomationsListOutput,
-  AutomationsRunOutput,
-  AutomationsRunResultOutput,
-  AutomationsRunsOutput,
-  AutomationsStatusOutput,
-  AutomationsUpdateOutput,
+  TaskEffectiveLimits,
+  TaskSummary,
+  TasksCancelOutput,
+  TasksCreateOutput,
+  TasksDeleteOutput,
+  TasksListOutput,
+  TasksRunOutput,
+  TasksRunResultOutput,
+  TasksRunsOutput,
+  TasksStatusOutput,
+  TasksUpdateOutput,
 } from "../schemas/tasks.ts";
-import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
+import { createTask, deleteTask, updateTask } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
 import { assertJsonSchema, checkAgainstSchema } from "./json-schema.ts";
 import { isOpenRun, type RequestedRun, type RunNowTicket } from "./scheduler.ts";
 import type { ReadRunsOptions, RunsPage } from "./store.ts";
 import {
-  type Automation,
-  type AutomationKind,
-  type AutomationRun,
-  type AutomationRunResult,
   DEFAULT_EVENT_DEBOUNCE_MS,
   DEFAULT_EVENT_MAX_FIRES_PER_HOUR,
   isEventSchedule,
@@ -51,6 +43,10 @@ import {
   onceRetirement,
   type RunTicket,
   type ScheduleSpec,
+  type Task,
+  type TaskKind,
+  type TaskRun,
+  type TaskRunResult,
   type TokenBudget,
 } from "./types.ts";
 
@@ -74,7 +70,7 @@ function log(msg: string): void {
  */
 export function formatSchedule(
   schedule: ScheduleSpec | undefined,
-  state?: Pick<Automation, "onceDone">,
+  state?: Pick<Task, "onceDone">,
 ): string {
   if (!schedule) return "Manual only";
 
@@ -103,7 +99,7 @@ export function formatSchedule(
  * Render an event schedule as the notifications it waits for.
  *
  * There is no time in it to render, so this names the match — which is the
- * whole of what an operator needs to recognise the automation in a list.
+ * whole of what an operator needs to recognise the task in a list.
  */
 function formatEventSchedule(schedule: ScheduleSpec): string {
   const match = schedule.match ?? {};
@@ -300,16 +296,16 @@ export interface CostEstimate {
   perMonthUsd: number;
 }
 
-export function estimateCost(automation: Automation, workspaceDefaultModel?: string): CostEstimate {
-  const rates = getModelRates(automation.model ?? workspaceDefaultModel);
+export function estimateCost(task: Task, workspaceDefaultModel?: string): CostEstimate {
+  const rates = getModelRates(task.model ?? workspaceDefaultModel);
   // Use actual average if available, otherwise a realistic per-run estimate.
   // maxInputTokens is a ceiling (unset = none), NOT an estimate — actual runs
   // typically use 15-25K input tokens. Using the ceiling produces wildly inflated costs.
-  const hasHistory = automation.runCount > 0 && automation.cumulativeInputTokens > 0;
-  const inputTokens = hasHistory ? automation.cumulativeInputTokens / automation.runCount : 20_000; // realistic per-run estimate
-  const outputTokens = hasHistory ? automation.cumulativeOutputTokens / automation.runCount : 500;
+  const hasHistory = task.runCount > 0 && task.cumulativeInputTokens > 0;
+  const inputTokens = hasHistory ? task.cumulativeInputTokens / task.runCount : 20_000; // realistic per-run estimate
+  const outputTokens = hasHistory ? task.cumulativeOutputTokens / task.runCount : 500;
   const perRunUsd = (inputTokens * rates.input + outputTokens * rates.output) / 1_000_000;
-  const runsPerDay = estimateRunsPerDay(automation.schedule);
+  const runsPerDay = estimateRunsPerDay(task.schedule);
   return {
     perRunUsd,
     perDayUsd: perRunUsd * runsPerDay,
@@ -334,45 +330,45 @@ export function toKebabCase(name: string): string {
 // ---------------------------------------------------------------------------
 
 export interface ToolContext {
-  definitions: () => Map<string, Automation>;
-  save: (defs: Map<string, Automation>) => void;
+  definitions: () => Map<string, Task>;
+  save: (defs: Map<string, Task>) => void;
   reloadScheduler: () => void;
   /**
-   * Ask the scheduler to run the automation now; null when it is not loaded.
+   * Ask the scheduler to run the task now; null when it is not loaded.
    * `requested` names the run (its id, input, and idempotency key), and the
    * run's ticket is written before this returns.
    */
-  runNow: (automationId: string, requested?: RequestedRun) => RunNowTicket | null;
+  runNow: (taskId: string, requested?: RequestedRun) => RunNowTicket | null;
   /**
    * A requested run's ticket by run id (this owner, this workspace), settled
    * first when it was left open by a process that stopped. Null when none.
    */
   readRunTicket?: (runId: string) => RunTicket | null;
-  /** The run an idempotency key started on this automation, as its ticket; null when none. */
-  findRunByKey?: (automationId: string, key: string) => RunTicket | null;
+  /** The run an idempotency key started on this task, as its ticket; null when none. */
+  findRunByKey?: (taskId: string, key: string) => RunTicket | null;
   /** A queued run's place in the run queue (1 is next), or null when it is not queued. */
-  queuePosition?: (automationId: string) => number | null;
-  cancelRun: (automationId: string) => boolean;
-  /** Read one automation's run history (workspace + owner bound at construction). */
-  readRuns: (automationId: string, opts?: ReadRunsOptions) => AutomationRun[];
-  /** Read one page of an automation's full history, back through its archive months. */
-  readRunsPage: (automationId: string, opts: ReadRunsOptions) => RunsPage;
-  /** Read run history across this owner's automations in the focused workspace. */
-  readAllRuns: (opts?: ReadRunsOptions) => AutomationRun[];
+  queuePosition?: (taskId: string) => number | null;
+  cancelRun: (taskId: string) => boolean;
+  /** Read one task's run history (workspace + owner bound at construction). */
+  readRuns: (taskId: string, opts?: ReadRunsOptions) => TaskRun[];
+  /** Read one page of a task's full history, back through its archive months. */
+  readRunsPage: (taskId: string, opts: ReadRunsOptions) => RunsPage;
+  /** Read run history across this owner's tasks in the focused workspace. */
+  readAllRuns: (opts?: ReadRunsOptions) => TaskRun[];
   /** Read one run's full result sidecar (the deliverable). */
-  readRunResult: (automationId: string, runId: string) => AutomationRunResult | null;
+  readRunResult: (taskId: string, runId: string) => TaskRunResult | null;
   defaultTimezone: string;
   /**
-   * The caps a run of an automation executes under, for create and update to
+   * The caps a run of a task executes under, for create and update to
    * report. The executor applies the same function. Absent: the built-in
    * ceilings and the runtime's built-in iteration default.
    */
-  runLimitsOf?: (automation: Automation) => EffectiveRunLimits;
-  /** Workspace default model (for cost estimation when automation.model is null). */
+  runLimitsOf?: (task: Task) => EffectiveRunLimits;
+  /** Workspace default model (for cost estimation when task.model is null). */
   defaultModel?: string;
-  /** Current user ID (for setting automation ownership at creation time). */
+  /** Current user ID (for setting task ownership at creation time). */
   currentUserId?: string;
-  /** Current workspace ID (for setting automation workspace scope at creation time). */
+  /** Current workspace ID (for setting task workspace scope at creation time). */
   currentWorkspaceId?: string;
   /**
    * Override the `handleRun` sync-wait deadline (ms). Production callers
@@ -391,7 +387,7 @@ export interface ToolContext {
  * `maxInputTokens`, `maxRunDurationMs`). The signature is the union so
  * callers don't need synthetic flat-record casts.
  */
-export interface ValidatableAutomationFields {
+export interface ValidatableTaskFields {
   /** `null` is an update's clear: nothing to validate. */
   schedule?: ScheduleSpec | null;
   maxIterations?: number;
@@ -403,18 +399,18 @@ export interface ValidatableAutomationFields {
   outputSchema?: Record<string, unknown> | null;
 }
 
-export function validateAutomationFields(args: ValidatableAutomationFields): void {
+export function validateTaskFields(args: ValidatableTaskFields): void {
   if (args.schedule) validateSchedule(args.schedule);
   validateNumericLimits(args);
   if (args.inputSchema != null) assertJsonSchema(args.inputSchema, "inputSchema");
   if (args.outputSchema != null) assertJsonSchema(args.outputSchema, "outputSchema");
-  // The executor refuses to run such an automation; refusing it here tells the
+  // The executor refuses to run such a task; refusing it here tells the
   // author at write time instead of at the first run.
   const recursive = containsRecursiveTool(args.allowedTools);
   if (recursive !== null) {
     throw new Error(
-      `allowedTools may not include "${recursive}": an automation cannot create, update, or ` +
-        "delete automations from its own runs.",
+      `allowedTools may not include "${recursive}": a task cannot create, update, or ` +
+        "delete tasks from its own runs.",
     );
   }
 }
@@ -431,7 +427,7 @@ function validateEventSchedule(schedule: ScheduleSpec): void {
   if (!schedule.match) {
     throw new Error(
       "match is required for event schedules — say which notifications should run this " +
-        'automation, e.g. { source: "acme", name: "reply.*" }',
+        'task, e.g. { source: "acme", name: "reply.*" }',
     );
   }
   const debounce = schedule.debounceMs;
@@ -539,7 +535,7 @@ function validateCronExpression(expression: string, timezone?: string): void {
 }
 
 /** Validate the optional numeric limit fields against their allowed ranges. Throws on out-of-range. */
-function validateNumericLimits(args: ValidatableAutomationFields): void {
+function validateNumericLimits(args: ValidatableTaskFields): void {
   const { maxIterations, maxInputTokens, maxRunDurationMs } = args;
   if (maxIterations != null && (maxIterations < 1 || maxIterations > MAX_ITERATIONS)) {
     throw new Error(`maxIterations must be between 1 and ${MAX_ITERATIONS}`);
@@ -557,7 +553,7 @@ function validateNumericLimits(args: ValidatableAutomationFields): void {
  * enforced shape — handler reads typed fields directly. The operator-only
  * field `source` is NOT in this shape; the LLM-facing handler hardcodes
  * `source: "agent"`. An internal caller bypasses this handler and calls
- * `createAutomation` from `domain.ts` directly with the full shape.
+ * `createTask` from `domain.ts` directly with the full shape.
  */
 interface CreateInput {
   manifest: {
@@ -571,23 +567,20 @@ interface CreateInput {
     maxInputTokens?: number;
     maxRunDurationMs?: number;
     allowedTools?: string[];
-    tokenBudget?: Automation["tokenBudget"];
-    kind?: AutomationKind;
+    tokenBudget?: Task["tokenBudget"];
+    kind?: TaskKind;
     inputSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
   };
   body: string;
 }
 
-export function handleCreate(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): AutomationsCreateOutput {
+export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): TasksCreateOutput {
   const { manifest, body } = args as unknown as CreateInput;
 
-  validateAutomationFields(manifest);
+  validateTaskFields(manifest);
 
-  const result = createAutomation(
+  const result = createTask(
     {
       name: manifest.name,
       prompt: body,
@@ -616,16 +609,16 @@ export function handleCreate(
 }
 
 /**
- * Attach the caps the automation's runs execute under, and name any cap the
+ * Attach the caps the task's runs execute under, and name any cap the
  * definition sets above its ceiling, so the caller learns at write time what a
  * run will actually be held to.
  */
-function withEffectiveLimits<T extends { automation: Automation; message: string }>(
+function withEffectiveLimits<T extends { task: Task; message: string }>(
   result: T,
   ctx: ToolContext,
-): T & { effectiveLimits: AutomationEffectiveLimits } {
-  const effectiveLimits = (ctx.runLimitsOf ?? effectiveRunLimits)(result.automation);
-  const notes = describeClampedLimits(result.automation, effectiveLimits);
+): T & { effectiveLimits: TaskEffectiveLimits } {
+  const effectiveLimits = (ctx.runLimitsOf ?? effectiveRunLimits)(result.task);
+  const notes = describeClampedLimits(result.task, effectiveLimits);
   const message = notes.length > 0 ? `${result.message} ${notes.join(" ")}` : result.message;
   return { ...result, message, effectiveLimits };
 }
@@ -641,7 +634,7 @@ interface UpdateInput {
   manifest?: Partial<
     Omit<CreateInput["manifest"], "name" | "schedule" | "kind" | "inputSchema" | "outputSchema">
   > & {
-    /** `null` clears it: nothing fires the automation unattended. */
+    /** `null` clears it: nothing fires the task unattended. */
     schedule?: ScheduleSpec | null;
     /** `null` clears it: runs take any input. */
     inputSchema?: Record<string, unknown> | null;
@@ -651,18 +644,15 @@ interface UpdateInput {
   body?: string;
 }
 
-export function handleUpdate(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): AutomationsUpdateOutput {
+export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): TasksUpdateOutput {
   const { name, manifest: patch, body } = args as unknown as UpdateInput;
   if (!name) throw new Error("Missing required field: name");
 
   if (patch) {
-    validateAutomationFields(patch);
+    validateTaskFields(patch);
   }
 
-  const result = updateAutomation(
+  const result = updateTask(
     name,
     {
       ...(patch ?? {}),
@@ -674,47 +664,44 @@ export function handleUpdate(
   return withEffectiveLimits(result, ctx);
 }
 
-export function handleDelete(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): AutomationsDeleteOutput {
+export function handleDelete(args: Record<string, unknown>, ctx: ToolContext): TasksDeleteOutput {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
-  return deleteAutomation(name, ctx);
+  return deleteTask(name, ctx);
 }
 
-export function handleList(args: Record<string, unknown>, ctx: ToolContext): AutomationsListOutput {
+export function handleList(args: Record<string, unknown>, ctx: ToolContext): TasksListOutput {
   const defs = ctx.definitions();
   const now = Date.now();
 
-  let automations = Array.from(defs.values());
+  let tasks = Array.from(defs.values());
 
   // Apply filters
   if (args.enabled !== undefined) {
-    automations = automations.filter((a) => a.enabled === args.enabled);
+    tasks = tasks.filter((a) => a.enabled === args.enabled);
   }
   if (args.source !== undefined) {
-    automations = automations.filter((a) => a.source === args.source);
+    tasks = tasks.filter((a) => a.source === args.source);
   }
   // Saved by default: a one-off is kept with its history, not listed with the
-  // automations someone keeps.
-  const kind = (args.kind as AutomationKind | "all" | undefined) ?? "saved";
+  // tasks someone keeps.
+  const kind = (args.kind as TaskKind | "all" | undefined) ?? "saved";
   if (kind !== "all") {
-    automations = automations.filter((a) => kindOf(a) === kind);
+    tasks = tasks.filter((a) => kindOf(a) === kind);
   }
 
   // Page AFTER filtering so `total` describes the filter's real match count,
   // which is what a caller deciding whether it has seen everything needs.
-  const total = automations.length;
+  const total = tasks.length;
 
   // Definitions come off readdirSync with no ordering anywhere on the path, so
   // without this the sequence a page slices is undefined — two calls could
   // interleave differently and a record could appear on both pages or neither.
   // Sort by id: unique by construction, so the order is total rather than
   // merely deterministic, which is what makes the cursor below unambiguous.
-  automations.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  tasks.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-  // Cursor, not offset: the caller may delete an automation between pages, and
+  // Cursor, not offset: the caller may delete a task between pages, and
   // a numeric offset would re-slice the shortened list and skip whatever moved
   // across the boundary — the same "concluded it wasn't there" failure this
   // tool's paging exists to prevent. Anchoring to the last id read is the
@@ -723,21 +710,21 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
   // which repeats work rather than skipping any.
   const cursor = args.cursor as string | undefined;
   if (cursor) {
-    const idx = automations.findIndex((a) => a.id === cursor);
-    if (idx >= 0) automations = automations.slice(idx + 1);
+    const idx = tasks.findIndex((a) => a.id === cursor);
+    if (idx >= 0) tasks = tasks.slice(idx + 1);
   }
 
   const limit = Math.min(
-    Math.max(1, Math.floor((args.limit as number) ?? AUTOMATIONS_LIST_DEFAULT_LIMIT)),
-    AUTOMATIONS_LIST_MAX_LIMIT,
+    Math.max(1, Math.floor((args.limit as number) ?? TASKS_LIST_DEFAULT_LIMIT)),
+    TASKS_LIST_MAX_LIMIT,
   );
   // Remaining after this page, computed from what is actually left rather than
   // from `total` minus a running count — the caller's history is not knowable
   // here, and guessing at it is how the withheld figure goes wrong.
-  const remaining = Math.max(0, automations.length - limit);
-  automations = automations.slice(0, limit);
+  const remaining = Math.max(0, tasks.length - limit);
+  tasks = tasks.slice(0, limit);
 
-  const summaries: AutomationSummary[] = automations.map((a) => ({
+  const summaries: TaskSummary[] = tasks.map((a) => ({
     id: a.id,
     name: a.name,
     description: a.description,
@@ -759,7 +746,7 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
   const hasMore = remaining > 0;
   const nextCursor = hasMore ? (summaries[summaries.length - 1]?.id ?? null) : null;
   return {
-    automations: summaries,
+    tasks: summaries,
     total,
     returned: summaries.length,
     nextCursor,
@@ -767,7 +754,7 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
     ...(hasMore && nextCursor
       ? {
           truncated:
-            `Showing ${summaries.length} of ${total} matching automations. ` +
+            `Showing ${summaries.length} of ${total} matching tasks. ` +
             `${remaining} more remain after this page — this is a partial view. ` +
             `Re-call with cursor="${nextCursor}" to continue before concluding anything ` +
             `about the full set.`,
@@ -776,44 +763,40 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
   };
 }
 
-export function handleStatus(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): AutomationsStatusOutput {
+export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): TasksStatusOutput {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
 
   const defs = ctx.definitions();
-  const automation = findByName(defs, name);
-  if (!automation) {
-    throw new Error(`Automation not found: "${name}"`);
+  const task = findByName(defs, name);
+  if (!task) {
+    throw new Error(`Task not found: "${name}"`);
   }
 
   const limit = (args.limit as number) ?? 5;
   const now = Date.now();
 
-  const runs = ctx.readRuns(automation.id, { limit });
+  const runs = ctx.readRuns(task.id, { limit });
 
-  const cost = estimateCost(automation, ctx.defaultModel);
+  const cost = estimateCost(task, ctx.defaultModel);
 
-  const rates = getModelRates(automation.model ?? ctx.defaultModel);
+  const rates = getModelRates(task.model ?? ctx.defaultModel);
   const actualCostUsd =
-    automation.cumulativeInputTokens > 0
-      ? (automation.cumulativeInputTokens * rates.input +
-          automation.cumulativeOutputTokens * rates.output) /
+    task.cumulativeInputTokens > 0
+      ? (task.cumulativeInputTokens * rates.input + task.cumulativeOutputTokens * rates.output) /
         1_000_000
       : 0;
 
   return {
-    automation: {
-      ...automation,
-      scheduleHuman: formatSchedule(automation.schedule, automation),
-      lastRunAtHuman: automation.lastRunAt ? formatRelativeTime(automation.lastRunAt, now) : null,
-      nextRunAtHuman: automation.nextRunAt ? formatRelativeTime(automation.nextRunAt, now) : null,
-      cumulativeInputTokens: automation.cumulativeInputTokens,
-      cumulativeOutputTokens: automation.cumulativeOutputTokens,
-      tokenBudget: automation.tokenBudget ?? null,
-      budgetResetAt: automation.budgetResetAt ?? null,
+    task: {
+      ...task,
+      scheduleHuman: formatSchedule(task.schedule, task),
+      lastRunAtHuman: task.lastRunAt ? formatRelativeTime(task.lastRunAt, now) : null,
+      nextRunAtHuman: task.nextRunAt ? formatRelativeTime(task.nextRunAt, now) : null,
+      cumulativeInputTokens: task.cumulativeInputTokens,
+      cumulativeOutputTokens: task.cumulativeOutputTokens,
+      tokenBudget: task.tokenBudget ?? null,
+      budgetResetAt: task.budgetResetAt ?? null,
       actualCostUsd,
       estimatedCostPerRun: cost.perRunUsd,
       estimatedCostPerDay: cost.perDayUsd,
@@ -823,9 +806,9 @@ export function handleStatus(
   };
 }
 
-export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): AutomationsRunsOutput {
-  const automationId = args.automationId as string | undefined;
-  const status = args.status as AutomationRun["status"] | undefined;
+export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): TasksRunsOutput {
+  const taskId = args.taskId as string | undefined;
+  const status = args.status as TaskRun["status"] | undefined;
   const since = args.since as string | undefined;
   const before = args.before as string | undefined;
   const limit = (args.limit as number) ?? 20;
@@ -833,11 +816,11 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Aut
     throw new Error(`Invalid before timestamp: "${before}"`);
   }
 
-  // One automation's history pages back through its archive with a cursor.
+  // One task's history pages back through its archive with a cursor.
   // The first page (no `before`) reads only the hot index; its `nextBefore`
   // says older runs exist.
-  if (automationId) {
-    const page = ctx.readRunsPage(automationId, { limit, status, since, before });
+  if (taskId) {
+    const page = ctx.readRunsPage(taskId, { limit, status, since, before });
     return {
       runs: page.runs,
       total: page.runs.length,
@@ -858,7 +841,7 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Aut
 export function handleRunResult(
   args: Record<string, unknown>,
   ctx: ToolContext,
-): AutomationsRunResultOutput {
+): TasksRunResultOutput {
   const name = args.name as string | undefined;
   const runId = args.runId as string;
   if (!runId) throw new Error("Missing required field: runId");
@@ -869,7 +852,7 @@ export function handleRunResult(
     const ticket = ctx.readRunTicket?.(runId);
     if (!ticket) {
       throw new Error(
-        `Run not found: "${runId}". Pass the automation's name too for a run not started by tasks__run.`,
+        `Run not found: "${runId}". Pass the task's name too for a run not started by tasks__run.`,
       );
     }
     if (isOpenRun(ticket.run)) {
@@ -877,7 +860,7 @@ export function handleRunResult(
         `Run "${runId}" is still ${ticket.run.status}; its result is written when it ends.`,
       );
     }
-    const result = ctx.readRunResult(ticket.automationId, runId);
+    const result = ctx.readRunResult(ticket.taskId, runId);
     if (!result) {
       throw new Error(
         `Run "${runId}" ended without a result (${ticket.run.status}${ticket.run.error ? `: ${ticket.run.error}` : ""}).`,
@@ -887,14 +870,14 @@ export function handleRunResult(
   }
 
   const defs = ctx.definitions();
-  const automation = findByName(defs, name);
-  if (!automation) {
-    throw new Error(`Automation not found: "${name}"`);
+  const task = findByName(defs, name);
+  if (!task) {
+    throw new Error(`Task not found: "${name}"`);
   }
 
-  const result = ctx.readRunResult(automation.id, runId);
+  const result = ctx.readRunResult(task.id, runId);
   if (!result) {
-    throw new Error(`Run result not found: "${runId}" for automation "${name}".`);
+    throw new Error(`Run result not found: "${runId}" for task "${name}".`);
   }
   return result;
 }
@@ -903,7 +886,7 @@ export function handleRunResult(
  * Maximum time `handleRun` will hold the MCP request awaiting completion
  * before returning a "dispatched, still running" envelope. Sized well
  * below the SDK's 60s default request timeout — without this cap, any
- * automation that takes longer than ~60s collides with the timeout and
+ * task that takes longer than ~60s collides with the timeout and
  * the agent sees `-32001 Request timed out` while the run is healthy
  * and proceeding in the background. The scheduler continues to track
  * the run; callers can poll `tasks__runs` for the final record.
@@ -918,7 +901,7 @@ const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
 /**
  * An inline one-off's definition: `tasks__run` with these instead of
- * `name` creates a `oneoff` automation with no schedule and runs it once.
+ * `name` creates a `oneoff` task with no schedule and runs it once.
  */
 interface InlineDefinition {
   prompt?: string;
@@ -950,10 +933,10 @@ interface RunArgs extends InlineDefinition {
 
 /** What `tasks__run` became: a run it asked for, or one an idempotency key already started. */
 export type PreparedRun =
-  | { kind: "existing"; automation: Automation; ticket: RunTicket }
+  | { kind: "existing"; task: Task; ticket: RunTicket }
   | {
       kind: "requested";
-      automation: Automation;
+      task: Task;
       requested: RequestedRun;
       ticket: RunNowTicket;
     };
@@ -1006,27 +989,27 @@ function canonicalJson(value: unknown): string {
 }
 
 function oneoffDefinition(
-  source: Partial<Pick<Automation, (typeof ONEOFF_DEFINITION_FIELDS)[number]>>,
+  source: Partial<Pick<Task, (typeof ONEOFF_DEFINITION_FIELDS)[number]>>,
 ): string {
   return canonicalJson(Object.fromEntries(ONEOFF_DEFINITION_FIELDS.map((f) => [f, source[f]])));
 }
 
 /**
- * Find or create the `oneoff` automation an inline `tasks__run` names.
+ * Find or create the `oneoff` task an inline `tasks__run` names.
  * The definition and the run's input are checked before anything is written,
  * so a refused call leaves no one-off behind. A key that already names a
  * one-off with a different definition is refused rather than run against the
  * old one.
  */
-function ensureOneoff(args: RunArgs, ctx: ToolContext): Automation {
+function ensureOneoff(args: RunArgs, ctx: ToolContext): Task {
   if (!args.prompt && !args.skill) {
     throw new Error(
-      "tasks__run needs `name` (an automation to run) or an inline definition with " +
+      "tasks__run needs `name` (a task to run) or an inline definition with " +
         "`prompt` or `skill`.",
     );
   }
   const limits = args.limits ?? {};
-  validateAutomationFields({
+  validateTaskFields({
     ...limits,
     ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
     ...(args.inputSchema ? { inputSchema: args.inputSchema } : {}),
@@ -1060,7 +1043,7 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Automation {
     return existing;
   }
 
-  const { automation } = createAutomation(
+  const { task } = createTask(
     {
       name: id,
       kind: "oneoff",
@@ -1071,10 +1054,10 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Automation {
     },
     ctx,
   );
-  return automation;
+  return task;
 }
 
-/** Refuse a run input that is too large or does not match the `inputSchema` of the automation `name`. */
+/** Refuse a run input that is too large or does not match the `inputSchema` of the task `name`. */
 function checkRunInput(
   name: string,
   inputSchema: Record<string, unknown> | undefined,
@@ -1104,8 +1087,8 @@ function checkRunInput(
 
 /**
  * Resolve what `tasks__run` runs and ask for the run: a saved
- * automation by `name`, or an inline definition run as a one-off. The input
- * is checked first, and an idempotency key already used on the automation
+ * task by `name`, or an inline definition run as a one-off. The input
+ * is checked first, and an idempotency key already used on the task
  * returns that run instead of asking for another. Shared by the inline call
  * and the task-augmented one, so the two cannot disagree on what a call
  * starts.
@@ -1115,7 +1098,7 @@ export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): 
   const inline = INLINE_FIELDS.filter((field) => args[field] !== undefined);
   if (args.name && inline.length > 0) {
     throw new Error(
-      `Give either \`name\` (an automation to run) or an inline definition, not both ` +
+      `Give either \`name\` (a task to run) or an inline definition, not both ` +
         `(also given: ${inline.join(", ")}).`,
     );
   }
@@ -1124,23 +1107,23 @@ export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): 
     throw new Error(`idempotencyKey must be 1 to ${MAX_IDEMPOTENCY_KEY_LENGTH} characters.`);
   }
 
-  // Ensure scheduler has fresh definitions (e.g., automation just created)
+  // Ensure scheduler has fresh definitions (e.g., task just created)
   ctx.reloadScheduler();
 
-  let automation: Automation;
+  let task: Task;
   if (args.name) {
     const found = findByName(ctx.definitions(), args.name);
-    if (!found) throw new Error(`Automation not found: "${args.name}"`);
-    automation = found;
-    checkRunInput(automation.name, automation.inputSchema, args.input);
+    if (!found) throw new Error(`Task not found: "${args.name}"`);
+    task = found;
+    checkRunInput(task.name, task.inputSchema, args.input);
   } else {
     // Checks the input against the inline definition before creating anything.
-    automation = ensureOneoff(args, ctx);
+    task = ensureOneoff(args, ctx);
   }
 
   if (key !== undefined) {
-    const existing = ctx.findRunByKey?.(automation.id, key);
-    if (existing) return { kind: "existing", automation, ticket: existing };
+    const existing = ctx.findRunByKey?.(task.id, key);
+    if (existing) return { kind: "existing", task, ticket: existing };
   }
 
   const requested: RequestedRun = {
@@ -1149,41 +1132,37 @@ export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): 
     ...(args.input !== undefined ? { input: args.input } : {}),
     ...(key !== undefined ? { idempotencyKey: key } : {}),
   };
-  log(`handleRun: running "${automation.id}" as ${requested.runId}`);
-  const ticket = ctx.runNow(automation.id, requested);
+  log(`handleRun: running "${task.id}" as ${requested.runId}`);
+  const ticket = ctx.runNow(task.id, requested);
   if (!ticket) {
     const ids = Array.from(ctx.definitions().keys());
     log(
-      `handleRun: runNow returned null for "${automation.id}". Scheduler has ${ids.length} definitions: [${ids.join(", ")}]`,
+      `handleRun: runNow returned null for "${task.id}". Scheduler has ${ids.length} definitions: [${ids.join(", ")}]`,
     );
     throw new Error(
-      `Failed to trigger run for "${automation.name}" (id=${automation.id}). The scheduler could not find this automation. Try reloading.`,
+      `Failed to trigger run for "${task.name}" (id=${task.id}). The scheduler could not find this task. Try reloading.`,
     );
   }
-  return { kind: "requested", automation, requested, ticket };
+  return { kind: "requested", task, requested, ticket };
 }
 
 /** The answer for a run an earlier call with the same idempotency key started. */
-function existingRunAnswer(
-  automation: Automation,
-  ticket: RunTicket,
-  ctx: ToolContext,
-): AutomationsRunOutput {
-  const { enabled } = disabledState(ctx, automation.name, automation);
+function existingRunAnswer(task: Task, ticket: RunTicket, ctx: ToolContext): TasksRunOutput {
+  const { enabled } = disabledState(ctx, task.name, task);
   const same = "An earlier call with this idempotencyKey already started this run";
   const { run } = ticket;
   if (!isOpenRun(run)) {
     return { run, enabled, message: `${same}; this is its record.` };
   }
   const where =
-    `Its record appears in tasks__runs (automationId "${automation.id}") when it ends; ` +
+    `Its record appears in tasks__runs (taskId "${task.id}") when it ends; ` +
     `read it with tasks__run_result (runId "${ticket.runId}").`;
   if (run.status === "queued") {
     return {
       status: "queued",
-      automationId: automation.id,
+      taskId: task.id,
       runId: ticket.runId,
-      position: ctx.queuePosition?.(automation.id) ?? 1,
+      position: ctx.queuePosition?.(task.id) ?? 1,
       queuedAt: ticket.requestedAt,
       enabled,
       message: `${same}, and it is still queued. ${where}`,
@@ -1191,7 +1170,7 @@ function existingRunAnswer(
   }
   return {
     status: "dispatched",
-    automationId: automation.id,
+    taskId: task.id,
     runId: ticket.runId,
     startedAt: run.startedAt,
     enabled,
@@ -1202,16 +1181,16 @@ function existingRunAnswer(
 export async function handleRun(
   args: Record<string, unknown>,
   ctx: ToolContext,
-): Promise<AutomationsRunOutput> {
+): Promise<TasksRunOutput> {
   const prepared = prepareRun(args, ctx);
-  const { automation } = prepared;
-  const name = automation.name;
-  if (prepared.kind === "existing") return existingRunAnswer(automation, prepared.ticket, ctx);
+  const { task } = prepared;
+  const name = task.name;
+  if (prepared.kind === "existing") return existingRunAnswer(task, prepared.ticket, ctx);
   const { ticket, requested } = prepared;
   const runId = requested.runId;
 
   if (ticket.state === "refused") {
-    const { enabled } = disabledState(ctx, name, automation);
+    const { enabled } = disabledState(ctx, name, task);
     return {
       run: ticket.run,
       enabled,
@@ -1223,24 +1202,24 @@ export async function handleRun(
     // The queued run is the scheduler's to finish; nothing awaits it here.
     ticket.run.catch(() => {});
     const queuedAt = requested.requestedAt;
-    const { enabled, disabledNote } = disabledState(ctx, name, automation);
+    const { enabled, disabledNote } = disabledState(ctx, name, task);
     return {
       status: "queued",
-      automationId: automation.id,
+      taskId: task.id,
       runId,
       position: ticket.position,
       queuedAt,
       enabled,
       message:
-        `"${name}" is queued at position ${ticket.position}: every automation run slot is busy, ` +
+        `"${name}" is queued at position ${ticket.position}: every task run slot is busy, ` +
         `and it starts as soon as one frees. When it ends, read it with tasks__run_result ` +
-        `(runId "${runId}"); it also appears in tasks__runs (automationId ` +
-        `"${automation.id}", since "${queuedAt}"). Remove it from the queue with ` +
+        `(runId "${runId}"); it also appears in tasks__runs (taskId ` +
+        `"${task.id}", since "${queuedAt}"). Remove it from the queue with ` +
         `tasks__cancel.${disabledNote}`,
     };
   }
 
-  // Race the run against a sync-wait deadline. Quick automations finish
+  // Race the run against a sync-wait deadline. Quick tasks finish
   // inside the window and return their full run record; longer ones get
   // a "dispatched" envelope so the agent can poll instead of seeing a
   // false -32001 failure.
@@ -1248,7 +1227,7 @@ export async function handleRun(
   // `Scheduler.dispatchRun` synthesizes a failure record for any
   // executor throw and returns it — so the EXECUTOR side never rejects.
   // BUT `updateAfterRun` (called from `dispatchRun` after the executor
-  // settles) does filesystem I/O — `appendRun` + `saveAutomation` — and
+  // settles) does filesystem I/O — `appendRun` + `saveTask` — and
   // can reject on disk-full, EBUSY, or permission flaps. In the
   // synchronous-completion path the rejection surfaces through
   // Promise.race and our outer catch handles it; in the dispatched path
@@ -1264,13 +1243,13 @@ export async function handleRun(
   const PENDING = Symbol("pending");
   // Track the timer so we can clear it when the run wins the race —
   // otherwise the pending timeout pins the event loop for up to waitMs
-  // past handleRun returning. Quick automations + bursty traffic would
+  // past handleRun returning. Quick tasks + bursty traffic would
   // accumulate live timers under load and delay clean process shutdown.
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<typeof PENDING>((resolve) => {
     timer = setTimeout(() => resolve(PENDING), waitMs);
   });
-  let outcome: AutomationRun | typeof PENDING;
+  let outcome: TaskRun | typeof PENDING;
   try {
     outcome = await Promise.race([runPromise, timeoutPromise]);
   } finally {
@@ -1279,20 +1258,20 @@ export async function handleRun(
 
   // Read after the run settles: the run itself can disable it (failure
   // auto-disable, token budget).
-  const { enabled, disabledNote } = disabledState(ctx, name, automation);
+  const { enabled, disabledNote } = disabledState(ctx, name, task);
 
   if (outcome === PENDING) {
     return {
       status: "dispatched",
-      automationId: automation.id,
+      taskId: task.id,
       runId,
       startedAt,
       enabled,
       message:
         `"${name}" is still running after ${waitMs / 1000}s and continues in the background; ` +
         `it has not failed. When it ends, read its full output with tasks__run_result ` +
-        `(runId "${runId}"); it also appears in tasks__runs (automationId ` +
-        `"${automation.id}", since "${startedAt}"). Stop it with tasks__cancel.${disabledNote}`,
+        `(runId "${runId}"); it also appears in tasks__runs (taskId ` +
+        `"${task.id}", since "${startedAt}"). Stop it with tasks__cancel.${disabledNote}`,
     };
   }
 
@@ -1302,16 +1281,16 @@ export async function handleRun(
 }
 
 /**
- * The automation's current `enabled` flag, and a note for a disabled one. Run
- * now runs a disabled automation (see `Scheduler.requestRunNow`); the note says
+ * The task's current `enabled` flag, and a note for a disabled one. Run
+ * now runs a disabled task (see `Scheduler.requestRunNow`); the note says
  * so, since its schedule and events will not fire it again.
  */
 function disabledState(
   ctx: ToolContext,
   name: string,
-  automation: Automation,
+  task: Task,
 ): { enabled: boolean; disabledNote: string } {
-  const current = findByName(ctx.definitions(), name) ?? automation;
+  const current = findByName(ctx.definitions(), name) ?? task;
   const enabled = current.enabled;
   // `enabled` gates only the trigger; with none there is nothing to say.
   const disabledNote =
@@ -1321,10 +1300,7 @@ function disabledState(
   return { enabled, disabledNote };
 }
 
-export function handleCancel(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): AutomationsCancelOutput {
+export function handleCancel(args: Record<string, unknown>, ctx: ToolContext): TasksCancelOutput {
   const name = args.name as string;
   if (!name) throw new Error("Missing required field: name");
 
@@ -1332,18 +1308,18 @@ export function handleCancel(
   ctx.reloadScheduler();
 
   const defs = ctx.definitions();
-  const automation = findByName(defs, name);
-  if (!automation) {
-    throw new Error(`Automation not found: "${name}"`);
+  const task = findByName(defs, name);
+  if (!task) {
+    throw new Error(`Task not found: "${name}"`);
   }
 
-  const cancelled = ctx.cancelRun(automation.id);
+  const cancelled = ctx.cancelRun(task.id);
   return {
     cancelled,
-    id: automation.id,
+    id: task.id,
     message: cancelled
-      ? `Automation "${name}" run cancelled.`
-      : `Automation "${name}" has no running or queued run to cancel.`,
+      ? `Task "${name}" run cancelled.`
+      : `Task "${name}" has no running or queued run to cancel.`,
   };
 }
 
@@ -1351,7 +1327,7 @@ export function handleCancel(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function findByName(defs: Map<string, Automation>, name: string): Automation | undefined {
+function findByName(defs: Map<string, Task>, name: string): Task | undefined {
   // First try direct id lookup (kebab-case of name)
   const byId = defs.get(toKebabCase(name));
   if (byId) return byId;

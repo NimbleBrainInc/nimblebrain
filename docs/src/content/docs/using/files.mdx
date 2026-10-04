@@ -5,7 +5,7 @@ description: Browse, organize, and search the files you and your agents keep in 
 
 import { Aside } from '@astrojs/starlight/components';
 
-The **Files** app holds every file in the workspace that belongs to you: what you attach in chat, what you upload, and what agents and automations write. Open it from **Files** in the sidebar.
+The **Files** app holds every file in the workspace that belongs to you: what you attach in chat, what you upload, and what agents and tasks write. Open it from **Files** in the sidebar.
 
 Files are private to you. Another member of the workspace has their own Files and can't see yours.
 
@@ -34,7 +34,7 @@ The chips under the search box narrow the list further and say how many files ea
 |---|---|
 | Documents, Images, Data, Fonts, Other | Files of that kind, judged from the file type |
 | From chats | Files attached in a conversation |
-| Made by agents | Files an agent or an automation wrote |
+| Made by agents | Files an agent or a task wrote |
 | Uploaded | Files uploaded through Files or an app |
 | Today, 7 days, 30 days | Files created in that period |
 
@@ -44,11 +44,11 @@ Click a column heading to sort by name, size, or date. The list shows 50 files a
 
 The agent works with the same files through the `files__*` tools:
 
-- `files__list` lists a folder or searches across folders with the same filters as the chips, and can find the files a given conversation or automation run wrote.
+- `files__list` lists a folder or searches across folders with the same filters as the chips, and can find the files a given conversation or task run wrote.
 - `files__create` takes a folder path (`Reports/Q3`) and makes any folder that is missing, so you can ask for a report to be saved to a specific folder.
 - `files__move`, `files__create_folder`, `files__update_folder`, and `files__delete_folder` organize files the way the app does, under the same rules.
 
-Every file an agent writes records the conversation or automation run it came from.
+Every file an agent writes records the conversation or task run it came from.
 
 <Aside type="tip">
   Ask the agent to show you a file in Files ("open the Q3 brief in Files"), and it opens the app on that file.

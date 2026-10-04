@@ -256,7 +256,7 @@ export function createServerNotificationRelay(
  *
  * Its own store rather than `RequestContext.identity`: the owner of a change is
  * a fact about the write, and a write can happen where the ambient request is
- * someone else's or no one's — a scheduled automation run fires on a timer that
+ * someone else's or no one's — a scheduled task run fires on a timer that
  * can carry a stale context. Scoping the user to the one call that sends the
  * notification means the relay reads exactly what the announcer named.
  */

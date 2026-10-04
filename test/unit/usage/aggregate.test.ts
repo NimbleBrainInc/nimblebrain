@@ -658,7 +658,7 @@ describe("the ledger's id split", () => {
     expect(report.totals.runs ?? 0).toBe(0);
   });
 
-  it("counts a new-shape automation record as a run, not a conversation", async () => {
+  it("counts a new-shape task record as a run, not a conversation", async () => {
     const dir = makeTmpDir();
     writeRecord(dir, { origin: "task", taskRunId: "run_new", runId: "turn-1" });
 
@@ -679,7 +679,7 @@ describe("the ledger's id split", () => {
     expect(report.totals.conversations).toBe(1);
   });
 
-  it("counts legacy and new automation records as one run", async () => {
+  it("counts legacy and new task records as one run", async () => {
     const dir = makeTmpDir();
     writeRecord(dir, { origin: "task", sessionId: "run_same" });
     writeRecord(dir, { origin: "task", taskRunId: "run_same", runId: "turn-2" });
@@ -688,7 +688,7 @@ describe("the ledger's id split", () => {
     expect(report.totals.runs).toBe(1);
   });
 
-  it("keeps an automation out of the conversation breakdown", async () => {
+  it("keeps a task out of the conversation breakdown", async () => {
     // The defect the undiscriminated read had: a task's run id keyed a row in
     // a dimension the schema calls "conversation", so a usage report listed
     // `run_…` among its conversations.

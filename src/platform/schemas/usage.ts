@@ -32,7 +32,7 @@ export const USAGE_ORIGINS = ["chat", "task", "system"] as const;
 const UsageGroupBy = StringEnum(USAGE_GROUP_BYS, {
   description:
     "Group breakdown. Default: day. `user` buckets by the caller (org scope); " +
-    "`origin` splits interactive chat from automation runs; `turn` buckets by a single " +
+    "`origin` splits interactive chat from task runs; `turn` buckets by a single " +
     "assistant turn and is the finest grain here, so narrow the period before reaching for " +
     "it; `provider` buckets by " +
     "the model string's provider prefix; `workspace` buckets by the workspace the call was " +
@@ -97,7 +97,7 @@ export const UsageReportInput = Type.Object({
   ),
   origin: Type.Optional(
     StringEnum(USAGE_ORIGINS, {
-      description: "Only calls with this origin: `chat`, `task` (automation runs), or `system`.",
+      description: "Only calls with this origin: `chat`, `task` (task runs), or `system`.",
     }),
   ),
 });
@@ -171,7 +171,7 @@ export interface UsageReportOutput {
     llmMs: number;
     /** Distinct chat conversations. Task runs are counted by `runs`. */
     conversations: number;
-    /** Distinct task runs — automations, which have no conversation to count. */
+    /** Distinct task runs — tasks, which have no conversation to count. */
     runs?: number;
     /**
      * Calls no price could be found for. Present only when non-zero.

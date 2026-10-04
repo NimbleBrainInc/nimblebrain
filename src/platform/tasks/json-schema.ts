@@ -1,5 +1,5 @@
 /**
- * JSON Schema checks for an automation's `inputSchema` and `outputSchema`: that
+ * JSON Schema checks for a task's `inputSchema` and `outputSchema`: that
  * an author's schema is one, that a run's input matches it, and that a run's
  * deliverable parses and matches it.
  *

@@ -113,7 +113,7 @@ A name outside the workspace's installed tools is refused when you save.
 
 **Passing that check is not the same as being deliverable.** Some tools a route
 may name are still refused at delivery, because an unattended call may not widen
-its author's own reach — creating automations, authoring skills, installing
+its author's own reach — creating tasks, authoring skills, installing
 connectors. Those fail with `refused` and are never retried; see
 [the unattended door](/deploy/security).
 
@@ -124,13 +124,13 @@ to the connector; the platform renders your template and makes the call.
 
 | Field | Meaning |
 |---|---|
-| `automation` | One of your automations, by id |
+| `task` | One of your tasks, by id |
 
-The automation must be [scheduled on events](/using/tasks) to accept one.
+The task must be [scheduled on events](/using/tasks) to accept one.
 Matching items are batched for about 30 seconds before the run starts.
 
-An automation may start at most **12 runs an hour** from events by default.
-Crossing that ceiling switches the automation off and settles every waiting item
+A task may start at most **12 runs an hour** from events by default.
+Crossing that ceiling switches the task off and settles every waiting item
 `failed` — see
 [failed](/using/notification-troubleshooting#failed).
 
@@ -165,10 +165,10 @@ One ledger line per target, per notification.
 | Outcome | Terminal | Means | Retries |
 |---|---|---|---|
 | `sending` | no | An attempt is in flight or the next is due | yes |
-| `delivered` | yes | The tool ran and did not report a failure, or the automation's run started | — |
-| `batching for the automation` | no | An agent target inside its batching window | — |
-| `refused` | yes | A gate said no: the author may not use that tool, or the route names no event-scheduled automation of theirs | no |
-| `skipped` | yes | The author has left the workspace, or the automation is off or did not want the item | no |
+| `delivered` | yes | The tool ran and did not report a failure, or the task's run started | — |
+| `batching for the task` | no | An agent target inside its batching window | — |
+| `refused` | yes | A gate said no: the author may not use that tool, or the route names no event-scheduled task of theirs | no |
+| `skipped` | yes | The author has left the workspace, or the task is off or did not want the item | no |
 | `failed` | yes | A tool call did not complete and the retry budget is spent, or a run was owed and did not happen | no |
 
 **Three attempts across about five minutes** — immediately, then after a minute,

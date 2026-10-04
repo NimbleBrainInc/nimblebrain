@@ -249,7 +249,7 @@ describe("create", () => {
     expect((await list({ folderId: "root" })).folders.map((f) => f.name)).toEqual(["Reports"]);
   });
 
-  test("stamps the conversation in a chat and the run in an automation run", async () => {
+  test("stamps the conversation in a chat and the run in a task run", async () => {
     const inChat = parse<FilesCreateOutput>(
       await exec(
         "create",

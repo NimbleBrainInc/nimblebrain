@@ -1,9 +1,9 @@
 /**
- * Deleting a workspace disarms the automations it held.
+ * Deleting a workspace disarms the tasks it held.
  *
- * The scheduler loads every workspace's automations into an in-memory map at
- * boot and re-reads it only from the automations tool surface — nothing
- * reloaded it on a workspace delete. So a deleted workspace's automations
+ * The scheduler loads every workspace's tasks into an in-memory map at
+ * boot and re-reads it only from the tasks tool surface — nothing
+ * reloaded it on a workspace delete. So a deleted workspace's tasks
  * stayed armed until the process restarted, and when one fired it wrote back
  * through a store that mkdir'd its way into the directory that had just been
  * archived. The workspace came back holding a run log and nothing else, and
@@ -12,14 +12,14 @@
  *
  * Two halves, both pinned here:
  *
- *   1. `Runtime.deleteWorkspace` drops the workspace's automations from the
+ *   1. `Runtime.deleteWorkspace` drops the workspace's tasks from the
  *      scheduler before anything else, so the correct behaviour does not rest
  *      on a write failing.
  *   2. `ensureWorkspaceDir` is the floor under it: the directory does not come
  *      back even if something does reach the store.
  *
  * The first test is the control, and it is not optional — without it, "the
- * automation did not fire" passes for a fixture that never armed one.
+ * task did not fire" passes for a fixture that never armed one.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -27,7 +27,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { appendRun } from "../../src/platform/tasks/store.ts";
-import type { Automation } from "../../src/platform/tasks/types.ts";
+import type { Task } from "../../src/platform/tasks/types.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { TaskRequest, TaskResult } from "../../src/runtime/types.ts";
@@ -37,7 +37,7 @@ import { makeTestWorkDir } from "../helpers/test-workdir.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
 const WS_ID = "ws_0064f069a7f4e1b0";
-const AUTOMATION_ID = "daily-digest";
+const TASK_ID = "daily-digest";
 /** No identity provider is configured, so every owner resolves to the dev id. */
 const OWNER = "usr_default";
 
@@ -48,14 +48,14 @@ let runtime: Runtime;
 let dispatched: string[];
 
 /**
- * An automation already due, so `reloadScheduler()` arms its timer at zero
+ * A task already due, so `reloadScheduler()` arms its timer at zero
  * delay and the very next macrotask fires it. That is what makes both tests
  * deterministic rather than a sleep long enough to "probably" be safe.
  */
-function armedAutomation(): Automation {
+function armedTask(): Task {
   const now = new Date().toISOString();
   return {
-    id: AUTOMATION_ID,
+    id: TASK_ID,
     name: "Daily digest",
     prompt: "summarize the day",
     schedule: { type: "interval", intervalMs: 60_000 },
@@ -73,12 +73,12 @@ function armedAutomation(): Automation {
   };
 }
 
-/** Write the automation and hand it to the scheduler, the way the tool does. */
+/** Write the task and hand it to the scheduler, the way the tool does. */
 function arm(): void {
   runWithRequestContext({ identity: DEV_IDENTITY, workspaceId: WS_ID }, () => {
-    const ctx = runtime.getAutomationsContext();
+    const ctx = runtime.getTasksContext();
     const defs = ctx.definitions();
-    defs.set(AUTOMATION_ID, armedAutomation());
+    defs.set(TASK_ID, armedTask());
     ctx.save(defs);
     ctx.reloadScheduler();
   });
@@ -101,7 +101,7 @@ beforeEach(async () => {
   await seedWorkspace(runtime.getWorkspaceStore(), WS_ID, { name: "Quiesce" });
   await runtime.getWorkspaceStore().addMember(WS_ID, OWNER, "admin");
 
-  // Stand in for the agent run. The automations source closed over
+  // Stand in for the agent run. The tasks source closed over
   // `(req) => runtime.executeTask(req)`, so shadowing the method on this
   // instance is what the scheduler reaches — and counting dispatches is the
   // only direct read on "did it fire".
@@ -122,7 +122,7 @@ afterEach(async () => {
   cleanup();
 });
 
-test("the control: an armed automation in a live workspace fires", async () => {
+test("the control: an armed task in a live workspace fires", async () => {
   arm();
   await tick();
 
@@ -133,7 +133,7 @@ test("the control: an armed automation in a live workspace fires", async () => {
 test("deleting the workspace disarms it, and the directory does not come back", async () => {
   arm();
 
-  // `deleteWorkspace` drops the workspace's automations in its synchronous
+  // `deleteWorkspace` drops the workspace's tasks in its synchronous
   // prefix, before its first await — so the zero-delay timer `arm()` just
   // scheduled is cleared before it can run. Nothing here waits on a race.
   const result = await runtime.deleteWorkspace(WS_ID);
@@ -155,9 +155,9 @@ test("a run that slips through cannot re-create the archived workspace", async (
   await runtime.deleteWorkspace(WS_ID);
 
   expect(() =>
-    appendRun(workDir, WS_ID, OWNER, AUTOMATION_ID, {
+    appendRun(workDir, WS_ID, OWNER, TASK_ID, {
       id: "run_late",
-      automationId: AUTOMATION_ID,
+      taskId: TASK_ID,
       startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
       status: "success",

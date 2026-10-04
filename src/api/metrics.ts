@@ -137,8 +137,8 @@ export const llmInputTokensEstimatedTotal = new Counter({
  * was for), and model.
  *
  * `source` and `origin` answer different questions and neither substitutes for
- * the other: `source="main"` covers interactive chat AND automation runs alike,
- * which is precisely how automation spend stayed invisible — it sat in
+ * the other: `source="main"` covers interactive chat AND task runs alike,
+ * which is precisely how task spend stayed invisible — it sat in
  * `source="main"` beside human turns with nothing to separate them.
  */
 export const llmCallsTotal = new Counter({
@@ -300,18 +300,18 @@ export const artifactResolutionsTotal = new Counter({
 });
 
 /**
- * Automation runs recorded, by terminal status: `success`, `degraded`,
+ * Task runs recorded, by terminal status: `success`, `degraded`,
  * `failure`, `timeout`, `cancelled`, or `skipped`. `degraded` is a run that
  * finished with a failed tool call no later call made good, so part of its
  * work did not happen; the ratio of `degraded` plus `failure` to the total is
- * the automation health signal. Counted where the run record is written, so
- * every run the run list shows is counted once. No automation or workspace
+ * the task health signal. Counted where the run record is written, so
+ * every run the run list shows is counted once. No task or workspace
  * label: both are tenant-unbounded, and one pod per tenant already attributes
- * it. The run record names the automation.
+ * it. The run record names the task.
  */
-export const automationRunsTotal = new Counter({
-  name: "nb_automation_runs_total",
-  help: "Automation runs recorded, by terminal status.",
+export const taskRunsTotal = new Counter({
+  name: "nb_task_runs_total",
+  help: "Task runs recorded, by terminal status.",
   labelNames: ["status"] as const,
   registers: [metricsRegistry],
 });

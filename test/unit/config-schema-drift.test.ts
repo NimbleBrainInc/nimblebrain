@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-  AUTOMATIONS_CONFIG_BOUNDS,
-  AUTOMATIONS_CONFIG_KEYS,
-  resolveAutomationsConfig,
-} from "../../src/config/automations.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { SECRETS_CONFIG_KEYS } from "../../src/config/secrets.ts";
+import {
+  resolveTasksConfig,
+  TASKS_CONFIG_BOUNDS,
+  TASKS_CONFIG_KEYS,
+} from "../../src/config/tasks.ts";
 import {
   COMPOSIO_PROVIDER_CONFIG_KEYS,
   CONNECTORS_CONFIG_KEYS,
@@ -46,7 +46,7 @@ const schema = JSON.parse(
 ) as {
   properties: {
     features: SchemaObject;
-    automations: SchemaObject & {
+    tasks: SchemaObject & {
       properties: Record<string, { minimum: number; maximum: number; default?: number }>;
     };
     models: SchemaObject;
@@ -142,20 +142,20 @@ describe("config schema ↔ notification poll config", () => {
   expectLockstep("notifications", schema.properties.notifications, ["poll"]);
 });
 
-describe("config schema ↔ automations config", () => {
-  // `AUTOMATIONS_CONFIG_KEYS` is derived from the bounds the resolver clamps
+describe("config schema ↔ tasks config", () => {
+  // `TASKS_CONFIG_KEYS` is derived from the bounds the resolver clamps
   // against, so a key the runtime reads is a key the schema must declare.
-  expectLockstep("automations", schema.properties.automations, AUTOMATIONS_CONFIG_KEYS);
+  expectLockstep("tasks", schema.properties.tasks, TASKS_CONFIG_KEYS);
 
   // The schema's range and default are what an editor offers, and the
   // resolver's are what runs; a ceiling with no default must not advertise one.
-  test("automations: each key's range and default match the resolver's", () => {
-    const resolved = resolveAutomationsConfig();
-    for (const key of AUTOMATIONS_CONFIG_KEYS) {
-      const declared = schema.properties.automations.properties[key];
+  test("tasks: each key's range and default match the resolver's", () => {
+    const resolved = resolveTasksConfig();
+    for (const key of TASKS_CONFIG_KEYS) {
+      const declared = schema.properties.tasks.properties[key];
       expect({ key, min: declared?.minimum, max: declared?.maximum }).toEqual({
         key,
-        ...AUTOMATIONS_CONFIG_BOUNDS[key],
+        ...TASKS_CONFIG_BOUNDS[key],
       });
       expect({ key, default: declared?.default }).toEqual({ key, default: resolved[key] });
     }

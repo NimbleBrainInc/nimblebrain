@@ -47,13 +47,13 @@ describe("loadConfig", () => {
     expect(config.maxIterations).toBe(15);
   });
 
-  it("carries the automations block through to the runtime config", () => {
-    const configPath = writeTestConfig("automations.json", {
-      automations: { maxConcurrentRuns: 4, maxQueuedRuns: 10, maxRunIterations: 12 },
+  it("carries the tasks block through to the runtime config", () => {
+    const configPath = writeTestConfig("tasks.json", {
+      tasks: { maxConcurrentRuns: 4, maxQueuedRuns: 10, maxRunIterations: 12 },
     });
 
     const config = loadConfig({ config: configPath });
-    expect(config.automations).toEqual({
+    expect(config.tasks).toEqual({
       maxConcurrentRuns: 4,
       maxQueuedRuns: 10,
       maxRunIterations: 12,
@@ -92,7 +92,7 @@ describe("loadConfig", () => {
       features: {},
       connectors: {},
       notifications: { poll: { intervalMs: 30000 } },
-      automations: {},
+      tasks: {},
       files: {},
     };
     const fileOnly = new Set(["$schema", "version"]);

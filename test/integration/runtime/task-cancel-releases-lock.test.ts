@@ -1,5 +1,5 @@
 /**
- * Cancelling a run releases the automation's per-run lock promptly, even when
+ * Cancelling a run releases the task's per-run lock promptly, even when
  * the tool the run is waiting on ignores its abort signal. The abort reaches
  * the MCP client, which rejects the pending call itself rather than waiting
  * for the handler, so the run ends as cancelled and the next Run now starts.
@@ -17,8 +17,8 @@ import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { createDirectExecutor } from "../../../src/platform/tasks/executor.ts";
 import { Scheduler } from "../../../src/platform/tasks/scheduler.ts";
 import { resolveExecutorContext } from "../../../src/platform/tasks/source.ts";
-import { saveAutomation } from "../../../src/platform/tasks/store.ts";
-import type { Automation } from "../../../src/platform/tasks/types.ts";
+import { saveTask } from "../../../src/platform/tasks/store.ts";
+import type { Task } from "../../../src/platform/tasks/types.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { TaskRequest } from "../../../src/runtime/types.ts";
 import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
@@ -33,7 +33,7 @@ afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("cancelling an automation run", () => {
+describe("cancelling a task run", () => {
   it("releases the lock when the tool in flight ignores its abort signal", async () => {
     let entered!: () => void;
     const enteredP = new Promise<void>((r) => {
@@ -92,8 +92,8 @@ describe("cancelling an automation run", () => {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         nextRunAt: new Date(Date.now() + 3_600_000).toISOString(),
-      } as unknown as Automation;
-      saveAutomation(workDir, WS, DEV_IDENTITY.id, auto);
+      } as unknown as Task;
+      saveTask(workDir, WS, DEV_IDENTITY.id, auto);
       const executor = createDirectExecutor(
         (req) => runtime.executeTask(req as TaskRequest),
         resolveExecutorContext,

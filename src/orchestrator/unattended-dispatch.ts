@@ -261,7 +261,7 @@ export async function dispatchUnattended(
         // it, which is the right authority for a call nobody is watching.
         identity: { id: opts.principalId } as UserIdentity,
         workspaceId: opts.workspaceId,
-        // Bars the automation-authoring surface at the sources themselves, so
+        // Bars the task-authoring surface at the sources themselves, so
         // the wall holds below anything this door checks by name.
         unattended: true,
       },

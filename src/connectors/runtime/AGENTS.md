@@ -18,12 +18,12 @@ then hands the id to `WorkspaceStore.delete` for the archive-rename. Teardown
 runs BEFORE the rename: `on_removing` needs the bundle reachable, and the
 credential cleanup needs the credential directory at its live path.
 
-- **The workspace's automations are disarmed first**, before the connector
-  teardown and long before the rename: `AutomationQuiescer.dropWorkspace` (the
-  scheduler, handed over by the automations source — the runtime may not import
+- **The workspace's tasks are disarmed first**, before the connector
+  teardown and long before the rename: `TaskQuiescer.dropWorkspace` (the
+  scheduler, handed over by the tasks source — the runtime may not import
   it) drops them from the in-memory `definitions` map. Nothing else does:
-  `scheduler.reload()` is called only from the automations tool surface, so a
-  deleted workspace's automations stayed armed until the process restarted. A
+  `scheduler.reload()` is called only from the tasks tool surface, so a
+  deleted workspace's tasks stayed armed until the process restarted. A
   targeted drop, never `reload()` — that rescans every workspace and owner on
   disk to learn one thing the caller already knows.
 - `WorkspaceStore` imports nothing from `src/connectors/` and holds no lifecycle

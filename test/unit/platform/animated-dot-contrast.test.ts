@@ -84,7 +84,7 @@ function derivedCandidates(): { file: string; selector: string }[] {
  */
 const GUARDED = [
   {
-    what: "automations running dot",
+    what: "tasks running dot",
     file: join(REPO, "src", "platform", "tasks", "ui", "src", "styles.ts"),
     selector: ".dot-running",
   },
@@ -276,7 +276,7 @@ for (const { what, selector, css } of LOADED) {
       const out: [string, string][] = [];
       // Deduped by resulting COLOUR, not name. Two things collapse here and
       // both are real: in light mode the page and the card are the same white,
-      // and automations declares the identical hover mix twice. The same pair
+      // and tasks declares the identical hover mix twice. The same pair
       // asserted under two names would read as broader coverage than it is.
       const seen = new Set<string>();
       const add = (name: string, colour: string) => {

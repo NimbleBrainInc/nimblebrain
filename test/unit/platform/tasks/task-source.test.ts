@@ -1,5 +1,5 @@
 /**
- * `tasks__run` as a task: the automations source's task surface over a
+ * `tasks__run` as a task: the tasks source's task surface over a
  * real scheduler and store. The task id is the run id, the run's ticket exists
  * before the handle is returned, a lookup reads the record on disk (so a new
  * process answers it), and only the (workspace, identity, source) that started
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Task } from "@modelcontextprotocol/server";
+import type { Task as McpTask } from "@modelcontextprotocol/server";
 import {
   type Executor,
   isOpenRun,
@@ -19,23 +19,20 @@ import {
 } from "../../../../src/platform/tasks/scheduler.ts";
 import type { ToolContext } from "../../../../src/platform/tasks/server.ts";
 import {
-  loadOwnerAutomations,
+  loadOwnerTasks,
   readIdempotencyKey,
   readRunResult,
   readRuns,
   readRunTicket,
-  saveAutomation,
   saveRunTicket,
+  saveTask,
 } from "../../../../src/platform/tasks/store.ts";
-import {
-  createAutomationsTaskSource,
-  taskStatusOf,
-} from "../../../../src/platform/tasks/task-source.ts";
+import { createTaskRunSource, taskStatusOf } from "../../../../src/platform/tasks/task-source.ts";
 import type {
-  Automation,
-  AutomationRun,
-  AutomationRunResult,
   RunTicket,
+  Task,
+  TaskRun,
+  TaskRunResult,
 } from "../../../../src/platform/tasks/types.ts";
 import { createRunAdmission, type RunAdmission } from "../../../../src/runtime/admission.ts";
 import type { IdentityTaskSource } from "../../../../src/tools/identity-task-source.ts";
@@ -53,24 +50,24 @@ let workDir: string;
 
 /** One executor call the test settles by hand. */
 interface HeldRun {
-  automation: Automation;
+  task: Task;
   runId: string | undefined;
   input: RunInput | undefined;
   signal: AbortSignal;
-  finish: (output: string, status?: AutomationRun["status"]) => void;
+  finish: (output: string, status?: TaskRun["status"]) => void;
 }
 
 /** An executor whose runs stay in flight until the test finishes them; an abort ends one cancelled. */
 function heldExecutor(): { executor: Executor; held: HeldRun[] } {
   const held: HeldRun[] = [];
-  const executor: Executor = (automation, signal, trigger, input, _lease, runId) =>
+  const executor: Executor = (task, signal, trigger, input, _lease, runId) =>
     new Promise((resolve) => {
       const startedAt = new Date().toISOString();
-      const finish = (output: string, status: AutomationRun["status"] = "success") => {
+      const finish = (output: string, status: TaskRun["status"] = "success") => {
         const id = runId ?? `run_${crypto.randomUUID().slice(0, 12)}`;
-        const run: AutomationRun = {
+        const run: TaskRun = {
           id,
-          automationId: automation.id,
+          taskId: task.id,
           startedAt,
           completedAt: new Date().toISOString(),
           status,
@@ -82,9 +79,9 @@ function heldExecutor(): { executor: Executor; held: HeldRun[] } {
           ...(output ? { resultPreview: output.slice(0, 280) } : {}),
           ...(status === "cancelled" ? { error: "Cancelled by user" } : {}),
         };
-        const result: AutomationRunResult = {
+        const result: TaskRunResult = {
           runId: id,
-          automationId: automation.id,
+          taskId: task.id,
           completedAt: run.completedAt!,
           output,
           activityLog: [],
@@ -94,12 +91,12 @@ function heldExecutor(): { executor: Executor; held: HeldRun[] } {
         resolve({ run, result });
       };
       signal.addEventListener("abort", () => finish("", "cancelled"), { once: true });
-      held.push({ automation, runId, input, signal, finish });
+      held.push({ task, runId, input, signal, finish });
     });
   return { executor, held };
 }
 
-/** The scheduler, tool context and task surface the automations source wires, for one owner. */
+/** The scheduler, tool context and task surface the tasks source wires, for one owner. */
 function harness(opts: { executor: Executor; admission?: RunAdmission }) {
   const scheduler = new Scheduler(opts.executor, {
     workDir,
@@ -114,12 +111,12 @@ function harness(opts: { executor: Executor; admission?: RunAdmission }) {
   };
 
   const ctx = (wsId = WS, owner = OWNER): ToolContext => ({
-    definitions: () => loadOwnerAutomations(workDir, wsId, owner),
+    definitions: () => loadOwnerTasks(workDir, wsId, owner),
     save: (map) => {
       for (const auto of map.values()) {
         auto.workspaceId ??= wsId;
         auto.ownerId ??= owner;
-        saveAutomation(workDir, wsId, owner, auto);
+        saveTask(workDir, wsId, owner, auto);
       }
     },
     reloadScheduler: () => scheduler.reload(),
@@ -140,7 +137,7 @@ function harness(opts: { executor: Executor; admission?: RunAdmission }) {
   });
 
   let unattended = false;
-  const source = createAutomationsTaskSource({
+  const source = createTaskRunSource({
     toolContext: () => ctx(),
     readTicket: currentTicket,
     readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
@@ -157,9 +154,9 @@ function harness(opts: { executor: Executor; admission?: RunAdmission }) {
   };
 }
 
-function seed(id: string, extra: Partial<Automation> = {}): Automation {
+function seed(id: string, extra: Partial<Task> = {}): Task {
   const now = new Date().toISOString();
-  const auto: Automation = {
+  const auto: Task = {
     id,
     name: id,
     prompt: `Do the ${id} thing.`,
@@ -175,11 +172,14 @@ function seed(id: string, extra: Partial<Automation> = {}): Automation {
     cumulativeOutputTokens: 0,
     ...extra,
   };
-  saveAutomation(workDir, WS, OWNER, auto);
+  saveTask(workDir, WS, OWNER, auto);
   return auto;
 }
 
-async function startTask(source: IdentityTaskSource, args: Record<string, unknown>): Promise<Task> {
+async function startTask(
+  source: IdentityTaskSource,
+  args: Record<string, unknown>,
+): Promise<McpTask> {
   const started = await source.startToolAsTask("run", args, { ownerContext: OWNED });
   if (!("task" in started)) throw new Error(`expected a task, got ${JSON.stringify(started)}`);
   return started.task;
@@ -189,7 +189,7 @@ async function startTask(source: IdentityTaskSource, args: Record<string, unknow
 const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 beforeEach(() => {
-  workDir = mkdtempSync(join(tmpdir(), "nb-automations-task-"));
+  workDir = mkdtempSync(join(tmpdir(), "nb-tasks-task-"));
   seedWorkspaceRoot(workDir, WS);
   seedWorkspaceRoot(workDir, OTHER_WS);
 });
@@ -199,8 +199,8 @@ afterEach(() => {
 });
 
 describe("taskStatusOf", () => {
-  const run = (status: AutomationRun["status"], extra: Partial<AutomationRun> = {}) =>
-    ({ status, ...extra }) as AutomationRun;
+  const run = (status: TaskRun["status"], extra: Partial<TaskRun> = {}) =>
+    ({ status, ...extra }) as TaskRun;
 
   test("maps each run state to a task status", () => {
     expect(taskStatusOf(run("queued"))).toBe("working");
@@ -229,7 +229,7 @@ describe("tasks__run as a task", () => {
     // The run is still in flight, and its record is already on disk.
     const ticket = readRunTicket(workDir, WS, OWNER, task.taskId);
     expect(ticket?.run.status).toBe("running");
-    expect(ticket?.automationId).toBe("digest");
+    expect(ticket?.taskId).toBe("digest");
     // The task id is the run id the runtime is handed.
     expect(held[0]?.runId).toBe(task.taskId);
 
@@ -251,8 +251,8 @@ describe("tasks__run as a task", () => {
     );
     expect(result.content).toEqual([{ type: "text", text: "the digest" }]);
     const { run, result: deliverable } = result.structuredContent as {
-      run: AutomationRun;
-      result: AutomationRunResult;
+      run: TaskRun;
+      result: TaskRunResult;
     };
     expect(run.id).toBe(task.taskId);
     expect(run.status).toBe("success");
@@ -359,11 +359,11 @@ describe("tasks__run as a task", () => {
     const now = new Date().toISOString();
     saveRunTicket(workDir, WS, OWNER, {
       runId: "run_leftbehind1",
-      automationId: auto.id,
+      taskId: auto.id,
       requestedAt: now,
       run: {
         id: "run_leftbehind1",
-        automationId: auto.id,
+        taskId: auto.id,
         startedAt: now,
         status: "running",
         inputTokens: 0,
@@ -409,7 +409,7 @@ describe("tasks__run as a task", () => {
       input: { text: "hello" },
       idempotencyKey: "batch-1/item-1",
     });
-    const oneoffs = [...loadOwnerAutomations(workDir, WS, OWNER).values()];
+    const oneoffs = [...loadOwnerTasks(workDir, WS, OWNER).values()];
     expect(oneoffs).toHaveLength(1);
     expect(oneoffs[0]?.kind).toBe("oneoff");
     expect(oneoffs[0]?.schedule).toBeUndefined();
@@ -422,7 +422,7 @@ describe("tasks__run as a task", () => {
       idempotencyKey: "batch-1/item-1",
     });
     expect(again.taskId).toBe(task.taskId);
-    expect(loadOwnerAutomations(workDir, WS, OWNER).size).toBe(1);
+    expect(loadOwnerTasks(workDir, WS, OWNER).size).toBe(1);
 
     held[0]?.finish("summary");
     await flush();
@@ -500,11 +500,11 @@ describe("tasks__run as a task", () => {
       { ownerContext: OWNED },
     );
     expect("result" in refused && refused.result.isError).toBe(true);
-    expect(loadOwnerAutomations(workDir, WS, OWNER).size).toBe(0);
+    expect(loadOwnerTasks(workDir, WS, OWNER).size).toBe(0);
 
     const ok = await startTask(source, { ...definition, input: { url: "https://example.com" } });
     expect(ok.status).toBe("working");
-    expect(loadOwnerAutomations(workDir, WS, OWNER).size).toBe(1);
+    expect(loadOwnerTasks(workDir, WS, OWNER).size).toBe(1);
 
     held[0]?.finish("page");
     await flush();

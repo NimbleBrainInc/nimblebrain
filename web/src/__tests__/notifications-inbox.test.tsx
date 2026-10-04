@@ -412,7 +412,7 @@ describe("the delivery ledger", () => {
 
     const ledger = container.querySelector('[data-testid="delivery-ledger"]');
     expect(ledger?.textContent).toContain("auto_triage");
-    expect(ledger?.textContent).toContain("batching for the automation");
+    expect(ledger?.textContent).toContain("batching for the task");
     expect(ledger?.querySelector(".text-destructive")).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 /**
- * Self-tests for `scripts/check-automation-paths.ts`.
+ * Self-tests for `scripts/check-task-paths.ts`.
  *
  * The lint exports its AST predicates so we can exercise them directly — no
  * subprocess, no fixture-on-disk dance. Each predicate is tested against a small
@@ -11,9 +11,9 @@
 import { describe, expect, test } from "bun:test";
 import * as ts from "typescript";
 import {
-  isIdentityAutomationsDataPath,
-  isUsersScopedAutomationsJoin,
-} from "../../../scripts/check-automation-paths.ts";
+  isIdentityTasksDataPath,
+  isUsersScopedTasksJoin,
+} from "../../../scripts/check-task-paths.ts";
 
 function parse(snippet: string): ts.SourceFile {
   return ts.createSourceFile("test.ts", snippet, ts.ScriptTarget.Latest, true);
@@ -41,80 +41,76 @@ const isGetDataPathCall = (n: ts.Node): n is ts.CallExpression =>
   ts.isPropertyAccessExpression(n.expression) &&
   n.expression.name.text === "getDataPath";
 
-describe("check-automation-paths — isIdentityAutomationsDataPath", () => {
-  test("matches `getIdentityContext(owner).getDataPath('automations')`", () => {
-    const src = parse(`const dir = getIdentityContext(owner).getDataPath("automations");`);
+describe("check-task-paths — isIdentityTasksDataPath", () => {
+  test("matches `getIdentityContext(owner).getDataPath('tasks')`", () => {
+    const src = parse(`const dir = getIdentityContext(owner).getDataPath("tasks");`);
     const call = findFirst(src, isGetDataPathCall);
     expect(call).toBeDefined();
-    expect(isIdentityAutomationsDataPath(call!)).toBe(true);
+    expect(isIdentityTasksDataPath(call!)).toBe(true);
   });
 
-  test("matches `runtime.getIdentityContext(owner).getDataPath('automations', id)`", () => {
-    const src = parse(
-      `const p = runtime.getIdentityContext(owner).getDataPath("automations", id);`,
-    );
+  test("matches `runtime.getIdentityContext(owner).getDataPath('tasks', id)`", () => {
+    const src = parse(`const p = runtime.getIdentityContext(owner).getDataPath("tasks", id);`);
     const call = findFirst(src, isGetDataPathCall);
-    expect(isIdentityAutomationsDataPath(call!)).toBe(true);
+    expect(isIdentityTasksDataPath(call!)).toBe(true);
   });
 
-  test("matches `new IdentityContext({...}).getDataPath('automations')`", () => {
-    const src = parse(
-      `const p = new IdentityContext({ userId, workDir }).getDataPath("automations");`,
-    );
+  test("matches `new IdentityContext({...}).getDataPath('tasks')`", () => {
+    const src = parse(`const p = new IdentityContext({ userId, workDir }).getDataPath("tasks");`);
     const call = findFirst(src, isGetDataPathCall);
-    expect(isIdentityAutomationsDataPath(call!)).toBe(true);
+    expect(isIdentityTasksDataPath(call!)).toBe(true);
   });
 
   test("does NOT match `getIdentityContext(owner).getDataPath('files')` (different subdir)", () => {
     const src = parse(`const dir = getIdentityContext(owner).getDataPath("files");`);
     const call = findFirst(src, isGetDataPathCall);
-    expect(isIdentityAutomationsDataPath(call!)).toBe(false);
+    expect(isIdentityTasksDataPath(call!)).toBe(false);
   });
 
-  test("does NOT match `ctx.getDataPath('automations')` where the receiver is unrelated", () => {
-    const src = parse(`const dir = ctx.getDataPath("automations");`);
+  test("does NOT match `ctx.getDataPath('tasks')` where the receiver is unrelated", () => {
+    const src = parse(`const dir = ctx.getDataPath("tasks");`);
     const call = findFirst(src, isGetDataPathCall);
-    expect(isIdentityAutomationsDataPath(call!)).toBe(false);
+    expect(isIdentityTasksDataPath(call!)).toBe(false);
   });
 
   test("does NOT match the sanctioned `workspaceTasksDir(workDir, wsId, ownerId)`", () => {
     const src = parse(`const dir = workspaceTasksDir(workDir, wsId, ownerId);`);
     const call = findFirst(src, ts.isCallExpression);
-    expect(isIdentityAutomationsDataPath(call!)).toBe(false);
+    expect(isIdentityTasksDataPath(call!)).toBe(false);
   });
 });
 
-describe("check-automation-paths — isUsersScopedAutomationsJoin", () => {
-  test("matches `join(workDir, 'users', ownerId, 'automations')`", () => {
-    const src = parse(`const dir = join(workDir, "users", ownerId, "automations");`);
+describe("check-task-paths — isUsersScopedTasksJoin", () => {
+  test("matches `join(workDir, 'users', ownerId, 'tasks')`", () => {
+    const src = parse(`const dir = join(workDir, "users", ownerId, "tasks");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(call).toBeDefined();
-    expect(isUsersScopedAutomationsJoin(call!)).toBe(true);
+    expect(isUsersScopedTasksJoin(call!)).toBe(true);
   });
 
   test("does NOT match a workspace-scoped join (no 'users' literal)", () => {
-    const src = parse(`const dir = join(workDir, "workspaces", wsId, "automations", ownerId);`);
+    const src = parse(`const dir = join(workDir, "workspaces", wsId, "tasks", ownerId);`);
     const call = findFirst(src, ts.isCallExpression);
-    expect(isUsersScopedAutomationsJoin(call!)).toBe(false);
+    expect(isUsersScopedTasksJoin(call!)).toBe(false);
   });
 
-  test("does NOT match a users join that isn't for automations", () => {
+  test("does NOT match a users join that isn't for tasks", () => {
     const src = parse(`const dir = join(workDir, "users", ownerId, "files");`);
     const call = findFirst(src, ts.isCallExpression);
-    expect(isUsersScopedAutomationsJoin(call!)).toBe(false);
+    expect(isUsersScopedTasksJoin(call!)).toBe(false);
   });
 
   test("does NOT match the sanctioned `workspaceTasksDir(...)`", () => {
     const src = parse(`const dir = workspaceTasksDir(workDir, wsId, ownerId);`);
     const call = findFirst(src, ts.isCallExpression);
-    expect(isUsersScopedAutomationsJoin(call!)).toBe(false);
+    expect(isUsersScopedTasksJoin(call!)).toBe(false);
   });
 });
 
-describe("check-automation-paths — script self-invocation", () => {
+describe("check-task-paths — script self-invocation", () => {
   test("runs end-to-end against src/ and speaks the workspace-owned contract", async () => {
     const proc = Bun.spawn({
-      cmd: ["bun", "run", "--no-env-file", "scripts/check-automation-paths.ts"],
+      cmd: ["bun", "run", "--no-env-file", "scripts/check-task-paths.ts"],
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -123,7 +119,7 @@ describe("check-automation-paths — script self-invocation", () => {
     const stderr = await new Response(proc.stderr).text();
     expect([0, 1]).toContain(exitCode);
     if (exitCode === 0) {
-      expect(stdout).toContain("No identity-owned automations paths");
+      expect(stdout).toContain("No identity-owned tasks paths");
     } else {
       expect(stderr).toContain("workspaceTasksDir");
     }

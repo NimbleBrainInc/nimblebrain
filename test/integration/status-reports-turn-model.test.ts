@@ -144,7 +144,7 @@ describe("what nb__status reports about the running model", () => {
       await runtime.shutdown();
     }
   });
-  it("an automation run names its own model, and there is no conversation to bind it to", async () => {
+  it("a task run names its own model, and there is no conversation to bind it to", async () => {
     // `executeTask` stamps the context too. Nothing is pinned — there is no
     // conversation — so the report has to be true without appealing to one.
     const workDir = join(testDir, "status-task-model");
@@ -186,7 +186,7 @@ describe("what nb__status reports about the running model", () => {
           .toLocaleString()}`,
       );
       expect(runtime.getMaxOutputTokens(RETARGETED)).not.toBe(runtime.getMaxOutputTokens(PINNED));
-      // The binding sentence must hold here too: an automation has no
+      // The binding sentence must hold here too: a task has no
       // conversation, so it cannot claim one.
       expect(out).toContain("Fixed for this turn");
       expect(out).not.toContain("conversation was created");

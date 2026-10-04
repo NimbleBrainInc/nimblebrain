@@ -1,36 +1,30 @@
 /**
- * Automation executor: runs an automation's prompt through the chat engine.
+ * Task executor: runs a task's prompt through the chat engine.
  *
- * `createDirectExecutor` runs each automation via `runtime.executeTask()`
+ * `createDirectExecutor` runs each task via `runtime.executeTask()`
  * in-process (wired in `platform/tasks/source.ts`) — the only path now
- * that automations is an in-process platform source (the former HTTP executor
- * + standalone MCP server were removed). Every run fires as the automation's
+ * that tasks is an in-process platform source (the former HTTP executor
+ * + standalone MCP server were removed). Every run fires as the task's
  * owner; see `resolveExecutorContext` in the platform source.
  *
  * No retry logic — the scheduler handles backoff.
  */
 
-import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/automations.ts";
+import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/tasks.ts";
 import { wrapContained } from "../../prompt/compose.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
 import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
 import {
-  type AutomationRunTrigger,
   budgetSpendAccounts,
   isTransientError,
   type RunInput,
   type RunSpendAccount,
+  type TaskRunTrigger,
 } from "./scheduler.ts";
-import type {
-  Automation,
-  AutomationRun,
-  AutomationRunResult,
-  RunFileRef,
-  RunToolCall,
-} from "./types.ts";
+import type { RunFileRef, RunToolCall, Task, TaskRun, TaskRunResult } from "./types.ts";
 
 /** Max chars of the deliverable kept in the run-list `resultPreview`. The full
- *  output lives in the `AutomationRunResult` sidecar. */
+ *  output lives in the `TaskRunResult` sidecar. */
 const PREVIEW_MAX_CHARS = 280;
 
 function truncate(text: string): string {
@@ -45,7 +39,7 @@ function truncate(text: string): string {
 /**
  * Minimal task request shape (matches runtime `TaskRequest`).
  *
- * Automations execute via `runtime.executeTask()`, not `runtime.chat()`:
+ * Tasks execute via `runtime.executeTask()`, not `runtime.chat()`:
  * the agent runs unattended and produces a finished deliverable, with
  * the runtime supplying the task-mode system prompt that forbids
  * greetings and follow-up questions. The chat surface is for live user
@@ -68,7 +62,7 @@ export interface TaskFnRequest {
   maxIterations?: number;
   maxRunInputTokens?: number;
   /**
-   * The automation's token budget as spend accounts (`budgetSpendAccounts`).
+   * The task's token budget as spend accounts (`budgetSpendAccounts`).
    * The runtime clamps each model call's output to what they allow and stops
    * the run with stopReason `spend_limit` when too little is left for a call.
    */
@@ -76,11 +70,11 @@ export interface TaskFnRequest {
   allowedTools?: string[];
   metadata?: Record<string, unknown>;
   /**
-   * The automation's workspace: tools scoped to it + identity tools, and
+   * The task's workspace: tools scoped to it + identity tools, and
    * its briefing. `runtime.executeTask()` refuses a task that names none.
    */
   workspaceId?: string;
-  /** Identity under which this automation runs. */
+  /** Identity under which this task runs. */
   identity?: { id: string; name?: string; email?: string; role?: string };
   /**
    * Cancellation signal forwarded into `runtime.executeTask()` → engine
@@ -123,7 +117,7 @@ export interface TaskFnResult {
   /** The deliverable — the agent's final assistant message. */
   output: string;
   /** Traceability anchor — the id of this run (the runtime generates a
-   *  `run_<12hex>` id). The automation run adopts this id directly. */
+   *  `run_<12hex>` id). The task run adopts this id directly. */
   runId: string;
   toolCalls: TaskFnToolCall[];
   stopReason: string;
@@ -150,18 +144,18 @@ export interface ExecutorContext {
 // ---------------------------------------------------------------------------
 
 /**
- * Recursive-call guard. An automation whose `allowedTools` includes a
- * tool that creates more automations would spawn an unbounded loop on
+ * Recursive-call guard. A task whose `allowedTools` includes a
+ * tool that creates more tasks would spawn an unbounded loop on
  * every scheduled run. The create and update tools refuse such a list, but
  * operator file edits and connector-contributed schedules can still set it —
- * so the guard also lives at the executor, which sees the merged Automation
+ * so the guard also lives at the executor, which sees the merged Task
  * regardless of how it was authored.
  *
  * This is a narrow, operator-input guard, NOT the run-time boundary: an
- * unattended run is barred from the whole automation-authoring surface at
+ * unattended run is barred from the whole task-authoring surface at
  * dispatch by `identity-sources.ts::isTaskForbiddenIdentityTool` (ambient,
  * enforced in `IdentityToolRouter`), which is the authoritative list. Removing
- * this guard in favor of that one is tracked as a cleanup (see the automations
+ * this guard in favor of that one is tracked as a cleanup (see the tasks
  * recursive-guard issue); until then, keep the two from drifting.
  */
 const RECURSIVE_TOOL_PATTERNS = ["tasks__create", "tasks__update", "tasks__delete"];
@@ -177,62 +171,62 @@ export function containsRecursiveTool(allowedTools: string[] | undefined): strin
 }
 
 function buildRequest(
-  automation: Automation,
-  trigger: AutomationRunTrigger,
+  task: Task,
+  trigger: TaskRunTrigger,
   limits: EffectiveRunLimits,
   ctx?: ExecutorContext,
   input?: RunInput,
 ): TaskFnRequest {
-  const offending = containsRecursiveTool(automation.allowedTools);
+  const offending = containsRecursiveTool(task.allowedTools);
   if (offending !== null) {
     throw new Error(
-      `Automation "${automation.name}" lists "${offending}" in allowedTools — refusing to run. ` +
-        `Automations cannot create/update/delete other automations from a scheduled run; ` +
-        `that pattern produces unbounded growth. Edit the automation file to remove the entry.`,
+      `Task "${task.name}" lists "${offending}" in allowedTools — refusing to run. ` +
+        `Tasks cannot create/update/delete other tasks from a scheduled run; ` +
+        `that pattern produces unbounded growth. Edit the task file to remove the entry.`,
     );
   }
 
   // The task surface owns the "you are running unattended, produce a
-  // deliverable" framing in its system prompt — the automation's prompt
+  // deliverable" framing in its system prompt — the task's prompt
   // goes in as the plain task description, not wrapped or prefixed here.
   // Per-run input goes AHEAD of the stored prompt and nowhere else: it is one
-  // run's material, so it must not reach the automation's definition and must
-  // not reach a cached prefix. The automation's own instruction stays last, so
+  // run's material, so it must not reach the task's definition and must
+  // not reach a cached prefix. The task's own instruction stays last, so
   // the thing the agent is being asked to do is the thing it reads last; an
   // output schema's instruction follows it, since it shapes the answer.
   const prompt = [
     input?.preamble,
     input?.data !== undefined ? renderRunInput(input.data) : undefined,
-    automation.prompt,
-    automation.outputSchema ? renderOutputSchemaInstruction(automation.outputSchema) : undefined,
+    task.prompt,
+    task.outputSchema ? renderOutputSchemaInstruction(task.outputSchema) : undefined,
   ]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
     .join("\n\n");
 
   const req: TaskFnRequest = {
     prompt,
-    // The scheduler's vocabulary is per-automation ("scheduled" runs vs. a
+    // The scheduler's vocabulary is per-task ("scheduled" runs vs. a
     // "manual" one, vs. one fired by a notification); the runtime's is per-run
     // and spans every door. One name each way, translated at the boundary
     // rather than aliased on both sides.
     trigger: taskTrigger(trigger),
     metadata: {
-      source: "automation",
-      automationId: automation.id,
-      automationName: automation.name,
+      source: "task",
+      taskId: task.id,
+      taskName: task.name,
     },
   };
-  if (automation.model != null) req.model = automation.model;
+  if (task.model != null) req.model = task.model;
   // Already clamped to the operator's per-run ceilings (see
   // `effectiveRunLimits`). Iterations are always capped; input tokens only when
   // the definition or the operator sets a cap.
   req.maxIterations = limits.maxIterations;
   if (limits.maxInputTokens != null) req.maxRunInputTokens = limits.maxInputTokens;
-  const spendAccounts = budgetSpendAccounts(automation, Date.now());
+  const spendAccounts = budgetSpendAccounts(task, Date.now());
   if (spendAccounts.length > 0) req.spendAccounts = spendAccounts;
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
-  if (automation.allowedTools?.length) req.allowedTools = automation.allowedTools;
+  if (task.allowedTools?.length) req.allowedTools = task.allowedTools;
   if (ctx?.workspaceId) req.workspaceId = ctx.workspaceId;
   if (ctx?.identity) req.identity = ctx.identity;
   return req;
@@ -255,8 +249,8 @@ export function renderRunInput(data: unknown): string {
 }
 
 /**
- * Tell the run to answer with JSON matching the automation's `outputSchema`.
- * The schema is the automation author's own, part of the definition, so it is
+ * Tell the run to answer with JSON matching the task's `outputSchema`.
+ * The schema is the task author's own, part of the definition, so it is
  * stated as an instruction rather than contained as data.
  */
 export function renderOutputSchemaInstruction(schema: Record<string, unknown>): string {
@@ -270,16 +264,12 @@ export function renderOutputSchemaInstruction(schema: Record<string, unknown>): 
 }
 
 /**
- * Check a run's deliverable against the automation's `outputSchema`: parse it
+ * Check a run's deliverable against the task's `outputSchema`: parse it
  * as JSON and validate it. Stamps validity on the run, and the parsed value on
  * the result when it parsed. No schema, or no deliverable: nothing to check.
  */
-export function applyOutputSchema(
-  automation: Automation,
-  run: AutomationRun,
-  result: AutomationRunResult,
-): void {
-  const schema = automation.outputSchema;
+export function applyOutputSchema(task: Task, run: TaskRun, result: TaskRunResult): void {
+  const schema = task.outputSchema;
   if (!schema || !result.output) return;
   const parsed = parseJsonDeliverable(result.output);
   if (!parsed) {
@@ -294,7 +284,7 @@ export function applyOutputSchema(
 }
 
 /** The runtime's name for what woke this run. */
-function taskTrigger(trigger: AutomationRunTrigger): NonNullable<TaskFnRequest["trigger"]> {
+function taskTrigger(trigger: TaskRunTrigger): NonNullable<TaskFnRequest["trigger"]> {
   if (trigger === "manual") return "manual";
   if (trigger === "event") return "event";
   return "schedule";
@@ -374,7 +364,7 @@ const ABANDONED_TOOL_MIN_CALLS = 3;
  * EVER succeeded. In the run that motivated this, `list_meetings` failed three
  * times on a bad date argument and then succeeded on the fourth — healthy, and
  * not flagged here. `log_interaction` was called fourteen times and never once
- * succeeded; every interaction the automation existed to record was lost, and
+ * succeeded; every interaction the task existed to record was lost, and
  * the run still reported `success`.
  *
  * Names only, deduplicated, in first-call order.
@@ -517,7 +507,7 @@ function toolCallVerdict(
       error:
         `Connector unavailable during run: ${unique.length} tool call type(s) could not be ` +
         `routed (${unique.join(", ")}). The required connector is missing, disconnected, or ` +
-        `in a workspace this automation cannot reach — the run did not complete its intended action.`,
+        `in a workspace this task cannot reach — the run did not complete its intended action.`,
     };
   }
   // The connector case above is the more specific diagnosis, so it wins the
@@ -558,8 +548,8 @@ function toolCallVerdict(
  * no finish part). Both name the model call's raw stop reason.
  */
 function unrecognizedStopError(
-  status: AutomationRun["status"],
-  stopReason: AutomationRun["stopReason"],
+  status: TaskRun["status"],
+  stopReason: TaskRun["stopReason"],
   data: Pick<TaskFnResult, "finishReason" | "finishReasonRaw">,
 ): string | undefined {
   if (status !== "failure" || stopReason !== "other") return undefined;
@@ -572,9 +562,9 @@ function unrecognizedStopError(
 
 /**
  * The error for a run the engine stopped at its input-token cap. `applied` is
- * the cap the run executed under; it names the automation's own cap when that
+ * the cap the run executed under; it names the task's own cap when that
  * is what applied, and the runtime's per-run ceiling when the ceiling lowered
- * the automation's cap or filled in for an unset one, since only the operator
+ * the task's cap or filled in for an unset one, since only the operator
  * can raise that.
  */
 function runInputCapError(
@@ -586,7 +576,7 @@ function runInputCapError(
   const ownApplied = own != null && (applied == null || own <= applied);
   const which = ownApplied
     ? "its own Max Input Tokens"
-    : "this runtime's per-run ceiling (automations.maxRunInputTokens)";
+    : "this runtime's per-run ceiling (tasks.maxRunInputTokens)";
   const remedy = ownApplied
     ? "Raise Max Input Tokens or narrow the task."
     : "Ask the operator to raise the ceiling, or narrow the task.";
@@ -602,12 +592,10 @@ function runInputCapError(
  * budget's window could not pay for its next model call, even with that call's
  * output clamped. `account` is the budget's account that stopped it, if one did.
  */
-function budgetStopError(account: RunSpendAccount | undefined, automation: Automation): string {
+function budgetStopError(account: RunSpendAccount | undefined, task: Task): string {
   const which = account?.unit === "output_tokens" ? "output" : "input";
   const cap =
-    which === "output"
-      ? automation.tokenBudget?.maxOutputTokens
-      : automation.tokenBudget?.maxInputTokens;
+    which === "output" ? task.tokenBudget?.maxOutputTokens : task.tokenBudget?.maxInputTokens;
   const left = account
     ? ` (${account.remaining.toLocaleString("en-US")} left when the run began)`
     : "";
@@ -619,15 +607,15 @@ function budgetStopError(account: RunSpendAccount | undefined, automation: Autom
 }
 
 function mapResultToRun(
-  automation: Automation,
+  task: Task,
   startedAt: string,
   data: TaskFnResult,
-  trigger: AutomationRunTrigger,
+  trigger: TaskRunTrigger,
   limits: EffectiveRunLimits,
   spendAccounts: RunSpendAccount[] = [],
-): AutomationRun {
-  const stopReason = data.stopReason as AutomationRun["stopReason"];
-  let status: AutomationRun["status"] = mapStopReasonToStatus(stopReason);
+): TaskRun {
+  const stopReason = data.stopReason as TaskRun["stopReason"];
+  let status: TaskRun["status"] = mapStopReasonToStatus(stopReason);
 
   // De-mask the silently-failed run. `stopReason: "complete"` only says the
   // MODEL decided it was done, and a model that cannot do the work commonly
@@ -664,16 +652,12 @@ function mapResultToRun(
     }
   }
   if (stopReason === "max_input_tokens") {
-    error = runInputCapError(
-      data.usage.inputTokens,
-      limits.maxInputTokens,
-      automation.maxInputTokens,
-    );
+    error = runInputCapError(data.usage.inputTokens, limits.maxInputTokens, task.maxInputTokens);
   }
   if (stopReason === "spend_limit") {
     error = budgetStopError(
       spendAccounts.find((a) => a.id === data.spendAccountId),
-      automation,
+      task,
     );
   }
   error ??= unrecognizedStopError(status, stopReason, data);
@@ -682,7 +666,7 @@ function mapResultToRun(
     // Adopt the runtime's runId verbatim — the run, its index summary, and its
     // result sidecar all key off the same id (no second uuid generated here).
     id: data.runId,
-    automationId: automation.id,
+    taskId: task.id,
     startedAt,
     completedAt: new Date().toISOString(),
     status,
@@ -691,7 +675,7 @@ function mapResultToRun(
     toolCalls: Array.isArray(data.toolCalls) ? data.toolCalls.length : 0,
     iterations: data.usage.iterations,
     // Truncated preview for the run list; the full deliverable lives in the
-    // AutomationRunResult sidecar (see `buildRunResult`).
+    // TaskRunResult sidecar (see `buildRunResult`).
     resultPreview: data.output ? truncate(data.output) : undefined,
     stopReason,
     ...(data.spendAccountId !== undefined ? { spendAccountId: data.spendAccountId } : {}),
@@ -702,10 +686,10 @@ function mapResultToRun(
 
 /**
  * Build the full run result (the deliverable) from a task result. This is the
- * sidecar to the lightweight {@link AutomationRun} summary: the untruncated
+ * sidecar to the lightweight {@link TaskRun} summary: the untruncated
  * output, the activity log, and refs to any files the run wrote.
  */
-export function buildRunResult(automation: Automation, data: TaskFnResult): AutomationRunResult {
+export function buildRunResult(task: Task, data: TaskFnResult): TaskRunResult {
   const toolCalls = Array.isArray(data.toolCalls) ? data.toolCalls : [];
   const activityLog: RunToolCall[] = toolCalls.map((tc) => ({
     id: typeof tc.id === "string" ? tc.id : String(tc.id ?? ""),
@@ -717,7 +701,7 @@ export function buildRunResult(automation: Automation, data: TaskFnResult): Auto
   }));
   return {
     runId: data.runId,
-    automationId: automation.id,
+    taskId: task.id,
     completedAt: new Date().toISOString(),
     output: data.output,
     activityLog,
@@ -727,7 +711,7 @@ export function buildRunResult(automation: Automation, data: TaskFnResult): Auto
       outputTokens: data.usage.outputTokens,
       iterations: data.usage.iterations,
     },
-    stopReason: data.stopReason as AutomationRun["stopReason"],
+    stopReason: data.stopReason as TaskRun["stopReason"],
   };
 }
 
@@ -766,7 +750,7 @@ export function extractOutputFiles(toolCalls: TaskFnResult["toolCalls"]): RunFil
 }
 
 /**
- * Map an engine stop reason to an automation-run status.
+ * Map an engine stop reason to a task-run status.
  *
  *   complete                                 → success (model said done)
  *   max_iterations                           → timeout (agent loop cap)
@@ -775,7 +759,7 @@ export function extractOutputFiles(toolCalls: TaskFnResult["toolCalls"]): RunFil
  *   spend_limit                              → failure (token budget; the
  *                                              error names the cap, and the
  *                                              scheduler disables the
- *                                              automation)
+ *                                              task)
  *   length / content_filter / error / other  → failure (model couldn't
  *                                              finish — surface so the
  *                                              operator knows)
@@ -785,7 +769,7 @@ export function extractOutputFiles(toolCalls: TaskFnResult["toolCalls"]): RunFil
  * change is meant to eliminate. Any new stop reason from the engine
  * should explicitly opt into `success` here.
  */
-function mapStopReasonToStatus(stopReason: AutomationRun["stopReason"]): AutomationRun["status"] {
+function mapStopReasonToStatus(stopReason: TaskRun["stopReason"]): TaskRun["status"] {
   switch (stopReason) {
     case "complete":
       return "success";
@@ -797,7 +781,7 @@ function mapStopReasonToStatus(stopReason: AutomationRun["stopReason"]): Automat
 }
 
 // ---------------------------------------------------------------------------
-// Direct executor (in-process, for the platform automations source)
+// Direct executor (in-process, for the platform tasks source)
 // ---------------------------------------------------------------------------
 
 /** Link an external abort signal to the run controller; reports whether it (not the timeout) fired, and detaches on cleanup. */
@@ -827,9 +811,9 @@ function linkExternalAbort(
 
 /** Stamp an aborted run + result sidecar as cancelled (external) or timeout, with matching stop metadata. */
 function classifyAbortedRun(
-  run: AutomationRun,
-  result: AutomationRunResult,
-  opts: { externallyAborted: boolean; automationId: string; timeoutMs: number },
+  run: TaskRun,
+  result: TaskRunResult,
+  opts: { externallyAborted: boolean; taskId: string; timeoutMs: number },
 ): void {
   // External cancel wins over the timeout: the operator-meaningful cause is
   // "I cancelled", not "the clock ran out". The run keeps its real
@@ -841,10 +825,10 @@ function classifyAbortedRun(
     run.transient = false;
   } else {
     run.status = "timeout";
-    run.error = `Automation ${opts.automationId} timed out after ${Math.round(opts.timeoutMs / 1000)}s`;
+    run.error = `Task ${opts.taskId} timed out after ${Math.round(opts.timeoutMs / 1000)}s`;
     run.transient = isTransientError(run.error);
   }
-  // "aborted" is not part of AutomationRun's stopReason union; the status field
+  // "aborted" is not part of TaskRun's stopReason union; the status field
   // carries the operational outcome. Record the engine's stop as "other" (no
   // natural completion) to keep the persisted record valid — matching the
   // synthesized-record path (`Scheduler.dispatchRun`) so both ways a run ends up
@@ -854,13 +838,13 @@ function classifyAbortedRun(
 }
 
 /**
- * Execute a single automation run by calling the task function directly.
+ * Execute a single task run by calling the task function directly.
  * No HTTP, no auth token — pure function call within the same process.
  *
  * @param taskFn      Direct reference to runtime.executeTask() or equivalent.
  * @param getContext  Derives the run's workspace/identity context from the
- *                    automation. Every trigger gets the same answer: the
- *                    automation's owner, in its workspace.
+ *                    task. Every trigger gets the same answer: the
+ *                    task's owner, in its workspace.
  * @param limitsOf    The caps a run executes under: the definition's own,
  *                    clamped to the operator's per-run ceilings. Enforced
  *                    here, at execution, so every stored definition is
@@ -868,22 +852,21 @@ function classifyAbortedRun(
  */
 export function createDirectExecutor(
   taskFn: TaskFn,
-  getContext: (automation: Automation) => ExecutorContext,
-  limitsOf: (automation: Automation) => EffectiveRunLimits = (automation) =>
-    effectiveRunLimits(automation),
+  getContext: (task: Task) => ExecutorContext,
+  limitsOf: (task: Task) => EffectiveRunLimits = (task) => effectiveRunLimits(task),
 ) {
   return async function executeDirect(
-    automation: Automation,
+    task: Task,
     externalSignal?: AbortSignal,
-    trigger: AutomationRunTrigger = "scheduled",
+    trigger: TaskRunTrigger = "scheduled",
     input?: RunInput,
     lease?: AdmissionLease,
     runId?: string,
-  ): Promise<{ run: AutomationRun; result: AutomationRunResult | null }> {
+  ): Promise<{ run: TaskRun; result: TaskRunResult | null }> {
     const startedAt = new Date().toISOString();
-    const limits = limitsOf(automation);
+    const limits = limitsOf(task);
     const timeoutMs = limits.maxRunDurationMs;
-    const ctx = getContext(automation);
+    const ctx = getContext(task);
 
     // Combined cancellation: a single controller aborts when EITHER the
     // scheduler's external signal fires (manual cancel, scheduler stop)
@@ -909,26 +892,19 @@ export function createDirectExecutor(
     const externalAbort = linkExternalAbort(runController, externalSignal);
 
     try {
-      const request = buildRequest(automation, trigger, limits, ctx, input);
+      const request = buildRequest(task, trigger, limits, ctx, input);
       const data = await taskFn({
         ...request,
         signal: runController.signal,
         ...(lease ? { admission: lease } : {}),
         ...(runId ? { runId } : {}),
       });
-      const run = mapResultToRun(
-        automation,
-        startedAt,
-        data,
-        trigger,
-        limits,
-        request.spendAccounts,
-      );
+      const run = mapResultToRun(task, startedAt, data, trigger, limits, request.spendAccounts);
       // Build the result sidecar from the same data — non-null on every normal
       // return, INCLUDING the aborted-partial path below (the partial usage and
       // activity log accumulated before the abort are still a real deliverable
       // worth persisting).
-      const result = buildRunResult(automation, data);
+      const result = buildRunResult(task, data);
       // An aborted run comes back as a normal result (stopReason "aborted")
       // carrying the partial usage accumulated before the abort — see
       // runtime.executeTask. The task layer can't know WHY it was aborted, so
@@ -936,11 +912,11 @@ export function createDirectExecutor(
       if (data.stopReason === "aborted") {
         classifyAbortedRun(run, result, {
           externallyAborted: externalAbort.wasExternal(),
-          automationId: automation.id,
+          taskId: task.id,
           timeoutMs,
         });
       }
-      applyOutputSchema(automation, run, result);
+      applyOutputSchema(task, run, result);
       return { run, result };
     } catch (err) {
       // Reaching here now means a genuine non-abort failure, OR an abort that
@@ -953,9 +929,7 @@ export function createDirectExecutor(
       // "I cancelled", not "the clock ran out at the same moment". Drift here
       // would silently restamp a cancel as a timeout in the run record.
       if (timedOut && !externalAbort.wasExternal()) {
-        throw new Error(
-          `Automation ${automation.id} timed out after ${Math.round(timeoutMs / 1000)}s`,
-        );
+        throw new Error(`Task ${task.id} timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
       throw err;
     } finally {

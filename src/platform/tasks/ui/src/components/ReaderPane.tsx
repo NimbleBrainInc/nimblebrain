@@ -1,13 +1,7 @@
 import { useEffect, useState } from "react";
 import { BackArrowIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
-import type {
-  AutomationRun,
-  AutomationRunResult,
-  AutomationSummary,
-  RunFileRef,
-  RunToolCall,
-} from "../types.ts";
+import type { RunFileRef, RunToolCall, TaskRun, TaskRunResult, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { formatDuration, formatTokens, relativeTime, statusDotClass } from "../utils.ts";
 
@@ -26,42 +20,42 @@ const NON_TERMINAL_STATUSES = new Set(["running", "skipped"]);
 
 export function ReaderPane({
   run,
-  automation,
+  task,
   onRerun,
   onOpenConfig,
   onBack,
 }: {
-  run: AutomationRun | null;
-  /** The parent automation for this run, if it still exists. */
-  automation: AutomationSummary | undefined;
-  /** Trigger a fresh run of the parent automation. */
+  run: TaskRun | null;
+  /** The parent task for this run, if it still exists. */
+  task: TaskSummary | undefined;
+  /** Trigger a fresh run of the parent task. */
   onRerun: (name: string) => void;
-  /** Open the automation's config view. */
+  /** Open the task's config view. */
   onOpenConfig: (name: string) => void;
   /** Return to the rail (used at narrow widths where rail and reader stack). */
   onBack?: () => void;
 }) {
-  const runResultTool = useTool<AutomationRunResult>("run_result");
+  const runResultTool = useTool<TaskRunResult>("run_result");
   const [copied, setCopied] = useState(false);
-  const [result, setResult] = useState<AutomationRunResult | null>(null);
+  const [result, setResult] = useState<TaskRunResult | null>(null);
 
-  const automationName = automation?.name || run?.automationId || "unknown";
+  const taskName = task?.name || run?.taskId || "unknown";
 
   // Fetch the full run result (deliverable + activity log + output files) for a
   // terminal run. The run-list summary only carries a truncated preview; the
   // sidecar holds the whole thing. Best-effort: a missing sidecar (legacy run,
-  // deleted automation) just leaves us with the preview.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runResultTool.call is stable; re-fetch only when the selected run or its automation changes
+  // deleted task) just leaves us with the preview.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runResultTool.call is stable; re-fetch only when the selected run or its task changes
   useEffect(() => {
     setResult(null);
     if (!run || NON_TERMINAL_STATUSES.has(run.status)) return;
-    if (!automation) return; // orphaned run — no automation to resolve by name
+    if (!task) return; // orphaned run — no task to resolve by name
     const runId = run.id;
     let cancelled = false;
     runResultTool
-      .call({ name: automationName, runId })
+      .call({ name: taskName, runId })
       .then((res) => {
-        if (!cancelled) setResult((res.data as AutomationRunResult) ?? null);
+        if (!cancelled) setResult((res.data as TaskRunResult) ?? null);
       })
       .catch(() => {
         // No sidecar (legacy/partial run) — fall back to the summary preview.
@@ -69,13 +63,13 @@ export function ReaderPane({
     return () => {
       cancelled = true;
     };
-  }, [run, automation, automationName]);
+  }, [run, task, taskName]);
 
   if (!run) {
     return <ReaderEmpty />;
   }
 
-  const orphan = !automation;
+  const orphan = !task;
   // Prefer the full deliverable from the result sidecar; fall back to the
   // truncated summary preview while it loads or when no sidecar exists.
   const output = result?.output ?? run.resultPreview ?? "";
@@ -97,7 +91,7 @@ export function ReaderPane({
     <div className="reader">
       <ReaderHead
         run={run}
-        automationName={automationName}
+        taskName={taskName}
         orphan={orphan}
         output={output}
         copied={copied}
@@ -124,17 +118,17 @@ function ReaderEmpty() {
       <div className="reader-empty">
         <div className="reader-empty-title">No run selected</div>
         <div className="reader-empty-desc">
-          Pick a run from the list to read its output, or create an automation to get one going.
+          Pick a run from the list to read its output, or create a task to get one going.
         </div>
       </div>
     </div>
   );
 }
 
-/** Header row: status dot, automation name, run metadata, and copy/re-run actions. */
+/** Header row: status dot, task name, run metadata, and copy/re-run actions. */
 function ReaderHead({
   run,
-  automationName,
+  taskName,
   orphan,
   output,
   copied,
@@ -143,8 +137,8 @@ function ReaderHead({
   onRerun,
   onCopy,
 }: {
-  run: AutomationRun;
-  automationName: string;
+  run: TaskRun;
+  taskName: string;
   orphan: boolean;
   output: string;
   copied: boolean;
@@ -168,11 +162,11 @@ function ReaderHead({
           <button
             type="button"
             className="reader-head-name"
-            onClick={() => !orphan && onOpenConfig(automationName)}
+            onClick={() => !orphan && onOpenConfig(taskName)}
             disabled={orphan}
             title={orphan ? "Task has been deleted" : "Open config"}
           >
-            {automationName}
+            {taskName}
           </button>
           <span className="reader-head-sep">·</span>
           <span className="reader-head-status">{statusLabel}</span>
@@ -187,7 +181,7 @@ function ReaderHead({
           </button>
         )}
         {!orphan && (
-          <button type="button" className="btn btn-accent" onClick={() => onRerun(automationName)}>
+          <button type="button" className="btn btn-accent" onClick={() => onRerun(taskName)}>
             Re-run
           </button>
         )}
@@ -197,7 +191,7 @@ function ReaderHead({
 }
 
 /** Sub-line of run facts: start time, duration, token counts, tool calls, relative age. */
-function ReaderHeadSub({ run }: { run: AutomationRun }) {
+function ReaderHeadSub({ run }: { run: TaskRun }) {
   return (
     <div className="reader-head-sub">
       {new Date(run.startedAt).toLocaleString(undefined, {
@@ -235,7 +229,7 @@ function OutputMarkdown({ markdown }: { markdown: string }) {
 }
 
 /** Main body content: error block, rendered output, or an in-progress/empty note. */
-function ReaderContent({ run, output }: { run: AutomationRun; output: string }) {
+function ReaderContent({ run, output }: { run: TaskRun; output: string }) {
   if (run.error) {
     return (
       <div className="reader-error">
@@ -300,7 +294,7 @@ function ReaderActivity({ log }: { log: RunToolCall[] }) {
 }
 
 /** Footer strip of raw run metrics (iterations, tool calls, stop reason, run id). */
-function ReaderFooter({ run }: { run: AutomationRun }) {
+function ReaderFooter({ run }: { run: TaskRun }) {
   return (
     <div className="reader-footer-meta">
       <span>Iterations: {run.iterations ?? "-"}</span>

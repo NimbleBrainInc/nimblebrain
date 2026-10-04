@@ -3,7 +3,7 @@
  *
  * A run is one pass of the agentic loop on behalf of one principal, walled to
  * one workspace. Every way of starting one — a person typing in chat, the
- * automations scheduler firing a cron tick, an operator pressing Run now —
+ * tasks scheduler firing a cron tick, an operator pressing Run now —
  * describes itself as a {@link RunSpec} and hands it to `Runtime.startRun`,
  * which establishes the run and returns a {@link RunHandle}.
  *
@@ -42,9 +42,9 @@ export type UserResourceLinkPart = {
  * What woke the agent. Exactly today's callers, no more:
  *
  *  - `chat`     — a person in a conversation (`/v1/workspaces/:wsId/chat*`, `startTurn`).
- *  - `schedule` — an automations cron tick (`Scheduler.dispatchRun`).
+ *  - `schedule` — a tasks cron tick (`Scheduler.dispatchRun`).
  *  - `manual`   — an operator pressing Run now (`tasks__run`).
- *  - `event`    — a notification a workspace admin routed to an automation.
+ *  - `event`    — a notification a workspace admin routed to a task.
  *  - `api`      — a caller driving the runtime directly (embedded, CLI, evals).
  *
  * The value is descriptive, not a policy switch: nothing branches on a

@@ -93,7 +93,7 @@ On a 2025-era connection the host never attaches a task. A tool that declares `e
 | `sampling` | The specification is deprecating it. A server that needs a model should call one itself. |
 | `roots` | The specification is deprecating it. A server reaches workspace files through [host-resources](/extensions/host-resources/) instead. |
 | `tasks` (2025-11-25) | Task augmentation is the `2026-07-28` tasks extension only. On a 2025-era connection the host calls every tool inline and refuses one whose `execution.taskSupport` is `required`; see [`io.modelcontextprotocol/tasks`](#client-capabilities-the-host-advertises). |
-| `elicitation` | Elicitation asks the client to put a question to a person and wait for the answer. An agent here often runs with nobody present, such as a scheduled automation or a webhook-triggered run. Even when someone is present, they are at the far end of an event stream, not waiting behind the tool call. The host cannot honor "block until someone answers", so it does not claim to. A tool that needs input should return that as its result, and the agent will ask. |
+| `elicitation` | Elicitation asks the client to put a question to a person and wait for the answer. An agent here often runs with nobody present, such as a scheduled task or a webhook-triggered run. Even when someone is present, they are at the far end of an event stream, not waiting behind the tool call. The host cannot honor "block until someone answers", so it does not claim to. A tool that needs input should return that as its result, and the agent will ask. |
 
 ### What the host reads from your server
 

@@ -1266,7 +1266,7 @@ async function executeIdentityToolCall(
   // Role-gate at DISPATCH, not just surfacing — the workspace branch and the
   // REST handler both do, and surfacing already hides role-gated identity
   // tools, so a crafted bare `tools/call` must not slip past. (No identity tool
-  // is role-gated today; this closes the gap before files/automations land an
+  // is role-gated today; this closes the gap before files/tasks land an
   // admin-gated one.)
   if (!isToolVisibleToRole(fullName, sessionCtx.identity?.orgRole)) {
     return {

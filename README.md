@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![MCP](https://img.shields.io/badge/protocol-MCP-8A2BE2)](https://modelcontextprotocol.io)
 
-A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP connector and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
+A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent tasks. Install an MCP connector and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
 
 Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
@@ -183,7 +183,7 @@ supply-chain review lives where a server is built and published, not in a proces
 that also holds tenant credentials. Every connector is aggregated into the same
 unified tool namespace by the `ToolRegistry`.
 
-No connectors are installed by default. Platform apps (conversations, files, usage, automations, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
+No connectors are installed by default. Platform apps (conversations, files, usage, tasks, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
 
 ## Configuration
 
@@ -269,7 +269,7 @@ bun run start    # serve: HTTP API server (production)
 bun run dev      # dev mode: API with file watching + web HMR
 ```
 
-`bun run start` is `bun run src/cli/index.ts serve`; that explicit form (with `--config`, `--port`) is exactly what the container runs. Everything else — connectors, skills, credentials, automations, telemetry — is managed from the web UI and the agent's tools, not the CLI.
+`bun run start` is `bun run src/cli/index.ts serve`; that explicit form (with `--config`, `--port`) is exactly what the container runs. Everything else — connectors, skills, credentials, tasks, telemetry — is managed from the web UI and the agent's tools, not the CLI.
 
 ### Flags
 
@@ -478,7 +478,7 @@ This section contains detailed internal architecture documentation for contribut
 
 ### Token Budget Behavior
 
-`maxInputTokens` bounds the context of one model call; the runtime windows or compacts history to fit it. A run-wide cap (an automation's **Max Input Tokens**) bounds the run: before each call the engine projects that call's input, and ends the run with `stopReason: "max_input_tokens"` if the projection would take the run past the cap. Every tool call from earlier steps has already run.
+`maxInputTokens` bounds the context of one model call; the runtime windows or compacts history to fit it. A run-wide cap (a task's **Max Input Tokens**) bounds the run: before each call the engine projects that call's input, and ends the run with `stopReason: "max_input_tokens"` if the projection would take the run past the cap. Every tool call from earlier steps has already run.
 
 ### Tiered Tool Surfacing
 

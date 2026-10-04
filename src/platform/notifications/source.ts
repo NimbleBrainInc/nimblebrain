@@ -55,7 +55,7 @@ import { isEventSchedule } from "../tasks/types.ts";
  * This source owns a store.
  *
  * The poller that fills the inbox lives here too, started in this factory and
- * stopped in a `source.stop()` wrapper the way the automations scheduler is.
+ * stopped in a `source.stop()` wrapper the way the tasks scheduler is.
  * It reads every connector that declares an outbox and writes what it finds
  * through {@link NotificationStore.append} — the same door a test fixture
  * writes through, which is why the store's dedupe and its `notification.created`
@@ -93,7 +93,7 @@ const MARK_READ_DESCRIPTION =
 const SETTINGS_DESCRIPTION =
   "The notifications configuration for the current workspace: every connector that declares " +
   "an outbox with the level ceiling it is held to, the delivery routes, and the tools and " +
-  "automations a route may name. Workspace admin only. Read-only.";
+  "tasks a route may name. Workspace admin only. Read-only.";
 
 const SET_SOURCE_LEVEL_DESCRIPTION =
   "Set how high one source's notifications may reach a route. A new source starts at " +
@@ -109,7 +109,7 @@ const SEND_TEST_DESCRIPTION =
 const SET_ROUTES_DESCRIPTION =
   "Replace this workspace's delivery routes. Each route matches on source, event-name glob " +
   "and minimum level, and delivers to a tool installed in this workspace or to one of your " +
-  "automations. The route's author is stamped from the authenticated identity — it is the " +
+  "tasks. The route's author is stamped from the authenticated identity — it is the " +
   "principal the route dispatches under and cannot be supplied. Workspace admin only.";
 
 /** The tool's arguments as store filters, leaving out what the caller left out. */
@@ -239,15 +239,15 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   }
 
   /**
-   * The automations the caller owns in the bound workspace, keyed by id.
+   * The tasks the caller owns in the bound workspace, keyed by id.
    *
-   * Absent rather than fatal when the automations source is not registered
+   * Absent rather than fatal when the tasks source is not registered
    * (minimal runtimes, tests): the settings page then offers no agent target,
    * which is the truthful answer, instead of failing the whole read.
    */
-  function ownAutomations(): Array<{ id: string; name: string; eventScheduled: boolean }> {
+  function ownTasks(): Array<{ id: string; name: string; eventScheduled: boolean }> {
     try {
-      return [...runtime.getAutomationsContext().definitions().values()]
+      return [...runtime.getTasksContext().definitions().values()]
         .map((a) => ({ id: a.id, name: a.name, eventScheduled: isEventSchedule(a.schedule) }))
         .sort((a, b) => a.name.localeCompare(b.name));
     } catch {
@@ -259,7 +259,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
    * Everything the settings surface renders, from one read.
    *
    * The pickers and the validator are fed from the same three sets — the
-   * declared sources, the workspace's tools, the caller's automations — so the
+   * declared sources, the workspace's tools, the caller's tasks — so the
    * editor cannot offer a route the write would refuse.
    */
   async function readSettings(wsId: string): Promise<NotificationsSettingsOutput> {
@@ -289,7 +289,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
       sources,
       routes: config.routes ?? [],
       deliverableTools,
-      automations: ownAutomations(),
+      tasks: ownTasks(),
       placeholders: NOTIFICATION_PLACEHOLDERS,
       routesExecuted: ROUTES_EXECUTE,
     };
@@ -318,9 +318,9 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
     dispatch: (opts) => runtime.dispatchUnattended(opts),
     // The only path from a delivery to an agent run. Reached through the
     // runtime rather than imported so neither platform source depends on the
-    // other's construction order, and so a runtime built without automations
+    // other's construction order, and so a runtime built without tasks
     // answers the route rather than failing it.
-    wakeAutomation: (req) => runtime.wakeAutomationOnNotification(req),
+    wakeTask: (req) => runtime.wakeTaskOnNotification(req),
     workspaceIds: async () => (await runtime.getWorkspaceStore().list()).map((ws) => ws.id),
     eventSink,
   });
@@ -439,7 +439,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
         const registry = await runtime.ensureWorkspaceRegistry(auth.wsId);
         const validated = validateRoutes(routes, {
           toolNames: new Set((await registry.availableTools()).map((t) => t.name)),
-          automationIds: new Set(ownAutomations().map((a) => a.id)),
+          taskIds: new Set(ownTasks().map((a) => a.id)),
           createdBy: currentIdentityId(),
         });
         if (!validated.ok) return refuse(validated.error);
@@ -485,7 +485,7 @@ export function createNotificationsSource(runtime: Runtime, eventSink: EventSink
   const source = defineInProcessApp({ name: "notifications", version: "1.0.0", tools }, eventSink);
 
   // The poller is owned by this factory, not by the MCP server — the same
-  // arrangement the automations scheduler has, and for the same reason: a timer
+  // arrangement the tasks scheduler has, and for the same reason: a timer
   // that outlives `Runtime.shutdown()` keeps a test process alive and keeps
   // reading a tenant's connectors after the runtime holding them is gone.
   //

@@ -93,7 +93,7 @@ body {
    bar on all three too — see dot-running below.
 
    timeout and backoff deliberately share one hue. They are warnings on
-   different axes — a run that ran too long, and an automation retrying after
+   different axes — a run that ran too long, and a task retrying after
    consecutive errors — and the token map has one warning for both. Rather than
    add a hue to the shell palette for one app, backoff carries its own
    backoff-badge with the retry count in words, so the states stay
@@ -101,7 +101,7 @@ body {
    That pairing holds on the card and in the status section, which gate the dot
    and the badge on the same condition, and the rail never renders backoff at
    all. It does NOT hold on the detail header, which renders the dot alone —
-   there a backing-off and a timed-out automation now look alike. 1.4.1 is still
+   there a backing-off and a timed-out task now look alike. 1.4.1 is still
    satisfied on that view because the status section below carries the badge,
    but the header dot on its own is weaker than it was.
 

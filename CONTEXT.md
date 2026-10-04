@@ -203,8 +203,8 @@ duplicate the side effect.
 
 ### Task *(proposed, ADR-0045)*
 The unattended primitive: a definition (what to do, optional schemas and
-acceptance criteria, limits, and an **optional** trigger) and its **runs**. An
-automation is a task with a trigger; a one-off is a task run once with none; a
+acceptance criteria, limits, and an **optional** trigger) and its **runs**. A
+scheduled task has a trigger; a one-off is a task run once with none; a
 batch is one task run over many inputs. A run's outcome has two parts:
 *execution* (how it ended) and *assessment* (whether the deliverable is
 acceptable). Not the same word as *task augmentation*: that is how a run travels

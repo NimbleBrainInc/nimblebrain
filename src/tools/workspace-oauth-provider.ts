@@ -1161,7 +1161,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Connector OAuth health — redacted (booleans + lifetime only, never token
     // values). A token response carrying no refresh_token means the connection
     // CANNOT refresh: it dies at access-token expiry and needs a full reconnect
-    // every time. That silently degrades scheduled automations (a daily run
+    // every time. That silently degrades scheduled tasks (a daily run
     // lands after the access token has expired → dead connector). The usual
     // cause is a vendor that gates offline access behind a non-standard param
     // (Dropbox's `token_access_type=offline`, Google's `access_type=offline`)

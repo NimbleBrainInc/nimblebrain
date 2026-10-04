@@ -37,7 +37,7 @@ import {
  * a {@link WorkspaceContext} that holds one and takes no workspace argument.
  *
  * There is no owner sub-partition, and that is deliberate. Conversations,
- * files and automations are authored by a user and private to them; a
+ * files and tasks are authored by a user and private to them; a
  * notification is authored by a *connector*, so ownership follows the
  * connector — any member who can reach its tools can read what it said. An
  * owner partition would file the inbox under whoever happened to be polling,

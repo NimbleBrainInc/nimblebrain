@@ -3,7 +3,7 @@
 FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS base
 
 LABEL org.opencontainers.image.title="NimbleBrain"
-LABEL org.opencontainers.image.description="Self-hosted platform for MCP Apps and agent automations"
+LABEL org.opencontainers.image.description="Self-hosted platform for MCP Apps and agent tasks"
 LABEL org.opencontainers.image.source="https://github.com/NimbleBrainInc/nimblebrain"
 LABEL org.opencontainers.image.url="https://nimblebrain.ai"
 LABEL org.opencontainers.image.vendor="NimbleBrain"

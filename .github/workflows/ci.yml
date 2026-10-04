@@ -170,7 +170,7 @@ jobs:
       - name: Install web dependencies
         run: cd web && bun install --frozen-lockfile
       # Platform app UI deps must be installed so each app's co-located tests
-      # (e.g. the automations markdown sanitizer contract) can resolve their
+      # (e.g. the tasks markdown sanitizer contract) can resolve their
       # own npm dependencies (marked, dompurify, happy-dom). `test:platform-apps`
       # runs `bun test` inside each src/platform/*/ui package. Mirrors the
       # install loop inside build:platform-apps; CI doesn't build the app UIs for

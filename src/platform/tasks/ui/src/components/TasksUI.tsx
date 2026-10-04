@@ -1,18 +1,18 @@
 import { useApp, useDataSync } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { ClockIcon, PlusIcon } from "../icons.tsx";
-import type { AutomationRun, AutomationSummary } from "../types.ts";
+import type { TaskRun, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict } from "../utils.ts";
-import { AutomationDetailView } from "./AutomationDetailView.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
-import { CreateAutomationForm, TEMPLATES } from "./CreateAutomationForm.tsx";
-import { RailAutomationItem, RailRunItem } from "./RailItem.tsx";
+import { CreateTaskForm, TEMPLATES } from "./CreateTaskForm.tsx";
+import { RailRunItem, RailTaskItem } from "./RailItem.tsx";
 import { ReaderPane } from "./ReaderPane.tsx";
 import { SkeletonCards, SkeletonRows } from "./Skeleton.tsx";
+import { TaskDetailView } from "./TaskDetailView.tsx";
 
 /**
- * Read every automation by following `nextCursor` to the end.
+ * Read every task by following `nextCursor` to the end.
  *
  * Accumulated into a Map keyed by id rather than appended: the handler
  * re-serves the first page when a cursor names a record that no longer exists
@@ -23,19 +23,19 @@ import { SkeletonCards, SkeletonRows } from "./Skeleton.tsx";
  * `exhausted` is false when the walk stopped on the page budget with a cursor
  * still in hand, so the caller can say so instead of rendering a short list.
  */
-async function fetchAllAutomations(
+async function fetchAllTasks(
   call: (args: Record<string, unknown>) => Promise<{ data?: unknown }>,
-): Promise<{ items: AutomationSummary[]; exhausted: boolean }> {
-  // 500 is AUTOMATIONS_LIST_MAX_LIMIT; a literal because this app's Vite
+): Promise<{ items: TaskSummary[]; exhausted: boolean }> {
+  // 500 is TASKS_LIST_MAX_LIMIT; a literal because this app's Vite
   // tsconfig scopes to its own src and cannot import src/limits.ts.
   const PAGE = 500;
   const MAX_PAGES = 50;
-  const byId = new Map<string, AutomationSummary>();
+  const byId = new Map<string, TaskSummary>();
   let cursor: string | undefined;
   for (let i = 0; i < MAX_PAGES; i++) {
     const result = await call(cursor ? { cursor, limit: PAGE } : { limit: PAGE });
     const data = asDict(result.data);
-    for (const a of (data.automations as AutomationSummary[]) || []) byId.set(a.id, a);
+    for (const a of (data.tasks as TaskSummary[]) || []) byId.set(a.id, a);
     const next = data.nextCursor as string | null | undefined;
     if (!next) return { items: [...byId.values()], exhausted: true };
     cursor = next;
@@ -43,7 +43,7 @@ async function fetchAllAutomations(
   return { items: [...byId.values()], exhausted: false };
 }
 
-export function AutomationsUI() {
+export function TasksUI() {
   const app = useApp();
   // The host draws this view's title in its own chrome when it declares
   // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
@@ -58,8 +58,8 @@ export function AutomationsUI() {
   const cancelTool = useTool<string>("cancel");
 
   // Data state
-  const [automations, setAutomations] = useState<AutomationSummary[]>([]);
-  const [runs, setRuns] = useState<AutomationRun[]>([]);
+  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [runs, setRuns] = useState<TaskRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [runsLoading, setRunsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,19 +74,19 @@ export function AutomationsUI() {
   // Without this, the auto-select of the most recent run would push the
   // user straight into the reader on first load and hide the lists.
   const [userOpenedReader, setUserOpenedReader] = useState(false);
-  const [selectedAutomation, setSelectedAutomation] = useState<string | null>(null);
+  const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createTemplate, setCreateTemplate] = useState<(typeof TEMPLATES)[0] | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: listTool.call is stable, adding it would cause infinite re-renders
-  const loadAutomations = useCallback(async () => {
+  const loadTasks = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       // The list tool caps a page to protect a model's context window; this
       // panel is a browser consumer with no such limit, so it reads to the end.
-      const { items, exhausted } = await fetchAllAutomations(listTool.call);
-      setAutomations(items);
+      const { items, exhausted } = await fetchAllTasks(listTool.call);
+      setTasks(items);
       // Rendering a short list under a count badge that agrees with it is the
       // failure this panel's paging exists to avoid — so say so instead.
       if (!exhausted) {
@@ -107,7 +107,7 @@ export function AutomationsUI() {
     try {
       const result = await runsTool.call({ limit: 20 });
       const data = asDict(result.data);
-      setRuns((data.runs as AutomationRun[]) || []);
+      setRuns((data.runs as TaskRun[]) || []);
     } catch {
       // silent
     } finally {
@@ -116,9 +116,9 @@ export function AutomationsUI() {
   }, []);
 
   const loadAll = useCallback(() => {
-    loadAutomations();
+    loadTasks();
     loadRuns();
-  }, [loadAutomations, loadRuns]);
+  }, [loadTasks, loadRuns]);
 
   // Initial load
   useEffect(() => {
@@ -237,7 +237,7 @@ export function AutomationsUI() {
         delete next[name];
         return next;
       });
-      if (selectedAutomation === name) setSelectedAutomation(null);
+      if (selectedTask === name) setSelectedTask(null);
       loadAll();
     }
   }
@@ -254,11 +254,11 @@ export function AutomationsUI() {
   // Create form (full-panel)
   if (showCreateForm) {
     return (
-      <CreateAutomationForm
+      <CreateTaskForm
         onCreated={(name) => {
           setShowCreateForm(false);
           setCreateTemplate(null);
-          setSelectedAutomation(name);
+          setSelectedTask(name);
           loadAll();
         }}
         onCancel={() => {
@@ -270,19 +270,19 @@ export function AutomationsUI() {
     );
   }
 
-  // Automation config view (full-panel)
-  if (selectedAutomation) {
-    const summary = automations.find((a) => a.name === selectedAutomation);
+  // Task config view (full-panel)
+  if (selectedTask) {
+    const summary = tasks.find((a) => a.name === selectedTask);
     return (
       <>
-        <AutomationDetailView
-          automationName={selectedAutomation}
-          onBack={() => setSelectedAutomation(null)}
-          actionInProgress={actionInProgress[selectedAutomation]}
-          onRunNow={() => handleRunNow(selectedAutomation)}
-          onToggle={() => handleToggle(selectedAutomation, summary?.enabled ?? true)}
-          onDelete={() => handleDelete(selectedAutomation)}
-          onCancel={() => handleCancel(selectedAutomation)}
+        <TaskDetailView
+          taskName={selectedTask}
+          onBack={() => setSelectedTask(null)}
+          actionInProgress={actionInProgress[selectedTask]}
+          onRunNow={() => handleRunNow(selectedTask)}
+          onToggle={() => handleToggle(selectedTask, summary?.enabled ?? true)}
+          onDelete={() => handleDelete(selectedTask)}
+          onCancel={() => handleCancel(selectedTask)}
           onUpdate={handleUpdate}
         />
         {confirmDelete && (
@@ -298,13 +298,11 @@ export function AutomationsUI() {
 
   // Two-pane reader (default)
   const selectedRun = runs.find((r) => r.id === selectedRunId) || null;
-  const selectedRunAutomation = selectedRun
-    ? automations.find((a) => a.id === selectedRun.automationId)
-    : undefined;
+  const selectedRunTask = selectedRun ? tasks.find((a) => a.id === selectedRun.taskId) : undefined;
   // Mobile pane visibility is driven by explicit navigation, not selection.
   // See the comment on `userOpenedReader` above.
   const paneShow: "rail" | "reader" = userOpenedReader ? "reader" : "rail";
-  const automationNameById = new Map(automations.map((a) => [a.id, a.name]));
+  const taskNameById = new Map(tasks.map((a) => [a.id, a.name]));
 
   return (
     <div className="app">
@@ -325,12 +323,12 @@ export function AutomationsUI() {
 
       <div className="two-pane" data-show={paneShow}>
         <aside className="rail">
-          <RailSection label="Tasks" count={automations.length} />
-          <AutomationsList
+          <RailSection label="Tasks" count={tasks.length} />
+          <TasksList
             loading={loading}
-            automations={automations}
-            selectedAutomation={selectedAutomation}
-            onSelectAutomation={(name) => setSelectedAutomation(name)}
+            tasks={tasks}
+            selectedTask={selectedTask}
+            onSelectTask={(name) => setSelectedTask(name)}
             onPickTemplate={pickTemplate}
           />
 
@@ -339,7 +337,7 @@ export function AutomationsUI() {
             runs={runs}
             runsLoading={runsLoading}
             selectedRunId={selectedRunId}
-            automationNameById={automationNameById}
+            taskNameById={taskNameById}
             onSelectRun={(id) => {
               setSelectedRunId(id);
               setUserOpenedReader(true);
@@ -351,11 +349,11 @@ export function AutomationsUI() {
           runs={runs}
           runsLoading={runsLoading}
           loading={loading}
-          automations={automations}
+          tasks={tasks}
           selectedRun={selectedRun}
-          selectedRunAutomation={selectedRunAutomation}
+          selectedRunTask={selectedRunTask}
           onRerun={handleRunNow}
-          onOpenConfig={(name) => setSelectedAutomation(name)}
+          onOpenConfig={(name) => setSelectedTask(name)}
           onBack={() => setUserOpenedReader(false)}
         />
       </div>
@@ -403,18 +401,18 @@ function RailSection({ label, count }: { label: string; count: number }) {
   );
 }
 
-/** Rail body for automations — skeletons while loading, a template picker when empty, else the list. */
-function AutomationsList({
+/** Rail body for tasks — skeletons while loading, a template picker when empty, else the list. */
+function TasksList({
   loading,
-  automations,
-  selectedAutomation,
-  onSelectAutomation,
+  tasks,
+  selectedTask,
+  onSelectTask,
   onPickTemplate,
 }: {
   loading: boolean;
-  automations: AutomationSummary[];
-  selectedAutomation: string | null;
-  onSelectAutomation: (name: string) => void;
+  tasks: TaskSummary[];
+  selectedTask: string | null;
+  onSelectTask: (name: string) => void;
   onPickTemplate: (t: (typeof TEMPLATES)[0]) => void;
 }) {
   if (loading) {
@@ -424,7 +422,7 @@ function AutomationsList({
       </div>
     );
   }
-  if (automations.length === 0) {
+  if (tasks.length === 0) {
     return (
       <div className="rail-empty">
         No tasks yet. Start from a template:
@@ -446,12 +444,12 @@ function AutomationsList({
   }
   return (
     <>
-      {automations.map((a) => (
-        <RailAutomationItem
+      {tasks.map((a) => (
+        <RailTaskItem
           key={a.id}
-          automation={a}
-          active={selectedAutomation === a.name}
-          onClick={() => onSelectAutomation(a.name)}
+          task={a}
+          active={selectedTask === a.name}
+          onClick={() => onSelectTask(a.name)}
         />
       ))}
     </>
@@ -463,13 +461,13 @@ function RunsList({
   runs,
   runsLoading,
   selectedRunId,
-  automationNameById,
+  taskNameById,
   onSelectRun,
 }: {
-  runs: AutomationRun[];
+  runs: TaskRun[];
   runsLoading: boolean;
   selectedRunId: string | null;
-  automationNameById: Map<string, string>;
+  taskNameById: Map<string, string>;
   onSelectRun: (id: string) => void;
 }) {
   if (runsLoading && runs.length === 0) {
@@ -488,7 +486,7 @@ function RunsList({
         <RailRunItem
           key={run.id}
           run={run}
-          automationName={automationNameById.get(run.automationId)}
+          taskName={taskNameById.get(run.taskId)}
           active={selectedRunId === run.id}
           onClick={() => onSelectRun(run.id)}
         />
@@ -502,19 +500,19 @@ function ReaderArea({
   runs,
   runsLoading,
   loading,
-  automations,
+  tasks,
   selectedRun,
-  selectedRunAutomation,
+  selectedRunTask,
   onRerun,
   onOpenConfig,
   onBack,
 }: {
-  runs: AutomationRun[];
+  runs: TaskRun[];
   runsLoading: boolean;
   loading: boolean;
-  automations: AutomationSummary[];
-  selectedRun: AutomationRun | null;
-  selectedRunAutomation: AutomationSummary | undefined;
+  tasks: TaskSummary[];
+  selectedRun: TaskRun | null;
+  selectedRunTask: TaskSummary | undefined;
   onRerun: (name: string) => void;
   onOpenConfig: (name: string) => void;
   onBack: () => void;
@@ -528,7 +526,7 @@ function ReaderArea({
             No runs yet
           </div>
           <div className="reader-empty-desc">
-            {automations.length === 0
+            {tasks.length === 0
               ? "Create a task from a template in the left panel to get started."
               : "Your tasks have not run yet. Pick one and Run now, or wait for the schedule."}
           </div>
@@ -539,7 +537,7 @@ function ReaderArea({
   return (
     <ReaderPane
       run={selectedRun}
-      automation={selectedRunAutomation}
+      task={selectedRunTask}
       onRerun={onRerun}
       onOpenConfig={onOpenConfig}
       onBack={onBack}

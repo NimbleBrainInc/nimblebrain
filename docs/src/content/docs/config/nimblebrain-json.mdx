@@ -115,7 +115,7 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
-| `automations` | `object` | — | Unattended (task) run slots, queue, and per-run ceilings. See [automations](#automations). |
+| `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
@@ -434,7 +434,7 @@ When `type: "redis"` is set without a `redis.url`, NimbleBrain refuses to fall b
 
 Run `platform.replicas: 1`. More than one replica is **not supported**: the runtime assumes it is the only process on a tenant's data, and no combination of settings makes a second replica safe today. With two replicas:
 
-- **Work runs twice.** Every pod's scheduler fires every due automation, and every pod polls every notification outbox, so runs, posts and deliveries happen once per pod.
+- **Work runs twice.** Every pod's scheduler fires every due task, and every pod polls every notification outbox, so runs, posts and deliveries happen once per pod.
 - **Writes are lost.** Workspace records and notification files are rewritten whole, with locks that hold within one process only.
 - **State goes stale between pods.** A connector installed or removed on one pod, a deactivated user, a changed model config, and live events (including an in-flight chat turn) stay on the pod that saw them.
 - **Sticky routing does not fix this.** Load-balancer cookie affinity pins a browser, not an MCP client or a webhook sender, and routing on `Mcp-Session-Id` cannot pin a session to the pod that created it.
@@ -624,15 +624,13 @@ the first few forever.
   [Observability](/deploy/observability/#background-loops).
 </Aside>
 
-## automations
+## tasks
 
 Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight and waiting, across every workspace, and the most any one run may spend.
 
-The block keeps the name `automations`, but it configures every unattended (task) run.
-
 ```json
 {
-  "automations": {
+  "tasks": {
     "maxConcurrentRuns": 2,
     "maxQueuedRuns":     50,
     "maxRunIterations":  50,
@@ -650,7 +648,7 @@ The block keeps the name `automations`, but it configures every unattended (task
 | `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
 | `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. |
 
-The three per-run ceilings apply when a run starts, so they cover every stored automation however it was written. A cap an automation sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: an automation with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
+The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
 
 A scheduled run that finds every slot busy is deferred rather than queued: it keeps its next-run time and runs on the first scheduler tick with a free slot, so its place survives a restart. The queue is held in memory: runs still queued when the runtime stops are recorded as skipped.
 

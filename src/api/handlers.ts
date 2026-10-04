@@ -110,7 +110,7 @@ export async function handleChat(
     // backgrounded tab, network blip) must not cancel the in-flight
     // engine loop; the run completes server-side, persists, and is
     // replayed to any reconnecting /v1/conversations/:id/events
-    // subscriber. (The automations executor's deadline cancellation is
+    // subscriber. (The tasks executor's deadline cancellation is
     // unaffected — that path supplies its own AbortController.)
     const result = await runtime.chat(parsed);
     const responseBody = chatResponseBody(result);
@@ -454,7 +454,7 @@ export async function handleChatStream(
         // /v1/conversations/:id/events subscriber — the "leave and come
         // back" contract. Binding the run to the connection would silently
         // abandon a prompt the moment a mobile client dropped. The one
-        // caller that must cancel on a deadline — the automations executor —
+        // caller that must cancel on a deadline — the tasks executor —
         // owns its own AbortController in platform/tasks/executor.ts.
         .chat(parsed, sink)
         .then((result) => {
@@ -858,7 +858,7 @@ function mapArtifactReadError(err: unknown, uri: string, workspaceId: string): R
 
 /**
  * Read a resource from a kernel identity source (conversations, files,
- * automations) for POST /v1/workspaces/:wsId/resources/read. Every kernel
+ * tasks) for POST /v1/workspaces/:wsId/resources/read. Every kernel
  * identity source's data is workspace-owned, so the read resolves in the
  * workspace in the URL.
  */

@@ -127,13 +127,13 @@ export function isDeclaredAdminTool(
  * click from their agent's call, because both reach the same source.
  *
  * - `chat`: the agent, in a conversation a person is taking part in.
- * - `automation`: the agent, in a run nobody is watching.
+ * - `task`: the agent, in a run nobody is watching.
  * - `dispatch`: an unattended dispatch from stored configuration.
  * - `app`: a connector's own view, over `/mcp`.
  * - `mcp`: any other `/mcp` client.
  * - `api`: REST `tools/call`.
  */
-export type AdminToolCaller = "chat" | "automation" | "dispatch" | "app" | "mcp" | "api";
+export type AdminToolCaller = "chat" | "task" | "dispatch" | "app" | "mcp" | "api";
 
 /** What a door knows about one call, beyond who made it and what it names. */
 export interface AdminToolCall {

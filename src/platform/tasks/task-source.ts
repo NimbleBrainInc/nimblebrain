@@ -1,5 +1,5 @@
 /**
- * The automations source's task surface (`IdentityTaskSource`): how a remote
+ * The tasks source's task surface (`IdentityTaskSource`): how a remote
  * client runs `tasks__run` as a task on the 2026-07-28 leg of `/mcp`
  * (the tasks extension), and how `tasks/get` and `tasks/cancel` read and
  * cancel the run.
@@ -16,7 +16,7 @@
  * that does not exist are all the same `TaskNotFoundError`.
  */
 
-import type { Task } from "@modelcontextprotocol/server";
+import type { Task as McpTask } from "@modelcontextprotocol/server";
 import type {
   IdentityTaskResult,
   IdentityTaskSource,
@@ -28,10 +28,10 @@ import {
   type TaskOwnerContext,
 } from "../../tools/types.ts";
 import { validateToolInput } from "../../tools/validate-input.ts";
-import { AutomationsRunInput } from "../schemas/tasks.ts";
+import { TasksRunInput } from "../schemas/tasks.ts";
 import { isOpenRun } from "./scheduler.ts";
 import { prepareRun, type ToolContext } from "./server.ts";
-import type { AutomationRun, AutomationRunResult, RunTicket } from "./types.ts";
+import type { RunTicket, TaskRun, TaskRunResult } from "./types.ts";
 
 /** The source's name: the `<source>` of `tasks__run`, and the task's origin. */
 const SOURCE = "tasks";
@@ -43,7 +43,7 @@ const POLL_INTERVAL_MS = 5_000;
 const CANCEL_SETTLE_MS = 5_000;
 
 /** What the task surface reads and drives. */
-export interface AutomationsTaskDeps {
+export interface TaskRunSourceDeps {
   /** The tool context for the request in scope (its identity and workspace), as the tool uses. */
   toolContext: () => ToolContext;
   /** A requested run's ticket for an owner in a workspace, settled when a stopped process left it open. */
@@ -52,11 +52,11 @@ export interface AutomationsTaskDeps {
   readResult: (
     wsId: string,
     ownerId: string,
-    automationId: string,
+    taskId: string,
     runId: string,
-  ) => AutomationRunResult | null;
+  ) => TaskRunResult | null;
   /** The record of a run this process is carrying, once it ends. */
-  runEnded: (runId: string) => Promise<AutomationRun> | undefined;
+  runEnded: (runId: string) => Promise<TaskRun> | undefined;
   /** Cancel a run this process is carrying for that owner in that workspace. */
   cancelRun: (wsId: string, ownerId: string, runId: string) => boolean;
   /** Why a call is refused inside an unattended run, or null when it is not in one. */
@@ -74,7 +74,7 @@ export interface AutomationsTaskDeps {
  *     failure, skipped     → failed, with the record's reason
  *   cancelled              → cancelled
  */
-export function taskStatusOf(run: AutomationRun): Task["status"] {
+export function taskStatusOf(run: TaskRun): McpTask["status"] {
   switch (run.status) {
     case "queued":
     case "running":
@@ -92,7 +92,7 @@ export function taskStatusOf(run: AutomationRun): Task["status"] {
 }
 
 /** The run as an MCP task: id, status, and the record's own times. */
-export function taskOf(ticket: RunTicket): Task {
+export function taskOf(ticket: RunTicket): McpTask {
   const { run } = ticket;
   const status = taskStatusOf(run);
   const statusMessage =
@@ -119,7 +119,7 @@ function errorResult(message: string): IdentityTaskResult {
   return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
 }
 
-export function createAutomationsTaskSource(deps: AutomationsTaskDeps): IdentityTaskSource {
+export function createTaskRunSource(deps: TaskRunSourceDeps): IdentityTaskSource {
   /** The ticket `taskId` names for the presented owner, or `TaskNotFoundError`. */
   function lookup(taskId: string, owner: TaskOwnerContext): RunTicket {
     if (owner.originApp !== undefined && owner.originApp !== SOURCE) {
@@ -145,7 +145,7 @@ export function createAutomationsTaskSource(deps: AutomationsTaskDeps): Identity
     const unattended = deps.unattendedRefusal();
     if (unattended) return unattended;
     // The same check the inline call gets at the in-process server.
-    const validation = validateToolInput(args, AutomationsRunInput as Record<string, unknown>);
+    const validation = validateToolInput(args, TasksRunInput as Record<string, unknown>);
     return validation.valid ? null : `Invalid arguments for "run": ${validation.error}`;
   }
 
@@ -192,7 +192,7 @@ export function createAutomationsTaskSource(deps: AutomationsTaskDeps): Identity
       const result = deps.readResult(
         ownerContext.workspaceId,
         ownerContext.identityId ?? "",
-        ticket.automationId,
+        ticket.taskId,
         taskId,
       );
       return {

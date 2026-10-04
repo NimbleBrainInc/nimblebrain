@@ -232,7 +232,7 @@ function NotificationSettings({ wsId }: { wsId: string }) {
 
       <Section
         title="Routes"
-        description="A route matches notifications and delivers them. Match on source, on the event name the connector chose, and on a minimum level; deliver to a tool this workspace has installed, or wake one of your automations."
+        description="A route matches notifications and delivers them. Match on source, on the event name the connector chose, and on a minimum level; deliver to a tool this workspace has installed, or wake one of your tasks."
         action={
           <Button
             variant="outline"
@@ -280,7 +280,7 @@ function NotificationSettings({ wsId }: { wsId: string }) {
  * Tool targets dispatch; an agent target is matched and recorded and nothing
  * wakes it yet. Two notices rather than one because the two claims are
  * different sizes, and an admin writing a Slack route needs to know it will
- * fire as much as one writing an automation route needs to know it will not.
+ * fire as much as one writing a task route needs to know it will not.
  */
 function RoutesExecutedNotice({ executed }: { executed: boolean }) {
   if (!executed) {
@@ -297,9 +297,9 @@ function RoutesExecutedNotice({ executed }: { executed: boolean }) {
   return (
     <p data-testid="routes-executed" className="text-sm text-muted-foreground">
       A matching notification calls a <strong>tool</strong> target as the route's author, and wakes
-      an <strong>automation</strong> target — batched, so a burst is one run. Either way the result
-      is on the item in the inbox. Only an automation that runs on events can be woken; the picker
-      says which of yours do.
+      an <strong>task</strong> target — batched, so a burst is one run. Either way the result is on
+      the item in the inbox. Only a task that runs on events can be woken; the picker says which of
+      yours do.
     </p>
   );
 }
@@ -419,7 +419,7 @@ function RouteTest({ routeId }: { routeId?: string }) {
 /**
  * Outcomes that do not make the answer a warning.
  *
- * `deferred` is an agent target inside its automation's debounce window: the
+ * `deferred` is an agent target inside its task's debounce window: the
  * route is not broken, so the tone stays quiet — but nothing has been sent
  * either, which is {@link testMessage}'s job to say. `pending` is deliberately
  * absent: a first attempt that has not settled reads as a failure until it
@@ -445,13 +445,13 @@ function testMessage(result: NotificationsSendTestOutput): string {
   if (result.deliveries.length === 0) return "Matched, but nothing was dispatched.";
   const bad = result.deliveries.filter((d) => !SETTLED_OK.has(d.outcome));
   if (bad.length === 0) {
-    // An agent target sits `deferred` for as long as its automation's debounce
+    // An agent target sits `deferred` for as long as its task's debounce
     // window is open: the run has not started, there is no channel to look at,
     // and the row can still settle `denied` or `skipped`. "Delivered" here is
     // the same false green `pending` would be.
     const deferred = result.deliveries.find((d) => d.outcome === "deferred");
     return deferred
-      ? `${deferred.target}: queued for its automation's next run — nothing has been sent yet.`
+      ? `${deferred.target}: queued for its task's next run — nothing has been sent yet.`
       : "Delivered. Check the channel.";
   }
   const first = bad[0];
@@ -603,7 +603,7 @@ function TargetEditor({
 }) {
   const placeholders = (settings?.placeholders ?? []).map((p) => `{{${p}}}`).join(", ");
   // A route can outlive the thing it names — the connector was uninstalled, the
-  // automation deleted. Dropping the stored value from the picker would silently
+  // task deleted. Dropping the stored value from the picker would silently
   // rewrite the route to "nothing" the next time anyone pressed Save, so the
   // gone target stays selectable and says what it is. Saving it is refused,
   // which is the reader's cue to change or remove it.
@@ -611,9 +611,9 @@ function TargetEditor({
     settings?.deliverableTools ?? [],
     target.kind === "tool" ? target.tool : "",
   );
-  const automationOptions = withCurrentAutomation(
-    settings?.automations ?? [],
-    target.kind === "agent" ? target.automation : "",
+  const taskOptions = withCurrentTask(
+    settings?.tasks ?? [],
+    target.kind === "agent" ? target.task : "",
   );
   return (
     <div className="rounded-sm bg-muted/40 p-3 space-y-2" data-testid="route-target">
@@ -626,14 +626,14 @@ function TargetEditor({
             onChange={(e) =>
               onChange(
                 e.target.value === "agent"
-                  ? { kind: "agent", automation: "" }
+                  ? { kind: "agent", task: "" }
                   : { kind: "tool", tool: "" },
                 "",
               )
             }
           >
             <option value="tool">A tool</option>
-            <option value="agent">An automation</option>
+            <option value="agent">A task</option>
           </Select>
         </div>
         <div className="min-w-48 flex-1 space-y-1">
@@ -655,14 +655,14 @@ function TargetEditor({
             </>
           ) : (
             <>
-              <Label className="text-xs text-muted-foreground">Automation</Label>
+              <Label className="text-xs text-muted-foreground">Task</Label>
               <Select
-                aria-label="Target automation"
-                value={target.automation}
-                onChange={(e) => onChange({ ...target, automation: e.target.value })}
+                aria-label="Target task"
+                value={target.task}
+                onChange={(e) => onChange({ ...target, task: e.target.value })}
               >
-                <option value="">Choose an automation…</option>
-                {automationOptions.map(({ value, label }) => (
+                <option value="">Choose a task…</option>
+                {taskOptions.map(({ value, label }) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
@@ -718,14 +718,14 @@ function withCurrent(available: readonly string[], current: string): Option[] {
 }
 
 /**
- * The caller's automations, plus a stored one that is gone.
+ * The caller's tasks, plus a stored one that is gone.
  *
- * An automation that does not run on events stays selectable and says so rather
+ * A task that does not run on events stays selectable and says so rather
  * than being hidden: it is a legal thing to name and the write accepts it, but
  * every notification sent to it is refused, and an operator reading the ledger
  * afterwards is the expensive way to learn that.
  */
-function withCurrentAutomation(
+function withCurrentTask(
   available: readonly { id: string; name: string; eventScheduled: boolean }[],
   current: string,
 ): Option[] {

@@ -31,7 +31,7 @@ const OTHER_ID = "conv_bbbbbbbbbbbbbbbb";
 /** The current conversation's only message — what identifies it in a payload. */
 const CURRENT_MESSAGE = "save this into your memory";
 /**
- * An automation run's correlation id, in the shape `executeTask` mints —
+ * A task run's correlation id, in the shape `executeTask` mints —
  * `run_` plus the first 12 characters of a UUID, so it carries a hyphen.
  */
 const RUN_ID = "run_a8f15601-0dd";
@@ -153,11 +153,11 @@ function outsideChat(tool: string, args: Record<string, unknown>): Promise<ToolR
 }
 
 /**
- * Run a tool the way an unattended automation does: `executeTask` stamps
+ * Run a tool the way an unattended task does: `executeTask` stamps
  * `runId` and no `conversationId`, because a run persists a run result rather
  * than a conversation.
  */
-function inAutomationRun(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
+function inTaskRun(tool: string, args: Record<string, unknown>): Promise<ToolResult> {
   return runWithRequestContext(
     {
       identity: { id: OWNER_ID } as never,
@@ -342,7 +342,7 @@ describe("a rename reaches the channel readers project from", () => {
   });
 });
 
-describe("an automation run has no conversation", () => {
+describe("a task run has no conversation", () => {
   // A run carries its correlation id in `runId`, so `conversationId` is simply
   // absent and the ambient fallback finds nothing to resolve. The last test
   // here covers the reader-side guard for the retired shape, where the run id
@@ -357,7 +357,7 @@ describe("an automation run has no conversation", () => {
     ["fork", {}],
   ] as const) {
     test(`${tool} with no id errors, and does not name the run id`, async () => {
-      const result = await inAutomationRun(tool, args);
+      const result = await inTaskRun(tool, args);
 
       expect(result.isError).toBe(true);
       const { error } = parseFirst(result) as { error: string };
@@ -382,7 +382,7 @@ describe("an automation run has no conversation", () => {
   test("an explicit id still works inside a run", async () => {
     // The guard rejects the ambient value, not the caller's — a run that names
     // a real conversation still reaches it.
-    const result = await inAutomationRun("update", { id: OTHER_ID, title: "Named" });
+    const result = await inTaskRun("update", { id: OTHER_ID, title: "Named" });
 
     expect(result.isError).toBe(false);
     expect(storedTitle(OTHER_ID)).toBe("Named");

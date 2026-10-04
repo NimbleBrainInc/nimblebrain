@@ -702,7 +702,7 @@ describe("a route naming one tool twice", () => {
 });
 
 describe("an agent target", () => {
-  /** Every offer the dispatcher made to the automations side, in order. */
+  /** Every offer the dispatcher made to the tasks side, in order. */
   let offers: EventWakeRequest[];
   /** What the stub answers; the last entry repeats. */
   let acks: EventWakeAck[];
@@ -714,18 +714,18 @@ describe("an agent target", () => {
 
   function waking(): Partial<RouteDispatcherDeps> {
     return {
-      wakeAutomation: (req) => {
+      wakeTask: (req) => {
         offers.push(req);
         return acks.length > 1 ? (acks.shift() as EventWakeAck) : acks[0]!;
       },
     };
   }
 
-  function agentRoute(id = "rt_triage", automation = "auto_triage"): Record<string, unknown> {
-    return { id, createdBy: AUTHOR, match: {}, deliver: [{ kind: "agent", automation }] };
+  function agentRoute(id = "rt_triage", task = "auto_triage"): Record<string, unknown> {
+    return { id, createdBy: AUTHOR, match: {}, deliver: [{ kind: "agent", task }] };
   }
 
-  test("offers the item to the automation and leaves the row deferred", async () => {
+  test("offers the item to the task and leaves the row deferred", async () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
     await dispatcher(waking()).onItem(wsId, item);
@@ -734,9 +734,9 @@ describe("an agent target", () => {
     expect(offers).toHaveLength(1);
     expect(offers[0]).toMatchObject({
       wsId,
-      automationId: "auto_triage",
-      // The route's author is the automation's owner, which is what scopes the
-      // lookup — a route cannot reach somebody else's automation by naming it.
+      taskId: "auto_triage",
+      // The route's author is the task's owner, which is what scopes the
+      // lookup — a route cannot reach somebody else's task by naming it.
       ownerId: AUTHOR,
     });
     expect(offers[0]?.item.envelope.eventId).toBe(item.envelope.eventId);
@@ -777,13 +777,13 @@ describe("an agent target", () => {
     expect(eventsOfType("notification.delivered")).toHaveLength(1);
   });
 
-  test("a refused offer is terminal at once, with the outcome the automations side chose", async () => {
+  test("a refused offer is terminal at once, with the outcome the tasks side chose", async () => {
     acks = [
       {
         accepted: false,
         outcome: "denied",
         classification: "not_event_scheduled",
-        reason: "that automation does not run on events",
+        reason: "that task does not run on events",
       },
     ];
     await configure({ routes: [agentRoute()] });
@@ -793,7 +793,7 @@ describe("an agent target", () => {
     expect(ledger(item)[0]).toMatchObject({
       outcome: "denied",
       classification: "not_event_scheduled",
-      lastError: "that automation does not run on events",
+      lastError: "that task does not run on events",
       attempts: 1,
     });
     expect(eventsOfType("notification.delivery_failed")[0]).toMatchObject({
@@ -802,14 +802,14 @@ describe("an agent target", () => {
     });
   });
 
-  test("a runtime with no automations answers the route rather than staying silent", async () => {
+  test("a runtime with no tasks answers the route rather than staying silent", async () => {
     await configure({ routes: [agentRoute()] });
     const item = seed();
     await dispatcher().onItem(wsId, item);
 
     expect(ledger(item)[0]).toMatchObject({
       outcome: "denied",
-      classification: "automations_unavailable",
+      classification: "tasks_unavailable",
     });
   });
 
@@ -821,7 +821,7 @@ describe("an agent target", () => {
           createdBy: AUTHOR,
           match: {},
           deliver: [
-            { kind: "agent", automation: "auto_triage" },
+            { kind: "agent", task: "auto_triage" },
             { kind: "tool", tool: TOOL, input: { text: "{{title}}" } },
           ],
         },

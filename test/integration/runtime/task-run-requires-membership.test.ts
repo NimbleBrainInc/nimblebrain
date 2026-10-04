@@ -1,11 +1,11 @@
 /**
- * An automation run (`executeTask`) requires current membership of its
+ * A task run (`executeTask`) requires current membership of its
  * provenance workspace.
  *
- * An automation fires AS its owner, walled to the workspace it was created in.
+ * A task fires AS its owner, walled to the workspace it was created in.
  * Membership there is validated at create, not per run — so a since-removed owner
  * would otherwise keep acting in a workspace they left. `executeTask` denies the
- * run early with `WorkspaceMembershipRevokedError` (the automations analog of the
+ * run early with `WorkspaceMembershipRevokedError` (the tasks analog of the
  * conversation resume gate). A member's run, and a dev-mode task that names no
  * workspace (it runs in the caller's default one), are not refused.
  */
@@ -21,7 +21,7 @@ import { devProvider } from "../../helpers/dev-provider.ts";
 import { createEchoModel } from "../../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../../helpers/test-workspace.ts";
 
-const testDir = join(tmpdir(), `nb-automation-membership-${Date.now()}`);
+const testDir = join(tmpdir(), `nb-task-membership-${Date.now()}`);
 const WORKSPACE_A = "ws_00883d7b29214d57";
 const OWNER = DEV_IDENTITY.id;
 
@@ -40,7 +40,7 @@ async function startRuntime(name: string): Promise<Runtime> {
   });
 }
 
-describe("executeTask requires current membership of the automation's provenance workspace", () => {
+describe("executeTask requires current membership of the task's provenance workspace", () => {
   it("denies a run whose owner was removed from the provenance workspace", async () => {
     const runtime = await startRuntime("removed");
     await provisionTestWorkspace(runtime, WORKSPACE_A, "Alpha");

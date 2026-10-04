@@ -9,7 +9,7 @@ import { readJson } from "../helpers/http.ts";
  * driven twice by the same caller and only the membership role differs.
  *
  * Doors covered: the chat engine (`IdentityToolRouter`, through `runtime.chat`
- * and an automation-style `executeTask`), `/mcp/<wsId>` `tools/list` and
+ * and a task-style `executeTask`), `/mcp/<wsId>` `tools/list` and
  * `tools/call`, REST `tools/call` (`ToolRegistry.execute`), and the
  * unattended dispatch. Plus the two things the gate must NOT touch: the
  * kernel's own lifecycle and hook-registration calls, and a server's own claim
@@ -313,7 +313,7 @@ describe("the chat engine door (IdentityToolRouter)", () => {
 });
 
 describe("unattended runs", () => {
-  it("never runs the declared tool for an automation owned by a member", async () => {
+  it("never runs the declared tool for a task owned by a member", async () => {
     resetCalls();
     responses.push(
       {
@@ -541,7 +541,7 @@ describe("the audit.admin_tool_call line", () => {
     expect(typeof line?.conversationId).toBe("string");
   });
 
-  it("records an unattended run as automation", async () => {
+  it("records an unattended run as task", async () => {
     responses.push({
       toolCalls: [{ toolCallId: "u5", toolName: CONFIGURE, input: JSON.stringify(ARGS) }],
     });
@@ -554,7 +554,7 @@ describe("the audit.admin_tool_call line", () => {
         allowedTools: [CONFIGURE],
       }),
     );
-    expect(lines.map((l) => [l.caller, l.outcome])).toEqual([["automation", "admitted"]]);
+    expect(lines.map((l) => [l.caller, l.outcome])).toEqual([["task", "admitted"]]);
   });
 
   it("records an unattended dispatch as dispatch", async () => {

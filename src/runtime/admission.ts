@@ -143,7 +143,7 @@ interface Entry {
   waiter: AdmissionWaiter;
 }
 
-/** Defaults match `resolveAutomationsConfig`, which is where the runtime's values come from. */
+/** Defaults match `resolveTasksConfig`, which is where the runtime's values come from. */
 const DEFAULT_LIMITS: AdmissionLimits = { maxConcurrentRuns: 2, maxQueuedRuns: 50 };
 
 /**

@@ -1,5 +1,5 @@
 /**
- * An automation's trigger is optional (ADR-0045): it may have no schedule at
+ * A task's trigger is optional (ADR-0045): it may have no schedule at
  * all (manual only), a schedule that fires once at a time T and then goes
  * inert, a recurring one, or an event. And a definition is `saved` or
  * `oneoff`, with one-offs left out of the default list.
@@ -22,22 +22,22 @@ import {
 } from "../../../../src/platform/tasks/server.ts";
 import {
   appendRun,
-  deleteAutomationDefinition,
-  loadOwnerAutomations,
+  deleteTaskDefinition,
+  loadOwnerTasks,
   MAX_RUN_LINES,
   readAllRuns,
   readRunResult,
   readRuns,
   readRunsPage,
-  saveAutomation,
+  saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import {
-  type Automation,
-  type AutomationRun,
   ONCE_GRACE_MS,
   ONCE_MISSED_REASON,
   ONCE_RAN_REASON,
   onceRetirement,
+  type Task,
+  type TaskRun,
 } from "../../../../src/platform/tasks/types.ts";
 import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
@@ -60,7 +60,7 @@ afterEach(() => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const loadDefs = () => loadOwnerAutomations(workDir, WS, OWNER);
+const loadDefs = () => loadOwnerTasks(workDir, WS, OWNER);
 
 function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -70,16 +70,16 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
       for (const auto of defs.values()) {
         auto.workspaceId ??= WS;
         auto.ownerId ??= OWNER;
-        saveAutomation(workDir, WS, OWNER, auto);
+        saveTask(workDir, WS, OWNER, auto);
       }
       for (const id of onDisk.keys()) {
-        if (!defs.has(id)) deleteAutomationDefinition(workDir, WS, OWNER, id);
+        if (!defs.has(id)) deleteTaskDefinition(workDir, WS, OWNER, id);
       }
     },
     reloadScheduler: () => {},
-    runNow: (automationId) => {
-      const run = makeRun(automationId, "success", "manual");
-      appendRun(workDir, WS, OWNER, automationId, run);
+    runNow: (taskId) => {
+      const run = makeRun(taskId, "success", "manual");
+      appendRun(workDir, WS, OWNER, taskId, run);
       return { state: "started", run: Promise.resolve(run) };
     },
     cancelRun: () => false,
@@ -95,14 +95,14 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
 }
 
 function makeRun(
-  automationId: string,
-  status: AutomationRun["status"],
-  trigger: AutomationRun["trigger"] = "scheduled",
-): AutomationRun {
+  taskId: string,
+  status: TaskRun["status"],
+  trigger: TaskRun["trigger"] = "scheduled",
+): TaskRun {
   const now = new Date().toISOString();
   return {
     id: `run_${Math.random().toString(36).slice(2, 10)}`,
-    automationId,
+    taskId,
     startedAt: now,
     completedAt: now,
     status,
@@ -114,7 +114,7 @@ function makeRun(
   };
 }
 
-function makeAutomation(overrides: Partial<Automation> = {}): Automation {
+function makeTask(overrides: Partial<Task> = {}): Task {
   const now = new Date().toISOString();
   return {
     id: "send-it",
@@ -137,16 +137,16 @@ function makeAutomation(overrides: Partial<Automation> = {}): Automation {
 const iso = (ms: number) => new Date(ms).toISOString();
 
 /** An executor whose run ends with `status`, or throws when given an error. */
-function executorThat(outcome: AutomationRun["status"] | Error): Executor {
-  return mock(async (auto: Automation, _signal: AbortSignal, trigger) => {
+function executorThat(outcome: TaskRun["status"] | Error): Executor {
+  return mock(async (auto: Task, _signal: AbortSignal, trigger) => {
     if (outcome instanceof Error) throw outcome;
     return { run: makeRun(auto.id, outcome, trigger), result: null };
   }) as Executor;
 }
 
 /** Seed `auto`, start a scheduler over it, run one tick, and stop. */
-async function tick(auto: Automation, executor: Executor): Promise<Scheduler> {
-  saveAutomation(workDir, WS, OWNER, auto);
+async function tick(auto: Task, executor: Executor): Promise<Scheduler> {
+  saveTask(workDir, WS, OWNER, auto);
   const scheduler = new Scheduler(executor, { workDir });
   scheduler.start();
   await scheduler.onTimer();
@@ -167,7 +167,7 @@ describe("a once schedule", () => {
     ["a thrown timeout", new Error("Run timed out after 120000ms")],
   ])("fires at its time and goes inert after %s", async (_label, outcome) => {
     const at = Date.now() - 1000;
-    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
+    const auto = makeTask({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
     const executor = executorThat(outcome);
 
     await tick(auto, executor);
@@ -190,7 +190,7 @@ describe("a once schedule", () => {
 
   test("does not fire before its time", async () => {
     const at = Date.now() + 3_600_000;
-    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) } });
+    const auto = makeTask({ schedule: { type: "once", at: iso(at) } });
     const executor = executorThat("success");
 
     const scheduler = await tick(auto, executor);
@@ -202,7 +202,7 @@ describe("a once schedule", () => {
 
   test("runtime down at its time, started within the grace window: fires on the first tick", async () => {
     const at = Date.now() - (ONCE_GRACE_MS - 60_000);
-    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
+    const auto = makeTask({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
     const executor = executorThat("success");
 
     await tick(auto, executor);
@@ -213,10 +213,10 @@ describe("a once schedule", () => {
 
   test("runtime down past its time plus the grace window: recorded skipped and inert at start", async () => {
     const at = Date.now() - (ONCE_GRACE_MS + 60_000);
-    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
+    const auto = makeTask({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
     const executor = executorThat("success");
 
-    saveAutomation(workDir, WS, OWNER, auto);
+    saveTask(workDir, WS, OWNER, auto);
     const scheduler = new Scheduler(executor, { workDir });
     scheduler.start();
     // Judged at start, before any tick.
@@ -238,8 +238,8 @@ describe("a once schedule", () => {
 
   test("deferred for want of a run slot for over the grace window, it still fires", async () => {
     const at = Date.now() - 1000;
-    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) } });
-    saveAutomation(workDir, WS, OWNER, auto);
+    const auto = makeTask({ schedule: { type: "once", at: iso(at) } });
+    saveTask(workDir, WS, OWNER, auto);
     // Every slot is held by another source's run.
     const admission = createRunAdmission({ maxConcurrentRuns: 1 });
     const ticket = admission.request({ workspaceId: WS, key: "other:run" });
@@ -270,8 +270,8 @@ describe("a once schedule", () => {
 
   test("a reload never judges a once missed", async () => {
     const at = Date.now() - 1000;
-    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) } });
-    saveAutomation(workDir, WS, OWNER, auto);
+    const auto = makeTask({ schedule: { type: "once", at: iso(at) } });
+    saveTask(workDir, WS, OWNER, auto);
     const admission = createRunAdmission({ maxConcurrentRuns: 1 });
     admission.request({ workspaceId: WS, key: "other:run" });
     const scheduler = new Scheduler(executorThat("success"), { workDir, admission });
@@ -290,14 +290,14 @@ describe("a once schedule", () => {
 
   test("an `at` changed during the run stays armed, and fires at its new time", async () => {
     const at = Date.now() - 1000;
-    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
-    saveAutomation(workDir, WS, OWNER, auto);
+    const auto = makeTask({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
+    saveTask(workDir, WS, OWNER, auto);
     let finish!: () => void;
     const gate = new Promise<void>((r) => {
       finish = r;
     });
     let calls = 0;
-    const executor = mock(async (a: Automation, _signal: AbortSignal, trigger) => {
+    const executor = mock(async (a: Task, _signal: AbortSignal, trigger) => {
       calls++;
       if (calls === 1) await gate;
       return { run: makeRun(a.id, "success", trigger), result: null };
@@ -337,8 +337,8 @@ describe("a once schedule", () => {
 
   test("Run now on an armed once runs it and leaves it armed", async () => {
     const at = Date.now() + 3_600_000;
-    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) } });
-    saveAutomation(workDir, WS, OWNER, auto);
+    const auto = makeTask({ schedule: { type: "once", at: iso(at) } });
+    saveTask(workDir, WS, OWNER, auto);
     const executor = executorThat("success");
     const scheduler = new Scheduler(executor, { workDir });
     scheduler.start();
@@ -353,13 +353,13 @@ describe("a once schedule", () => {
   });
 
   test("Run now on an inert once runs it and leaves it inert", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "once", at: iso(Date.now() - 60_000) },
       enabled: false,
       onceDone: { at: iso(Date.now() - 60_000), outcome: "ran" },
       disabledReason: `${ONCE_RAN_REASON}${iso(Date.now() - 60_000)}`,
     });
-    saveAutomation(workDir, WS, OWNER, auto);
+    saveTask(workDir, WS, OWNER, auto);
     const executor = executorThat("success");
     const scheduler = new Scheduler(executor, { workDir });
     scheduler.start();
@@ -382,8 +382,8 @@ describe("once schedule validation and re-arm", () => {
       { manifest: { name: "Send It", schedule: { type: "once", at } }, body: "Send the email" },
       makeCtx(),
     );
-    expect(out.automation.nextRunAt).toBe(new Date(at).toISOString());
-    expect(out.automation.enabled).toBe(true);
+    expect(out.task.nextRunAt).toBe(new Date(at).toISOString());
+    expect(out.task.enabled).toBe(true);
   });
 
   test("create refuses a time in the past", () => {
@@ -414,11 +414,11 @@ describe("once schedule validation and re-arm", () => {
   test("a new time re-arms one that already ran", () => {
     const ctx = makeCtx();
     const past = iso(Date.now() - 60_000);
-    saveAutomation(
+    saveTask(
       workDir,
       WS,
       OWNER,
-      makeAutomation({
+      makeTask({
         schedule: { type: "once", at: past },
         enabled: false,
         disabledAt: past,
@@ -433,20 +433,20 @@ describe("once schedule validation and re-arm", () => {
       ctx,
     );
 
-    expect(out.automation.enabled).toBe(true);
-    expect(out.automation.disabledReason).toBeUndefined();
-    expect(out.automation.onceDone).toBeUndefined();
-    expect(out.automation.nextRunAt).toBe(new Date(at).toISOString());
-    expect(onceRetirement(out.automation)).toBeNull();
+    expect(out.task.enabled).toBe(true);
+    expect(out.task.disabledReason).toBeUndefined();
+    expect(out.task.onceDone).toBeUndefined();
+    expect(out.task.nextRunAt).toBe(new Date(at).toISOString());
+    expect(onceRetirement(out.task)).toBeNull();
   });
 
   test("enabling one whose time has passed is refused", () => {
     const past = iso(Date.now() - 60_000);
-    saveAutomation(
+    saveTask(
       workDir,
       WS,
       OWNER,
-      makeAutomation({
+      makeTask({
         schedule: { type: "once", at: past },
         enabled: false,
         onceDone: { at: past, outcome: "ran" },
@@ -460,12 +460,7 @@ describe("once schedule validation and re-arm", () => {
   });
 
   test("re-arming with a past time is refused", () => {
-    saveAutomation(
-      workDir,
-      WS,
-      OWNER,
-      makeAutomation({ schedule: { type: "once", at: future() } }),
-    );
+    saveTask(workDir, WS, OWNER, makeTask({ schedule: { type: "once", at: future() } }));
     expect(() =>
       handleUpdate(
         { name: "Send It", manifest: { schedule: { type: "once", at: iso(Date.now() - 1000) } } },
@@ -475,53 +470,53 @@ describe("once schedule validation and re-arm", () => {
   });
 
   test("a disabled once with a reason but no onceDone is not read as done", () => {
-    saveAutomation(
+    saveTask(
       workDir,
       WS,
       OWNER,
-      makeAutomation({
+      makeTask({
         schedule: { type: "once", at: future() },
         enabled: false,
         disabledReason: `${ONCE_RAN_REASON}whatever`,
       }),
     );
-    const row = handleList({}, makeCtx()).automations[0]!;
+    const row = handleList({}, makeCtx()).tasks[0]!;
     expect(row.schedule).toMatch(/^Once at/);
     expect(row.onceDone).toBeUndefined();
   });
 
   test("a paused once keeps its pause when its time changes", () => {
-    saveAutomation(
+    saveTask(
       workDir,
       WS,
       OWNER,
-      makeAutomation({ schedule: { type: "once", at: future() }, enabled: false }),
+      makeTask({ schedule: { type: "once", at: future() }, enabled: false }),
     );
     const out = handleUpdate(
       { name: "Send It", manifest: { schedule: { type: "once", at: future() } } },
       makeCtx(),
     );
-    expect(out.automation.enabled).toBe(false);
+    expect(out.task.enabled).toBe(false);
   });
 
   test("list and status say when it runs, and that it ran", () => {
     const ctx = makeCtx();
     const at = "2099-07-01T13:12:00-07:00";
     handleCreate({ manifest: { name: "Send It", schedule: { type: "once", at } }, body: "x" }, ctx);
-    const armed = handleList({}, ctx).automations[0]!;
+    const armed = handleList({}, ctx).tasks[0]!;
     expect(armed.schedule).toMatch(/^Once at Jul 1, 2099/);
     expect(armed.scheduleType).toBe("once");
 
     const stored = loadDefs().get("send-it")!;
-    saveAutomation(workDir, WS, OWNER, {
+    saveTask(workDir, WS, OWNER, {
       ...stored,
       enabled: false,
       onceDone: { at, outcome: "ran" },
     });
-    const done = handleList({}, ctx).automations[0]!;
+    const done = handleList({}, ctx).tasks[0]!;
     expect(done.schedule).toMatch(/^Ran once at Jul 1, 2099/);
     expect(done.onceDone).toEqual({ at, outcome: "ran" });
-    expect(handleStatus({ name: "Send It" }, ctx).automation.scheduleHuman).toMatch(/^Ran once/);
+    expect(handleStatus({ name: "Send It" }, ctx).task.scheduleHuman).toMatch(/^Ran once/);
   });
 });
 
@@ -529,14 +524,14 @@ describe("once schedule validation and re-arm", () => {
 // Manual only
 // ---------------------------------------------------------------------------
 
-describe("an automation with no schedule", () => {
+describe("a task with no schedule", () => {
   test("is created, listed as manual only, and never arms", async () => {
     const ctx = makeCtx();
     const out = handleCreate({ manifest: { name: "By Hand" }, body: "Do it" }, ctx);
-    expect(out.automation.schedule).toBeUndefined();
-    expect(out.automation.nextRunAt).toBeUndefined();
+    expect(out.task.schedule).toBeUndefined();
+    expect(out.task.nextRunAt).toBeUndefined();
 
-    const row = handleList({}, ctx).automations[0]!;
+    const row = handleList({}, ctx).tasks[0]!;
     expect(row.schedule).toBe("Manual only");
     expect(row.scheduleType).toBe("none");
     expect(row.nextRunAt).toBeNull();
@@ -564,12 +559,7 @@ describe("an automation with no schedule", () => {
   });
 
   test("Run now runs it, enabled or not, with no disabled note", async () => {
-    saveAutomation(
-      workDir,
-      WS,
-      OWNER,
-      makeAutomation({ id: "by-hand", name: "By Hand", enabled: false }),
-    );
+    saveTask(workDir, WS, OWNER, makeTask({ id: "by-hand", name: "By Hand", enabled: false }));
     const executor = executorThat("success");
     const scheduler = new Scheduler(executor, { workDir });
     scheduler.start();
@@ -615,8 +605,8 @@ describe("an automation with no schedule", () => {
       { name: "By Hand", manifest: { schedule: { type: "interval", intervalMs: 3_600_000 } } },
       ctx,
     );
-    expect(out.automation.schedule?.type).toBe("interval");
-    expect(out.automation.nextRunAt).toBeDefined();
+    expect(out.task.schedule?.type).toBe("interval");
+    expect(out.task.nextRunAt).toBeDefined();
   });
 });
 
@@ -625,27 +615,26 @@ describe("an automation with no schedule", () => {
 // ---------------------------------------------------------------------------
 
 describe("kind", () => {
-  test("list returns saved automations by default, and one-offs when asked", () => {
+  test("list returns saved tasks by default, and one-offs when asked", () => {
     const ctx = makeCtx();
     handleCreate({ manifest: { name: "Kept" }, body: "x" }, ctx);
     handleCreate({ manifest: { name: "Just Once", kind: "oneoff" }, body: "x" }, ctx);
     // A definition written before `kind` existed reads as saved.
-    saveAutomation(workDir, WS, OWNER, makeAutomation({ id: "legacy", name: "Legacy" }));
+    saveTask(workDir, WS, OWNER, makeTask({ id: "legacy", name: "Legacy" }));
 
-    const names = (args: Record<string, unknown>) =>
-      handleList(args, ctx).automations.map((a) => a.name);
+    const names = (args: Record<string, unknown>) => handleList(args, ctx).tasks.map((a) => a.name);
     expect(names({})).toEqual(["Kept", "Legacy"]);
     expect(names({ kind: "oneoff" })).toEqual(["Just Once"]);
     expect(names({ kind: "all" })).toEqual(["Just Once", "Kept", "Legacy"]);
     expect(handleList({}, ctx).total).toBe(2);
-    expect(
-      handleList({ kind: "all" }, ctx).automations.find((a) => a.name === "Just Once")?.kind,
-    ).toBe("oneoff");
+    expect(handleList({ kind: "all" }, ctx).tasks.find((a) => a.name === "Just Once")?.kind).toBe(
+      "oneoff",
+    );
   });
 
   test("create stores no kind unless one is given", () => {
     const out = handleCreate({ manifest: { name: "Kept" }, body: "x" }, makeCtx());
-    expect("kind" in out.automation).toBe(false);
+    expect("kind" in out.task).toBe(false);
   });
 });
 
@@ -665,14 +654,11 @@ describe("handleRuns pages back through archived history", () => {
         startedAt: iso(i < 5 ? base + i * 60_000 : Date.parse("2025-03-01T00:00:00Z") + i * 60_000),
       });
     }
-    const page = handleRuns(
-      { automationId: "busy", since: "2025-02-15T00:00:00Z", limit: 2000 },
-      ctx,
-    );
+    const page = handleRuns({ taskId: "busy", since: "2025-02-15T00:00:00Z", limit: 2000 }, ctx);
     expect(page.runs.length).toBe(MAX_RUN_LINES);
     expect(page.nextBefore).toBeUndefined();
     // Without `since`, the January archive is more history.
-    expect(handleRuns({ automationId: "busy", limit: 2000 }, ctx).nextBefore).toBeDefined();
+    expect(handleRuns({ taskId: "busy", limit: 2000 }, ctx).nextBefore).toBeDefined();
   });
 
   test("the first page reads the recent runs and hands a cursor into the archive", () => {
@@ -686,7 +672,7 @@ describe("handleRuns pages back through archived history", () => {
       });
     }
 
-    const first = handleRuns({ automationId: "busy", limit: 10 }, ctx);
+    const first = handleRuns({ taskId: "busy", limit: 10 }, ctx);
     expect(first.runs.length).toBe(10);
     expect(first.nextBefore).toBeDefined();
 
@@ -695,7 +681,7 @@ describe("handleRuns pages back through archived history", () => {
     const ids = new Set(first.runs.map((r) => r.id));
     let before = first.nextBefore;
     while (before) {
-      const page = handleRuns({ automationId: "busy", limit: 400, before }, ctx);
+      const page = handleRuns({ taskId: "busy", limit: 400, before }, ctx);
       for (const r of page.runs) ids.add(r.id);
       before = page.nextBefore;
     }
