@@ -175,27 +175,20 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     expect(await res.text()).toBe("served bytes");
   });
 
-  it("GET /v1/files accepts both new and legacy id shapes at the validator", async () => {
-    // New scheme: fl_<24 hex>. Request a nonexistent id and assert we get
-    // 404 (passed the regex, failed the lookup) rather than 400 (invalid
-    // format). Same for the legacy scheme. This pins the compatibility
-    // guarantee against a future "simplify the regex" PR that might silently
-    // break historical file links baked into conversation JSONL. A well-formed
-    // but nonexistent id passes the regex and resolves to no partition → 404.
-    const newShape = "fl_aaaaaaaaaaaaaaaaaaaaaaaa"; // 24 hex chars
-    const legacyShape = "fl_mo7gybgy_5ad5f8a8"; // base36 + 8 hex, from the anchor bug report
-    for (const id of [newShape, legacyShape]) {
-      const res = await fetch(`${baseUrl}/v1/files/${id}`);
-      expect(res.status).toBe(404);
-      const body = await readJson<ApiErrorBody>(res);
-      expect(body.error).toBe("not_found");
-    }
+  it("GET /v1/files validates the id shape before the lookup", async () => {
+    // A well-formed but nonexistent id passes the validator and resolves to no
+    // partition → 404; any other shape is refused at the validator → 400.
+    const res = await fetch(`${baseUrl}/v1/files/fl_aaaaaaaaaaaaaaaaaaaaaaaa`);
+    expect(res.status).toBe(404);
+    const body = await readJson<ApiErrorBody>(res);
+    expect(body.error).toBe("not_found");
 
-    // Negative control: malformed id gets rejected at the regex, 400.
-    const bad = await fetch(`${baseUrl}/v1/files/not-a-valid-id`);
-    expect(bad.status).toBe(400);
-    const badBody = await readJson<ApiErrorBody>(bad);
-    expect(badBody.error).toBe("bad_request");
+    for (const id of ["not-a-valid-id", "fl_mo7gybgy_5ad5f8a8"]) {
+      const bad = await fetch(`${baseUrl}/v1/files/${id}`);
+      expect(bad.status).toBe(400);
+      const badBody = await readJson<ApiErrorBody>(bad);
+      expect(badBody.error).toBe("bad_request");
+    }
   });
 
   it("agent-created files and chat-uploaded files coexist in the same registry", async () => {

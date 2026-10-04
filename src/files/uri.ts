@@ -20,16 +20,11 @@ const FILE_URI_PREFIX = `${FILE_URI_SCHEME}://`;
 
 /**
  * Canonical stored-file id shape — the ONE validator for "is this a servable
- * file id." Two accepted schemes:
- *   - `fl_<24 hex>`            — current (`generateFileId` in `store.ts`).
- *   - `fl_<base36>_<8 hex>`    — legacy; historical `files://` links still
- *                                resolve, so anything that gates file ids
- *                                (the serve handler AND the migration) MUST
- *                                accept it or those files become unreachable.
- * Import this everywhere a file id is validated — never re-declare a stricter
- * copy, or "what the runtime serves" and "what the migration moves" drift.
+ * file id": `fl_<24 hex>`, as minted by `generateFileId` in `store.ts`. Import
+ * this everywhere a file id is validated; never re-declare a copy, or what the
+ * runtime mints and what it serves drift apart.
  */
-export const FILE_ID_RE = /^fl_(?:[a-f0-9]{24}|[a-z0-9]+_[a-f0-9]{8})$/;
+export const FILE_ID_RE = /^fl_[a-f0-9]{24}$/;
 
 export function fileIdToUri(id: string): string {
   return `${FILE_URI_PREFIX}${id}`;

@@ -41,7 +41,7 @@ export function sanitizeFilename(name: string): string {
 }
 
 /** Generate a file ID with fl_ prefix. 24 hex chars (~96 bits random). */
-function generateFileId(): string {
+export function generateFileId(): string {
   return `fl_${randomBytes(12).toString("hex")}`;
 }
 
