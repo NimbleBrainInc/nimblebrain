@@ -1,13 +1,13 @@
 /**
  * MCP Server endpoint — exposes the platform as an MCP server via Streamable HTTP.
  *
- * Two protocol eras on one URL, and they are equivalent apart from tasks, which
- * only the 2026-07-28 leg serves (ADR-0046). A request carrying the 2026-07-28 `_meta`
- * envelope is served per request by an SDK v2 server (`handleModern`); every
- * other request is 2025-era traffic for the sessionful leg this header
- * describes, on the same SDK. Both legs mount the same handlers (`createHandlers`),
- * and `test/integration/mcp-era-parity.test.ts` drives the same scenarios
- * against both.
+ * Two protocol eras on one URL, and they are equivalent but for task
+ * augmentation, which only the 2026-07-28 leg serves (ADR-0046). A request
+ * carrying the 2026-07-28 `_meta` envelope is served per request by an SDK v2
+ * server (`handleModern`); every other request is 2025-era traffic for the
+ * sessionful leg this header describes, on the same SDK. Both legs mount the same
+ * handlers (`createHandlers`), and `test/integration/mcp-era-parity.test.ts`
+ * drives the same scenarios against both.
  *
  * External MCP clients (Claude Code, Open WebUI, etc.) connect to
  * `/mcp/<wsId>` and reach that workspace's tools through the standard MCP
@@ -87,7 +87,6 @@ import type {
   ReadResourceRequest,
   ReadResourceResult,
   Resource,
-  Task,
   Tool,
 } from "@modelcontextprotocol/server";
 import {
@@ -431,7 +430,7 @@ export class McpServerHost {
         this.registry.touch(sessionId, now).catch((err) => {
           log.warn(`[mcp] registry touch failed: ${(err as Error).message}`);
         });
-        return local.transport.handleRequest(request);
+        return this.forwardToSession(local, request, sessionId, sessionCtx);
       }
       return this.localMissResponse(request, sessionId, sessionCtx);
     }
@@ -461,6 +460,25 @@ export class McpServerHost {
     }
 
     return this.initializeSession(request, body, features, sessionCtx);
+  }
+
+  /**
+   * Hand a request to the session's own transport, with any `params.task`
+   * removed first (`withoutTaskParams`): this leg serves no task augmentation.
+   */
+  private async forwardToSession(
+    local: TransportEntry,
+    request: Request,
+    sessionId: string,
+    sessionCtx: McpSessionContext,
+  ): Promise<Response> {
+    const stripped = await withoutTaskParams(request);
+    if (stripped) {
+      log.info(
+        `[mcp] ignored params.task on a 2025-era tools/call ${fmtSessionContext(request, sessionId, sessionCtx)}`,
+      );
+    }
+    return local.transport.handleRequest(request, stripped);
   }
 
   /**
@@ -742,8 +760,9 @@ export class McpServerHost {
  * routes through `routeToolCall`, and no name can address another workspace:
  * the `ws_<id>-` form is retired and refused as `invalid_tool_name`.
  *
- * Only the 2026 leg serves tasks (ADR-0046), so `callTool` takes the era's own
- * ask ({@link TaskAsk}): a 2025 call always runs inline.
+ * Only the 2026 leg runs a call as a task, and holds no task table: a task it
+ * starts is found again through the id it hands out (`mcp-modern-tasks.ts`).
+ * `callTool` takes the era's own ask ({@link TaskAsk}).
  *
  * When `runtime` is null (legacy unit-test path), tool handlers degrade
  * to safe no-ops: `tools/list` returns empty and `tools/call` rejects
@@ -1015,9 +1034,11 @@ function createHandlers(
 
 /**
  * The 2025 leg: a session's SDK v2 `Server`, on the 2025 era its `initialize`
- * negotiated. It serves no tasks (ADR-0046): it advertises no `tasks`
- * capability and installs no `tasks/*` handler, so those methods answer
- * `-32601`, and every `tools/call` runs inline, a `params.task` ignored.
+ * negotiated. It serves no task augmentation (ADR-0046): it declares no `tasks`
+ * capability, and every `tools/call` runs to completion and answers a
+ * `CallToolResult`. A `params.task` a client sends anyway is removed and logged
+ * at the door (`withoutTaskParams`), as the 2025-11-25 spec has a receiver that
+ * does not declare tasks ignore it.
  */
 function createLegacyServer(
   runtime: Runtime | null,
@@ -1033,7 +1054,7 @@ function createLegacyServer(
   server.setRequestHandler("tools/list", () => handlers.listTools());
   server.setRequestHandler(
     "tools/call",
-    // A legacy ask never runs as a task, so the answer is a `CallToolResult`.
+    // A legacy ask is never answered with a task.
     (request) => handlers.callTool(request, { era: "legacy" }) as Promise<CallToolResult>,
   );
   server.setRequestHandler("resources/list", (request) => handlers.listResources(request));
@@ -1094,16 +1115,20 @@ type WorkspaceRoute = Extract<Awaited<ReturnType<typeof routeToolCall>>, { kind:
 type TaskAwareSourceHandle = NonNullable<ReturnType<ToolRegistry["findTaskAwareSource"]>>;
 
 /**
- * What a `tools/call` asks of the task machinery. Only the 2026-07-28 leg
- * serves tasks: its client opts in to the tasks extension, and the door tasks a
- * call to a tool that can run as one. A 2025 call always runs inline.
+ * What a `tools/call` asks of the task machinery. Only a 2026-07-28 request
+ * can ask: it opts in to the tasks extension, and the door tasks a call to a
+ * tool that can run as one. A 2025 request never runs as a task (ADR-0046).
  */
 type TaskAsk = { era: "legacy" } | { era: "modern"; optedIn: boolean };
 
-/** A `tools/call` answer: the tool's result, or, on the 2026 leg, the task it runs as. */
+/** A `tools/call` answer: the tool's result, or the 2026 task it runs as. */
 type ToolCallAnswer = CallToolResult | ModernCreateTaskResult;
 
-/** Whether the call runs as a task: an opted-in 2026 call to a tool that can run as one. */
+/**
+ * Whether the call runs as a task: the request opted in to the tasks extension
+ * and the tool can run as one. A 2025 request never does, so a `required` tool
+ * it calls runs to completion like any other.
+ */
 function runsAsTask(
   ask: TaskAsk,
   taskSupport: "optional" | "required" | "forbidden" | undefined,
@@ -1335,10 +1360,9 @@ async function answerIdentityTask(
 
 /**
  * Dispatch a workspace-scoped `/mcp` tools/call (bare `<source>__<tool>`):
- * feature + role gating, connector permission gate, then, on the 2026 leg, the
- * tasks extension's negotiation, and the task or inline execution path. The
- * workspace is the session's own (carried on `routed.context`), never from the
- * tool name.
+ * feature + role gating, connector permission gate, tool-level task
+ * negotiation, then the task-augmented or inline execution path. The workspace
+ * is the session's own (carried on `routed.context`), never from the tool name.
  */
 async function executeWorkspaceToolCall(
   routed: WorkspaceRoute,
@@ -1395,14 +1419,12 @@ async function executeWorkspaceToolCall(
     if (denied) return toCallToolResult(denied);
   }
 
-  // Only the 2026 leg serves tasks; a 2025 call runs inline whatever the tool declares.
-  const taskAwareSource =
-    ask.era === "modern" && sourceName
-      ? runtime.getRegistryForWorkspace(wsId).findTaskAwareSource(sourceName)
-      : null;
+  const wsRegistry = runtime.getRegistryForWorkspace(wsId);
+  const taskAwareSource = sourceName ? wsRegistry.findTaskAwareSource(sourceName) : null;
   const taskSupport = await resolveTaskSupport(taskAwareSource, innerToolName);
+  const asTask = runsAsTask(ask, taskSupport);
 
-  if (ask.era === "modern" && taskSupport === "required" && !ask.optedIn) {
+  if (ask.era === "modern" && taskSupport === "required" && !asTask) {
     // The 2026 answer for a call that needs a capability the request did not
     // declare, naming it so the client can opt in and retry.
     throw new MissingRequiredClientCapabilityError(
@@ -1420,9 +1442,13 @@ async function executeWorkspaceToolCall(
     workspaceId: wsId,
   };
 
-  if (sourceName && taskAwareSource && runsAsTask(ask, taskSupport)) {
-    const started = { sourceName, taskAwareSource, reqCtx, localName, args, wsId };
-    return modernCreateTaskResult(sourceName, (await startWorkspaceTask(started, sessionCtx)).task);
+  if (asTask && sourceName && taskAwareSource) {
+    const created = await runWithRequestContext(reqCtx, () =>
+      taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
+        ownerContext: ownerContextFor(wsId, sessionCtx, sourceName),
+      }),
+    );
+    return modernCreateTaskResult(sourceName, created.task);
   }
 
   // ── Inline path ────────────────────────────────────────────────────────────
@@ -1483,16 +1509,6 @@ async function resolveTaskSupport(
   return tool?.execution?.taskSupport;
 }
 
-/** What `startWorkspaceTask` needs to start one call as a task. */
-interface StartedTask {
-  sourceName: string;
-  taskAwareSource: TaskAwareSourceHandle;
-  reqCtx: RequestContext;
-  localName: string;
-  args: Record<string, unknown> | undefined;
-  wsId: string;
-}
-
 /**
  * The owner stamped on a task `/mcp` starts: the workspace, the identity, and
  * the source it runs on (`originApp`), so a task request scoped to any other
@@ -1511,31 +1527,14 @@ function ownerContextFor(
 }
 
 /**
- * Start a workspace call as a task. Returns the task the connector created
- * immediately; the McpSource has already started the stream and is draining it
- * in the background.
- */
-async function startWorkspaceTask(
-  started: StartedTask,
-  sessionCtx: McpSessionContext,
-): Promise<{ task: Task }> {
-  const { sourceName, taskAwareSource, reqCtx, localName, args, wsId } = started;
-  return runWithRequestContext(reqCtx, () =>
-    taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
-      ownerContext: ownerContextFor(wsId, sessionCtx, sourceName),
-    }),
-  );
-}
-
-/**
  * The `_meta` key naming the one source a request is for. A `resources/read`,
  * `resources/list` or `resources/templates/list` resolves in that source, a
- * 2026 `tasks/get` or `tasks/cancel` is answered only for a task it ran, and a
+ * `tasks/get` or `tasks/cancel` is answered only for a task it ran, and a
  * `tools/call` is an app's call, held to the MCP Apps app scope
  * (`assertAppMayCall`). The iframe bridge sets it to the app's own server
  * (`web/src/bridge/bridge.ts`, pinned equal by
  * `test/unit/tools/server-notifications.test.ts`); an MCP client that omits it
- * gets the workspace-wide read or listing, and any task it owns.
+ * gets the workspace-wide read or listing, and any task it started.
  */
 export const RESOURCE_SOURCE_META_KEY = "ai.nimblebrain/source";
 
@@ -1839,6 +1838,34 @@ async function readResourceFromWorkspace(
     if (result) return result;
   }
   return null;
+}
+
+/**
+ * A 2025-era body with `params.task` removed from every `tools/call`, or
+ * undefined when none carries one (or the body is not JSON, which the
+ * transport answers itself). The 2025 leg declares no `tasks` capability, and
+ * the 2025-11-25 spec has a receiver that does not declare it process the
+ * request normally, ignoring the task. Removing the field makes that ignore
+ * explicit, and `forwardToSession` logs each one, so 2025 task traffic stays
+ * visible.
+ */
+async function withoutTaskParams(request: Request): Promise<{ parsedBody: unknown } | undefined> {
+  let body: unknown;
+  try {
+    body = await request.clone().json();
+  } catch {
+    return undefined;
+  }
+  let stripped = false;
+  for (const message of Array.isArray(body) ? body : [body]) {
+    if (typeof message !== "object" || message === null) continue;
+    const { method, params } = message as { method?: unknown; params?: unknown };
+    if (method !== "tools/call" || typeof params !== "object" || params === null) continue;
+    if (!("task" in params)) continue;
+    delete (params as { task?: unknown }).task;
+    stripped = true;
+  }
+  return stripped ? { parsedBody: body } : undefined;
 }
 
 /** JSON-RPC error response with the proper headers. */

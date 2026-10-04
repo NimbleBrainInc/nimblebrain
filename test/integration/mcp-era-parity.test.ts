@@ -1,19 +1,18 @@
 /**
- * `/mcp/<wsId>` serves both protocol eras, and they are equivalent apart from
- * tasks, which only the 2026-07-28 leg serves (ADR-0046). This suite is the
- * guard on that rule. One set of scenarios runs against each leg through a
- * driver per era, and every assertion is shared, so a change that lets the legs
- * drift fails here.
+ * `/mcp/<wsId>` serves both protocol eras, and they are equivalent but for task
+ * augmentation: a client on `2026-07-28` can do everything a client on
+ * `2025-11-25` can. This suite is the guard on that rule. One set of scenarios
+ * runs against each leg through a driver per era, and every assertion is
+ * shared, so a change that lets the legs drift fails here.
  *
- * - 2025 leg: the SDK v2 client on its plain 2025 `initialize` handshake,
- *   sessionful. It serves no tasks: no `tasks` capability, `params.task`
- *   ignored, `tasks/*` answered `-32601`.
+ * - 2025 leg: the SDK v2 client on its plain `initialize` handshake, sessionful. It serves no task augmentation
+ *   (ADR-0046): no `tasks` capability, a `params.task` ignored, no `tasks/*`.
  * - 2026 leg: the SDK v2 client for what it speaks, and the tasks extension
  *   (SEP-2663) on the wire for what it does not (typescript-sdk#2189): opt-in
  *   per request, a flat task, `tasks/get` inlining the outcome.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { rmSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,6 +34,7 @@ import { textContent } from "../../src/engine/content-helpers.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
+import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
 import {
@@ -81,6 +81,10 @@ class JobsSource implements ToolSource {
   readonly name = SOURCE;
   private readonly held = new Map<string, HeldTask>();
   private readonly fail = new Map<string, (err: Error) => void>();
+  /** How many tasks have been started. */
+  get started(): number {
+    return this.held.size;
+  }
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
@@ -133,7 +137,7 @@ class JobsSource implements ToolSource {
   async startToolAsTask(
     _tool: string,
     _args: Record<string, unknown>,
-    opts: { ownerContext: TaskOwnerContext },
+    opts: { ownerContext: TaskOwnerContext; ttlMs?: number },
   ): Promise<{ task: Task }> {
     const now = new Date().toISOString();
     const task: Task = {
@@ -141,7 +145,7 @@ class JobsSource implements ToolSource {
       status: "working",
       createdAt: now,
       lastUpdatedAt: now,
-      ttl: 60_000,
+      ttl: opts.ttlMs ?? 60_000,
       pollInterval: 10,
     };
     let settle!: (result: CallToolResult) => void;
@@ -249,22 +253,10 @@ afterAll(async () => {
 
 /** What a scenario does at the door, in each era's own vocabulary. */
 interface EraDriver {
-  /** Whether tasks are advertised where this era's client looks before it calls. */
-  advertisesTasks(): Promise<boolean>;
   listTools(): Promise<string[]>;
   callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
   readResource(uri: string): Promise<string | undefined>;
   close(): Promise<void>;
-}
-
-/** The 2026 leg's driver, which also runs tasks. */
-interface TaskDriver extends EraDriver {
-  /** Start `name` as a task; the task's id. */
-  startTask(name: string): Promise<string>;
-  status(taskId: string, as?: "owner" | "other"): Promise<Task["status"]>;
-  /** The terminal result of a completed task. */
-  result(taskId: string): Promise<CallToolResult>;
-  cancel(taskId: string): Promise<void>;
 }
 
 /** A JSON-RPC error's code, from whichever SDK or wire raised it. */
@@ -279,34 +271,27 @@ async function errorCode(p: Promise<unknown>): Promise<number | undefined> {
 
 const LEGACY_VERSION = "2025-11-25";
 
-/** A 2025 session: the SDK v2 client on its plain `initialize` handshake. */
-async function legacySession(): Promise<{ client: Client; sessionId: string }> {
+/**
+ * A 2025-era client of the door, as the owner or as {@link OTHER}: the SDK 2
+ * client on its plain `initialize` handshake. Also the session id, for the
+ * requests the client will not send itself (`legacyPost`).
+ */
+async function legacyClient(
+  as: "owner" | "other" = "owner",
+): Promise<{ client: Client; sessionId: string }> {
   const client = new Client({ name: "parity-2025", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(mcpUrl());
+  const headers: Record<string, string> = as === "other" ? { [OTHER_HEADER]: "1" } : {};
+  const transport = new StreamableHTTPClientTransport(mcpUrl(), { requestInit: { headers } });
   await client.connect(transport);
   expect(client.getNegotiatedProtocolVersion()).toBe(LEGACY_VERSION);
   if (!transport.sessionId) throw new Error("the 2025 leg allocated no session");
   return { client, sessionId: transport.sessionId };
 }
 
-async function legacyDriver(): Promise<EraDriver> {
-  const { client } = await legacySession();
-  return {
-    advertisesTasks: async () => client.getServerCapabilities()?.tasks !== undefined,
-    listTools: async () => (await client.listTools()).tools.map((t) => t.name),
-    callTool: async (name, args) => client.callTool({ name, arguments: args }),
-    readResource: async (uri) => {
-      const read = await client.readResource({ uri });
-      const first = read.contents[0];
-      return first && "text" in first ? first.text : undefined;
-    },
-    close: () => client.close(),
-  };
-}
-
 /**
  * One 2025 request on the wire, in an existing session: what a client that
- * still speaks the 2025-11-25 tasks utility would send.
+ * still speaks the 2025-11-25 tasks utility sends. The SDK 2 client sends
+ * neither a `params.task` nor a `tasks/*` request itself.
  */
 async function legacyPost(
   sessionId: string,
@@ -326,6 +311,20 @@ async function legacyPost(
   const text = await res.text();
   const json = text.startsWith("{") ? text : (text.match(/^data: (.*)$/m)?.[1] ?? "{}");
   return JSON.parse(json);
+}
+
+async function legacyDriver(): Promise<EraDriver> {
+  const { client: owner } = await legacyClient();
+  return {
+    listTools: async () => (await owner.listTools()).tools.map((t) => t.name),
+    callTool: async (name, args) => owner.callTool({ name, arguments: args }),
+    readResource: async (uri) => {
+      const read = await owner.readResource({ uri });
+      const first = read.contents[0];
+      return first && "text" in first ? first.text : undefined;
+    },
+    close: () => owner.close(),
+  };
 }
 
 const MODERN_VERSION = "2026-07-28";
@@ -385,35 +384,17 @@ async function modernResult(
   return body.result ?? {};
 }
 
-async function modernDriver(): Promise<TaskDriver> {
+async function modernDriver(): Promise<EraDriver> {
   const client = new Client(
     { name: "parity-2026", version: "1.0.0" },
     { versionNegotiation: { mode: "auto" } },
   );
   await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
   expect(client.getNegotiatedProtocolVersion()).toBe(MODERN_VERSION);
-  const taskGet = (taskId: string, as: "owner" | "other" = "owner") =>
-    modernResult("tasks/get", { taskId }, { as });
   return {
-    advertisesTasks: async () =>
-      client.getServerCapabilities()?.extensions?.[TASKS_EXTENSION_ID] !== undefined,
     listTools: async () => (await client.listTools()).tools.map((t) => t.name),
     callTool: async (name, args) =>
       (await client.callTool({ name, arguments: args })) as CallToolResult,
-    startTask: async (name) => {
-      const created = await modernResult("tools/call", { name, arguments: {} }, { optIn: true });
-      expect(created.resultType).toBe("task");
-      return String(created.taskId);
-    },
-    status: async (taskId, as) => (await taskGet(taskId, as)).status as Task["status"],
-    result: async (taskId) => {
-      const got = await taskGet(taskId);
-      expect(got.status).toBe("completed");
-      return got.result as CallToolResult;
-    },
-    cancel: async (taskId) => {
-      expect(await modernResult("tasks/cancel", { taskId })).toEqual({ resultType: "complete" });
-    },
     readResource: async (uri) => {
       const read = await client.readResource({ uri });
       const first = read.contents[0];
@@ -423,12 +404,23 @@ async function modernDriver(): Promise<TaskDriver> {
   };
 }
 
+/** Start `name` as a 2026 task; the task's id. */
+async function startModernTask(name: string): Promise<string> {
+  const created = await modernResult("tools/call", { name, arguments: {} }, { optIn: true });
+  expect(created.resultType).toBe("task");
+  return String(created.taskId);
+}
+
+async function modernStatus(taskId: string, as: "owner" | "other" = "owner") {
+  return (await modernResult("tasks/get", { taskId }, { as })).status as Task["status"];
+}
+
 // ── The scenarios, once per era ──────────────────────────────────────
 
 describe.each([
-  { era: "2025-11-25", driver: legacyDriver, servesTasks: false },
-  { era: "2026-07-28", driver: modernDriver, servesTasks: true },
-])("/mcp/<wsId> on $era", ({ driver, servesTasks }) => {
+  { era: "2025-11-25", driver: legacyDriver },
+  { era: "2026-07-28", driver: modernDriver },
+])("/mcp/<wsId> on $era", ({ driver }) => {
   let d: EraDriver;
 
   beforeAll(async () => {
@@ -437,10 +429,6 @@ describe.each([
 
   afterAll(async () => {
     await d.close();
-  });
-
-  it("advertises tasks before any call only where it serves them", async () => {
-    expect(await d.advertisesTasks()).toBe(servesTasks);
   });
 
   it("lists the workspace's tools by their bare names", async () => {
@@ -466,86 +454,101 @@ describe.each([
   });
 });
 
-// ── The 2025 leg serves no tasks ──────────────────────────────────────
-
-describe("/mcp/<wsId> serves no tasks on 2025-11-25", () => {
+describe("/mcp/<wsId> on 2025-11-25 serves no task augmentation", () => {
   let client: Client;
   let sessionId: string;
 
   beforeAll(async () => {
-    ({ client, sessionId } = await legacySession());
+    ({ client, sessionId } = await legacyClient());
   });
 
   afterAll(async () => {
     await client.close();
   });
 
-  it("lists no tool with an execution.taskSupport", async () => {
-    const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toContain(`${SOURCE}__research`);
-    expect(tools.filter((t) => t.execution !== undefined)).toEqual([]);
+  it("declares no tasks capability", () => {
+    expect(client.getServerCapabilities()?.tasks).toBeUndefined();
   });
 
-  it.each(["research", "batch"])(
-    "runs a tools/call carrying params.task to %s as an ordinary call",
-    async (tool) => {
+  it("runs a call carrying params.task to completion, ignoring the task, and logs it", async () => {
+    const before = jobs.started;
+    const info = spyOn(log, "info");
+    try {
       const { result, error } = await legacyPost(sessionId, "tools/call", {
-        name: `${SOURCE}__${tool}`,
-        arguments: { text: "now" },
+        name: `${SOURCE}__research`,
+        arguments: {},
         task: { ttl: 60_000 },
       });
       expect(error).toBeUndefined();
-      expect(result).toEqual({ content: [{ type: "text", text: `${tool}:now` }], isError: false });
-    },
-  );
-
-  it.each([
-    ["tasks/get", { taskId: "t" }],
-    ["tasks/result", { taskId: "t" }],
-    ["tasks/cancel", { taskId: "t" }],
-    ["tasks/list", {}],
-  ])("answers %s as method not found", async (method, params) => {
-    expect((await legacyPost(sessionId, method, params)).error?.code).toBe(-32601);
-  });
-});
-
-// ── Tasks on the 2026 leg ──────────────────────────────────────────────
-
-describe("/mcp/<wsId> tasks on 2026-07-28", () => {
-  let d: TaskDriver;
-
-  beforeAll(async () => {
-    d = await modernDriver();
-  });
-
-  afterAll(async () => {
-    await d.close();
-  });
-
-  it("runs a task to completion", async () => {
-    const taskId = await d.startTask(`${SOURCE}__research`);
-    expect(await d.status(taskId)).toBe("working");
-    jobs.settleWorking({ content: [{ type: "text", text: "researched" }] });
-    expect(await d.status(taskId)).toBe("completed");
-    expect(await d.result(taskId)).toEqual({ content: [{ type: "text", text: "researched" }] });
-  });
-
-  it("cancels a task", async () => {
-    const taskId = await d.startTask(`${SOURCE}__research`);
-    await d.cancel(taskId);
-    expect(await d.status(taskId)).toBe("cancelled");
-  });
-
-  it("refuses another identity's task as not found", async () => {
-    const taskId = await d.startTask(`${SOURCE}__research`);
-    try {
-      expect(await errorCode(d.status(taskId, "other"))).toBe(-32602);
-      expect(await errorCode(d.status(`${taskId}-unknown`))).toBe(-32602);
+      expect(result?.content).toEqual([{ type: "text", text: "research:" }]);
+      expect(jobs.started).toBe(before);
+      // The log line is how 2025 task traffic stays visible.
+      expect(info.mock.calls.some(([msg]) => msg.startsWith("[mcp] ignored params.task"))).toBe(
+        true,
+      );
     } finally {
-      await d.cancel(taskId);
+      info.mockRestore();
     }
   });
 
+  it("runs a task-only tool to completion", async () => {
+    const before = jobs.started;
+    const result = await client.callTool({ name: `${SOURCE}__batch`, arguments: {} });
+    expect(result.content).toEqual([{ type: "text", text: "batch:" }]);
+    expect(jobs.started).toBe(before);
+  });
+
+  for (const method of ["tasks/get", "tasks/result", "tasks/cancel", "tasks/list"]) {
+    it(`answers ${method} as method not found`, async () => {
+      const params = method === "tasks/list" ? {} : { taskId: "job-any" };
+      expect((await legacyPost(sessionId, method, params)).error?.code).toBe(-32601);
+    });
+  }
+});
+
+describe("/mcp/<wsId> task lifecycle on 2026-07-28", () => {
+  it("advertises the tasks extension before any call", async () => {
+    const client = new Client(
+      { name: "parity-2026", version: "1.0.0" },
+      { versionNegotiation: { mode: "auto" } },
+    );
+    await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
+    try {
+      expect(client.getServerCapabilities()?.extensions?.[TASKS_EXTENSION_ID]).toBeDefined();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("runs a task to completion", async () => {
+    const taskId = await startModernTask(`${SOURCE}__research`);
+    expect(await modernStatus(taskId)).toBe("working");
+    jobs.settleWorking({ content: [{ type: "text", text: "researched" }] });
+    const got = await modernResult("tasks/get", { taskId });
+    expect(got.status).toBe("completed");
+    expect(got.result).toEqual({ content: [{ type: "text", text: "researched" }] });
+  });
+
+  it("cancels a task", async () => {
+    const taskId = await startModernTask(`${SOURCE}__research`);
+    expect(await modernResult("tasks/cancel", { taskId })).toEqual({ resultType: "complete" });
+    expect(await modernStatus(taskId)).toBe("cancelled");
+  });
+
+  it("refuses another identity's task as not found", async () => {
+    const taskId = await startModernTask(`${SOURCE}__research`);
+    try {
+      expect(await errorCode(modernStatus(taskId, "other"))).toBe(-32602);
+      expect(await errorCode(modernStatus(`${taskId}-unknown`))).toBe(-32602);
+    } finally {
+      await modernResult("tasks/cancel", { taskId });
+    }
+  });
+});
+
+// ── What only the 2026 wire can get wrong ─────────────────────────────
+
+describe("/mcp/<wsId> tasks on 2026-07-28", () => {
   it("answers outright a call that did not opt in to the tasks extension", async () => {
     const result = await modernResult("tools/call", { name: `${SOURCE}__research`, arguments: {} });
     expect(result.resultType).toBe("complete");

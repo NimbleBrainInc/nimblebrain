@@ -120,7 +120,7 @@ The authorization server honours a client's `resource` only for URLs it has been
 
 ## Protocol versions
 
-The endpoint serves both protocol eras on the same URL, and they are equivalent apart from tasks, which only `2026-07-28` serves. A request's own shape decides which era serves it:
+The endpoint serves both protocol eras on the same URL, and they are equivalent but for tasks: a client on `2026-07-28` can do everything a 2025-era client can, and run long-running tools as tasks. A request's own shape decides which era serves it:
 
 | A client that… | Is served |
 |---|---|
@@ -129,9 +129,14 @@ The endpoint serves both protocol eras on the same URL, and they are equivalent 
 
 The tools, resources, workspace wall and error shapes are the same on both; a `resources/read` whose URI resolves nowhere answers `-32602` on either. On 2025, a tool whose `outputSchema` root is not an object is listed with that schema wrapped as the `result` property of an object schema, and its `structuredContent` is wrapped to match. Neither era advertises `listChanged` or `resources.subscribe`, so a `2026-07-28` client has nothing to open a `subscriptions/listen` stream for.
 
-Long-running tools run as tasks on `2026-07-28` only, through the tasks extension (`io.modelcontextprotocol/tasks`), advertised in `server/discover`. A `tools/call` that names the extension in its request's client capabilities is answered with a task (`resultType: "task"`) when the tool can run as one. Poll with `tasks/get`, which inlines the result once the task ends, and cancel with `tasks/cancel`. Each poll is a request on its own, with the task id as its `Mcp-Name` header. A task is reachable only by the identity that started it, at the workspace URL it was started at; any other poll is answered `-32602`, the same as a task that does not exist.
+Long-running tools run as tasks on `2026-07-28` only, through the MCP tasks extension. The 2025-11-25 tasks utility is not served:
 
-The 2025 era serves no tasks. `initialize` advertises no `tasks` capability, every `tools/call` runs to completion inside the request and answers a `CallToolResult` (a `params.task` is ignored), and `tasks/get`, `tasks/result`, `tasks/list` and `tasks/cancel` answer `-32601`. A call that outlasts a timeout in the path fails as any long request does.
+| Era | Tasks |
+|---|---|
+| 2025 | None. The session declares no `tasks` capability, every `tools/call` runs to completion and answers its result (a `params.task` on it is ignored), and `tasks/get`, `tasks/result`, `tasks/cancel` answer `-32601`. A call that outlasts a timeout between you and the endpoint fails the way any long request does. |
+| `2026-07-28` | The tasks extension (`io.modelcontextprotocol/tasks`), advertised in `server/discover`. A `tools/call` that names the extension in its request's client capabilities is answered with a task (`resultType: "task"`) when the tool can run as one. Poll with `tasks/get`, which inlines the result once the task ends, and cancel with `tasks/cancel`. Each poll is a request on its own, with the task id as its `Mcp-Name` header. |
+
+A task is reachable only by the identity that started it, at the workspace URL it was started at; any other poll is answered `-32602`, the same as a task that does not exist.
 
 ## Sessions
 

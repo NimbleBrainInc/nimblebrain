@@ -914,7 +914,7 @@ export class McpSource implements ToolSource {
     const transport = this.transport;
     if (!client || !transport) return;
     this.protocolEra = client.getProtocolEra() === "modern" ? "modern" : "legacy";
-    const wire = TaskWire.attach(client, transport, CLIENT_INFO, McpSource.CAPABILITIES);
+    const wire = TaskWire.attach(this.name, client, transport, CLIENT_INFO, McpSource.CAPABILITIES);
     this.taskClient = wire
       ? taskClientFor(wire)
       : inlineTaskClient((params, signal) => client.callTool(params, { signal }));

@@ -1,6 +1,6 @@
 # 0023. The client advertises `extensions`, and nothing it does not serve
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0046
 - Date: 2026-09-03
 - Serves: orchestrate remote MCP
 
@@ -41,6 +41,12 @@ capabilities of each `tools/call` it sends to a server that advertised it, then
 polls and cancels what it started (ADR-0029), so each claim is backed by the
 code that sent it. `tasks/list` is not claimed: nothing here lists tasks, and
 SEP-2663 removes the method from the spec.
+
+- *Amended by ADR-0046:* the 2025-11-25 `tasks` capability is no longer
+  claimed, because the 2025-11-25 tasks utility is not spoken. A task is opted
+  in per `tools/call` under the 2026-07-28 tasks extension
+  (`io.modelcontextprotocol/tasks`), in that request's own `_meta` client
+  capabilities.
 
 **A claim is per era, because what is served is.** The host-resources methods
 are server→client requests, and `2026-07-28` removed that channel, so

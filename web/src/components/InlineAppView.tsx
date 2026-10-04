@@ -7,6 +7,7 @@ import { buildHostExtensions } from "../bridge/host-extensions";
 import { createAppIframe } from "../bridge/iframe";
 import { useFileLimits } from "../context/ChatContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { useAppDisplayName } from "../hooks/useAppDisplayName";
 import type { ToolResultForUI } from "../hooks/useChat";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
 import { useNotice } from "./notices";
@@ -50,6 +51,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
   const notify = useNotice();
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
+  const nameApp = useAppDisplayName();
   // Mirror SlotRenderer: publish workspace into hostContext so apps mounted
   // here see the same `useHostContext().workspace` value as in placements.
   // Inline previews don't push host-context-changed (they're scoped to a
@@ -125,7 +127,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
           getHostExtensions: () =>
             buildHostExtensions(workspaceRef.current, undefined, uploadLimitsRef.current),
           getUploadLimits: () => uploadLimitsRef.current,
-          onNotify: (notice) => notifyRef.current({ ...notice, source: appName }),
+          onNotify: (notice) => notifyRef.current({ ...notice, source: nameApp(appName) }),
         });
         bridgeRef.current = bridge;
 
@@ -153,7 +155,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
         container.innerHTML = "";
       }
     };
-  }, [appName, resourceUri]);
+  }, [appName, resourceUri, nameApp]);
 
   return (
     <div className="w-full max-w-full my-2 rounded-sm overflow-hidden border border-border bg-card">

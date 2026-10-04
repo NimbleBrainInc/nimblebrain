@@ -35,9 +35,9 @@ import { json } from "./types.ts";
 export { TASKS_EXTENSION_ID };
 
 /**
- * The task surface of a source the door can start a task on and answer polls
- * for: a connector's `McpSource`, or a kernel identity source's task surface.
- * Each checks the caller's owner context against the one stamped on the task.
+ * The task surface of a source the door can answer polls for: a connector's
+ * `McpSource`, or a kernel identity source's task surface. Each checks the
+ * caller's owner context against the one stamped when the task started.
  */
 export interface TaskAwareSource {
   getTaskStatus(taskId: string, opts: { ownerContext: TaskOwnerContext }): Promise<Task>;
@@ -53,7 +53,11 @@ export interface TaskAwareSource {
   cancelTask(taskId: string, opts: { ownerContext: TaskOwnerContext }): Promise<Task>;
 }
 
-/** The one source a task request is for, in the workspace the request is bound to. */
+/**
+ * The one source a task request is for, in the workspace the request is bound
+ * to. The iframe bridge names the app's server this way; a scoped request finds
+ * only a task that source ran in that workspace.
+ */
 export interface TaskScope {
   source: string;
   /** The request's validated workspace. None reaches no workspace's task. */
@@ -165,8 +169,8 @@ async function taskRequestBody(request: Request): Promise<TaskRequestBody | null
  * `MCP-Protocol-Version` names the envelope's version, `Mcp-Method` the
  * method, and `Mcp-Name` the task id.
  *
- * `scopeOf` reads the source a request names under `RESOURCE_SOURCE_META_KEY`:
- * a scoped request reaches only a task that source ran.
+ * `scopeOf` reads the source a request names under `RESOURCE_SOURCE_META_KEY`,
+ * as on the 2025 leg: a scoped request reaches only a task that source ran.
  * Another identity's task, another workspace's, another source's and one that
  * never existed all answer the same `-32602`.
  */
