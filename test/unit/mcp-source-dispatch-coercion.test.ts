@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { CallToolResult, Task } from "@modelcontextprotocol/server";
 import type { EventSink } from "../../src/engine/types.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { TASKS_EXTENSION_ID } from "../../src/tools/mcp-task-client.ts";
 
 // Regression coverage for the dispatch-boundary argument normalization in
 // McpSource.execute (inline path).
@@ -147,8 +148,8 @@ describe("McpSource.execute — dispatch-boundary coercion", () => {
 });
 
 /**
- * Build an McpSource whose tool is task-augmented (execution.taskSupport:
- * "optional"), with a scripted task stream that records the dispatched
+ * Build an McpSource on a 2026-07-28 connection to a server advertising the
+ * tasks extension (so every call is task-augmented), with a scripted task stream that records the dispatched
  * `arguments`. Proves the task path THROUGH execute() — execute → callToolAsTask
  * → startToolAsTask → callToolStream — also coerces. (The external `/mcp`
  * surface that calls startToolAsTask directly is out of scope here.)
@@ -177,7 +178,6 @@ function buildTaskSource(schema: Record<string, unknown>): DispatchCapture {
     };
   }
   const fakeTaskClient = {
-    era: "legacy",
     callToolStream: (req: { name: string; arguments?: Record<string, unknown> }) => {
       captured = req.arguments;
       return taskStream();
@@ -187,17 +187,21 @@ function buildTaskSource(schema: Record<string, unknown>): DispatchCapture {
   const internals = source as unknown as {
     client: unknown;
     taskClient: unknown;
+    protocolEra: "legacy" | "modern";
     cachedTools: unknown;
   };
-  internals.client = { close: async () => {} };
+  internals.client = {
+    close: async () => {},
+    getServerCapabilities: () => ({ extensions: { [TASKS_EXTENSION_ID]: {} } }),
+  };
   internals.taskClient = fakeTaskClient;
+  internals.protocolEra = "modern";
   internals.cachedTools = [
     {
       name: "outlook__OUTLOOK_CREATE_DRAFT",
       description: "",
       inputSchema: schema,
       source: "mcp:outlook",
-      execution: { taskSupport: "optional" }, // → task-augmented dispatch path
     },
   ];
 

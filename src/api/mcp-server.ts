@@ -1488,7 +1488,7 @@ async function executeWorkspaceToolCall(
   };
 
   if (taskParam && sourceName && taskAwareSource && (ask.era === "modern" || taskStore)) {
-    const started = { taskParam, sourceName, taskAwareSource, reqCtx, localName, args, wsId };
+    const started = { sourceName, taskAwareSource, reqCtx, localName, args, wsId };
     return answerWithTask(ask, started, innerToolName, sessionCtx, taskStore);
   }
 
@@ -1604,7 +1604,6 @@ async function answerWithTask(
 
 /** What `startWorkspaceTask` needs to start one call as a task. */
 interface StartedTask {
-  taskParam: { ttl?: number };
   sourceName: string;
   taskAwareSource: TaskAwareSourceHandle;
   reqCtx: RequestContext;
@@ -1639,11 +1638,10 @@ async function startWorkspaceTask(
   started: StartedTask,
   sessionCtx: McpSessionContext,
 ): Promise<CreateTaskResult> {
-  const { taskParam, sourceName, taskAwareSource, reqCtx, localName, args, wsId } = started;
+  const { sourceName, taskAwareSource, reqCtx, localName, args, wsId } = started;
   return runWithRequestContext(reqCtx, () =>
     taskAwareSource.startToolAsTask(localName, (args ?? {}) as Record<string, unknown>, {
       ownerContext: ownerContextFor(wsId, sessionCtx, sourceName),
-      ...(taskParam.ttl !== undefined ? { ttlMs: taskParam.ttl } : {}),
     }),
   );
 }

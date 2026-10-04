@@ -34,6 +34,7 @@ import {
   KEYDOWN_METHOD,
   LOCATION_METHOD,
   NAVIGATE_METHOD,
+  NOTIFY_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_METHOD,
 } from "./extensions";
@@ -358,6 +359,23 @@ export const UiLocationMessage = Type.Object({
 });
 export type UiLocationMessage = Static<typeof UiLocationMessage>;
 
+/**
+ * The shape only. Level and lengths are checked by the handler, which answers a
+ * bad value with `-32602` and the reason; a schema failure is dropped without a
+ * reply, which would leave the app's request waiting.
+ */
+export const UiNotifyMessage = Type.Object({
+  jsonrpc: JsonRpcVersion,
+  method: Type.Literal(NOTIFY_METHOD),
+  id: RequestId,
+  params: Type.Object({
+    level: Type.String(),
+    title: Type.String(),
+    description: Type.Optional(Type.String()),
+  }),
+});
+export type UiNotifyMessage = Static<typeof UiNotifyMessage>;
+
 export const UiNavigateNotification = Type.Object({
   jsonrpc: JsonRpcVersion,
   method: Type.Literal(NAVIGATE_METHOD),
@@ -383,6 +401,7 @@ export const AppToHostMessage = Type.Union([
   SynapseUploadFilesMessage,
   UiKeydownMessage,
   UiLocationMessage,
+  UiNotifyMessage,
   ExtAppsInitializeRequest,
   ExtAppsInitializedNotification,
   ExtAppsRequestTeardownNotification,

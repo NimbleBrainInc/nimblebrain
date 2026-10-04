@@ -15,11 +15,15 @@ only.
 
 ## Levels
 
-| Level | Rank |
-|---|---|
-| `info` | lowest |
-| `attention` | middle |
-| `urgent` | highest |
+| Level | Rank | Use it when |
+|---|---|---|
+| `info` | lowest | It is a record. Nobody needs to look (a domain was registered). |
+| `attention` | middle | A person should know, whether the news is good or bad (a domain is live, someone replied, a send failed and nothing will retry it). |
+| `urgent` | highest | Someone has to act now, or something gets worse. |
+
+A level is how hard an item asks for attention, not whether its news is good
+or bad. Choose it by what the reader has to do, not by how they will feel about
+it. The inbox marks only `urgent` rows; `info` and `attention` rows look alike.
 
 Levels are **advisory** — the connector chooses one for each notification, and
 nothing treats it as authority. They are used in two places: the inbox sorts by

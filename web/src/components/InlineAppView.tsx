@@ -9,6 +9,7 @@ import { useFileLimits } from "../context/ChatContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
 import type { ToolResultForUI } from "../hooks/useChat";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
+import { useNotice } from "./notices";
 
 export interface InlineAppViewProps {
   appName: string;
@@ -46,6 +47,9 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
   // re-renders with a new object reference (e.g., during streaming text deltas).
   const toolResultRef = useRef(toolResult);
   toolResultRef.current = toolResult;
+  const notify = useNotice();
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
   // Mirror SlotRenderer: publish workspace into hostContext so apps mounted
   // here see the same `useHostContext().workspace` value as in placements.
   // Inline previews don't push host-context-changed (they're scoped to a
@@ -121,6 +125,7 @@ export function InlineAppView({ appName, resourceUri, toolResult }: InlineAppVie
           getHostExtensions: () =>
             buildHostExtensions(workspaceRef.current, undefined, uploadLimitsRef.current),
           getUploadLimits: () => uploadLimitsRef.current,
+          onNotify: (notice) => notifyRef.current({ ...notice, source: appName }),
         });
         bridgeRef.current = bridge;
 

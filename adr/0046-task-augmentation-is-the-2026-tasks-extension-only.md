@@ -1,6 +1,6 @@
 # 0046. Task augmentation is the 2026-07-28 tasks extension, and nothing else
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-03
 - Serves: orchestrate remote MCP
 

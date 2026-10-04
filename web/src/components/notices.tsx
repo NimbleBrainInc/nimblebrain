@@ -33,6 +33,11 @@ export interface Notice {
   description?: string;
   /** One action, such as Undo. Raising it closes the notice. */
   action?: { label: string; onClick: () => void };
+  /**
+   * Who raised it, when not the shell itself: an app's notice names the app, as
+   * its bundle's manifest names it, never as the app's message does.
+   */
+  source?: string;
 }
 
 const LEVELS: Record<
@@ -109,6 +114,7 @@ function NoticeBridge({ children }: { children: ReactNode }) {
         description: notice.description,
         timeout: level.timeout,
         priority: level.priority,
+        ...(notice.source ? { data: { source: notice.source } } : {}),
         actionProps: action
           ? {
               children: action.label,
@@ -150,6 +156,11 @@ export function NoticeViewport() {
           >
             <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", level.iconClass)} aria-hidden="true" />
             <Toast.Content className="min-w-0 flex-1">
+              {toast.data?.source ? (
+                <p className="text-2xs font-medium text-muted-foreground">
+                  From {toast.data.source}
+                </p>
+              ) : null}
               <Toast.Title className="text-sm font-medium" />
               <Toast.Description className="mt-0.5 text-sm text-muted-foreground" />
             </Toast.Content>

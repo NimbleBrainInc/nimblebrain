@@ -1,34 +1,33 @@
 /**
  * The task wire, driven on the connection's own transport.
  *
- * SDK v2 carries no task client in either era. On a 2025-11-25 connection its
- * `tools/call` wire schema refuses a task-shaped result ("content is required
- * when the body carries 'task'"), and on a 2026-07-28 connection the result
- * funnel rejects `resultType: "task"` as `UnsupportedResultType` and refuses to
- * send `tasks/*` at all. The tasks extension (`io.modelcontextprotocol/tasks`,
- * SEP-2663) is tracked upstream as typescript-sdk#2189. Until it ships, the
+ * Task augmentation is the 2026-07-28 tasks extension
+ * (`io.modelcontextprotocol/tasks`, SEP-2663) and nothing else (ADR-0046): the
+ * 2025-11-25 tasks utility (`params.task`, `tasks/result`) is never sent.
+ *
+ * SDK v2 carries no client for the extension: on a 2026-07-28 connection its
+ * result funnel rejects `resultType: "task"` as `UnsupportedResultType` and
+ * refuses to send `tasks/*` at all (typescript-sdk#2189). Until it ships, the
  * runtime sends the task calls itself: a JSON-RPC request with its own id on
  * the same transport the `Client` uses (so auth, session and the era's HTTP
  * headers come from the transport as they do for every other request), and a
  * response intercepted before the `Client` sees an id it did not issue.
  *
- * Two vocabularies, chosen by the connection's negotiated era:
+ * The request opts in per call by naming the extension in its `_meta` client
+ * capabilities; the server alone decides whether to task it, so `tools/call`
+ * answers either a complete result or a flat task (`resultType: "task"`);
+ * `tasks/get` inlines the outcome; `tasks/cancel` cancels. `tasks/update`
+ * (mid-task input) is not driven: a task that asks for input is cancelled and
+ * reported, because this runtime has no one to ask.
  *
- * - **legacy (2025-11-25):** `tools/call` with `params.task: { ttl }` answers
- *   `{ task }`; `tasks/get` polls; `tasks/result` reads the payload;
- *   `tasks/cancel` cancels.
- * - **modern (2026-07-28, SEP-2663):** the request opts in per call by naming
- *   the extension in its `_meta` client capabilities; the server alone decides
- *   whether to task it, so `tools/call` answers either a complete result or a
- *   flat task (`resultType: "task"`); `tasks/get` inlines the outcome;
- *   `tasks/cancel` cancels. `tasks/update` (mid-task input) is not driven: a
- *   task that asks for input is cancelled and reported, because this runtime
- *   has no one to ask.
+ * A 2025-era connection gets {@link inlineTaskClient}: the call runs as an
+ * ordinary blocking `tools/call` and is reported as an already-completed task,
+ * the same shape as a 2026 server answering outright.
  *
  * The generator's message shape is the one `McpSource.drainTaskStream`
- * consumes, and its `Task` is the 2025 shape, so everything downstream of the
- * stream is era-blind. When the SDK ships the extension this file is deleted
- * and the stream is built on its client.
+ * consumes, and its `Task` is the SDK's `Task`, so everything downstream of the
+ * stream is wire-blind. When the SDK ships the extension the wire here is
+ * deleted and the stream is built on its client.
  */
 
 import type {
@@ -65,8 +64,6 @@ export interface TaskStreamMessage {
   error?: { message?: string };
 }
 
-type Era = "legacy" | "modern";
-
 interface Pending {
   resolve: (result: Record<string, unknown>) => void;
   reject: (err: Error) => void;
@@ -84,9 +81,9 @@ export class TaskWireError extends Error {
 }
 
 /**
- * The task wire for one connected (client, transport) pair. Built after the
- * `Client` connects, because the interceptor wraps the `onmessage` the
- * `Client` installed and the era is known only then.
+ * The task wire for one connected 2026-07-28 (client, transport) pair. Built
+ * after the `Client` connects, because the interceptor wraps the `onmessage`
+ * the `Client` installed and the era is known only then.
  */
 export class TaskWire {
   private readonly pending = new Map<string, Pending>();
@@ -94,36 +91,32 @@ export class TaskWire {
 
   private constructor(
     private readonly transport: Transport,
-    private readonly era: Era,
-    private readonly envelope: Record<string, unknown> | undefined,
+    private readonly envelope: Record<string, unknown>,
   ) {}
 
   /**
-   * Attach to a connected client. `clientInfo` and `capabilities` are what the
-   * client declared; on a modern connection they form the per-request envelope
-   * the SDK would have attached, plus the tasks extension this request opts in
-   * to.
+   * Attach to a connected 2026-07-28 client, or null on any other era: a
+   * 2025-era connection has no task wire. `clientInfo` and `capabilities` are
+   * what the client declared; they form the per-request envelope the SDK would
+   * have attached, plus the tasks extension this request opts in to.
    */
   static attach(
     client: Client,
     transport: Transport,
     clientInfo: Implementation,
     capabilities: ClientCapabilities,
-  ): TaskWire {
-    const era: Era = client.getProtocolEra() === "modern" ? "modern" : "legacy";
+  ): TaskWire | null {
     const version = client.getNegotiatedProtocolVersion();
-    const envelope =
-      era === "modern" && version
-        ? {
-            [PROTOCOL_VERSION_META_KEY]: version,
-            [CLIENT_INFO_META_KEY]: clientInfo,
-            [CLIENT_CAPABILITIES_META_KEY]: {
-              ...capabilities,
-              extensions: { ...(capabilities.extensions ?? {}), [TASKS_EXTENSION_ID]: {} },
-            },
-          }
-        : undefined;
-    const wire = new TaskWire(transport, era, envelope);
+    if (client.getProtocolEra() !== "modern" || !version) return null;
+    const envelope = {
+      [PROTOCOL_VERSION_META_KEY]: version,
+      [CLIENT_INFO_META_KEY]: clientInfo,
+      [CLIENT_CAPABILITIES_META_KEY]: {
+        ...capabilities,
+        extensions: { ...(capabilities.extensions ?? {}), [TASKS_EXTENSION_ID]: {} },
+      },
+    };
+    const wire = new TaskWire(transport, envelope);
     const inner = transport.onmessage;
     transport.onmessage = (message: JSONRPCMessage, extra?: MessageExtraInfo) => {
       if (wire.claim(message)) return;
@@ -135,11 +128,6 @@ export class TaskWire {
       innerClose?.();
     };
     return wire;
-  }
-
-  /** The era this wire speaks, fixed at attach. */
-  getEra(): Era {
-    return this.era;
   }
 
   /** Settle a response to one of our requests; false for anything else. */
@@ -163,9 +151,9 @@ export class TaskWire {
   }
 
   /**
-   * Send one request and resolve with its raw result. On a modern connection
-   * the envelope is merged under the caller's `_meta`, the way the SDK merges
-   * its own, so the transport derives the era's standard headers from it.
+   * Send one request and resolve with its raw result. The envelope is merged
+   * under the caller's `_meta`, the way the SDK merges its own, so the
+   * transport derives the era's standard headers from it.
    */
   async request(
     method: string,
@@ -174,9 +162,7 @@ export class TaskWire {
   ): Promise<Record<string, unknown>> {
     const id = `nb-task-${++this.seq}-${crypto.randomUUID()}`;
     const meta = params._meta as Record<string, unknown> | undefined;
-    const withEnvelope = this.envelope
-      ? { ...params, _meta: { ...this.envelope, ...meta } }
-      : params;
+    const withEnvelope = { ...params, _meta: { ...this.envelope, ...meta } };
     const timeoutMs = opts.timeoutMs ?? TASK_REQUEST_TIMEOUT_MS;
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -230,8 +216,8 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** A modern (flat, SEP-2663) task body, as the 2025 `Task` the runtime carries. */
-function taskFromModern(raw: Record<string, unknown>): Task {
+/** A flat SEP-2663 task body, as the SDK `Task` the runtime carries. */
+function taskFromWire(raw: Record<string, unknown>): Task {
   const task: Task = {
     taskId: String(raw.taskId),
     status: raw.status as Task["status"],
@@ -252,20 +238,7 @@ function callToolResultFrom(raw: Record<string, unknown>): CallToolResult {
 
 /** `tasks/get` — the current server-side state of one task. */
 export async function getTask(wire: TaskWire, taskId: string): Promise<Task> {
-  const raw = await wire.request("tasks/get", { taskId });
-  return wire.getEra() === "modern" ? taskFromModern(raw) : (raw as unknown as Task);
-}
-
-/**
- * `tasks/result` — the payload a 2025-era task produced. The 2026 revision has
- * no such method: `tasks/get` inlines the outcome, and {@link callToolAsTaskStream}
- * reads it there.
- */
-export async function getTaskResult(wire: TaskWire, taskId: string): Promise<CallToolResult> {
-  if (wire.getEra() === "modern") {
-    throw new Error(`tasks/result ${taskId}: the 2026-07-28 revision inlines results in tasks/get`);
-  }
-  return callToolResultFrom(await wire.request("tasks/result", { taskId }));
+  return taskFromWire(await wire.request("tasks/get", { taskId }));
 }
 
 /**
@@ -284,8 +257,7 @@ export async function cancelTask(wire: TaskWire, taskId: string): Promise<void> 
 /**
  * Start a task-augmentable `tools/call` and drive it to a terminal state.
  *
- * A legacy server tasks every call this sends (the ttl is the request). A
- * modern server may instead answer the call outright; that arrives as a
+ * The server may answer the call outright instead; that arrives as a
  * `taskCreated` for an already-`completed` synthetic task followed by its
  * result, so a caller that hands out task handles (the `/mcp` endpoint) still
  * has one to hand out.
@@ -295,8 +267,8 @@ export async function cancelTask(wire: TaskWire, taskId: string): Promise<void> 
  */
 export async function* callToolAsTaskStream(
   wire: TaskWire,
-  params: { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> },
-  opts: { signal: AbortSignal; ttlMs: number; createTimeoutMs: number },
+  params: TaskCallParams,
+  opts: { signal: AbortSignal; createTimeoutMs: number },
 ): AsyncGenerator<TaskStreamMessage, void, void> {
   const started = await startTask(wire, params, opts);
   if ("messages" in started) {
@@ -321,52 +293,55 @@ export async function* callToolAsTaskStream(
     lastBody = polled.body;
     yield { type: "taskStatus", task };
   }
-  yield await terminalMessage(wire, task, lastBody);
+  yield terminalMessage(task, lastBody);
 }
 
 /**
  * Send the task-augmentable `tools/call`. Resolves the task to poll, or — when
- * a modern server answered the call outright or asked for input — the whole
- * message sequence.
+ * the server answered the call outright or asked for input — the whole message
+ * sequence.
  */
 async function startTask(
   wire: TaskWire,
-  params: { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> },
-  opts: { signal: AbortSignal; ttlMs: number; createTimeoutMs: number },
+  params: TaskCallParams,
+  opts: { signal: AbortSignal; createTimeoutMs: number },
 ): Promise<{ task: Task } | { messages: TaskStreamMessage[] }> {
-  const modern = wire.getEra() === "modern";
-  const created = await wire.request(
-    "tools/call",
-    modern ? params : { ...params, task: { ttl: opts.ttlMs } },
-    { signal: opts.signal, timeoutMs: opts.createTimeoutMs },
-  );
-  if (!modern) return { task: (created as { task: Task }).task };
-  if (created.resultType === "task") return { task: taskFromModern(created) };
+  const created = await wire.request("tools/call", params, {
+    signal: opts.signal,
+    timeoutMs: opts.createTimeoutMs,
+  });
+  if (created.resultType === "task") return { task: taskFromWire(created) };
   if (created.resultType === "input_required") {
     return { messages: [{ type: "error", error: { message: inputRequiredMessage(params.name) } }] };
   }
+  return { messages: answeredOutright(callToolResultFrom(created)) };
+}
+
+/**
+ * A call that was answered without a task, as the stream reports it: a
+ * synthetic `nb-inline-*` task, already `completed`, then its result.
+ */
+function answeredOutright(result: CallToolResult): TaskStreamMessage[] {
   const now = new Date().toISOString();
-  return {
-    messages: [
-      {
-        type: "taskCreated",
-        task: {
-          taskId: `nb-inline-${crypto.randomUUID()}`,
-          status: "completed",
-          createdAt: now,
-          lastUpdatedAt: now,
-          ttl: null,
-        },
+  return [
+    {
+      type: "taskCreated",
+      task: {
+        taskId: `nb-inline-${crypto.randomUUID()}`,
+        status: "completed",
+        createdAt: now,
+        lastUpdatedAt: now,
+        ttl: null,
       },
-      { type: "result", result: callToolResultFrom(created) },
-    ],
-  };
+    },
+    { type: "result", result },
+  ];
 }
 
 /**
  * One poll. Resolves the task's new state, or the terminal message when the
- * caller abandoned the call, the poll failed, or a modern task asked for input
- * this host cannot give.
+ * caller abandoned the call, the poll failed, or the task asked for input this
+ * host cannot give.
  */
 async function pollTask(
   wire: TaskWire,
@@ -394,8 +369,7 @@ async function pollTask(
       },
     };
   }
-  if (wire.getEra() === "legacy") return { task: body as unknown as Task, body };
-  const next = taskFromModern(body);
+  const next = taskFromWire(body);
   if (next.status === "input_required") {
     await cancelTask(wire, next.taskId);
     return { message: { type: "error", error: { message: inputRequiredMessage(tool) } } };
@@ -404,38 +378,25 @@ async function pollTask(
 }
 
 /**
- * The message a terminal task ends the stream with. A completed task's result
- * is inlined in the last `tasks/get` on a modern connection and read with
- * `tasks/result` on a legacy one.
- *
- * For `failed` and `cancelled` the legacy wording is load-bearing:
- * `recoverFailedTaskResult` keys on a message ending `Task <id> failed` to
- * attempt one more `tasks/result` before settling for a bare error string. A
- * modern task inlines its JSON-RPC error, so its message is appended and no
- * recovery is attempted — there is no `tasks/result` to recover from.
+ * The message a terminal task ends the stream with. `tasks/get` inlines the
+ * outcome: a completed task's result, or the JSON-RPC error a failed one ended
+ * with, whose message is appended to the status.
  */
-async function terminalMessage(
-  wire: TaskWire,
+function terminalMessage(
   task: Task,
   lastBody: Record<string, unknown> | undefined,
-): Promise<TaskStreamMessage> {
-  const modern = wire.getEra() === "modern";
+): TaskStreamMessage {
   if (task.status === "completed") {
-    try {
-      const inlined = modern ? lastBody?.result : undefined;
-      const result =
-        typeof inlined === "object" && inlined !== null
-          ? callToolResultFrom(inlined as Record<string, unknown>)
-          : await getTaskResult(wire, task.taskId);
-      return { type: "result", result };
-    } catch (err) {
-      return {
-        type: "error",
-        error: { message: err instanceof Error ? err.message : String(err) },
-      };
+    const inlined = lastBody?.result;
+    if (typeof inlined === "object" && inlined !== null) {
+      return { type: "result", result: callToolResultFrom(inlined as Record<string, unknown>) };
     }
+    return {
+      type: "error",
+      error: { message: `Task ${task.taskId} completed without an inlined result` },
+    };
   }
-  const inlinedError = modern ? (lastBody?.error as { message?: unknown } | undefined) : undefined;
+  const inlinedError = lastBody?.error as { message?: unknown } | undefined;
   const detail = typeof inlinedError?.message === "string" ? `: ${inlinedError.message}` : "";
   return { type: "error", error: { message: `Task ${task.taskId} ${task.status}${detail}` } };
 }
@@ -447,6 +408,13 @@ function inputRequiredMessage(tool: string): string {
   );
 }
 
+/** The `tools/call` a {@link TaskClient} starts. */
+export type TaskCallParams = {
+  name: string;
+  arguments?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+};
+
 /**
  * The task operations one connection offers `McpSource`: the seam between the
  * source's task bookkeeping and the wire that carries it. When the SDK ships
@@ -454,22 +422,35 @@ function inputRequiredMessage(tool: string): string {
  * {@link taskClientFor} and nothing above this interface changes.
  */
 export interface TaskClient {
-  /** The era the connection negotiated; `getTaskResult` exists only on `legacy`. */
-  readonly era: Era;
   callToolStream(
-    params: { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> },
-    opts: { signal: AbortSignal; ttlMs: number; createTimeoutMs: number },
+    params: TaskCallParams,
+    opts: { signal: AbortSignal; createTimeoutMs: number },
   ): AsyncGenerator<TaskStreamMessage, void, void>;
   getTask(taskId: string): Promise<Task>;
-  getTaskResult(taskId: string): Promise<CallToolResult>;
 }
 
-/** The {@link TaskClient} over one connection's {@link TaskWire}. */
+/** The {@link TaskClient} over one 2026-07-28 connection's {@link TaskWire}. */
 export function taskClientFor(wire: TaskWire): TaskClient {
   return {
-    era: wire.getEra(),
     callToolStream: (params, opts) => callToolAsTaskStream(wire, params, opts),
     getTask: (taskId) => getTask(wire, taskId),
-    getTaskResult: (taskId) => getTaskResult(wire, taskId),
+  };
+}
+
+/**
+ * The {@link TaskClient} for a connection with no task wire (a 2025-era one):
+ * `call` runs the tool as an ordinary blocking `tools/call`, and the stream
+ * reports it as an already-completed task. No task is ever attached, so there
+ * is no server-side task to get.
+ */
+export function inlineTaskClient(
+  call: (params: TaskCallParams, signal: AbortSignal) => Promise<CallToolResult>,
+): TaskClient {
+  return {
+    async *callToolStream(params, opts) {
+      yield* answeredOutright(await call(params, opts.signal));
+    },
+    getTask: (taskId) =>
+      Promise.reject(new Error(`No task ${taskId}: this connection runs calls inline`)),
   };
 }

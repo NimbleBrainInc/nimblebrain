@@ -72,6 +72,8 @@ mock.module("../api/client", () => ({
 }));
 
 const React = await import("react");
+const { NoticeProvider } = await import("../components/notices");
+const withNotices = (el: React.ReactNode) => React.createElement(NoticeProvider, null, el);
 const ReactDOMClient = await import("react-dom/client");
 const { act } = await import("react");
 const { MemoryRouter, Route, Routes } = await import("react-router-dom");
@@ -150,7 +152,7 @@ async function render(element: React.ReactElement): Promise<Mounted> {
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
   await act(async () => {
-    root.render(element);
+    root.render(withNotices(element));
   });
   await settle();
   mounted = {

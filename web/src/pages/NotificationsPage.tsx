@@ -543,7 +543,8 @@ function InboxSummary({
               type="button"
               data-testid="inbox-needs-attention"
               onClick={onShowAttention}
-              className="text-warning underline-offset-2 hover:underline"
+              // A filter link, not a warning: attention items include good news.
+              className="text-foreground underline-offset-2 hover:underline"
             >
               {`${attention.count}${attention.more ? "+" : ""} need attention`}
             </button>
@@ -834,7 +835,10 @@ function NotificationRowHead({
           <time dateTime={item.timestamp} title={formatInstantFull(item.timestamp)}>
             {formatInstant(item.timestamp)}
           </time>
-          {item.subject ? (
+          {/* Only when it adds something. A connector sets `subject` for routes
+              and grouping as well as for this line, so it often repeats what
+              the title already says ("acme.com is active" about acme.com). */}
+          {item.subject && !item.title.toLowerCase().includes(item.subject.toLowerCase()) ? (
             <>
               <span aria-hidden="true">·</span>
               <span className="truncate">{item.subject}</span>

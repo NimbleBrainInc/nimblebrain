@@ -28,6 +28,7 @@ import {
   ACTION_METHOD,
   KEYDOWN_METHOD,
   LOCATION_METHOD,
+  NOTIFY_METHOD,
   REQUEST_FILE_METHOD,
   UPLOAD_FILES_METHOD,
 } from "./extensions";
@@ -47,6 +48,7 @@ import {
   UiKeydownMessage,
   UiLocationMessage,
   UiMessageMessage,
+  UiNotifyMessage,
   UiOpenLinkMessage,
   UiRequestDisplayModeMessage,
   UiSizeChangedMessage,
@@ -79,6 +81,7 @@ export const SCHEMA_BY_METHOD: Record<string, TSchema> = {
   [UPLOAD_FILES_METHOD]: SynapseUploadFilesMessage,
   [KEYDOWN_METHOD]: UiKeydownMessage,
   [LOCATION_METHOD]: UiLocationMessage,
+  [NOTIFY_METHOD]: UiNotifyMessage,
 };
 
 export interface AppToHostValidationResult {

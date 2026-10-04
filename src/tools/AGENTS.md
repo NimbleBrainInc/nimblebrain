@@ -18,13 +18,13 @@ A read is attributable: `get(scope, key, { caller, purpose })` returns a `Redact
 
 ## Long-Running Tools (MCP Tasks)
 
-Any MCP tool whose work exceeds the stock MCP request timeout (~60 s) must be written as a **task-augmented tool**. The engine implements the client side of both task vocabularies, chosen by the era the connection negotiated: the 2025-11-25 `tasks` utility, and on `2026-07-28` the tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663). Connector authors only have to opt in.
+Any MCP tool whose work exceeds the stock MCP request timeout (~60 s) must run as a **task**. Task augmentation is the `2026-07-28` tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) and nothing else (ADR-0046): the 2025-11-25 tasks utility (`params.task`, `CreateTaskResult`, `tasks/result`) is never sent. The retry policy is ADR-0029's.
 
-**The runtime drives the task wire itself** (`src/tools/mcp-task-client.ts`), on the connection's own transport: SDK v2 reads neither vocabulary (typescript-sdk#2189). Keep every task call behind the `TaskClient` seam so the file can be replaced by the SDK's client when it ships, and never claim the tasks extension on the connection's capabilities: the SDK cannot read a task result, so the claim goes on the task wire's own requests only.
+**The runtime drives the task wire itself** (`src/tools/mcp-task-client.ts`), on the connection's own transport: SDK v2 has no client for the extension (typescript-sdk#2189). Keep every task call behind the `TaskClient` seam so the wire can be replaced by the SDK's client when it ships, and never claim the tasks extension on the connection's capabilities: the SDK cannot read a task result, so the claim goes on the task wire's own requests only.
 
 ### Authoring a long-running tool
 
-Declare the tool with `execution.taskSupport` on its `tools/list` entry. FastMCP (Python) makes this one line:
+Serve it over `2026-07-28` and advertise the tasks extension; a 2025-era connection never carries a task. FastMCP (Python) implements tasks only as this extension and negotiates it on `2026-07-28` connections:
 
 ```python
 from fastmcp.server.tasks import TaskConfig
@@ -41,22 +41,20 @@ async def start_research(query: str, ctx: Context) -> dict:
         raise
 ```
 
-- `mode="optional"` lets the tool run inline or as a task (client decides). Use this.
-- `mode="required"` rejects non-augmented calls with JSON-RPC `-32601` — only use if you're certain every client supports tasks.
-- `mode="forbidden"` (the implicit default) never runs as a task. Use for fast tools.
+- `mode="optional"` (or `task=True`) runs as a task for a client that opts in and inline otherwise. Use this: a 2025-era client still reaches the tool.
+- `mode="required"` refuses a client that does not opt in. On a 2025-era connection the runtime refuses such a tool before dispatch, so it is uncallable there.
+- `mode="forbidden"` (the default) never runs as a task. Use for fast tools.
 
-### What the engine does automatically
+### What the engine does
 
-1. On a 2025-era connection, advertises `capabilities.tasks.{requests.tools.call, cancel}` so servers know the client supports the task flow. `tasks.list` is not claimed: nothing calls `listTasks`, and SEP-2663 removes `tasks/list` from the spec (ADR-0023). On `2026-07-28`, each task-path `tools/call` names the tasks extension in its own `_meta` client capabilities. (`src/tools/mcp-source.ts`, `src/tools/mcp-task-client.ts`)
-2. Takes the task path for a tool whose `execution.taskSupport` is `"optional"` or `"required"` (2025 era), or for every call to a server advertising the tasks extension (`2026-07-28`, where the server decides per call and a complete answer is accepted too). (`src/tools/mcp-source.ts::execute`)
-3. Polls the task — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits a `tool.task_status` event on every `taskStatus`.
+1. **2026-07-28, server advertises the extension:** every call takes the task path. The `tools/call` names the extension in its own `_meta` client capabilities; the server decides per call and may answer outright (accepted as a synthetic `nb-inline-*` task, already completed). (`src/tools/mcp-source.ts::execute`, `mcp-task-client.ts`)
+2. **2025-era connection:** no task is ever attached and no `tasks` capability is claimed. A tool with `execution.taskSupport: "optional"` is called inline. One with `"required"` is refused before dispatch with an `isError` result naming the reason (`McpSource.taskRequiredRefusal`), never sent to fail at the server. `startToolAsTask` (the `/mcp` endpoint's entry) applies the same refusal and runs any other call inline through `inlineTaskClient`, reported as an already-completed task.
+3. Polls the task (`tasks/get`, which inlines the outcome) — `taskCreated` → `taskStatus`* → terminal `result | error` — and emits a `tool.task_status` event on every `taskStatus`. A task that asks for input (`input_required`) is cancelled and reported: the runtime has no one to ask.
 4. Run-scoped `AbortSignal` is threaded through `ToolRouter.execute(call, signal)` → `ToolSource.execute(..., signal)` → the task stream. An abort sends `tasks/cancel`.
-5. Inline tool calls (taskSupport omitted / forbidden) use the regular `client.callTool(...)` path and the same signal.
-6. Crash-retry semantics: **inline calls** restart the subprocess and retry on transport error. **Task-augmented calls do not retry** — task state lives server-side; retrying would create a confusing duplicate. Surfacing the error lets the agent decide whether to initiate a new run. On a `2026-07-28` connection to a server advertising the tasks extension every call takes the task path, so none of that server's calls is retried, and each keeps a task handle (a synthetic `nb-inline-*` one when the server answered outright) until the sweeper's grace window ends.
+5. Inline calls use the regular `client.callTool(...)` path and the same signal.
+6. Retry (ADR-0029): **inline calls** re-establish the connection and retry once on transport error. **Task calls never retry** — task state lives server-side, so a retry would duplicate the work. Every call to a server advertising the extension takes the task path, so none of that server's calls is retried, and each keeps a task handle until the sweeper's grace window ends.
 
-The spec-compliant task flow does NOT use the 60 s MCP request timeout — `tools/call` returns in milliseconds with a task, and the task wire polls it.
-
-Default TTL attached to outbound task-augmented requests is one hour (`DEFAULT_TASK_TTL_MS` in `src/tools/mcp-source.ts`). Servers may clamp it lower.
+A task call does not hold the request open for the work: `tools/call` returns a task in milliseconds and the task wire polls it.
 
 ### Dual-channel contract (engine + entity)
 
@@ -68,14 +66,10 @@ The task channel is how the **agent** awaits the result. Apps that have UIs shou
 Both channels are sources of truth for different consumers. They must be kept in lockstep by the worker:
 
 ```
-ctx.report_progress(...)  ─► notifications/tasks/status  ─► engine ─► chat UI
+ctx.report_progress(...)  ─► task status (tasks/get)      ─► engine ─► chat UI
 app.update_entity(...)    ─► resources/list_changed       ─► relay  ─► Synapse UI (useDataSync)
 ```
 
-### Startup reaper pattern
+### Startup reaper
 
-Long-running entities can get orphaned if the connector subprocess dies mid-run. The canonical fix is a startup sweep that marks any entity stuck in `working` as `failed` with a clear reason. See `synapse-apps/synapse-research/src/mcp_research/server.py::_reap_orphaned_runs()` for the reference implementation.
-
-### Reference server
-
-`synapse-apps/synapse-research` is the first consumer of this pattern. Its `tests/test_spec_compliance.py` exercises every MUST from the spec against an in-process FastMCP client and is a good template for new task-aware connectors.
+Long-running entities are orphaned if the connector process dies mid-run. On startup, the server sweeps every entity still marked `working` to `failed`, with a reason saying the run was interrupted, so the UI never shows a run that will not finish.
