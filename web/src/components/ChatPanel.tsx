@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { useChatConfigContext, useChatContext } from "../context/ChatContext";
-import type { ChatMessage } from "../hooks/useChat";
+import type { ChatMessage } from "../hooks/chat-store";
 import { ariaKeyShortcuts, SHORTCUTS } from "../lib/shortcuts";
 import type { DisplayDetail } from "../lib/tool-display";
 import { InContextPopover } from "./InContextPopover";

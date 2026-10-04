@@ -1,3 +1,4 @@
+import { hostSupports } from "@nimblebrain/synapse";
 import { useAction, useApp, useDataSync, useHostContext } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationList } from "./ConversationList";
@@ -18,7 +19,7 @@ export function Dashboard() {
   // The host draws this view's title in its own chrome when it declares
   // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
   // twice. A host without it (any other MCP Apps host) gets the view's title.
-  const hostShowsTitle = "ai.nimblebrain/location" in (app.hostCapabilities.experimental ?? {});
+  const hostShowsTitle = hostSupports(app, "location");
   const action = useAction();
   // Pushed by the host via hostContext: the workspace the shell is focused on —
   // used here ONLY as a change signal (refetch when the user switches

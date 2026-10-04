@@ -42,7 +42,7 @@ A provider's API key can be supplied here or in `nimblebrain.json` under `provid
 
 ### Public origin and callbacks
 
-The platform builds every outward-facing URL (OAuth callbacks, post-login landing) from a single canonical public origin. Resolution order: `NB_PUBLIC_ORIGIN` → derived from `NB_PLATFORM_HOST` / `NB_CUSTOM_DOMAIN` → legacy `NB_API_URL` → `http://localhost:27247` (dev).
+The platform builds every outward-facing URL (OAuth callbacks, post-login landing) from a single canonical public origin. Resolution order: `NB_PUBLIC_ORIGIN` → derived from `NB_PLATFORM_HOST` / `NB_CUSTOM_DOMAIN` → `http://localhost:27247` (dev).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -51,7 +51,6 @@ The platform builds every outward-facing URL (OAuth callbacks, post-login landin
 | `NB_CUSTOM_DOMAIN` | No | — | Custom domain host. When set and canonical, becomes the derived public origin (custom domain wins). |
 | `NB_CUSTOM_DOMAIN_CANONICAL` | No | `true` | `"true"` / `"false"` only — anything else throws. When `"false"`, the custom domain is served but the platform host stays canonical. |
 | `NB_WEB_URL` | No | falls back to the canonical origin | User-facing SPA origin for post-OAuth browser returns. Only needed when the API and SPA are served from different origins (e.g. dev: API on :27247, SPA on :27246). |
-| `NB_API_URL` | No (**legacy**) | — | **Legacy** public-origin fallback for older deploys that set only this. Prefer `NB_PUBLIC_ORIGIN`. This is the only sanctioned reader; do not reintroduce it elsewhere. |
 
 ### Connectors catalog
 
@@ -219,7 +218,7 @@ When the same setting can be configured in multiple places, this is the resoluti
 | Working directory | `NB_WORK_DIR` (beats all) | `--workdir` | `workDir` | `~/.nimblebrain` |
 | Port | `PORT` (beats `--port`) | `--port` | `http.port` | `27247` |
 | MCP session TTL | `MCP_SESSION_TTL_SECONDS` (beats all) | — | `sessionStore.ttlSeconds` | `28800` |
-| Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts, else legacy `NB_API_URL` | `http://localhost:27247` |
+| Public origin | `NB_PUBLIC_ORIGIN` | — | derived from host facts | `http://localhost:27247` |
 | Anthropic key | `ANTHROPIC_API_KEY` | — | `providers.anthropic.apiKey` | — |
 | Telemetry | `NB_TELEMETRY_DISABLED` / `DO_NOT_TRACK` | — | `telemetry.enabled` | Enabled |
 

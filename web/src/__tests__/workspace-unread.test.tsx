@@ -83,7 +83,7 @@ async function mount(workspaces: BootstrapResponse["workspaces"]): Promise<void>
     root.render(
       <MemoryRouter initialEntries={["/w/00a1b2c3d4e5f607/"]}>
         <WorkspaceProvider initialWorkspaces={infos} initialActiveId={HOME}>
-          <WorkspaceUnreadProvider token="t" workspaces={workspaces}>
+          <WorkspaceUnreadProvider workspaces={workspaces}>
             <Probe />
             <WorkspaceSwitcher />
           </WorkspaceUnreadProvider>

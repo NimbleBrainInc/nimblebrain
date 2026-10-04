@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-import type { SkillsLoadedContext } from "../hooks/useChat";
+import type { SkillsLoadedContext } from "../hooks/chat-store";
 import {
   conciseReason,
   formatTokenCount,

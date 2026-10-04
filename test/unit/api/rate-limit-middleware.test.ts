@@ -8,7 +8,7 @@ import { readJson } from "../../helpers/http.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
 
 /** A workspace chat route, the kind of route requestRateLimit guards. */
-const CHAT_PATH = "/v1/workspaces/ws_00079598e311c160/chat";
+const CHAT_PATH = "/v1/workspaces/ws_00079598e311c160/chat/start";
 
 /**
  * Build a Hono app that simulates authenticated routes with requestRateLimit.

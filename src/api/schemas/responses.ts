@@ -179,7 +179,6 @@ export interface HealthResponse {
 
 export interface ShellResponse {
   placements: PlacementEntry[];
-  chatEndpoint: string;
   eventsEndpoint: string;
 }
 
@@ -232,9 +231,9 @@ export interface BootstrapResponse {
   buildSha: string | null;
 }
 
-// ── POST /v1/workspaces/:wsId/chat ──────────────────────────────────────────
+// ── The finished turn ───────────────────────────────────────────────────────
 
-/** The synchronous chat result; also the `done` frame of `…/chat/stream`. */
+/** A finished chat turn: the `done` frame of `GET /v1/conversations/:id/events`. */
 export interface ChatResponse {
   response: string;
   conversationId: string;

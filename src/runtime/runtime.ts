@@ -845,12 +845,8 @@ export class Runtime {
     // System tools (search, status, use_skill). Skill mutation lives in the
     // dedicated `nb__skills` source — registered separately via
     // `createPlatformSources`.
-    // Use a late-bound holder so reloadSkills can reference `rt` after construction.
+    // Use a late-bound holder so getSkills can reference `rt` after construction.
     const rtHolder: { rt?: Runtime } = {};
-    const boundReloadSkills = async () => {
-      if (rtHolder.rt) await rtHolder.rt.reloadSkills();
-    };
-    const skillDirPath = globalSkillDir(config);
     const boundGetSkills = () => {
       const rt = rtHolder.rt;
       return {
@@ -927,8 +923,7 @@ export class Runtime {
       // Declared here rather than beside `manageUsersCtx` above: both carry the
       // runtime, because `manage_workspaces delete` cascades connector teardown
       // through `Runtime.deleteWorkspace` rather than calling the store.
-      const manageWorkspacesCtx = { getIdentity, workspaceStore, runtime: rt };
-      const manageMembersCtx = { getIdentity, workspaceStore, userStore, runtime: rt };
+      const manageWorkspacesCtx = { getIdentity, workspaceStore, userStore, runtime: rt };
 
       // Brokered teardown and boot-state derivation dispatch through the
       // configured providers; without this the lifecycle can only do the kernel's
@@ -973,26 +968,16 @@ export class Runtime {
       // Register the `nb` system source. Built as an in-process MCP server
       // — `createSystemTools` returns it already-started so it's ready to
       // serve tools and resources to every workspace registry.
-      const systemTools = await createSystemTools(
-        () => rt.getRegistryForCurrentWorkspace(),
-        config.configPath,
-        gate,
-        lifecycle,
-        undefined, // reserved slot — was the nb__delegate spawn context (removed)
-        skillDirPath,
-        boundReloadSkills,
-        boundGetSkills,
-        events,
+      const systemTools = await createSystemTools(() => rt.getRegistryForCurrentWorkspace(), {
+        getSkills: boundGetSkills,
+        eventSink: events,
         features,
-        rt,
-        undefined, // reserved slot — was a registry-SDK home (legacy connector-search path, removed)
+        runtime: rt,
         manageUsersCtx,
         manageWorkspacesCtx,
-        manageMembersCtx,
-        undefined, // reserved slot — was manageConnectorCtx (nb__manage_app, removed)
         toolPromotionCtx,
         toolEligibilityCtx,
-      );
+      });
       rt._systemSource = systemTools;
 
       // Phase 2: Create platform capability sources. Each is an in-process
@@ -1103,11 +1088,6 @@ export class Runtime {
       rt._bootReady.reject(err);
       throw err;
     }
-  }
-
-  /** True if a chat() is currently in flight on this conversation. */
-  isConversationActive(conversationId: string): boolean {
-    return this.activeConversations.has(conversationId);
   }
 
   /** Process a chat message. Optional per-request EventSink for SSE streaming. */

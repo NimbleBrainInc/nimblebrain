@@ -83,7 +83,7 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
 
   it("collapses a burst of connection.state_changed into one refetch", async () => {
     render(
-      <WorkspaceAppIconsProvider token="tok" workspaceId="ws-1">
+      <WorkspaceAppIconsProvider workspaceId="ws-1">
         <div />
       </WorkspaceAppIconsProvider>,
     );
@@ -124,7 +124,7 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
       return null;
     }
     render(
-      <WorkspaceAppIconsProvider token="tok" workspaceId="ws-1">
+      <WorkspaceAppIconsProvider workspaceId="ws-1">
         <Probe />
       </WorkspaceAppIconsProvider>,
     );
@@ -135,7 +135,7 @@ describe("WorkspaceAppIconsProvider — SSE refetch surface (#317)", () => {
 
   it("still refetches on connector.installed / connector.uninstalled", async () => {
     render(
-      <WorkspaceAppIconsProvider token="tok" workspaceId="ws-1">
+      <WorkspaceAppIconsProvider workspaceId="ws-1">
         <div />
       </WorkspaceAppIconsProvider>,
     );

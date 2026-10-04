@@ -28,11 +28,9 @@ const STATE_CHANGE_SETTLE_MS = 500;
  * a burst of connection state changes settles, since those change `status`.
  */
 export function WorkspaceAppIconsProvider({
-  token,
   workspaceId,
   children,
 }: {
-  token: string;
   workspaceId?: string;
   children: ReactNode;
 }) {
@@ -81,7 +79,7 @@ export function WorkspaceAppIconsProvider({
   workspaceRef.current = workspaceId;
   useEffect(() => () => clearTimeout(settleTimer.current), []);
 
-  useEvents(token, workspaceId, {
+  useEvents({
     onConnectorLifecycleChanged: () => {
       if (workspaceId) void refresh(workspaceId);
     },

@@ -129,25 +129,7 @@ describe("System Tools", () => {
       removeTool: (name) => ({ ok: true, toolName: name, changed: false, message: "" }),
     };
     // toolPromotionCtx is the 17th positional arg (15 reserved slots after getRegistry).
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      toolPromotionCtx,
-    );
+    const systemTools = await createSystemTools(() => registry, { toolPromotionCtx });
     const result = await systemTools.execute("search", { scope: "tools", query: "greet" });
 
     expect(result.isError).toBe(false);
@@ -332,26 +314,7 @@ describe("System Tools", () => {
     const toolEligibilityCtx: ToolEligibilityContext = {
       isToolEligible: (tool) => isToolEligibleForPromotion(tool, "member", features),
     };
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      toolEligibilityCtx,
-    );
+    const systemTools = await createSystemTools(() => registry, { toolEligibilityCtx });
 
     const result = await systemTools.execute("search", {
       scope: "tools",
@@ -387,26 +350,7 @@ describe("System Tools", () => {
     const toolEligibilityCtx: ToolEligibilityContext = {
       isToolEligible: (tool) => isToolEligibleForPromotion(tool, "admin", features),
     };
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      toolEligibilityCtx,
-    );
+    const systemTools = await createSystemTools(() => registry, { toolEligibilityCtx });
 
     const result = await systemTools.execute("search", {
       scope: "tools",
@@ -446,19 +390,9 @@ describe("System Tools", () => {
     // runtime is the 11th positional arg (9 reserved/unused slots after
     // getRegistry). The handler resolves its workspace per call, so a bare
     // stand-in is enough to assert registration.
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      {} as unknown as Runtime,
-    );
+    const systemTools = await createSystemTools(() => registry, {
+      runtime: {} as unknown as Runtime,
+    });
     const names = (await systemTools.tools()).map((t) => t.name);
     expect(names).toContain("nb__use_skill");
   });
@@ -496,25 +430,7 @@ describe("System Tools", () => {
         return { ok: true, toolName, changed: true, message: `${toolName} removed` };
       },
     };
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      toolPromotionCtx,
-    );
+    const systemTools = await createSystemTools(() => registry, { toolPromotionCtx });
 
     const result = await systemTools.execute("manage_tools", {
       add: ["test__greet", "test__farewell"],
@@ -555,25 +471,7 @@ describe("System Tools", () => {
         return { ok: true, toolName, changed: true, message: `${toolName} removed` };
       },
     };
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      toolPromotionCtx,
-    );
+    const systemTools = await createSystemTools(() => registry, { toolPromotionCtx });
 
     const result = await systemTools.execute("manage_tools", {
       add: ["app__public", "internal__secret"],
@@ -615,25 +513,7 @@ describe("System Tools", () => {
         return { ok: true, toolName, changed: true, message: `${toolName} removed` };
       },
     };
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      toolPromotionCtx,
-    );
+    const systemTools = await createSystemTools(() => registry, { toolPromotionCtx });
 
     const searchResult = await systemTools.execute("search", {
       scope: "tools",
@@ -743,7 +623,6 @@ describe("status tool — scope: skills", () => {
 
   async function makeStatusSource(
     skills: { context: Skill[]; matchable: Skill[] },
-    lifecycleMock?: { getInstance: (name: string, wsId: string) => unknown },
     layer3?: Array<{ skill: Skill; loadedBy: "always" | "tool_affinity"; reason: string }>,
   ) {
     const registry = await makeRegistry();
@@ -755,19 +634,7 @@ describe("status tool — scope: skills", () => {
       requireWorkspaceId: () => "ws_0076759dbbe19fcc",
       describeRequestSkills: async () => ({ context: skills.context, layer3: layer3 ?? [] }),
     } as unknown as import("../../src/runtime/runtime.ts").Runtime;
-    return await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      lifecycleMock as unknown as import("../../src/connectors/runtime/lifecycle.ts").ConnectorLifecycleManager,
-      undefined,
-      undefined,
-      undefined,
-      getSkills,
-      undefined,
-      undefined,
-      runtimeMock,
-    );
+    return await createSystemTools(() => registry, { getSkills, runtime: runtimeMock });
   }
 
   it("shows core skills as immutable", async () => {
@@ -819,7 +686,7 @@ describe("status tool — scope: skills", () => {
     // both the boot context (Core) and the per-request Layer-3 set. Core is
     // authoritative: it must render once, under "Core Skills", never also in
     // the Layer-3 sections. Guards the name-based coreNames dedup.
-    const source = await makeStatusSource({ context: [coreSkill], matchable: [] }, undefined, [
+    const source = await makeStatusSource({ context: [coreSkill], matchable: [] }, [
       { skill: coreSkill, loadedBy: "always", reason: "loading_strategy: always" },
     ]);
     const result = await source.execute("status", { scope: "skills" });
@@ -855,7 +722,7 @@ describe("status tool — scope: skills", () => {
         fetched++;
         return { ok: true, body: "LOOKUP_BODY" };
       });
-      const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+      const source = await makeStatusSource({ context: [], matchable: [] }, layer3);
       const result = await source.execute("status", { scope: "skills" });
       expect(extractText(result.content)).toContain("connector:crm:lookup");
       expect(fetched).toBe(0);
@@ -863,7 +730,7 @@ describe("status tool — scope: skills", () => {
 
     it("has its body fetched and printed by the detail view", async () => {
       const layer3 = serverSkill(async () => ({ ok: true, body: "LOOKUP_BODY" }));
-      const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+      const source = await makeStatusSource({ context: [], matchable: [] }, layer3);
       const result = await source.execute("status", {
         scope: "skills",
         name: "connector:crm:lookup",
@@ -874,7 +741,7 @@ describe("status tool — scope: skills", () => {
 
     it("is reported as unfetchable when its body cannot be loaded", async () => {
       const layer3 = serverSkill(async () => ({ ok: false, reason: "unreachable" }));
-      const source = await makeStatusSource({ context: [], matchable: [] }, undefined, layer3);
+      const source = await makeStatusSource({ context: [], matchable: [] }, layer3);
       const result = await source.execute("status", {
         scope: "skills",
         name: "connector:crm:lookup",
@@ -916,18 +783,7 @@ describe("search — feature flag gating", () => {
   it("scope=tools returns error when toolDiscovery is disabled", async () => {
     const registry = await makeRegistry();
     const features = resolveFeatures({ toolDiscovery: false });
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      features,
-    );
+    const systemTools = await createSystemTools(() => registry, { features });
     const result = await systemTools.execute("search", { scope: "tools", query: "test" });
     expect(result.isError).toBe(true);
     expect(extractText(result.content)).toContain("disabled");
@@ -936,18 +792,7 @@ describe("search — feature flag gating", () => {
   it("scope=catalog returns error when catalogSearch is disabled", async () => {
     const registry = await makeRegistry();
     const features = resolveFeatures({ catalogSearch: false });
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      features,
-    );
+    const systemTools = await createSystemTools(() => registry, { features });
     const result = await systemTools.execute("search", { scope: "catalog", query: "test" });
     expect(result.isError).toBe(true);
     expect(extractText(result.content)).toContain("disabled");
@@ -956,18 +801,7 @@ describe("search — feature flag gating", () => {
   it("scope=tools works when toolDiscovery is enabled", async () => {
     const registry = await makeRegistry();
     const features = resolveFeatures({ catalogSearch: false });
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      features,
-    );
+    const systemTools = await createSystemTools(() => registry, { features });
     const result = await systemTools.execute("search", { scope: "tools", query: "hello" });
     expect(result.isError).toBe(false);
   });
@@ -1016,19 +850,7 @@ describe("search — scope: catalog", () => {
 
   async function search(runtime: Runtime, query: string) {
     const registry = await makeRegistry();
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      runtime,
-    );
+    const systemTools = await createSystemTools(() => registry, { runtime });
     return systemTools.execute("search", { scope: "catalog", query });
   }
 
@@ -1127,16 +949,7 @@ describe("status tool — scope: overview", () => {
       ],
       matchable: [],
     });
-    const systemTools = await createSystemTools(
-      () => registry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      getSkills,
-    );
+    const systemTools = await createSystemTools(() => registry, { getSkills });
     const result = await systemTools.execute("status", {});
     expect(result.isError).toBe(false);
     const text = extractText(result.content);

@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
+import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import { WorkspaceContext } from "../../src/workspace/context.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -130,7 +132,7 @@ async function connectAndSeed(
   };
   const { meta } = await startConnectorSource(ref, registry, new NoopEventSink(), {
     allowInsecureRemotes: true,
-    wsId: WS,
+    workspaceContext: new WorkspaceContext({ wsId: WS, workDir: defaultWorkDir() }),
   });
   await lifecycle.seedInstance(SERVER_NAME, url, ref, meta ?? undefined, WS);
   return ref;

@@ -140,7 +140,7 @@ export interface BridgeHandle {
  * Create a bridge between the host page and an app iframe.
  *
  * Listens for postMessage events from the iframe and routes them per the
- * ext-apps spec, plus NimbleBrain synapse/ extensions.
+ * ext-apps spec, plus NimbleBrain ai.nimblebrain/* extensions.
  */
 export function createBridge(
   iframe: HTMLIFrameElement,
@@ -230,7 +230,7 @@ export function createBridge(
     }
 
     // Dispatch by method. Every spec method, the two ui/notifications/*
-    // lifecycle signals, and the synapse/ extensions are distinct `method`
+    // lifecycle signals, and the ai.nimblebrain/* extensions are distinct `method`
     // values, so one switch reproduces the original per-method routing. A
     // message with no method, or with one this host does not serve, lands in
     // `default`.

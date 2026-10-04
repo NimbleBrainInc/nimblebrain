@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
-import type { ChatMessage } from "../src/hooks/useChat.ts";
+import type { ChatMessage } from "../src/hooks/chat-store.ts";
 import { MessageList } from "../src/components/MessageList.tsx";
 
 /**

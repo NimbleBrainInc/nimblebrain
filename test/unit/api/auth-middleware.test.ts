@@ -111,7 +111,7 @@ describe("authenticateRequest — adapter mode", () => {
   });
 
   it("rejects an unverified Bearer token on a workspace's chat route with 401", async () => {
-    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/chat", {
+    const req = makeRequest("/v1/workspaces/ws_00079598e311c160/chat/start", {
       method: "POST",
       headers: { Authorization: "Bearer not-a-provider-token" },
     });

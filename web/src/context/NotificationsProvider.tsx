@@ -32,11 +32,9 @@ import { NotificationsContext, type NotificationsValue } from "./NotificationsCo
 const REFRESH_DEBOUNCE_MS = 300;
 
 export function NotificationsProvider({
-  token,
   workspaceId,
   children,
 }: {
-  token: string;
   workspaceId?: string;
   children: ReactNode;
 }) {
@@ -86,7 +84,7 @@ export function NotificationsProvider({
 
   useEffect(() => () => (timer.current ? clearTimeout(timer.current) : undefined), []);
 
-  useEvents(token, workspaceId, {
+  useEvents({
     onNotificationCreated: refresh,
     onNotificationRead: refresh,
     onNotificationDelivery: refresh,

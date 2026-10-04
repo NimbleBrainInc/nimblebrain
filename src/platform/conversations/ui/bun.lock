@@ -8,7 +8,7 @@
         "@modelcontextprotocol/client": "^2.0.0",
         "@modelcontextprotocol/core": "^2.0.0",
         "@modelcontextprotocol/ext-apps": "^2.0.0",
-        "@nimblebrain/synapse": "0.25.1",
+        "@nimblebrain/synapse": "0.28.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "zod": "^4.2.0",
@@ -31,7 +31,7 @@
 
     "@modelcontextprotocol/ext-apps": ["@modelcontextprotocol/ext-apps@2.0.0", "", { "dependencies": { "@standard-schema/spec": "^1.1.0" }, "peerDependencies": { "@modelcontextprotocol/client": "^2.0.0", "@modelcontextprotocol/core": "^2.0.0", "@modelcontextprotocol/server": "^2.0.0", "react": "^17.0.0 || ^18.0.0 || ^19.0.0", "react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0", "zod": "^4.2.0" }, "optionalPeers": ["@modelcontextprotocol/server", "react", "react-dom"] }, "sha512-a6tXzFcIbIIdnqumQ7W8Oxd8W/KAPkAKYpoxpD9nDgxZ24ywgxG5pK/8G9W5pOFUygS7gWHQhPv8cwRB44/8yg=="],
 
-    "@nimblebrain/synapse": ["@nimblebrain/synapse@0.25.1", "", { "peerDependencies": { "@modelcontextprotocol/client": "^2.0.0", "@modelcontextprotocol/core": "^2.0.0", "@modelcontextprotocol/ext-apps": "^2.0.0", "react": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react"], "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-vv+rkgyz7sPxjBZiqy38idZS2G3IJef2iJqmBdqzl05ofRdEf0cgbUIur5leP8J7QbfsvLdK8NNArVMURNf++g=="],
+    "@nimblebrain/synapse": ["@nimblebrain/synapse@0.28.0", "", { "peerDependencies": { "@modelcontextprotocol/client": "^2.0.0", "@modelcontextprotocol/core": "^2.0.0", "@modelcontextprotocol/ext-apps": "^2.0.0", "react": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react"], "bin": { "synapse": "dist/codegen/cli.js" } }, "sha512-Z705GhTwhhvotrvPjWKhfg3asIDaHL1Vc6SnZZBRHGplCEFBJQUJXEPzV/uRvmY3+Uz1a8lrBPs4hwd4TF2uJA=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.150.0", "", {}, "sha512-rDS5/31E9HfPl/CIzGrn0DOlvBbXFseQ5URJ9sYMfstbKLD/c6Gm9vmRzRGDdAXyOIL4zmO37lc9RIwYqVruZw=="],
 

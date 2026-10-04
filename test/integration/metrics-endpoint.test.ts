@@ -16,6 +16,7 @@ import { join } from "node:path";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -61,8 +62,7 @@ describe("metrics with no Prometheus configured", () => {
   });
 
   test("a chat turn drives the metrics sink without error and populates a counter", async () => {
-    const chat = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const chat = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${API_KEY}`,

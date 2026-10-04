@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { MessageList } from "../src/components/MessageList.tsx";
-import type { ChatMessage } from "../src/hooks/useChat.ts";
+import type { ChatMessage } from "../src/hooks/chat-store.ts";
 
 // happy-dom's Window stub doesn't expose SyntaxError/TypeError; querySelector's
 // selector parser constructs one and trips on the gap. Same patch the

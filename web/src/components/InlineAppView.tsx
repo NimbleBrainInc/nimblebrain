@@ -7,8 +7,8 @@ import { buildHostExtensions } from "../bridge/host-extensions";
 import { createAppIframe } from "../bridge/iframe";
 import { useFileLimits } from "../context/ChatContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import type { ToolResultForUI } from "../hooks/chat-store";
 import { useAppDisplayName } from "../hooks/useAppDisplayName";
-import type { ToolResultForUI } from "../hooks/useChat";
 import { buildSizedHtml, DEFAULT_CONTENT_HEIGHT, RUNAWAY_HEIGHT_GUARD } from "./content-height";
 import { useNotice } from "./notices";
 

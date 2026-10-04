@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { defaultWorkDir } from "../../src/connectors/runtime/paths.ts";
 import { startConnectorSource } from "../../src/connectors/runtime/startup.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
+import { WorkspaceContext } from "../../src/workspace/context.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -128,7 +130,10 @@ describe("startConnectorSource — remote url entries", () => {
 
     const meta = await startConnectorSource(ref, registry, new NoopEventSink(), {
       allowInsecureRemotes: true,
-      wsId: "ws_0076759dbbe19fcc",
+      workspaceContext: new WorkspaceContext({
+        wsId: "ws_0076759dbbe19fcc",
+        workDir: defaultWorkDir(),
+      }),
     });
 
     expect(meta).not.toBeNull();
@@ -154,7 +159,10 @@ describe("startConnectorSource — remote url entries", () => {
     const results = await Promise.allSettled([
       startConnectorSource(ref, registry, new NoopEventSink(), {
         allowInsecureRemotes: true,
-        wsId: "ws_0076759dbbe19fcc",
+        workspaceContext: new WorkspaceContext({
+          wsId: "ws_0076759dbbe19fcc",
+          workDir: defaultWorkDir(),
+        }),
       }),
     ]);
 
@@ -162,7 +170,7 @@ describe("startConnectorSource — remote url entries", () => {
     expect(registry.hasSource("bad-remote")).toBe(false);
   }, 20_000);
 
-  it("url connector without static auth + missing wsId throws (no silent ws_00299f642c763af7 fallback)", async () => {
+  it("url connector without static auth + missing workspaceContext throws (no silent ws_00299f642c763af7 fallback)", async () => {
     // Credential-boundary guard: URL connectors that will open an OAuth flow
     // must be workspace-scoped. A silent `?? "ws_00299f642c763af7"` fallback would
     // pool OAuth tokens across workspaces, so startConnectorSource hard-errors
@@ -178,9 +186,9 @@ describe("startConnectorSource — remote url entries", () => {
     await expect(
       startConnectorSource(ref, registry, new NoopEventSink(), {
         allowInsecureRemotes: true,
-        // wsId intentionally omitted
+        // workspaceContext intentionally omitted
       }),
-    ).rejects.toThrow(/requires opts\.workspaceContext.*opts\.wsId/);
+    ).rejects.toThrow(/requires opts\.workspaceContext/);
     expect(registry.hasSource("no-ws")).toBe(false);
   }, 15_000);
 

@@ -38,7 +38,7 @@ import type {
   PreparingTool,
   StreamingState,
   ToolCallDisplay,
-} from "../hooks/useChat";
+} from "../hooks/chat-store";
 import { useMinDisplayTime, type VisualStatus } from "../hooks/useMinDisplayTime";
 import { isDocumentArtifact } from "../lib/artifact-kind";
 import { formatDuration, stripServerPrefix } from "../lib/format";

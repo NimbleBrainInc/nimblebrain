@@ -3,8 +3,8 @@
  *
  * Tools return both a human-readable `content` array and an optional
  * `structuredContent` object. We prefer `structuredContent` when present
- * since it carries the typed payload; the JSON-parse fallback exists for
- * older tools that haven't migrated yet.
+ * since it carries the typed payload; the JSON-parse fallback reads a tool
+ * that returns its payload as JSON text only (the conversations source).
  *
  * On `isError: true` we throw with the error text so callers can
  * surface it to the operator without having to inspect the envelope

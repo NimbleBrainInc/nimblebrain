@@ -47,6 +47,7 @@ import type { Runtime } from "../runtime/runtime.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import type { CredentialStore } from "./credential-store.ts";
@@ -2335,8 +2336,7 @@ async function eagerStartRemoteSource(
   try {
     await startConnectorSource(ref, wsRegistry, ctx.runtime.getEventSink(), {
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
-      wsId,
-      workDir: ctx.runtime.getWorkDir(),
+      workspaceContext: new WorkspaceContext({ wsId, workDir: ctx.runtime.getWorkDir() }),
       connectorMcp: ctx.runtime.getConnectorMcpDeps(wsId),
     });
     return undefined;
