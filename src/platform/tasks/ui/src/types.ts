@@ -97,6 +97,9 @@ export interface TaskRun {
   label?: RunLabel;
   assessment?: RunAssessment;
   retryOf?: string;
+  /** Set on a run that is an item of a batch. */
+  batchId?: string;
+  costUsd?: number;
   startedAt: string;
   completedAt?: string;
   resultPreview?: string;
@@ -150,4 +153,50 @@ export interface TaskRunResult {
     | "content_filter"
     | "error"
     | "other";
+}
+
+/** How many of a batch's items are in each state (mirror of the runtime's BatchCounts). */
+export interface BatchCounts {
+  pending: number;
+  queued: number;
+  running: number;
+  pass: number;
+  fail: number;
+  uncertain: number;
+  not_assessed: number;
+  failed: number;
+  skipped: number;
+  cancelled: number;
+}
+
+/** A batch as the batch tools return it (mirror of the runtime's TaskBatchView). */
+export interface TaskBatch {
+  id: string;
+  taskId: string;
+  items: number;
+  concurrency: number;
+  budgetUsd?: number;
+  state: "running" | "paused" | "completed" | "cancelled";
+  pause?: { reason: string; message: string; at: string };
+  counts: BatchCounts;
+  costUsd: number;
+  createdAt: string;
+  updatedAt: string;
+  done: number;
+  passRate: number | null;
+}
+
+/** One item's result row (mirror of the runtime's TaskBatchItemView). */
+export interface BatchItemResult {
+  index: number;
+  inputSummary: string;
+  state: "pending" | "queued" | "running" | "done";
+  runId?: string;
+  previousRunIds?: string[];
+  execution?: string;
+  verdict?: string;
+  label?: RunLabel;
+  costUsd?: number;
+  error?: string;
+  output?: Record<string, string | number | boolean | null>;
 }

@@ -2,9 +2,10 @@ import { hostSupports } from "@nimblebrain/synapse";
 import { useApp, useDataSync } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { ClockIcon, PlusIcon } from "../icons.tsx";
-import type { TaskRun, TaskSummary } from "../types.ts";
+import type { TaskBatch, TaskRun, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
-import { asDict } from "../utils.ts";
+import { asDict, formatCost } from "../utils.ts";
+import { BatchPane } from "./BatchPane.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { CreateTaskForm, TEMPLATES } from "./CreateTaskForm.tsx";
 import { RailRunItem, RailTaskItem } from "./RailItem.tsx";
@@ -57,10 +58,13 @@ export function TasksUI() {
   const updateTool = useTool<string>("update");
   const deleteTool = useTool<string>("delete");
   const cancelTool = useTool<string>("cancel");
+  const batchesTool = useTool<string>("batches");
 
   // Data state
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [runs, setRuns] = useState<TaskRun[]>([]);
+  const [batches, setBatches] = useState<TaskBatch[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [runsLoading, setRunsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -102,13 +106,17 @@ export function TasksUI() {
     }
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runsTool.call is stable, adding it would cause infinite re-renders
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runsTool.call and batchesTool.call are stable, adding them would cause infinite re-renders
   const loadRuns = useCallback(async () => {
     setRunsLoading(true);
     try {
-      const result = await runsTool.call({ limit: 20 });
-      const data = asDict(result.data);
-      setRuns((data.runs as TaskRun[]) || []);
+      // A batch shows as one row of its own, not as one row per item.
+      const [result, batchResult] = await Promise.all([
+        runsTool.call({ limit: 20, excludeBatchRuns: true }),
+        batchesTool.call({ limit: 10 }),
+      ]);
+      setRuns((asDict(result.data).runs as TaskRun[]) || []);
+      setBatches((asDict(batchResult.data).batches as TaskBatch[]) || []);
     } catch {
       // silent
     } finally {
@@ -299,6 +307,7 @@ export function TasksUI() {
 
   // Two-pane reader (default)
   const selectedRun = runs.find((r) => r.id === selectedRunId) || null;
+  const selectedBatch = batches.find((b) => b.id === selectedBatchId) || null;
   const selectedRunTask = selectedRun ? tasks.find((a) => a.id === selectedRun.taskId) : undefined;
   // Mobile pane visibility is driven by explicit navigation, not selection.
   // See the comment on `userOpenedReader` above.
@@ -333,6 +342,24 @@ export function TasksUI() {
             onPickTemplate={pickTemplate}
           />
 
+          {batches.length > 0 && (
+            <>
+              <RailSection label="Batches" count={batches.length} />
+              {batches.map((b) => (
+                <RailBatchItem
+                  key={b.id}
+                  batch={b}
+                  taskName={taskNameById.get(b.taskId)}
+                  active={selectedBatchId === b.id}
+                  onClick={() => {
+                    setSelectedBatchId(b.id);
+                    setUserOpenedReader(true);
+                  }}
+                />
+              ))}
+            </>
+          )}
+
           <RailSection label="Recent Runs" count={runs.length} />
           <RunsList
             runs={runs}
@@ -341,22 +368,32 @@ export function TasksUI() {
             taskNameById={taskNameById}
             onSelectRun={(id) => {
               setSelectedRunId(id);
+              setSelectedBatchId(null);
               setUserOpenedReader(true);
             }}
           />
         </aside>
 
-        <ReaderArea
-          runs={runs}
-          runsLoading={runsLoading}
-          loading={loading}
-          tasks={tasks}
-          selectedRun={selectedRun}
-          selectedRunTask={selectedRunTask}
-          onRerun={handleRunNow}
-          onOpenConfig={(name) => setSelectedTask(name)}
-          onBack={() => setUserOpenedReader(false)}
-        />
+        {selectedBatch ? (
+          <BatchPane
+            batch={selectedBatch}
+            taskName={taskNameById.get(selectedBatch.taskId)}
+            onChanged={loadAll}
+            onBack={() => setUserOpenedReader(false)}
+          />
+        ) : (
+          <ReaderArea
+            runs={runs}
+            runsLoading={runsLoading}
+            loading={loading}
+            tasks={tasks}
+            selectedRun={selectedRun}
+            selectedRunTask={selectedRunTask}
+            onRerun={handleRunNow}
+            onOpenConfig={(name) => setSelectedTask(name)}
+            onBack={() => setUserOpenedReader(false)}
+          />
+        )}
       </div>
 
       {confirmDelete && (
@@ -454,6 +491,35 @@ function TasksList({
         />
       ))}
     </>
+  );
+}
+
+/** One batch in the rail: progress, verdict counts, cost, and state. Click → open its results. */
+function RailBatchItem({
+  batch,
+  taskName,
+  active,
+  onClick,
+}: {
+  batch: TaskBatch;
+  taskName?: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const { counts } = batch;
+  return (
+    <button type="button" className={`rail-run-item${active ? " active" : ""}`} onClick={onClick}>
+      <div className="rail-run-top">
+        <span className="rail-run-name">
+          ▸ Batch {batch.id.slice(6, 10)} · {taskName ?? batch.taskId}
+        </span>
+        <span className="rail-run-time">{batch.state}</span>
+      </div>
+      <div className="rail-run-snippet">
+        {batch.done}/{batch.items} · ✓ {counts.pass} ✗ {counts.fail} ? {counts.uncertain}
+        {counts.failed > 0 ? ` ⚠ ${counts.failed}` : ""} · {formatCost(batch.costUsd) || "$0.00"}
+      </div>
+    </button>
   );
 }
 

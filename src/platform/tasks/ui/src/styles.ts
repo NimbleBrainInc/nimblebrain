@@ -680,4 +680,23 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .dot-running, .skel { animation: none; }
 }
+
+/* Batches */
+.batch-progress { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--color-text-secondary) 15%, transparent); overflow: hidden; }
+.batch-progress-fill { height: 100%; background: var(--color-text-accent); transition: width 0.3s; }
+.batch-counts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0; font-size: 12px; color: var(--color-text-secondary); }
+.batch-count-pass { color: var(--nb-color-success); }
+.batch-count-fail { color: var(--nb-color-danger); }
+.batch-count-uncertain { color: var(--nb-color-warning); }
+.batch-note { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 10px; }
+.batch-filter { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-secondary); margin: 6px 0 10px; }
+.batch-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.batch-table th { text-align: left; font-weight: 500; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-primary); padding: 4px 6px; }
+.batch-table td { border-bottom: 1px solid color-mix(in srgb, var(--color-border-primary) 50%, transparent); padding: 5px 6px; vertical-align: top; color: var(--color-text-primary); max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.batch-input { font-family: var(--font-mono); white-space: nowrap; }
+.batch-pending { color: var(--color-text-secondary); }
+.batch-run-link { background: none; border: none; padding: 0; color: var(--color-text-accent); cursor: pointer; font-size: 12px; }
+.batch-run-output { padding: 6px 0; }
+.batch-run-id { font-size: 11px; color: var(--color-text-secondary); margin-bottom: 4px; }
+.batch-run-error { color: var(--nb-color-danger); white-space: pre-wrap; }
 `;
