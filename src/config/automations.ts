@@ -11,6 +11,7 @@
  */
 
 import { DEFAULT_MAX_ITERATIONS, MAX_ITERATIONS } from "../limits.ts";
+import { log } from "../observability/log.ts";
 
 /** The `automations` block, as an operator writes it. */
 export interface AutomationsConfig {
@@ -154,4 +155,33 @@ export function describeClampedLimits(auto: RunCaps, effective: EffectiveRunLimi
   check("maxInputTokens", auto.maxInputTokens);
   check("maxRunDurationMs", auto.maxRunDurationMs);
   return notes;
+}
+
+let warnedBothBlocks = false;
+
+/**
+ * The block that configures task runs: `tasks` when the file sets it, else
+ * `automations`. `automations` is the name operators and the chart set today;
+ * `tasks` is accepted beside it as the name the block will take. When both are
+ * set, `tasks` wins whole (the two are never merged key by key, so what runs
+ * is exactly one block an operator wrote) and a warning names the ignored one,
+ * once per process.
+ */
+export function selectTaskRunConfig(file: {
+  automations?: unknown;
+  tasks?: unknown;
+}): AutomationsConfig | undefined {
+  if (file.tasks === undefined) return file.automations as AutomationsConfig | undefined;
+  if (file.automations !== undefined && !warnedBothBlocks) {
+    warnedBothBlocks = true;
+    log.warn(
+      "[config] nimblebrain.json sets both `tasks` and `automations`; `tasks` is used and `automations` is ignored",
+    );
+  }
+  return file.tasks as AutomationsConfig;
+}
+
+/** Let the next {@link selectTaskRunConfig} warn again. Tests only. */
+export function resetTaskRunConfigWarningForTest(): void {
+  warnedBothBlocks = false;
 }

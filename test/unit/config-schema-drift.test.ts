@@ -44,11 +44,15 @@ interface SchemaObject {
 const schema = JSON.parse(
   readFileSync(resolve(import.meta.dir, "../../src/config/nimblebrain-config.schema.json"), "utf8"),
 ) as {
-  properties: {
-    features: SchemaObject;
-    automations: SchemaObject & {
+  $defs: {
+    taskRunConfig: SchemaObject & {
       properties: Record<string, { minimum: number; maximum: number; default?: number }>;
     };
+  };
+  properties: {
+    features: SchemaObject;
+    automations: { allOf: Array<{ $ref: string }> };
+    tasks: { allOf: Array<{ $ref: string }> };
     models: SchemaObject;
     notifications: SchemaObject & {
       properties: { poll: SchemaObject };
@@ -145,14 +149,22 @@ describe("config schema ↔ notification poll config", () => {
 describe("config schema ↔ automations config", () => {
   // `AUTOMATIONS_CONFIG_KEYS` is derived from the bounds the resolver clamps
   // against, so a key the runtime reads is a key the schema must declare.
-  expectLockstep("automations", schema.properties.automations, AUTOMATIONS_CONFIG_KEYS);
+  expectLockstep("taskRunConfig", schema.$defs.taskRunConfig, AUTOMATIONS_CONFIG_KEYS);
+
+  // `automations` and its alias `tasks` are one block under two names, so both
+  // must point at the one definition rather than carry copies that can drift.
+  test("automations and tasks both declare the shared taskRunConfig block", () => {
+    for (const name of ["automations", "tasks"] as const) {
+      expect(schema.properties[name].allOf).toEqual([{ $ref: "#/$defs/taskRunConfig" }]);
+    }
+  });
 
   // The schema's range and default are what an editor offers, and the
   // resolver's are what runs; a ceiling with no default must not advertise one.
   test("automations: each key's range and default match the resolver's", () => {
     const resolved = resolveAutomationsConfig();
     for (const key of AUTOMATIONS_CONFIG_KEYS) {
-      const declared = schema.properties.automations.properties[key];
+      const declared = schema.$defs.taskRunConfig.properties[key];
       expect({ key, min: declared?.minimum, max: declared?.maximum }).toEqual({
         key,
         ...AUTOMATIONS_CONFIG_BOUNDS[key],

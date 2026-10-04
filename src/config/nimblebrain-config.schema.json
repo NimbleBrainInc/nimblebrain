@@ -481,7 +481,44 @@
       "additionalProperties": false
     },
     "automations": {
-      "description": "Automation run guardrails: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each automation's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
+      "description": "Task run guardrails (see `$defs/taskRunConfig`). The name operators set today; `tasks` is accepted beside it.",
+      "allOf": [{ "$ref": "#/$defs/taskRunConfig" }]
+    },
+    "tasks": {
+      "description": "The same block as `automations`, under the name it will take. When both are set, `tasks` is used whole and `automations` is ignored, with a warning.",
+      "allOf": [{ "$ref": "#/$defs/taskRunConfig" }]
+    },
+    "files": {
+      "description": "File context configuration for workspace file uploads.",
+      "type": "object",
+      "properties": {
+        "maxFileSize": {
+          "type": "number",
+          "description": "Maximum individual file size in bytes. Default: 26214400 (25 MB).",
+          "default": 26214400
+        },
+        "maxTotalSize": {
+          "type": "number",
+          "description": "Maximum total file size per message in bytes. Default: 104857600 (100 MB).",
+          "default": 104857600
+        },
+        "maxFilesPerMessage": {
+          "type": "number",
+          "description": "Maximum number of files per chat message. Default: 10.",
+          "default": 10
+        },
+        "maxExtractedTextSize": {
+          "type": "number",
+          "description": "Maximum extracted text size per file in bytes. Default: 204800 (200 KB).",
+          "default": 204800
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "taskRunConfig": {
+      "description": "Task run guardrails: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each automation's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
       "type": "object",
       "properties": {
         "maxConcurrentRuns": {
@@ -521,35 +558,6 @@
       },
       "additionalProperties": false
     },
-    "files": {
-      "description": "File context configuration for workspace file uploads.",
-      "type": "object",
-      "properties": {
-        "maxFileSize": {
-          "type": "number",
-          "description": "Maximum individual file size in bytes. Default: 26214400 (25 MB).",
-          "default": 26214400
-        },
-        "maxTotalSize": {
-          "type": "number",
-          "description": "Maximum total file size per message in bytes. Default: 104857600 (100 MB).",
-          "default": 104857600
-        },
-        "maxFilesPerMessage": {
-          "type": "number",
-          "description": "Maximum number of files per chat message. Default: 10.",
-          "default": 10
-        },
-        "maxExtractedTextSize": {
-          "type": "number",
-          "description": "Maximum extracted text size per file in bytes. Default: 204800 (200 KB).",
-          "default": 204800
-        }
-      },
-      "additionalProperties": false
-    }
-  },
-  "$defs": {
     "connectorRef": {
       "description": "One entry in a workspace's `connectors[]` — a remote MCP server, addressed by URL. Workspace records live at `<workDir>/workspaces/<wsId>/workspace.json`, not in this file.",
       "type": "object",

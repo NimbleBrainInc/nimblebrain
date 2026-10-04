@@ -117,7 +117,8 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
-| `automations` | `object` | — | Automation run slots, queue, and per-run ceilings. See [automations](#automations). |
+| `automations` | `object` | — | Task run slots, queue, and per-run ceilings. See [automations](#automations). |
+| `tasks` | `object` | — | The `automations` block under the name it will take. See [automations](#automations). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
@@ -628,7 +629,9 @@ the first few forever.
 
 ## automations
 
-Guardrails on [automation](/using/automations) runs: how many the runtime holds in flight and waiting, across every workspace, and the most any one run may spend.
+Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight and waiting, across every workspace, and the most any one run may spend.
+
+The block may also be written as `tasks`, the name it will take. When a file sets both, `tasks` is used whole, `automations` is ignored, and the runtime logs a warning at startup.
 
 ```json
 {

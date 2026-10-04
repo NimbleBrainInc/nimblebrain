@@ -1,9 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import {
   describeClampedLimits,
   effectiveRunLimits,
+  resetTaskRunConfigWarningForTest,
   resolveAutomationsConfig,
+  selectTaskRunConfig,
 } from "../../../src/config/automations.ts";
+import { log } from "../../../src/observability/log.ts";
 
 describe("resolveAutomationsConfig", () => {
   it("fills every key with its default when the block is absent, leaving no input ceiling", () => {
@@ -94,5 +97,29 @@ describe("effectiveRunLimits", () => {
     const notes = describeClampedLimits(auto, effectiveRunLimits(auto, ceilings));
     expect(notes).toHaveLength(1);
     expect(notes[0]).toContain("maxIterations 40");
+  });
+});
+
+describe("selectTaskRunConfig", () => {
+  afterEach(() => resetTaskRunConfigWarningForTest());
+
+  it("reads automations when tasks is unset, and tasks when only it is set", () => {
+    expect(selectTaskRunConfig({ automations: { maxConcurrentRuns: 3 } })).toEqual({
+      maxConcurrentRuns: 3,
+    });
+    expect(selectTaskRunConfig({ tasks: { maxQueuedRuns: 7 } })).toEqual({ maxQueuedRuns: 7 });
+    expect(selectTaskRunConfig({})).toBeUndefined();
+  });
+
+  it("uses tasks whole when both are set, and warns once", () => {
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const both = { automations: { maxConcurrentRuns: 3 }, tasks: { maxQueuedRuns: 7 } };
+      expect(selectTaskRunConfig(both)).toEqual({ maxQueuedRuns: 7 });
+      selectTaskRunConfig(both);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
