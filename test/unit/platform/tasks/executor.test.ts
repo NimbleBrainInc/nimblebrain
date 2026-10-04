@@ -374,6 +374,47 @@ describe("createDirectExecutor — stopReason → status", () => {
     expect(run.error).toContain("10,000 left");
   });
 
+  test("spend_limit by a batch's account before any call → skipped; after one → failure", async () => {
+    const batchAccount = {
+      id: "task-batch:ws/usr/batch_000000000001",
+      unit: "usd" as const,
+      remaining: 1,
+    };
+    const stopped = (inputTokens: number) =>
+      createDirectExecutor(
+        async (req): Promise<TaskFnResult> => ({
+          output: "",
+          runId: req.runId ?? "run_test000000",
+          toolCalls: [],
+          stopReason: "spend_limit",
+          spendAccountId: batchAccount.id,
+          usage: { inputTokens, outputTokens: 0, iterations: 0 },
+        }),
+        () => ({}),
+      );
+    const before = await stopped(0)(
+      makeTask(),
+      undefined,
+      "manual",
+      undefined,
+      undefined,
+      undefined,
+      [batchAccount],
+    );
+    expect(before.run.status).toBe("skipped");
+    expect(before.run.error).toContain("Batch budget reached");
+    const after = await stopped(500)(
+      makeTask(),
+      undefined,
+      "manual",
+      undefined,
+      undefined,
+      undefined,
+      [batchAccount],
+    );
+    expect(after.run.status).toBe("failure");
+  });
+
   test("length → failure (fail-closed default)", async () => {
     expect(await statusFor("length")).toBe("failure");
   });

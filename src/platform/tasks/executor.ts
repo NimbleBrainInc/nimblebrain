@@ -681,6 +681,17 @@ function mapResultToRun(
       spendAccounts.find((a) => a.id === data.spendAccountId),
       task,
     );
+    // Refused by its batch's account before its first model call: the run
+    // never started (ADR-0045 `skipped`, over a spend account). Its batch asks
+    // for the item again, so it neither counts as a failure nor feeds the
+    // task's error streak.
+    if (
+      data.spendAccountId?.startsWith(BATCH_ACCOUNT_PREFIX) &&
+      data.usage.inputTokens === 0 &&
+      data.usage.outputTokens === 0
+    ) {
+      status = "skipped";
+    }
   }
   error ??= unrecognizedStopError(status, stopReason, data);
   // Recorded whatever the status, and read without any criteria: the derived

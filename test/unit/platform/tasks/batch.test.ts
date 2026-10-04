@@ -118,7 +118,13 @@ interface HarnessOptions {
   /** Hold every run until the test releases it. */
   gated?: boolean;
   /** Emulate the door's spend accounts: each run makes `calls` model calls of 100 in / 100 out. */
-  door?: { calls: number };
+  door?: {
+    calls: number;
+    /** Output tokens a call actually writes (default 100, the most it may reserve). */
+    writes?: number;
+    /** Hold each run after its first call is reserved, until the test releases it. */
+    holdAfterCheck?: boolean;
+  };
   /** The run's status for an input. */
   behave?: (input: unknown) => Partial<TaskRun>;
   spend?: SpendBalances;
@@ -189,10 +195,18 @@ function harness(opts: HarnessOptions = {}): Harness {
               stop = allowed.accountId;
               break;
             }
-            await Bun.sleep(1);
-            hold.debit({ inputTokens: 100, outputTokens: 100 });
-            costUsd += 0.2;
-            totalSpent += 0.2;
+            if (i === 0 && opts.door.holdAfterCheck) {
+              await new Promise<void>((resolve) =>
+                gates.push({ release: resolve, input: input?.data, runId }),
+              );
+            } else {
+              await Bun.sleep(1);
+            }
+            const writes = opts.door.writes ?? 100;
+            hold.debit({ inputTokens: 100, outputTokens: writes });
+            const cost = (100 + writes) / 1000;
+            costUsd += cost;
+            totalSpent += cost;
           }
         } finally {
           hold.release();
@@ -205,7 +219,13 @@ function harness(opts: HarnessOptions = {}): Harness {
         taskId: task.id,
         startedAt: now,
         completedAt: now,
-        status: stop ? "failure" : "success",
+        // As the executor records it: refused before its first call by the
+        // batch's account, the run never started.
+        status: stop
+          ? costUsd === 0 && stop.startsWith("task-batch:")
+            ? "skipped"
+            : "failure"
+          : "success",
         inputTokens: 100,
         outputTokens: 50,
         toolCalls: 0,
@@ -555,6 +575,52 @@ describe("the batch budget", () => {
     const batch = batchOf(h, out.batch.id);
     expect(batch.counts.pass).toBe(3);
     expect(batch.budgetUsd).toBe(5);
+  });
+});
+
+describe("reserved-out versus spent-out", () => {
+  it("does not pause when another run's reservation refused a call, runs the item once it frees, and pauses only when spent", async () => {
+    // A call reserves $0.20 (100 in, 100 out) and actually costs $0.11 (100 in,
+    // 10 out). $0.35 covers one reservation at a time and three calls' spend
+    // only barely short: a, then b, run; c finds the budget truly spent.
+    const h = harness({
+      door: { calls: 1, writes: 10, holdAfterCheck: true },
+      maxConcurrentRuns: 4,
+    });
+    makeTask();
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items("a", "b", "c"), concurrency: 2, budgetUsd: 0.35 },
+      h.ctx,
+    );
+    // a holds its reservation; b was refused by it and waits, without a pause.
+    await waitFor(() => h.gates.length === 1, "a reserved");
+    await waitFor(
+      () => readBatchItems(workDir, WS, OWNER, out.batch.id)[1]?.previousRunIds?.length === 1,
+      "b refused and back to pending",
+    );
+    expect(batchOf(h, out.batch.id).state).toBe("running");
+    expect(h.paused).toHaveLength(0);
+    const refused = readRuns(workDir, WS, OWNER, "enrich").find((r) => r.batchIndex === 1);
+    expect(refused?.status).toBe("skipped");
+    // Nothing is retried on a timer while a holds its reservation.
+    await Bun.sleep(40);
+    expect(readRuns(workDir, WS, OWNER, "enrich").filter((r) => r.batchIndex === 1)).toHaveLength(
+      1,
+    );
+
+    // a ends, freeing its reservation: b runs (and c is refused by b's).
+    h.gates[0]!.release();
+    await waitFor(() => h.gates.length === 2, "b reserved");
+    expect(batchOf(h, out.batch.id).state).toBe("running");
+    h.gates[1]!.release();
+
+    // b ends: $0.13 is left, less than one call needs, and nothing else holds
+    // a reservation, so c's refusal is spend.
+    await waitFor(() => batchOf(h, out.batch.id).state === "paused", "budget pause");
+    const batch = batchOf(h, out.batch.id);
+    expect(batch.pause?.reason).toBe("budget");
+    expect(batch.counts).toMatchObject({ pass: 2, pending: 1 });
+    expect(h.totalSpent()).toBeCloseTo(0.22, 9);
   });
 });
 

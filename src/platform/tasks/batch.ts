@@ -157,6 +157,12 @@ interface LiveBatch {
   retryTimer?: ReturnType<typeof setTimeout>;
   /** Runs a pause took out of the queue: their items go back to pending. */
   withdrawn: Set<string>;
+  /**
+   * An item's run was refused by the batch's account only because other runs'
+   * reservations held it: ask for nothing more until one of the batch's runs
+   * ends and frees its reservation.
+   */
+  waitForSettle?: boolean;
 }
 
 /** The spend account id of a batch. Opaque to the door. */
@@ -609,6 +615,7 @@ export class BatchDriver {
   /** Hold the batch's account open while it runs, then ask for items. */
   private activate(lb: LiveBatch): void {
     const { batch } = lb;
+    lb.waitForSettle = false;
     if (this.config.spend && batch.budgetUsd !== undefined && !lb.anchor) {
       lb.anchor = this.config.spend.open(this.accountsFor(lb), { model: "", rates: null });
     }
@@ -648,7 +655,7 @@ export class BatchDriver {
       this.settleIdle(lb);
       return;
     }
-    if (this.stopping || lb.retryTimer) return;
+    if (this.stopping || lb.retryTimer || lb.waitForSettle) return;
     while (lb.outstanding.size < lb.batch.concurrency) {
       const index = this.nextPending(lb);
       if (index === undefined) break;
@@ -791,38 +798,74 @@ export class BatchDriver {
     lb.outstanding.delete(index);
     const item = lb.items[index];
     if (!item || item.runId !== runId) return;
-    const { batch } = lb;
-    const accountId = batchAccountId(batch);
-    const spendStop = run.stopReason === "spend_limit" ? run.spendAccountId : undefined;
-    const settled = this.outcomeOf(item, run);
-    const withdrawn = lb.withdrawn.delete(runId);
-    if (!run.trigger && this.stopping) {
-      // Dropped from the queue as the runtime stopped: ask again next boot.
-      this.setItem(lb, backToPending(settled));
-    } else if (!run.trigger && withdrawn) {
-      // Taken out of the queue by a pause: asked for again on resume.
-      this.setItem(lb, backToPending(settled));
-      lb.pending.unshift(index);
-    } else if (spendStop === accountId && settled.execution === "failed") {
-      // Stopped by the batch's budget before it produced anything: it runs
-      // again when the batch resumes under a raised budget.
-      this.setItem(lb, backToPending(settled));
-      lb.pending.unshift(index);
-    } else {
-      this.setItem(lb, settled);
-    }
-    if (batch.state === "cancelled" && lb.items[index]?.state === "pending") {
-      // A cancelled batch runs nothing again: the item settles as cancelled.
-      this.setItem(lb, { ...lb.items[index]!, state: "done", execution: "cancelled" });
-    }
-    if (spendStop === accountId) {
+    const batchStop =
+      run.stopReason === "spend_limit" && run.spendAccountId === batchAccountId(lb.batch);
+    // Any run ending frees its reservation, so a reserved-out item may run now.
+    lb.waitForSettle = false;
+    const reservedOut = batchStop && this.reservedOut(lb);
+    this.settleItem(lb, index, run, batchStop, lb.withdrawn.delete(runId));
+    if (reservedOut) {
+      lb.waitForSettle = true;
+    } else if (batchStop) {
       this.pause(lb, "budget", "The batch's budget has too little left for another model call.");
-    } else if (spendStop?.startsWith(BUDGET_ACCOUNT_PREFIX)) {
+    } else if (
+      run.stopReason === "spend_limit" &&
+      run.spendAccountId?.startsWith(BUDGET_ACCOUNT_PREFIX)
+    ) {
       this.pause(lb, "budget", "The task's token budget is spent for its window.");
     }
     this.applyStopRule(lb);
     this.persistBatch(lb);
     this.pump(lb);
+  }
+
+  /** Give an item its run's outcome, or put it back to run again when the run did not really have its turn. */
+  private settleItem(
+    lb: LiveBatch,
+    index: number,
+    run: TaskRun,
+    batchStop: boolean,
+    withdrawn: boolean,
+  ): void {
+    const settled = this.outcomeOf(lb.items[index]!, run);
+    const producedNothing = settled.execution === "failed" || settled.execution === "skipped";
+    let again = false;
+    if (!run.trigger && (this.stopping || withdrawn)) {
+      // Dropped from the queue as the runtime stopped (asked again next boot),
+      // or taken out of it by a pause (asked again on resume).
+      again = true;
+    } else if (batchStop && producedNothing) {
+      // Stopped by the batch's account before it produced anything: it runs
+      // again once a reservation frees, or under a raised budget.
+      again = true;
+    }
+    if (!again) {
+      this.setItem(lb, settled);
+    } else if (lb.batch.state === "cancelled") {
+      // A cancelled batch runs nothing again: the item settles as cancelled.
+      this.setItem(lb, { ...backToPending(settled), state: "done", execution: "cancelled" });
+    } else {
+      this.setItem(lb, backToPending(settled));
+      if (!this.stopping) lb.pending.unshift(index);
+    }
+  }
+
+  /**
+   * Whether a stop by the batch's account came from other runs' reservations
+   * rather than from spend. Only the batch's own running runs reserve against
+   * its account (the driver's anchor never does), so with none of them still
+   * running, a refusal means the actual balance cannot pay for one call: spent.
+   * With one running and actual balance left, its reservation may be what
+   * refused the call, and its end frees it.
+   */
+  private reservedOut(lb: LiveBatch): boolean {
+    const { batch } = lb;
+    if (batch.budgetUsd === undefined) return false;
+    const othersRunning = [...lb.outstanding].some((i) => lb.items[i]?.state === "running");
+    if (!othersRunning) return false;
+    const actual =
+      this.config.spend?.balance(batchAccountId(batch)) ?? batch.budgetUsd - batch.costUsd;
+    return actual > 0;
   }
 
   /** Pause the batch when its pass rate fell below its stop rule. */
