@@ -30,7 +30,7 @@ import {
 import { useNotifications } from "../../context/NotificationsContext";
 import { useWorkspaceAppIcons } from "../../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
-import { INBOX_PAGE_SIZE, LEVEL_RANK } from "../../lib/notification-levels";
+import { INBOX_READ_MAX, LEVEL_RANK } from "../../lib/notification-levels";
 import { cn } from "../../lib/utils";
 import { toSlug } from "../../lib/workspace-slug";
 import { Tooltip } from "../ui/tooltip";
@@ -62,9 +62,11 @@ export function formatAgo(iso: string, now: number = Date.now()): string {
 
 /**
  * The unread items, read when the preview opens and re-read while it stays
- * open and `revision` moves. A page of them rather than just the shown five,
- * so "Mark all read" can mark what it says. A response that lands after a
- * newer read was issued, or after the preview closed, is dropped.
+ * open and `revision` moves. As many as one read returns rather than just the
+ * shown five, so "Mark all read" can mark what it says, plus a read of the
+ * unread items at attention and above, so an urgent one older than that set
+ * still leads the five. A response that lands after a newer read was issued,
+ * or after the preview closed, is dropped.
  */
 function useUnreadPreview(workspaceId: string | undefined, open: boolean, revision: number) {
   const [items, setItems] = useState<NotificationView[] | null>(null);
@@ -79,13 +81,22 @@ function useUnreadPreview(workspaceId: string | undefined, open: boolean, revisi
       setError(false);
       return;
     }
-    listNotifications({ unreadOnly: true, limit: INBOX_PAGE_SIZE }, workspaceId)
-      .then((out) => {
+    Promise.all([
+      listNotifications({ unreadOnly: true, limit: INBOX_READ_MAX }, workspaceId),
+      listNotifications(
+        { unreadOnly: true, level: "attention", limit: INBOX_PREVIEW_SIZE },
+        workspaceId,
+      ),
+    ])
+      .then(([newest, pressing]) => {
         if (mine !== seq.current) return;
-        // The inbox page's order, urgency first and then newest, so an urgent
-        // item is never the one cut from the five shown.
+        // Urgency first, then newest, so an urgent item is never the one cut
+        // from the five shown.
+        const byId = new Map(
+          [...newest.notifications, ...pressing.notifications].map((n) => [n.id, n]),
+        );
         setItems(
-          [...out.notifications].sort(
+          [...byId.values()].sort(
             (a, b) => LEVEL_RANK[b.level] - LEVEL_RANK[a.level] || b.seq - a.seq,
           ),
         );

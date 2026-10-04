@@ -52,6 +52,14 @@ export const NotificationsListInput = Type.Object({
         "the lowest `seq` you hold to read the page before it; `hasMore` says whether one is left.",
     }),
   ),
+  ids: Type.Optional(
+    Type.Array(Type.String({ minLength: 3, maxLength: 512 }), {
+      minItems: 1,
+      maxItems: NOTIFICATION_LIST_MAX_LIMIT,
+      description:
+        "Only these items, by id. How a link to one item finds it, and its `seq`, whatever its age.",
+    }),
+  ),
   since: Type.Optional(
     Type.String({
       maxLength: 64,

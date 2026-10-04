@@ -17,7 +17,14 @@ import { useNotifications } from "../context/NotificationsContext";
 import { useShellContext } from "../context/ShellContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
-import { INBOX_PAGE_SIZE, LEVEL_RANK } from "../lib/notification-levels";
+import {
+  appendOlderPage,
+  EMPTY_PAGES,
+  type InboxPages,
+  mergeFirstPage,
+  oldestSeq,
+} from "../lib/inbox-pages";
+import { INBOX_PAGE_SIZE, INBOX_READ_MAX } from "../lib/notification-levels";
 import { resolveNotificationLink } from "../lib/notification-link";
 import { cn } from "../lib/utils";
 import { EmptyState, InlineError } from "./settings/components";
@@ -115,12 +122,17 @@ function listArgsFrom(filters: InboxFilters): NotificationsListInput {
 }
 
 /**
- * The page's own read of the inbox, filtered. Re-read when the filters change
- * and when the shell's inbox `revision` moves, which is how a live item lands
- * here without the page opening a stream of its own.
+ * The page's own read of the inbox, filtered, a page at a time.
+ *
+ * The list is the newest page plus any older pages "Load older" added below
+ * it, as one unbroken run newest first (`lib/inbox-pages.ts` holds the rules).
+ * The first page is re-read when the filters change, which starts over, and
+ * when the shell's inbox `revision` moves, which folds the fresh first page in
+ * and keeps the older pages. That re-read is how a live item lands here
+ * without the page opening a stream of its own.
  *
  * Addressed to `workspaceId` explicitly, and a response that lands after a
- * newer read was issued is dropped.
+ * newer read was issued, or after the view changed, is dropped.
  *
  * **A row read here stays here until the view changes.** Marking a row read
  * moves `revision`, and under a filter that excludes read items (Unread) the
@@ -129,35 +141,43 @@ function listArgsFrom(filters: InboxFilters): NotificationsListInput {
  * the same filters and workspace, and let go when either changes.
  */
 function useInboxList(workspaceId: string | undefined, filters: InboxFilters, revision: number) {
-  const [items, setItems] = useState<NotificationView[]>([]);
+  const [pages, setPages] = useState<InboxPages>(EMPTY_PAGES);
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
+  const view = useRef(0);
   const kept = useRef(new Set<string>());
   const scope = useRef<{ workspaceId?: string; key?: string }>({});
+  const pagesRef = useRef(pages);
+  pagesRef.current = pages;
   const key = JSON.stringify(filters);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `filters`, and `revision` is the re-read signal
   useEffect(() => {
     if (!workspaceId) return;
+    let fresh = false;
     if (scope.current.workspaceId !== workspaceId || scope.current.key !== key) {
       kept.current.clear();
+      view.current++;
+      fresh = true;
       // Another workspace's rows must not sit under this one's name while
       // its read is in flight. A filter change keeps the rows until it lands.
-      if (scope.current.workspaceId !== workspaceId) setItems([]);
+      if (scope.current.workspaceId !== workspaceId) setPages(EMPTY_PAGES);
       scope.current = { workspaceId, key };
     }
     const mine = ++seq.current;
     listNotifications(listArgsFrom(filters), workspaceId)
       .then((out) => {
         if (mine !== seq.current) return;
-        setItems((current) => {
-          const returned = new Set(out.notifications.map((item) => item.id));
-          const held = current.filter(
-            (item) => kept.current.has(item.id) && !returned.has(item.id),
-          );
-          return [...out.notifications, ...held];
-        });
+        setPages((current) =>
+          mergeFirstPage(
+            fresh ? EMPTY_PAGES : current,
+            out.notifications,
+            out.hasMore,
+            kept.current,
+          ),
+        );
         setError(null);
       })
       .catch((err: unknown) => {
@@ -169,16 +189,128 @@ function useInboxList(workspaceId: string | undefined, filters: InboxFilters, re
       });
   }, [workspaceId, key, revision]);
 
+  /**
+   * Read the page below the oldest row held and append it. `limit` is larger
+   * only when walking down to a linked item. Resolves to the new oldest `seq`,
+   * or `undefined` when nothing was appended.
+   */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `filters`
+  const loadOlder = useCallback(
+    async (limit: number = INBOX_PAGE_SIZE): Promise<number | undefined> => {
+      const anchor = oldestSeq(pagesRef.current);
+      if (!workspaceId || anchor === undefined || !pagesRef.current.hasMore) return undefined;
+      const mine = view.current;
+      setLoadingOlder(true);
+      const out = await listNotifications(
+        { ...listArgsFrom(filters), limit, before: anchor },
+        workspaceId,
+      ).catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))));
+      setLoadingOlder(false);
+      if (mine !== view.current) return undefined;
+      if (out instanceof Error) {
+        setError(out.message);
+        return undefined;
+      }
+      const next = appendOlderPage(pagesRef.current, anchor, out.notifications, out.hasMore);
+      pagesRef.current = next;
+      setPages(next);
+      return advancedBelow(next, anchor);
+    },
+    [workspaceId, key],
+  );
+
   /** Paint these rows read, and hold them through re-reads of this view. */
   const markLocally = useCallback((ids: string[]) => {
     const readAt = new Date().toISOString();
     for (const id of ids) kept.current.add(id);
-    setItems((current) =>
-      current.map((item) => (ids.includes(item.id) && !item.readAt ? { ...item, readAt } : item)),
-    );
+    setPages((current) => ({
+      ...current,
+      items: current.items.map((item) =>
+        ids.includes(item.id) && !item.readAt ? { ...item, readAt } : item,
+      ),
+    }));
   }, []);
 
-  return { items, markLocally, loading, error };
+  return {
+    items: pages.items,
+    hasMore: pages.hasMore,
+    loadOlder,
+    loadingOlder,
+    markLocally,
+    loading,
+    error,
+  };
+}
+
+/** The new oldest `seq` when `pages` now reaches below `anchor`, else `undefined`. */
+function advancedBelow(pages: InboxPages, anchor: number): number | undefined {
+  const oldest = oldestSeq(pages);
+  return oldest !== undefined && oldest < anchor ? oldest : undefined;
+}
+
+/**
+ * How many unread items are at attention or above, across the whole inbox.
+ *
+ * The list is newest first and paged, so an urgent item from last week can sit
+ * pages down. This count is what says it is there, whatever its age, and links
+ * to the filter that lists them. Capped at one read: `more` means "at least".
+ */
+function useNeedsAttention(workspaceId: string | undefined, revision: number) {
+  const [state, setState] = useState<{ count: number; more: boolean } | null>(null);
+  const seq = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is the re-read signal
+  useEffect(() => {
+    if (!workspaceId) return;
+    const mine = ++seq.current;
+    listNotifications({ unreadOnly: true, level: "attention", limit: INBOX_READ_MAX }, workspaceId)
+      .then((out) => {
+        if (mine === seq.current) {
+          setState({ count: out.notifications.length, more: out.hasMore });
+        }
+      })
+      .catch(() => {
+        if (mine === seq.current) setState(null);
+      });
+  }, [workspaceId, revision]);
+  return state;
+}
+
+/**
+ * Page down to the item `?item=` names when it is older than what is loaded.
+ *
+ * Finds the item by id first, which says how far down it sits, then loads
+ * older pages until the list reaches it. An id that names nothing (pruned, or
+ * another workspace's) stops at the first read. Once per id, and abandoned if
+ * `?item=` moves on while it walks.
+ */
+function useReachLinkedItem({
+  focusId,
+  reachable,
+  workspaceId,
+  loadOlder,
+}: {
+  focusId: string | null;
+  reachable: boolean;
+  workspaceId: string | undefined;
+  loadOlder: (limit?: number) => Promise<number | undefined>;
+}) {
+  const reaching = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusId || !workspaceId || !reachable || reaching.current === focusId) return;
+    reaching.current = focusId;
+    const stillWanted = () => reaching.current === focusId;
+    void (async () => {
+      const out = await listNotifications({ ids: [focusId], limit: 1 }, workspaceId).catch(
+        () => null,
+      );
+      const target = out?.notifications[0];
+      if (!target) return;
+      let oldest = await loadOlder(INBOX_READ_MAX);
+      while (stillWanted() && oldest !== undefined && oldest > target.seq) {
+        oldest = await loadOlder(INBOX_READ_MAX);
+      }
+    })();
+  }, [focusId, reachable, workspaceId, loadOlder]);
 }
 
 export function NotificationsPage() {
@@ -189,29 +321,23 @@ export function NotificationsPage() {
   // `?item=` is how a delivered notification links back here from outside the
   // shell — the `{{inbox.url}}` a route template rendered into Slack or mail.
   // The reader followed a link to one item, so it opens expanded and scrolled
-  // to rather than leaving them to find it in a list of a hundred.
+  // to rather than leaving them to find it, and paged down to when it is older
+  // than the first page.
   const [searchParams, setSearchParams] = useSearchParams();
   const focusId = searchParams.get("item");
   const [open, setOpen] = useState<Set<string>>(() => new Set(focusId ? [focusId] : []));
   const filters = readFilters(searchParams);
   const filtered = hasFilters(filters);
-  const { items, markLocally, loading, error } = useInboxList(
+  const { items, hasMore, loadOlder, loadingOlder, markLocally, loading, error } = useInboxList(
     activeWorkspace?.id,
     filters,
     revision,
   );
+  const attention = useNeedsAttention(activeWorkspace?.id, revision);
 
   const placements = useMemo(
     () => (shell ? [...shell.forSlot("sidebar"), ...shell.forSlot("main")] : []),
     [shell],
-  );
-
-  // Urgency first, then newest. An inbox read top-down should not make somebody
-  // scroll past a week of routine items to find the one thing on fire; within a
-  // level the order is the arrival order the store assigned.
-  const ordered = useMemo(
-    () => [...items].sort((a, b) => LEVEL_RANK[b.level] - LEVEL_RANK[a.level] || b.seq - a.seq),
-    [items],
   );
 
   const setFilter = useCallback(
@@ -231,6 +357,10 @@ export function NotificationsPage() {
   );
 
   const clearFilters = useCallback(() => setSearchParams({}, { replace: true }), [setSearchParams]);
+  const showNeedsAttention = useCallback(
+    () => setSearchParams({ status: "unread", level: "attention" }, { replace: true }),
+    [setSearchParams],
+  );
 
   // Marked here and in the shell's count at once: this list paints the rows
   // read, and the shell drops the bell. The shell's re-read after the call
@@ -264,6 +394,12 @@ export function NotificationsPage() {
   // id, not latched once, because `?item=` changes under a mounted page when
   // the bell's preview opens another item while the inbox is already showing.
   const focusPresent = focusId !== null && items.some((i) => i.id === focusId);
+  useReachLinkedItem({
+    focusId,
+    reachable: !loading && !focusPresent && !filtered && hasMore,
+    workspaceId: activeWorkspace?.id,
+    loadOlder,
+  });
   const followed = useRef<string | null>(null);
   useEffect(() => {
     if (!focusPresent || !focusId || followed.current === focusId) return;
@@ -274,32 +410,30 @@ export function NotificationsPage() {
   }, [focusPresent, focusId, items, markIds]);
 
   const sources = useMemo(() => [...new Set(items.map((item) => item.source))], [items]);
-  const shownUnread = ordered.filter((item) => !item.readAt).map((item) => item.id);
+  const shownUnread = items.filter((item) => !item.readAt).map((item) => item.id);
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto p-6 space-y-4">
         <InboxFilterBar filters={filters} onChange={setFilter} sources={sources} />
 
-        <div className="flex min-h-8 items-center justify-between gap-4 text-sm">
-          <span data-testid="inbox-unread-count" className="text-muted-foreground">
-            {unread > 0 ? `${unread} unread` : "All read"}
-          </span>
-          {shownUnread.length > 0 && (
-            <Button variant="outline" size="sm" onClick={() => markIds(shownUnread)}>
-              {/* "All" only when the rows on screen are all of it. */}
-              {filtered || unread > shownUnread.length ? "Mark shown read" : "Mark all read"}
-            </Button>
-          )}
-        </div>
+        <InboxSummary
+          unread={unread}
+          attention={filtered ? null : attention}
+          onShowAttention={showNeedsAttention}
+          shownUnread={shownUnread}
+          // "All" only when the rows on screen are all of it.
+          markLabel={filtered || unread > shownUnread.length ? "Mark shown read" : "Mark all read"}
+          onMark={() => markIds(shownUnread)}
+        />
 
         {error ? <InlineError message={error} /> : null}
 
-        {loading && ordered.length === 0 ? (
+        {loading && items.length === 0 ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : null}
 
-        {!loading && ordered.length === 0 && !error && filtered ? (
+        {!loading && items.length === 0 && !error && filtered ? (
           <EmptyState
             message={
               <>
@@ -312,7 +446,7 @@ export function NotificationsPage() {
           />
         ) : null}
 
-        {!loading && ordered.length === 0 && !error && !filtered ? (
+        {!loading && items.length === 0 && !error && !filtered ? (
           <EmptyState
             message={
               <>
@@ -332,7 +466,7 @@ export function NotificationsPage() {
         ) : null}
 
         <ul className="space-y-px">
-          {ordered.map((item) => (
+          {items.map((item) => (
             <NotificationRow
               key={item.id}
               item={item}
@@ -346,13 +480,66 @@ export function NotificationsPage() {
           ))}
         </ul>
 
-        {ordered.length >= INBOX_PAGE_SIZE ? (
-          <p className="text-xs text-muted-foreground">
-            Showing the most recent {ordered.length}. Older items stay in the inbox for 90 days and
-            are reachable by narrowing the filters or asking the agent for them.
-          </p>
+        {hasMore ? (
+          <div className="flex justify-center">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loadingOlder}
+              onClick={() => void loadOlder()}
+              data-testid="inbox-load-older"
+            >
+              {loadingOlder ? "Loading…" : "Load older"}
+            </Button>
+          </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The line above the list: the unread count, how many of those need
+ * attention (a link to the filter that lists them), and the mark button.
+ */
+function InboxSummary({
+  unread,
+  attention,
+  onShowAttention,
+  shownUnread,
+  markLabel,
+  onMark,
+}: {
+  unread: number;
+  attention: { count: number; more: boolean } | null;
+  onShowAttention: () => void;
+  shownUnread: string[];
+  markLabel: string;
+  onMark: () => void;
+}) {
+  return (
+    <div className="flex min-h-8 items-center justify-between gap-4 text-sm">
+      <span className="flex items-center gap-2 text-muted-foreground">
+        <span data-testid="inbox-unread-count">{unread > 0 ? `${unread} unread` : "All read"}</span>
+        {attention && attention.count > 0 ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <button
+              type="button"
+              data-testid="inbox-needs-attention"
+              onClick={onShowAttention}
+              className="text-warning underline-offset-2 hover:underline"
+            >
+              {`${attention.count}${attention.more ? "+" : ""} need attention`}
+            </button>
+          </>
+        ) : null}
+      </span>
+      {shownUnread.length > 0 && (
+        <Button variant="outline" size="sm" onClick={onMark}>
+          {markLabel}
+        </Button>
+      )}
     </div>
   );
 }

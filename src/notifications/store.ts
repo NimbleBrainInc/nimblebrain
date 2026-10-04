@@ -85,6 +85,8 @@ export interface NotificationListOptions {
   after?: number;
   /** Only items with a `seq` less than this — the newest-first page before one held. */
   before?: number;
+  /** Only these items, by `<source>:<eventId>`. */
+  ids?: readonly string[];
   /** Only items whose `timestamp` is at or after this ISO 8601 instant. */
   since?: string;
   /** Only items whose title or event name contains this text, ignoring case. */
@@ -508,26 +510,30 @@ function refKey(source: string, eventId: string): string {
 function matchesFilters(item: Notification, opts: NotificationListOptions): boolean {
   if (opts.unreadOnly && item.readAt) return false;
   if (opts.source && item.source !== opts.source) return false;
-  if (opts.after !== undefined && item.seq <= opts.after) return false;
-  if (opts.before !== undefined && item.seq >= opts.before) return false;
   if (opts.since !== undefined && Date.parse(item.envelope.timestamp) < Date.parse(opts.since)) {
     return false;
   }
-  if (opts.query) {
-    const needle = opts.query.toLowerCase();
-    const { title } = notificationPresentation(item.envelope);
-    if (
-      !title.toLowerCase().includes(needle) &&
-      !item.envelope.name.toLowerCase().includes(needle)
-    ) {
-      return false;
-    }
-  }
-  if (opts.level) {
-    const rank = NOTIFICATION_LEVEL_RANK[notificationPresentation(item.envelope).level];
-    if (rank < NOTIFICATION_LEVEL_RANK[opts.level]) return false;
-  }
-  return true;
+  return inPosition(item, opts) && matchesQuery(item, opts.query) && atLevel(item, opts.level);
+}
+
+/** The positional filters: the `seq` window and the id set. */
+function inPosition(item: Notification, opts: NotificationListOptions): boolean {
+  if (opts.after !== undefined && item.seq <= opts.after) return false;
+  if (opts.before !== undefined && item.seq >= opts.before) return false;
+  return !opts.ids || opts.ids.includes(notificationId(item));
+}
+
+function matchesQuery(item: Notification, query: string | undefined): boolean {
+  if (!query) return true;
+  const needle = query.toLowerCase();
+  const { title } = notificationPresentation(item.envelope);
+  return title.toLowerCase().includes(needle) || item.envelope.name.toLowerCase().includes(needle);
+}
+
+function atLevel(item: Notification, level: NotificationLevel | undefined): boolean {
+  if (!level) return true;
+  const rank = NOTIFICATION_LEVEL_RANK[notificationPresentation(item.envelope).level];
+  return rank >= NOTIFICATION_LEVEL_RANK[level];
 }
 
 function clampLimit(limit: number | undefined): number {
