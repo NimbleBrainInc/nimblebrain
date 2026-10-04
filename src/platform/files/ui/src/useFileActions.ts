@@ -43,12 +43,9 @@ export function useFileActions(reload: () => void) {
       };
       // The host takes a title of up to 120 characters; a long filename is cut.
       const title = message.length > 120 ? `${message.slice(0, 119)}…` : message;
-      notify({ level: "success", title }).then(
-        (shown) => {
-          if (!shown) showOwn();
-        },
-        showOwn,
-      );
+      notify({ level: "success", title }).then((shown) => {
+        if (!shown) showOwn();
+      }, showOwn);
     },
     [notify],
   );
