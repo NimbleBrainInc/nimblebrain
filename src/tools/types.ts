@@ -41,10 +41,10 @@ export interface Tool {
    *   - `"forbidden"` — tool MUST NOT be invoked as a task
    *   - (absent / undefined) — same as `"forbidden"` (default)
    *
-   * When a tool declares `"optional"` or `"required"`, the client (this engine)
-   * attaches `params.task: { ttl }` to outbound `tools/call` so the server
-   * returns a CreateTaskResult immediately instead of blocking. The engine
-   * then polls via `tasks/get` and retrieves via `tasks/result`.
+   * Only a 2025-era server lists it; the 2026-07-28 tasks extension carries no
+   * per-tool marker. The engine never attaches a task on a 2025-era connection
+   * (ADR-0046): an `"optional"` tool is called inline, and a `"required"` one
+   * is refused before dispatch.
    */
   execution?: {
     taskSupport?: "optional" | "required" | "forbidden";

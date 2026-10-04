@@ -54,6 +54,7 @@ import {
 } from "../skills/skills-extension.ts";
 import { coerceInputForSchema } from "./coerce-input.ts";
 import {
+  inlineTaskClient,
   TASKS_EXTENSION_ID,
   type TaskClient,
   type TaskStreamMessage,
@@ -81,9 +82,8 @@ import {
 import type { WorkspaceOAuthProvider } from "./workspace-oauth-provider.ts";
 
 /**
- * Default time-to-live (ms) sent with task-augmented `tools/call` requests.
- * One hour fits research-run-style workloads; the server MAY clamp it down.
- * Override globally via `McpSource` constructor or per-connector in the future.
+ * How long a task handle is kept after its last update when the task declares
+ * no TTL (a server that names none, or a call answered without a task).
  */
 const DEFAULT_TASK_TTL_MS = 60 * 60 * 1000;
 
@@ -525,9 +525,11 @@ export class McpSource implements ToolSource {
   private readonly subscribedResourceUris = new Set<string>();
 
   /**
-   * The task operations on the current connection (see `mcp-task-client.ts`).
-   * Built after every successful connect, dropped on `stop()`: its wire wraps
-   * the connection's transport, so it is as single-use as the transport is.
+   * The task operations on the current connection (see `mcp-task-client.ts`):
+   * the task wire on a 2026-07-28 connection, and on a 2025-era one an inline
+   * client that never attaches a task (ADR-0046). Built after every successful
+   * connect, dropped on `stop()`: a wire wraps the connection's transport, so
+   * it is as single-use as the transport is.
    */
   private taskClient: TaskClient | null = null;
 
@@ -899,8 +901,8 @@ export class McpSource implements ToolSource {
 
   /**
    * What every successful connect does once the era is known, on both success
-   * seams (the bottom of `start()` and the OAuth retry): attach the task wire,
-   * log the negotiated era, and on a 2026-07-28 connection open the listen
+   * seams (the bottom of `start()` and the OAuth retry): attach the task client
+   * (the task wire on 2026-07-28, inline calls on 2025), log the negotiated era, and on a 2026-07-28 connection open the listen
    * stream its change notifications ride.
    */
   private onConnected(): void {
@@ -912,9 +914,10 @@ export class McpSource implements ToolSource {
     const transport = this.transport;
     if (!client || !transport) return;
     this.protocolEra = client.getProtocolEra() === "modern" ? "modern" : "legacy";
-    this.taskClient = taskClientFor(
-      TaskWire.attach(client, transport, CLIENT_INFO, McpSource.CAPABILITIES),
-    );
+    const wire = TaskWire.attach(client, transport, CLIENT_INFO, McpSource.CAPABILITIES);
+    this.taskClient = wire
+      ? taskClientFor(wire)
+      : inlineTaskClient((params, signal) => client.callTool(params, { signal }));
     this.logNegotiatedEra(client);
     if (this.protocolEra === "modern") void this.listen();
   }
@@ -1131,14 +1134,12 @@ export class McpSource implements ToolSource {
    * connection the SDK attaches it to every request's `_meta` envelope, the
    * `server/discover` probe included.
    *
-   * `tasks` is the 2025-11-25 task capability: a legacy-era server with
-   * `execution.taskSupport` on a tool sees that we will attach
-   * `params.task: {ttl}` rather than block the request, and that we can cancel
-   * what we started. `tasks.list` is not claimed: nothing here calls it. The
-   * 2026-07-28 tasks extension (`io.modelcontextprotocol/tasks`) is NOT
-   * claimed here, because a claim on the connection would opt every SDK call
-   * in, and the SDK cannot read a task result; the task wire claims it per
-   * request instead (`mcp-task-client.ts`).
+   * No task capability is claimed here. The 2025-11-25 `tasks` capability is
+   * not claimed because the runtime never attaches a task on a 2025-era
+   * connection (ADR-0046). The 2026-07-28 tasks extension
+   * (`io.modelcontextprotocol/tasks`) is not claimed on the connection because
+   * that would opt every SDK call in, and the SDK cannot read a task result;
+   * the task wire claims it per request instead (`mcp-task-client.ts`).
    *
    * `io.modelcontextprotocol/skills` (SEP-2640) is claimed on both eras
    * because skill discovery runs on both: {@link listSkills} enumerates, and
@@ -1151,10 +1152,6 @@ export class McpSource implements ToolSource {
    * knows it will be told.
    */
   private static readonly CAPABILITIES: ClientCapabilities = {
-    tasks: {
-      requests: { tools: { call: {} } },
-      cancel: {},
-    },
     extensions: {
       ...skillsClientExtension(),
       ...facetsClientExtension(),
@@ -1958,22 +1955,22 @@ export class McpSource implements ToolSource {
       };
     }
 
-    // Dispatch on whether the call may come back as a task. On a 2025-era
-    // connection that is the tool's own `execution.taskSupport`
-    // ("optional" | "required"). On a 2026-07-28 connection the server alone
+    // Dispatch on whether the call may come back as a task. Task augmentation
+    // is the 2026-07-28 tasks extension only (ADR-0046): the server alone
     // decides per call (SEP-2663) and tool listings carry no task marker, so
-    // every call to a server advertising the tasks extension takes the task
-    // path, which handles a complete answer as well. Either way the call
-    // returns immediately with a task and we poll it to the final `result` or
-    // `error`. Everything else uses the inline path, and so does a call that
-    // asks for it (`options.inline`, the host's lifecycle calls).
+    // every call to a server advertising the extension takes the task path,
+    // which handles a complete answer as well. Everything else uses the inline
+    // path, and so does a call that asks for it (`options.inline`, the host's
+    // lifecycle calls). A 2025-era tool that requires a task is refused here,
+    // before anything is sent.
     const tool = this.findTool(toolName);
     const taskSupport = tool?.execution?.taskSupport;
+    const refusal = this.taskRequiredRefusal(toolName, taskSupport);
+    if (refusal) return { content: textContent(refusal), isError: true };
     const isTaskAugmented =
       options?.inline !== true &&
-      (this.protocolEra === "modern"
-        ? TASKS_EXTENSION_ID in this.serverExtensions()
-        : taskSupport === "optional" || taskSupport === "required");
+      this.protocolEra === "modern" &&
+      TASKS_EXTENSION_ID in this.serverExtensions();
 
     const dispatchArgs = this.prepareDispatchArgs(tool, input, toolName);
 
@@ -2008,6 +2005,27 @@ export class McpSource implements ToolSource {
     } catch (err) {
       return this.handleExecuteError(err, toolName, dispatchArgs, signal, isTaskAugmented);
     }
+  }
+
+  /**
+   * Why a call to `toolName` cannot be made, or null when it can. A 2025-era
+   * tool whose `execution.taskSupport` is `"required"` runs only under the
+   * 2025-11-25 tasks utility, which the runtime does not speak (ADR-0046), so
+   * the call is refused before dispatch rather than sent to fail at the server.
+   * An `"optional"` one is called inline.
+   */
+  private taskRequiredRefusal(
+    toolName: string,
+    taskSupport: "optional" | "required" | "forbidden" | undefined,
+  ): string | null {
+    if (this.protocolEra !== "legacy" || taskSupport !== "required") return null;
+    return (
+      `Tool "${toolName}" on ${this.name} cannot be called: it requires a task ` +
+      `(execution.taskSupport "required"), and this server offers tasks only through the ` +
+      `MCP 2025-11-25 tasks utility, which NimbleBrain does not speak (see ADR-0046). ` +
+      `It can be called once the server supports the 2026-07-28 tasks extension ` +
+      `(${TASKS_EXTENSION_ID}).`
+    );
   }
 
   /**
@@ -2590,12 +2608,17 @@ export class McpSource implements ToolSource {
   async startToolAsTask(
     toolName: string,
     args: Record<string, unknown>,
-    opts: { ownerContext: TaskOwnerContext; signal?: AbortSignal; ttlMs?: number },
+    opts: { ownerContext: TaskOwnerContext; signal?: AbortSignal },
   ): Promise<CreateTaskResult> {
     const client = this.client;
     if (!client || this.dead) {
       throw new Error(`McpSource "${this.name}" not started`);
     }
+    const refusal = this.taskRequiredRefusal(
+      toolName,
+      this.findTool(toolName)?.execution?.taskSupport,
+    );
+    if (refusal) throw new Error(refusal);
 
     const abortController = new AbortController();
     const externalSignal = opts.signal;
@@ -2608,11 +2631,7 @@ export class McpSource implements ToolSource {
     if (!taskClient) throw new Error(`McpSource "${this.name}" has no task client`);
     const stream = taskClient.callToolStream(
       { name: toolName, arguments: args },
-      {
-        signal: abortController.signal,
-        ttlMs: opts.ttlMs ?? DEFAULT_TASK_TTL_MS,
-        createTimeoutMs: TASK_CREATED_TIMEOUT_MS,
-      },
+      { signal: abortController.signal, createTimeoutMs: TASK_CREATED_TIMEOUT_MS },
     );
 
     // Race the stream's first message against a hard ceiling. The SDK
@@ -2827,7 +2846,7 @@ export class McpSource implements ToolSource {
             if (this.settleTaskResult(handle, message.result)) return;
             break;
           case "error":
-            await this.settleTaskError(handle, message.error);
+            this.settleTaskError(handle, message.error);
             return;
         }
       }
@@ -2884,17 +2903,8 @@ export class McpSource implements ToolSource {
    *      preserves its historical return shape. Rejection is reserved for
    *      transport crashes / protocol violations so `execute()`'s catch branch
    *      makes the right restart decision.
-   *
-   * Contract: even when `recoverFailedTaskResult` salvages a payload,
-   * `latestTask.status` reflects what the SERVER reported (`failed`/`cancelled`)
-   * — the recovery only salvages the agent-visible content, not the terminal
-   * verdict. Status consumers see the honest server state; the agent sees the
-   * actual output.
    */
-  private async settleTaskError(
-    handle: TaskHandle,
-    error: { message?: string } | undefined,
-  ): Promise<void> {
+  private settleTaskError(handle: TaskHandle, error: { message?: string } | undefined): void {
     const message = error?.message ?? `Task ${handle.taskId} failed`;
     if (handle.cancelRequested) {
       const err = new Error(`Task ${handle.taskId} cancelled: ${message}`);
@@ -2910,8 +2920,7 @@ export class McpSource implements ToolSource {
       return;
     }
     const isAborted = handle.abortController.signal.aborted;
-    const recoveredResult = await this.recoverFailedTaskResult(handle, message, isAborted);
-    const callToolResult: CallToolResult = recoveredResult ?? {
+    const callToolResult: CallToolResult = {
       content: [{ type: "text", text: message }],
       isError: true,
     };
@@ -2924,40 +2933,6 @@ export class McpSource implements ToolSource {
     };
     handle.expiresAt = Date.now() + TASK_HANDLE_GRACE_MS;
     handle.terminalDeferred.resolve(callToolResult);
-  }
-
-  /**
-   * Defense in depth: the task stream emits `type: 'error'` with the message
-   * `Task <id> failed` whenever a 2025-era task's server-side status is
-   * `failed`, without reading the server's `tasks/result` payload. A connector
-   * that misclassified its own terminal status —
-   * e.g. a post-result exception flipping COMPLETED→FAILED while a usable payload
-   * already existed in the store — would surface to the agent as a useless string
-   * with the real output gone. Try one extra `tasks/result` fetch before settling
-   * for the generic error. Returns null when no result is genuinely available.
-   *
-   * Discriminator: `endsWith` on the known `handle.taskId`, NOT a regex on the
-   * bare message. Using the taskId as the discriminator also tightens specificity: we won't
-   * accidentally recover on a connector-authored error that mentions a different
-   * task.
-   */
-  private async recoverFailedTaskResult(
-    handle: TaskHandle,
-    message: string,
-    isAborted: boolean,
-  ): Promise<CallToolResult | null> {
-    const isGenericTaskFailed = message.endsWith(`Task ${handle.taskId} failed`);
-    const taskClient = this.taskClient;
-    if (isAborted || !taskClient || taskClient.era !== "legacy" || !isGenericTaskFailed)
-      return null;
-    try {
-      const recovered = await taskClient.getTaskResult(handle.taskId);
-      log.debug("mcp", `recovered tasks/result for failed task ${handle.taskId} on ${this.name}`);
-      return recovered;
-    } catch {
-      // No result genuinely available — caller falls through to the generic error.
-      return null;
-    }
   }
 
   /** Stream ended without a terminal message — protocol violation; reject. */

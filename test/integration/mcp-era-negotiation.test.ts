@@ -4,7 +4,8 @@
  * Client role: one `McpSource` against a 2025-only server and a 2026-07-28
  * server, the same assertions on each — the negotiated version, tools, a tool
  * call, a `ui://` read, and the extensions the server advertises. The task wire
- * against a 2025 task server and a SEP-2663 one, and the legacy retry after a
+ * against a SEP-2663 server, a 2025 server's task-marked tools called inline or
+ * refused (ADR-0046), and the legacy retry after a
  * probe that meets an HTTP 500 (and not after a gateway's 502/503/504).
  *
  * Server role: `/mcp/<wsId>` answering a 2026-07-28 client and a 2025 client
@@ -66,7 +67,10 @@ function serve(fetch: Fetch): Served {
 
 /** The connector under test: one tool, one `ui://` resource, and whatever extensions it is given. */
 function buildServer(
-  opts: { extensions?: ServerCapabilities["extensions"]; taskTools?: boolean } = {},
+  opts: {
+    extensions?: ServerCapabilities["extensions"];
+    taskSupport?: "optional" | "required";
+  } = {},
 ) {
   const capabilities: ServerCapabilities = {
     tools: {},
@@ -80,7 +84,7 @@ function buildServer(
         name: "echo",
         inputSchema: { type: "object" as const, properties: { text: { type: "string" } } },
         // A 2025-era task marker; the 2026 wire drops it.
-        ...(opts.taskTools ? { execution: { taskSupport: "optional" as const } } : {}),
+        ...(opts.taskSupport ? { execution: { taskSupport: opts.taskSupport } } : {}),
       },
     ],
   }));
@@ -279,7 +283,7 @@ describe("McpSource era fallback", () => {
 describe("the host-resources claim", () => {
   it("rides the 2025 initialize handshake", async () => {
     const legacy = legacyServer();
-    let claimed: { tasks?: unknown; extensions?: Record<string, unknown> } | undefined;
+    let claimed: { extensions?: Record<string, unknown> } | undefined;
     const served = serve(async (request) => {
       const body = await bodyOf(request);
       if (body?.method === "initialize") {
@@ -294,7 +298,7 @@ describe("the host-resources claim", () => {
         HOST_RESOURCES_CAPABILITY_V1,
       );
       // The extension is added to the constructed claims, not swapped in for them.
-      expect(claimed?.tasks).toEqual({ requests: { tools: { call: {} } }, cancel: {} });
+      expect(claimed?.extensions?.[FACETS]).toBeDefined();
     } finally {
       await source.stop();
       served.close();
@@ -387,52 +391,52 @@ function sep2663Server(status: "working" | "input_required"): { served: Served; 
 }
 
 describe("the task wire", () => {
-  it("drives a 2025-era task: task-augmented tools/call, tasks/get, tasks/result", async () => {
-    const legacy = legacyServer({ taskTools: true });
-    const now = new Date().toISOString();
-    const seen: string[] = [];
-    let polls = 0;
+  /** A 2025-only server whose `echo` carries `taskSupport`, recording every request it sees. */
+  function legacyTaskServer(taskSupport: "optional" | "required") {
+    const legacy = legacyServer({ taskSupport });
+    const seen: Array<{ method: string; params?: Record<string, unknown> }> = [];
     const served = serve(async (request) => {
       const body = await bodyOf(request);
-      if (body?.method === "tools/call" && body.params?.task) {
-        seen.push("tools/call+task");
-        return answer(body.id, {
-          task: {
-            taskId: "t-legacy",
-            status: "working",
-            createdAt: now,
-            lastUpdatedAt: now,
-            ttl: 60_000,
-            pollInterval: 10,
-          },
-        });
-      }
-      if (body?.method === "tasks/get") {
-        seen.push("tasks/get");
-        polls++;
-        return answer(body.id, {
-          taskId: "t-legacy",
-          status: polls < 2 ? "working" : "completed",
-          createdAt: now,
-          lastUpdatedAt: now,
-          ttl: 60_000,
-          pollInterval: 10,
-        });
-      }
-      if (body?.method === "tasks/result") {
-        seen.push("tasks/result");
-        return answer(body.id, { content: [{ type: "text", text: "researched (2025)" }] });
-      }
+      if (body?.method) seen.push({ method: body.method, params: body.params });
       return legacy(request);
     });
+    return { served, seen };
+  }
+
+  it("calls a 2025-era tool whose taskSupport is optional inline, attaching no task", async () => {
+    const { served, seen } = legacyTaskServer("optional");
     const source = await connect(served.url);
     try {
-      // The 2025 task marker rides the listing, which the runtime reads before
-      // any call; a call to a tool it has not listed goes inline.
+      expect(source.getNegotiatedProtocolVersion()).toBe("2025-11-25");
       expect((await source.tools())[0]?.execution?.taskSupport).toBe("optional");
       const result = await source.execute("echo", { text: "deep" });
-      expect(result.content).toEqual([{ type: "text", text: "researched (2025)" }]);
-      expect(seen).toEqual(["tools/call+task", "tasks/get", "tasks/get", "tasks/result"]);
+      expect(result.isError).toBe(false);
+      expect(result.content).toEqual([{ type: "text", text: "echo:deep" }]);
+      const calls = seen.filter((r) => r.method === "tools/call");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.params?.task).toBeUndefined();
+      expect(seen.some((r) => r.method.startsWith("tasks/"))).toBe(false);
+      // Nor does the handshake claim the 2025 tasks capability.
+      const init = seen.find((r) => r.method === "initialize");
+      expect((init?.params?.capabilities as Record<string, unknown>)?.tasks).toBeUndefined();
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
+
+  it("refuses a 2025-era tool whose taskSupport is required before dispatch, naming the reason", async () => {
+    const { served, seen } = legacyTaskServer("required");
+    const source = await connect(served.url);
+    try {
+      expect((await source.tools())[0]?.execution?.taskSupport).toBe("required");
+      const result = await source.execute("echo", { text: "deep" });
+      expect(result.isError).toBe(true);
+      const text = JSON.stringify(result.content);
+      expect(text).toContain("2025-11-25 tasks utility");
+      expect(text).toContain("ADR-0046");
+      expect(seen.some((r) => r.method === "tools/call")).toBe(false);
+      expect(seen.some((r) => r.method.startsWith("tasks/"))).toBe(false);
     } finally {
       await source.stop();
       served.close();

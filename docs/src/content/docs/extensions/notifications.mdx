@@ -20,8 +20,9 @@ is a JSON object, and both are shown in full below.
 
 <Aside type="note" title="Notifications are for facts nobody asked for">
 "The job you asked for finished" is not one. That is an [MCP
-Task](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks),
-which the host already polls as a client — see [long-running
+task](https://modelcontextprotocol.io/extensions/tasks/overview) (the
+`io.modelcontextprotocol/tasks` extension), which the host already polls as a
+client — see [long-running
 tools](/apps/tool-results). Reach for a notification when something happened
 that no in-flight call is waiting on.
 </Aside>

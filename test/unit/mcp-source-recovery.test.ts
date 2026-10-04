@@ -4,6 +4,7 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { INFRA_ERROR_META_KEY, SKILL_ACTIVATED_META_KEY } from "../../src/engine/types.ts";
 import { McpSource, type McpTransportMode, policyFor } from "../../src/tools/mcp-source.ts";
+import { TASKS_EXTENSION_ID } from "../../src/tools/mcp-task-client.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
 
@@ -188,19 +189,15 @@ describe("execute (tools/call) — unified recovery", () => {
       cachedTools: unknown[];
       client: Record<string, unknown>;
       taskClient: unknown;
+      protocolEra: "legacy" | "modern";
     };
-    // Task-augmentation is read off the cached tool descriptor.
-    internal.cachedTools = [
-      {
-        name: "svc__long_job",
-        inputSchema: { type: "object" },
-        execution: { taskSupport: "required" },
-      },
-    ];
+    // A 2026-07-28 server advertising the tasks extension: every call takes the task path.
+    internal.protocolEra = "modern";
+    internal.client.getServerCapabilities = () => ({ extensions: { [TASKS_EXTENSION_ID]: {} } });
+    internal.cachedTools = [{ name: "svc__long_job", inputSchema: { type: "object" } }];
     // The throttle lands on the task stream, which is the path that can be
     // refused AFTER the task already exists server-side.
     internal.taskClient = {
-      era: "legacy",
       callToolStream: () => {
         throw new Error("Streamable HTTP error: Failed to open SSE stream: Too Many Requests");
       },
@@ -344,16 +341,13 @@ describe("execute (tools/call) — unified recovery", () => {
       cachedTools: unknown[];
       client: Record<string, unknown>;
       taskClient: unknown;
+      protocolEra: "legacy" | "modern";
     };
-    internal.cachedTools = [
-      {
-        name: "svc__long_job",
-        inputSchema: { type: "object" },
-        execution: { taskSupport: "required" },
-      },
-    ];
+    // A 2026-07-28 server advertising the tasks extension: every call takes the task path.
+    internal.protocolEra = "modern";
+    internal.client.getServerCapabilities = () => ({ extensions: { [TASKS_EXTENSION_ID]: {} } });
+    internal.cachedTools = [{ name: "svc__long_job", inputSchema: { type: "object" } }];
     internal.taskClient = {
-      era: "legacy",
       callToolStream: async function* () {
         yield { type: "taskCreated", task: { taskId: "t1", status: "working" } };
         yield {
