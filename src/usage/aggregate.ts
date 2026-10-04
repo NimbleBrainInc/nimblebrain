@@ -848,23 +848,27 @@ export function ledgerCostOfTaskRuns(
   workspaceId?: string,
 ): number {
   if (taskRunIds.size === 0) return 0;
+  const filters = workspaceId !== undefined ? { workspaceId } : {};
   let total = 0;
   for (const month of usageMonthsInRange(range.from, range.to)) {
     const dir = usageMonthDir(workDir, month);
     for (const shard of shardsForMonth(dir)) {
-      let text: string;
-      try {
-        text = readFileSync(join(dir, shard), "utf-8");
-      } catch {
-        continue; // Shard vanished between listing and read (retention sweep).
-      }
-      const filters = workspaceId !== undefined ? { workspaceId } : {};
-      for (const record of parseShard(text, range, undefined, filters)) {
+      for (const record of parseShard(readShardSync(join(dir, shard)), range, undefined, filters)) {
         const runId = taskRunOf(record);
-        if (!runId || !taskRunIds.has(runId)) continue;
-        total += costBreakdown(record.model, record.usage, record.rates).total;
+        if (runId && taskRunIds.has(runId)) {
+          total += costBreakdown(record.model, record.usage, record.rates).total;
+        }
       }
     }
   }
   return total;
+}
+
+/** A shard's text, or empty when it vanished between listing and read (retention sweep). */
+function readShardSync(path: string): string {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return "";
+  }
 }
