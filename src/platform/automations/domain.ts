@@ -122,6 +122,8 @@ export interface DomainCreateInput {
   tokenBudget?: TokenBudget;
   enabled?: boolean;
   allowedTools?: string[];
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   // Operator/runtime fields:
   source?: AutomationSource;
   ownerId?: string;
@@ -142,6 +144,10 @@ export interface DomainUpdatePatch {
   tokenBudget?: TokenBudget;
   enabled?: boolean;
   allowedTools?: string[];
+  /** `null` removes it: runs take any input. */
+  inputSchema?: Record<string, unknown> | null;
+  /** `null` removes it: the deliverable is not checked. */
+  outputSchema?: Record<string, unknown> | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +245,8 @@ export function createAutomation(
     description: input.description,
     skill: input.skill,
     allowedTools: input.allowedTools,
+    ...(input.inputSchema ? { inputSchema: input.inputSchema } : {}),
+    ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
     maxIterations: input.maxIterations,
     maxInputTokens: input.maxInputTokens,
     maxRunDurationMs: input.maxRunDurationMs,
@@ -295,6 +303,8 @@ const UPDATABLE_FIELDS = [
   "schedule",
   "skill",
   "allowedTools",
+  "inputSchema",
+  "outputSchema",
   "maxIterations",
   "maxInputTokens",
   "maxRunDurationMs",
@@ -315,21 +325,27 @@ function reanchorNextRunAt(automation: Automation, defaultTimezone?: string): vo
   setNextRunAt(automation, computeNextRunAt(automation, Date.now(), defaultTimezone));
 }
 
+/** Patch fields where `null` deletes the key rather than storing a null. */
+const CLEARABLE_FIELDS = ["schedule", "inputSchema", "outputSchema"] as const satisfies readonly (
+  | keyof DomainUpdatePatch
+  | keyof Automation
+)[];
+
 /**
- * Copy the patch's fields onto `automation`. `schedule: null` deletes the key,
- * so the record reads as manual-only. Returns whether anything was written.
+ * Copy the patch's fields onto `automation`. `null` on a clearable field
+ * (`schedule`, `inputSchema`, `outputSchema`) deletes the key, so a schedule
+ * cleared reads as manual-only. Returns whether anything was written.
  */
 function applyPatchFields(automation: Automation, patch: DomainUpdatePatch): boolean {
   let changed = false;
+  const record = automation as unknown as Record<string, unknown>;
   for (const field of UPDATABLE_FIELDS) {
-    if (field === "schedule" && patch.schedule === null) continue;
-    if (field in patch && patch[field] !== undefined) {
-      (automation as unknown as Record<string, unknown>)[field] = patch[field];
-      changed = true;
+    if (!(field in patch) || patch[field] === undefined) continue;
+    if (patch[field] === null && (CLEARABLE_FIELDS as readonly string[]).includes(field)) {
+      delete record[field];
+    } else {
+      record[field] = patch[field];
     }
-  }
-  if (patch.schedule === null) {
-    delete automation.schedule;
     changed = true;
   }
   return changed;

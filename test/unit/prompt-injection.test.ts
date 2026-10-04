@@ -843,6 +843,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       "connector-skill",
       "activated-skill",
       "skill-instructions",
+      "run-input",
     ] as const satisfies readonly ContainmentTag[];
 
     // Exhaustiveness guard: every member of the union must appear in TAGS.
@@ -861,6 +862,7 @@ describe("Tier 1: Composition Integrity — prompt injection via untrusted field
       "connector-skill": true,
       "activated-skill": true,
       "skill-instructions": true,
+      "run-input": true,
     };
     void _exhaustive;
 

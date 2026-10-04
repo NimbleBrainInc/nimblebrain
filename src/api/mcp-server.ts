@@ -131,6 +131,7 @@ import { assertToolAllowed } from "../permissions/assert-tool-allowed.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { IDENTITY_SOURCES } from "../tools/identity-sources.ts";
+import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import { McpSource } from "../tools/mcp-source.ts";
 import { bareToolName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -898,7 +899,7 @@ function createHandlers(
     // Identity request (bare `<source>__<tool>`): dispatch against the caller's
     // identity, no workspace. See `executeIdentityToolCall` for the rationale.
     if (routed.kind === "identity") {
-      return executeIdentityToolCall(routed, name, args, features, sessionCtx, runtime);
+      return executeIdentityToolCall(routed, name, args, ask, features, sessionCtx, runtime);
     }
     return executeWorkspaceToolCall(
       routed,
@@ -1183,8 +1184,10 @@ function requestedTask(
 
 /**
  * Where a 2026 task request resolves: the request's (workspace, identity), and
- * the task-aware sources of that workspace. Null without a runtime or an
- * identity, which reach no task.
+ * the task-aware sources it can reach: a kernel identity source's task surface
+ * (`automations` runs) by that name, else a connector in that workspace. Null
+ * without a runtime or an identity, which reach no task. Either kind checks the
+ * task's (workspace, identity, source) owner against the request's.
  */
 function modernTaskContext(
   runtime: Runtime | null,
@@ -1197,7 +1200,8 @@ function modernTaskContext(
     workspaceId: wsId,
     identityId,
     findSource: (name) =>
-      runtime.getRegistryForWorkspace(wsId).findTaskAwareSource(name) as TaskAwareSource | null,
+      runtime.getIdentityTaskSource(name) ??
+      (runtime.getRegistryForWorkspace(wsId).findTaskAwareSource(name) as TaskAwareSource | null),
   };
 }
 
@@ -1276,20 +1280,24 @@ export function mapRouteToolError(err: unknown): never {
 
 /**
  * Dispatch an identity-scoped `/mcp` tools/call (bare `<source>__<tool>`)
- * against the caller's identity, no workspace. `workspaceId: null` is safe — a
- * handler that needs a workspace calls `requireWorkspaceId()`, which hard-fails
- * (never a passive failover). Identity tools (conversations) aren't
- * task-augmented, so the workspace task-negotiation is skipped; entity reads
- * are gated by `canAccess` in the handler.
+ * against the caller's identity, in the session's workspace. Entity reads are
+ * gated by `canAccess` in the handler.
+ *
+ * A kernel identity source with a task surface (`automations__run`) runs as a
+ * task on the 2026-07-28 leg when the client opts in to the tasks extension:
+ * the answer is a flat task whose id names the source beside the source's own
+ * task id (the run id). Every other call, including any 2025-era one, runs
+ * inline.
  */
 async function executeIdentityToolCall(
   routed: IdentityRoute,
   name: string,
   args: Record<string, unknown> | undefined,
+  ask: TaskAsk,
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
   runtime: Runtime,
-) {
+): Promise<ToolCallAnswer> {
   const fullName = routed.toolName;
   if (!isToolEnabled(fullName, features)) {
     return {
@@ -1331,10 +1339,65 @@ async function executeIdentityToolCall(
     // consistent with the resources wall.
     workspaceId: sessionCtx.workspaceId,
   };
+
+  if (ask.era === "modern" && !routed.policyOwner) {
+    const tasked = await answerIdentityTask(
+      runtime.getIdentityTaskSource(sourcePrefix),
+      { name, bare, args, ask },
+      identityCtx,
+      sessionCtx,
+    );
+    if (tasked) return tasked;
+  }
+
   const idResult = await runWithRequestContext(identityCtx, () =>
     routed.source.execute(bare, (args ?? {}) as Record<string, unknown>),
   );
   return toCallToolResult(idResult);
+}
+
+/**
+ * Run an identity tool call as a task on the 2026-07-28 leg, or null to run it
+ * inline: the source has no task surface, the tool cannot run as a task, or the
+ * client did not opt in to the tasks extension. A `required` tool the client
+ * did not opt in for is refused naming the extension, as on the workspace door.
+ * A call the source refuses before any run exists is answered inline with its
+ * error.
+ */
+async function answerIdentityTask(
+  taskSource: IdentityTaskSource | null,
+  call: {
+    name: string;
+    bare: string;
+    args: Record<string, unknown> | undefined;
+    ask: Extract<TaskAsk, { era: "modern" }>;
+  },
+  identityCtx: RequestContext,
+  sessionCtx: McpSessionContext,
+): Promise<ToolCallAnswer | null> {
+  if (!taskSource) return null;
+  const taskSupport = taskSource.taskSupport(call.bare);
+  if (taskSupport === "required" && !call.ask.optedIn) {
+    throw new MissingRequiredClientCapabilityError(
+      { requiredCapabilities: { extensions: { [TASKS_EXTENSION_ID]: {} } } },
+      `Tool ${call.name} runs only as a task; declare the ${TASKS_EXTENSION_ID} extension to call it`,
+    );
+  }
+  if (!requestedTask(call.ask, taskSupport)) return null;
+  const started = await runWithRequestContext(identityCtx, () =>
+    taskSource.startToolAsTask(call.bare, call.args ?? {}, {
+      ownerContext: ownerContextFor(identityCtx.workspaceId ?? "", sessionCtx, taskSource.name),
+    }),
+  );
+  if ("result" in started) {
+    const { content, structuredContent, isError } = started.result;
+    return {
+      content,
+      ...(structuredContent ? { structuredContent } : {}),
+      isError: isError ?? false,
+    };
+  }
+  return modernCreateTaskResult(taskSource.name, started.task);
 }
 
 /**

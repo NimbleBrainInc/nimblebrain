@@ -29,7 +29,9 @@ import {
   loadAllAutomations,
   loadAutomation,
   saveAutomation,
+  saveIdempotencyKey,
   saveRunResult,
+  saveRunTicket,
 } from "./store.ts";
 import {
   type Automation,
@@ -40,6 +42,7 @@ import {
   ONCE_GRACE_MS,
   ONCE_MISSED_REASON,
   ONCE_RAN_REASON,
+  type RunTicket,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -99,15 +102,32 @@ export type AutomationRunTrigger = "scheduled" | "manual" | "event";
 /**
  * Per-run input, for a trigger that carries something the stored prompt does
  * not. An `event` run carries the batch of notifications that fired it; a
- * `scheduled` or `manual` run carries nothing and passes none.
+ * `manual` run may carry the caller's JSON `input`; a `scheduled` run carries
+ * nothing and passes none.
  *
- * It is prepended to the prompt rather than merged into it, and it is never
- * persisted on the automation: inbox content is one run's input, not part of
- * the definition and not part of any cached prefix.
+ * It goes ahead of the prompt rather than into it, and it is never persisted
+ * on the automation: it is one run's input, not part of the definition and not
+ * part of any cached prefix.
  */
 export interface RunInput {
   /** Goes ahead of the automation's own prompt, separated by a blank line. */
-  preamble: string;
+  preamble?: string;
+  /** The caller's JSON input, rendered as data ahead of the prompt (see the executor). */
+  data?: unknown;
+}
+
+/**
+ * A run asked for by id (`automations__run`): the id it was given before it
+ * was asked for, and what it was asked with. A requested run has a ticket from
+ * the moment it is asked for (`RunTicket`), updated as it starts and ends, and
+ * its id is the run's id in every record, the runtime's included.
+ */
+export interface RequestedRun {
+  runId: string;
+  /** When it was asked for. */
+  requestedAt: string;
+  input?: unknown;
+  idempotencyKey?: string;
 }
 
 /**
@@ -126,6 +146,8 @@ export type Executor = (
   trigger: AutomationRunTrigger,
   input?: RunInput,
   lease?: AdmissionLease,
+  /** The run's id when it was minted ahead of the run (a requested run); the runtime adopts it. */
+  runId?: string,
 ) => Promise<{ run: AutomationRun; result: AutomationRunResult | null }>;
 
 /**
@@ -162,6 +184,7 @@ interface QueuedRun {
   key: string;
   trigger: "manual" | "event";
   input?: RunInput;
+  requested?: RequestedRun;
   resolve: (outcome: QueuedOutcome) => void;
   reject: (err: unknown) => void;
 }
@@ -721,10 +744,11 @@ function notStartedRun(
   key: string,
   reason: string,
   status: "skipped" | "cancelled" = "skipped",
+  requested?: RequestedRun,
 ): QueuedOutcome {
   const now = new Date().toISOString();
   const run: AutomationRun = {
-    id: `run_${Date.now()}_${status === "cancelled" ? "cancel" : "skip"}`,
+    id: requested?.runId ?? `run_${Date.now()}_${status === "cancelled" ? "cancel" : "skip"}`,
     automationId: key.slice(key.lastIndexOf("/") + 1),
     startedAt: now,
     completedAt: now,
@@ -735,7 +759,22 @@ function notStartedRun(
     iterations: 0,
     error: reason,
   };
-  return { run, started: false };
+  return { run: requested ? withRequest(run, requested) : run, started: false };
+}
+
+/** A requested run's record, carrying its id and what it was asked with. */
+function withRequest(run: AutomationRun, requested: RequestedRun): AutomationRun {
+  return {
+    ...run,
+    id: requested.runId,
+    ...(requested.input !== undefined ? { input: requested.input } : {}),
+    ...(requested.idempotencyKey !== undefined ? { idempotencyKey: requested.idempotencyKey } : {}),
+  };
+}
+
+/** Whether a run record is still open: asked for, and not yet ended or refused. */
+export function isOpenRun(run: Pick<AutomationRun, "status">): boolean {
+  return run.status === "queued" || run.status === "running";
 }
 
 /**
@@ -767,6 +806,14 @@ export class Scheduler {
   private definitions: Map<string, Automation> = new Map();
   /** In-flight runs' abort controllers, for cancel and stop. Slots are admission's. */
   private readonly activeRuns: Map<string, AbortController> = new Map();
+  /**
+   * Requested runs this process is carrying, by run id: queued or in flight,
+   * with the automation key and the promise of the run's record. A ticket that
+   * says a run is open while this map has no entry for it was left by a
+   * process that stopped before the run ended (see `settleLostRun`).
+   */
+  private readonly openRuns: Map<string, { key: string; ended: Promise<AutomationRun> }> =
+    new Map();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
 
@@ -991,7 +1038,12 @@ export class Scheduler {
    * when the automation is disabled and its token budget is spent for the
    * window, and when the scheduler is stopped (nothing would drain the queue).
    */
-  requestRunNow(wsId: string, ownerId: string, automationId: string): RunNowTicket | null {
+  requestRunNow(
+    wsId: string,
+    ownerId: string,
+    automationId: string,
+    requested?: RequestedRun,
+  ): RunNowTicket | null {
     const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
     const auto = this.definitions.get(key);
     if (!auto) {
@@ -1002,9 +1054,13 @@ export class Scheduler {
       return null;
     }
 
+    // A requested run's record exists before anything can answer for it: its
+    // ticket says queued from here, and every outcome below rewrites it.
+    if (requested) this.openTicket(auto, requested);
+
     const refuse = (reason: string): RunNowTicket => ({
       state: "refused",
-      run: this.recordSkipped(auto, reason, "manual"),
+      run: this.recordSkipped(auto, reason, "manual", "skipped", requested),
     });
 
     if (!this.running) return refuse(STOPPED_REASON);
@@ -1013,16 +1069,130 @@ export class Scheduler {
     const budget = runNowBudgetRefusal(auto, Date.now());
     if (budget) return refuse(budget);
 
-    const admitted = this.admit(key, "manual");
+    const input: RunInput | undefined =
+      requested?.input !== undefined ? { data: requested.input } : undefined;
+    const admitted = this.admit(key, "manual", input, requested);
     if (admitted.state === "started") {
-      return { state: "started", run: this.dispatchRun(auto, "manual", undefined, admitted.lease) };
+      const run = this.dispatchRun(auto, "manual", input, admitted.lease, requested);
+      return { state: "started", run: this.trackOpen(key, requested, run) };
     }
     if (admitted.state === "refused") return refuse(this.refusalReason(admitted.reason, "runNow"));
     return {
       state: "queued",
       position: admitted.position,
-      run: admitted.outcome.then((outcome) => outcome.run),
+      run: this.trackOpen(
+        key,
+        requested,
+        admitted.outcome.then((outcome) => outcome.run),
+      ),
     };
+  }
+
+  /** Write a requested run's first ticket (queued) and the idempotency key it was asked with. */
+  private openTicket(auto: Automation, requested: RequestedRun): void {
+    const { workspaceId: wsId, ownerId } = auto;
+    if (!wsId || !ownerId) return;
+    if (requested.idempotencyKey !== undefined) {
+      saveIdempotencyKey(
+        this.config.workDir,
+        wsId,
+        ownerId,
+        auto.id,
+        requested.idempotencyKey,
+        requested.runId,
+      );
+    }
+    this.writeTicket(wsId, ownerId, auto.id, requested, {
+      id: requested.runId,
+      automationId: auto.id,
+      startedAt: requested.requestedAt,
+      status: "queued",
+      inputTokens: 0,
+      outputTokens: 0,
+      toolCalls: 0,
+      iterations: 0,
+    });
+  }
+
+  /** Rewrite a requested run's ticket with its current record. */
+  private writeTicket(
+    wsId: string,
+    ownerId: string,
+    automationId: string,
+    requested: RequestedRun,
+    run: AutomationRun,
+  ): void {
+    const ticket: RunTicket = {
+      runId: requested.runId,
+      automationId,
+      requestedAt: requested.requestedAt,
+      run: withRequest(run, requested),
+    };
+    saveRunTicket(this.config.workDir, wsId, ownerId, ticket);
+  }
+
+  /** Remember a requested run as open until its record is written; returns `ended`. */
+  private trackOpen(
+    key: string,
+    requested: RequestedRun | undefined,
+    ended: Promise<AutomationRun>,
+  ): Promise<AutomationRun> {
+    if (!requested) return ended;
+    const { runId } = requested;
+    this.openRuns.set(runId, { key, ended });
+    const forget = () => {
+      if (this.openRuns.get(runId)?.ended === ended) this.openRuns.delete(runId);
+    };
+    ended.then(forget, forget);
+    return ended;
+  }
+
+  /** Whether this process is carrying the requested run (queued or in flight). */
+  isRunOpen(runId: string): boolean {
+    return this.openRuns.has(runId);
+  }
+
+  /** The record of a requested run this process is carrying, once it ends; undefined when it carries none. */
+  runEnded(runId: string): Promise<AutomationRun> | undefined {
+    return this.openRuns.get(runId)?.ended;
+  }
+
+  /**
+   * Cancel a requested run by its id, when this process is carrying it for
+   * that owner in that workspace: abort it in flight, or take it out of the
+   * queue. False when it carries no such run.
+   */
+  cancelRunById(wsId: string, ownerId: string, runId: string): boolean {
+    const open = this.openRuns.get(runId);
+    if (!open?.key.startsWith(`${wsId}/${ownerId}/`)) return false;
+    const automationId = open.key.slice(open.key.lastIndexOf("/") + 1);
+    return this.cancelRun(wsId, ownerId, automationId);
+  }
+
+  /**
+   * Settle a requested run whose ticket says it is open while no process is
+   * carrying it: the runtime stopped (or died) before it ended. A queued run
+   * never started and is recorded skipped; one that was running is recorded as
+   * a failure. Writes the run index and the ticket, and returns the new ticket.
+   */
+  settleLostRun(wsId: string, ownerId: string, ticket: RunTicket): RunTicket {
+    if (!isOpenRun(ticket.run) || this.openRuns.has(ticket.runId)) return ticket;
+    const wasRunning = ticket.run.status === "running";
+    const now = new Date().toISOString();
+    const run: AutomationRun = {
+      ...ticket.run,
+      completedAt: now,
+      status: wasRunning ? "failure" : "skipped",
+      error: wasRunning
+        ? "The runtime stopped while this run was in flight, so it did not finish."
+        : "The runtime stopped before this queued run started.",
+    };
+    appendRun(this.config.workDir, wsId, ownerId, ticket.automationId, run);
+    automationRunsTotal.inc({ status: run.status });
+    const settled: RunTicket = { ...ticket, run };
+    saveRunTicket(this.config.workDir, wsId, ownerId, settled);
+    this.config.onRunRecorded?.(ownerId);
+    return settled;
   }
 
   /**
@@ -1101,13 +1271,21 @@ export class Scheduler {
     key: string,
     trigger: QueuedRun["trigger"],
     input?: RunInput,
+    requested?: RequestedRun,
   ):
     | { state: "started"; lease: AdmissionLease }
     | { state: "queued"; position: number; outcome: Promise<QueuedOutcome> }
     | { state: "refused"; reason: AdmissionRefusal } {
     let entry!: QueuedRun;
     const outcome = new Promise<QueuedOutcome>((resolve, reject) => {
-      entry = { key, trigger, ...(input ? { input } : {}), resolve, reject };
+      entry = {
+        key,
+        trigger,
+        ...(input ? { input } : {}),
+        ...(requested ? { requested } : {}),
+        resolve,
+        reject,
+      };
     });
     const ticket = this.admission.request(Scheduler.admissionOf(key), {
       admitted: (lease) => this.startQueued(entry, lease),
@@ -1148,11 +1326,18 @@ export class Scheduler {
     const auto = this.definitions.get(entry.key);
     if (!auto) {
       lease.release();
-      entry.resolve(notStartedRun(entry.key, "the automation was deleted while queued"));
+      try {
+        entry.resolve(this.notStartedForKey(entry, "the automation was deleted while queued"));
+      } catch (err) {
+        entry.reject(err);
+      }
       return;
     }
     const refuse = (reason: string) =>
-      entry.resolve({ run: this.recordSkipped(auto, reason, entry.trigger), started: false });
+      entry.resolve({
+        run: this.recordSkipped(auto, reason, entry.trigger, "skipped", entry.requested),
+        started: false,
+      });
     try {
       if (entry.trigger === "event" && !auto.enabled) {
         lease.release();
@@ -1170,7 +1355,7 @@ export class Scheduler {
       entry.reject(err);
       return;
     }
-    this.dispatchRun(auto, entry.trigger, entry.input, lease).then(
+    this.dispatchRun(auto, entry.trigger, entry.input, lease, entry.requested).then(
       (run) => entry.resolve({ run, started: true }),
       entry.reject,
     );
@@ -1193,12 +1378,37 @@ export class Scheduler {
     try {
       entry.resolve(
         auto
-          ? { run: this.recordSkipped(auto, text, entry.trigger, status), started: false }
-          : notStartedRun(entry.key, text, status),
+          ? {
+              run: this.recordSkipped(auto, text, entry.trigger, status, entry.requested),
+              started: false,
+            }
+          : reason === WORKSPACE_DELETED
+            ? notStartedRun(entry.key, text, status, entry.requested)
+            : this.notStartedForKey(entry, text, status),
       );
     } catch (err) {
       entry.reject(err);
     }
+  }
+
+  /**
+   * The not-started record of a queued run whose automation is gone. Not
+   * written to the run index (there is no automation to hold it), but a
+   * requested run's ticket is rewritten so its handle reads the outcome.
+   */
+  private notStartedForKey(
+    entry: QueuedRun,
+    reason: string,
+    status: "skipped" | "cancelled" = "skipped",
+  ): QueuedOutcome {
+    const outcome = notStartedRun(entry.key, reason, status, entry.requested);
+    if (entry.requested) {
+      const [wsId, ownerId] = entry.key.split("/");
+      if (wsId && ownerId) {
+        this.writeTicket(wsId, ownerId, outcome.run.automationId, entry.requested, outcome.run);
+      }
+    }
+    return outcome;
   }
 
   /**
@@ -1392,6 +1602,7 @@ export class Scheduler {
     trigger: AutomationRunTrigger,
     input: RunInput | undefined,
     lease: AdmissionLease,
+    requested?: RequestedRun,
   ): Promise<AutomationRun> {
     const key = Scheduler.keyOf(auto);
     const controller = new AbortController();
@@ -1414,6 +1625,7 @@ export class Scheduler {
         input,
         lease,
         firedOnceAt,
+        requested,
       });
     } finally {
       // The slot is free whether the run's record landed or its write threw.
@@ -1434,21 +1646,49 @@ export class Scheduler {
       input: RunInput | undefined;
       lease: AdmissionLease;
       firedOnceAt: string | undefined;
+      requested: RequestedRun | undefined;
     },
   ): Promise<AutomationRun> {
-    const { startedAt, trigger, input, lease, firedOnceAt } = dispatch;
+    const { startedAt, trigger, input, lease, firedOnceAt, requested } = dispatch;
+    const ticket = (run: AutomationRun) => {
+      if (requested && auto.workspaceId && auto.ownerId) {
+        this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);
+      }
+    };
+    ticket({
+      id: requested?.runId ?? "",
+      automationId: auto.id,
+      startedAt,
+      status: "running",
+      inputTokens: 0,
+      outputTokens: 0,
+      toolCalls: 0,
+      iterations: 0,
+      trigger,
+    });
     try {
-      const { run, result } = await this.executor(auto, controller.signal, trigger, input, lease);
+      const executed = await this.executor(
+        auto,
+        controller.signal,
+        trigger,
+        input,
+        lease,
+        requested?.runId,
+      );
+      const run = requested ? withRequest(executed.run, requested) : executed.run;
+      const result =
+        requested && executed.result ? { ...executed.result, runId: run.id } : executed.result;
       this.updateAfterRun(auto, run, trigger, firedOnceAt);
       // Persist the full deliverable sidecar alongside the run summary. Present
       // for both the scheduled and manual (runNow) paths; null only when the
       // executor had no clean data (it rejected instead — see the catch below).
       if (result) this.persistRunResult(auto, result);
+      ticket(run);
       this.runRecorded(auto);
       return run;
     } catch (err) {
       const { status, suffix, error, transient } = classifyRunFailure(err);
-      const failedRun: AutomationRun = {
+      const failed: AutomationRun = {
         id: `run_${Date.now()}_${suffix}`,
         automationId: auto.id,
         startedAt,
@@ -1462,7 +1702,9 @@ export class Scheduler {
         transient,
         trigger,
       };
+      const failedRun = requested ? withRequest(failed, requested) : failed;
       this.updateAfterRun(auto, failedRun, trigger, firedOnceAt);
+      ticket(failedRun);
       this.runRecorded(auto);
       return failedRun;
     }
@@ -1568,9 +1810,10 @@ export class Scheduler {
     reason: string,
     trigger?: AutomationRunTrigger,
     status: "skipped" | "cancelled" = "skipped",
+    requested?: RequestedRun,
   ): AutomationRun {
     const now = Date.now();
-    const run = this.writeNotStarted(auto, reason, status, now);
+    const run = this.writeNotStarted(auto, reason, status, now, requested);
     const wsId = auto.workspaceId;
     const ownerId = auto.ownerId;
     if (!wsId || !ownerId) return run; // defensive — can't locate the store
@@ -1618,9 +1861,10 @@ export class Scheduler {
     reason: string,
     status: "skipped" | "cancelled",
     now: number,
+    requested?: RequestedRun,
   ): AutomationRun {
     const at = new Date(now).toISOString();
-    const run: AutomationRun = {
+    const notStarted: AutomationRun = {
       id: `run_${now}_${status === "cancelled" ? "cancel" : "skip"}`,
       automationId: auto.id,
       startedAt: at,
@@ -1632,9 +1876,11 @@ export class Scheduler {
       iterations: 0,
       error: reason,
     };
+    const run = requested ? withRequest(notStarted, requested) : notStarted;
     if (!auto.workspaceId || !auto.ownerId) return run;
     appendRun(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, run);
     automationRunsTotal.inc({ status: run.status });
+    if (requested) this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);
     return run;
   }
 

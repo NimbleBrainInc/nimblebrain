@@ -174,6 +174,8 @@ export interface RunSpec {
   model: string;
   /** Cancellation, threaded into the engine and down to every tool call. */
   signal?: AbortSignal;
+  /** The run's id, when the caller minted it ahead of the run; absent, the door mints one. */
+  runId?: string;
   /** Per-request event sink (SSE stream, executor tap) joined to the defaults. */
   sink?: EventSink;
   onAbort: RunAbortDisposition;

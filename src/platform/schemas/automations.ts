@@ -123,6 +123,30 @@ const TokenBudget = Type.Object(
   },
 );
 
+/**
+ * A JSON Schema an author supplies: an open object, since its keywords are the
+ * schema language's, not this tool's.
+ */
+function jsonSchemaField(description: string) {
+  return Type.Unsafe<Record<string, unknown>>({
+    type: "object",
+    properties: {},
+    additionalProperties: true,
+    description,
+  });
+}
+
+const InputSchemaField = jsonSchemaField(
+  "JSON Schema each run's `input` must match (automations__run `input`). A run whose input " +
+    "does not match is refused before it starts. Omit to take any JSON input.",
+);
+
+const OutputSchemaField = jsonSchemaField(
+  "JSON Schema the deliverable must match. The run is told to answer with JSON matching it; " +
+    "the final output is parsed and checked, kept as the result's `structured`, and the run " +
+    "record says whether it matched (`outputSchemaValid`, `outputSchemaErrors`).",
+);
+
 // Manifest fields shared by create + update. `name` is required for create
 // (rebuilt with explicit required); update uses the same fields minus name
 // (renames are not patchable; the kebab-case id would drift).
@@ -193,6 +217,8 @@ const ManifestFields = {
     }),
   ),
   tokenBudget: Type.Optional(TokenBudget),
+  inputSchema: Type.Optional(InputSchemaField),
+  outputSchema: Type.Optional(OutputSchemaField),
   kind: Type.Optional(
     StringEnum(["saved", "oneoff"] as const, {
       description:
@@ -223,6 +249,16 @@ const UpdateManifestFields = {
   allowedTools: ManifestFields.allowedTools,
   maxRunDurationMs: ManifestFields.maxRunDurationMs,
   tokenBudget: ManifestFields.tokenBudget,
+  inputSchema: Type.Optional(
+    Type.Union([InputSchemaField, Type.Null()], {
+      description: "New input schema, or null to remove it so runs take any input.",
+    }),
+  ),
+  outputSchema: Type.Optional(
+    Type.Union([OutputSchemaField, Type.Null()], {
+      description: "New output schema, or null to remove it so the deliverable is not checked.",
+    }),
+  ),
 };
 
 // ── Tool input schemas ───────────────────────────────────────────────────
@@ -332,10 +368,61 @@ export const AutomationsRunsInput = Type.Object({
 });
 export type AutomationsRunsInput = Static<typeof AutomationsRunsInput>;
 
-export const AutomationsRunInput = Type.Object(
-  { name: Type.String({ description: "Name of the automation to run." }) },
-  { required: ["name"] },
-);
+export const AutomationsRunInput = Type.Object({
+  name: Type.Optional(
+    Type.String({
+      description:
+        "Name of a saved automation to run. Omit it and give `prompt` (or `skill`) instead to " +
+        "run an inline one-off: a `oneoff` automation with no schedule is created, owned by " +
+        "you in this workspace, run once, and kept with its run.",
+    }),
+  ),
+  input: Type.Optional(
+    Type.Unsafe<unknown>({
+      description:
+        "JSON input for this run (any JSON value, at most 64 KiB serialized). Checked against " +
+        "the automation's inputSchema when it has one, kept on the run record, and given to " +
+        "the run as data, never as instructions.",
+    }),
+  ),
+  idempotencyKey: Type.Optional(
+    Type.String({
+      minLength: 1,
+      maxLength: 256,
+      description:
+        "Repeat-safe key. A later call with the same key for the same automation (or the same " +
+        "inline one-off) returns the run the first call started instead of starting another.",
+    }),
+  ),
+  prompt: Type.Optional(
+    Type.String({ description: "Inline one-off: the prompt that opens the run." }),
+  ),
+  skill: Type.Optional(
+    Type.String({ description: "Inline one-off: a skill for the run to carry out." }),
+  ),
+  inputSchema: Type.Optional(InputSchemaField),
+  outputSchema: Type.Optional(OutputSchemaField),
+  allowedTools: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Inline one-off: the tools the run may use, as names or globs (see automations__create).",
+    }),
+  ),
+  limits: Type.Optional(
+    Type.Object(
+      {
+        maxIterations: ManifestFields.maxIterations,
+        maxInputTokens: ManifestFields.maxInputTokens,
+        maxRunDurationMs: ManifestFields.maxRunDurationMs,
+      },
+      {
+        additionalProperties: false,
+        description: "Inline one-off: per-run caps, as on automations__create.",
+      },
+    ),
+  ),
+  budget: Type.Optional(TokenBudget),
+});
 export type AutomationsRunInput = Static<typeof AutomationsRunInput>;
 
 export const AutomationsCancelInput = Type.Object(
@@ -346,10 +433,16 @@ export type AutomationsCancelInput = Static<typeof AutomationsCancelInput>;
 
 export const AutomationsRunResultInput = Type.Object(
   {
-    name: Type.String({ description: "Name of the automation." }),
+    name: Type.Optional(
+      Type.String({
+        description:
+          "Name of the automation. Optional for a run automations__run started, which is found " +
+          "by its id alone.",
+      }),
+    ),
     runId: Type.String({ description: "The run id (from a run record) to fetch the result for." }),
   },
-  { required: ["name", "runId"] },
+  { required: ["runId"] },
 );
 export type AutomationsRunResultInput = Static<typeof AutomationsRunResultInput>;
 
@@ -458,7 +551,15 @@ export interface AutomationRunRecord {
   automationId: string;
   startedAt: string;
   completedAt?: string;
-  status: "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled" | "skipped";
+  status:
+    | "queued"
+    | "running"
+    | "success"
+    | "degraded"
+    | "failure"
+    | "timeout"
+    | "cancelled"
+    | "skipped";
   inputTokens: number;
   outputTokens: number;
   toolCalls: number;
@@ -478,6 +579,14 @@ export interface AutomationRunRecord {
     | "other";
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
+  /** The JSON input the run was given. */
+  input?: unknown;
+  /** The idempotency key the run was requested with. */
+  idempotencyKey?: string;
+  /** Whether the deliverable matched the automation's outputSchema; absent without one. */
+  outputSchemaValid?: boolean;
+  /** Why the deliverable did not match the outputSchema. */
+  outputSchemaErrors?: string[];
 }
 
 /**
@@ -523,6 +632,8 @@ export interface AutomationsRunResultOutput {
     | "content_filter"
     | "error"
     | "other";
+  /** The deliverable parsed as JSON, when the automation has an outputSchema and it parsed. */
+  structured?: unknown;
 }
 
 /**
@@ -579,6 +690,8 @@ export interface AutomationStatusDetail {
   model?: string | null;
   skill?: string;
   allowedTools?: string[];
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;
@@ -660,6 +773,8 @@ export type AutomationsRunOutput =
   | {
       status: "dispatched";
       automationId: string;
+      /** The run's id: read its result with automations__run_result. */
+      runId: string;
       startedAt: string;
       enabled: boolean;
       message: string;
@@ -667,6 +782,8 @@ export type AutomationsRunOutput =
   | {
       status: "queued";
       automationId: string;
+      /** The run's id: read its result with automations__run_result. */
+      runId: string;
       /** 1 is next to start. */
       position: number;
       queuedAt: string;
@@ -695,6 +812,8 @@ export interface AutomationRecord {
   onceDone?: AutomationOnceDone;
   skill?: string;
   allowedTools?: string[];
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;

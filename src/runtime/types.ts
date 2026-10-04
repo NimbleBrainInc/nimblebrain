@@ -505,6 +505,12 @@ export interface TaskRequest {
    */
   signal?: AbortSignal;
   /**
+   * The run's id, when the caller named it before the run started: a caller
+   * that hands out a handle for the run (a task id) mints the id first, so the
+   * handle and the run's own records share it. Absent: the door mints one.
+   */
+  runId?: string;
+  /**
    * An opaque key for run admission (`src/runtime/admission.ts`): a call whose
    * key already holds a slot or waits for one is refused. The runtime never
    * interprets it. Ignored when `admission` is passed.

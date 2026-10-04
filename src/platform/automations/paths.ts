@@ -14,6 +14,8 @@
  *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/<runId>.result.json  a hot run's deliverable
  *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
  *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
+ *   workspaces/<wsId>/automations/<ownerId>/runs/<automationId>/keys/<sha256(key)>.json  an idempotency key and the run it started
+ *   workspaces/<wsId>/automations/<ownerId>/run-tickets/<runId>.json  a requested run's current record, found by run id alone
  *
  * A run's summary and its deliverable move to the archive together, so the
  * hot runs dir holds at most the hot window of sidecars plus `index.jsonl`
@@ -32,6 +34,8 @@ import { join, sep } from "node:path";
 const AUTOMATIONS_SEGMENT = "automations";
 const WORKSPACES_SEGMENT = "workspaces";
 const RUNS_SEGMENT = "runs";
+const TICKETS_SEGMENT = "run-tickets";
+const KEYS_SEGMENT = "keys";
 
 /**
  * Automation ids are kebab-case (lowercase alphanumeric segments separated by
@@ -170,6 +174,47 @@ export function automationRunResultPath(
 ): string {
   validateRunId(runId);
   return join(automationRunsDir(workDir, wsId, ownerId, automationId), `${runId}.result.json`);
+}
+
+/**
+ * A requested run's ticket: `…/automations/<ownerId>/run-tickets/<runId>.json`.
+ * Keyed by run id alone, under the owner, so a task handle (which names only
+ * the run) finds its run without knowing the automation, and the owner
+ * partition in the path is the ownership check.
+ */
+export function automationRunTicketPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  runId: string,
+): string {
+  validateRunId(runId);
+  return join(workspaceAutomationsDir(workDir, wsId, ownerId), TICKETS_SEGMENT, `${runId}.json`);
+}
+
+/** A SHA-256 hex digest: the file name an idempotency key is stored under. */
+const KEY_DIGEST_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Where an idempotency key used on one automation is recorded:
+ * `…/runs/<automationId>/keys/<digest>.json`. `digest` is the key's SHA-256,
+ * so a caller's key never becomes a path segment.
+ */
+export function automationIdempotencyKeyPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  digest: string,
+): string {
+  if (!KEY_DIGEST_RE.test(digest)) {
+    throw new Error(`Invalid idempotency key digest: ${JSON.stringify(digest)}.`);
+  }
+  return join(
+    automationRunsDir(workDir, wsId, ownerId, automationId),
+    KEYS_SEGMENT,
+    `${digest}.json`,
+  );
 }
 
 /** What a parsed automation path resolves to. */

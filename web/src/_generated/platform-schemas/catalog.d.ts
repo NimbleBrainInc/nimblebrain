@@ -161,6 +161,8 @@ export declare const PlatformToolCatalog: {
                         maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                         period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
                     }>>;
+                    inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                    outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
                     kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
                 }>;
                 body: import("@sinclair/typebox").TString;
@@ -197,6 +199,8 @@ export declare const PlatformToolCatalog: {
                         maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                         period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
                     }>>;
+                    inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
+                    outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
                 }>>;
                 body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
@@ -232,7 +236,24 @@ export declare const PlatformToolCatalog: {
         };
         readonly run: {
             readonly input: import("@sinclair/typebox").TObject<{
-                name: import("@sinclair/typebox").TString;
+                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<unknown>>;
+                idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                prompt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                limits: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                    maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                    maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                    maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                }>>;
+                budget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                    maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                    maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
+                }>>;
             }>;
         };
         readonly cancel: {

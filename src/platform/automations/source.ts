@@ -10,7 +10,7 @@ import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-a
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { AutomationEventTrigger } from "./event-trigger.ts";
 import { createDirectExecutor, type ExecutorContext } from "./executor.ts";
-import { countsAsEventFire, Scheduler } from "./scheduler.ts";
+import { countsAsEventFire, isOpenRun, Scheduler } from "./scheduler.ts";
 import { TOOL_SCHEMAS } from "./schemas.ts";
 import {
   handleCancel,
@@ -29,12 +29,15 @@ import {
   loadAutomation,
   loadOwnerAutomations,
   readAllRuns,
+  readIdempotencyKey,
   readRunResult,
   readRuns,
   readRunsPage,
+  readRunTicket,
   saveAutomation,
 } from "./store.ts";
-import type { Automation } from "./types.ts";
+import { createAutomationsTaskSource } from "./task-source.ts";
+import type { Automation, RunTicket } from "./types.ts";
 import { AUTOMATIONS_PANEL_HTML } from "./ui-resource.ts";
 
 /**
@@ -177,6 +180,19 @@ export async function createAutomationsSource(
   runtime.registerAutomationEventTrigger(eventTrigger);
 
   /**
+   * A requested run's ticket. One that says the run is open while this
+   * process carries no such run was left by a process that stopped before the
+   * run ended, so it is settled (recorded as not finished) on the way out:
+   * every reader sees the run's real outcome, and a task handle never polls a
+   * run nothing will finish.
+   */
+  function currentTicket(wsId: string, owner: string, runId: string): RunTicket | null {
+    const ticket = readRunTicket(workDir, wsId, owner, runId);
+    if (!ticket || !isOpenRun(ticket.run) || scheduler.isRunOpen(runId)) return ticket;
+    return scheduler.settleLostRun(wsId, owner, ticket);
+  }
+
+  /**
    * The caller's owner id. Automations are workspace-owned with the owner as a
    * privacy sub-partition: the tool path carries the caller's identity in the
    * request context; internal callers (CLI, connector lifecycle) resolve to the dev
@@ -210,7 +226,16 @@ export async function createAutomationsSource(
         runtime.announceIdentitySourceChange("automations", owner);
       },
       reloadScheduler: () => scheduler.reload(),
-      runNow: (id) => scheduler.requestRunNow(wsId, owner, id),
+      runNow: (id, requested) => scheduler.requestRunNow(wsId, owner, id, requested),
+      readRunTicket: (runId) => currentTicket(wsId, owner, runId),
+      findRunByKey: (id, key) => {
+        const runId = readIdempotencyKey(workDir, wsId, owner, id, key);
+        return runId ? currentTicket(wsId, owner, runId) : null;
+      },
+      queuePosition: (id) => {
+        const index = scheduler.getQueuedRunIds().indexOf(`${wsId}/${owner}/${id}`);
+        return index >= 0 ? index + 1 : null;
+      },
       cancelRun: (id) => scheduler.cancelRun(wsId, owner, id),
       readRuns: (id, opts) => readRuns(workDir, wsId, owner, id, opts),
       readRunsPage: (id, opts) => readRunsPage(workDir, wsId, owner, id, opts),
@@ -237,6 +262,32 @@ export async function createAutomationsSource(
       defaultTimezone: tc.defaultTimezone,
     };
   });
+
+  /** Why an automations tool is refused inside an unattended run, or null when it is not. */
+  function unattendedRefusal(name: string): string | null {
+    if (!getRequestContext()?.unattended || !isTaskForbiddenIdentityTool(`automations__${name}`)) {
+      return null;
+    }
+    return (
+      `Tool "automations__${name}" is not available inside an unattended ` +
+      "automation run. An automation cannot create, modify, delete, or trigger " +
+      "automations from within its own run. Manage automations from an interactive session."
+    );
+  }
+
+  // The task surface `/mcp` drives for `automations__run` on the 2026-07-28
+  // leg (the tasks extension). It reads and writes through the same store and
+  // scheduler the tools do.
+  runtime.registerIdentityTaskSource(
+    createAutomationsTaskSource({
+      toolContext: getToolContext,
+      readTicket: currentTicket,
+      readResult: (wsId, owner, id, runId) => readRunResult(workDir, wsId, owner, id, runId),
+      runEnded: (runId) => scheduler.runEnded(runId),
+      cancelRun: (wsId, owner, runId) => scheduler.cancelRunById(wsId, owner, runId),
+      unattendedRefusal: () => unattendedRefusal("run"),
+    }),
+  );
 
   /** Shared error handler — catches, formats, returns isError result. */
   function withErrorHandling(
@@ -273,16 +324,8 @@ export async function createAutomationsSource(
       // request context (set by `executeTask`, preserved across the per-call
       // restamp), so this does not depend on which router dispatched the call,
       // or on the tool having been surfaced to the model.
-      if (
-        getRequestContext()?.unattended &&
-        isTaskForbiddenIdentityTool(`automations__${schema.name}`)
-      ) {
-        throw new Error(
-          `Tool "automations__${schema.name}" is not available inside an unattended ` +
-            "automation run. An automation cannot create, modify, delete, or trigger " +
-            "automations from within its own run. Manage automations from an interactive session.",
-        );
-      }
+      const refusal = unattendedRefusal(schema.name);
+      if (refusal) throw new Error(refusal);
       const ctx = getToolContext();
       switch (schema.name) {
         case "create":

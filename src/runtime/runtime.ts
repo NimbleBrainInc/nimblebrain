@@ -238,6 +238,7 @@ import {
   isTaskForbiddenIdentityTool,
   personalConnectorWireName,
 } from "../tools/identity-sources.ts";
+import type { IdentityTaskSource } from "../tools/identity-task-source.ts";
 import {
   resolveInstanceCredentialRefs,
   type WithCredentialRefs,
@@ -527,6 +528,8 @@ export class Runtime {
   private _automationsContextGetter: (() => AutomationDomainContext) | null = null;
   private _automationEventTrigger: AutomationEventTrigger | null = null;
   private _automationQuiescer: AutomationQuiescer | null = null;
+  /** Identity sources' task surfaces, by source name (see {@link registerIdentityTaskSource}). */
+  private readonly _identityTaskSources = new Map<string, IdentityTaskSource>();
   /**
    * Per-workspace host-resources deps factory. Set in `Runtime.start()`
    * after the resolver + rate-limit are constructed; consumed by every
@@ -1547,6 +1550,7 @@ export class Runtime {
       },
       model: this.resolveRequestModelString(request.model),
       ...(request.signal ? { signal: request.signal } : {}),
+      ...(request.runId ? { runId: request.runId } : {}),
       ...(requestSink ? { sink: requestSink } : {}),
       onAbort: "partial",
     });
@@ -1632,8 +1636,9 @@ export class Runtime {
     }
 
     // The run's correlation anchor, stamped on the request context for audit
-    // and file correlation and returned to the caller.
-    const runId = `run_${crypto.randomUUID().slice(0, 12)}`;
+    // and file correlation and returned to the caller. A caller that handed out
+    // a handle for the run before it started names the id it minted.
+    const runId = spec.runId ?? `run_${crypto.randomUUID().slice(0, 12)}`;
 
     const { workWorkspace, activeWorkspace } = await this.resolveRunWorkspaces(spec);
     const briefingWsId = spec.briefingWorkspaceId;
@@ -4851,6 +4856,21 @@ export class Runtime {
    */
   registerAutomationQuiescer(quiescer: AutomationQuiescer): void {
     this._automationQuiescer = quiescer;
+  }
+
+  /**
+   * Register a kernel identity source's task surface, so the `/mcp` identity
+   * door can run its tools as tasks and answer lookups for them. Called by the
+   * source during construction, like the registrations above.
+   */
+  registerIdentityTaskSource(source: IdentityTaskSource): void {
+    this._identityTaskSources.set(source.name, source);
+  }
+
+  /** The task surface of the identity source by that name, or null when it has none. */
+  getIdentityTaskSource(name: string): IdentityTaskSource | null {
+    if (!isIdentitySource(name)) return null;
+    return this._identityTaskSources.get(name) ?? null;
   }
 
   /**

@@ -78,23 +78,29 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     name: "run_result",
     description:
       "Fetch a single run's full result (the deliverable): the untruncated final output, " +
-      "the activity log of every tool call, refs to any files the run wrote, and usage. " +
-      "The run list (automations__runs / automations__status) carries only a truncated " +
-      "preview — use this to read the whole result for one run by id.",
+      "the activity log of every tool call, refs to any files the run wrote, usage, and the " +
+      "parsed `structured` output when the automation has an outputSchema. The run list " +
+      "(automations__runs / automations__status) carries only a truncated preview — use this " +
+      "to read the whole result for one run by id. A run automations__run started is found by " +
+      "its `runId` alone.",
     inputSchema: AutomationsRunResultInput,
   },
   {
     name: "run",
     description:
-      "Run an automation now, bypassing schedule and backoff. Runs it even when it is disabled " +
-      "(enabled: false): Run now is a deliberate act, while a disabled automation is never fired " +
-      "by its schedule or by events. The response carries `enabled` and says when it is false. " +
-      "Returns the full run record when the run completes within ~30s. A longer run returns " +
-      "{status: 'dispatched', automationId, startedAt, enabled, message}: it is still running in " +
-      "the background, not failed and not ignored. Its record appears in automations__runs " +
-      "(automationId, since: startedAt) when it ends; read the full output with " +
-      "automations__run_result, or stop it with automations__cancel. Only an error response " +
-      "means the run did not start.",
+      "Run an automation now, bypassing schedule and backoff: a saved one by `name`, or an " +
+      "inline one-off from `prompt` (or `skill`) plus optional schemas, tools, limits, and " +
+      "budget, which creates a `oneoff` automation with no schedule and runs it once. `input` " +
+      "is JSON for the run, checked against the automation's inputSchema and given to the run " +
+      "as data. `idempotencyKey` makes the call safe to repeat: a repeat returns the run the " +
+      "first call started. Runs a disabled automation too (enabled: false): Run now is a " +
+      "deliberate act, while a disabled automation is never fired by its schedule or by events. " +
+      "The response carries `enabled` and says when it is false. Returns the full run record " +
+      "when the run completes within ~30s. A longer run returns {status: 'dispatched', " +
+      "automationId, runId, startedAt, enabled, message}: it is still running in the " +
+      "background, not failed and not ignored; read it with automations__run_result (runId) " +
+      "when it ends, or stop it with automations__cancel. Only an error response means the run " +
+      "did not start.",
     inputSchema: AutomationsRunInput,
   },
   {

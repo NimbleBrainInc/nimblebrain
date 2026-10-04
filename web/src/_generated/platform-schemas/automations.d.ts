@@ -51,6 +51,8 @@ export declare const AutomationsCreateInput: import("@sinclair/typebox").TObject
             maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
         }>>;
+        inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+        outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
         kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
     }>;
     body: import("@sinclair/typebox").TString;
@@ -86,6 +88,8 @@ export declare const AutomationsUpdateInput: import("@sinclair/typebox").TObject
             maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
             period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
         }>>;
+        inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
+        outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -116,7 +120,24 @@ export declare const AutomationsRunsInput: import("@sinclair/typebox").TObject<{
 }>;
 export type AutomationsRunsInput = Static<typeof AutomationsRunsInput>;
 export declare const AutomationsRunInput: import("@sinclair/typebox").TObject<{
-    name: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<unknown>>;
+    idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    prompt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+    outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+    allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+    limits: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    }>>;
+    budget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
+    }>>;
 }>;
 export type AutomationsRunInput = Static<typeof AutomationsRunInput>;
 export declare const AutomationsCancelInput: import("@sinclair/typebox").TObject<{
@@ -124,7 +145,7 @@ export declare const AutomationsCancelInput: import("@sinclair/typebox").TObject
 }>;
 export type AutomationsCancelInput = Static<typeof AutomationsCancelInput>;
 export declare const AutomationsRunResultInput: import("@sinclair/typebox").TObject<{
-    name: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     runId: import("@sinclair/typebox").TString;
 }>;
 export type AutomationsRunResultInput = Static<typeof AutomationsRunResultInput>;
@@ -200,7 +221,7 @@ export interface AutomationRunRecord {
     automationId: string;
     startedAt: string;
     completedAt?: string;
-    status: "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled" | "skipped";
+    status: "queued" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled" | "skipped";
     inputTokens: number;
     outputTokens: number;
     toolCalls: number;
@@ -212,6 +233,14 @@ export interface AutomationRunRecord {
     stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
     /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
     spendAccountId?: string;
+    /** The JSON input the run was given. */
+    input?: unknown;
+    /** The idempotency key the run was requested with. */
+    idempotencyKey?: string;
+    /** Whether the deliverable matched the automation's outputSchema; absent without one. */
+    outputSchemaValid?: boolean;
+    /** Why the deliverable did not match the outputSchema. */
+    outputSchemaErrors?: string[];
 }
 /**
  * One tool call from a run's activity log. Mirror of `RunToolCall` in
@@ -250,6 +279,8 @@ export interface AutomationsRunResultOutput {
         iterations: number;
     };
     stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
+    /** The deliverable parsed as JSON, when the automation has an outputSchema and it parsed. */
+    structured?: unknown;
 }
 /**
  * Token budget block on a stored automation. Mirror of the
@@ -302,6 +333,8 @@ export interface AutomationStatusDetail {
     model?: string | null;
     skill?: string;
     allowedTools?: string[];
+    inputSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
     maxIterations?: number;
     maxInputTokens?: number;
     maxRunDurationMs?: number;
@@ -382,12 +415,16 @@ export type AutomationsRunOutput = {
 } | {
     status: "dispatched";
     automationId: string;
+    /** The run's id: read its result with automations__run_result. */
+    runId: string;
     startedAt: string;
     enabled: boolean;
     message: string;
 } | {
     status: "queued";
     automationId: string;
+    /** The run's id: read its result with automations__run_result. */
+    runId: string;
     /** 1 is next to start. */
     position: number;
     queuedAt: string;
@@ -414,6 +451,8 @@ export interface AutomationRecord {
     onceDone?: AutomationOnceDone;
     skill?: string;
     allowedTools?: string[];
+    inputSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
     maxIterations?: number;
     maxInputTokens?: number;
     maxRunDurationMs?: number;

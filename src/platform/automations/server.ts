@@ -7,6 +7,7 @@
  * handlers + formatting only.
  */
 
+import { createHash, randomBytes } from "node:crypto";
 import { Cron } from "croner";
 import {
   describeClampedLimits,
@@ -33,7 +34,8 @@ import type {
 } from "../schemas/automations.ts";
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
-import type { RunNowTicket } from "./scheduler.ts";
+import { assertJsonSchema, checkAgainstSchema } from "./json-schema.ts";
+import { isOpenRun, type RequestedRun, type RunNowTicket } from "./scheduler.ts";
 import type { ReadRunsOptions, RunsPage } from "./store.ts";
 import {
   type Automation,
@@ -47,7 +49,9 @@ import {
   MAX_EVENT_DEBOUNCE_MS,
   MAX_EVENT_MAX_FIRES_PER_HOUR,
   onceRetirement,
+  type RunTicket,
   type ScheduleSpec,
+  type TokenBudget,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -333,8 +337,21 @@ export interface ToolContext {
   definitions: () => Map<string, Automation>;
   save: (defs: Map<string, Automation>) => void;
   reloadScheduler: () => void;
-  /** Ask the scheduler to run the automation now; null when it is not loaded. */
-  runNow: (automationId: string) => RunNowTicket | null;
+  /**
+   * Ask the scheduler to run the automation now; null when it is not loaded.
+   * `requested` names the run (its id, input, and idempotency key), and the
+   * run's ticket is written before this returns.
+   */
+  runNow: (automationId: string, requested?: RequestedRun) => RunNowTicket | null;
+  /**
+   * A requested run's ticket by run id (this owner, this workspace), settled
+   * first when it was left open by a process that stopped. Null when none.
+   */
+  readRunTicket?: (runId: string) => RunTicket | null;
+  /** The run an idempotency key started on this automation, as its ticket; null when none. */
+  findRunByKey?: (automationId: string, key: string) => RunTicket | null;
+  /** A queued run's place in the run queue (1 is next), or null when it is not queued. */
+  queuePosition?: (automationId: string) => number | null;
   cancelRun: (automationId: string) => boolean;
   /** Read one automation's run history (workspace + owner bound at construction). */
   readRuns: (automationId: string, opts?: ReadRunsOptions) => AutomationRun[];
@@ -381,11 +398,16 @@ export interface ValidatableAutomationFields {
   maxInputTokens?: number;
   maxRunDurationMs?: number;
   allowedTools?: string[];
+  /** `null` is an update's clear: nothing to validate. */
+  inputSchema?: Record<string, unknown> | null;
+  outputSchema?: Record<string, unknown> | null;
 }
 
 export function validateAutomationFields(args: ValidatableAutomationFields): void {
   if (args.schedule) validateSchedule(args.schedule);
   validateNumericLimits(args);
+  if (args.inputSchema != null) assertJsonSchema(args.inputSchema, "inputSchema");
+  if (args.outputSchema != null) assertJsonSchema(args.outputSchema, "outputSchema");
   // The executor refuses to run such an automation; refusing it here tells the
   // author at write time instead of at the first run.
   const recursive = containsRecursiveTool(args.allowedTools);
@@ -551,6 +573,8 @@ interface CreateInput {
     allowedTools?: string[];
     tokenBudget?: Automation["tokenBudget"];
     kind?: AutomationKind;
+    inputSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
   };
   body: string;
 }
@@ -578,6 +602,8 @@ export function handleCreate(
       tokenBudget: manifest.tokenBudget,
       enabled: manifest.enabled,
       kind: manifest.kind,
+      inputSchema: manifest.inputSchema,
+      outputSchema: manifest.outputSchema,
       // LLM-facing path: stamp `agent` source and derive ownership from
       // request context.
       source: "agent",
@@ -612,9 +638,15 @@ function withEffectiveLimits<T extends { automation: Automation; message: string
  */
 interface UpdateInput {
   name: string;
-  manifest?: Partial<Omit<CreateInput["manifest"], "name" | "schedule" | "kind">> & {
+  manifest?: Partial<
+    Omit<CreateInput["manifest"], "name" | "schedule" | "kind" | "inputSchema" | "outputSchema">
+  > & {
     /** `null` clears it: nothing fires the automation unattended. */
     schedule?: ScheduleSpec | null;
+    /** `null` clears it: runs take any input. */
+    inputSchema?: Record<string, unknown> | null;
+    /** `null` clears it: the deliverable is not checked. */
+    outputSchema?: Record<string, unknown> | null;
   };
   body?: string;
 }
@@ -827,10 +859,32 @@ export function handleRunResult(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): AutomationsRunResultOutput {
-  const name = args.name as string;
-  if (!name) throw new Error("Missing required field: name");
+  const name = args.name as string | undefined;
   const runId = args.runId as string;
   if (!runId) throw new Error("Missing required field: runId");
+
+  // A run `automations__run` started is found by its id alone, through its
+  // ticket, which also says when it has not ended yet.
+  if (!name) {
+    const ticket = ctx.readRunTicket?.(runId);
+    if (!ticket) {
+      throw new Error(
+        `Run not found: "${runId}". Pass the automation's name too for a run not started by automations__run.`,
+      );
+    }
+    if (isOpenRun(ticket.run)) {
+      throw new Error(
+        `Run "${runId}" is still ${ticket.run.status}; its result is written when it ends.`,
+      );
+    }
+    const result = ctx.readRunResult(ticket.automationId, runId);
+    if (!result) {
+      throw new Error(
+        `Run "${runId}" ended without a result (${ticket.run.status}${ticket.run.error ? `: ${ticket.run.error}` : ""}).`,
+      );
+    }
+    return result;
+  }
 
   const defs = ctx.definitions();
   const automation = findByName(defs, name);
@@ -856,35 +910,248 @@ export function handleRunResult(
  */
 const HANDLE_RUN_SYNC_WAIT_MS = 30_000;
 
-export async function handleRun(
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): Promise<AutomationsRunOutput> {
-  const name = args.name as string;
-  if (!name) throw new Error("Missing required field: name");
+/** The most a run's JSON `input` may take, serialized. It is kept on the run record. */
+export const MAX_RUN_INPUT_BYTES = 64 * 1024;
+
+/** The longest idempotency key `automations__run` takes. */
+const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
+
+/**
+ * An inline one-off's definition: `automations__run` with these instead of
+ * `name` creates a `oneoff` automation with no schedule and runs it once.
+ */
+interface InlineDefinition {
+  prompt?: string;
+  skill?: string;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  allowedTools?: string[];
+  limits?: { maxIterations?: number; maxInputTokens?: number; maxRunDurationMs?: number };
+  budget?: TokenBudget;
+}
+
+/** The fields of `automations__run` that make it an inline one-off. */
+const INLINE_FIELDS = [
+  "prompt",
+  "skill",
+  "inputSchema",
+  "outputSchema",
+  "allowedTools",
+  "limits",
+  "budget",
+] as const;
+
+/** `automations__run`'s arguments, already shape-checked by the tool's input schema. */
+interface RunArgs extends InlineDefinition {
+  name?: string;
+  input?: unknown;
+  idempotencyKey?: string;
+}
+
+/** What `automations__run` became: a run it asked for, or one an idempotency key already started. */
+export type PreparedRun =
+  | { kind: "existing"; automation: Automation; ticket: RunTicket }
+  | {
+      kind: "requested";
+      automation: Automation;
+      requested: RequestedRun;
+      ticket: RunNowTicket;
+    };
+
+/** A fresh run id, in the runtime's shape (`run_<12 chars>`). */
+function newRunId(): string {
+  return `run_${randomBytes(6).toString("hex")}`;
+}
+
+/**
+ * The id of the one-off an inline `automations__run` creates. With an
+ * idempotency key it is derived from the key, so a repeat finds the same
+ * one-off (and through the key, the same run) under the caller's own
+ * partition; without one it is fresh.
+ */
+function oneoffId(idempotencyKey: string | undefined): string {
+  const token =
+    idempotencyKey !== undefined
+      ? createHash("sha256").update(idempotencyKey, "utf-8").digest("hex").slice(0, 20)
+      : randomBytes(8).toString("hex");
+  return `oneoff-${token}`;
+}
+
+/** Find or create the `oneoff` automation an inline `automations__run` names. */
+function ensureOneoff(args: RunArgs, ctx: ToolContext): Automation {
+  if (!args.prompt && !args.skill) {
+    throw new Error(
+      "automations__run needs `name` (an automation to run) or an inline definition with " +
+        "`prompt` or `skill`.",
+    );
+  }
+  const limits = args.limits ?? {};
+  validateAutomationFields({
+    ...limits,
+    ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
+    ...(args.inputSchema ? { inputSchema: args.inputSchema } : {}),
+    ...(args.outputSchema ? { outputSchema: args.outputSchema } : {}),
+  });
+  const id = oneoffId(args.idempotencyKey);
+  const prompt =
+    args.prompt ??
+    `Carry out the "${args.skill}" skill on this run's input, and give its result as the deliverable.`;
+  const { automation } = createAutomation(
+    {
+      name: id,
+      prompt,
+      kind: "oneoff",
+      ...(args.skill ? { skill: args.skill } : {}),
+      ...(args.inputSchema ? { inputSchema: args.inputSchema } : {}),
+      ...(args.outputSchema ? { outputSchema: args.outputSchema } : {}),
+      ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
+      ...limits,
+      ...(args.budget ? { tokenBudget: args.budget } : {}),
+      source: "agent",
+      ownerId: ctx.currentUserId,
+      workspaceId: ctx.currentWorkspaceId,
+    },
+    ctx,
+  );
+  return automation;
+}
+
+/** Refuse a run input that is too large or does not match the automation's `inputSchema`. */
+function checkRunInput(automation: Automation, input: unknown): void {
+  if (input === undefined) {
+    if (automation.inputSchema) {
+      const verdict = checkAgainstSchema(automation.inputSchema, null);
+      if (!verdict.valid) {
+        throw new Error(
+          `"${automation.name}" takes an input matching its inputSchema; none was given.`,
+        );
+      }
+    }
+    return;
+  }
+  const size = Buffer.byteLength(JSON.stringify(input) ?? "", "utf-8");
+  if (size > MAX_RUN_INPUT_BYTES) {
+    throw new Error(
+      `input is ${size} bytes serialized; a run's input may be at most ${MAX_RUN_INPUT_BYTES}. ` +
+        "Pass a reference (a file id or URL) instead of the content.",
+    );
+  }
+  if (!automation.inputSchema) return;
+  const verdict = checkAgainstSchema(automation.inputSchema, input);
+  if (!verdict.valid) {
+    throw new Error(
+      `input does not match the inputSchema of "${automation.name}": ${verdict.errors.join("; ")}`,
+    );
+  }
+}
+
+/**
+ * Resolve what `automations__run` runs and ask for the run: a saved
+ * automation by `name`, or an inline definition run as a one-off. The input
+ * is checked first, and an idempotency key already used on the automation
+ * returns that run instead of asking for another. Shared by the inline call
+ * and the task-augmented one, so the two cannot disagree on what a call
+ * starts.
+ */
+export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): PreparedRun {
+  const args = rawArgs as RunArgs;
+  const inline = INLINE_FIELDS.filter((field) => args[field] !== undefined);
+  if (args.name && inline.length > 0) {
+    throw new Error(
+      `Give either \`name\` (an automation to run) or an inline definition, not both ` +
+        `(also given: ${inline.join(", ")}).`,
+    );
+  }
+  const key = args.idempotencyKey;
+  if (key !== undefined && (key.length === 0 || key.length > MAX_IDEMPOTENCY_KEY_LENGTH)) {
+    throw new Error(`idempotencyKey must be 1 to ${MAX_IDEMPOTENCY_KEY_LENGTH} characters.`);
+  }
 
   // Ensure scheduler has fresh definitions (e.g., automation just created)
   ctx.reloadScheduler();
 
-  const defs = ctx.definitions();
-  const automation = findByName(defs, name);
-  if (!automation) {
-    throw new Error(`Automation not found: "${name}"`);
+  let automation: Automation;
+  if (args.name) {
+    const found = findByName(ctx.definitions(), args.name);
+    if (!found) throw new Error(`Automation not found: "${args.name}"`);
+    automation = found;
+  } else {
+    automation = ensureOneoff(args, ctx);
   }
 
-  log(`handleRun: found "${name}" (id=${automation.id}), dispatching via runNow...`);
+  checkRunInput(automation, args.input);
 
-  const ticket = ctx.runNow(automation.id);
+  if (key !== undefined) {
+    const existing = ctx.findRunByKey?.(automation.id, key);
+    if (existing) return { kind: "existing", automation, ticket: existing };
+  }
+
+  const requested: RequestedRun = {
+    runId: newRunId(),
+    requestedAt: new Date().toISOString(),
+    ...(args.input !== undefined ? { input: args.input } : {}),
+    ...(key !== undefined ? { idempotencyKey: key } : {}),
+  };
+  log(`handleRun: running "${automation.id}" as ${requested.runId}`);
+  const ticket = ctx.runNow(automation.id, requested);
   if (!ticket) {
-    // Debug: dump scheduler state to understand why runNow returned null
     const ids = Array.from(ctx.definitions().keys());
     log(
       `handleRun: runNow returned null for "${automation.id}". Scheduler has ${ids.length} definitions: [${ids.join(", ")}]`,
     );
     throw new Error(
-      `Failed to trigger run for "${name}" (id=${automation.id}). The scheduler could not find this automation. Try reloading.`,
+      `Failed to trigger run for "${automation.name}" (id=${automation.id}). The scheduler could not find this automation. Try reloading.`,
     );
   }
+  return { kind: "requested", automation, requested, ticket };
+}
+
+/** The answer for a run an earlier call with the same idempotency key started. */
+function existingRunAnswer(
+  automation: Automation,
+  ticket: RunTicket,
+  ctx: ToolContext,
+): AutomationsRunOutput {
+  const { enabled } = disabledState(ctx, automation.name, automation);
+  const same = "An earlier call with this idempotencyKey already started this run";
+  const { run } = ticket;
+  if (!isOpenRun(run)) {
+    return { run, enabled, message: `${same}; this is its record.` };
+  }
+  const where =
+    `Its record appears in automations__runs (automationId "${automation.id}") when it ends; ` +
+    `read it with automations__run_result (runId "${ticket.runId}").`;
+  if (run.status === "queued") {
+    return {
+      status: "queued",
+      automationId: automation.id,
+      runId: ticket.runId,
+      position: ctx.queuePosition?.(automation.id) ?? 1,
+      queuedAt: ticket.requestedAt,
+      enabled,
+      message: `${same}, and it is still queued. ${where}`,
+    };
+  }
+  return {
+    status: "dispatched",
+    automationId: automation.id,
+    runId: ticket.runId,
+    startedAt: run.startedAt,
+    enabled,
+    message: `${same}, and it is still running. ${where}`,
+  };
+}
+
+export async function handleRun(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<AutomationsRunOutput> {
+  const prepared = prepareRun(args, ctx);
+  const { automation } = prepared;
+  const name = automation.name;
+  if (prepared.kind === "existing") return existingRunAnswer(automation, prepared.ticket, ctx);
+  const { ticket, requested } = prepared;
+  const runId = requested.runId;
 
   if (ticket.state === "refused") {
     const { enabled } = disabledState(ctx, name, automation);
@@ -898,18 +1165,20 @@ export async function handleRun(
   if (ticket.state === "queued") {
     // The queued run is the scheduler's to finish; nothing awaits it here.
     ticket.run.catch(() => {});
-    const queuedAt = new Date().toISOString();
+    const queuedAt = requested.requestedAt;
     const { enabled, disabledNote } = disabledState(ctx, name, automation);
     return {
       status: "queued",
       automationId: automation.id,
+      runId,
       position: ticket.position,
       queuedAt,
       enabled,
       message:
         `"${name}" is queued at position ${ticket.position}: every automation run slot is busy, ` +
-        `and it starts as soon as one frees. When it ends, its run appears in automations__runs ` +
-        `(automationId "${automation.id}", since "${queuedAt}"); remove it from the queue with ` +
+        `and it starts as soon as one frees. When it ends, read it with automations__run_result ` +
+        `(runId "${runId}"); it also appears in automations__runs (automationId ` +
+        `"${automation.id}", since "${queuedAt}"). Remove it from the queue with ` +
         `automations__cancel.${disabledNote}`,
     };
   }
@@ -959,13 +1228,14 @@ export async function handleRun(
     return {
       status: "dispatched",
       automationId: automation.id,
+      runId,
       startedAt,
       enabled,
       message:
         `"${name}" is still running after ${waitMs / 1000}s and continues in the background; ` +
-        `it has not failed. When it ends, its run appears in automations__runs ` +
-        `(automationId "${automation.id}", since "${startedAt}"); read its full output with ` +
-        `automations__run_result, or stop it with automations__cancel.${disabledNote}`,
+        `it has not failed. When it ends, read its full output with automations__run_result ` +
+        `(runId "${runId}"); it also appears in automations__runs (automationId ` +
+        `"${automation.id}", since "${startedAt}"). Stop it with automations__cancel.${disabledNote}`,
     };
   }
 

@@ -1590,3 +1590,168 @@ describe("event schedules", () => {
     expect(status.automation.estimatedCostPerDay).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// handleRun — inline one-offs, input, idempotency (the call without a task)
+// ---------------------------------------------------------------------------
+
+describe("handleRun — inline one-offs, input, idempotency", () => {
+  test("hands the scheduler a minted run id with the input and key", async () => {
+    const seen: Array<{ id: string; requested: unknown }> = [];
+    const base = makeCtx();
+    const ctx = makeCtx({
+      runNow: (id, requested) => {
+        seen.push({ id, requested });
+        return base.runNow(id);
+      },
+    });
+    handleCreate(createArgs("Typed", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+
+    await handleRun({ name: "Typed", input: { n: 1 }, idempotencyKey: "k-1" }, ctx);
+
+    const requested = seen[0]?.requested as {
+      runId: string;
+      input: unknown;
+      idempotencyKey: string;
+    };
+    expect(requested.runId).toMatch(/^run_[0-9a-f]{12}$/);
+    expect(requested.input).toEqual({ n: 1 });
+    expect(requested.idempotencyKey).toBe("k-1");
+  });
+
+  test("an inline definition creates a oneoff automation with no schedule", async () => {
+    const ctx = makeCtx({ currentUserId: OWNER, currentWorkspaceId: WS });
+    const result = await handleRun({ prompt: "Summarize the input.", input: "text" }, ctx);
+    if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
+
+    const oneoff = loadDefs().get(result.run.automationId);
+    expect(oneoff?.kind).toBe("oneoff");
+    expect(oneoff?.schedule).toBeUndefined();
+    expect(oneoff?.prompt).toBe("Summarize the input.");
+    // Left out of the default list, which holds saved automations.
+    expect(handleList({}, ctx).automations).toHaveLength(0);
+  });
+
+  test("refuses both a name and an inline definition", async () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Saved", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    await expect(handleRun({ name: "Saved", prompt: "other" }, ctx)).rejects.toThrow("not both");
+  });
+
+  test("refuses a call with neither a name nor a prompt or skill", async () => {
+    await expect(handleRun({ input: { a: 1 } }, makeCtx())).rejects.toThrow("needs `name`");
+  });
+
+  test("refuses an inline outputSchema that is not a JSON Schema", async () => {
+    await expect(
+      handleRun({ prompt: "p", outputSchema: { type: "no-such-type" } }, makeCtx()),
+    ).rejects.toThrow("outputSchema is not a valid JSON Schema");
+  });
+
+  test("refuses an input over the size limit", async () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Big", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    await expect(handleRun({ name: "Big", input: "x".repeat(70 * 1024) }, ctx)).rejects.toThrow(
+      "at most",
+    );
+  });
+
+  test("an automation with an inputSchema refuses a run with no input", async () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs(
+        "Needs input",
+        "p",
+        { type: "interval", intervalMs: 60_000 },
+        {
+          inputSchema: { type: "object", required: ["url"] },
+        },
+      ),
+      ctx,
+    );
+    await expect(handleRun({ name: "Needs input" }, ctx)).rejects.toThrow("none was given");
+  });
+
+  test("a repeated idempotency key returns the earlier run without asking for another", async () => {
+    let asked = 0;
+    const existing = makeRun({ automationId: "keyed", status: "success", idempotencyKey: "k" });
+    const ctx = makeCtx({
+      runNow: () => {
+        asked++;
+        return null;
+      },
+      findRunByKey: (id, key) =>
+        id === "keyed" && key === "k"
+          ? {
+              runId: existing.id,
+              automationId: "keyed",
+              requestedAt: existing.startedAt,
+              run: existing,
+            }
+          : null,
+    });
+    handleCreate(createArgs("Keyed", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+
+    const result = await handleRun({ name: "Keyed", idempotencyKey: "k" }, ctx);
+    if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
+    expect(result.run.id).toBe(existing.id);
+    expect(result.message).toContain("idempotencyKey");
+    expect(asked).toBe(0);
+  });
+});
+
+describe("create and update — input and output schemas", () => {
+  test("create keeps both schemas on the automation", () => {
+    const ctx = makeCtx();
+    const inputSchema = { type: "object", properties: { url: { type: "string" } } };
+    const outputSchema = { type: "array", items: { type: "string" } };
+    const { automation } = handleCreate(
+      createArgs(
+        "Schemas",
+        "p",
+        { type: "interval", intervalMs: 60_000 },
+        {
+          inputSchema,
+          outputSchema,
+        },
+      ),
+      ctx,
+    );
+    expect(automation.inputSchema).toEqual(inputSchema);
+    expect(automation.outputSchema).toEqual(outputSchema);
+  });
+
+  test("create refuses a schema that does not compile", () => {
+    expect(() =>
+      handleCreate(
+        createArgs(
+          "Bad schema",
+          "p",
+          { type: "interval", intervalMs: 60_000 },
+          {
+            inputSchema: { type: 12 },
+          },
+        ),
+        makeCtx(),
+      ),
+    ).toThrow("inputSchema is not a valid JSON Schema");
+  });
+
+  test("update with null removes a schema", () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs(
+        "Clearable",
+        "p",
+        { type: "interval", intervalMs: 60_000 },
+        {
+          outputSchema: { type: "object" },
+        },
+      ),
+      ctx,
+    );
+    const { automation } = handleUpdate(updateArgs("Clearable", { outputSchema: null }), ctx);
+    expect(automation.outputSchema).toBeUndefined();
+    expect("outputSchema" in (loadDefs().get("clearable") ?? {})).toBe(false);
+  });
+});

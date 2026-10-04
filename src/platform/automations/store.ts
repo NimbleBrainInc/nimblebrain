@@ -19,9 +19,14 @@
  *
  * A run is NOT a conversation: it leaves a `AutomationRunResult` sidecar (final
  * output, activity log, output-file refs) under its `runs/` subtree.
+ *
+ * A run requested by id (`automations__run`) also has a ticket,
+ * `run-tickets/<runId>.json`, holding its current record from the moment it is
+ * asked for, and an idempotency key it was asked with is recorded under
+ * `runs/<automationId>/keys/`. Both are kept like the rest of the history.
  */
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   appendFileSync,
   type Dirent,
@@ -33,24 +38,26 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { ensureWorkspaceDir } from "../../workspace/context.ts";
 import {
   automationArchivedRunResultPath,
   automationFilePath,
+  automationIdempotencyKeyPath,
   automationRunArchiveDir,
   automationRunArchiveRoot,
   automationRunIndexPath,
   automationRunResultPath,
   automationRunSegmentPath,
   automationRunsDir,
+  automationRunTicketPath,
   isRunArchiveMonth,
   parseAutomationPath,
   validateAutomationId,
   validateRunId,
   workspaceAutomationsDir,
 } from "./paths.ts";
-import type { Automation, AutomationRun, AutomationRunResult } from "./types.ts";
+import type { Automation, AutomationRun, AutomationRunResult, RunTicket } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -622,6 +629,99 @@ export function readRunResult(
   if (!filePath) return null;
   try {
     return JSON.parse(readFileSync(filePath, "utf-8")) as AutomationRunResult;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Run tickets — run-tickets/<runId>.json (a requested run, by id alone)
+// ---------------------------------------------------------------------------
+
+/** Write a run's ticket atomically (temp + rename). */
+export function saveRunTicket(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  ticket: RunTicket,
+): void {
+  const filePath = automationRunTicketPath(workDir, wsId, ownerId, ticket.runId);
+  ensureWorkspaceDir(dirname(filePath));
+  atomicWrite(filePath, `${JSON.stringify(ticket, null, 2)}\n`);
+}
+
+/**
+ * Read a run's ticket, or null when this owner in this workspace has none by
+ * that id (an invalid id, another owner's run, or no such run).
+ */
+export function readRunTicket(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  runId: string,
+): RunTicket | null {
+  let filePath: string;
+  try {
+    filePath = automationRunTicketPath(workDir, wsId, ownerId, runId);
+  } catch {
+    return null;
+  }
+  if (!existsSync(filePath)) return null;
+  try {
+    const ticket = JSON.parse(readFileSync(filePath, "utf-8")) as RunTicket;
+    return ticket && ticket.runId === runId ? ticket : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency keys — runs/<automationId>/keys/<sha256(key)>.json
+// ---------------------------------------------------------------------------
+
+function keyDigest(key: string): string {
+  return createHash("sha256").update(key, "utf-8").digest("hex");
+}
+
+/** Record that `key` started `runId` on this automation. */
+export function saveIdempotencyKey(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  key: string,
+  runId: string,
+): void {
+  const filePath = automationIdempotencyKeyPath(
+    workDir,
+    wsId,
+    ownerId,
+    automationId,
+    keyDigest(key),
+  );
+  ensureWorkspaceDir(dirname(filePath));
+  atomicWrite(filePath, `${JSON.stringify({ key, runId })}\n`);
+}
+
+/** The run `key` started on this automation, or null when it started none. */
+export function readIdempotencyKey(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  automationId: string,
+  key: string,
+): string | null {
+  const filePath = automationIdempotencyKeyPath(
+    workDir,
+    wsId,
+    ownerId,
+    automationId,
+    keyDigest(key),
+  );
+  if (!existsSync(filePath)) return null;
+  try {
+    const entry = JSON.parse(readFileSync(filePath, "utf-8")) as { key?: unknown; runId?: unknown };
+    return entry.key === key && typeof entry.runId === "string" ? entry.runId : null;
   } catch {
     return null;
   }

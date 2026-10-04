@@ -73,6 +73,7 @@ function makeRuntimeStub(workDir: string): unknown {
     // hands to the runtime at construction.
     registerAutomationEventTrigger: () => {},
     registerAutomationQuiescer: () => {},
+    registerIdentityTaskSource: () => {},
     // The notifications source builds its poller at construction. It is
     // stopped with the source in `afterEach`, and with no instances to
     // enumerate its sweep has nothing to read.

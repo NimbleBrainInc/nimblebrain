@@ -25,7 +25,8 @@ export type ContainmentTag =
   | "layer3-skill"
   | "connector-skill"
   | "activated-skill"
-  | "skill-instructions";
+  | "skill-instructions"
+  | "run-input";
 
 /**
  * Wrap untrusted `body` in `<tag>…</tag>`, neutralising every closing form of

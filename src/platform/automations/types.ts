@@ -68,6 +68,20 @@ export interface Automation {
   allowedTools?: string[];
 
   /**
+   * JSON Schema each run's `input` must match. Set: a run whose input does not
+   * match is refused before it is requested. Absent: any JSON input is taken.
+   */
+  inputSchema?: Record<string, unknown>;
+
+  /**
+   * JSON Schema the deliverable must match. Set: the run is told to answer with
+   * JSON matching it, and the executor parses and validates the final output,
+   * keeping the parsed value as the deliverable's `structured` and recording
+   * whether it matched (`AutomationRun.outputSchemaValid`).
+   */
+  outputSchema?: Record<string, unknown>;
+
+  /**
    * Max agentic iterations per run. Default: the runtime's chat default (25).
    * Held at execution to the operator's `automations.maxRunIterations` (at
    * most 50); see `effectiveRunLimits`.
@@ -303,7 +317,19 @@ export interface AutomationRun {
    * it good, so part of its work did not happen (`error` names the tools). It is
    * not a failure: it neither extends an error streak nor backs the schedule off.
    */
-  status: "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled" | "skipped";
+  /**
+   * `queued` and `running` appear only on an open run's ticket (see
+   * {@link RunTicket}); the run index holds only runs that ended or never started.
+   */
+  status:
+    | "queued"
+    | "running"
+    | "success"
+    | "degraded"
+    | "failure"
+    | "timeout"
+    | "cancelled"
+    | "skipped";
   inputTokens: number;
   outputTokens: number;
   toolCalls: number;
@@ -341,6 +367,31 @@ export interface AutomationRun {
     | "other";
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
+  /** The JSON input the run was given (`automations__run` `input`). */
+  input?: unknown;
+  /** The idempotency key the run was requested with; a repeat returns this run. */
+  idempotencyKey?: string;
+  /**
+   * Whether the deliverable matched the automation's `outputSchema`. Absent
+   * when the automation has none, or the run produced no deliverable.
+   */
+  outputSchemaValid?: boolean;
+  /** Why the deliverable did not match the `outputSchema`, when it did not. */
+  outputSchemaErrors?: string[];
+}
+
+/**
+ * A run requested by id (`automations__run`), found again by that id alone.
+ * `run` is the run's current record: `queued` or `running` while it is open,
+ * then the same record the run index holds once it ends or is refused. A task
+ * handle's status is read from here.
+ */
+export interface RunTicket {
+  runId: string;
+  automationId: string;
+  /** When the run was asked for. */
+  requestedAt: string;
+  run: AutomationRun;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +434,12 @@ export interface AutomationRunResult {
   outputFiles: RunFileRef[];
   usage: { inputTokens: number; outputTokens: number; iterations: number };
   stopReason?: AutomationRun["stopReason"];
+  /**
+   * The deliverable parsed as JSON, when the automation has an `outputSchema`
+   * and the output parsed. Kept whether or not it matched; the run record says
+   * whether it did (`AutomationRun.outputSchemaValid`).
+   */
+  structured?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +485,8 @@ export type UpdateAutomationInput = Partial<
     | "schedule"
     | "skill"
     | "allowedTools"
+    | "inputSchema"
+    | "outputSchema"
     | "maxIterations"
     | "maxInputTokens"
     | "maxRunDurationMs"
