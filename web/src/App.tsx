@@ -28,7 +28,7 @@ import { PaletteProvider } from "./context/PaletteContext";
 import { SessionProvider } from "./context/SessionContext";
 import { ShellProvider } from "./context/ShellContext";
 import { SidebarProvider } from "./context/SidebarContext";
-import { ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
+import { type ThemePreference, ThemeProvider, useTheme } from "./context/ThemeContext.tsx";
 import { WorkspaceAppIconsProvider } from "./context/WorkspaceAppIconsProvider";
 import {
   useWorkspaceContext,
@@ -79,6 +79,12 @@ import { clearSentryContext, setSentryUser } from "./sentry";
 import { initTelemetry } from "./telemetry";
 import type { BootstrapResponse, ConfigInfo, FileLimits, PlacementEntry } from "./types";
 import "./index.css";
+
+/** Stores a theme toggled from the palette or shortcut as the person's preference. */
+async function saveThemePreference(theme: ThemePreference): Promise<void> {
+  const res = await callToolWithoutWorkspace("nb", "set_preferences", { theme });
+  if (res.isError) throw new Error(res.content?.[0]?.text ?? "Theme preference not saved.");
+}
 
 function AuthenticatedApp({
   token,
@@ -137,7 +143,7 @@ function AuthenticatedApp({
   };
 
   return (
-    <ThemeProvider>
+    <ThemeProvider savePreference={saveThemePreference}>
       <NoticeProvider>
         <SessionProvider session={session}>
           <WorkspaceProvider initialWorkspaces={initialWorkspaces}>

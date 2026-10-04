@@ -1,10 +1,18 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { matchesShortcut, SHORTCUTS } from "../lib/shortcuts";
 
 type ThemeMode = "light" | "dark";
 
 /** Server-side preference: "light", "dark", or "system" (follow OS). */
-type ThemePreference = "light" | "dark" | "system";
+export type ThemePreference = "light" | "dark" | "system";
 
 interface ThemeContextValue {
   mode: ThemeMode;
@@ -51,8 +59,25 @@ function getInitialMode(): ThemeMode {
   return mode;
 }
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
+export function ThemeProvider({
+  children,
+  savePreference,
+}: {
+  children: React.ReactNode;
+  /**
+   * Stores a theme the person chose outside Settings (the palette, the
+   * shortcut) as their server preference. Without it a toggle lasts only until
+   * the shell applies the stored preference again.
+   */
+  savePreference?: (pref: ThemePreference) => Promise<void>;
+}) {
   const [mode, setModeState] = useState<ThemeMode>(getInitialMode);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const saveRef = useRef(savePreference);
+  saveRef.current = savePreference;
+  // Saves run one at a time so quick toggles reach the server in order.
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
   const setMode = useCallback((next: ThemeMode) => {
     applyMode(next);
@@ -61,12 +86,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggle = useCallback(() => {
-    setModeState((prev) => {
-      const next: ThemeMode = prev === "dark" ? "light" : "dark";
-      applyMode(next);
-      localStorage.setItem(LS_KEY, next);
-      return next;
-    });
+    const next: ThemeMode = modeRef.current === "dark" ? "light" : "dark";
+    modeRef.current = next;
+    applyMode(next);
+    localStorage.setItem(LS_KEY, next);
+    setModeState(next);
+    const save = saveRef.current;
+    if (!save) return;
+    // The theme has already changed here; a failed save only means the next
+    // load applies the stored preference instead.
+    saveQueue.current = saveQueue.current
+      .then(() => save(next))
+      .catch((err) => console.warn("[theme] preference not saved", err));
   }, []);
 
   /** Apply a server-side preference. Stores the raw preference so "system" is preserved. */
