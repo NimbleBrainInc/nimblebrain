@@ -15,7 +15,7 @@ import {
   canReadWorkspaceMembers,
   canRenameWorkspace,
 } from "../workspace/authz.ts";
-import type { WorkspaceMember } from "../workspace/types.ts";
+import { MAX_WORKSPACE_NAME_CHARS, type WorkspaceMember } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
@@ -283,17 +283,32 @@ async function dispatchMemberAction(
 
 // ── Action handlers ───────────────────────────────────────────────
 
+/** The refusal for a name over `MAX_WORKSPACE_NAME_CHARS` code points, or null. */
+function nameTooLong(name: string): ToolResult | null {
+  let chars = 0;
+  for (const _ of name) chars++;
+  if (chars <= MAX_WORKSPACE_NAME_CHARS) return null;
+  return {
+    content: textContent(
+      `A workspace name can be at most ${MAX_WORKSPACE_NAME_CHARS} characters (got ${chars}).`,
+    ),
+    isError: true,
+  };
+}
+
 async function handleCreate(
   ctx: ManageWorkspacesContext,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const name = input.name ? String(input.name) : undefined;
+  const name = input.name ? String(input.name).trim() : undefined;
   if (!name) {
     return {
       content: textContent("name is required to create a workspace."),
       isError: true,
     };
   }
+  const tooLong = nameTooLong(name);
+  if (tooLong) return tooLong;
 
   const connectors = input.connectors as Array<Record<string, unknown>> | undefined;
 
@@ -370,6 +385,8 @@ async function handleUpdate(
     if (!name) {
       return { content: textContent("A workspace name cannot be empty."), isError: true };
     }
+    const tooLong = nameTooLong(name);
+    if (tooLong) return tooLong;
     patch.name = name;
   }
   if (input.connectors !== undefined) {

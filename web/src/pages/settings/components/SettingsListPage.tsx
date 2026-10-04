@@ -31,7 +31,7 @@ export interface SettingsListPageProps extends Omit<SettingsPageHeaderProps, "ac
    * other UI on the same toggle); this template owns the visual chrome.
    */
   create?: {
-    /** Visible label on the create button (e.g. "Create User"). */
+    /** Visible label on the create button (e.g. "Create user"). */
     label: string;
     showing: boolean;
     onToggle: () => void;

@@ -43,13 +43,9 @@ Every workspace member has one of two roles:
 
 ## Creating a workspace
 
-The agent can create workspaces through the `nb__manage_workspaces` tool. Ask it in chat:
+An organization admin creates a workspace from **Organization → Workspaces → New workspace**, or from **New workspace** in the sidebar's workspace switcher. Give it a name; it gets a generated `ws_<16-hex>` ID, and the creator is seated as its admin. The name is a freely editable label: rename it later from the workspace's **Settings → General**.
 
-```
-Create a workspace called "Engineering" for our dev team
-```
-
-The agent uses `nb__manage_workspaces` with `action: "create"` to set it up. The new workspace gets a generated `ws_<16-hex>` ID; the tool takes no ID or slug and refuses one. The name you give it is a freely editable label.
+The agent cannot create workspaces. The `nb__manage_workspaces` tool behind these pages is app-only, so it never appears in the agent's tool list; it takes no ID or slug and refuses one.
 
 ## Managing members
 

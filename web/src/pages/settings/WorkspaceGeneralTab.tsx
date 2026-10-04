@@ -102,7 +102,11 @@ function Inner({
   );
 }
 
-/** Long enough for any real name, short enough to fit the sidebar and switcher. */
+/**
+ * Long enough for any real name, short enough to fit the sidebar and switcher.
+ * Matches the server's `MAX_WORKSPACE_NAME_CHARS` (`src/workspace/types.ts`),
+ * which refuses a longer name; this only stops the field accepting one.
+ */
 const MAX_NAME_LENGTH = 80;
 
 /**
