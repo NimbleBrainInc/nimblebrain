@@ -1,4 +1,4 @@
-# 0023. The client advertises `tasks` and `extensions`, and nothing it does not serve
+# 0023. The client advertises `extensions`, and nothing it does not serve
 
 - Status: Accepted
 - Date: 2026-09-03
@@ -27,16 +27,20 @@ collide.
 **One builder produces the client and its claims** (`buildClient`,
 `src/tools/mcp-source.ts`), called on the initial start and again on the OAuth
 retry rebuild, so two connections to the same server cannot claim different
-things. It advertises exactly two blocks, and a block is claimed only on the
-eras where it is served.
+things. It advertises one block, `extensions`, and a claim in it is made only
+on the eras where it is served. The tasks extension is claimed per request, not
+on the connection.
 
-**`tasks`, because it is exercised.** The client honours task-augmented
-`tools/call` and can cancel what it started: a server that marks a tool with
-`execution.taskSupport` sees that this client will attach a task rather than
-block the request. The stream is opened, polled, and cancelled by real code paths
-(ADR-0029), so the claim is backed. `tasks/list` is not claimed — nothing here
-lists tasks, and SEP-2663 removes the method from the spec, so claiming it would
-invite a client that never arrives.
+**Tasks are claimed per request, on the task wire** (ADR-0046). The client
+claims no 2025-11-25 `tasks` capability, because it never attaches a task on a
+2025-era connection. It does not claim the 2026-07-28 tasks extension
+(`io.modelcontextprotocol/tasks`) on the connection either: a connection-level
+claim would opt every SDK call in, and the SDK cannot read a task result. The
+task wire (`src/tools/mcp-task-client.ts`) names the extension in the client
+capabilities of each `tools/call` it sends to a server that advertised it, then
+polls and cancels what it started (ADR-0029), so each claim is backed by the
+code that sent it. `tasks/list` is not claimed: nothing here lists tasks, and
+SEP-2663 removes the method from the spec.
 
 **A claim is per era, because what is served is.** The host-resources methods
 are server→client requests, and `2026-07-28` removed that channel, so

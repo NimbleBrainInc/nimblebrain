@@ -9,7 +9,7 @@ This page is the contract a server developer builds against: what the host speak
 
 ## Specification revisions
 
-NimbleBrain uses the official TypeScript SDK v2 (`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.x) as a client and for the `2026-07-28` side of its MCP endpoint. The endpoint's 2025 side stays on SDK 1.x (`@modelcontextprotocol/sdk`), because SDK v2 cannot yet send a task-shaped `tools/call` result. The [MCP App Bridge](/apps/bridge/) reaches the endpoint on `2026-07-28`.
+NimbleBrain uses the official TypeScript SDK v2 (`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.x) as a client and for both sides of its MCP endpoint. The [MCP App Bridge](/apps/bridge/) reaches the endpoint on `2026-07-28`.
 
 The revisions fall into two eras. `2026-07-28` has no `initialize` handshake: a client probes with `server/discover`, and every request carries its protocol version, client info and client capabilities in its own `_meta` envelope. Every earlier revision is negotiated once, by `initialize`, under the specification's [lifecycle rules](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#version-negotiation).
 
@@ -113,7 +113,7 @@ The host implements the MCP Apps specification: `ui/initialize`, tool input and 
 
 ## As a server to external clients
 
-Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It serves both eras on the same URL. A request carrying the `2026-07-28` `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. Anything else is 2025 traffic, served in a session opened by `initialize`. Both eras list the same tools and resources and return the same errors. Only `2026-07-28` runs tools as tasks. It advertises:
+Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It serves both eras on the same URL. A request carrying the `2026-07-28` `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. Anything else is 2025 traffic, served in a session opened by `initialize`. Both eras list the same tools and resources and return the same errors: a `resources/read` whose URI resolves nowhere answers `-32602` on either. Only `2026-07-28` runs tools as tasks. On 2025, a tool whose `outputSchema` root is not an object is listed with that schema wrapped as the `result` property of an object schema, and its `structuredContent` is wrapped to match, because 2025 requires an object root. It advertises:
 
 | Capability | 2025 | `2026-07-28` | Notes |
 |---|---|---|---|

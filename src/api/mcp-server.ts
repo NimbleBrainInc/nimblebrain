@@ -5,7 +5,7 @@
  * only the 2026-07-28 leg serves (ADR-0046). A request carrying the 2026-07-28 `_meta`
  * envelope is served per request by an SDK v2 server (`handleModern`); every
  * other request is 2025-era traffic for the sessionful leg this header
- * describes, on SDK v1. Both legs mount the same handlers (`createHandlers`),
+ * describes, on the same SDK. Both legs mount the same handlers (`createHandlers`),
  * and `test/integration/mcp-era-parity.test.ts` drives the same scenarios
  * against both.
  *
@@ -76,19 +76,6 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import {
-  CallToolRequestSchema,
-  ErrorCode,
-  isInitializeRequest,
-  type JSONRPCMessage,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ListToolsRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import type {
   CallToolRequest,
   CallToolResult,
@@ -106,9 +93,13 @@ import type {
 import {
   CLIENT_CAPABILITIES_META_KEY,
   createMcpHandler,
+  isInitializeRequest,
   isLegacyRequest,
   MissingRequiredClientCapabilityError,
-  Server as ModernServer,
+  ProtocolError,
+  ProtocolErrorCode,
+  Server,
+  WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { isAppCallable, isModelVisible, type ToolResult } from "../engine/types.ts";
@@ -148,13 +139,20 @@ import type { SessionRegistry } from "./session-store/index.ts";
 import { json } from "./types.ts";
 
 /**
- * JSON-RPC error code for "resource not found".
- *
- * MCP specifies this code for `resources/read` when the URI can't be resolved.
- * It's not part of the base JSON-RPC 2.0 set nor the SDK's `ErrorCode` enum
- * (which only covers JSON-RPC's reserved range), so we declare it here.
+ * JSON-RPC error code for a `resources/read` whose URI resolves nowhere:
+ * `-32602` (Invalid Params), as the 2026-07-28 revision requires. The SDK sends
+ * this code on every revision, a 2025 session included.
  */
-const RESOURCE_NOT_FOUND_CODE = -32002;
+const RESOURCE_NOT_FOUND_CODE = ProtocolErrorCode.InvalidParams;
+
+/**
+ * A JSON-RPC error a handler throws. The message carries the `MCP error <code>:`
+ * prefix every `/mcp` error has always carried, so a client matching on the
+ * text reads the same thing on either leg.
+ */
+function mcpError(code: number, message: string, data?: unknown): ProtocolError {
+  return new ProtocolError(code, `MCP error ${code}: ${message}`, data);
+}
 
 const mcpPkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
 const mcpPkg = JSON.parse(readFileSync(mcpPkgPath, "utf-8")) as {
@@ -334,8 +332,7 @@ export class McpServerHost {
    *
    * Returning 405 is the spec-blessed escape hatch: the SDK explicitly
    * treats it as "server doesn't offer GET-style listening" and gracefully
-   * runs POST-only (`@modelcontextprotocol/sdk/.../client/streamableHttp.js`
-   * in `_startOrAuthSse`). If we ever start emitting standalone-stream
+   * runs POST-only (the Streamable HTTP client's `_startOrAuthSse`). If we ever start emitting standalone-stream
    * notifications, switch this back to a real handler and add a heartbeat
    * (see `src/api/sse-heartbeat.ts`).
    */
@@ -676,7 +673,6 @@ export class McpServerHost {
 
     const server = createLegacyServer(this.runtime, features, sessionCtx);
     await server.connect(transport);
-    dropTaskAugmentation(transport);
     return transport.handleRequest(request, { parsedBody });
   }
 
@@ -737,8 +733,8 @@ export class McpServerHost {
 /**
  * The requests `/mcp` answers, bound to one (identity, workspace). Both eras
  * mount the same handlers, so the two cannot drift: the 2025 leg on a
- * sessionful SDK v1 `Server` (`createLegacyServer`), the 2026-07-28 leg on a
- * per-request SDK v2 `Server` (`createModernServer`).
+ * sessionful SDK v2 `Server` (`createLegacyServer`), the 2026-07-28 leg on a
+ * per-request one (`createModernServer`).
  *
  * The session is walled to its one workspace (`sessionCtx.workspaceId`, from
  * the URL). `tools/list` serves that workspace's tools (bare) plus the caller's
@@ -816,8 +812,8 @@ function createHandlers(
     const { name, arguments: args } = request.params;
 
     if (!runtime || !identityId) {
-      throw new McpError(
-        ErrorCode.MethodNotFound,
+      throw mcpError(
+        ProtocolErrorCode.MethodNotFound,
         "tools/call not available on this session (runtime not wired)",
       );
     }
@@ -982,7 +978,7 @@ function createHandlers(
   const readResource = async (request: ReadResourceRequest): Promise<ReadResourceResult> => {
     const uri = request.params.uri;
     if (!runtime || !identityId) {
-      throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+      throw mcpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
     }
 
     const scoped = scopedSourceName(request.params._meta);
@@ -1010,18 +1006,18 @@ function createHandlers(
 
     // The URI resolved in neither the caller's identity sources nor the
     // focused workspace. Per MCP spec, raise a JSON-RPC error — the SDK
-    // transport converts McpError into a proper `error` envelope.
-    throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+    // transport converts it into a proper `error` envelope.
+    throw mcpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
   };
 
   return { listTools, callTool, listResources, listResourceTemplates, readResource };
 }
 
 /**
- * The 2025 leg: a session's SDK v1 `Server`. It serves no tasks (ADR-0046): it
- * advertises no `tasks` capability and installs no `tasks/*` handler, so those
- * methods answer `-32601`, and every `tools/call` runs inline
- * (`dropTaskAugmentation`).
+ * The 2025 leg: a session's SDK v2 `Server`, on the 2025 era its `initialize`
+ * negotiated. It serves no tasks (ADR-0046): it advertises no `tasks`
+ * capability and installs no `tasks/*` handler, so those methods answer
+ * `-32601`, and every `tools/call` runs inline, a `params.task` ignored.
  */
 function createLegacyServer(
   runtime: Runtime | null,
@@ -1034,40 +1030,18 @@ function createLegacyServer(
   );
 
   const handlers = createHandlers(runtime, features, sessionCtx);
-  server.setRequestHandler(ListToolsRequestSchema, () => handlers.listTools());
+  server.setRequestHandler("tools/list", () => handlers.listTools());
   server.setRequestHandler(
-    CallToolRequestSchema,
+    "tools/call",
     // A legacy ask never runs as a task, so the answer is a `CallToolResult`.
     (request) => handlers.callTool(request, { era: "legacy" }) as Promise<CallToolResult>,
   );
-  server.setRequestHandler(ListResourcesRequestSchema, (request) =>
-    handlers.listResources(request),
-  );
-  server.setRequestHandler(ListResourceTemplatesRequestSchema, (request) =>
+  server.setRequestHandler("resources/list", (request) => handlers.listResources(request));
+  server.setRequestHandler("resources/templates/list", (request) =>
     handlers.listResourceTemplates(request),
   );
-  server.setRequestHandler(ReadResourceRequestSchema, (request) => handlers.readResource(request));
+  server.setRequestHandler("resources/read", (request) => handlers.readResource(request));
   return server;
-}
-
-/**
- * Remove `params.task` from every `tools/call` before the session's `Server`
- * sees it, so a 2025 client's task-augmented call runs as an ordinary call and
- * answers a `CallToolResult`. The SDK's `tools/call` wrapper otherwise holds a
- * request carrying `params.task` to a `CreateTaskResult` and refuses the
- * `CallToolResult` this leg answers.
- */
-function dropTaskAugmentation(transport: WebStandardStreamableHTTPServerTransport): void {
-  const deliver = transport.onmessage;
-  if (!deliver) return;
-  transport.onmessage = (message, extra) => deliver(withoutTaskParam(message), extra);
-}
-
-function withoutTaskParam(message: JSONRPCMessage): JSONRPCMessage {
-  if (!("method" in message) || message.method !== "tools/call") return message;
-  if (!message.params || !("task" in message.params)) return message;
-  const { task: _dropped, ...params } = message.params;
-  return { ...message, params };
 }
 
 /**
@@ -1082,8 +1056,8 @@ function createModernServer(
   runtime: Runtime | null,
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
-): ModernServer {
-  const server = new ModernServer(
+): Server {
+  const server = new Server(
     { name: "nimblebrain", version: MCP_SERVER_VERSION },
     {
       capabilities: {
@@ -1191,7 +1165,7 @@ export function mapRouteToolError(err: unknown): never {
     // Pass the error's own text through: for the retired `ws_<id>-` form it names
     // the bare tool to call instead, and a fixed string would leave an external
     // client with no way to recover.
-    throw new McpError(ErrorCode.InvalidParams, err.message, {
+    throw mcpError(ProtocolErrorCode.InvalidParams, err.message, {
       reason: "invalid_tool_name",
       input: err.input,
       parse: err.reason,
@@ -1203,14 +1177,14 @@ export function mapRouteToolError(err: unknown): never {
     // isn't allowed for this identity. The MCP draft's tasks spec sets the
     // precedent of using `-32602` for owner-mismatch task lookups; we mirror
     // that here so a misrouted call doesn't get classified as a server bug.
-    throw new McpError(ErrorCode.InvalidParams, `Access denied to workspace "${err.wsId}"`, {
+    throw mcpError(ProtocolErrorCode.InvalidParams, `Access denied to workspace "${err.wsId}"`, {
       reason: "workspace_access_denied",
       wsId: err.wsId,
     });
   }
   if (err instanceof UnknownToolSource) {
-    throw new McpError(
-      ErrorCode.MethodNotFound,
+    throw mcpError(
+      ProtocolErrorCode.MethodNotFound,
       `No tool source "${err.sourceName}" in workspace "${err.wsId}"`,
       {
         reason: "unknown_tool_source",
@@ -1221,15 +1195,15 @@ export function mapRouteToolError(err: unknown): never {
     );
   }
   if (err instanceof UnknownIdentitySource) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw mcpError(
+      ProtocolErrorCode.InvalidParams,
       `No identity source "${err.sourceName}" for "${err.toolName}"`,
       { reason: "unknown_identity_source", toolName: err.toolName },
     );
   }
   if (err instanceof ConnectorGrantDenied) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw mcpError(
+      ProtocolErrorCode.InvalidParams,
       `Personal connector "${err.connector}" is not granted to this workspace`,
       { reason: "connector_grant_denied", connector: err.connector, wsId: err.workspaceId },
     );
@@ -1592,8 +1566,8 @@ async function assertAppMayCall(
   identityId: string,
 ): Promise<CallToolResult | undefined> {
   if (!name.startsWith(`${appSource}__`)) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw mcpError(
+      ProtocolErrorCode.InvalidParams,
       `Tool calls from the "${appSource}" app are scoped to that server; "${name}" names another.`,
       { reason: "outside_app_scope", source: appSource, toolName: name },
     );
@@ -1611,8 +1585,8 @@ async function assertAppMayCall(
     if (denied) return toCallToolResult(denied);
   }
   if (!tool || !isAppCallable(tool)) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw mcpError(
+      ProtocolErrorCode.InvalidParams,
       tool
         ? `Tool "${name}" is not callable from an app: its visibility does not include "app".`
         : `Tool "${name}" is not callable from an app: it is not listed, so its visibility is unknown.`,
@@ -1660,16 +1634,16 @@ async function assertAgentMayCall(
   try {
     tools = await source.tools();
   } catch {
-    throw new McpError(
-      ErrorCode.InternalError,
+    throw mcpError(
+      ProtocolErrorCode.InternalError,
       `Tool "${name}" is unavailable: its server is not connected, so its visibility cannot be read. Retry shortly.`,
       { reason: "source_unavailable", toolName: name },
     );
   }
   const tool = tools.find((t) => t.name === innerToolName);
   if (!tool || !isModelVisible(tool)) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
+    throw mcpError(
+      ProtocolErrorCode.InvalidParams,
       tool
         ? `Tool "${name}" is not callable by an agent: its visibility does not include "model". Only its app's view calls it.`
         : `Tool "${name}" is not callable by an agent: it is not listed, so its visibility is unknown.`,
@@ -1768,7 +1742,7 @@ async function readFromOneSource(
     (client) => client.readResource({ uri }),
   );
   if (result?.contents && result.contents.length > 0) return result;
-  throw new McpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
+  throw mcpError(RESOURCE_NOT_FOUND_CODE, `Resource not found: ${uri}`, { uri });
 }
 
 /**

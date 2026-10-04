@@ -36,8 +36,8 @@ Keeping the 2025 vocabulary has stopped being free:
 
 - The MCP TypeScript SDK 2 deprecates it, and a v2 server cannot send a
   task-shaped `tools/call` result on a 2025 connection, explicit result schema
-  or not. The 2025 leg stays on SDK v1 for that one reason, so the runtime
-  carries two SDK major versions.
+  or not. Serving it holds the 2025 leg on SDK v1, so the runtime carries two
+  SDK major versions.
 - The servers that run long calls have moved. FastMCP implements tasks only as
   the extension, negotiated on 2026-07-28 connections.
 - Every place that uses task augmentation keeps two code paths for one
@@ -68,12 +68,13 @@ only.
 ## Consequences
 
 - One vocabulary to build, test and document, in each of the three places.
-- The 2025 leg no longer needs SDK v1 for tasks, and it is the runtime's last
-  holder of it. It stays on SDK v1 because an SDK 2 server's 2025 codec
-  rewrites answers a 2025 client sees: a resource-not-found `-32002` goes out
-  as `-32602`, and a non-object `outputSchema` (with its `structuredContent`)
-  is wrapped under `result`. Moving it is a change to the 2025 wire, decided on
-  its own.
+- The 2025 leg runs on SDK 2, and SDK v1 is out of the runtime: both legs of
+  `/mcp`, the connector client and the bridge use the SDK 2 packages.
+- SDK 2 changes two answers on the 2025 wire. A `resources/read` whose URI
+  resolves nowhere answers `-32602`, not `-32002`. A tool whose `outputSchema`
+  root is not an object is listed with that schema wrapped as the `result`
+  property of an object schema, and its `structuredContent` is wrapped the same
+  way.
 - A 2025 client loses long-running calls on `/mcp`. Its calls still work, as
   ordinary blocking calls, and one that outlasts a timeout in the path fails the
   way any long blocking request does.
