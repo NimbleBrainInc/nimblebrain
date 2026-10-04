@@ -403,6 +403,8 @@ export interface AutomationSummary {
   /** The schedule's type, or `none` when nothing fires it unattended. */
   scheduleType: "cron" | "interval" | "event" | "once" | "none";
   kind: "saved" | "oneoff";
+  /** Set when a once schedule has fired or missed its time; the automation is inert until re-armed. */
+  onceDone?: AutomationOnceDone;
   enabled: boolean;
   source: "user" | "agent";
   runCount: number;
@@ -530,6 +532,12 @@ export interface AutomationTokenBudget {
   period?: "daily" | "monthly";
 }
 
+/** How a once schedule's occurrence ended, and when. Mirror of `OnceDone`. */
+export interface AutomationOnceDone {
+  at: string;
+  outcome: "ran" | "missed";
+}
+
 /**
  * Schedule spec block on a stored automation. Mirror of `ScheduleSpec`.
  */
@@ -558,6 +566,7 @@ export interface AutomationStatusDetail {
   prompt: string;
   schedule?: AutomationScheduleSpec;
   kind?: "saved" | "oneoff";
+  onceDone?: AutomationOnceDone;
   scheduleHuman: string;
   enabled: boolean;
   source: "user" | "agent";
@@ -679,6 +688,7 @@ export interface AutomationRecord {
   prompt: string;
   schedule?: AutomationScheduleSpec;
   kind?: "saved" | "oneoff";
+  onceDone?: AutomationOnceDone;
   skill?: string;
   allowedTools?: string[];
   maxIterations?: number;

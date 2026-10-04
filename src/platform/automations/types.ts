@@ -12,6 +12,13 @@ import type { NotificationRouteMatch } from "../schemas/notifications.ts";
 /** Who created this automation. */
 export type AutomationSource = "user" | "agent";
 
+/** How a once schedule's one occurrence ended, and when (see {@link Automation.onceDone}). */
+export interface OnceDone {
+  /** ISO time the occurrence was settled: the run's start, or when it was judged missed. */
+  at: string;
+  outcome: "ran" | "missed";
+}
+
 /** Whether an automation is a kept definition or a one-off (see {@link Automation.kind}). */
 export type AutomationKind = "saved" | "oneoff";
 
@@ -45,6 +52,14 @@ export interface Automation {
    * default list. Absent reads as `saved`.
    */
   kind?: AutomationKind;
+
+  /**
+   * Set when a once schedule's occurrence is over: it fired (`ran`, whatever
+   * the run's outcome) or was too late to fire (`missed`). The automation is
+   * then inert until a new `at` re-arms it, which clears this. Absent on every
+   * other automation, and on a once still to come.
+   */
+  onceDone?: OnceDone;
 
   /** Force a specific skill match (bypass trigger/keyword matching). */
   skill?: string;
@@ -180,18 +195,19 @@ export const MAX_EVENT_MAX_FIRES_PER_HOUR = 60;
 export const EVENT_FIRE_CEILING_REASON = "event_fire_ceiling";
 
 /**
- * How late a once schedule may still fire. The scheduler fires a `once` whose
- * time has passed on its next tick when it is at most this late (the runtime
- * was down or busy at `at`); later than that it records the occurrence as
- * skipped and goes inert, because a one-time action hours after its time is
- * more often wrong than useful (an email sent the next morning).
+ * How late a once schedule may still fire after the runtime was down at its
+ * time. Judged once, when the scheduler starts: a once whose `at` passed more
+ * than this long ago is recorded as skipped and goes inert, because a one-time
+ * action hours after its time is more often wrong than useful (an email sent
+ * the next morning). A once deferred while running because every run slot is
+ * busy is never judged late; it waits for a slot however long that takes.
  */
 export const ONCE_GRACE_MS = 3_600_000;
 
-/** What `disabledReason` starts with once a once schedule has fired. */
+/** What `disabledReason` (display text only) starts with once a once schedule has fired. */
 export const ONCE_RAN_REASON = "Ran once at ";
 
-/** What `disabledReason` starts with when a once schedule missed its time. */
+/** What `disabledReason` (display text only) starts with when a once schedule missed its time. */
 export const ONCE_MISSED_REASON = "Missed its one time at ";
 
 /**
@@ -264,16 +280,13 @@ export function isOnceSchedule(schedule: ScheduleSpec | undefined): boolean {
 /**
  * Whether a once automation has fired (`ran`) or missed its time (`missed`)
  * and is inert until re-armed, or null when it is not a once automation or is
- * still armed (or paused before its time).
+ * still to come. Read from {@link Automation.onceDone}.
  */
 export function onceRetirement(
-  automation: Pick<Automation, "schedule" | "enabled" | "disabledReason">,
+  automation: Pick<Automation, "schedule" | "onceDone">,
 ): "ran" | "missed" | null {
-  if (!isOnceSchedule(automation.schedule) || automation.enabled) return null;
-  const reason = automation.disabledReason ?? "";
-  if (reason.startsWith(ONCE_RAN_REASON)) return "ran";
-  if (reason.startsWith(ONCE_MISSED_REASON)) return "missed";
-  return null;
+  if (!isOnceSchedule(automation.schedule)) return null;
+  return automation.onceDone?.outcome ?? null;
 }
 
 // ---------------------------------------------------------------------------

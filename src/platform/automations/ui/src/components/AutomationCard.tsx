@@ -138,9 +138,9 @@ export function AutomationCard({
 }) {
   const a = automation;
   const hasBackoff = a.enabled && (a.consecutiveErrors ?? 0) > 0;
-  // A once schedule that has run (or missed its time) is done, not broken: its
-  // reason is the schedule's own record, so it is not shown as auto-disabled.
-  const isDone = !a.enabled && a.scheduleType === "once" && !!a.disabledReason;
+  // A once schedule that has run (or missed its time) is done, not broken, so
+  // it is not shown as auto-disabled.
+  const isDone = !!a.onceDone;
   const isAutoDisabled = !a.enabled && !!a.disabledReason && !isDone;
   const dotClass = hasBackoff
     ? "dot-backoff"

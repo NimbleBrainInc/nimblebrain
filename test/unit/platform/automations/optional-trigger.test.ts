@@ -39,6 +39,7 @@ import {
   ONCE_RAN_REASON,
   onceRetirement,
 } from "../../../../src/platform/automations/types.ts";
+import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 const WS = "ws_0076759dbbe19fcc";
@@ -177,6 +178,7 @@ describe("a once schedule", () => {
     expect(stored.nextRunAt).toBeUndefined();
     expect(stored.schedule).toEqual({ type: "once", at: iso(at) });
     expect(stored.disabledReason?.startsWith(ONCE_RAN_REASON)).toBe(true);
+    expect(stored.onceDone?.outcome).toBe("ran");
     expect(onceRetirement(stored)).toBe("ran");
     expect(isDue(stored, Date.now() + 86_400_000)).toBe(false);
 
@@ -198,7 +200,7 @@ describe("a once schedule", () => {
     expect(scheduler.getDefinitions().get(`${WS}/${OWNER}/${auto.id}`)?.nextRunAt).toBe(iso(at));
   });
 
-  test("a time missed by less than the grace window fires on the next tick", async () => {
+  test("runtime down at its time, started within the grace window: fires on the first tick", async () => {
     const at = Date.now() - (ONCE_GRACE_MS - 60_000);
     const auto = makeAutomation({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
     const executor = executorThat("success");
@@ -209,12 +211,18 @@ describe("a once schedule", () => {
     expect(onceRetirement(loadDefs().get(auto.id)!)).toBe("ran");
   });
 
-  test("a time missed by more than the grace window is recorded skipped and goes inert", async () => {
+  test("runtime down past its time plus the grace window: recorded skipped and inert at start", async () => {
     const at = Date.now() - (ONCE_GRACE_MS + 60_000);
     const auto = makeAutomation({ schedule: { type: "once", at: iso(at) }, nextRunAt: iso(at) });
     const executor = executorThat("success");
 
-    await tick(auto, executor);
+    saveAutomation(workDir, WS, OWNER, auto);
+    const scheduler = new Scheduler(executor, { workDir });
+    scheduler.start();
+    // Judged at start, before any tick.
+    expect(loadDefs().get(auto.id)?.onceDone?.outcome).toBe("missed");
+    await scheduler.onTimer();
+    scheduler.stop();
 
     expect(executor).not.toHaveBeenCalled();
     const stored = loadDefs().get(auto.id)!;
@@ -226,6 +234,58 @@ describe("a once schedule", () => {
     expect(runs.length).toBe(1);
     expect(runs[0]!.status).toBe("skipped");
     expect(runs[0]!.trigger).toBeUndefined();
+  });
+
+  test("deferred for want of a run slot for over the grace window, it still fires", async () => {
+    const at = Date.now() - 1000;
+    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) } });
+    saveAutomation(workDir, WS, OWNER, auto);
+    // Every slot is held by another source's run.
+    const admission = createRunAdmission({ maxConcurrentRuns: 1 });
+    const ticket = admission.request({ workspaceId: WS, key: "other:run" });
+    if (ticket.state !== "admitted") throw new Error("expected the blocker to hold the slot");
+    const executor = executorThat("success");
+    const scheduler = new Scheduler(executor, { workDir, admission });
+    scheduler.start();
+
+    const realNow = Date.now;
+    try {
+      await scheduler.onTimer();
+      expect(executor).not.toHaveBeenCalled();
+      // Two hours later, still busy: still deferred, never judged missed.
+      Date.now = () => realNow() + 2 * ONCE_GRACE_MS;
+      await scheduler.onTimer();
+      expect(executor).not.toHaveBeenCalled();
+      expect(loadDefs().get(auto.id)?.onceDone).toBeUndefined();
+      // The slot frees: it fires, however late.
+      ticket.lease.release();
+      await scheduler.onTimer();
+    } finally {
+      Date.now = realNow;
+      scheduler.stop();
+    }
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(loadDefs().get(auto.id)?.onceDone?.outcome).toBe("ran");
+  });
+
+  test("a reload never judges a once missed", async () => {
+    const at = Date.now() - 1000;
+    const auto = makeAutomation({ schedule: { type: "once", at: iso(at) } });
+    saveAutomation(workDir, WS, OWNER, auto);
+    const admission = createRunAdmission({ maxConcurrentRuns: 1 });
+    admission.request({ workspaceId: WS, key: "other:run" });
+    const scheduler = new Scheduler(executorThat("success"), { workDir, admission });
+    scheduler.start();
+    const realNow = Date.now;
+    try {
+      Date.now = () => realNow() + 2 * ONCE_GRACE_MS;
+      scheduler.reload();
+    } finally {
+      Date.now = realNow;
+      scheduler.stop();
+    }
+    expect(loadDefs().get(auto.id)?.onceDone).toBeUndefined();
+    expect(loadDefs().get(auto.id)?.enabled).toBe(true);
   });
 
   test("Run now on an armed once runs it and leaves it armed", async () => {
@@ -249,6 +309,7 @@ describe("a once schedule", () => {
     const auto = makeAutomation({
       schedule: { type: "once", at: iso(Date.now() - 60_000) },
       enabled: false,
+      onceDone: { at: iso(Date.now() - 60_000), outcome: "ran" },
       disabledReason: `${ONCE_RAN_REASON}${iso(Date.now() - 60_000)}`,
     });
     saveAutomation(workDir, WS, OWNER, auto);
@@ -314,6 +375,7 @@ describe("once schedule validation and re-arm", () => {
         schedule: { type: "once", at: past },
         enabled: false,
         disabledAt: past,
+        onceDone: { at: past, outcome: "ran" },
         disabledReason: `${ONCE_RAN_REASON}${past}`,
       }),
     );
@@ -326,6 +388,7 @@ describe("once schedule validation and re-arm", () => {
 
     expect(out.automation.enabled).toBe(true);
     expect(out.automation.disabledReason).toBeUndefined();
+    expect(out.automation.onceDone).toBeUndefined();
     expect(out.automation.nextRunAt).toBe(new Date(at).toISOString());
     expect(onceRetirement(out.automation)).toBeNull();
   });
@@ -339,6 +402,7 @@ describe("once schedule validation and re-arm", () => {
       makeAutomation({
         schedule: { type: "once", at: past },
         enabled: false,
+        onceDone: { at: past, outcome: "ran" },
         disabledReason: `${ONCE_RAN_REASON}${past}`,
       }),
     );
@@ -361,6 +425,22 @@ describe("once schedule validation and re-arm", () => {
         makeCtx(),
       ),
     ).toThrow(/already passed/);
+  });
+
+  test("a disabled once with a reason but no onceDone is not read as done", () => {
+    saveAutomation(
+      workDir,
+      WS,
+      OWNER,
+      makeAutomation({
+        schedule: { type: "once", at: future() },
+        enabled: false,
+        disabledReason: `${ONCE_RAN_REASON}whatever`,
+      }),
+    );
+    const row = handleList({}, makeCtx()).automations[0]!;
+    expect(row.schedule).toMatch(/^Once at/);
+    expect(row.onceDone).toBeUndefined();
   });
 
   test("a paused once keeps its pause when its time changes", () => {
@@ -389,9 +469,11 @@ describe("once schedule validation and re-arm", () => {
     saveAutomation(workDir, WS, OWNER, {
       ...stored,
       enabled: false,
-      disabledReason: `${ONCE_RAN_REASON}${at}`,
+      onceDone: { at, outcome: "ran" },
     });
-    expect(handleList({}, ctx).automations[0]!.schedule).toMatch(/^Ran once at Jul 1, 2099/);
+    const done = handleList({}, ctx).automations[0]!;
+    expect(done.schedule).toMatch(/^Ran once at Jul 1, 2099/);
+    expect(done.onceDone).toEqual({ at, outcome: "ran" });
     expect(handleStatus({ name: "Send It" }, ctx).automation.scheduleHuman).toMatch(/^Ran once/);
   });
 });

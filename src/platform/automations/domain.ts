@@ -345,6 +345,8 @@ function applyOnceRearm(
   patch: DomainUpdatePatch,
   wasRetiredOnce: boolean,
 ): void {
+  // Any new schedule (or none) ends the old occurrence's record.
+  if (patch.schedule !== undefined) delete automation.onceDone;
   if (!wasRetiredOnce || !isOnceSchedule(patch.schedule ?? undefined)) return;
   if (patch.enabled === false) return;
   automation.enabled = true;

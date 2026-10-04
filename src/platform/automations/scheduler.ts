@@ -494,21 +494,28 @@ function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: numbe
  * says what happened. Its schedule stays, so its history still reads, and a new
  * `at` re-arms it (`updateAutomation`).
  */
-export function retireOnce(auto: Automation, reason: string, now: number): void {
+export function retireOnce(
+  auto: Automation,
+  outcome: "ran" | "missed",
+  settledAt: string,
+  reason: string,
+  now: number,
+): void {
   auto.enabled = false;
   auto.nextRunAt = undefined;
+  auto.onceDone = { at: settledAt, outcome };
   auto.disabledAt = new Date(now).toISOString();
   auto.disabledReason = reason;
 }
 
 /**
- * Whether a due once schedule is too late to fire: its time passed more than
- * {@link ONCE_GRACE_MS} ago (the runtime was down, or every run slot was busy,
- * for that long).
+ * Whether an armed once was missed while the runtime was down: its time passed
+ * more than {@link ONCE_GRACE_MS} ago. Asked only by `start()`, so a once
+ * deferred at runtime because every run slot was busy is never judged late.
  */
-export function onceMissed(auto: Automation, now: number): boolean {
-  if (!isOnceSchedule(auto.schedule) || !auto.schedule?.at) return false;
-  const at = new Date(auto.schedule.at).getTime();
+export function onceMissedWhileDown(auto: Automation, now: number): boolean {
+  if (!auto.enabled || auto.onceDone || !isOnceSchedule(auto.schedule)) return false;
+  const at = new Date(auto.schedule?.at ?? "").getTime();
   return !Number.isNaN(at) && now - at > ONCE_GRACE_MS;
 }
 
@@ -829,8 +836,32 @@ export class Scheduler {
     if (this.running) return;
     this.running = true;
     this.definitions = this.loadAll();
+    this.retireOncesMissedWhileDown();
     this.seedNextRunAt();
     this.armTimer();
+  }
+
+  /**
+   * At start, retire every armed once whose time passed more than the grace
+   * window ago: the runtime was not running when it was due. Only here, never
+   * on a tick or a reload, so a once the running scheduler deferred for want
+   * of a run slot fires whenever a slot frees, however late. A once within the
+   * window stays due and fires on the first tick.
+   */
+  private retireOncesMissedWhileDown(): void {
+    const now = Date.now();
+    for (const auto of [...this.definitions.values()]) {
+      if (!onceMissedWhileDown(auto, now)) continue;
+      try {
+        this.recordMissedOnce(auto, now);
+      } catch (err) {
+        log.warn("[automations] could not record a missed once", {
+          automationId: auto.id,
+          workspaceId: auto.workspaceId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   /**
@@ -1322,10 +1353,6 @@ export class Scheduler {
   private considerForDispatch(auto: Automation, now: number): Promise<AutomationRun> | null {
     if (!auto.enabled) return null;
     if (!isDue(auto, now)) return null;
-    if (onceMissed(auto, now)) {
-      this.recordMissedOnce(auto, now);
-      return null;
-    }
     if (isInBackoff(auto, now)) return null;
 
     // Per-automation concurrency guard
@@ -1477,7 +1504,7 @@ export class Scheduler {
       // The schedule's one occurrence ran, whatever its outcome (success,
       // failure, timeout, cancel): cleanup is the schedule's, not the prompt's.
       // A Run now or event run is not that occurrence and leaves it armed.
-      retireOnce(auto, `${ONCE_RAN_REASON}${run.startedAt}`, now);
+      retireOnce(auto, "ran", run.startedAt, `${ONCE_RAN_REASON}${run.startedAt}`, now);
     }
     auto.updatedAt = new Date(now).toISOString();
     applyTokenBudget(auto, run, now, this.config.defaultTimezone);
@@ -1569,13 +1596,13 @@ export class Scheduler {
 
   /**
    * Record a once schedule's occurrence as skipped because it is too late to
-   * fire (see {@link onceMissed}), and leave the automation inert.
+   * fire (see {@link onceMissedWhileDown}), and leave the automation inert.
    */
   private recordMissedOnce(auto: Automation, now: number): void {
     const at = auto.schedule?.at ?? "";
     const reason =
-      `${ONCE_MISSED_REASON}${at}: it was more than ${ONCE_GRACE_MS / 60_000} minutes late ` +
-      "when the scheduler reached it, so it did not run. Set a new time to run it.";
+      `${ONCE_MISSED_REASON}${at}: the runtime was not running then, and it started more ` +
+      `than ${ONCE_GRACE_MS / 60_000} minutes later, so it did not run. Set a new time to run it.`;
     const wsId = auto.workspaceId;
     const ownerId = auto.ownerId;
     if (!wsId || !ownerId) return;
@@ -1596,7 +1623,7 @@ export class Scheduler {
     const fresh = loadAutomation(this.config.workDir, wsId, ownerId, auto.id) ?? auto;
     fresh.workspaceId = wsId;
     fresh.ownerId = ownerId;
-    retireOnce(fresh, reason, now);
+    retireOnce(fresh, "missed", new Date(now).toISOString(), reason, now);
     fresh.updatedAt = new Date(now).toISOString();
     saveAutomation(this.config.workDir, wsId, ownerId, fresh);
     this.definitions.set(Scheduler.keyOf(fresh), fresh);

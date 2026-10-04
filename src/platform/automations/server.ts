@@ -70,7 +70,7 @@ function log(msg: string): void {
  */
 export function formatSchedule(
   schedule: ScheduleSpec | undefined,
-  state?: Pick<Automation, "enabled" | "disabledReason">,
+  state?: Pick<Automation, "onceDone">,
 ): string {
   if (!schedule) return "Manual only";
 
@@ -715,6 +715,7 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
     schedule: formatSchedule(a.schedule, a),
     scheduleType: a.schedule?.type ?? "none",
     kind: kindOf(a),
+    ...(a.onceDone ? { onceDone: a.onceDone } : {}),
     enabled: a.enabled,
     source: a.source,
     runCount: a.runCount,

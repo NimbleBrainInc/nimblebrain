@@ -6,6 +6,8 @@ export interface AutomationSummary {
   /** The schedule's type; `none` when nothing fires it unattended. */
   scheduleType?: "cron" | "interval" | "event" | "once" | "none";
   kind?: "saved" | "oneoff";
+  /** Set when a once schedule has fired or missed its time (inert until re-armed). */
+  onceDone?: { at: string; outcome: "ran" | "missed" };
   enabled: boolean;
   source: string;
   runCount: number;

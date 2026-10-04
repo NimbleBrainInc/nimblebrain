@@ -45,7 +45,8 @@ Pausing and resuming (`enabled`) controls only the schedule. Run now works whate
 A **once** schedule is for a single action at a known time: send this email at 1:12 PM on July 1. Do not write that as a cron with a fixed date (`12 13 1 7 *`): a cron recurs, so that one runs again every July 1.
 
 - **It fires once at its time**, then the automation turns itself off and has no next run. This happens whatever the run's outcome (success, failure, or timeout), so no cleanup step is needed in the prompt. The definition and its run history stay, and the automation shows as **Ran once at …**.
-- **A time that passes while the runtime is down** fires as soon as the runtime is back if it is at most an hour late. Later than that, the occurrence is recorded as skipped, the automation turns off, and it shows as **Missed its time**. The same applies if every run slot stays busy for over an hour past its time.
+- **A time that passes while the runtime is down** fires as soon as the runtime is back if it is at most an hour late. Later than that, the occurrence is recorded as skipped, the automation turns off, and it shows as **Missed its time**.
+- **A time that comes while every run slot is busy** waits for a slot, like any scheduled run, and fires when one frees, however long that takes.
 - **The time must be in the future** when you create the automation or change its time. A time with no offset is refused, since it means a different moment on every server.
 - **To run it again**, give it a new time: that re-arms it and turns it back on. Resume alone does not, since its time has passed. Run now runs it immediately and leaves its schedule as it was.
 
