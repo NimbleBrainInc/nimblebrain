@@ -534,11 +534,14 @@ function NotificationRow({
       />
 
       {expanded ? (
-        <div className="px-3 pb-3 pt-0 space-y-3 border-t border-border/60">
+        // On a muted surface, so where the open item ends and the next row
+        // begins is plain, and indented to the title's column (the row's
+        // padding, the level icon, and the gap after it).
+        <div className="space-y-3 border-t border-border/60 bg-muted/50 py-3 pr-3 pl-9.5">
           {item.body ? (
             // `whitespace-pre-wrap` on a plain string. The server's newlines
             // survive; nothing else it wrote is interpreted.
-            <p className="text-sm whitespace-pre-wrap break-words pt-3">{item.body}</p>
+            <p className="text-sm whitespace-pre-wrap break-words">{item.body}</p>
           ) : null}
 
           {item.link ? <NotificationLink uri={item.link.resource} href={href} /> : null}
@@ -573,7 +576,7 @@ function NotificationRow({
   );
 }
 
-/** The row's always-visible line: unread dot, level, title, app, time, subject. */
+/** The row's always-visible line: level, title, app, time, subject, unread dot. */
 function NotificationRowHead({
   item,
   expanded,
@@ -600,13 +603,6 @@ function NotificationRowHead({
       data-unread={unread ? "true" : "false"}
       className="w-full flex items-start gap-2.5 px-3 py-3 text-left hover:bg-foreground/5 transition-colors"
     >
-      {/* The bell's dot, on the row it stands for. Read rows keep the
-            slot so titles stay aligned. */}
-      <span
-        aria-hidden="true"
-        data-testid={unread ? "notification-unread-dot" : undefined}
-        className={cn("mt-1.5 size-2 shrink-0 rounded-full", unread && "bg-primary")}
-      />
       <LevelIcon aria-hidden="true" className={cn("size-4 shrink-0 mt-0.5", level.className)} />
       <span className="min-w-0 flex-1">
         <span
@@ -640,9 +636,19 @@ function NotificationRowHead({
           <span className="sr-only">{`${level.label}${unread ? ", unread" : ""}`}</span>
         </span>
       </span>
+      {/* The bell's dot, on the row it stands for. On the trailing side, so a
+          read row reserves no space for it and every title starts in one
+          column. */}
+      {unread ? (
+        <span
+          aria-hidden="true"
+          data-testid="notification-unread-dot"
+          className="size-2 shrink-0 self-center rounded-full bg-primary"
+        />
+      ) : null}
       <ChevronRight
         aria-hidden="true"
-        className={cn("size-4 shrink-0 mt-0.5 transition-transform", expanded && "rotate-90")}
+        className={cn("size-4 shrink-0 self-center transition-transform", expanded && "rotate-90")}
       />
     </button>
   );
