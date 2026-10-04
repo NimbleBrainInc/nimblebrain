@@ -47,7 +47,7 @@ hands that specification to the configured execution provider, which runs the
 engine loop and reports the outcome. An execution provider may narrow what the
 specification allows and may never widen it, which is what keeps
 it from being a second door. Which provider runs a run is installation
-configuration, never the task author's choice.
+configuration, never the automation author's choice.
 
 **In-process is the default and the reference.** The runtime ships the
 in-process provider, which runs the loop as today and needs nothing else. An

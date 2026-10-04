@@ -201,14 +201,16 @@ call is re-issued once on a transport error, and a task call is **never**
 retried — it has already created server-side state, so replaying it would
 duplicate the side effect.
 
-### Task *(proposed, ADR-0045)*
+### Automation *(proposed, ADR-0045)*
 The unattended primitive: a definition (what to do, optional schemas and
 acceptance criteria, limits, and an **optional** trigger) and its **runs**. A
-scheduled task has a trigger; a one-off is a task run once with none; a
-batch is one task run over many inputs. A run's outcome has two parts:
-*execution* (how it ended) and *assessment* (whether the deliverable is
-acceptable). Not the same word as *task augmentation*: that is how a run travels
-over MCP, not what a run is.
+scheduled automation has a trigger; a one-off is an automation run once with
+none; a batch is one automation run over many inputs. A run's outcome has two
+parts: *execution* (how it ended) and *assessment* (whether the deliverable is
+acceptable). It is executable work: you run an automation and never check one
+off. Over `/mcp` a run travels as an MCP task (*task augmentation*), but an
+automation is not a task. In this product "task" means tracked work in a
+tracking connector, or that protocol handle.
 
 ### Skill
 A unit of guidance in the Agent Skills format. The file is the standard,
@@ -290,6 +292,6 @@ Orchestrate over remote MCP:
 - [0032](adr/0032-provider-typed-ref-blocks-on-persisted-state.md) — *(proposed)* the provider-typed blocks on persisted connector state
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
 - [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
-- [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
+- [0045](adr/0045-an-automation-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* an automation is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
 - [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken
 - [0047](adr/0047-the-door-decides-a-run-and-an-execution-provider-runs-it.md) — *(proposed)* the door decides a run and an execution provider runs it; in-process is the default and the reference; a remote execution provider gets a resolved spec and a run-scoped credential, and calls back through `/mcp` and a runtime-hosted model endpoint
