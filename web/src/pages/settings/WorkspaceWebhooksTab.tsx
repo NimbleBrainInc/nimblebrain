@@ -47,7 +47,7 @@ interface Webhook {
  * credential, replaced by dots. The origin and path stay readable, so an admin
  * can still tell which host and door it points at.
  */
-export function maskHookUrl(url: string): string {
+function maskHookUrl(url: string): string {
   const cut = url.lastIndexOf("/");
   return cut < 0 ? "••••••••••••" : `${url.slice(0, cut + 1)}••••••••••••`;
 }

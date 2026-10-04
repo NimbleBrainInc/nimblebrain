@@ -308,6 +308,8 @@ export function WorkspacesTab() {
 
   // Throwing keeps the dialog open with the refusal shown (ConfirmDialog), and
   // parseToolResult throws on a refusal, which `callTool` returns as a result.
+  // On success the dialog is ours to close, and it closes before the re-read, so
+  // a failed refresh never reports inside a dialog whose delete already landed.
   const deleteWorkspace = useCallback(
     async (workspace: Workspace) => {
       const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
@@ -316,6 +318,7 @@ export function WorkspacesTab() {
       });
       parseToolResult(res);
       notify({ level: "success", title: `${workspace.name} was deleted` });
+      setDeleting(null);
       await Promise.all([fetchWorkspaces(), refreshWorkspaces()]);
     },
     [notify, fetchWorkspaces, refreshWorkspaces],

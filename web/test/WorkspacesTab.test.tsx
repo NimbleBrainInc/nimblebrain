@@ -124,6 +124,9 @@ describe("the workspace list", () => {
       workspaceId: "ws_00000000000000aa",
     });
     expect(document.body.textContent).toContain("Acme was deleted");
+    // The dialog closes once the delete lands, rather than holding on "Deleting…".
+    expect(document.body.textContent).not.toContain("Delete Acme?");
+    expect(buttonByText("Deleting…")).toBeUndefined();
   });
 
   test("a refused delete stays in the dialog with the server's reason", async () => {
