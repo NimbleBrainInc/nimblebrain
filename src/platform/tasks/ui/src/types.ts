@@ -56,10 +56,47 @@ export interface TaskDetail {
   estimatedCostPerMonth?: number;
 }
 
+/** One criterion as judged (mirror of the runtime's CriterionResult). */
+export interface CriterionResult {
+  id: string;
+  answer: boolean | number | string;
+  passed: boolean;
+  confidence: number;
+  probabilities?: Record<string, number>;
+  rationale?: string;
+}
+
+/** Whether a run's deliverable is acceptable (mirror of the runtime's RunAssessment). */
+export interface RunAssessment {
+  verdict: "pass" | "fail" | "uncertain" | "not_assessed";
+  reason?: string;
+  schema?: { valid: boolean; errors?: string[] };
+  criteria?: CriterionResult[];
+  judge?: { server: string; id: string; version?: string; calibrated: boolean };
+  stateTruncated?: boolean;
+  assessedAt: string;
+  human?: { verdict: "pass" | "fail"; note?: string; by: string; via: string; at: string };
+}
+
+/** The one label a run reads as, derived by the runtime. */
+export type RunLabel =
+  | "Succeeded"
+  | "Poor result"
+  | "Needs review"
+  | "Failed"
+  | "Skipped"
+  | "Cancelled"
+  | "Queued"
+  | "Running";
+
 export interface TaskRun {
   id: string;
   taskId: string;
   status: string;
+  /** Derived by the runtime on read; absent on records from older servers. */
+  label?: RunLabel;
+  assessment?: RunAssessment;
+  retryOf?: string;
   startedAt: string;
   completedAt?: string;
   resultPreview?: string;

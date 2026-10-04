@@ -3,6 +3,7 @@ import { ChevronIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
 import type { TaskRun } from "../types.ts";
 import { formatDuration, formatTokens, relativeTime, statusDotClass } from "../utils.ts";
+import { RunBadge } from "./RunBadge.tsx";
 
 export function RunRow({ run, showName }: { run: TaskRun; showName?: boolean }) {
   const [expanded, setExpanded] = useState(false);
@@ -25,6 +26,7 @@ export function RunRow({ run, showName }: { run: TaskRun; showName?: boolean }) 
         <ChevronIcon open={expanded} />
         <span className={`dot ${dotClass}`} />
         <span className="run-name">{showName ? run.taskId || "unknown" : run.status}</span>
+        <RunBadge label={run.label} />
         <span className="run-time">{relativeTime(run.startedAt)}</span>
         <span className="run-duration">{formatDuration(run.startedAt, run.completedAt)}</span>
       </div>

@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
 import { BackArrowIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
-import type { RunFileRef, RunToolCall, TaskRun, TaskRunResult, TaskSummary } from "../types.ts";
+import type {
+  RunAssessment,
+  RunFileRef,
+  RunToolCall,
+  TaskRun,
+  TaskRunResult,
+  TaskSummary,
+} from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { formatDuration, formatTokens, relativeTime, statusDotClass } from "../utils.ts";
+import { RunBadge } from "./RunBadge.tsx";
 
 const STATUS_LABEL: Record<string, string> = {
   success: "Run succeeded",
@@ -19,7 +27,7 @@ const STATUS_LABEL: Record<string, string> = {
 const NON_TERMINAL_STATUSES = new Set(["running", "skipped"]);
 
 export function ReaderPane({
-  run,
+  run: listedRun,
   task,
   onRerun,
   onOpenConfig,
@@ -38,6 +46,9 @@ export function ReaderPane({
   const runResultTool = useTool<TaskRunResult>("run_result");
   const [copied, setCopied] = useState(false);
   const [result, setResult] = useState<TaskRunResult | null>(null);
+  // The run as `assess` last returned it, while the same run stays selected.
+  const [assessed, setAssessed] = useState<TaskRun | null>(null);
+  const run = assessed && assessed.id === listedRun?.id ? assessed : listedRun;
 
   const taskName = task?.name || run?.taskId || "unknown";
 
@@ -48,9 +59,9 @@ export function ReaderPane({
   // biome-ignore lint/correctness/useExhaustiveDependencies: runResultTool.call is stable; re-fetch only when the selected run or its task changes
   useEffect(() => {
     setResult(null);
-    if (!run || NON_TERMINAL_STATUSES.has(run.status)) return;
+    if (!listedRun || NON_TERMINAL_STATUSES.has(listedRun.status)) return;
     if (!task) return; // orphaned run — no task to resolve by name
-    const runId = run.id;
+    const runId = listedRun.id;
     let cancelled = false;
     runResultTool
       .call({ name: taskName, runId })
@@ -63,7 +74,7 @@ export function ReaderPane({
     return () => {
       cancelled = true;
     };
-  }, [run, task, taskName]);
+  }, [listedRun, task, taskName]);
 
   if (!run) {
     return <ReaderEmpty />;
@@ -103,6 +114,11 @@ export function ReaderPane({
 
       <div className="reader-body">
         <ReaderContent run={run} output={output} />
+        <ReaderAssessment
+          run={run}
+          taskName={orphan ? undefined : taskName}
+          onAssessed={setAssessed}
+        />
         <ReaderFiles files={outputFiles} />
         <ReaderActivity log={activityLog} />
         <ReaderFooter run={run} />
@@ -170,6 +186,7 @@ function ReaderHead({
           </button>
           <span className="reader-head-sep">·</span>
           <span className="reader-head-status">{statusLabel}</span>
+          <RunBadge label={run.label} />
           {orphan && <span className="reader-head-tag">deleted</span>}
         </div>
         <ReaderHeadSub run={run} />
@@ -253,6 +270,107 @@ function ReaderContent({ run, output }: { run: TaskRun; output: string }) {
     return <div className="reader-empty-desc">This run is still in progress.</div>;
   }
   return <div className="reader-empty-desc">No output captured for this run.</div>;
+}
+
+/** How one criterion reads: its decided pass/fail, and the judge's answer and confidence. */
+function CriterionLine({ c }: { c: NonNullable<RunAssessment["criteria"]>[number] }) {
+  return (
+    <li className="reader-assessment-item">
+      <span className={`reader-assessment-mark ${c.passed ? "pass" : "fail"}`}>
+        {c.passed ? "✓" : "✗"}
+      </span>
+      <span className="reader-assessment-body">
+        <span>{c.id}</span>
+        <span className="reader-assessment-meta">
+          {" "}
+          · {String(c.answer)} · confidence {c.confidence.toFixed(2)}
+        </span>
+        {c.rationale && <div className="reader-assessment-meta">{c.rationale}</div>}
+      </span>
+    </li>
+  );
+}
+
+const VERDICT_TEXT: Record<RunAssessment["verdict"], string> = {
+  pass: "Passed",
+  fail: "Failed",
+  uncertain: "Uncertain",
+  not_assessed: "Not assessed",
+};
+
+/**
+ * The run's assessment: the judge's verdict per criterion, the schema check,
+ * and the person's verdict, with Accept and Reject to set it. Renders nothing
+ * for a run with no assessment.
+ */
+function ReaderAssessment({
+  run,
+  taskName,
+  onAssessed,
+}: {
+  run: TaskRun;
+  /** Absent for a run whose task was deleted: no verdict can be set. */
+  taskName?: string;
+  onAssessed: (run: TaskRun) => void;
+}) {
+  const assessTool = useTool<{ run: TaskRun }>("assess");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const a = run.assessment;
+  if (!a) return null;
+
+  async function setVerdict(verdict: "pass" | "fail") {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await assessTool.call({ runId: run.id, name: taskName, verdict });
+      if (res.data?.run) onAssessed(res.data.run);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="reader-assessment">
+      <div className="reader-section-label">
+        Assessment · {VERDICT_TEXT[a.verdict]}
+        {a.judge ? ` · judged by ${a.judge.version ?? a.judge.id}` : ""}
+      </div>
+      {a.reason && <div className="reader-assessment-note">{a.reason}</div>}
+      {a.schema && (
+        <div className="reader-assessment-note">
+          Output schema:{" "}
+          {a.schema.valid ? "matches" : `does not match (${(a.schema.errors ?? []).join("; ")})`}
+        </div>
+      )}
+      {a.criteria && a.criteria.length > 0 && (
+        <ul className="reader-assessment-list">
+          {a.criteria.map((c) => (
+            <CriterionLine key={c.id} c={c} />
+          ))}
+        </ul>
+      )}
+      {a.human && (
+        <div className="reader-assessment-note">
+          Your verdict: {a.human.verdict === "pass" ? "accepted" : "rejected"}
+          {a.human.note ? ` — ${a.human.note}` : ""}
+        </div>
+      )}
+      {taskName && (
+        <div className="reader-assessment-actions">
+          <button type="button" className="btn" disabled={busy} onClick={() => setVerdict("pass")}>
+            Accept
+          </button>
+          <button type="button" className="btn" disabled={busy} onClick={() => setVerdict("fail")}>
+            Reject
+          </button>
+          {error && <span className="reader-assessment-meta">{error}</span>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** List of files the run produced; renders nothing when there are none. */

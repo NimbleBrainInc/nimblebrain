@@ -476,6 +476,24 @@ body {
   font-family: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
   color: var(--nb-color-danger);
 }
+.run-badge {
+  font-size: 10px; padding: 1px 6px; border-radius: 10px; font-weight: 600;
+  white-space: nowrap; flex-shrink: 0;
+}
+.run-badge-success { color: var(--nb-color-success); background: color-mix(in srgb, var(--nb-color-success) 14%, transparent); }
+.run-badge-warning { color: var(--nb-color-warning); background: color-mix(in srgb, var(--nb-color-warning) 14%, transparent); }
+.run-badge-danger { color: var(--nb-color-danger); background: color-mix(in srgb, var(--nb-color-danger) 14%, transparent); }
+.run-badge-muted { color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-text-secondary) 12%, transparent); }
+.reader-assessment { margin-top: 22px; }
+.reader-assessment-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.reader-assessment-item { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.reader-assessment-mark { width: 14px; flex-shrink: 0; font-weight: 600; }
+.reader-assessment-mark.pass { color: var(--nb-color-success); }
+.reader-assessment-mark.fail { color: var(--nb-color-danger); }
+.reader-assessment-body { flex: 1; min-width: 0; }
+.reader-assessment-meta { color: var(--color-text-secondary); font-size: 12px; }
+.reader-assessment-note { color: var(--color-text-secondary); font-size: 12px; margin-top: 6px; }
+.reader-assessment-actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 12px; }
 .reader-section-label {
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
   color: var(--color-text-secondary); margin-bottom: 6px; cursor: default;

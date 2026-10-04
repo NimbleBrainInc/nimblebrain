@@ -1,5 +1,6 @@
 import type { TaskRun, TaskSummary } from "../types.ts";
 import { relativeTime, statusDotClass } from "../utils.ts";
+import { RunBadge } from "./RunBadge.tsx";
 
 const RUN_STATUS_LABEL: Record<string, string> = {
   success: "Succeeded",
@@ -73,6 +74,7 @@ export function RailRunItem({
       <div className="rail-run-top">
         <span className={`dot ${dotClass}`} title={RUN_STATUS_LABEL[run.status] || run.status} />
         <span className="rail-run-name">{label}</span>
+        <RunBadge label={run.label} />
         <span className="rail-run-time">{relativeTime(run.startedAt)}</span>
       </div>
       {snippet && <div className="rail-run-snippet">{snippet}</div>}
