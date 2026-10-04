@@ -221,4 +221,41 @@ describe("useAutosaveForm", () => {
     expect(notice?.textContent).toContain("Couldn't save Limit");
     expect(notice?.textContent).toContain("limit must be positive");
   });
+
+  // Back, a keyboard shortcut, or a route change that keeps focus unmounts the
+  // form without blurring the field, so the edit is committed on the way out.
+  test("an edit not yet committed is saved when the form unmounts", async () => {
+    await mount();
+    await act(async () => form.set("name", "b"));
+    expect(status("name")).toBe("dirty");
+    expect(saves).toHaveLength(0);
+    await act(async () => removeForm());
+    await flush();
+    expect(saves.map((s) => [s.field, s.value])).toEqual([["name", "b"]]);
+  });
+
+  test("a clean field is not sent when the form unmounts, beside a dirty one that is", async () => {
+    await mount();
+    // Edited and put back: the draft matches what is saved.
+    await act(async () => form.set("name", "b"));
+    await act(async () => form.set("name", "a"));
+    expect(status("name")).toBe("clean");
+    await act(async () => form.set("limit", "20"));
+    await act(async () => removeForm());
+    await flush();
+    expect(saves.map((s) => [s.field, s.value])).toEqual([["limit", "20"]]);
+  });
+
+  test("an uncommitted edit refused after the form unmounts raises an error notice", async () => {
+    await mount();
+    await act(async () => form.set("limit", "0"));
+    await act(async () => removeForm());
+    await flush();
+    expect(saves.map((s) => [s.field, s.value])).toEqual([["limit", "0"]]);
+    await act(async () => saves[0]!.reject(new Error("limit must be positive")));
+    await flush();
+    const notice = document.body.querySelector("[data-testid='notice']");
+    expect(notice?.textContent).toContain("Couldn't save Limit");
+    expect(notice?.textContent).toContain("limit must be positive");
+  });
 });

@@ -85,9 +85,8 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
   // Undo raises `commit` from a notice created by an earlier render.
   const commitRef = useRef<(field: keyof V, value?: V[keyof V]) => void>(() => {});
 
-  // Whether the form is still on the page. Leaving it (following a link)
-  // blurs the field being edited, which starts its save, and then unmounts
-  // the form; a failure that lands after that has no field to show on.
+  // Whether the form is still on the page. A save can land after the form has
+  // left it, and a failure then has no field to show on.
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -95,6 +94,12 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
     return () => {
       mounted.current = false;
       for (const timer of pending.values()) clearTimeout(timer);
+      // Leaving without a blur (Back, a shortcut, a route change that keeps
+      // focus) never commits the field being typed in, so commit it here. The
+      // refs hold the latest state, and the save runs after the form is gone.
+      for (const [field, fieldStatus] of Object.entries(statusRef.current)) {
+        if (fieldStatus === "dirty") commitRef.current(field as keyof V);
+      }
     };
   }, []);
 
