@@ -8,6 +8,8 @@
 //   - a save never overwrites another field's edit
 //   - a failed save keeps the draft, marks the field, and can be retried or reverted
 //   - Undo on a field's notice puts back the value the save replaced
+//   - an edit still pending when the form unmounts is saved then, including one
+//     typed while its field's own save was in flight
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -257,5 +259,21 @@ describe("useAutosaveForm", () => {
     const notice = document.body.querySelector("[data-testid='notice']");
     expect(notice?.textContent).toContain("Couldn't save Limit");
     expect(notice?.textContent).toContain("limit must be positive");
+  });
+
+  // An edit typed while the field's own save is in flight leaves the field
+  // "saving", not "dirty", so the unmount commit skips it; the save landing
+  // after the form is gone has to send the newer text itself.
+  test("an edit made during the field's own save is saved when the form has left the page", async () => {
+    await mount();
+    await act(async () => form.commit("name", "b"));
+    await act(async () => form.set("name", "bc"));
+    await act(async () => removeForm());
+    await act(async () => saves[0]!.resolve());
+    await flush();
+    expect(saves.map((s) => [s.field, s.value])).toEqual([
+      ["name", "b"],
+      ["name", "bc"],
+    ]);
   });
 });

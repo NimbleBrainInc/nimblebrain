@@ -14,7 +14,8 @@ import { useNotice } from "../components/notices";
  * Each field holds a draft and the value last saved. A field is committed —
  * sent through `save` — when the edit is complete: a select on change, a text
  * field on blur or Enter, a textarea on blur. Escape reverts a text field to its
- * saved value.
+ * saved value. An edit still pending when the form leaves the page is committed
+ * then, including one typed while its field's own save was in flight.
  *
  * Saves run one at a time, in the order they were committed, so two writes
  * never race to the server. A field committed again while its save is queued
@@ -182,6 +183,12 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
       setError(field, null);
       if (!queued.current.has(field)) {
         setStatus(field, Object.is(draftRef.current[field], value) ? "saved" : "dirty");
+      }
+      // Typed during this save and the form has since left the page: the
+      // unmount commit skipped the field (it was saving), so send the newer
+      // text now, or it is lost with nothing to say so.
+      if (!mounted.current && !Object.is(draftRef.current[field], value)) {
+        commitRef.current(field);
       }
       opts.onSaved?.(field, value, previous);
       // The save an Undo makes raises no notice: it would offer Undo of the Undo.
