@@ -834,7 +834,10 @@ function NotificationRowHead({
           <time dateTime={item.timestamp} title={formatInstantFull(item.timestamp)}>
             {formatInstant(item.timestamp)}
           </time>
-          {item.subject ? (
+          {/* Only when it adds something. A connector sets `subject` for routes
+              and grouping as well as for this line, so it often repeats what
+              the title already says ("acme.com is active" about acme.com). */}
+          {item.subject && !item.title.toLowerCase().includes(item.subject.toLowerCase()) ? (
             <>
               <span aria-hidden="true">·</span>
               <span className="truncate">{item.subject}</span>
