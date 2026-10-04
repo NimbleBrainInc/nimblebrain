@@ -34,8 +34,8 @@ export interface Notice {
   /** One action, such as Undo. Raising it closes the notice. */
   action?: { label: string; onClick: () => void };
   /**
-   * Who raised it, when not the shell itself: an app's notice names the app, so
-   * an app can never pass for NimbleBrain.
+   * Who raised it, when not the shell itself: an app's notice names the app, as
+   * its bundle's manifest names it, never as the app's message does.
    */
   source?: string;
 }

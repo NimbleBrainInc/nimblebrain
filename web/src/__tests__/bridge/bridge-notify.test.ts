@@ -5,7 +5,8 @@
 //   - the app cannot choose its own label; the host labels it
 //   - a bad level, an empty or long title, or a long description is answered
 //     -32602 with the reason, not dropped and left waiting
-//   - a burst past the limit is refused, so one app cannot fill the screen
+//   - a burst past the limit is refused, so one app cannot fill the screen,
+//     and the budget comes back once the window has passed
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
@@ -30,7 +31,7 @@ mock.module("../../mcp-bridge-client", () => ({
   withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
 }));
 
-const { createBridge } = await import("../../bridge/bridge");
+const { createBridge, createNoticeLimiter } = await import("../../bridge/bridge");
 
 interface Reply {
   id: string | number;
@@ -127,6 +128,16 @@ describe("ai.nimblebrain/notify", () => {
     expect(sixth.error?.code).toBe(-32000);
     expect(sixth.error?.message).toContain("Too many notices");
     expect(seen).toHaveLength(5);
+  });
+
+  test("the budget comes back once the window has passed", () => {
+    let t = 0;
+    const withinLimit = createNoticeLimiter(() => t);
+    for (let i = 0; i < 5; i++) expect(withinLimit()).toBe(true);
+    t = 9_999;
+    expect(withinLimit()).toBe(false);
+    t = 10_000;
+    expect(withinLimit()).toBe(true);
   });
 
   test("a host that shows no notices answers -32601", async () => {

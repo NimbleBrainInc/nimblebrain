@@ -667,7 +667,7 @@ Show the user a notice: the toast the shell uses for its own saves and errors. U
 | `title` | yes | 1–120 characters, trimmed. |
 | `description` | no | Up to 500 characters. |
 
-The host answers `{}` once the notice is shown. Every notice names the app that sent it, and an app cannot set that label, so a notice never passes for one from NimbleBrain itself. The host answers with an error, and shows nothing, for:
+The host answers `{}` once the notice is shown. Every notice names the app that sent it. The name comes from your bundle's manifest (the placement's `label`, or the server name), never from the message, so the request cannot pick it. The host answers with an error, and shows nothing, for:
 
 - `-32602` and the reason: an unknown `level`, an empty or over-long `title`, or an over-long `description`;
 - `-32000`: more than 5 notices from your app in 10 seconds.

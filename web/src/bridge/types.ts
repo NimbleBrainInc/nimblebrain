@@ -74,7 +74,7 @@ export interface BridgeCallbacks {
   /**
    * Called when the app asks to show a notice (`ai.nimblebrain/notify`), after
    * the bridge has checked it. The caller shows it labelled with the app; the
-   * app never chooses its own label, so it cannot pose as the host.
+   * label comes from the bundle's manifest, never from the message.
    */
   onNotify?: (notice: AppNotice) => void;
   /**

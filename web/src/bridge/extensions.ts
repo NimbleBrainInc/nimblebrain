@@ -57,7 +57,6 @@ export const LOCATION_METHOD = "ai.nimblebrain/location";
  */
 export const NAVIGATE_METHOD = "ai.nimblebrain/navigate";
 
-/** Every extension this host serves, and therefore declares. */
 /**
  * App → host request: show the reader a notice, labelled with the app that
  * sent it. Answered `{}`, or an error naming why it was refused. The MCP Apps
@@ -66,6 +65,7 @@ export const NAVIGATE_METHOD = "ai.nimblebrain/navigate";
  */
 export const NOTIFY_METHOD = "ai.nimblebrain/notify";
 
+/** Every extension this host serves, and therefore declares. */
 export const NIMBLEBRAIN_EXTENSIONS = [
   ACTION_METHOD,
   NOTIFY_METHOD,

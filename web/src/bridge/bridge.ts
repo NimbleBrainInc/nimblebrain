@@ -615,14 +615,6 @@ function supersedes(next: unknown, prev: unknown): boolean {
   return JSON.stringify(next) === JSON.stringify(prev);
 }
 
-/**
- * Answer a request the host has just served.
- *
- * A frame with no id is a notification, and a notification takes no response:
- * an app on an older SDK sends `ui/message` and `ui/update-model-context` that
- * way, and posting a response with `id: undefined` would be a malformed frame
- * rather than a harmless one.
- */
 const NOTICE_LEVELS = new Set(["success", "info", "warning", "error"]);
 const MAX_NOTICE_TITLE = 120;
 const MAX_NOTICE_DESCRIPTION = 500;
@@ -631,7 +623,7 @@ const NOTICE_BURST = 5;
 const NOTICE_WINDOW_MS = 10_000;
 
 /** A per-bridge limiter: true while the app is within its notice budget. */
-function createNoticeLimiter(now: () => number = Date.now): () => boolean {
+export function createNoticeLimiter(now: () => number = Date.now): () => boolean {
   const sent: number[] = [];
   return () => {
     const t = now();
@@ -684,6 +676,14 @@ function handleNotify(
   return { jsonrpc: "2.0", id, result: {} };
 }
 
+/**
+ * Answer a request the host has just served.
+ *
+ * A frame with no id is a notification, and a notification takes no response:
+ * an app on an older SDK sends `ui/message` and `ui/update-model-context` that
+ * way, and posting a response with `id: undefined` would be a malformed frame
+ * rather than a harmless one.
+ */
 function answerIfRequest(
   msg: { id?: unknown },
   result: Record<string, unknown>,
