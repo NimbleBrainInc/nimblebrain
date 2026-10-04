@@ -44,7 +44,7 @@ const INSTANCE_SCOPE: CredentialScope = { kind: "instance" };
  * A JSON object literal — not a class instance.
  *
  * The walk descends only into these (and arrays). `RuntimeConfig` carries live
- * objects alongside its JSON — `events: EventSink[]`, `confirmationGate`, an
+ * objects alongside its JSON — `events: EventSink[]`, `confirmationGate`, a
  * `languageModel` — and descending into one would rebuild it as a plain
  * object and strip its prototype. Nothing secret hides behind a class here, so
  * refusing to enter one costs nothing.
