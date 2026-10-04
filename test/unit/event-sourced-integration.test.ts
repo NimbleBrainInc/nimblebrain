@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveUsageMetrics } from "../../src/conversation/event-reconstructor.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
-import type { ConversationEvent, StoredMessage } from "../../src/conversation/types.ts";
+import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { engineEvent, llmDonePayload, runStartPayload } from "../helpers/engine-events.ts";
 
 function makeDirs() {
@@ -78,66 +78,6 @@ describe("Event-sourced integration", () => {
     expect(messages[1].metadata?.usage?.inputTokens).toBe(100);
     expect(messages[1].metadata?.usage?.outputTokens).toBe(20);
     expect(messages[1].metadata?.model).toBe("claude-sonnet-4-5-20250929");
-  });
-
-  it("legacy format: old conversation files load and return messages directly", async () => {
-    const dirs = makeDirs();
-    const store = new EventSourcedConversationStore({ ...dirs });
-
-    // Manually write old-format file
-    const id = "conv_1e9ac4e9010000a1";
-    const meta = {
-      id,
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:01Z",
-      title: "Old convo",
-      totalInputTokens: 50,
-      totalOutputTokens: 10,
-      totalCostUsd: 0.001,
-      lastModel: "claude-sonnet-4-5-20250929",
-      // Stage 1: ownerId is required on every conversation. The
-      // migration script stamps it on pre-Stage-1 files.
-      ownerId: "user_test",
-    };
-    const userMsg: StoredMessage = {
-      role: "user",
-      content: [{ type: "text", text: "Legacy question" }],
-      timestamp: "2026-01-01T00:00:00Z",
-    };
-    // Untyped like `meta`: a legacy line as it sits on disk, with the token
-    // counts that per-message metadata carried then.
-    const assistantMsg = {
-      role: "assistant",
-      content: [{ type: "text", text: "Legacy answer" }],
-      timestamp: "2026-01-01T00:00:01Z",
-      metadata: {
-        inputTokens: 50,
-        outputTokens: 10,
-        model: "claude-sonnet-4-5-20250929",
-      },
-    };
-
-    writeFileSync(
-      join(dirs.dir, `${id}.jsonl`),
-      [JSON.stringify(meta), JSON.stringify(userMsg), JSON.stringify(assistantMsg)]
-        .map((l) => `${l}\n`)
-        .join(""),
-    );
-
-    const conv = await store.load(id);
-    expect(conv).not.toBeNull();
-    expect(conv!.title).toBe("Old convo");
-
-    const messages = await store.history(conv!);
-    expect(messages.length).toBe(2);
-    expect(messages[0].role).toBe("user");
-    expect((messages[0].content as Array<{ type: string; text: string }>)[0].text).toBe(
-      "Legacy question",
-    );
-    expect(messages[1].role).toBe("assistant");
-    expect((messages[1].content as Array<{ type: string; text: string }>)[0].text).toBe(
-      "Legacy answer",
-    );
   });
 
   it("debug vs normal logging: verbose fields persisted only in debug mode", async () => {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationIndex } from "../../src/conversation/index-cache.ts";
 import type { ConversationSummary } from "../../src/conversation/types.ts";
+import { conversationEventLines, type FixtureTurn } from "../helpers/conversation-events.ts";
 
 function tempDir(): string {
   const dir = join(tmpdir(), `nb-index-test-${crypto.randomUUID()}`);
@@ -35,21 +36,16 @@ function writeConversation(
     totalCostUsd: 0.01,
     lastModel: "claude-sonnet-4-5-20250929",
   });
-  const userMsg = JSON.stringify({
-    role: "user",
-    content: opts.userMessage ?? "Hello",
-    timestamp: createdAt,
-  });
-  const assistantMsg = JSON.stringify({
-    role: "assistant",
-    content: "Hi there",
-    timestamp: createdAt,
-  });
-
-  let content = `${meta}\n${userMsg}\n${assistantMsg}\n`;
+  // Events carry the conversation's last-activity time: the index derives
+  // `updatedAt` from the last event.
+  const turns: FixtureTurn[] = [
+    { role: "user", content: opts.userMessage ?? "Hello", timestamp: updatedAt },
+    { role: "assistant", content: "Hi there", timestamp: updatedAt },
+  ];
   for (let i = 0; i < (opts.extraMessages ?? 0); i++) {
-    content += `${JSON.stringify({ role: "user", content: `msg ${i}`, timestamp: createdAt })}\n`;
+    turns.push({ role: "user", content: `msg ${i}`, timestamp: updatedAt });
   }
+  const content = [meta, ...conversationEventLines(turns)].map((l) => `${l}\n`).join("");
   writeFileSync(join(dir, `${id}.jsonl`), content);
 }
 

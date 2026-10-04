@@ -141,7 +141,7 @@ describe("reconcileConnectorSkills", () => {
     const composio = connector({
       url: "https://composio.session/ephemeral",
       serverName: "com-outlook-mcp",
-      composio: { connectorId: "com.microsoft/outlook" },
+      brokered: { provider: "composio", connectorId: "com.microsoft/outlook" },
     });
     const { deps, cap } = buildDeps(
       [{ id: "ws_00079598e311c160", connectors: [composio] }],

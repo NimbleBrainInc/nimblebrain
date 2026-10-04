@@ -17,6 +17,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationIndex } from "../../../../src/platform/conversations/index-cache.ts";
+import { conversationEventLines, type FixtureTurn } from "../../../helpers/conversation-events.ts";
 
 let dir: string;
 
@@ -37,7 +38,7 @@ function writeConv(id: string): void {
   mkdirSync(ownerDir, { recursive: true });
   writeFileSync(
     join(ownerDir, `${id}.jsonl`),
-    `${JSON.stringify(meta)}\n${JSON.stringify({ role: "user", content: "hi" })}\n`,
+    `${[JSON.stringify(meta), ...conversationEventLines([{ role: "user", content: "hi", timestamp: "2026-01-01T00:01:00.000Z" } as FixtureTurn])].join("\n")}\n`,
   );
 }
 

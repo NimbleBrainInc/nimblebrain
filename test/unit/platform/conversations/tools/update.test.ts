@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/platform/conversations/index-cache.ts";
 import { readConversation } from "../../../../../src/platform/conversations/jsonl-reader.ts";
 import { handleUpdate } from "../../../../../src/platform/conversations/tools/update.ts";
+import {
+  conversationEventLines,
+  type FixtureTurn,
+} from "../../../../helpers/conversation-events.ts";
 
 /** The workspaces root the index walks. */
 const ROOT = join(import.meta.dir, ".tmp-update");
@@ -75,7 +79,7 @@ describe("handleUpdate", () => {
   test("updates title and returns updated metadata", async () => {
     const meta = makeMeta();
     const messages = makeMessages();
-    const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
+    const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
     writeTmpFile("conv_test001.jsonl", lines);
 
     await index.build(ROOT);
@@ -102,7 +106,7 @@ describe("handleUpdate", () => {
   test("messages are preserved unchanged after update", async () => {
     const meta = makeMeta();
     const messages = makeMessages();
-    const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
+    const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
     writeTmpFile("conv_test001.jsonl", lines);
 
     await index.build(ROOT);
@@ -125,7 +129,7 @@ describe("handleUpdate", () => {
   test("file is not corrupted after update — all lines parseable", async () => {
     const meta = makeMeta();
     const messages = makeMessages();
-    const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
+    const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
     writeTmpFile("conv_test001.jsonl", lines);
 
     await index.build(ROOT);
@@ -136,17 +140,18 @@ describe("handleUpdate", () => {
     const content = readFileSync(filePath, "utf-8");
     const fileLines = content.split("\n").filter(Boolean);
 
-    // Should have 6 lines: 1 metadata + 5 messages
-    expect(fileLines).toHaveLength(6);
+    // Every original line, plus one appended `metadata.title` event.
+    expect(fileLines).toHaveLength(lines.length + 1);
+    expect(fileLines.slice(0, lines.length)).toEqual(lines);
 
     // Every line should be valid JSON
     for (const line of fileLines) {
       expect(() => JSON.parse(line)).not.toThrow();
     }
 
-    // First line should have the new title
-    const updatedMeta = JSON.parse(fileLines[0]!) as Record<string, unknown>;
-    expect(updatedMeta.title).toBe("Integrity check");
+    const appended = JSON.parse(fileLines.at(-1)!) as Record<string, unknown>;
+    expect(appended.type).toBe("metadata.title");
+    expect(appended.title).toBe("Integrity check");
   });
 
   // ---------------------------------------------------------------------------
@@ -156,7 +161,7 @@ describe("handleUpdate", () => {
   test("readConversation returns the new title after update", async () => {
     const meta = makeMeta({ title: "Before" });
     const messages = makeMessages();
-    const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
+    const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
     writeTmpFile("conv_test001.jsonl", lines);
 
     await index.build(ROOT);

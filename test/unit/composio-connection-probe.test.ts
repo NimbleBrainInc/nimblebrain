@@ -62,7 +62,7 @@ function target(connectorId: string | undefined): ProbeTarget {
     wsId: "ws_0002ee92e8791c13",
     principalId: "_workspace",
     ref: (connectorId
-      ? { url: "u", composio: { connectorId } }
+      ? { url: "u", brokered: { provider: "composio", connectorId } }
       : { url: "u" }) as ProbeTarget["ref"],
   };
 }

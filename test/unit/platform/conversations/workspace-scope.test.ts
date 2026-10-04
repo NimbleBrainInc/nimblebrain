@@ -31,6 +31,7 @@ import {
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { conversationEventLines, type FixtureTurn } from "../../../helpers/conversation-events.ts";
 
 const OWNER_ID = "usr_test";
 const PEER_ID = "usr_peer";
@@ -71,7 +72,9 @@ function writeConv(spec: ConvSpec): void {
   if (spec.stampWorkspace !== false) meta.workspaceId = spec.wsId;
   const lines = [
     JSON.stringify(meta),
-    JSON.stringify({ role: "user", content: spec.message ?? `hello from ${spec.wsId}` }),
+    ...conversationEventLines([
+      { role: "user", content: spec.message ?? `hello from ${spec.wsId}`, timestamp: ts },
+    ] as FixtureTurn[]),
   ];
   writeFileSync(join(dir, `${spec.id}.jsonl`), `${lines.join("\n")}\n`);
 }

@@ -605,7 +605,6 @@ export class ConnectorLifecycleManager {
       await new McpOAuthRecords({
         owner: { type: "workspace", wsId: instance.wsId },
         serverName,
-        workDir,
       }).deleteAll();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -973,10 +972,8 @@ export class ConnectorLifecycleManager {
       {
         type: "remote",
         url: new URL(ref.url),
-        // Mapped, like the boot path: unlike the identity flow below, this one
-        // builds its OAuth provider unconditionally, so a Composio ref with a
-        // legacy env-template auth can reach here (Reconnect / `/v1/mcp-auth/
-        // initiate`) and would otherwise resolve an empty `x-api-key`.
+        // Resolved like the boot path, so Reconnect / `/v1/mcp-auth/initiate`
+        // builds the same transport a restart would.
         transportConfig: resolveRefTransport(ref).transportConfig,
         // Honor the per-call flag, same source the OAuth provider above and the
         // startup-time validateConnectorUrl use — not the manager default — so the
@@ -1109,7 +1106,6 @@ export class ConnectorLifecycleManager {
       owner: { type: "workspace", wsId },
       ...(ownerDisplayName ? { ownerDisplayName } : {}),
       serverName,
-      workDir: opts.workDir,
       // Workspace-scoped tokens route the credential directory through
       // the typed handle.
       workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
@@ -1275,7 +1271,7 @@ export class ConnectorLifecycleManager {
         workDir: opts.workDir,
       });
       await this.teardownConnectionSource(serverName, wsId, principalId);
-      await clearMcpOAuthAuthLost(opts.workDir, { type: "workspace", wsId }, serverName);
+      await clearMcpOAuthAuthLost({ type: "workspace", wsId }, serverName);
       this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
         authorizationUrl: undefined,
       });
@@ -1291,7 +1287,6 @@ export class ConnectorLifecycleManager {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId },
       serverName,
-      workDir: opts.workDir,
       workspaceContext: new WorkspaceContext({ wsId, workDir: opts.workDir }),
       // Resolve through the single source of truth (bouncer-aware), same as
       // boot-start and `initiate`. Although revocation doesn't run an
@@ -1310,7 +1305,7 @@ export class ConnectorLifecycleManager {
     // A disconnect is deliberate: whatever broke before it, the connection now
     // rests. Cleared after teardown, so a refresh still in flight on the old
     // source — racing the revoke above — cannot set it again.
-    await clearMcpOAuthAuthLost(opts.workDir, { type: "workspace", wsId }, serverName);
+    await clearMcpOAuthAuthLost({ type: "workspace", wsId }, serverName);
 
     this.recordConnectionStateChange(serverName, wsId, principalId, "not_authenticated", {
       authorizationUrl: undefined,
@@ -2104,8 +2099,8 @@ export class ConnectorLifecycleManager {
     const oauthRecordAuth = brokered === undefined && !connectorHasStaticAuth(ref);
     if (
       oauthRecordAuth &&
-      (await hasMcpOAuthAuthLost(workDir, owner, serverName)) &&
-      (startError !== undefined || !(await hasMcpOAuthTokens(workDir, owner, serverName)))
+      (await hasMcpOAuthAuthLost(owner, serverName)) &&
+      (startError !== undefined || !(await hasMcpOAuthTokens(owner, serverName)))
     ) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "reauth_required", {
         ...(startError ? { lastError: startError } : {}),
@@ -2135,8 +2130,7 @@ export class ConnectorLifecycleManager {
     // boot-start either succeeded or was never attempted — a failure returned
     // above on `startError` — so `running` is accurate.
     const hasAuth =
-      brokered ??
-      (connectorHasStaticAuth(ref) || (await hasMcpOAuthTokens(workDir, owner, serverName)));
+      brokered ?? (connectorHasStaticAuth(ref) || (await hasMcpOAuthTokens(owner, serverName)));
     if (!hasAuth) {
       this.recordConnectionStateChange(serverName, wsId, "_workspace", "not_authenticated");
     } else {
@@ -2163,7 +2157,7 @@ async function clearIdentityConnectorCredentials(
 ): Promise<void> {
   const owner: ConnectorOwner = { type: "user", userId };
   try {
-    await new McpOAuthRecords({ owner, serverName, workDir }).deleteAll();
+    await new McpOAuthRecords({ owner, serverName }).deleteAll();
   } catch (err) {
     log.warn(
       `[lifecycle] failed to clear identity OAuth records for ${userId}|${serverName}: ${

@@ -102,7 +102,6 @@ export interface WorkspaceOAuthProviderOptions {
    */
   ownerDisplayName?: string;
   serverName: string;
-  workDir: string;
   /**
    * Workspace-bound context, optional. It no longer decides where anything
    * lands — the credential store resolves the owner's scope itself — but when
@@ -800,7 +799,6 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     this.records = new McpOAuthRecords({
       owner: opts.owner,
       serverName: opts.serverName,
-      workDir: opts.workDir,
     });
   }
 

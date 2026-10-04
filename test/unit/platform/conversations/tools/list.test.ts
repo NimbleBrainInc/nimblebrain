@@ -3,6 +3,10 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/platform/conversations/index-cache.ts";
 import { handleList } from "../../../../../src/platform/conversations/tools/list.ts";
+import {
+  conversationEventLines,
+  type FixtureTurn,
+} from "../../../../helpers/conversation-events.ts";
 
 /**
  * Fixtures live under the real workspace layout, because the index takes an
@@ -40,10 +44,10 @@ function writeConvFile(spec: ConvSpec): string {
     lastModel: spec.lastModel ?? null,
   };
 
-  const lines = [JSON.stringify(meta)];
-  for (const msg of spec.messages ?? []) {
-    lines.push(JSON.stringify(msg));
-  }
+  const lines = [
+    JSON.stringify(meta),
+    ...conversationEventLines((spec.messages ?? []) as FixtureTurn[]),
+  ];
 
   const filename = `conv_${spec.id}.jsonl`;
   const dir = join(TMP_DIR, "ws_00859aff6f095b0e", "conversations", "usr_test");

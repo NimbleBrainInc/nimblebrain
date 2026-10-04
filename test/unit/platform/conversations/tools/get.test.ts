@@ -8,6 +8,10 @@ import {
   DEFAULT_GET_LIMIT,
   handleGet,
 } from "../../../../../src/platform/conversations/tools/get.ts";
+import {
+  conversationEventLines,
+  type FixtureTurn,
+} from "../../../../helpers/conversation-events.ts";
 
 function tempDir(): string {
   const dir = join(tmpdir(), `nb-get-test-${crypto.randomUUID()}`);
@@ -68,7 +72,9 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
 
   const lines = [
     meta,
-    ...annotated.map((m) => JSON.stringify({ ...m, timestamp: m.timestamp ?? createdAt })),
+    ...conversationEventLines(
+      annotated.map((m) => ({ ...m, timestamp: m.timestamp ?? createdAt })) as FixtureTurn[],
+    ),
   ];
   // `dir` is the workspaces root the index walks; the file goes in one owner
   // partition of one workspace.
@@ -101,7 +107,8 @@ describe("conversations__get", () => {
         { role: "assistant", content: "Reply 1", timestamp: ts },
         { role: "user", content: "Message 2", timestamp: ts },
         { role: "assistant", content: "Reply 2", timestamp: ts },
-        { role: "user", content: "Message 3", timestamp: ts },
+        // updatedAt is derived from the last event, so the last turn carries it.
+        { role: "user", content: "Message 3", timestamp: "2025-01-15T10:05:00.000Z" },
       ],
     });
     await index.build(dir);
@@ -340,9 +347,12 @@ describe("conversations__get", () => {
       role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
       content: `${fatChunk}-${i}`,
       timestamp: ts,
-      // Realistic message shape: nested usage / blocks add pretty-print overhead.
-      blocks: [{ type: "text", text: `${fatChunk}-${i}` }],
-      usage: { inputTokens: 100, outputTokens: 50, model: "claude-sonnet-4-6", llmMs: 1200 },
+      // Realistic message shape: nested usage adds pretty-print overhead.
+      metadata: {
+        usage: { inputTokens: 100, outputTokens: 50 },
+        model: "claude-sonnet-4-6",
+        llmMs: 1200,
+      },
     }));
     writeConversation(dir, "conv-fits-under-engine-cap", { messages });
     await index.build(dir);

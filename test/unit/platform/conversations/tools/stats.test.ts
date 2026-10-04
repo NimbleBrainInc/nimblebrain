@@ -3,6 +3,10 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/platform/conversations/index-cache.ts";
 import { handleStats } from "../../../../../src/platform/conversations/tools/stats.ts";
+import {
+  conversationEventLines,
+  type FixtureTurn,
+} from "../../../../helpers/conversation-events.ts";
 
 /**
  * Fixtures live under the real workspace layout, because the index takes an
@@ -79,10 +83,7 @@ function writeConv(opts: ConvOptions): void {
       },
     });
   }
-  const lines = [JSON.stringify(meta)];
-  for (const msg of messages) {
-    lines.push(JSON.stringify(msg));
-  }
+  const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
   const wsDir = join(TMP_DIR, "ws_00859aff6f095b0e", "conversations", "usr_test");
   mkdirSync(wsDir, { recursive: true });
   writeFileSync(join(wsDir, `${opts.id}.jsonl`), `${lines.join("\n")}\n`);
@@ -412,29 +413,5 @@ describe("handleStats", () => {
     expect(json).not.toContain("cost");
     expect(json).not.toContain("usd");
     expect(json).not.toContain("USD");
-  });
-
-  test("handles assistant messages without metadata gracefully", async () => {
-    const now = new Date().toISOString();
-    writeConv({
-      id: "conv_nometa",
-      createdAt: now,
-      messages: [
-        { role: "user", content: "Hi", timestamp: now },
-        { role: "assistant", content: "Hello", timestamp: now },
-      ],
-    });
-
-    const index = new ConversationIndex();
-    await index.build(TMP_DIR);
-
-    const result = await handleStats({ period: "all" }, index, SCOPE);
-
-    // Conversation is counted; assistant messages without metadata
-    // contribute zero to derived totals (no crash, no spurious values).
-    expect(result.totalConversations).toBe(1);
-    expect(result.totalInputTokens).toBe(0);
-    expect(result.byModel).toEqual({});
-    expect(result.topTools).toEqual([]);
   });
 });

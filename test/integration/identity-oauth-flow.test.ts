@@ -27,8 +27,8 @@ import {
  *
  * Asserts the identity-specific behavior: the connector resolves from the store,
  * the flow is registered under a `{kind:"user"}` owner (so the callback lands on
- * `/profile/connectors`), and the OAuth client is registered under the user's
- * identity credential root (`users/<id>/credentials/mcp-oauth/…`) — outside any
+ * `/profile/connectors`), and the OAuth client is registered at the user's
+ * credential scope (`mcp-oauth.<server>.client` at `user` scope) — outside any
  * workspace.
  */
 

@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { ConversationIndex } from "../../../../../src/platform/conversations/index-cache.ts";
 import { readConversation } from "../../../../../src/platform/conversations/jsonl-reader.ts";
 import { handleFork } from "../../../../../src/platform/conversations/tools/fork.ts";
+import {
+  conversationEventLines,
+  type FixtureTurn,
+} from "../../../../helpers/conversation-events.ts";
 
 /** The workspaces root the index walks. */
 const ROOT = join(import.meta.dir, ".tmp-fork");
@@ -74,7 +78,7 @@ function makeMessages() {
 function writeSourceConversation(metaOverrides: Record<string, unknown> = {}): string {
   const meta = makeMeta(metaOverrides);
   const messages = makeMessages();
-  const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
+  const lines = [JSON.stringify(meta), ...conversationEventLines(messages as FixtureTurn[])];
   return writeTmpFile(`${SOURCE_ID}.jsonl`, lines);
 }
 
@@ -113,7 +117,7 @@ describe("handleFork", () => {
     expect(result.messageCount).toBe(5);
 
     // Token totals should match source (recalculated from assistant messages)
-    // Source has 2 assistant messages: 100+200=300 input, 60+120=180 output, 0.005+0.015=0.02 cost
+    // Source has 2 assistant messages: 100+200=300 input, 60+120=180 output
     expect(result.totalInputTokens).toBe(300);
     expect(result.totalOutputTokens).toBe(180);
     expect(result.lastModel).toBe("claude-sonnet-4-5-20250929");
@@ -241,18 +245,23 @@ describe("handleFork", () => {
     const raw = readFileSync(newFilePath, "utf-8");
     const lines = raw.split("\n").filter(Boolean);
 
-    // First line should be valid JSON metadata
+    // Line 1 is the event-sourced store's header: no stored totals.
     const meta = JSON.parse(lines[0]!);
     expect(meta.id).toBe(result.id);
+    expect(meta.format).toBe("events");
     expect(typeof meta.createdAt).toBe("string");
     expect(typeof meta.updatedAt).toBe("string");
+    expect(meta.totalInputTokens).toBeUndefined();
+    expect(meta.totalOutputTokens).toBeUndefined();
+    expect(meta.totalCostUsd).toBeUndefined();
 
-    // Each subsequent line should be a valid message
+    // Every subsequent line is an event.
+    expect(lines.length).toBeGreaterThan(1);
     for (let i = 1; i < lines.length; i++) {
-      const msg = JSON.parse(lines[i]!);
-      expect(msg.role).toBeDefined();
-      expect(msg.content).toBeDefined();
-      expect(msg.timestamp).toBeDefined();
+      const evt = JSON.parse(lines[i]!);
+      expect(typeof evt.type).toBe("string");
+      expect(typeof evt.ts).toBe("string");
+      expect(evt.role).toBeUndefined();
     }
 
     // And readConversation should parse it successfully
@@ -282,6 +291,62 @@ describe("handleFork", () => {
     const newConv = await readConversation(newFilePath);
     expect(newConv).not.toBeNull();
     expect(newConv!.messageCount).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Round trip: the fork reads back as the source's turns
+  // ---------------------------------------------------------------------------
+
+  test("the fork reads back as the source's turns, tool calls included", async () => {
+    const turns: FixtureTurn[] = [
+      {
+        role: "user",
+        content: "Find the file",
+        timestamp: "2025-01-01T00:01:00.000Z",
+        userId: "usr_test",
+      },
+      {
+        role: "assistant",
+        content: "Looking.",
+        timestamp: "2025-01-01T00:02:00.000Z",
+        metadata: {
+          usage: { inputTokens: 40, outputTokens: 20, cacheReadTokens: 10 },
+          model: "claude-sonnet-4-5-20250929",
+          llmMs: 300,
+          toolCalls: [
+            {
+              id: "tc_1",
+              name: "files__search",
+              input: { q: "a" },
+              output: "found",
+              ok: true,
+              ms: 5,
+            },
+            {
+              id: "tc_2",
+              name: "files__read",
+              input: { id: "f" },
+              output: "boom",
+              ok: false,
+              ms: 7,
+            },
+          ],
+        },
+      },
+      { role: "user", content: "Thanks", timestamp: "2025-01-01T00:03:00.000Z" },
+    ];
+    writeTmpFile(`${SOURCE_ID}.jsonl`, [
+      JSON.stringify(makeMeta({ ownerId: "usr_test" })),
+      ...conversationEventLines(turns),
+    ]);
+    const index = await buildIndex();
+
+    const result = await handleFork({ id: SOURCE_ID }, index);
+
+    const source = await readConversation(join(TMP_DIR, `${SOURCE_ID}.jsonl`));
+    const forked = await readConversation(join(TMP_DIR, `${result.id}.jsonl`));
+    expect(forked!.messages).toEqual(source!.messages);
+    expect(forked!.meta.ownerId).toBe("usr_test");
   });
 
   // ---------------------------------------------------------------------------

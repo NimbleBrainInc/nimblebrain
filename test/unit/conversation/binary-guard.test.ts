@@ -18,7 +18,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertNoBinaryPayloads } from "../../../src/conversation/binary-guard.ts";
 import { EventSourcedConversationStore } from "../../../src/conversation/event-sourced-store.ts";
-import { JsonlConversationStore } from "../../../src/conversation/jsonl-store.ts";
 import type { StoredMessage } from "../../../src/conversation/types.ts";
 
 function makeDir(): string {
@@ -98,19 +97,6 @@ describe("conversation stores reject binary-bearing messages (issue #54)", () =>
         // The historical bug shape: bytes inline in the content part.
         { type: "image", image: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
       ],
-    } as unknown as StoredMessage;
-
-    await expect(store.append(conv, poisoned)).rejects.toThrow(/Refusing to persist binary/);
-  });
-
-  it("JsonlConversationStore.append throws on Uint8Array in contentParts", async () => {
-    const store = new JsonlConversationStore(makeDir());
-    const conv = await store.create({ ownerId: "user_test" });
-
-    const poisoned = {
-      role: "user",
-      timestamp: "2026-05-18T00:00:00.000Z",
-      content: [{ type: "image", image: new Uint8Array([1, 2, 3, 4]) }],
     } as unknown as StoredMessage;
 
     await expect(store.append(conv, poisoned)).rejects.toThrow(/Refusing to persist binary/);

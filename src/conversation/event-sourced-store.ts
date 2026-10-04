@@ -508,19 +508,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
   }
 
   /**
-   * Backward-compatible append for StoredMessage.
-   * Converts assistant messages to events; user messages to user.message events.
+   * Append a StoredMessage, converting it to events: a user message becomes a
+   * `user.message` event, an assistant message a synthetic run.
    */
   async append(conversation: Conversation, message: StoredMessage): Promise<void> {
-    if (conversation.format === "events") {
-      this.appendEventFormat(conversation, message);
-      return;
-    }
-    await this.appendLegacyFormat(conversation, message);
-  }
-
-  /** Append a StoredMessage to an event-format conversation, converting it to events. */
-  private appendEventFormat(conversation: Conversation, message: StoredMessage): void {
     if (message.role === "user") {
       const event: ConversationEvent = {
         ts: message.timestamp,
@@ -571,35 +562,10 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     }
   }
 
-  /** Append a StoredMessage to a legacy (message-format) conversation via atomic rewrite. */
-  private async appendLegacyFormat(
-    conversation: Conversation,
-    message: StoredMessage,
-  ): Promise<void> {
-    // Legacy format — same pattern as JsonlConversationStore
-    assertNoBinaryPayloads(message, `message(${message.role})`);
-    const path = this.path(conversation.id);
-    if (message.role === "assistant" && message.metadata) {
-      conversation.lastModel = message.metadata.model ?? conversation.lastModel;
-    }
-    conversation.updatedAt = message.timestamp;
-
-    const content = await readFile(path, "utf-8");
-    const lines = content.split("\n").filter(Boolean);
-    lines[0] = JSON.stringify(conversation);
-    lines.push(JSON.stringify(message));
-
-    const tmpPath = `${path}.tmp.${uniqueTmpSuffix()}`;
-    await writeFile(tmpPath, lines.map((l) => `${l}\n`).join(""));
-    await rename(tmpPath, path);
-    this.index.invalidate();
-    this.onMutate?.({ id: conversation.id, filePath: path });
-  }
-
   /**
    * Read raw conversation events for a single conversation. Returns []
-   * for missing files or legacy (message-format) conversations. The
-   * event-log read tools (`skills__loading_log`) consume this.
+   * for a missing file. The event-log read tools (`skills__loading_log`)
+   * consume this.
    */
   async readEvents(id: string): Promise<ConversationEvent[]> {
     const path = this.path(id);
@@ -607,7 +573,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const content = await readFile(path, "utf-8");
     const lines = content.split("\n").filter(Boolean);
     if (lines.length < 2) return [];
-    if (!this.detectFormat(lines)) return [];
     return safeParseLines<ConversationEvent>(lines.slice(1));
   }
 
@@ -642,11 +607,8 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     const lines = content.split("\n").filter(Boolean);
     if (lines.length < 2) return [];
 
-    if (this.detectFormat(lines)) {
-      const events = safeParseLines<ConversationEvent>(lines.slice(1));
-      return reconstructMessages(events, opts);
-    }
-    return safeParseLines<StoredMessage>(lines.slice(1));
+    const events = safeParseLines<ConversationEvent>(lines.slice(1));
+    return reconstructMessages(events, opts);
   }
 
   async list(
@@ -816,34 +778,6 @@ export class EventSourcedConversationStore implements ConversationStore, EventSi
     // hook names the one conversation that moved; the re-read it triggers is
     // lazy (next read) and scoped to that conversation's header.
     this.onMutate?.({ id, filePath: path });
-  }
-
-  /** Detect whether a conversation file uses event format or legacy message format. */
-  private detectFormat(lines: string[]): boolean {
-    const [firstLine, secondLine] = lines;
-
-    // Check line 1 for explicit format field
-    if (firstLine) {
-      try {
-        const meta = JSON.parse(firstLine) as Record<string, unknown>;
-        if (meta.format === "events") return true;
-      } catch {
-        // fall through
-      }
-    }
-
-    // Check line 2 for type field (event) vs role field (legacy)
-    if (secondLine) {
-      try {
-        const parsed = JSON.parse(secondLine) as Record<string, unknown>;
-        if ("type" in parsed) return true;
-        if ("role" in parsed) return false;
-      } catch {
-        // fall through
-      }
-    }
-
-    return false;
   }
 
   private async _update(id: string, patch: ConversationPatch): Promise<Conversation | null> {

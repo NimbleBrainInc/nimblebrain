@@ -258,7 +258,6 @@ describe("McpSource — OAuth retry path", () => {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "retry-test",
-      workDir,
       callbackUrl: CALLBACK,
       // Mock runs on localhost; SSRF validator would otherwise reject.
       allowInsecureRemotes: true,
@@ -309,7 +308,6 @@ describe("McpSource — OAuth retry path", () => {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "pending-test",
-      workDir,
       callbackUrl: CALLBACK,
       allowInsecureRemotes: true,
       onInteractiveAuthRequired: (url) => {
@@ -358,7 +356,6 @@ describe("McpSource — OAuth retry path", () => {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "reauth-test",
-      workDir,
       callbackUrl: CALLBACK,
       allowInsecureRemotes: true,
       headlessAuthProbe: true,
@@ -402,7 +399,6 @@ describe("McpSource — OAuth retry path", () => {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "userinfo-test",
-      workDir,
       callbackUrl: CALLBACK,
       allowInsecureRemotes: true,
       headlessAuthProbe: true,
@@ -447,7 +443,6 @@ describe("McpSource — OAuth retry path", () => {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName,
-      workDir,
       callbackUrl: CALLBACK,
       allowInsecureRemotes: true,
       onInteractiveAuthRequired: (url) => {

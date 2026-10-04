@@ -1,9 +1,5 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { LanguageModelV4Message } from "@ai-sdk/provider";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import { InMemoryConversationStore } from "../../src/conversation/memory-store.ts";
 import type { ConversationStore, StoredMessage } from "../../src/conversation/types.ts";
 import { windowMessages } from "../../src/conversation/window.ts";
@@ -88,37 +84,6 @@ function conversationTests(name: string, makeStore: () => ConversationStore) {
 
 // In-memory tests
 conversationTests("InMemoryConversationStore", () => new InMemoryConversationStore());
-
-// JSONL tests
-const testDir = join(tmpdir(), `nimblebrain-test-${Date.now()}`);
-conversationTests("JsonlConversationStore", () => new JsonlConversationStore(testDir));
-
-afterAll(() => {
-  if (existsSync(testDir)) rmSync(testDir, { recursive: true });
-});
-
-describe("JsonlConversationStore (persistence)", () => {
-  const persistDir = join(tmpdir(), `nimblebrain-persist-${Date.now()}`);
-
-  afterAll(() => {
-    if (existsSync(persistDir)) rmSync(persistDir, { recursive: true });
-  });
-
-  it("persists across store instances", async () => {
-    const store1 = new JsonlConversationStore(persistDir);
-    const conv = await store1.create({ ownerId: "user_test" });
-    await store1.append(conv, msg("user", "Remember me"));
-
-    // New instance, same directory
-    const store2 = new JsonlConversationStore(persistDir);
-    const loaded = await store2.load(conv.id);
-    expect(loaded).not.toBeNull();
-
-    const history = await store2.history(loaded!);
-    expect(history).toHaveLength(1);
-    expect(history[0]!.content).toEqual([{ type: "text", text: "Remember me" }]);
-  });
-});
 
 describe("windowMessages", () => {
   function wmsg(role: "user" | "assistant", text: string): LanguageModelV4Message {

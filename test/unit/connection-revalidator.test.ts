@@ -40,7 +40,10 @@ function composioInstance(serverName: string, wsId = "ws_0002ee92e8791c13"): Fak
     serverName,
     wsId,
     state: "running",
-    ref: { url: "https://backend.composio.dev/x/mcp", composio: { connectorId: "com.x" } },
+    ref: {
+      url: "https://backend.composio.dev/x/mcp",
+      brokered: { provider: "composio", connectorId: "com.x" },
+    },
     connections: new Map([[`_workspace`, { principalId: "_workspace", state: "running" }]]),
   };
 }
