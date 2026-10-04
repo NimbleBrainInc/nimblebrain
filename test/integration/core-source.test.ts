@@ -748,16 +748,21 @@ describe("Core Source", () => {
         }),
       );
 
-      const lines: string[] = [];
-      const original = log.error;
-      (log as { error: typeof log.error }).error = (msg: string) => {
-        lines.push(msg);
-      };
+      // Captured per level: an applied override is a normal-boot notice, a
+      // dropped key is a warning, and neither is an error.
+      const lines: Record<"info" | "warn" | "error", string[]> = { info: [], warn: [], error: [] };
+      const original = { info: log.info, warn: log.warn, error: log.error };
+      const sink = log as Record<"info" | "warn" | "error", (msg: string) => void>;
+      for (const level of ["info", "warn", "error"] as const) {
+        sink[level] = (msg: string) => {
+          lines[level].push(msg);
+        };
+      }
       let loaded: ReturnType<typeof loadConfig>;
       try {
         loaded = loadConfig({ config: configPath });
       } finally {
-        (log as { error: typeof log.error }).error = original;
+        Object.assign(log, original);
       }
 
       // The seed reclaims the key with no writer; the writable one still wins.
@@ -765,11 +770,14 @@ describe("Core Source", () => {
       expect(loaded.maxIterations).toBe(25);
 
       expect(
-        lines.some((l) => l.includes("Ignored 1 override key") && l.includes("modelPolicy")),
+        lines.warn.some((l) => l.includes("Ignored 1 override key") && l.includes("modelPolicy")),
       ).toBe(true);
       expect(
-        lines.some((l) => l.includes("Applied 1 runtime override") && l.includes("maxIterations")),
+        lines.info.some(
+          (l) => l.includes("Applied 1 runtime override") && l.includes("maxIterations"),
+        ),
       ).toBe(true);
+      expect(lines.error).toEqual([]);
     });
 
     it("writes no override key the loader would drop", async () => {

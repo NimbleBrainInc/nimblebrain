@@ -57,7 +57,7 @@ function validateConfig(
 
     if (warnUnknownKeys) {
       for (const key of warnings) {
-        log.error(`[config] Warning: unknown key "${key}" in ${path} (ignored)`);
+        log.warn(`[config] Unknown key "${key}" in ${path} (ignored)`);
       }
     }
 
@@ -136,12 +136,12 @@ function applyOverride(
     const applied = Object.keys(override).filter((k) => writable.has(k));
     const ignored = Object.keys(override).filter((k) => !writable.has(k));
     if (applied.length > 0) {
-      log.error(
+      log.info(
         `[config] Applied ${applied.length} runtime override${applied.length === 1 ? "" : "s"} from ${configOverridePath}: ${applied.join(", ")}`,
       );
     }
     if (ignored.length > 0) {
-      log.error(
+      log.warn(
         `[config] Ignored ${ignored.length} override key${ignored.length === 1 ? "" : "s"} with no writer in ${configOverridePath}: ${ignored.join(", ")}. Set these in the seed config instead.`,
       );
     }
@@ -175,13 +175,13 @@ function stripWorkspaceFields(fileConfig: FileConfig): void {
 /** Emit deprecation warnings for removed fields still present in the file. */
 function warnDeprecatedFields(fileConfig: FileConfig, configPath: string): void {
   if ("identity" in fileConfig) {
-    log.error(
-      `[config] Warning: "identity" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
+    log.warn(
+      `[config] "identity" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
     );
   }
   if ("contextFile" in fileConfig) {
-    log.error(
-      `[config] Warning: "contextFile" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
+    log.warn(
+      `[config] "contextFile" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
     );
   }
 }
