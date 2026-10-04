@@ -35,15 +35,6 @@ export interface ToolEligibilityContext {
 /** Callback that returns the current loaded skills from the runtime. */
 export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 
-/**
- * Factory that creates the `nb` system source as an in-process MCP server.
- * Merges core platform tools (get_config, briefing, etc.) with system tools
- * (search, status, etc.) into a single "nb" source.
- *
- * Returns a started, ready-to-use source. Async because the underlying
- * `McpSource.start()` runs the SDK initialize handshake over the linked
- * `InMemoryTransport` pair before the source can serve tool calls.
- */
 /** What `createSystemTools` builds the `nb` source from. Each absent field drops the tools that need it. */
 export interface SystemToolsOptions {
   getSkills?: GetSkillsFn;
@@ -56,6 +47,15 @@ export interface SystemToolsOptions {
   toolEligibilityCtx?: ToolEligibilityContext;
 }
 
+/**
+ * Factory that creates the `nb` system source as an in-process MCP server.
+ * Merges core platform tools (get_config, briefing, etc.) with system tools
+ * (search, status, etc.) into a single "nb" source.
+ *
+ * Returns a started, ready-to-use source. Async because the underlying
+ * `McpSource.start()` runs the SDK initialize handshake over the linked
+ * `InMemoryTransport` pair before the source can serve tool calls.
+ */
 export async function createSystemTools(
   getRegistry: () => ToolRegistry,
   opts: SystemToolsOptions = {},
