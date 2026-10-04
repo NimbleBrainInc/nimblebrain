@@ -1,10 +1,10 @@
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
-import { LIFECYCLE_EVENTS, type LifecycleDeclaration } from "../lifecycle/types.ts";
+import { LIFECYCLE_EVENTS, type LifecycleBinding } from "../lifecycle/types.ts";
 
 /**
- * Connector tools only the host may call: the handlers a connector's
- * `lifecycle` block names (`on_ready`, `on_removing`).
+ * Connector tools only the host may call: the lifecycle handlers a connector's
+ * server binds (`on_ready`, `on_removing`).
  *
  * A lifecycle event means the host did something: it installed the connector,
  * or it is about to remove it. A handler anyone else can call lets them forge
@@ -13,11 +13,10 @@ import { LIFECYCLE_EVENTS, type LifecycleDeclaration } from "../lifecycle/types.
  * included. The host's own calls (`src/lifecycle/notify.ts`) reach the source
  * through `connectorPortForSource` and pass no door, so they are unaffected.
  *
- * The declaration is whichever won for the connection
- * (`Runtime.connectorGatesFor`): the handlers the server marks under the
- * `ai.nimblebrain/lifecycle` extension when it advertises it, and otherwise the
- * operator-trusted catalog block. Believing the server is safe because the
- * declaration is about its own tools only: withholding protects the server's
+ * The binding is the connection's (`Runtime.connectorGatesFor`): the handlers
+ * the server marks under the `ai.nimblebrain/lifecycle` extension when it
+ * advertises it. Believing the server is safe because the binding is about its
+ * own tools only: withholding protects the server's
  * own handlers, so a server that lies exposes or hides nothing but its own.
  * The scope matches `admin_tools`: workspace connectors only. A
  * personal connector acts on its owner's own account, is never called by the
@@ -26,10 +25,7 @@ import { LIFECYCLE_EVENTS, type LifecycleDeclaration } from "../lifecycle/types.
  */
 
 /** Whether `lifecycle` names `toolName` as a handler, so only the host may call it. */
-export function isHostOnlyTool(
-  lifecycle: LifecycleDeclaration | undefined,
-  toolName: string,
-): boolean {
+export function isHostOnlyTool(lifecycle: LifecycleBinding | undefined, toolName: string): boolean {
   if (lifecycle === undefined) return false;
   return LIFECYCLE_EVENTS.some((event) => lifecycle[event] === toolName);
 }

@@ -11,21 +11,19 @@ import type { ConnectorPort } from "../../../src/tools/connector-surface.ts";
 import type { Tool, ToolResult } from "../../../src/tools/types.ts";
 
 /**
- * Delivery of a binding declared through `ai.nimblebrain/lifecycle`: the same
- * events as the catalog path, with the extension's argument rule (`reason` only
- * to a handler that declares it) and its admission of a `taskSupport:
- * "optional"` handler. And the removal deadline covering a slow rediscovery.
+ * Delivery of a binding declared through `ai.nimblebrain/lifecycle`: the
+ * extension's argument rule (`reason` only to a handler that declares it) and
+ * its admission of a `taskSupport: "optional"` handler. And the removal deadline covering a slow rediscovery.
  */
 
 const WS = "ws_000f7ed6658f9d30";
 const CONNECTOR = "acme-scope";
 
 const WIRE: LifecycleBinding = {
-  declaredBy: "extension",
   on_ready: "scope_ready",
   on_removing: "scope_removing",
 };
-const WIRE_READY: LifecycleBinding = { declaredBy: "extension", on_ready: "scope_ready" };
+const WIRE_READY: LifecycleBinding = { on_ready: "scope_ready" };
 
 function tool(name: string, extra: Partial<Tool> = {}): Tool {
   return {
@@ -91,7 +89,7 @@ describe("ready, declared on the wire", () => {
     expect(calls).toEqual([{ tool: "scope_ready", input: { reason: "resume" } }]);
   });
 
-  test('admits a taskSupport "optional" handler, which the catalog path refuses', async () => {
+  test('admits a taskSupport "optional" handler, since the host calls inline', async () => {
     const optional = { execution: { taskSupport: "optional" as const } };
     const { port, calls } = fakePort([marked("scope_ready", "ready", optional)]);
     await notifyReady(
@@ -101,22 +99,12 @@ describe("ready, declared on the wire", () => {
       "install",
     );
     expect(calls.map((c) => c.tool)).toEqual(["scope_ready"]);
-
-    const catalog = { on_ready: "scope_ready" };
-    await expect(
-      notifyReady(
-        deps(async () => catalog, port),
-        WS,
-        CONNECTOR,
-        "install",
-      ),
-    ).rejects.toThrow("taskSupport");
   });
 
   test("an advertised binding with no handler calls nothing", async () => {
     const { port, calls } = fakePort([tool("search")]);
     const outcome = await notifyReady(
-      deps(async () => ({ declaredBy: "extension" }), port),
+      deps(async () => ({}), port),
       WS,
       CONNECTOR,
       "install",
@@ -131,7 +119,7 @@ describe("ready, declared on the wire", () => {
     });
     const first = fakePort([broken]);
     const rejected = await notifyReady(
-      deps(async () => ({ declaredBy: "extension" }), first.port),
+      deps(async () => ({}), first.port),
       WS,
       CONNECTOR,
       "resume",
@@ -142,7 +130,7 @@ describe("ready, declared on the wire", () => {
     // The held binding still predates the fix; the listing in hand does not.
     const fixed = fakePort([marked("scope_ready", "ready")]);
     const outcome = await notifyReady(
-      deps(async () => ({ declaredBy: "extension" }), fixed.port),
+      deps(async () => ({}), fixed.port),
       WS,
       CONNECTOR,
       "resume",
@@ -156,7 +144,7 @@ describe("ready, declared on the wire", () => {
       marked("scope_removing", "removing", { execution: { taskSupport: "required" } }),
     ]);
     const outcome = await notifyReady(
-      deps(async () => ({ declaredBy: "extension" }), port),
+      deps(async () => ({}), port),
       WS,
       CONNECTOR,
       "resume",

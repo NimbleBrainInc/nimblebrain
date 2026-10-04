@@ -65,7 +65,7 @@ describe("snapshotLifecycleBinding", () => {
     const wire = await lifecycleBindingFor(WS, CONNECTOR, source);
     expect(wire).toEqual({
       advertised: true,
-      binding: { declaredBy: "extension", on_ready: "scope_ready", on_removing: "scope_removing" },
+      binding: { on_ready: "scope_ready", on_removing: "scope_removing" },
       rejected: [],
     });
   });
@@ -84,7 +84,7 @@ describe("snapshotLifecycleBinding", () => {
   test("an empty tool list binds nothing and is not held", async () => {
     const source = fakeSource({ list: [] });
     const wire = await snapshotLifecycleBinding(WS, CONNECTOR, source);
-    expect(wire).toEqual({ advertised: true, binding: { declaredBy: "extension" }, rejected: [] });
+    expect(wire).toEqual({ advertised: true, binding: {}, rejected: [] });
     source.list = [marked("scope_ready", "ready")];
     const later = await lifecycleBindingFor(WS, CONNECTOR, source);
     expect(later?.advertised && later.binding.on_ready).toBe("scope_ready");
@@ -123,7 +123,7 @@ describe("lifecycleBindingFor", () => {
 });
 
 describe("lifecycleContractWarnings", () => {
-  test("one sentence per rejection, none for a catalog connector", async () => {
+  test("one sentence per rejection, none for a server that does not advertise the extension", async () => {
     const source = fakeSource({
       list: [marked("a_ready", "ready"), marked("b_ready", "ready"), marked("x", "paused")],
     });

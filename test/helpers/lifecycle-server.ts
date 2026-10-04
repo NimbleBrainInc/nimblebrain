@@ -29,9 +29,11 @@ export interface FixtureTool {
   /** The `event` the marker names; no marker when absent. */
   event?: string;
   /** `inputSchema.properties`. Default: none. */
-  properties?: Record<string, Record<string, string>>;
+  properties?: Record<string, Record<string, string | boolean>>;
   required?: string[];
   taskSupport?: "optional" | "required";
+  /** Other `_meta` the tool carries beside its marker. */
+  meta?: Record<string, unknown>;
 }
 
 /** One `tools/call` the fixture answered. */
@@ -95,7 +97,14 @@ function buildServer(
         ...(t.required ? { required: t.required } : {}),
       },
       ...(t.taskSupport ? { execution: { taskSupport: t.taskSupport } } : {}),
-      ...(t.event ? { _meta: { [LIFECYCLE_EXTENSION_ID]: { event: t.event } } } : {}),
+      ...(t.event || t.meta
+        ? {
+            _meta: {
+              ...t.meta,
+              ...(t.event ? { [LIFECYCLE_EXTENSION_ID]: { event: t.event } } : {}),
+            },
+          }
+        : {}),
     })),
   }));
   server.setRequestHandler("tools/call", async (request) => {

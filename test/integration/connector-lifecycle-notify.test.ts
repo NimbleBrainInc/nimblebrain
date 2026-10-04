@@ -17,8 +17,9 @@ import {
   notifyReadyOnRunning,
   resetReadyNotifications,
 } from "../../src/lifecycle/notify.ts";
-import type { LifecycleDeclaration } from "../../src/lifecycle/types.ts";
+import type { LifecycleBinding } from "../../src/lifecycle/types.ts";
 import type { Runtime } from "../../src/runtime/runtime.ts";
+import { LIFECYCLE_EXTENSION_ID } from "../../src/services/lifecycle-extension.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
 import {
   createManageConnectorsTool,
@@ -62,18 +63,26 @@ const SHARED_WS = "ws_003eba8844413cd9";
 const CONNECTOR = "ai-granola-mcp";
 const NOTICE = "Setting up your sending workspace — watch the panel.";
 
-const DECL: LifecycleDeclaration = {
+const DECL: LifecycleBinding = {
   on_ready: "workspace_ready",
   on_removing: "workspace_removing",
 };
 
-/** A handler as a well-behaved server advertises it: no required arguments. */
+/**
+ * A handler as a well-behaved server advertises it: marked for its event, with
+ * no required arguments, and a `ready` handler declaring `reason`.
+ */
 function handler(name: string): Tool {
+  const event = name.endsWith("_removing") ? "removing" : "ready";
   return {
     name,
     description: "Lifecycle handler",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: {
+      type: "object",
+      properties: event === "ready" ? { reason: { type: "string" } } : {},
+    },
     source: CONNECTOR,
+    meta: { [LIFECYCLE_EXTENSION_ID]: { event } },
   };
 }
 
@@ -114,7 +123,7 @@ interface Harness {
 }
 
 async function buildHarness(
-  opts: { declaration?: LifecycleDeclaration; hooks?: boolean } = {},
+  opts: { declaration?: LifecycleBinding; hooks?: boolean } = {},
 ): Promise<Harness> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-lifecycle-notify-"));
   const credStore = installTestCredentialStore(workDir);
@@ -250,36 +259,10 @@ describe("a fresh install", () => {
     expect(messageOf(result)).toContain(NOTICE);
   });
 
-  test("a manifest naming a handler the server does not serve is a warning, not a failure", async () => {
-    h = await buildHarness({ declaration: { on_ready: "not_a_tool" } });
-    const result = await install();
-
-    // By this line the ref is persisted and the source is running, so the
-    // install HAS succeeded — reporting otherwise sends the operator to a retry
-    // the duplicate-install path short-circuits.
-    expect(result.isError).toBe(false);
-    const sc = result.structuredContent as { ok?: boolean; warning?: string; notice?: string };
-    expect(sc.ok).toBe(true);
-    expect(sc.warning).toContain("not_a_tool");
-    expect(sc.notice).toBeUndefined();
-
-    // Two things at once, and they pulled against each other once already.
-    // A contract violation describes a connector whose source started fine, so
-    // narrating it as an eager-start failure sent the operator to click Connect
-    // on a live connection — it must NOT be labelled that.
-    expect(messageOf(result)).not.toContain("eager-start failed");
-    // But it must still be SAID. The engine feeds the model a tool result's
-    // `content` and never its `structuredContent`, and the web client's install
-    // call types its return without `warning` — so this sentence is the only
-    // surface either audience reads, and a warning absent from it reaches
-    // nobody at all.
-    expect(messageOf(result)).toContain("not_a_tool");
-  });
-
-  test("a connector declaring no lifecycle block installs with no notice and no call", async () => {
+  test("a connector that does not advertise the extension installs with no notice and no call", async () => {
     h = await buildHarness({ declaration: undefined });
     // `declarationFor` answering `undefined` is the ordinary case: almost no
-    // connector declares this block, and the seam is inert until one does.
+    // connector advertises the extension, and the seam is inert until one does.
     h.lifecycleDeps.declarationFor = async () => undefined;
     const result = await install();
     expect(result.isError).toBe(false);
