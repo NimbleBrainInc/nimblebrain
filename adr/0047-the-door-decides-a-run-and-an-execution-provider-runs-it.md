@@ -13,7 +13,7 @@ spend (ADR-0045). It then runs the engine loop in the runtime's own process.
 
 Running the loop in-process ties an unattended run's life to that process. A
 restart or rollout ends every run in flight, and the admission queue is held in
-memory. A durable job service can run work in isolated jobs that survive the
+memory. A durable execution service can run work in isolated workers that survive the
 runtime. Compute is not the pressure: an agent loop mostly waits on models and
 tools, and a batch's width is set by the admission pool, not by the runtime's
 CPU (internal measurement, available on request). Moving the loop to such a
@@ -47,7 +47,7 @@ hands that specification to the configured execution provider, which runs the
 engine loop and reports the outcome. An execution provider may narrow what the
 specification allows and may never widen it, which is what keeps
 it from being a second door. Which provider runs a run is installation
-configuration, never the task author's choice.
+configuration, never the job author's choice.
 
 **In-process is the default and the reference.** The runtime ships the
 in-process provider, which runs the loop as today and needs nothing else. An
@@ -63,8 +63,8 @@ queued. Its audience is that one run, it expires with the run's maximum
 duration, and it is revoked when the run ends. The runtime both mints and
 verifies it. The execution provider holds no stored secret, no connector
 credential, and no model key. The credential carries the owner's unattended
-reach for the run's lifetime, so it is held only in the job's memory, never
-written to disk, logs, or the job service's own store, and the job's network
+reach for the run's lifetime, so it is held only in the worker's memory, never
+written to disk, logs, or the execution service's own store, and the worker's network
 reach is the runtime's `/mcp` and model endpoint and nothing else.
 
 **Tool calls come back through `/mcp`, bounded by the run.** `/mcp` recognizes a
@@ -122,7 +122,7 @@ call after a restart seeds the door's balance from current spend.
   provider-compatible HTTP route), and that key's storage and rotation.
 - An execution provider that cannot satisfy the conformance suite is not one. That
   includes any that would need a credential or a model key shipped to it.
-- The in-process provider stays the only one an installation without a job
+- The in-process provider stays the only one an installation without an execution
   service ever sees, and nothing in this decision changes how it behaves.
 
 ## Alternatives considered

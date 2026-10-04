@@ -7,7 +7,7 @@
 ## Context
 
 This is about *task augmentation*, the protocol mechanism that carries a
-long-running tool call, not the unattended task of ADR-0045.
+long-running tool call, not the unattended job of ADR-0045.
 
 MCP has defined task augmentation twice. The 2025-11-25 revision has a
 tasks utility in core: the client attaches `params.task` to `tools/call`, the
