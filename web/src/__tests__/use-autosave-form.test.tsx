@@ -169,6 +169,8 @@ describe("useAutosaveForm", () => {
       error: "limit must be positive",
     });
     expect(form.status).toBe("error");
+    // The form is still on the page, and this field reports on the field only.
+    expect(document.body.querySelectorAll("[data-testid='notice']")).toHaveLength(0);
 
     await act(async () => form.fieldState("limit").onRetry());
     await flush();
