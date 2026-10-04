@@ -558,6 +558,14 @@ describe("subject", () => {
     expect(text[0]).toContain("Q4 founders");
     expect(text[1]?.split("acme-outreach.com").length).toBe(2);
   });
+
+  test("counts as named when only the case differs", async () => {
+    const { container } = await mount({
+      items: [item({ title: "Acme-Outreach.com is active", subject: "acme-outreach.com" })],
+    });
+    const text = (rows(container)[0]?.textContent ?? "").toLowerCase();
+    expect(text.split("acme-outreach.com").length).toBe(2);
+  });
 });
 
 describe("unread", () => {
