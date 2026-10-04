@@ -107,7 +107,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       allowInsecureRemotes: true,
       workDir,
@@ -159,7 +159,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     try {
       runtime = await Runtime.start({
         identityProvider: devProvider,
-        model: { provider: "custom", adapter: createEchoModel() },
+        languageModel: createEchoModel(),
         logging: { disabled: true },
         allowInsecureRemotes: true,
         workDir,

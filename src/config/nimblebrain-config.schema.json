@@ -15,23 +15,6 @@
       "description": "Config file version. Current: \"1\".",
       "enum": ["1"]
     },
-    "model": {
-      "description": "Model provider configuration.",
-      "type": "object",
-      "required": ["provider"],
-      "properties": {
-        "provider": {
-          "type": "string",
-          "enum": ["anthropic", "openai", "google"],
-          "description": "Model provider."
-        },
-        "apiKey": {
-          "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
-          "description": "Anthropic API key. Falls back to ANTHROPIC_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
-        }
-      },
-      "additionalProperties": false
-    },
     "providers": {
       "description": "Configured model providers.",
       "type": "object",
@@ -152,10 +135,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "defaultModel": {
-      "description": "Default model ID (e.g., \"claude-sonnet-4-5-20250929\"). Deprecated — use models.default instead.",
-      "type": "string"
     },
     "maxIterations": {
       "description": "Max agentic iterations per request. Capped at 50. Default: 25.",

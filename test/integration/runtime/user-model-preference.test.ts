@@ -27,7 +27,7 @@ async function start(name: string, allowlist?: string[]) {
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
     ...(allowlist ? { providers: { anthropic: { apiKey: "k", models: allowlist } } } : {}),
     workDir,
@@ -279,7 +279,7 @@ describe("a caller's own choice never becomes everyone's default", () => {
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -314,7 +314,7 @@ describe("the settings view is the configured one", () => {
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
       workDir,
     });

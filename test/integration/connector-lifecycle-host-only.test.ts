@@ -138,7 +138,7 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: recordingModel() },
+    languageModel: recordingModel(),
     logging: { disabled: true },
     workDir: testDir,
     // The personal connector's fake server binds on localhost.

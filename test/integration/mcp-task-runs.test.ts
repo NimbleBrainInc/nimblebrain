@@ -109,7 +109,7 @@ let handle: ServerHandle;
 async function boot(): Promise<void> {
   runtime = await Runtime.start({
     identityProvider: ({ workDir: dir, userStore }) => new TwoIdentityProvider(dir, userStore),
-    model: { provider: "custom", adapter: scriptedModel() },
+    languageModel: scriptedModel(),
     logging: { disabled: true },
     workDir,
   });

@@ -23,7 +23,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -82,7 +82,7 @@ describe("GET /v1/workspaces/:wsId/shell auth", () => {
     mkdirSync(shellAuthDir, { recursive: true });
     authRuntime = await Runtime.start({
       identityProvider: testAuthAdapter(TEST_API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: shellAuthDir,
     });

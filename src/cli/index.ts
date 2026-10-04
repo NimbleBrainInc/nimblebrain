@@ -24,7 +24,6 @@ function parseServeArgs(argv: string[]) {
       args,
       options: {
         config: { type: "string", short: "c" },
-        model: { type: "string" },
         port: { type: "string" },
         debug: { type: "boolean" },
       },
@@ -33,7 +32,7 @@ function parseServeArgs(argv: string[]) {
   } catch (err) {
     process.stderr.write(
       `${err instanceof Error ? err.message : String(err)}\n` +
-        "Usage: bun run src/cli/index.ts [serve] [--config <path>] [--port <n>] [--model <id>] [--debug]\n",
+        "Usage: bun run src/cli/index.ts [serve] [--config <path>] [--port <n>] [--debug]\n",
     );
     process.exit(2);
   }
@@ -47,7 +46,7 @@ function parseServeArgs(argv: string[]) {
  *
  * The image/chart invoke this as `bun run src/cli/index.ts serve [flags]`; the
  * leading `serve` token is accepted and ignored so the deploy command is
- * unchanged. Flags: --config/-c, --model, --port, --debug.
+ * unchanged. Flags: --config/-c, --port, --debug.
  *
  * `secrets` is the one other subcommand. It is dispatched by name and nothing
  * else changes: a bare invocation, and every flag form the deploy command uses,
@@ -73,7 +72,6 @@ async function main(): Promise<void> {
     await runServe(
       {
         config: values.config,
-        model: values.model,
         port: values.port ? Number(values.port) : undefined,
         debug: values.debug ?? false,
       },

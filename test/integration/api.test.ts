@@ -28,7 +28,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -177,7 +177,7 @@ describe("Bearer token authentication", () => {
     mkdirSync(authDir, { recursive: true });
     authRuntime = await Runtime.start({
       identityProvider: testAuthAdapter(TEST_API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: authDir,
     });
@@ -479,7 +479,7 @@ describe("auth enforcement on new endpoints", () => {
     mkdirSync(authDir2, { recursive: true });
     authRuntime2 = await Runtime.start({
       identityProvider: testAuthAdapter(TEST_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: authDir2,
     });

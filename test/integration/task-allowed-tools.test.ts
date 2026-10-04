@@ -45,10 +45,7 @@ describe("an unattended run's allowedTools", () => {
     mkdirSync(dir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({ responses: [...reachForTool(), ...reachForTool()] }),
-      },
+      languageModel: createEchoModel({ responses: [...reachForTool(), ...reachForTool()] }),
       logging: { disabled: true },
       workDir: dir,
       telemetry: { enabled: false },
@@ -146,7 +143,7 @@ describe("an unattended run's allowedTools and the nb__ tools", () => {
     mkdirSync(nbDir, { recursive: true });
     nbRuntime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: recorded.model },
+      languageModel: recorded.model,
       logging: { disabled: true },
       workDir: nbDir,
       telemetry: { enabled: false },

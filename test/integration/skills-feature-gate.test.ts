@@ -39,7 +39,7 @@ const UNGATED = ["skills__list", "skills__read", "skills__loading_log"];
 async function startRuntime(workDir: string, skillManagement: boolean): Promise<Runtime> {
   const runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
     features: { skillManagement },

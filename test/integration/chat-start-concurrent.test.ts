@@ -62,7 +62,7 @@ describe("POST /v1/workspaces/:wsId/chat/start — concurrency protection", () =
     runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: gatedModel },
+      languageModel: gatedModel,
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);
@@ -108,7 +108,7 @@ describe("POST /v1/workspaces/:wsId/chat/start — concurrency protection", () =
     runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
     });
     await provisionTestWorkspace(runtime);

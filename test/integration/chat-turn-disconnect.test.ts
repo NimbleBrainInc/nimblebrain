@@ -80,7 +80,7 @@ describe("chat turn — run survives viewer disconnect", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: gatedModel },
+      languageModel: gatedModel,
       logging: { disabled: true },
       workDir,
     });

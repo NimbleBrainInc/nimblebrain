@@ -14,7 +14,6 @@ const DEFAULT_CONFIG_CONTENT = {
 
 export interface CliFlags {
   config?: string;
-  model?: string;
   /** Default workDir when neither config file nor NB_WORK_DIR specifies one. */
   defaultWorkDir?: string;
 }
@@ -169,21 +168,6 @@ function stripWorkspaceFields(fileConfig: FileConfig): void {
   delete fileConfig.skillDirs;
   delete fileConfig.preferences;
   delete fileConfig.home;
-  delete fileConfig.skills; // legacy field
-}
-
-/** Emit deprecation warnings for removed fields still present in the file. */
-function warnDeprecatedFields(fileConfig: FileConfig, configPath: string): void {
-  if ("identity" in fileConfig) {
-    log.warn(
-      `[config] "identity" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
-    );
-  }
-  if ("contextFile" in fileConfig) {
-    log.warn(
-      `[config] "contextFile" is deprecated in ${configPath}. Use a context skill (type: "context") instead.`,
-    );
-  }
 }
 
 /** Resolve workDir (NB_WORK_DIR > file > flag default), absolutized at load. */
@@ -210,19 +194,16 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
   const fileConfig = applyOverride(seedConfig, configOverridePath);
 
   stripWorkspaceFields(fileConfig);
-  warnDeprecatedFields(fileConfig, configPath);
 
   // CLI flags override file config — workspace-owned fields (skillDirs,
   // preferences, home) are intentionally omitted; they were deleted above and
   // now live in workspace.json. `connectors` below is the instance-level
   // provider/gateway block, not a workspace's connector array.
   const config: RuntimeConfig = {
-    model: fileConfig.model ?? { provider: "anthropic" },
     providers: fileConfig.providers as RuntimeConfig["providers"],
     allowInsecureRemotes: fileConfig.allowInsecureRemotes as boolean | undefined,
     models: fileConfig.models as RuntimeConfig["models"],
     modelPolicy: fileConfig.modelPolicy as RuntimeConfig["modelPolicy"],
-    defaultModel: flags.model ?? fileConfig.defaultModel,
     maxIterations: fileConfig.maxIterations,
     maxInputTokens: fileConfig.maxInputTokens,
     maxOutputTokens: fileConfig.maxOutputTokens,

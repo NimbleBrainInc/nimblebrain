@@ -605,7 +605,7 @@ describe("/mcp/<wsId> on both eras", () => {
     workDir = await mkdtemp(join(tmpdir(), "nb-mcp-era-"));
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });

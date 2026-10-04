@@ -214,11 +214,11 @@ describe("instance config references", () => {
   test("a reference is typed only where the runtime can resolve one", () => {
     const ref = { ref: "credential", key: "k" } as const;
     const declared: DeclaredRuntimeConfig[] = [
-      { model: { provider: "openai", apiKey: ref, baseURL: ref } },
+      { providers: { openai: { apiKey: ref, baseURL: ref } } },
       // @ts-expect-error — a literal-union field takes no reference
       { thinking: ref },
-      // @ts-expect-error — a literal-union field takes no reference
-      { model: { provider: ref } },
+      // @ts-expect-error — a nested literal-union field takes no reference
+      { sessionStore: { type: ref } },
       // @ts-expect-error — `workDir` is read before the credential store exists
       { workDir: ref },
     ];

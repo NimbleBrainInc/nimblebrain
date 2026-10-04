@@ -120,7 +120,7 @@ describe("a resume runs only in the conversation's own workspace", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createCapturingModel(captured) },
+      languageModel: createCapturingModel(captured),
       logging: { disabled: true },
       workDir,
     });
@@ -155,7 +155,7 @@ describe("a resume runs only in the conversation's own workspace", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createCapturingModel(captured) },
+      languageModel: createCapturingModel(captured),
       logging: { disabled: true },
       workDir,
     });
@@ -207,7 +207,7 @@ describe("a resume runs only in the conversation's own workspace", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createCapturingModel(captured) },
+      languageModel: createCapturingModel(captured),
       logging: { disabled: true },
       workDir,
     });

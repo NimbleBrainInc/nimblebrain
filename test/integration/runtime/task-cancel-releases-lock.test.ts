@@ -63,16 +63,13 @@ describe("cancelling a task run", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({
-          responses: [
-            { toolCalls: [{ toolCallId: "tc1", toolName: "probe__hang", input: "{}" }] },
-            { text: "done" },
-            { text: "done" },
-          ],
-        }),
-      },
+      languageModel: createEchoModel({
+        responses: [
+          { toolCalls: [{ toolCallId: "tc1", toolName: "probe__hang", input: "{}" }] },
+          { text: "done" },
+          { text: "done" },
+        ],
+      }),
       logging: { disabled: true },
       workDir,
     });

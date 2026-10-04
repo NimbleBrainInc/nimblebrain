@@ -62,7 +62,7 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     connectors: {
@@ -104,7 +104,7 @@ test("an unregistered `secrets.backend` fails the boot, not the first read", asy
   try {
     const boot = Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: dir,
       secrets: { backend: "vault" },

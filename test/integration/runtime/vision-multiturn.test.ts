@@ -150,7 +150,7 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: model },
+    languageModel: model,
     logging: { disabled: true },
     workDir: testDir,
   });

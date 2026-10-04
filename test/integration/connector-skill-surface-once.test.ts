@@ -111,24 +111,21 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: {
-      provider: "custom",
-      adapter: createMockModel((options) => {
-        prompts.push(options.prompt);
-        modelCalls += 1;
-        // First pass calls the server's tool — that is what fires the surface-once
-        // hook. Everything after answers, so the run terminates.
-        if (modelCalls === 1) {
-          return {
-            content: [
-              { type: "tool-call", toolCallId: "call-1", toolName: CALLED_TOOL, input: "{}" },
-            ],
-            finishReason: "tool-calls",
-          };
-        }
-        return { content: [{ type: "text", text: "ok" }] };
-      }),
-    },
+    languageModel: createMockModel((options) => {
+      prompts.push(options.prompt);
+      modelCalls += 1;
+      // First pass calls the server's tool — that is what fires the surface-once
+      // hook. Everything after answers, so the run terminates.
+      if (modelCalls === 1) {
+        return {
+          content: [
+            { type: "tool-call", toolCallId: "call-1", toolName: CALLED_TOOL, input: "{}" },
+          ],
+          finishReason: "tool-calls",
+        };
+      }
+      return { content: [{ type: "text", text: "ok" }] };
+    }),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

@@ -149,7 +149,7 @@ async function chat(message: string, conversationId?: string): Promise<string> {
 beforeAll(async () => {
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: capturingModel() },
+    languageModel: capturingModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

@@ -42,7 +42,7 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     identityProvider: () => new TestAuthAdapter(TEST_KEY),
     workDir,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
   });
 

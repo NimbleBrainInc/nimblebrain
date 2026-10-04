@@ -10,7 +10,6 @@ import { loadConfig } from "./config.ts";
 
 export interface ServeOptions {
   config?: string;
-  model?: string;
   port?: number;
   debug?: boolean;
 }
@@ -19,7 +18,6 @@ export interface ServeOptions {
 export async function runServe(opts: ServeOptions, telemetry: TelemetryManager): Promise<void> {
   const config = loadConfig({
     config: opts.config,
-    model: opts.model,
     defaultWorkDir: defaultWorkDir(),
   });
 

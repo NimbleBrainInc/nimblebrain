@@ -30,7 +30,7 @@ describe("config schema validation", () => {
     expect(
       isValid({
         version: "1",
-        defaultModel: "claude-sonnet-4-5-20250929",
+        models: { default: "claude-sonnet-4-5-20250929" },
       }),
     ).toBe(true);
   });

@@ -77,7 +77,7 @@ describe("the server authenticates with the runtime's identity provider", () => 
   beforeAll(async () => {
     runtime = await Runtime.start({
       identityProvider: () => provider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });

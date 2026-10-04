@@ -32,7 +32,7 @@ describe("model qualification at runtime boundary", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -68,7 +68,7 @@ describe("model qualification at runtime boundary", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -102,7 +102,7 @@ describe("model qualification at runtime boundary", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       // Stored config simulates the legacy state: bare ids saved by an
       // older settings UI that didn't encode the provider into option
@@ -131,7 +131,7 @@ describe("model qualification at runtime boundary", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       models: {
         default: "anthropic:claude-sonnet-4-6",

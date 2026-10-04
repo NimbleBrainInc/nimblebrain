@@ -26,7 +26,6 @@ import { dirname, join } from "node:path";
  */
 export const OVERRIDE_WRITABLE_KEYS = [
   "models",
-  "defaultModel",
   "maxIterations",
   "maxInputTokens",
   "maxOutputTokens",
