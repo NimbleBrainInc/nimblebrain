@@ -37,6 +37,7 @@ import { createSkillsSource } from "../../../src/platform/skills/source.ts";
 import { createTasksSource } from "../../../src/platform/tasks/source.ts";
 import { createRunAdmission } from "../../../src/runtime/admission.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
+import { createSpendBalances } from "../../../src/runtime/spend.ts";
 import { createCoreToolDefs } from "../../../src/tools/core-source.ts";
 import { defineInProcessApp } from "../../../src/tools/in-process-app.ts";
 import type { McpSource } from "../../../src/tools/mcp-source.ts";
@@ -82,6 +83,7 @@ function makeRuntimeStub(workDir: string): unknown {
     getNotificationsPollConfig: () => resolvePollConfig(),
     getTasksConfig: () => resolveTasksConfig(),
     getRunAdmission: () => createRunAdmission(),
+    getSpendBalances: () => createSpendBalances(),
     getMaxIterations: () => 25,
   };
 }

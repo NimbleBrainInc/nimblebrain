@@ -147,6 +147,7 @@ export declare const TasksRunsInput: import("@sinclair/typebox").TObject<{
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    excludeBatchRuns: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type TasksRunsInput = Static<typeof TasksRunsInput>;
 export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
@@ -202,6 +203,68 @@ export declare const TasksRunResultInput: import("@sinclair/typebox").TObject<{
     runId: import("@sinclair/typebox").TString;
 }>;
 export type TasksRunResultInput = Static<typeof TasksRunResultInput>;
+export declare const TasksRunBatchInput: import("@sinclair/typebox").TObject<{
+    taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    items: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<unknown>>;
+    concurrency: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+    budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    stopWhen: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        minPassRate: import("@sinclair/typebox").TNumber;
+        afterItems: import("@sinclair/typebox").TInteger;
+    }>>;
+    idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    prompt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+    outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+    allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+    limits: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    }>>;
+    budget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
+    }>>;
+    criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        rule: import("@sinclair/typebox").TString;
+        type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+        levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+    }>>>;
+    confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+    }>>;
+    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+}>;
+export type TasksRunBatchInput = Static<typeof TasksRunBatchInput>;
+export declare const TasksBatchInput: import("@sinclair/typebox").TObject<{
+    batchId: import("@sinclair/typebox").TString;
+    results: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pending" | "skipped" | "failed" | "pass" | "cancelled" | "fail" | "uncertain" | "not_assessed" | "failing">>;
+    cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+}>;
+export type TasksBatchInput = Static<typeof TasksBatchInput>;
+export declare const TasksBatchControlInput: import("@sinclair/typebox").TObject<{
+    batchId: import("@sinclair/typebox").TString;
+    action: import("@sinclair/typebox").TUnsafe<"pause" | "resume" | "cancel" | "rerun_failed">;
+    budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+}>;
+export type TasksBatchControlInput = Static<typeof TasksBatchControlInput>;
+export declare const TasksBatchesInput: import("@sinclair/typebox").TObject<{
+    taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    state: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"running" | "cancelled" | "paused" | "completed">>;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+}>;
+export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
 /**
  * Status of the most recent task run, as exposed via the list/
  * summary surface. Mirrors `TaskRun["status"]` minus `"running"`
@@ -363,6 +426,12 @@ export interface TaskRunRecord {
     assessment?: TaskRunAssessment;
     /** The run this one retries. */
     retryOf?: string;
+    /** The batch this run is an item of. */
+    batchId?: string;
+    /** The item's index in its batch. */
+    batchIndex?: number;
+    /** What the run's model calls cost, in USD. */
+    costUsd?: number;
 }
 /**
  * A run record as the run surfaces return it (`tasks__runs`,
@@ -672,4 +741,92 @@ export interface TasksDeleteOutput {
     deleted: boolean;
     id: string;
     message: string;
+}
+/** How many of a batch's items are in each state. Mirror of `BatchCounts`. */
+export interface TaskBatchCounts {
+    pending: number;
+    queued: number;
+    running: number;
+    pass: number;
+    fail: number;
+    uncertain: number;
+    not_assessed: number;
+    failed: number;
+    skipped: number;
+    cancelled: number;
+}
+/** A stored batch. Mirror of `Batch` (`src/platform/tasks/types.ts`). */
+export interface TaskBatchRecord {
+    id: string;
+    taskId: string;
+    workspaceId: string;
+    ownerId: string;
+    items: number;
+    concurrency: number;
+    budgetUsd?: number;
+    stopWhen?: {
+        minPassRate: number;
+        afterItems: number;
+    };
+    stopRuleDisarmed?: boolean;
+    state: "running" | "paused" | "completed" | "cancelled";
+    pause?: {
+        reason: "manual" | "budget" | "pass_rate" | "unavailable";
+        message: string;
+        at: string;
+    };
+    counts: TaskBatchCounts;
+    costUsd: number;
+    idempotencyKey?: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt?: string;
+    createdBy: string;
+}
+/** A batch as the batch tools return it: the record plus figures derived on read. */
+export type TaskBatchView = TaskBatchRecord & {
+    /** Items with an outcome. */
+    done: number;
+    /** pass / (pass + fail); null before either. Uncertain is excluded. */
+    passRate: number | null;
+};
+/** One item's result row (`tasks__batch` with `results: true`). */
+export interface TaskBatchItemView {
+    index: number;
+    /** The item's input as JSON, cut to a short preview. */
+    inputSummary: string;
+    state: "pending" | "queued" | "running" | "done";
+    runId?: string;
+    previousRunIds?: string[];
+    execution?: TaskRunExecution;
+    verdict?: "pass" | "fail" | "uncertain" | "not_assessed";
+    /** The label the item's run reads as, from its execution and verdict. */
+    label?: TaskRunLabel;
+    costUsd?: number;
+    error?: string;
+    /** The top-level scalar fields of the run's structured output, when it has one. */
+    output?: Record<string, string | number | boolean | null>;
+}
+export interface TasksRunBatchOutput {
+    batch: TaskBatchView;
+    /** True when an earlier call with the same idempotencyKey made this batch. */
+    existing: boolean;
+    message: string;
+    warnings?: TaskWarning[];
+}
+export interface TasksBatchOutput {
+    batch: TaskBatchView;
+    /** With `results: true`: one page of items, in index order. */
+    results?: TaskBatchItemView[];
+    /** Pass as `cursor` for the next page; absent on the last. */
+    nextCursor?: number;
+}
+export interface TasksBatchControlOutput {
+    batch: TaskBatchView;
+    message: string;
+    /** Items the action touched. */
+    affected: number;
+}
+export interface TasksBatchesOutput {
+    batches: TaskBatchView[];
 }

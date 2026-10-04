@@ -29,6 +29,7 @@
  */
 
 import type {
+  TaskBatchRecord,
   TaskRecord,
   TaskRunRecord,
   TaskScheduleSpec,
@@ -36,7 +37,7 @@ import type {
   TaskSummary,
   TaskTokenBudget,
 } from "../schemas/tasks.ts";
-import type { ScheduleSpec, Task, TaskRun, TokenBudget } from "./types.ts";
+import type { Batch, ScheduleSpec, Task, TaskRun, TokenBudget } from "./types.ts";
 
 /**
  * Constrained-generic assertion. `A extends B` is checked at the
@@ -84,6 +85,14 @@ type AssertNever<_T extends never> = unknown;
 // no overlays.
 export type DriftRunRecordA = AssertAssignable<TaskRunRecord, TaskRun>;
 export type DriftRunRecordB = AssertAssignable<TaskRun, TaskRunRecord>;
+
+// TaskBatchRecord ↔ Batch — bidirectional structural mirror, no overlays.
+export type DriftBatchA = AssertAssignable<TaskBatchRecord, Batch>;
+export type DriftBatchB = AssertAssignable<Batch, TaskBatchRecord>;
+type BatchUnexpected = Exclude<keyof TaskBatchRecord, keyof Batch>;
+export type DriftBatchUnexpected = AssertNever<BatchUnexpected>;
+type BatchMissing = Exclude<keyof Batch, keyof TaskBatchRecord>;
+export type DriftBatchMissing = AssertNever<BatchMissing>;
 
 // TaskRecord ↔ Task — bidirectional structural mirror, no
 // overlays: create and update return the stored task as-is.

@@ -16,6 +16,9 @@
  *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
  *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/keys/<sha256(key)>.json  an idempotency key and the run it started
  *   workspaces/<wsId>/tasks/<ownerId>/run-tickets/<runId>.json  a requested run's current record, found by run id alone
+ *   workspaces/<wsId>/tasks/<ownerId>/batches/<batchId>.json  a batch: its definition snapshot and counts
+ *   workspaces/<wsId>/tasks/<ownerId>/batches/<batchId>.items.jsonl  its items: inputs, then appended outcomes
+ *   workspaces/<wsId>/tasks/<ownerId>/batches/keys/<sha256(key)>.json  an idempotency key and the batch it made
  *
  * A run's summary and its deliverable move to the archive together, so the
  * hot runs dir holds at most the hot window of sidecars plus `index.jsonl`
@@ -36,6 +39,7 @@ const WORKSPACES_SEGMENT = "workspaces";
 const RUNS_SEGMENT = "runs";
 const TICKETS_SEGMENT = "run-tickets";
 const KEYS_SEGMENT = "keys";
+const BATCHES_SEGMENT = "batches";
 
 /**
  * Task ids are kebab-case (lowercase alphanumeric segments separated by
@@ -44,6 +48,7 @@ const KEYS_SEGMENT = "keys";
  */
 const TASK_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const RUN_ID_RE = /^run_[A-Za-z0-9_-]+$/;
+const BATCH_ID_RE = /^batch_[a-f0-9]{12}$/;
 
 export function validateTaskId(id: string): void {
   if (!TASK_ID_RE.test(id)) {
@@ -57,6 +62,17 @@ export function validateRunId(id: string): void {
   if (!RUN_ID_RE.test(id)) {
     throw new Error(`Invalid run id: ${JSON.stringify(id)}. Must match ${RUN_ID_RE}.`);
   }
+}
+
+export function validateBatchId(id: string): void {
+  if (!BATCH_ID_RE.test(id)) {
+    throw new Error(`Invalid batch id: ${JSON.stringify(id)}. Must match ${BATCH_ID_RE}.`);
+  }
+}
+
+/** Whether `id` is a well-formed batch id. */
+export function isBatchId(id: string): boolean {
+  return BATCH_ID_RE.test(id);
 }
 
 /** The directory holding every owner's tasks in one workspace: `{workDir}/workspaces/<wsId>/tasks`. */
@@ -213,6 +229,49 @@ export function taskIdempotencyKeyPath(
     throw new Error(`Invalid idempotency key digest: ${JSON.stringify(digest)}.`);
   }
   return join(taskRunsDir(workDir, wsId, ownerId, taskId), KEYS_SEGMENT, `${digest}.json`);
+}
+
+/** One owner's batches: `…/tasks/<ownerId>/batches`. */
+export function taskBatchesDir(workDir: string, wsId: string, ownerId: string): string {
+  return join(workspaceTasksDir(workDir, wsId, ownerId), BATCHES_SEGMENT);
+}
+
+/** A batch record: `…/batches/<batchId>.json`. */
+export function taskBatchPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  batchId: string,
+): string {
+  validateBatchId(batchId);
+  return join(taskBatchesDir(workDir, wsId, ownerId), `${batchId}.json`);
+}
+
+/** A batch's items: `…/batches/<batchId>.items.jsonl`. */
+export function taskBatchItemsPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  batchId: string,
+): string {
+  validateBatchId(batchId);
+  return join(taskBatchesDir(workDir, wsId, ownerId), `${batchId}.items.jsonl`);
+}
+
+/**
+ * Where an idempotency key used on `tasks__run_batch` is recorded:
+ * `…/batches/keys/<digest>.json`, `digest` being the key's SHA-256.
+ */
+export function taskBatchKeyPath(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  digest: string,
+): string {
+  if (!KEY_DIGEST_RE.test(digest)) {
+    throw new Error(`Invalid idempotency key digest: ${JSON.stringify(digest)}.`);
+  }
+  return join(taskBatchesDir(workDir, wsId, ownerId), KEYS_SEGMENT, `${digest}.json`);
 }
 
 /** What a parsed task path resolves to. */

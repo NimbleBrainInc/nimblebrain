@@ -73,7 +73,8 @@ const RUNS_SEGMENT = "runs";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function atomicWrite(filePath: string, contents: string): void {
+/** Write a file whole or not at all: a temp file beside it, then one rename. */
+export function atomicWrite(filePath: string, contents: string): void {
   const tmpPath = `${filePath}.${randomBytes(6).toString("hex")}.tmp`;
   writeFileSync(tmpPath, contents);
   renameSync(tmpPath, filePath);
@@ -335,6 +336,8 @@ export interface ReadRunsOptions {
    * alone.
    */
   before?: string;
+  /** Leave out runs that are items of a batch. */
+  excludeBatch?: boolean;
 }
 
 /** Parse a JSONL run index; a missing or empty file reads as no runs. Malformed lines are skipped. */
@@ -465,12 +468,15 @@ export function readRunsPage(
   const sinceMs = opts.since !== undefined ? new Date(opts.since).getTime() : -Infinity;
   const seen = new Set<string>();
   const picked: TaskRun[] = [];
+  const wanted = (r: TaskRun) => {
+    const t = startedMs(r);
+    if (!(t < beforeMs) || t < sinceMs) return false;
+    if (opts.status && r.status !== opts.status) return false;
+    return !(opts.excludeBatch && r.batchId);
+  };
   const take = (runs: TaskRun[]) => {
     for (const r of runs) {
-      const t = startedMs(r);
-      if (!(t < beforeMs) || t < sinceMs) continue;
-      if (opts.status && r.status !== opts.status) continue;
-      if (seen.has(r.id)) continue;
+      if (!wanted(r) || seen.has(r.id)) continue;
       seen.add(r.id);
       picked.push(r);
     }
@@ -554,6 +560,10 @@ function applyFilters(runs: TaskRun[], opts?: ReadRunsOptions): TaskRun[] {
 
   if (opts?.status) {
     result = result.filter((r) => r.status === opts.status);
+  }
+
+  if (opts?.excludeBatch) {
+    result = result.filter((r) => !r.batchId);
   }
 
   if (opts?.limit !== undefined) {

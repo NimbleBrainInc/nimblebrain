@@ -10,10 +10,14 @@
 
 import {
   TasksAssessInput,
+  TasksBatchControlInput,
+  TasksBatchesInput,
+  TasksBatchInput,
   TasksCancelInput,
   TasksCreateInput,
   TasksDeleteInput,
   TasksListInput,
+  TasksRunBatchInput,
   TasksRunInput,
   TasksRunResultInput,
   TasksRunsInput,
@@ -115,6 +119,41 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       "(its `label`). Only a run that left a deliverable has an assessment. A run is found by " +
       "its id among your tasks; pass `name` too for an older run.",
     inputSchema: TasksAssessInput,
+  },
+  {
+    name: "run_batch",
+    description:
+      "Run one task over many inputs as a batch: a saved task by `taskId`, or an inline " +
+      "definition (as tasks__run), once per item of `items` (at most 10,000). Every item is " +
+      "checked against the task's inputSchema first; any bad item refuses the whole batch and " +
+      "nothing is created. Returns at once with the batch id; the runs go on in the background, " +
+      "at most `concurrency` at a time. `budgetUsd` caps the whole batch's spend across all its " +
+      "runs; `stopWhen` pauses it when its pass rate collapses. `idempotencyKey` makes the call " +
+      "safe to repeat. Follow it with tasks__batch; control it with tasks__batch_control.",
+    inputSchema: TasksRunBatchInput,
+  },
+  {
+    name: "batch",
+    description:
+      "A batch's state, counts (pending, queued, running, pass, fail, uncertain, not_assessed, " +
+      "failed, skipped, cancelled), cost, and pass rate. With `results: true` (or a `verdict` " +
+      "filter), one page of item results: index, input preview, run id, label, verdict, cost, " +
+      "and the structured output's top-level fields. Page with `nextCursor`.",
+    inputSchema: TasksBatchInput,
+  },
+  {
+    name: "batch_control",
+    description:
+      "Pause, resume, cancel, or re-run the failed items of a batch. pause: no new item starts. " +
+      "resume: starts items again (with `budgetUsd`, under a new budget). cancel: stops it for " +
+      "good, cancelling its queued and running runs. rerun_failed: runs every failed, skipped, " +
+      "cancelled, or fail-judged item again as a new run.",
+    inputSchema: TasksBatchControlInput,
+  },
+  {
+    name: "batches",
+    description: "Your batches in this workspace, newest first, optionally by task or state.",
+    inputSchema: TasksBatchesInput,
   },
   {
     name: "cancel",

@@ -532,6 +532,16 @@ export interface TaskRun {
   assessment?: RunAssessment;
   /** The run this one retries (`onPoorResult: "retry_once"`). */
   retryOf?: string;
+  /** The batch this run is an item of (`tasks__run_batch`). */
+  batchId?: string;
+  /** The item's index in its batch (0-based). Set with `batchId`. */
+  batchIndex?: number;
+  /**
+   * What the run's model calls cost, in USD, at the model's known rates (0 for
+   * a model with none). Computed from the usage the run reported; absent on a
+   * run that never reached the model and on records from before it was kept.
+   */
+  costUsd?: number;
 }
 
 /**
@@ -653,3 +663,110 @@ export type UpdateTaskInput = Partial<
     | "tokenBudget"
   >
 >;
+
+// ---------------------------------------------------------------------------
+// Batch — one task run over many inputs (`tasks__run_batch`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a batch stands. `running`: its driver feeds items into runs.
+ * `paused`: no new item starts (runs already started finish). `completed`:
+ * every item has an outcome. `cancelled`: stopped for good.
+ */
+export type BatchState = "running" | "paused" | "completed" | "cancelled";
+
+/**
+ * Why a batch paused. `manual`: someone paused it. `budget`: its own budget,
+ * or the task's token budget, has too little left for another run.
+ * `pass_rate`: its stop rule fired. `unavailable`: its task can no longer be
+ * run (deleted).
+ */
+export type BatchPauseReason = "manual" | "budget" | "pass_rate" | "unavailable";
+
+/** Pause the batch when its pass rate collapses (see `Batch.stopWhen`). */
+export interface BatchStopRule {
+  /** 0..1. The batch pauses when pass / (pass + fail) falls below it. */
+  minPassRate: number;
+  /** Assessed runs (pass, fail, or uncertain) before the rule is applied. */
+  afterItems: number;
+}
+
+/**
+ * How many of a batch's items are in each state. Derived from the items
+ * (`countItems`); the batch record keeps a copy, rebuilt at boot.
+ */
+export interface BatchCounts {
+  /** Not asked for yet. */
+  pending: number;
+  /** Asked for, waiting for a run slot. */
+  queued: number;
+  running: number;
+  /** Ended with a deliverable, by its assessment. */
+  pass: number;
+  fail: number;
+  uncertain: number;
+  not_assessed: number;
+  /** Ended without a deliverable. */
+  failed: number;
+  /** Never started (refused at the door). */
+  skipped: number;
+  cancelled: number;
+}
+
+/** A batch: its definition snapshot and where it stands. `…/tasks/<ownerId>/batches/<id>.json`. */
+export interface Batch {
+  /** `batch_<12 hex>`. */
+  id: string;
+  /** The task every item runs (a saved task, or the one-off an inline call made). */
+  taskId: string;
+  workspaceId: string;
+  ownerId: string;
+  /** How many items; their inputs and outcomes are in `<id>.items.jsonl`. */
+  items: number;
+  /** Most of the batch's runs asked for at once (queued or running); at most `tasks.maxConcurrentRuns`. */
+  concurrency: number;
+  /** Whole-batch ceiling in USD, enforced before each model call as one shared spend account. */
+  budgetUsd?: number;
+  stopWhen?: BatchStopRule;
+  /** True once a resume after a `pass_rate` pause: the stop rule is not applied again. */
+  stopRuleDisarmed?: boolean;
+  state: BatchState;
+  /** Set while paused. */
+  pause?: { reason: BatchPauseReason; message: string; at: string };
+  counts: BatchCounts;
+  /** What the batch's runs cost so far, summed from its items. */
+  costUsd: number;
+  idempotencyKey?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  /** The user who asked for it. */
+  createdBy: string;
+}
+
+/** Where one item stands. `done` carries its outcome. */
+export type BatchItemState = "pending" | "queued" | "running" | "done";
+
+/** One item of a batch, folded from its lines in `<id>.items.jsonl`. */
+export interface BatchItem {
+  index: number;
+  input: unknown;
+  state: BatchItemState;
+  /** The item's current run, once asked for. */
+  runId?: string;
+  /** Runs of this item that `rerun_failed` replaced, oldest first. */
+  previousRunIds?: string[];
+  /** How the current run ended (with `state: "done"`). */
+  execution?: RunExecution;
+  /** The current run's effective verdict, when it left a deliverable and was assessed. */
+  verdict?: AssessmentVerdict;
+  /**
+   * The current run finished with part of its work undone (unrecovered tool
+   * failures, or `degraded`), so it never reads Succeeded.
+   */
+  degraded?: boolean;
+  /** What every run of this item has cost so far, in USD. */
+  costUsd?: number;
+  /** Why the run did not succeed, when it says. */
+  error?: string;
+}

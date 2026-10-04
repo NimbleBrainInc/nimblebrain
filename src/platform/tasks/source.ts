@@ -10,6 +10,9 @@ import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
+import { BatchDriver, passRateOf } from "./batch.ts";
+import { listBatches, readBatchKey } from "./batch-store.ts";
+import { handleBatch, handleBatchControl, handleBatches, handleRunBatch } from "./batch-tools.ts";
 import { TaskEventTrigger } from "./event-trigger.ts";
 import { applyOutputSchema, createDirectExecutor, type ExecutorContext } from "./executor.ts";
 import {
@@ -52,7 +55,7 @@ import {
   updateRun,
 } from "./store.ts";
 import { createTaskRunSource } from "./task-source.ts";
-import type { RunTicket, Task, TaskRun } from "./types.ts";
+import type { Batch, RunTicket, Task, TaskRun } from "./types.ts";
 import { TASKS_PANEL_HTML } from "./ui-resource.ts";
 
 /**
@@ -196,6 +199,63 @@ export function poorResultEnvelope(task: Task, run: TaskRun): NotificationEnvelo
 }
 
 /**
+ * The inbox item for a batch that paused on its own: its budget ran out or its
+ * stop rule fired. Generic for the same reason as a poor result (see
+ * `poorResultEnvelope`): the batch id, its owner's id, why it paused, and its
+ * counts, never the task's name, its criteria or stop rule, or any input or
+ * deliverable.
+ */
+export function batchPausedEnvelope(batch: Batch): NotificationEnvelope {
+  const reason = batch.pause?.reason ?? "manual";
+  const { pass, fail, uncertain } = batch.counts;
+  const done = batch.items - batch.counts.pending - batch.counts.queued - batch.counts.running;
+  const why =
+    reason === "pass_rate"
+      ? "its pass rate fell below its stop rule"
+      : reason === "budget"
+        ? "its budget has too little left for another run"
+        : "it was paused";
+  return {
+    eventId: `batch-paused:${batch.id}:${batch.pause?.at ?? batch.updatedAt}`,
+    name: "task.batch.paused",
+    timestamp: new Date().toISOString(),
+    data: {
+      batchId: batch.id,
+      ownerId: batch.ownerId,
+      reason,
+      items: batch.items,
+      done,
+      pass,
+      fail,
+      uncertain,
+      passRate: passRateOf(batch.counts),
+    },
+    _meta: {
+      "ai.nimblebrain/notification": {
+        level: "attention",
+        title: "A task batch paused",
+        body:
+          `Batch ${batch.id} paused because ${why} (${done} of ${batch.items} done: ` +
+          `${pass} pass, ${fail} fail, ${uncertain} uncertain). Its owner can resume or ` +
+          "cancel it in Tasks.",
+      },
+    },
+  };
+}
+
+/** Put a batch's pause in its workspace inbox. Best-effort, like a poor result. */
+function notifyBatchPaused(runtime: Runtime, batch: Batch): void {
+  try {
+    runtime.getNotificationStore(batch.workspaceId).append("tasks", batchPausedEnvelope(batch));
+  } catch (err) {
+    log.warn("[tasks] could not write a batch notification", {
+      batchId: batch.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Put a poor result in the task's workspace inbox, where the owner's views and
  * any route the workspace configured pick it up. Idempotent per run, and
  * best-effort: a refused write is logged and changes nothing about the run.
@@ -259,10 +319,27 @@ export async function createTasksSource(
   });
   scheduler.start();
 
-  // A workspace delete has to disarm what this scheduler holds for that
-  // workspace before the subtree moves. The runtime cannot import the
-  // scheduler, so it is handed over here.
-  runtime.registerTaskQuiescer(scheduler);
+  // Batches: one task run over many inputs, driven here and run through the
+  // scheduler, so the door sees ordinary runs naming one more spend account.
+  const batchDriver = new BatchDriver({
+    workDir,
+    scheduler,
+    spend: runtime.getSpendBalances(),
+    onChange: (owner) => runtime.announceIdentitySourceChange("tasks", owner),
+    notifyPaused: (batch) => notifyBatchPaused(runtime, batch),
+  });
+  // After the scheduler has loaded the tasks the batches run.
+  batchDriver.start();
+
+  // A workspace delete has to disarm what this scheduler and the batch driver
+  // hold for that workspace before the subtree moves. The runtime cannot
+  // import either, so they are handed over here.
+  runtime.registerTaskQuiescer({
+    dropWorkspace: (wsId) => {
+      batchDriver.dropWorkspace(wsId);
+      return scheduler.dropWorkspace(wsId);
+    },
+  });
 
   // The event trigger: the tasks end of the path from a routed
   // notification to an agent run. It reads and writes through the same store
@@ -356,7 +433,10 @@ export async function createTasksSource(
       findRun: (id, runId) => findRun(workDir, wsId, owner, id, runId),
       updateRun: (id, runId, update) => {
         const updated = updateRun(workDir, wsId, owner, id, runId, update);
-        if (updated) runtime.announceIdentitySourceChange("tasks", owner);
+        if (updated) {
+          batchDriver.syncRun(wsId, owner, updated);
+          runtime.announceIdentitySourceChange("tasks", owner);
+        }
         return updated;
       },
       reassessRun: async (task, run) => {
@@ -372,7 +452,9 @@ export async function createTasksSource(
           applyOutputSchema(task, checked, result);
         }
         const assessment = await assessRun(task, checked, result, { port: judgePort });
-        return scheduler.recordAssessment(task, run.id, assessment);
+        const updated = scheduler.recordAssessment(task, run.id, assessment);
+        if (updated) batchDriver.syncRun(wsId, owner, updated);
+        return updated;
       },
       callerVia: () => (getRequestContext()?.shellCall ? "ui" : "remote"),
       defaultTimezone,
@@ -380,6 +462,18 @@ export async function createTasksSource(
       defaultModel: runtime.getDefaultModel(),
       currentUserId: owner,
       currentWorkspaceId: wsId,
+      batches: {
+        create: (spec) => batchDriver.create({ ...spec, wsId, ownerId: owner, createdBy: owner }),
+        get: (batchId) => batchDriver.get(wsId, owner, batchId),
+        findByKey: (key) => {
+          const batchId = readBatchKey(workDir, wsId, owner, key);
+          return batchId ? (batchDriver.get(wsId, owner, batchId)?.batch ?? null) : null;
+        },
+        control: (batchId, action, budgetUsd) =>
+          batchDriver.control(wsId, owner, batchId, action, budgetUsd),
+        list: () => listBatches(workDir, wsId, owner),
+        maxConcurrentRuns: runtime.getRunAdmission().limits.maxConcurrentRuns,
+      },
     };
   }
 
@@ -497,6 +591,20 @@ export async function createTasksSource(
               ? withJudgeWarnings(out, ctx.definitions().get(runOutputTaskId(out)), "run")
               : out,
           );
+        case "run_batch": {
+          const out = handleRunBatch(input, ctx);
+          // An inline definition is saved by the call, so it is warned about
+          // like a create.
+          return input.taskId === undefined
+            ? withJudgeWarnings(out, ctx.definitions().get(out.batch.taskId), "run")
+            : out;
+        }
+        case "batch":
+          return handleBatch(input, ctx);
+        case "batch_control":
+          return handleBatchControl(input, ctx);
+        case "batches":
+          return handleBatches(input, ctx);
         case "cancel":
           return handleCancel(input, ctx);
         case "assess":
@@ -542,6 +650,7 @@ export async function createTasksSource(
   source.stop = async () => {
     try {
       eventTrigger.stop();
+      batchDriver.stop();
       scheduler.stop();
     } finally {
       await originalStop();

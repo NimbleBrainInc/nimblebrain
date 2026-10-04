@@ -488,6 +488,11 @@ export const TasksRunsInput = Type.Object({
     }),
   ),
   limit: Type.Optional(Type.Number({ description: "Max runs to return. Default: 20." })),
+  excludeBatchRuns: Type.Optional(
+    Type.Boolean({
+      description: "true: leave out runs that are items of a batch (read those with tasks__batch).",
+    }),
+  ),
 });
 export type TasksRunsInput = Static<typeof TasksRunsInput>;
 
@@ -602,6 +607,196 @@ export const TasksRunResultInput = Type.Object(
   { required: ["runId"] },
 );
 export type TasksRunResultInput = Static<typeof TasksRunResultInput>;
+
+// ── Batches ──────────────────────────────────────────────────────────────
+
+const BatchIdField = Type.String({
+  pattern: "^batch_[a-f0-9]{12}$",
+  description: "The batch's id (tasks__run_batch returns it).",
+});
+
+export const TasksRunBatchInput = Type.Object(
+  {
+    taskId: Type.Optional(
+      Type.String({
+        description:
+          "The saved task every item runs. Omit it and give `prompt` (or `skill`) instead to " +
+          "run an inline definition: a `oneoff` task is created for the batch.",
+      }),
+    ),
+    items: Type.Array(
+      Type.Unsafe<unknown>({
+        description: "One run's JSON input, checked against the task's inputSchema.",
+      }),
+      {
+        minItems: 1,
+        maxItems: 10000,
+        description:
+          "The inputs, one run each (at most 10,000; each at most 64 KiB serialized, 16 MiB " +
+          "together). Every item is checked against the task's inputSchema first: if any fails, " +
+          "the whole batch is refused (naming the first bad indices) and nothing is created.",
+      },
+    ),
+    concurrency: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 100,
+        description:
+          "Most of the batch's runs at once (queued or running). Held to the runtime's " +
+          "concurrent-run limit, which is also the default; the runtime's fair share between " +
+          "workspaces applies on top.",
+      }),
+    ),
+    budgetUsd: Type.Optional(
+      Type.Number({
+        exclusiveMinimum: 0,
+        description:
+          "Whole-batch ceiling in USD, checked before every model call across all of the batch's " +
+          "runs at once. When too little is left, no new item starts and the batch pauses " +
+          "(resume can raise it).",
+      }),
+    ),
+    stopWhen: Type.Optional(
+      Type.Object(
+        {
+          minPassRate: Type.Number({
+            minimum: 0,
+            maximum: 1,
+            description: "Pause when pass / (pass + fail) falls below this (0..1).",
+          }),
+          afterItems: Type.Integer({
+            minimum: 1,
+            description: "Assessed runs (pass, fail, or uncertain) before the rule applies.",
+          }),
+        },
+        {
+          required: ["minPassRate", "afterItems"],
+          additionalProperties: false,
+          description:
+            "Pause the batch when its pass rate collapses. Uncertain results are excluded, so " +
+            "judge doubt alone never pauses it. Needs a task with criteria or an outputSchema.",
+        },
+      ),
+    ),
+    idempotencyKey: Type.Optional(
+      Type.String({
+        minLength: 1,
+        maxLength: 256,
+        description: "Repeat-safe key: a later call with the same key returns the same batch.",
+      }),
+    ),
+    prompt: Type.Optional(
+      Type.String({ description: "Inline definition: the prompt that opens each run." }),
+    ),
+    skill: Type.Optional(
+      Type.String({ description: "Inline definition: a skill for each run to carry out." }),
+    ),
+    inputSchema: Type.Optional(InputSchemaField),
+    outputSchema: Type.Optional(OutputSchemaField),
+    allowedTools: Type.Optional(
+      Type.Array(Type.String(), {
+        description: "Inline definition: the tools each run may use (see tasks__create).",
+      }),
+    ),
+    limits: Type.Optional(
+      Type.Object(
+        {
+          maxIterations: ManifestFields.maxIterations,
+          maxInputTokens: ManifestFields.maxInputTokens,
+          maxRunDurationMs: ManifestFields.maxRunDurationMs,
+        },
+        {
+          additionalProperties: false,
+          description: "Inline definition: per-run caps, as on tasks__create.",
+        },
+      ),
+    ),
+    budget: Type.Optional(TokenBudget),
+    criteria: Type.Optional(CriteriaField),
+    confidenceThreshold: Type.Optional(ConfidenceThresholdField),
+    judge: Type.Optional(JudgeField),
+    onPoorResult: Type.Optional(OnPoorResultField),
+  },
+  { required: ["items"] },
+);
+export type TasksRunBatchInput = Static<typeof TasksRunBatchInput>;
+
+/** What `tasks__batch` `verdict` filters results to. `failing` is fail plus failed. */
+const BatchResultFilter = StringEnum(
+  [
+    "pass",
+    "fail",
+    "uncertain",
+    "not_assessed",
+    "failed",
+    "skipped",
+    "cancelled",
+    "pending",
+    "failing",
+  ] as const,
+  {
+    description:
+      "Only items in this state: a verdict (pass, fail, uncertain, not_assessed), an execution " +
+      "without a deliverable (failed, skipped, cancelled), pending (not ended), or failing " +
+      "(fail or failed).",
+  },
+);
+
+export const TasksBatchInput = Type.Object(
+  {
+    batchId: BatchIdField,
+    results: Type.Optional(
+      Type.Boolean({ description: "true: include item results, a page at a time." }),
+    ),
+    verdict: Type.Optional(BatchResultFilter),
+    cursor: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        description: "Item index to start the page at: the previous page's `nextCursor`.",
+      }),
+    ),
+    limit: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: 500, description: "Items per page. Default 50." }),
+    ),
+  },
+  { required: ["batchId"] },
+);
+export type TasksBatchInput = Static<typeof TasksBatchInput>;
+
+export const TasksBatchControlInput = Type.Object(
+  {
+    batchId: BatchIdField,
+    action: StringEnum(["pause", "resume", "cancel", "rerun_failed"] as const, {
+      description:
+        "pause: no new item starts (runs already asked for finish). resume: start items again. " +
+        "cancel: stop for good, cancelling queued and running runs. rerun_failed: run again, " +
+        "each as a new run, every item that failed, was skipped or cancelled, or was judged fail.",
+    }),
+    budgetUsd: Type.Optional(
+      Type.Number({
+        exclusiveMinimum: 0,
+        description:
+          "With resume: the budget to resume under (more than already spent). Refused while " +
+          "runs sharing the old budget are still in flight.",
+      }),
+    ),
+  },
+  { required: ["batchId", "action"] },
+);
+export type TasksBatchControlInput = Static<typeof TasksBatchControlInput>;
+
+export const TasksBatchesInput = Type.Object({
+  taskId: Type.Optional(Type.String({ description: "Only batches of this task." })),
+  state: Type.Optional(
+    StringEnum(["running", "paused", "completed", "cancelled"] as const, {
+      description: "Only batches in this state.",
+    }),
+  ),
+  limit: Type.Optional(
+    Type.Integer({ minimum: 1, maximum: 100, description: "Most batches. Default 20." }),
+  ),
+});
+export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
 
 // ── Tool output types ────────────────────────────────────────────────────
 //
@@ -820,6 +1015,12 @@ export interface TaskRunRecord {
   assessment?: TaskRunAssessment;
   /** The run this one retries. */
   retryOf?: string;
+  /** The batch this run is an item of. */
+  batchId?: string;
+  /** The item's index in its batch. */
+  batchIndex?: number;
+  /** What the run's model calls cost, in USD. */
+  costUsd?: number;
 }
 
 /**
@@ -1150,4 +1351,99 @@ export interface TasksDeleteOutput {
   deleted: boolean;
   id: string;
   message: string;
+}
+
+// ── Batch outputs ────────────────────────────────────────────────────────
+
+/** How many of a batch's items are in each state. Mirror of `BatchCounts`. */
+export interface TaskBatchCounts {
+  pending: number;
+  queued: number;
+  running: number;
+  pass: number;
+  fail: number;
+  uncertain: number;
+  not_assessed: number;
+  failed: number;
+  skipped: number;
+  cancelled: number;
+}
+
+/** A stored batch. Mirror of `Batch` (`src/platform/tasks/types.ts`). */
+export interface TaskBatchRecord {
+  id: string;
+  taskId: string;
+  workspaceId: string;
+  ownerId: string;
+  items: number;
+  concurrency: number;
+  budgetUsd?: number;
+  stopWhen?: { minPassRate: number; afterItems: number };
+  stopRuleDisarmed?: boolean;
+  state: "running" | "paused" | "completed" | "cancelled";
+  pause?: {
+    reason: "manual" | "budget" | "pass_rate" | "unavailable";
+    message: string;
+    at: string;
+  };
+  counts: TaskBatchCounts;
+  costUsd: number;
+  idempotencyKey?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  createdBy: string;
+}
+
+/** A batch as the batch tools return it: the record plus figures derived on read. */
+export type TaskBatchView = TaskBatchRecord & {
+  /** Items with an outcome. */
+  done: number;
+  /** pass / (pass + fail); null before either. Uncertain is excluded. */
+  passRate: number | null;
+};
+
+/** One item's result row (`tasks__batch` with `results: true`). */
+export interface TaskBatchItemView {
+  index: number;
+  /** The item's input as JSON, cut to a short preview. */
+  inputSummary: string;
+  state: "pending" | "queued" | "running" | "done";
+  runId?: string;
+  previousRunIds?: string[];
+  execution?: TaskRunExecution;
+  verdict?: "pass" | "fail" | "uncertain" | "not_assessed";
+  /** The label the item's run reads as, from its execution and verdict. */
+  label?: TaskRunLabel;
+  costUsd?: number;
+  error?: string;
+  /** The top-level scalar fields of the run's structured output, when it has one. */
+  output?: Record<string, string | number | boolean | null>;
+}
+
+export interface TasksRunBatchOutput {
+  batch: TaskBatchView;
+  /** True when an earlier call with the same idempotencyKey made this batch. */
+  existing: boolean;
+  message: string;
+  warnings?: TaskWarning[];
+}
+
+export interface TasksBatchOutput {
+  batch: TaskBatchView;
+  /** With `results: true`: one page of items, in index order. */
+  results?: TaskBatchItemView[];
+  /** Pass as `cursor` for the next page; absent on the last. */
+  nextCursor?: number;
+}
+
+export interface TasksBatchControlOutput {
+  batch: TaskBatchView;
+  message: string;
+  /** Items the action touched. */
+  affected: number;
+}
+
+export interface TasksBatchesOutput {
+  batches: TaskBatchView[];
 }

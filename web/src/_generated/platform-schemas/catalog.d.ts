@@ -262,6 +262,7 @@ export declare const PlatformToolCatalog: {
                 since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                excludeBatchRuns: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
             }>;
         };
         readonly run: {

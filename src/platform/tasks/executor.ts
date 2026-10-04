@@ -13,8 +13,10 @@
 import { type EffectiveRunLimits, effectiveRunLimits } from "../../config/tasks.ts";
 import { wrapContained } from "../../prompt/compose.ts";
 import type { AdmissionLease } from "../../runtime/admission.ts";
+import { estimateCost } from "../../usage/cost.ts";
 import { checkAgainstSchema, parseJsonDeliverable } from "./json-schema.ts";
 import {
+  BATCH_ACCOUNT_PREFIX,
   budgetSpendAccounts,
   isTransientError,
   type RunInput,
@@ -127,7 +129,20 @@ export interface TaskFnResult {
   finishReasonRaw?: string;
   /** The spend account that stopped the run, when `stopReason` is `spend_limit`. */
   spendAccountId?: string;
-  usage: { inputTokens: number; outputTokens: number; iterations: number };
+  /**
+   * The run's usage (runtime `TurnUsage`): `model` and the cache and reasoning
+   * counts price it (`costUsd`).
+   */
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    iterations: number;
+    model?: string;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    cacheWrite1hTokens?: number;
+    reasoningTokens?: number;
+  };
 }
 
 /** A function that executes a single task. Injected by the caller. */
@@ -176,6 +191,7 @@ function buildRequest(
   limits: EffectiveRunLimits,
   ctx?: ExecutorContext,
   input?: RunInput,
+  extraAccounts: readonly RunSpendAccount[] = [],
 ): TaskFnRequest {
   const offending = containsRecursiveTool(task.allowedTools);
   if (offending !== null) {
@@ -222,7 +238,7 @@ function buildRequest(
   // the definition or the operator sets a cap.
   req.maxIterations = limits.maxIterations;
   if (limits.maxInputTokens != null) req.maxRunInputTokens = limits.maxInputTokens;
-  const spendAccounts = budgetSpendAccounts(task, Date.now());
+  const spendAccounts = [...budgetSpendAccounts(task, Date.now()), ...extraAccounts];
   if (spendAccounts.length > 0) req.spendAccounts = spendAccounts;
   // An empty list means no narrowing, as the form shows it ("all"), not a run
   // with only the system tools.
@@ -593,6 +609,12 @@ function runInputCapError(
  * output clamped. `account` is the budget's account that stopped it, if one did.
  */
 function budgetStopError(account: RunSpendAccount | undefined, task: Task): string {
+  if (account?.id.startsWith(BATCH_ACCOUNT_PREFIX)) {
+    return (
+      `Batch budget reached: too little of the batch's budget was left for the next step ` +
+      `($${account.remaining.toFixed(2)} left when the run began), so the run stopped before it.`
+    );
+  }
   const which = account?.unit === "output_tokens" ? "output" : "input";
   const cap =
     which === "output" ? task.tokenBudget?.maxOutputTokens : task.tokenBudget?.maxInputTokens;
@@ -664,6 +686,8 @@ function mapResultToRun(
   // Recorded whatever the status, and read without any criteria: the derived
   // label never reads Succeeded while part of the work did not happen.
   const unrecovered = unresolvedFailures(data.toolCalls).map((u) => u.name);
+  // Priced as the door debits a `usd` spend account: the run model's rates.
+  const costUsd = data.usage.model ? estimateCost(data.usage.model, data.usage) : undefined;
 
   return {
     // Adopt the runtime's runId verbatim — the run, its index summary, and its
@@ -685,6 +709,7 @@ function mapResultToRun(
     trigger,
     ...(error ? { error } : {}),
     ...(unrecovered.length > 0 ? { unrecoveredToolFailures: unrecovered } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
   };
 }
 
@@ -866,6 +891,7 @@ export function createDirectExecutor(
     input?: RunInput,
     lease?: AdmissionLease,
     runId?: string,
+    extraAccounts?: readonly RunSpendAccount[],
   ): Promise<{ run: TaskRun; result: TaskRunResult | null }> {
     const startedAt = new Date().toISOString();
     const limits = limitsOf(task);
@@ -896,7 +922,7 @@ export function createDirectExecutor(
     const externalAbort = linkExternalAbort(runController, externalSignal);
 
     try {
-      const request = buildRequest(task, trigger, limits, ctx, input);
+      const request = buildRequest(task, trigger, limits, ctx, input, extraAccounts);
       const data = await taskFn({
         ...request,
         signal: runController.signal,

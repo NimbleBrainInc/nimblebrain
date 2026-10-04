@@ -37,12 +37,16 @@ import {
   toRunView,
   validateAssessmentFields,
 } from "./assessment.ts";
+import type { BatchAction, BatchControlResult } from "./batch.ts";
 import { createTask, deleteTask, updateTask } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
 import { assertJsonSchema, checkAgainstSchema } from "./json-schema.ts";
 import { isOpenRun, type RequestedRun, type RunNowTicket } from "./scheduler.ts";
 import type { ReadRunsOptions, RunsPage } from "./store.ts";
 import {
+  type Batch,
+  type BatchItem,
+  type BatchStopRule,
   type Criterion,
   DEFAULT_EVENT_DEBOUNCE_MS,
   DEFAULT_EVENT_MAX_FIRES_PER_HOUR,
@@ -405,6 +409,31 @@ export interface ToolContext {
    * having to wait 30s. Has no effect outside `handleRun`.
    */
   handleRunSyncWaitMs?: number;
+  /**
+   * This owner's batches in this workspace (`batch-tools.ts`). Absent where
+   * no batch driver is wired.
+   */
+  batches?: BatchPort;
+}
+
+/** The batch driver, bound to the caller's workspace and owner. */
+export interface BatchPort {
+  create(spec: {
+    task: Task;
+    inputs: readonly unknown[];
+    concurrency: number;
+    budgetUsd?: number;
+    stopWhen?: BatchStopRule;
+    idempotencyKey?: string;
+  }): Batch;
+  get(batchId: string): { batch: Batch; items: BatchItem[] } | null;
+  /** The batch an idempotency key made, or null. */
+  findByKey(key: string): Batch | null;
+  control(batchId: string, action: BatchAction, budgetUsd?: number): BatchControlResult;
+  /** Newest first. */
+  list(): Batch[];
+  /** The runtime's concurrent-run limit: a batch's concurrency is held to it. */
+  maxConcurrentRuns: number;
 }
 
 /**
@@ -872,6 +901,7 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Tas
   const since = args.since as string | undefined;
   const before = args.before as string | undefined;
   const limit = (args.limit as number) ?? 20;
+  const excludeBatch = args.excludeBatchRuns === true ? { excludeBatch: true } : {};
   if (before !== undefined && Number.isNaN(new Date(before).getTime())) {
     throw new Error(`Invalid before timestamp: "${before}"`);
   }
@@ -880,7 +910,7 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Tas
   // The first page (no `before`) reads only the hot index; its `nextBefore`
   // says older runs exist.
   if (taskId) {
-    const page = ctx.readRunsPage(taskId, { limit, status, since, before });
+    const page = ctx.readRunsPage(taskId, { limit, status, since, before, ...excludeBatch });
     return {
       runs: page.runs.map(toRunView),
       total: page.runs.length,
@@ -888,7 +918,7 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Tas
     };
   }
 
-  const runs = ctx.readAllRuns({ limit, status, since, before });
+  const runs = ctx.readAllRuns({ limit, status, since, before, ...excludeBatch });
   return { runs: runs.map(toRunView), total: runs.length };
 }
 
@@ -967,14 +997,14 @@ const HANDLE_RUN_SYNC_WAIT_MS = 30_000;
 /** The most a run's JSON `input` may take, serialized. It is kept on the run record. */
 export const MAX_RUN_INPUT_BYTES = 64 * 1024;
 
-/** The longest idempotency key `tasks__run` takes. */
-const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
+/** The longest idempotency key `tasks__run` and `tasks__run_batch` take. */
+export const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
 /**
  * An inline one-off's definition: `tasks__run` with these instead of
  * `name` creates a `oneoff` task with no schedule and runs it once.
  */
-interface InlineDefinition {
+export interface InlineDefinition {
   prompt?: string;
   skill?: string;
   inputSchema?: Record<string, unknown>;
@@ -989,7 +1019,7 @@ interface InlineDefinition {
 }
 
 /** The fields of `tasks__run` that make it an inline one-off. */
-const INLINE_FIELDS = [
+export const INLINE_FIELDS = [
   "prompt",
   "skill",
   "inputSchema",
@@ -1031,10 +1061,10 @@ function newRunId(): string {
  * one-off (and through the key, the same run) under the caller's own
  * partition; without one it is fresh.
  */
-function oneoffId(idempotencyKey: string | undefined): string {
+function oneoffId(idSeed: string | undefined): string {
   const token =
-    idempotencyKey !== undefined
-      ? createHash("sha256").update(idempotencyKey, "utf-8").digest("hex").slice(0, 20)
+    idSeed !== undefined
+      ? createHash("sha256").update(idSeed, "utf-8").digest("hex").slice(0, 20)
       : randomBytes(8).toString("hex");
   return `oneoff-${token}`;
 }
@@ -1092,18 +1122,23 @@ function assessmentDefinition(
 }
 
 /**
- * Find or create the `oneoff` task an inline `tasks__run` names.
- * The definition and the run's input are checked before anything is written,
- * so a refused call leaves no one-off behind. A key that already names a
- * one-off with a different definition is refused rather than run against the
- * old one.
+ * Find or create the `oneoff` task an inline `tasks__run` (or
+ * `tasks__run_batch`) names. The definition and the input(s) are checked
+ * (`checkInput`, given the one-off's id and input schema) before anything is
+ * written, so a refused call leaves no one-off behind. With `idSeed` (the
+ * call's idempotency key, namespaced by tool) the one-off's id is derived
+ * from it, and a seed that already names a one-off with a different definition
+ * is refused rather than run against the old one.
  */
-function ensureOneoff(args: RunArgs, ctx: ToolContext): Task {
+export function ensureOneoff(
+  args: InlineDefinition,
+  ctx: ToolContext,
+  checkInput: (id: string, inputSchema: Record<string, unknown> | undefined) => void,
+  idSeed: string | undefined,
+  missing = "tasks__run needs `name` (a task to run)",
+): Task {
   if (!args.prompt && !args.skill) {
-    throw new Error(
-      "tasks__run needs `name` (a task to run) or an inline definition with " +
-        "`prompt` or `skill`.",
-    );
+    throw new Error(`${missing} or an inline definition with \`prompt\` or \`skill\`.`);
   }
   const limits = args.limits ?? {};
   validateTaskFields({
@@ -1113,7 +1148,7 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Task {
     ...(args.outputSchema ? { outputSchema: args.outputSchema } : {}),
     ...assessmentDefinition(args),
   });
-  const id = oneoffId(args.idempotencyKey);
+  const id = oneoffId(idSeed);
   const prompt =
     args.prompt ??
     `Carry out the "${args.skill}" skill on this run's input, and give its result as the deliverable.`;
@@ -1128,7 +1163,7 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Task {
     ...assessmentDefinition(args),
   };
 
-  checkRunInput(id, args.inputSchema, args.input);
+  checkInput(id, args.inputSchema);
 
   const existing = ctx.definitions().get(id);
   if (existing) {
@@ -1156,32 +1191,43 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Task {
   return task;
 }
 
+/**
+ * Why a run input is refused for the task `name` (too large, or not matching
+ * its `inputSchema`), or null when it is taken.
+ */
+export function runInputProblem(
+  name: string,
+  inputSchema: Record<string, unknown> | undefined,
+  input: unknown,
+): string | null {
+  if (input === undefined) {
+    if (inputSchema && !checkAgainstSchema(inputSchema, null).valid) {
+      return `"${name}" takes an input matching its inputSchema; none was given.`;
+    }
+    return null;
+  }
+  const size = Buffer.byteLength(JSON.stringify(input) ?? "", "utf-8");
+  if (size > MAX_RUN_INPUT_BYTES) {
+    return (
+      `input is ${size} bytes serialized; a run's input may be at most ${MAX_RUN_INPUT_BYTES}. ` +
+      "Pass a reference (a file id or URL) instead of the content."
+    );
+  }
+  if (!inputSchema) return null;
+  const verdict = checkAgainstSchema(inputSchema, input);
+  return verdict.valid
+    ? null
+    : `input does not match the inputSchema of "${name}": ${verdict.errors.join("; ")}`;
+}
+
 /** Refuse a run input that is too large or does not match the `inputSchema` of the task `name`. */
 function checkRunInput(
   name: string,
   inputSchema: Record<string, unknown> | undefined,
   input: unknown,
 ): void {
-  if (input === undefined) {
-    if (inputSchema && !checkAgainstSchema(inputSchema, null).valid) {
-      throw new Error(`"${name}" takes an input matching its inputSchema; none was given.`);
-    }
-    return;
-  }
-  const size = Buffer.byteLength(JSON.stringify(input) ?? "", "utf-8");
-  if (size > MAX_RUN_INPUT_BYTES) {
-    throw new Error(
-      `input is ${size} bytes serialized; a run's input may be at most ${MAX_RUN_INPUT_BYTES}. ` +
-        "Pass a reference (a file id or URL) instead of the content.",
-    );
-  }
-  if (!inputSchema) return;
-  const verdict = checkAgainstSchema(inputSchema, input);
-  if (!verdict.valid) {
-    throw new Error(
-      `input does not match the inputSchema of "${name}": ${verdict.errors.join("; ")}`,
-    );
-  }
+  const problem = runInputProblem(name, inputSchema, input);
+  if (problem) throw new Error(problem);
 }
 
 /**
@@ -1217,7 +1263,12 @@ export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): 
     checkRunInput(task.name, task.inputSchema, args.input);
   } else {
     // Checks the input against the inline definition before creating anything.
-    task = ensureOneoff(args, ctx);
+    task = ensureOneoff(
+      args,
+      ctx,
+      (id, schema) => checkRunInput(id, schema, args.input),
+      args.idempotencyKey,
+    );
   }
 
   if (key !== undefined) {
@@ -1561,7 +1612,7 @@ export function runOutputTaskId(out: TasksRunOutput): string {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function findByName(defs: Map<string, Task>, name: string): Task | undefined {
+export function findByName(defs: Map<string, Task>, name: string): Task | undefined {
   // First try direct id lookup (kebab-case of name)
   const byId = defs.get(toKebabCase(name));
   if (byId) return byId;
