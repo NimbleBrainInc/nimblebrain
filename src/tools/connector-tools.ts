@@ -1812,9 +1812,8 @@ async function provisionDeclaredHooks(
  * Tell a freshly-installed connector it is ready, and carry back what it said.
  *
  * The `notice` is the bundle's own words about what is now happening — the one
- * place a user waiting on install-time setup is told to wait. The `warning` is
- * a manifest that names a handler the server does not serve, or one the runtime
- * could never call with no arguments.
+ * place a user waiting on install-time setup is told to wait. The `warning`
+ * lists the marked tools the extension binding rejected.
  *
  * Never an error, for the same reason the hooks contract check is not: by this
  * line the ref is persisted, the instance is seeded and the source is running,
@@ -1834,17 +1833,14 @@ async function notifyConnectorReady(
   // call itself says, because a rejected `removing` handler does not stop a
   // valid `ready` one from being called.
   let rejected: string[] = [];
-  const withRejected = (warning?: string) => {
-    const joined = [warning, ...rejected].filter(Boolean).join(" ");
-    return joined ? { warning: joined } : {};
-  };
+  const withRejected = () => (rejected.length > 0 ? { warning: rejected.join(" ") } : {});
   try {
     const deps = ctx.runtime.getLifecycleNotifyDeps();
     rejected = (await deps.contractWarningsFor?.(wsId, serverName).catch(() => [])) ?? [];
     const { notice } = await notifyReady(deps, wsId, serverName, "install");
     return { ...(notice ? { notice } : {}), ...withRejected() };
   } catch (err) {
-    // Anything else (the source went away mid-install, a transient catalog
+    // A failure here (the source went away mid-install, a transient catalog
     // read) leaves the connector installed and the bundle un-notified — the
     // next transition to `running` tells it, with `resume`.
     log.warn("[lifecycle] install-time notification failed", {

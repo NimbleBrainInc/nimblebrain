@@ -135,10 +135,10 @@ export async function notifyReady(
   const current = wire.binding;
 
   const handler = current.on_ready;
-  // A server may declare `on_removing` alone. Its contract is checked above;
-  // there is nothing to call now and nothing to come back for. A `ready`
-  // handler the host rejected is different: the server is still to be fixed,
-  // and the fix arrives as a tool-set change, so the attempt stays open.
+  // A server may bind `on_removing` alone: there is nothing to call now and
+  // nothing to come back for. A `ready` handler the host rejected is
+  // different: the server is still to be fixed, and the fix arrives as a
+  // tool-set change, so the attempt stays open.
   if (!handler) return { settled: !wire.rejected.some((r) => r.event === "on_ready") };
 
   // `reason` goes only to a handler that declares it.
