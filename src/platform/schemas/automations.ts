@@ -102,11 +102,12 @@ const TokenBudget = Type.Object(
   },
   {
     description:
-      "Spending limit across runs, in tokens (not dollars). Checked after each run " +
-      "completes: once the period's total passes a cap, the automation is disabled and " +
-      "stays disabled until someone re-enables it. The run that crosses the cap finishes; " +
-      "to bound a single run, use maxInputTokens and maxIterations. Offer one when the " +
-      "automation runs often or unattended for long.",
+      "Spending limit across runs, in tokens (not dollars). Checked before each model " +
+      "call: each step may write only what is left of the period's budget, and a run with " +
+      "too little left for another step stops with stopReason spend_limit. The automation " +
+      "is then disabled and stays disabled until someone re-enables it. To bound a single " +
+      "run, use maxInputTokens and maxIterations. Offer one when the automation runs often " +
+      "or unattended for long.",
   },
 );
 

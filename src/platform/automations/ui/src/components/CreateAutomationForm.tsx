@@ -310,8 +310,8 @@ export function CreateAutomationForm({
             </div>
           )}
           <div style={hintStyle}>
-            Counted in tokens, not dollars. Checked after each run: once the day's total passes the
-            budget, the automation turns off until you turn it back on.
+            Counted in tokens, not dollars. Checked before each step: a run stops when too little of
+            the day's budget is left, and the automation turns off until you turn it back on.
           </div>
 
           <div className="detail-config-label" style={{ marginTop: 12 }}>

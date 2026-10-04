@@ -570,9 +570,10 @@ const BUDGET_ACCOUNT_PREFIX = "automation-budget:";
 
 /**
  * The token budget as the spend accounts a run names: one per cap, holding
- * what is left of the current window. The run-start door checks them before
- * each model call and stops the run (stopReason `spend_limit`) before a call
- * that would overrun one, so a run cannot spend past the budget.
+ * what is left of the current window. The run-start door clamps each model
+ * call's output to what they allow and stops the run (stopReason
+ * `spend_limit`) when too little is left for another call, so a run cannot
+ * spend past the budget.
  *
  * The ids are this app's to choose and mean nothing to the door: the
  * automation's key, the window, and the unit. A window whose boundary has
@@ -617,11 +618,12 @@ export function budgetSpendAccounts(auto: Automation, now: number): RunSpendAcco
  *
  * Every run counts, whatever triggered it and whether or not the automation
  * is enabled. The window is spent when the counters pass a cap, or when the
- * run was stopped by one of the budget's spend accounts: its next model call
- * would have passed a cap, so the counters stop short of it. A disabled
- * automation has nothing left to disable, so its budget is enforced where its
- * runs start: Run now refuses it until the window resets (see
- * `Scheduler.requestRunNow`), and the door stops any run that would overrun it.
+ * run was stopped by one of the budget's spend accounts: too little was left
+ * for its next model call, so the counters stop just short of a cap. A
+ * disabled automation has nothing left to disable, so its budget is enforced
+ * where its runs start: Run now refuses it until the window resets (see
+ * `Scheduler.requestRunNow`), and the door clamps and stops any run against
+ * what is left.
  */
 function applyTokenBudget(
   auto: Automation,

@@ -67,8 +67,8 @@ export interface TaskFnRequest {
   maxRunInputTokens?: number;
   /**
    * The automation's token budget as spend accounts (`budgetSpendAccounts`).
-   * The runtime stops the run with stopReason `spend_limit` before a model call
-   * that would overrun one.
+   * The runtime clamps each model call's output to what they allow and stops
+   * the run with stopReason `spend_limit` when too little is left for a call.
    */
   spendAccounts?: RunSpendAccount[];
   allowedTools?: string[];
