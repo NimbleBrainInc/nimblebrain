@@ -259,8 +259,7 @@ function fromTaskRuns(path: string): UsageLedgerEntry[] {
 }
 
 /**
- * A run index: `tasks/<ownerId>/runs/<taskId>/index.jsonl` (`automations/`
- * before the boot migration moved it).
+ * A run index: `tasks/<ownerId>/runs/<taskId>/index.jsonl`.
  *
  * The task id between `runs/` and the file is the part that matters.
  * Matching `runs/index.jsonl` — no id segment — matches nothing on a real tree,
