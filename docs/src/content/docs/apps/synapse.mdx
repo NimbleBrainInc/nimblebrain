@@ -522,7 +522,7 @@ if (file) {
 `pickFiles(app, options)` picks several. In React, `useFileUpload()` returns the pickers with a pending flag.
 
 <Aside type="note">
-`action()` and `pickFile()` / `pickFiles()` work only where the host declares the matching `ai.nimblebrain/` extension: `action()` is a silent no-op otherwise and the picker throws `HostCapabilityError`, since it depends on host-side persistence. `sendMessage()` sends nothing without the `message` capability, and `openLink()` falls back to `window.open()` without `openLinks`. Call `hostSupports(app, 'requestFile')` (or the extension you need) to decide whether to render a control at all.
+`action()` and `pickFile()` / `pickFiles()` work only where the host declares the matching `ai.nimblebrain/` extension: `action()` is a silent no-op otherwise and the picker throws `HostCapabilityError`, since it depends on host-side persistence. `downloadFile()` throws `HostCapabilityError` without the `downloadFile` capability, `sendMessage()` sends nothing without `message`, and `openLink()` falls back to `window.open()` without `openLinks`. To decide whether to render a control at all, call `hostSupports(app, 'requestFile')` for an `ai.nimblebrain/` extension, or read `app.hostCapabilities` for a spec capability such as `downloadFile`.
 </Aside>
 
 <Aside type="caution">
@@ -682,7 +682,7 @@ Synapse detects its host during the ext-apps handshake. In NimbleBrain, `hostInf
 
 | Export | Contents |
 |--------|----------|
-| `@nimblebrain/synapse` | `connect`, the extension helpers (`action`, `pickFile`, `pickFiles`, `uploadFiles`, `notify`, `hostSupports`, `downloadFile`, `callToolAsTask`), `HostCapabilityError`, `TaskError`, all types |
+| `@nimblebrain/synapse` | `connect`, the extension helpers (`action`, `pickFile`, `pickFiles`, `uploadFiles`, `notify`, `setLocation`, `onNavigate`, `hostSupports`, `downloadFile`, `callToolAsTask`), `NIMBLEBRAIN_EXTENSIONS`, `connectUI`, `detectHostKind`, `HostCapabilityError`, `TaskError`, all types |
 | `@nimblebrain/synapse/react` | `AppProvider`, `useApp`, `useToolResult`, `useToolInput`, `useResize`, `useTheme`, `useHostContext`, `useCallTool`, `useCallToolAsTask`, `useDataSync`, `useModelContext`, `useSendMessage`, `useAction`, `useNotify`, `useFileUpload`, `useTrail` |
 | `@nimblebrain/synapse/iife` | `connect.iife.global.js` — `window.Synapse` global for `<script>` tags |
 | `@nimblebrain/synapse/vite` | `synapseVite` Vite plugin |
@@ -702,10 +702,11 @@ Synapse detects its host during the ext-apps handshake. In NimbleBrain, `hostInf
 | `useCallToolAsTask(name)` | `{ fire, task, result, error, isWorking, isTerminal, cancel }` | Task status, by polling |
 | `useDataSync(cb)` | — | `notifications/resources/list_changed` from the app's server |
 | `useModelContext()` | `(state, summary?) => void`, debounced | — |
-| `useSendMessage()` | `(msg, ctx?) => void` | — |
+| `useSendMessage()` | `(text) => void` | — |
 | `useAction()` | `(action, params?) => void` | — |
 | `useNotify()` | `(notice) => Promise<boolean>` | — |
 | `useFileUpload()` | `{ pickFile, pickFiles, uploadFiles, isPending }` | — |
+| `useTrail(trail, navigate)` | `boolean` — whether the host shows the title and breadcrumb | `ai.nimblebrain/navigate` |
 
 Every hook requires an `<AppProvider>` ancestor.
 
