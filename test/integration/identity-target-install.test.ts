@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
@@ -15,6 +15,7 @@ import {
   createManageConnectorsTool,
   type ManageConnectorsContext,
 } from "../../src/tools/connector-tools.ts";
+import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -231,19 +232,13 @@ describe("manage_connectors.install scope:identity — DCR personal-connector in
   test("state is `running` from persisted tokens, even with a cold source (survives a pod roll)", async () => {
     await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
 
-    // Simulate a completed OAuth: tokens on disk, but the source is NOT warmed in
-    // this process (a fresh pod). Before the persisted-state fix this reported
-    // `not_authenticated` and the UI offered a Connect that then fails.
-    const oauthDir = join(
-      h.workDir,
-      "users",
-      USER.id,
-      "credentials",
-      "mcp-oauth",
-      "ai-granola-mcp",
-    );
-    mkdirSync(oauthDir, { recursive: true });
-    writeFileSync(join(oauthDir, "tokens.json"), JSON.stringify({ access_token: "x" }));
+    // Simulate a completed OAuth: tokens stored, but the source is NOT warmed in
+    // this process (a fresh pod). The state must come from the stored tokens, or
+    // the UI offers a Connect that then fails.
+    await new McpOAuthRecords({
+      owner: { type: "user", userId: USER.id },
+      serverName: "ai-granola-mcp",
+    }).write("tokens", { access_token: "x" });
 
     const result = await h.tool.handler({ action: "list_personal_connectors" });
     const sc = result.structuredContent as { connectors: Array<{ state: string }> };
@@ -484,10 +479,12 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     // survive the disconnect (else it silently rebinds on a reconnect).
     h.toolPolicies[SERVER] = { tools: { some_tool: "allow" } };
 
-    // Simulate a completed OAuth: tokens under the identity mcp-oauth root.
-    const oauthDir = join(h.workDir, "users", USER.id, "credentials", "mcp-oauth", SERVER);
-    mkdirSync(oauthDir, { recursive: true });
-    writeFileSync(join(oauthDir, "tokens.json"), JSON.stringify({ access_token: "x" }));
+    // Simulate a completed OAuth: tokens at the identity's credential scope.
+    const records = new McpOAuthRecords({
+      owner: { type: "user", userId: USER.id },
+      serverName: SERVER,
+    });
+    await records.write("tokens", { access_token: "x" });
 
     const store = new IdentityConnectorStore({ workDir: h.workDir });
     expect(await store.list(USER.id)).toHaveLength(1);
@@ -515,7 +512,7 @@ describe("manage_connectors.disconnect scope:identity — full remove", () => {
     // Per-tool policies dropped (no silent rebind on reconnect).
     expect(h.toolPolicies[SERVER]).toBeUndefined();
     // Identity credentials deleted.
-    expect(existsSync(oauthDir)).toBe(false);
+    expect(await records.has("tokens")).toBe(false);
   });
 
   test("errors on a connector that isn't installed on the identity", async () => {
