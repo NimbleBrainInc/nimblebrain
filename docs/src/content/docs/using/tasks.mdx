@@ -57,7 +57,7 @@ The runtime runs a fixed number of unattended runs at once across all of its wor
 - **A scheduled run** that comes due while every slot is busy waits for a slot and then runs, oldest due first, so a tightly spaced batch runs late rather than being dropped. Its place is held by its next-run time, so it survives a restart.
 - **A Run now or an event run** that arrives while every slot is busy joins a queue and starts when a slot frees. A freed slot goes to the waiting run whose workspace holds the fewest slots, and to the oldest among equals, so one busy workspace cannot keep another waiting; a workspace with no one else waiting uses every slot. Run now answers at once that the run is queued and at what position in arrival order. A queued run gets a freed slot before a waiting scheduled run does.
 - **The queue is bounded**: 50 runs by default ([`tasks.maxQueuedRuns`](/config/nimblebrain-json/#tasks)). A run that arrives when it is full is not started and is recorded as skipped, with the reason.
-- **One run per task.** A Run now or event run for a task that already has a run in flight or queued is recorded as skipped.
+- **One run per task.** A Run now or event run for a task that already has a run in flight or queued is recorded as skipped. A [batch](#batches) is the exception: its runs of one task each take their own slot.
 - **Cancel** stops a run in flight, or removes a queued one and records it as cancelled.
 
 <Aside type="caution">
@@ -277,6 +277,47 @@ Accept or Reject on a run in the Tasks panel, or `tasks__assess` with `{ runId, 
 - `retry_once`: the task runs again, once, with the same input and the failed criteria given to it as guidance. The retry is an ordinary run (it takes a run slot and counts against the token budget) and records `retryOf`. If the retry fails too, or cannot start, the same notification is written instead.
 
 An `uncertain` run sets off nothing, including one the judge could not answer; it reads Needs review until you accept or reject it.
+
+## Batches
+
+A batch runs one task over many inputs: one run per item, under one concurrency limit, one budget, and one stop rule. Start one with `tasks__run_batch`; it answers at once with the batch, and the runs go on in the background.
+
+<Steps>
+
+1. **What it runs.** `taskId` names a saved task, or leave it out and pass an inline definition exactly as for `tasks__run` (`prompt` or `skill`, and optionally `inputSchema`, `outputSchema`, `criteria`, and the rest), which creates a one-off task for the batch.
+
+2. **Items.** `items` is a list of inputs, one run each: at most 10,000, each at most 64 KiB serialized and 16 MiB together. Every item is checked against the task's `inputSchema` before anything is created. If any item would be refused, the whole batch is refused, the error names the first few bad items by index and says why, and nothing runs.
+
+3. **Concurrency.** `concurrency` is the most of the batch's runs asked for at once (queued or running). It is held to the runtime's concurrent-run limit ([`tasks.maxConcurrentRuns`](/config/nimblebrain-json/#tasks)), which is also the default, and the answer says when it was lowered. Each run still takes a run slot like any other, so the [fair share between workspaces](#run-slots-and-the-queue) applies on top: another workspace's run gets the next free slot instead of waiting for the batch to finish. When the queue is full, the batch waits a few seconds and asks again; no item is skipped for it.
+
+4. **Budget.** `budgetUsd` caps what the whole batch spends, in dollars at the model's rates. It is checked before every model call across all of the batch's runs at once, so runs in flight together cannot pass it. When too little is left for another call, the run stops there and no new item starts: the batch pauses with reason `budget`. An item stopped before it produced anything waits to run again; resume the batch with a raised budget to go on. A model with no known rates cannot be priced, so on such a model no call fits a budget and the batch pauses at its first call. The task's own token budget still applies to each run, and a run stopped by it pauses the batch the same way.
+
+5. **Stop rule.** `stopWhen: { minPassRate, afterItems }` pauses the batch, with reason `pass_rate`, when its pass rate falls below `minPassRate` after `afterItems` assessed runs. The pass rate is pass / (pass + fail): `uncertain` results are left out, so judge doubt alone never pauses a batch. A task with no criteria and no output schema is never assessed, so a stop rule on it is refused. Resuming after the rule fired turns it off for the rest of the batch.
+
+6. **Idempotency.** `idempotencyKey` makes the call safe to repeat: a later call with the same key returns the same batch. The same key with a different task or a different number of items is refused.
+
+</Steps>
+
+A batch that pauses on its own (budget or stop rule) writes a notification to the workspace inbox. Like a poor result, it names no task, rule, input, or deliverable: only the batch's id, why it paused, and its counts. A run of a batch item sets off no `onPoorResult` of its own; the stop rule and **Re-run failed** take its place.
+
+### Following and controlling a batch
+
+`tasks__batch` with the batch's id returns its state (`running`, `paused`, `completed`, `cancelled`), why it paused, its counts (`pending`, `queued`, `running`, `pass`, `fail`, `uncertain`, `not_assessed`, `failed`, `skipped`, `cancelled`), what it has cost, and its pass rate. With `results: true` it also returns item results a page at a time (50 by default, `limit` up to 500, the next page from `nextCursor`): each item's index, a preview of its input, its run's id and label, its verdict, its cost, and the top-level fields of the run's structured output. `verdict` filters the results, and `failing` selects items judged `fail` or whose run failed. `tasks__batches` lists your batches, newest first. Each item's run is an ordinary run that records its `batchId` and `batchIndex`; `tasks__run_result` reads it by run id, and `tasks__runs` with `excludeBatchRuns: true` leaves batch runs out.
+
+`tasks__batch_control` acts on a batch:
+
+| Action | Does |
+|---|---|
+| `pause` | No new item starts. Runs already asked for finish. |
+| `resume` | Items start again. With `budgetUsd`, under a new budget (more than already spent). A new budget is refused while runs that share the old one are still in flight: pause, and resume once they end. |
+| `cancel` | Stops the batch for good: queued runs are taken out of the queue and runs in flight are stopped, all recorded `cancelled`, and items not yet started are cancelled. |
+| `rerun_failed` | Runs every item whose run failed, was skipped or cancelled, or was judged `fail` again, each as a new run. The item keeps its earlier run ids (`previousRunIds`) and adds the new run's cost to its own. |
+
+In the Tasks panel, batches are listed in their own section with their progress, counts, cost, and state, and their item runs are left out of Recent Runs. Open one for its results table, with the output's fields as columns, each item's verdict and cost, and its run's output; filter it to failing items, and pause, resume, cancel, or re-run failed items from its header.
+
+### If the runtime restarts
+
+A batch's record and its items are kept beside the task's runs. When the runtime starts, every unfinished batch is reconciled from its items: an item whose run was still queued is asked for again (its old run is recorded `skipped`), an item whose run was in flight is recorded `failed`, since the run ended with the process, and is picked up by **Re-run failed**. Counts and cost are rebuilt, and running batches carry on. The budget's balance is rebuilt from what the batch's recorded runs cost, so spend by a run that was in flight when the process died is not counted against it.
 
 ## What's next
 
