@@ -441,6 +441,42 @@ describe("order", () => {
     expect(store.list({ limit: 2, after: 3 })).toEqual([]);
   });
 
+  test("descending pages back with `before`, and `hasMore` says when to stop", () => {
+    const store = storeFor(WS_A);
+    seedThree(store);
+    store.append("acme", envelope({ eventId: "e4" }));
+    store.append("acme", envelope({ eventId: "e5" }));
+    const first = store.listWithUnread({ limit: 2 });
+    expect(first.items.map((i) => i.seq)).toEqual([5, 4]);
+    expect(first.hasMore).toBe(true);
+    const second = store.listWithUnread({ limit: 2, before: 4 });
+    expect(second.items.map((i) => i.seq)).toEqual([3, 2]);
+    expect(second.hasMore).toBe(true);
+    const last = store.listWithUnread({ limit: 2, before: 2 });
+    expect(last.items.map((i) => i.seq)).toEqual([1]);
+    expect(last.hasMore).toBe(false);
+  });
+
+  test("`hasMore` counts only what matches the filters", () => {
+    const store = storeFor(WS_A);
+    seedThree(store);
+    store.markRead([
+      { source: "acme", eventId: "e1" },
+      { source: "acme", eventId: "e2" },
+    ]);
+    const page = store.listWithUnread({ limit: 1, unreadOnly: true });
+    expect(page.items.map((i) => i.seq)).toEqual([3]);
+    expect(page.hasMore).toBe(false);
+  });
+
+  test("`ids` finds items by id whatever their age", () => {
+    const store = storeFor(WS_A);
+    seedThree(store);
+    store.append("beta", envelope({ eventId: "e1" }));
+    expect(store.list({ ids: ["acme:e1"] }).map((i) => i.seq)).toEqual([1]);
+    expect(store.list({ ids: ["acme:gone"] })).toEqual([]);
+  });
+
   test("filters apply in both directions", () => {
     const store = storeFor(WS_A);
     seedThree(store);

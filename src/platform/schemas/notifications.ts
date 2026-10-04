@@ -44,6 +44,22 @@ export const NotificationsListInput = Type.Object({
         'with `order: "asc"` it walks forward through a backlog one page at a time.',
     }),
   ),
+  before: Type.Optional(
+    Type.Number({
+      minimum: 0,
+      description:
+        "Only items with a `seq` less than this. With the default newest-first order, pass " +
+        "the lowest `seq` you hold to read the page before it; `hasMore` says whether one is left.",
+    }),
+  ),
+  ids: Type.Optional(
+    Type.Array(Type.String({ minLength: 3, maxLength: 512 }), {
+      minItems: 1,
+      maxItems: NOTIFICATION_LIST_MAX_LIMIT,
+      description:
+        "Only these items, by id. How a link to one item finds it, and its `seq`, whatever its age.",
+    }),
+  ),
   since: Type.Optional(
     Type.String({
       maxLength: 64,
@@ -244,6 +260,11 @@ export interface NotificationsListOutput {
    * the filters. A page is capped, so its own unread rows are not this count.
    */
   unread: number;
+  /**
+   * Whether more items match these filters beyond this page, in the direction
+   * it was read. Newest first, that means a `before` read would return more.
+   */
+  hasMore: boolean;
   /**
    * Highest `seq` in this page, absent when the page is empty. Pass it back as
    * `after` to continue — forward through a backlog under `order: "asc"`, or

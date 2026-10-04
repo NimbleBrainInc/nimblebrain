@@ -23,6 +23,8 @@ export declare const NotificationsListInput: import("@sinclair/typebox").TObject
     level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     after: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    ids: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     query: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     order: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"desc" | "asc">>;
@@ -179,6 +181,11 @@ export interface NotificationsListOutput {
      * the filters. A page is capped, so its own unread rows are not this count.
      */
     unread: number;
+    /**
+     * Whether more items match these filters beyond this page, in the direction
+     * it was read. Newest first, that means a `before` read would return more.
+     */
+    hasMore: boolean;
     /**
      * Highest `seq` in this page, absent when the page is empty. Pass it back as
      * `after` to continue — forward through a backlog under `order: "asc"`, or
