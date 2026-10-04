@@ -1040,7 +1040,7 @@ function createHandlers(
  * completion and answers a `CallToolResult`. A `params.task` a client sends
  * anyway is removed at the door (`withoutTaskParams`), as the 2025-11-25 spec
  * has a receiver that does not declare tasks ignore it, because SDK v1 would
- * otherwise demand a `CreateTaskResult` once the tool had already run.
+ * otherwise refuse the call (-32603) without running it.
  */
 function createLegacyServer(
   runtime: Runtime | null,
@@ -1844,15 +1844,14 @@ async function readResourceFromWorkspace(
   return null;
 }
 
-/** JSON-RPC error response with the proper headers. */
 /**
  * A 2025-era body with `params.task` removed from every `tools/call`, or
  * undefined when none carries one (or the body is not JSON, which the
  * transport answers itself). The 2025 leg declares no `tasks` capability, and
  * the 2025-11-25 spec has a receiver that does not declare it process the
- * request normally, ignoring the task. SDK v1 instead validates the answer to
- * any `tools/call` carrying `params.task` as a `CreateTaskResult`, after the
- * tool has run, so the field is removed before the SDK sees it.
+ * request normally, ignoring the task. SDK v1 instead refuses any `tools/call`
+ * carrying `params.task` with -32603 when the server declares no `tasks`
+ * capability, so the field is removed before the SDK sees it.
  */
 async function withoutTaskParams(request: Request): Promise<{ parsedBody: unknown } | undefined> {
   let body: unknown;
@@ -1873,6 +1872,7 @@ async function withoutTaskParams(request: Request): Promise<{ parsedBody: unknow
   return stripped ? { parsedBody: body } : undefined;
 }
 
+/** JSON-RPC error response with the proper headers. */
 function jsonRpcError(status: number, code: number, message: string): Response {
   return json<JsonRpcErrorBody>({ jsonrpc: "2.0", error: { code, message }, id: null }, status);
 }
