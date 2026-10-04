@@ -4203,13 +4203,15 @@ export class Runtime {
    *
    * Resolved from the catalog entry the installed ref is, the same way hook
    * declarations are ({@link trustedCatalogEntryFor}). The poller reads this to
-   * decide which connectors it has anything to poll.
+   * decide which connectors it has anything to poll, passing the one `catalog`
+   * it opened for the sweep (`pollTargets`).
    */
   async getNotificationsDeclaration(
     wsId: string,
     serverName: string,
+    catalog: ConnectorCatalog = this.getConnectorCatalog(),
   ): Promise<NotificationsDeclaration | undefined> {
-    return (await this.trustedCatalogEntryFor(wsId, serverName))?.notifications;
+    return (await this.trustedCatalogEntryFor(wsId, serverName, catalog))?.notifications;
   }
 
   /**
@@ -4634,8 +4636,9 @@ export class Runtime {
   private async trustedCatalogEntryFor(
     wsId: string,
     serverName: string,
+    catalog: ConnectorCatalog = this.getConnectorCatalog(),
   ): Promise<ConnectorCatalogEntry | undefined> {
-    return (await this.boundCatalogEntries(wsId)).get(serverName);
+    return (await this.boundCatalogEntries(wsId, catalog)).get(serverName);
   }
 
   /**
@@ -4651,10 +4654,13 @@ export class Runtime {
    * another server is absent here, so it runs with no grants, and the operator
    * is told once per process.
    */
-  private async boundCatalogEntries(wsId: string): Promise<Map<string, ConnectorCatalogEntry>> {
+  private async boundCatalogEntries(
+    wsId: string,
+    catalog: ConnectorCatalog = this.getConnectorCatalog(),
+  ): Promise<Map<string, ConnectorCatalogEntry>> {
     const [ws, entries] = await Promise.all([
       this._workspaceStore.get(wsId),
-      this.getConnectorCatalog().catalogEntries(),
+      catalog.catalogEntries(),
     ]);
     const out = new Map<string, ConnectorCatalogEntry>();
     for (const ref of ws?.connectors ?? []) {
