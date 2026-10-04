@@ -1,3 +1,4 @@
+import { ORG_ABOUT_TAB, ORG_SETTINGS_TABS } from "../../lib/settings-tabs";
 import { type SettingsNavItem, SettingsShell } from "./SettingsShell";
 
 // ── Organization settings shell — `/org/*` ───────────────────────────
@@ -9,21 +10,19 @@ import { type SettingsNavItem, SettingsShell } from "./SettingsShell";
 // is the one role-exempt entry (platform version / info), pinned to the
 // footer so any signed-in user can reach it.
 
-const ORG_ITEMS: SettingsNavItem[] = [
-  { id: "org-model", label: "Model", to: "/org/model", minRole: "org_admin" },
-  { id: "org-workspaces", label: "Workspaces", to: "/org/workspaces", minRole: "org_admin" },
-  { id: "org-archives", label: "Archives", to: "/org/archives", minRole: "org_admin" },
-  { id: "org-users", label: "Users", to: "/org/users", minRole: "org_admin" },
-  { id: "org-skills", label: "Skills", to: "/org/skills", minRole: "org_admin" },
-  { id: "org-usage", label: "Usage", to: "/org/usage", minRole: "org_admin" },
-];
+const ORG_ITEMS: SettingsNavItem[] = ORG_SETTINGS_TABS.map((tab) => ({
+  id: `org-${tab.segment}`,
+  label: tab.label,
+  to: `/org/${tab.segment}`,
+  minRole: tab.minRole,
+}));
 
 export function OrgSettingsPage() {
   return (
     <SettingsShell
       title="Organization"
       items={ORG_ITEMS}
-      footer={{ id: "about", label: "About", to: "/org/about" }}
+      footer={{ id: "about", label: ORG_ABOUT_TAB.label, to: `/org/${ORG_ABOUT_TAB.segment}` }}
     />
   );
 }

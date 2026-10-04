@@ -128,9 +128,7 @@ export function WorkspaceInstructions({
               {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()}{" "}
               characters
             </span>
-          ) : (
-            "Saves when you click away."
-          )
+          ) : undefined
         }
       >
         <Textarea

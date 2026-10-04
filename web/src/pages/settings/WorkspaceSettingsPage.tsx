@@ -1,5 +1,6 @@
 import { useParams } from "react-router-dom";
 import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { WORKSPACE_SETTINGS_TABS } from "../../lib/settings-tabs";
 import { toSlug } from "../../lib/workspace-slug";
 import { type SettingsNavItem, SettingsShell } from "./SettingsShell";
 
@@ -19,25 +20,12 @@ export function WorkspaceSettingsPage() {
   const workspace = slug ? wsCtx.workspaces.find((w) => toSlug(w.id) === slug) : undefined;
   const base = `/w/${slug}/settings`;
 
-  const items: SettingsNavItem[] = [
-    { id: "ws-general", label: "General", to: `${base}/general`, minRole: "ws_member" },
-    { id: "ws-members", label: "Members", to: `${base}/members`, minRole: "ws_member" },
-    { id: "ws-connectors", label: "Connectors", to: `${base}/connectors`, minRole: "ws_member" },
-    { id: "ws-skills", label: "Skills", to: `${base}/skills`, minRole: "ws_member" },
-    { id: "ws-mcp", label: "MCP", to: `${base}/mcp`, minRole: "ws_member" },
-    // Admin-only in the NAV, and separately admin-only in the tool — a route
-    // decides what a connector does unasked, under its author's identity.
-    {
-      id: "ws-notifications",
-      label: "Notifications",
-      to: `${base}/notifications`,
-      minRole: "ws_admin",
-    },
-    // Admin-only in the NAV, and separately admin-only in the tool. The nav gate
-    // decides whether the tab is worth showing; the tool decides whether a URL is
-    // returned. A hidden tab is not a permission.
-    { id: "ws-webhooks", label: "Webhooks", to: `${base}/webhooks`, minRole: "ws_admin" },
-  ];
+  const items: SettingsNavItem[] = WORKSPACE_SETTINGS_TABS.map((tab) => ({
+    id: `ws-${tab.segment}`,
+    label: tab.label,
+    to: `${base}/${tab.segment}`,
+    minRole: tab.minRole,
+  }));
 
   return <SettingsShell title={workspace?.name ?? "Workspace"} items={items} />;
 }

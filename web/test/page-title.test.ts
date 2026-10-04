@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import { pageTitle } from "../src/lib/page-title";
+import { pageTitle, settingsLocation } from "../src/lib/page-title";
 import type { PlacementEntry } from "../src/types";
 
 const placement = (over: Partial<PlacementEntry>): PlacementEntry => ({
@@ -27,8 +27,9 @@ const PLACEMENTS = [
 describe("pageTitle", () => {
   test("the shell's own pages", () => {
     expect(pageTitle("/", PLACEMENTS)).toBe("Home");
-    expect(pageTitle("/profile/general", PLACEMENTS)).toBe("Profile");
-    expect(pageTitle("/org/workspaces", PLACEMENTS)).toBe("Organization");
+    expect(pageTitle("/profile/general", PLACEMENTS)).toBe("General");
+    expect(pageTitle("/org/workspaces", PLACEMENTS)).toBe("Workspaces");
+    expect(pageTitle("/org/about", PLACEMENTS)).toBe("About");
   });
 
   test("workspace pages, without the workspace's name", () => {
@@ -37,10 +38,32 @@ describe("pageTitle", () => {
     expect(pageTitle("/w/000f7ed6658f9d30/context/conv-1", PLACEMENTS)).toBe("Context");
   });
 
-  test("settings: the Connectors row's tab keeps its name; every other tab is Settings", () => {
+  test("a settings tab is named as its nav names it, deeper routes by their tab", () => {
+    expect(pageTitle("/w/000f7ed6658f9d30/settings/general", PLACEMENTS)).toBe("General");
+    expect(pageTitle("/w/000f7ed6658f9d30/settings/members", PLACEMENTS)).toBe("Members");
     expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors", PLACEMENTS)).toBe("Connectors");
     expect(pageTitle("/w/000f7ed6658f9d30/settings/connectors/browse", PLACEMENTS)).toBe("Connectors");
-    expect(pageTitle("/w/000f7ed6658f9d30/settings/general", PLACEMENTS)).toBe("Settings");
+  });
+
+  test("a settings tab follows a crumb back to its area's first tab", () => {
+    expect(settingsLocation("/w/000f7ed6658f9d30/settings/members")).toEqual({
+      crumbs: [{ label: "Settings", to: "/w/000f7ed6658f9d30/settings/general" }],
+      title: "Members",
+    });
+    expect(settingsLocation("/org/users")).toEqual({
+      crumbs: [{ label: "Organization", to: "/org/workspaces" }],
+      title: "Users",
+    });
+    expect(settingsLocation("/profile/skills")).toEqual({
+      crumbs: [{ label: "Profile", to: "/profile/general" }],
+      title: "Skills",
+    });
+    // An unknown tab names the area, with nothing to go back to.
+    expect(settingsLocation("/w/000f7ed6658f9d30/settings/gone")).toEqual({
+      crumbs: [],
+      title: "Settings",
+    });
+    expect(settingsLocation("/w/000f7ed6658f9d30/app/people")).toBeNull();
   });
 
   test("an app or identity view takes its sidebar label, falling back to its route", () => {

@@ -138,6 +138,19 @@ describe("TopBar", () => {
     expect(byTestId("top-bar-back")).toBeUndefined();
   });
 
+  test("a settings tab names itself after a Settings crumb that links to General", async () => {
+    await mountBar("/w/000f7ed6658f9d30/settings/members");
+    expect(byTestId("top-bar-title")?.textContent).toBe("Members");
+    const crumbs = Array.from(container.getElementsByTagName("a")).filter(
+      (el) => el.getAttribute("data-testid") === "top-bar-crumb",
+    );
+    expect(crumbs.map((c) => c.textContent)).toEqual(["Settings"]);
+    expect(crumbs[0].getAttribute("href")).toBe("/w/000f7ed6658f9d30/settings/general");
+    expect(byTestId("top-bar-back")?.getAttribute("href")).toBe(
+      "/w/000f7ed6658f9d30/settings/general",
+    );
+  });
+
   test("a trail one deep shows its label and no back control", async () => {
     await mountBar("/w/000f7ed6658f9d30/app/people");
     await act(async () =>
@@ -223,7 +236,7 @@ describe("TopBar", () => {
     container.remove();
 
     await mountBar("/profile/general");
-    expect(byTestId("top-bar-title")?.textContent).toBe("Profile");
+    expect(byTestId("top-bar-title")?.textContent).toBe("General");
     expect(byTestId("chat-chrome-open-button")).toBeUndefined();
   });
 
