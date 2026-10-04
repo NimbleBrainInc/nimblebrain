@@ -19,7 +19,14 @@ describe("task-forbidden identity tools", () => {
   // An unattended task run must not reach the task-authoring
   // surface — that is the persistence vector an injected prompt would exploit.
   it("bars every mutating and run-triggering tasks tool", () => {
-    for (const tool of ["tasks__create", "tasks__update", "tasks__delete", "tasks__run"]) {
+    // `tasks__assess` included: a run must not mark its own result passed.
+    for (const tool of [
+      "tasks__create",
+      "tasks__update",
+      "tasks__delete",
+      "tasks__run",
+      "tasks__assess",
+    ]) {
       expect(isTaskForbiddenIdentityTool(tool)).toBe(true);
     }
   });

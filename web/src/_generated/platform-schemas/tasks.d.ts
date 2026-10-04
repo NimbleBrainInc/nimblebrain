@@ -53,6 +53,21 @@ export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
         }>>;
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
         outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+        criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            id: import("@sinclair/typebox").TString;
+            rule: import("@sinclair/typebox").TString;
+            type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+            levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+            options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+            pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+        }>>>;
+        confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+        }>>;
+        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
         kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
     }>;
     body: import("@sinclair/typebox").TString;
@@ -90,6 +105,21 @@ export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
         }>>;
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
         outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
+        criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+            id: import("@sinclair/typebox").TString;
+            rule: import("@sinclair/typebox").TString;
+            type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+            levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+            options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+            pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+        }>>, import("@sinclair/typebox").TNull]>>;
+        confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>>;
+        judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+            server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+        }>, import("@sinclair/typebox").TNull]>>;
+        onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">, import("@sinclair/typebox").TNull]>>;
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
@@ -138,8 +168,31 @@ export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
         maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
     }>>;
+    criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+        id: import("@sinclair/typebox").TString;
+        rule: import("@sinclair/typebox").TString;
+        type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+        levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+        pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+    }>>>;
+    confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+    }>>;
+    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
 }>;
 export type TasksRunInput = Static<typeof TasksRunInput>;
+export declare const TasksAssessInput: import("@sinclair/typebox").TObject<{
+    runId: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pass" | "fail">>;
+    note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    reassess: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
+}>;
+export type TasksAssessInput = Static<typeof TasksAssessInput>;
 export declare const TasksCancelInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
 }>;
@@ -210,6 +263,66 @@ export interface TasksListOutput {
      */
     truncated?: string;
 }
+/** One acceptance criterion. Mirror of `Criterion`. */
+export interface TaskCriterion {
+    id: string;
+    rule: string;
+    type: "boolean" | "score" | "choice";
+    levels?: string[];
+    options?: string[];
+    pass?: boolean | number | string | string[];
+}
+/** Which judge answers a task's criteria. Mirror of `TaskJudge`. */
+export interface TaskJudgeSpec {
+    server?: string;
+    id?: string;
+    options?: Record<string, unknown>;
+}
+/** One criterion as judged and decided. Mirror of `CriterionResult`. */
+export interface TaskCriterionResult {
+    id: string;
+    answer: boolean | number | string;
+    passed: boolean;
+    confidence: number;
+    probabilities?: Record<string, number>;
+    rationale?: string;
+}
+/** A person's verdict on a run. Mirror of `HumanVerdict`. */
+export interface TaskHumanVerdict {
+    verdict: "pass" | "fail";
+    note?: string;
+    by: string;
+    via: "ui" | "remote";
+    at: string;
+}
+/** Whether a run's deliverable is acceptable. Mirror of `RunAssessment`. */
+export interface TaskRunAssessment {
+    verdict: "pass" | "fail" | "uncertain" | "not_assessed";
+    reason?: string;
+    schema?: {
+        valid: boolean;
+        errors?: string[];
+    };
+    criteria?: TaskCriterionResult[];
+    judge?: {
+        server: string;
+        id: string;
+        version?: string;
+        calibrated: boolean;
+    };
+    usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        costUsd?: number;
+    };
+    stateTruncated?: boolean;
+    assessedAt: string;
+    human?: TaskHumanVerdict;
+}
+/** How a run ended (ADR-0045), derived from its record. Mirror of `RunExecution`. */
+export type TaskRunExecution = "queued" | "running" | "skipped" | "completed" | "incomplete" | "failed" | "cancelled";
+/** The one label a run reads as, derived and never stored. Mirror of `RunLabel`. */
+export type TaskRunLabel = "Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled" | "Queued" | "Running";
 /**
  * Structural mirror of a single TaskRun record as returned by
  * the handlers. Kept in sync with `TaskRun` in
@@ -241,7 +354,23 @@ export interface TaskRunRecord {
     outputSchemaValid?: boolean;
     /** Why the deliverable did not match the outputSchema. */
     outputSchemaErrors?: string[];
+    /** Tools whose failed calls no later call made good. */
+    unrecoveredToolFailures?: string[];
+    /** Whether the deliverable is acceptable; absent until assessed. */
+    assessment?: TaskRunAssessment;
+    /** The run this one retries. */
+    retryOf?: string;
 }
+/**
+ * A run record as the run surfaces return it (`tasks__runs`,
+ * `tasks__status`, `tasks__run`, `tasks__assess`): the stored record plus
+ * its derived execution and label, which are computed on read and never
+ * stored.
+ */
+export type TaskRunView = TaskRunRecord & {
+    execution: TaskRunExecution;
+    label: TaskRunLabel;
+};
 /**
  * One tool call from a run's activity log. Mirror of `RunToolCall` in
  * `platform/tasks/types.ts` (kept here to avoid a cross-tree import;
@@ -281,6 +410,12 @@ export interface TasksRunResultOutput {
     stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
     /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
     structured?: unknown;
+    /** How the run ended, from its record; absent when the record was not found. */
+    execution?: TaskRunExecution;
+    /** The label the run reads as, from its record; absent when the record was not found. */
+    label?: TaskRunLabel;
+    /** The run's assessment, from its record. */
+    assessment?: TaskRunAssessment;
 }
 /**
  * Token budget block on a stored task. Mirror of the
@@ -335,6 +470,10 @@ export interface TaskStatusDetail {
     allowedTools?: string[];
     inputSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
+    criteria?: TaskCriterion[];
+    confidenceThreshold?: number;
+    judge?: TaskJudgeSpec;
+    onPoorResult?: "record" | "notify" | "retry_once";
     maxIterations?: number;
     maxInputTokens?: number;
     maxRunDurationMs?: number;
@@ -360,10 +499,10 @@ export interface TaskStatusDetail {
 }
 export interface TasksStatusOutput {
     task: TaskStatusDetail;
-    recentRuns: TaskRunRecord[];
+    recentRuns: TaskRunView[];
 }
 export interface TasksRunsOutput {
-    runs: TaskRunRecord[];
+    runs: TaskRunView[];
     total: number;
     /**
      * Pass as `before` for the next older page of one task's history;
@@ -409,7 +548,7 @@ export interface TasksRunsOutput {
  * caused the production CLI crash this type prevents.
  */
 export type TasksRunOutput = {
-    run: TaskRunRecord;
+    run: TaskRunView;
     enabled: boolean;
     message?: string;
 } | {
@@ -431,6 +570,11 @@ export type TasksRunOutput = {
     enabled: boolean;
     message: string;
 };
+/** `tasks__assess`: the run's record with its new assessment, as it now reads. */
+export interface TasksAssessOutput {
+    run: TaskRunView;
+    message: string;
+}
 export interface TasksCancelOutput {
     cancelled: boolean;
     id: string;
@@ -453,6 +597,10 @@ export interface TaskRecord {
     allowedTools?: string[];
     inputSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
+    criteria?: TaskCriterion[];
+    confidenceThreshold?: number;
+    judge?: TaskJudgeSpec;
+    onPoorResult?: "record" | "notify" | "retry_once";
     maxIterations?: number;
     maxInputTokens?: number;
     maxRunDurationMs?: number;

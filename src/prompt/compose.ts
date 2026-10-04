@@ -26,7 +26,8 @@ export type ContainmentTag =
   | "connector-skill"
   | "activated-skill"
   | "skill-instructions"
-  | "run-input";
+  | "run-input"
+  | "judge-feedback";
 
 /**
  * Wrap untrusted `body` in `<tag>…</tag>`, neutralising every closing form of

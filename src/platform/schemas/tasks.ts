@@ -147,6 +147,105 @@ const OutputSchemaField = jsonSchemaField(
     "record says whether it matched (`outputSchemaValid`, `outputSchemaErrors`).",
 );
 
+// ── Acceptance criteria and the judge ────────────────────────────────────
+//
+// Bounds mirror the judge tool contract (1 to 50 criteria, id pattern, rule
+// length, 2 to 10 levels, 2 to 255 options), enforced again with the
+// cross-field rules a schema cannot state by `validateAssessmentFields` in
+// src/platform/tasks/assessment.ts.
+
+const Criterion = Type.Object(
+  {
+    id: Type.String({
+      pattern: "^[A-Za-z0-9_.-]{1,64}$",
+      description: "Unique within the task; names the criterion in the assessment.",
+    }),
+    rule: Type.String({
+      minLength: 1,
+      maxLength: 4000,
+      description:
+        'The rule, in plain language, e.g. "Every claim cites a source fetched during this run." ' +
+        "A rule can name the run's `input`, `deliverable`, or `activity` (its tool calls).",
+    }),
+    type: StringEnum(["boolean", "score", "choice"] as const, {
+      description:
+        "boolean: is the rule true. score: which of the ordered `levels` holds. choice: which of " +
+        "the `options` holds.",
+    }),
+    levels: Type.Optional(
+      Type.Array(Type.String(), {
+        minItems: 2,
+        maxItems: 10,
+        description: "score only: the levels, lowest first.",
+      }),
+    ),
+    options: Type.Optional(
+      Type.Array(Type.String(), {
+        minItems: 2,
+        maxItems: 255,
+        description: "choice only: the distinct options.",
+      }),
+    ),
+    pass: Type.Optional(
+      Type.Union([Type.Boolean(), Type.Integer(), Type.String(), Type.Array(Type.String())], {
+        description:
+          "What passes. boolean: true (default) or false. score: the lowest passing level index " +
+          "(default: the upper half of the levels). choice: the passing option or options " +
+          "(required).",
+      }),
+    ),
+  },
+  { required: ["id", "rule", "type"] },
+);
+
+const CriteriaField = Type.Array(Criterion, {
+  minItems: 1,
+  maxItems: 50,
+  description:
+    "Acceptance criteria. After each run that leaves a deliverable, a judge server the " +
+    "workspace connected answers every criterion (the deliverable, the input, and a summary " +
+    "of the tool calls are sent to it), and the run is recorded pass, fail, or uncertain. " +
+    "Without a connected judge server the run is not assessed.",
+});
+
+const ConfidenceThresholdField = Type.Number({
+  minimum: 0,
+  maximum: 1,
+  description:
+    "Judge confidence below which a run whose criteria all passed is `uncertain` rather than " +
+    "`pass`. Default 0.7.",
+});
+
+const JudgeField = Type.Object(
+  {
+    server: Type.Optional(
+      Type.String({
+        description:
+          "The connected judge server to use. Needed only when the workspace has more than one.",
+      }),
+    ),
+    id: Type.Optional(
+      Type.String({ description: "A judge from that server's list_judges. Default: its default." }),
+    ),
+    options: Type.Optional(
+      Type.Unsafe<Record<string, unknown>>({
+        type: "object",
+        properties: {},
+        additionalProperties: true,
+        description: "That judge's settings (its options_schema). Needs `id`.",
+      }),
+    ),
+  },
+  { description: "Which judge answers the criteria. Omit to use the one connected judge server." },
+);
+
+const OnPoorResultField = StringEnum(["record", "notify", "retry_once"] as const, {
+  description:
+    "What a `fail` assessment does. record: nothing more. notify (default): a notification in " +
+    "the workspace inbox naming the task and the failed criteria. retry_once: run again once, " +
+    "with the failed criteria as guidance.",
+});
+
 // Manifest fields shared by create + update. `name` is required for create
 // (rebuilt with explicit required); update uses the same fields minus name
 // (renames are not patchable; the kebab-case id would drift).
@@ -219,6 +318,10 @@ const ManifestFields = {
   tokenBudget: Type.Optional(TokenBudget),
   inputSchema: Type.Optional(InputSchemaField),
   outputSchema: Type.Optional(OutputSchemaField),
+  criteria: Type.Optional(CriteriaField),
+  confidenceThreshold: Type.Optional(ConfidenceThresholdField),
+  judge: Type.Optional(JudgeField),
+  onPoorResult: Type.Optional(OnPoorResultField),
   kind: Type.Optional(
     StringEnum(["saved", "oneoff"] as const, {
       description:
@@ -257,6 +360,26 @@ const UpdateManifestFields = {
   outputSchema: Type.Optional(
     Type.Union([OutputSchemaField, Type.Null()], {
       description: "New output schema, or null to remove it so the deliverable is not checked.",
+    }),
+  ),
+  criteria: Type.Optional(
+    Type.Union([CriteriaField, Type.Null()], {
+      description: "New acceptance criteria (the whole list), or null to remove them.",
+    }),
+  ),
+  confidenceThreshold: Type.Optional(
+    Type.Union([ConfidenceThresholdField, Type.Null()], {
+      description: "New confidence threshold, or null for the default (0.7).",
+    }),
+  ),
+  judge: Type.Optional(
+    Type.Union([JudgeField, Type.Null()], {
+      description: "Which judge to use, or null to use the one connected judge server.",
+    }),
+  ),
+  onPoorResult: Type.Optional(
+    Type.Union([OnPoorResultField, Type.Null()], {
+      description: "What a fail assessment does, or null for the default (notify).",
     }),
   ),
 };
@@ -422,8 +545,42 @@ export const TasksRunInput = Type.Object({
     ),
   ),
   budget: Type.Optional(TokenBudget),
+  criteria: Type.Optional(CriteriaField),
+  confidenceThreshold: Type.Optional(ConfidenceThresholdField),
+  judge: Type.Optional(JudgeField),
+  onPoorResult: Type.Optional(OnPoorResultField),
 });
 export type TasksRunInput = Static<typeof TasksRunInput>;
+
+export const TasksAssessInput = Type.Object(
+  {
+    runId: Type.String({ description: "The run to assess." }),
+    name: Type.Optional(
+      Type.String({
+        description:
+          "Name of the run's task. Optional: a run is found among your tasks by its id alone.",
+      }),
+    ),
+    verdict: Type.Optional(
+      StringEnum(["pass", "fail"] as const, {
+        description:
+          "Your verdict on the run's deliverable. It replaces the judge's in how the run reads.",
+      }),
+    ),
+    note: Type.Optional(
+      Type.String({ maxLength: 2000, description: "Why, in a sentence or two (with `verdict`)." }),
+    ),
+    reassess: Type.Optional(
+      Type.Boolean({
+        description:
+          "true: judge the run again with the task's current schema and criteria (after editing " +
+          "them). Give this or `verdict`, not both.",
+      }),
+    ),
+  },
+  { required: ["runId"] },
+);
+export type TasksAssessInput = Static<typeof TasksAssessInput>;
 
 export const TasksCancelInput = Type.Object(
   { name: Type.String({ description: "Name of the task to cancel." }) },
@@ -540,6 +697,76 @@ export interface TasksListOutput {
   truncated?: string;
 }
 
+/** One acceptance criterion. Mirror of `Criterion`. */
+export interface TaskCriterion {
+  id: string;
+  rule: string;
+  type: "boolean" | "score" | "choice";
+  levels?: string[];
+  options?: string[];
+  pass?: boolean | number | string | string[];
+}
+
+/** Which judge answers a task's criteria. Mirror of `TaskJudge`. */
+export interface TaskJudgeSpec {
+  server?: string;
+  id?: string;
+  options?: Record<string, unknown>;
+}
+
+/** One criterion as judged and decided. Mirror of `CriterionResult`. */
+export interface TaskCriterionResult {
+  id: string;
+  answer: boolean | number | string;
+  passed: boolean;
+  confidence: number;
+  probabilities?: Record<string, number>;
+  rationale?: string;
+}
+
+/** A person's verdict on a run. Mirror of `HumanVerdict`. */
+export interface TaskHumanVerdict {
+  verdict: "pass" | "fail";
+  note?: string;
+  by: string;
+  via: "ui" | "remote";
+  at: string;
+}
+
+/** Whether a run's deliverable is acceptable. Mirror of `RunAssessment`. */
+export interface TaskRunAssessment {
+  verdict: "pass" | "fail" | "uncertain" | "not_assessed";
+  reason?: string;
+  schema?: { valid: boolean; errors?: string[] };
+  criteria?: TaskCriterionResult[];
+  judge?: { server: string; id: string; version?: string; calibrated: boolean };
+  usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  stateTruncated?: boolean;
+  assessedAt: string;
+  human?: TaskHumanVerdict;
+}
+
+/** How a run ended (ADR-0045), derived from its record. Mirror of `RunExecution`. */
+export type TaskRunExecution =
+  | "queued"
+  | "running"
+  | "skipped"
+  | "completed"
+  | "incomplete"
+  | "failed"
+  | "cancelled";
+
+/** The one label a run reads as, derived and never stored. Mirror of `RunLabel`. */
+export type TaskRunLabel =
+  | "Succeeded"
+  | "Poor result"
+  | "Needs review"
+  | "Failed"
+  | "Skipped"
+  | "Cancelled"
+  | "Queued"
+  | "Running";
+
 /**
  * Structural mirror of a single TaskRun record as returned by
  * the handlers. Kept in sync with `TaskRun` in
@@ -587,7 +814,24 @@ export interface TaskRunRecord {
   outputSchemaValid?: boolean;
   /** Why the deliverable did not match the outputSchema. */
   outputSchemaErrors?: string[];
+  /** Tools whose failed calls no later call made good. */
+  unrecoveredToolFailures?: string[];
+  /** Whether the deliverable is acceptable; absent until assessed. */
+  assessment?: TaskRunAssessment;
+  /** The run this one retries. */
+  retryOf?: string;
 }
+
+/**
+ * A run record as the run surfaces return it (`tasks__runs`,
+ * `tasks__status`, `tasks__run`, `tasks__assess`): the stored record plus
+ * its derived execution and label, which are computed on read and never
+ * stored.
+ */
+export type TaskRunView = TaskRunRecord & {
+  execution: TaskRunExecution;
+  label: TaskRunLabel;
+};
 
 /**
  * One tool call from a run's activity log. Mirror of `RunToolCall` in
@@ -634,6 +878,12 @@ export interface TasksRunResultOutput {
     | "other";
   /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
   structured?: unknown;
+  /** How the run ended, from its record; absent when the record was not found. */
+  execution?: TaskRunExecution;
+  /** The label the run reads as, from its record; absent when the record was not found. */
+  label?: TaskRunLabel;
+  /** The run's assessment, from its record. */
+  assessment?: TaskRunAssessment;
 }
 
 /**
@@ -692,6 +942,10 @@ export interface TaskStatusDetail {
   allowedTools?: string[];
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  criteria?: TaskCriterion[];
+  confidenceThreshold?: number;
+  judge?: TaskJudgeSpec;
+  onPoorResult?: "record" | "notify" | "retry_once";
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;
@@ -718,11 +972,11 @@ export interface TaskStatusDetail {
 
 export interface TasksStatusOutput {
   task: TaskStatusDetail;
-  recentRuns: TaskRunRecord[];
+  recentRuns: TaskRunView[];
 }
 
 export interface TasksRunsOutput {
-  runs: TaskRunRecord[];
+  runs: TaskRunView[];
   total: number;
   /**
    * Pass as `before` for the next older page of one task's history;
@@ -769,7 +1023,7 @@ export interface TasksRunsOutput {
  * caused the production CLI crash this type prevents.
  */
 export type TasksRunOutput =
-  | { run: TaskRunRecord; enabled: boolean; message?: string }
+  | { run: TaskRunView; enabled: boolean; message?: string }
   | {
       status: "dispatched";
       taskId: string;
@@ -790,6 +1044,12 @@ export type TasksRunOutput =
       enabled: boolean;
       message: string;
     };
+
+/** `tasks__assess`: the run's record with its new assessment, as it now reads. */
+export interface TasksAssessOutput {
+  run: TaskRunView;
+  message: string;
+}
 
 export interface TasksCancelOutput {
   cancelled: boolean;
@@ -814,6 +1074,10 @@ export interface TaskRecord {
   allowedTools?: string[];
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  criteria?: TaskCriterion[];
+  confidenceThreshold?: number;
+  judge?: TaskJudgeSpec;
+  onPoorResult?: "record" | "notify" | "retry_once";
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;

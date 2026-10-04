@@ -9,6 +9,7 @@
  */
 
 import {
+  TasksAssessInput,
   TasksCancelInput,
   TasksCreateInput,
   TasksDeleteInput,
@@ -70,7 +71,9 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: "runs",
     description:
-      "Query run history across tasks with filters. History is kept indefinitely: for " +
+      "Query run history across tasks with filters. Each run carries its `execution` (how it " +
+      "ended), its `assessment` when judged, and the `label` it reads as (Succeeded, Poor " +
+      "result, Needs review, Failed, ...). History is kept indefinitely: for " +
       "one task, pass the response's `nextBefore` back as `before` to page further back.",
     inputSchema: TasksRunsInput,
   },
@@ -89,8 +92,8 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     name: "run",
     description:
       "Run a task now, bypassing schedule and backoff: a saved one by `name`, or an " +
-      "inline one-off from `prompt` (or `skill`) plus optional schemas, tools, limits, and " +
-      "budget, which creates a `oneoff` task with no schedule and runs it once. `input` " +
+      "inline one-off from `prompt` (or `skill`) plus optional schemas, criteria, tools, " +
+      "limits, and budget, which creates a `oneoff` task with no schedule and runs it once. `input` " +
       "is JSON for the run, checked against the task's inputSchema and given to the run " +
       "as data. `idempotencyKey` makes the call safe to repeat: a repeat returns the run the " +
       "first call started. Runs a disabled task too (enabled: false): Run now is a " +
@@ -102,6 +105,16 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
       "when it ends, or stop it with tasks__cancel. Only an error response means the run " +
       "did not start.",
     inputSchema: TasksRunInput,
+  },
+  {
+    name: "assess",
+    description:
+      "Set your verdict on a run's deliverable ({runId, verdict: 'pass'|'fail', note?}), or " +
+      "judge it again with the task's current schema and criteria ({runId, reassess: true}). " +
+      "Your verdict is recorded beside the judge's and replaces it in how the run reads " +
+      "(its `label`). Only a run that left a deliverable has an assessment. A run is found by " +
+      "its id among your tasks; pass `name` too for an older run.",
+    inputSchema: TasksAssessInput,
   },
   {
     name: "cancel",

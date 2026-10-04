@@ -163,6 +163,21 @@ export declare const PlatformToolCatalog: {
                     }>>;
                     inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
                     outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                    criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                        id: import("@sinclair/typebox").TString;
+                        rule: import("@sinclair/typebox").TString;
+                        type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+                        levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                        pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+                    }>>>;
+                    confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                    judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                        server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                    }>>;
+                    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
                     kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
                 }>;
                 body: import("@sinclair/typebox").TString;
@@ -201,6 +216,21 @@ export declare const PlatformToolCatalog: {
                     }>>;
                     inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
                     outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
+                    criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                        id: import("@sinclair/typebox").TString;
+                        rule: import("@sinclair/typebox").TString;
+                        type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+                        levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                        pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+                    }>>, import("@sinclair/typebox").TNull]>>;
+                    confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TNumber, import("@sinclair/typebox").TNull]>>;
+                    judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+                        server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                    }>, import("@sinclair/typebox").TNull]>>;
+                    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">, import("@sinclair/typebox").TNull]>>;
                 }>>;
                 body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             }>;
@@ -254,11 +284,35 @@ export declare const PlatformToolCatalog: {
                     maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
                     period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
                 }>>;
+                criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                    id: import("@sinclair/typebox").TString;
+                    rule: import("@sinclair/typebox").TString;
+                    type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+                    levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                    options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                    pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+                }>>>;
+                confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+                judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                    server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                    options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+                }>>;
+                onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
             }>;
         };
         readonly cancel: {
             readonly input: import("@sinclair/typebox").TObject<{
                 name: import("@sinclair/typebox").TString;
+            }>;
+        };
+        readonly assess: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                runId: import("@sinclair/typebox").TString;
+                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pass" | "fail">>;
+                note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                reassess: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
             }>;
         };
     };

@@ -97,6 +97,15 @@ export interface RequestContext {
    * is not (see that module's trust-boundary note).
    */
   unattended?: boolean;
+  /**
+   * True when the call came from the first-party web shell: its REST
+   * `tools/call`, or an app view's `/mcp` call under a first-party credential
+   * (`isAppCall`). Set by those two doors only, never from caller input, and
+   * read as attribution (a person's verdict on a task run records `via: "ui"`),
+   * never as authority: under a provider that marks every credential
+   * first-party (`oidc`, `dev`) an external client can claim to be a view.
+   */
+  shellCall?: boolean;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

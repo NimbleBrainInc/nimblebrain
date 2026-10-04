@@ -47,6 +47,7 @@ export const PlatformToolCatalog = {
     runs: { input: Tasks.TasksRunsInput },
     run: { input: Tasks.TasksRunInput },
     cancel: { input: Tasks.TasksCancelInput },
+    assess: { input: Tasks.TasksAssessInput },
   },
   conversations: {
     list: { input: Conversations.ConversationsListInput },

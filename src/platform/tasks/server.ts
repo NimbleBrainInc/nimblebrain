@@ -18,6 +18,7 @@ import { MAX_ITERATIONS, TASKS_LIST_DEFAULT_LIMIT, TASKS_LIST_MAX_LIMIT } from "
 import type {
   TaskEffectiveLimits,
   TaskSummary,
+  TasksAssessOutput,
   TasksCancelOutput,
   TasksCreateOutput,
   TasksDeleteOutput,
@@ -28,22 +29,32 @@ import type {
   TasksStatusOutput,
   TasksUpdateOutput,
 } from "../schemas/tasks.ts";
+import {
+  executionOf,
+  isAssessable,
+  labelOf,
+  toRunView,
+  validateAssessmentFields,
+} from "./assessment.ts";
 import { createTask, deleteTask, updateTask } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
 import { assertJsonSchema, checkAgainstSchema } from "./json-schema.ts";
 import { isOpenRun, type RequestedRun, type RunNowTicket } from "./scheduler.ts";
 import type { ReadRunsOptions, RunsPage } from "./store.ts";
 import {
+  type Criterion,
   DEFAULT_EVENT_DEBOUNCE_MS,
   DEFAULT_EVENT_MAX_FIRES_PER_HOUR,
   isEventSchedule,
   kindOf,
   MAX_EVENT_DEBOUNCE_MS,
   MAX_EVENT_MAX_FIRES_PER_HOUR,
+  type OnPoorResult,
   onceRetirement,
   type RunTicket,
   type ScheduleSpec,
   type Task,
+  type TaskJudge,
   type TaskKind,
   type TaskRun,
   type TaskRunResult,
@@ -357,6 +368,22 @@ export interface ToolContext {
   readAllRuns: (opts?: ReadRunsOptions) => TaskRun[];
   /** Read one run's full result sidecar (the deliverable). */
   readRunResult: (taskId: string, runId: string) => TaskRunResult | null;
+  /** One run's record by id, hot or archived; null when it has none. */
+  findRun?: (taskId: string, runId: string) => TaskRun | null;
+  /** Rewrite one run's record (its index line and ticket); null when it has none. */
+  updateRun?: (taskId: string, runId: string, update: (run: TaskRun) => TaskRun) => TaskRun | null;
+  /**
+   * Judge a run again with its task's current schema and criteria, and
+   * record the new assessment (keeping a person's verdict). Null when the run
+   * has no record. Absent where no judge port is wired.
+   */
+  reassessRun?: (task: Task, run: TaskRun) => Promise<TaskRun | null>;
+  /**
+   * Where the call in scope came from: `ui` for the first-party web shell
+   * (its REST tool call, or an app view's `/mcp` call), `remote` for any other
+   * caller. Attribution only.
+   */
+  callerVia?: () => "ui" | "remote";
   defaultTimezone: string;
   /**
    * The caps a run of a task executes under, for create and update to
@@ -397,11 +424,16 @@ export interface ValidatableTaskFields {
   /** `null` is an update's clear: nothing to validate. */
   inputSchema?: Record<string, unknown> | null;
   outputSchema?: Record<string, unknown> | null;
+  criteria?: Criterion[] | null;
+  confidenceThreshold?: number | null;
+  judge?: TaskJudge | null;
+  onPoorResult?: OnPoorResult | null;
 }
 
 export function validateTaskFields(args: ValidatableTaskFields): void {
   if (args.schedule) validateSchedule(args.schedule);
   validateNumericLimits(args);
+  validateAssessmentFields(args);
   if (args.inputSchema != null) assertJsonSchema(args.inputSchema, "inputSchema");
   if (args.outputSchema != null) assertJsonSchema(args.outputSchema, "outputSchema");
   // The executor refuses to run such a task; refusing it here tells the
@@ -571,6 +603,10 @@ interface CreateInput {
     kind?: TaskKind;
     inputSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
+    criteria?: Criterion[];
+    confidenceThreshold?: number;
+    judge?: TaskJudge;
+    onPoorResult?: OnPoorResult;
   };
   body: string;
 }
@@ -597,6 +633,10 @@ export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): T
       kind: manifest.kind,
       inputSchema: manifest.inputSchema,
       outputSchema: manifest.outputSchema,
+      criteria: manifest.criteria,
+      confidenceThreshold: manifest.confidenceThreshold,
+      judge: manifest.judge,
+      onPoorResult: manifest.onPoorResult,
       // LLM-facing path: stamp `agent` source and derive ownership from
       // request context.
       source: "agent",
@@ -632,7 +672,18 @@ function withEffectiveLimits<T extends { task: Task; message: string }>(
 interface UpdateInput {
   name: string;
   manifest?: Partial<
-    Omit<CreateInput["manifest"], "name" | "schedule" | "kind" | "inputSchema" | "outputSchema">
+    Omit<
+      CreateInput["manifest"],
+      | "name"
+      | "schedule"
+      | "kind"
+      | "inputSchema"
+      | "outputSchema"
+      | "criteria"
+      | "confidenceThreshold"
+      | "judge"
+      | "onPoorResult"
+    >
   > & {
     /** `null` clears it: nothing fires the task unattended. */
     schedule?: ScheduleSpec | null;
@@ -640,6 +691,14 @@ interface UpdateInput {
     inputSchema?: Record<string, unknown> | null;
     /** `null` clears it: the deliverable is not checked. */
     outputSchema?: Record<string, unknown> | null;
+    /** `null` clears them: runs are not judged. */
+    criteria?: Criterion[] | null;
+    /** `null` clears it: the default threshold applies. */
+    confidenceThreshold?: number | null;
+    /** `null` clears it: the one connected judge server is used. */
+    judge?: TaskJudge | null;
+    /** `null` clears it: the default policy applies. */
+    onPoorResult?: OnPoorResult | null;
   };
   body?: string;
 }
@@ -802,7 +861,7 @@ export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): T
       estimatedCostPerDay: cost.perDayUsd,
       estimatedCostPerMonth: cost.perMonthUsd,
     },
-    recentRuns: runs,
+    recentRuns: runs.map(toRunView),
   };
 }
 
@@ -822,14 +881,14 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Tas
   if (taskId) {
     const page = ctx.readRunsPage(taskId, { limit, status, since, before });
     return {
-      runs: page.runs,
+      runs: page.runs.map(toRunView),
       total: page.runs.length,
       ...(page.nextBefore ? { nextBefore: page.nextBefore } : {}),
     };
   }
 
   const runs = ctx.readAllRuns({ limit, status, since, before });
-  return { runs, total: runs.length };
+  return { runs: runs.map(toRunView), total: runs.length };
 }
 
 /**
@@ -866,7 +925,7 @@ export function handleRunResult(
         `Run "${runId}" ended without a result (${ticket.run.status}${ticket.run.error ? `: ${ticket.run.error}` : ""}).`,
       );
     }
-    return result;
+    return withRunOutcome(result, ticket.run);
   }
 
   const defs = ctx.definitions();
@@ -879,7 +938,18 @@ export function handleRunResult(
   if (!result) {
     throw new Error(`Run result not found: "${runId}" for task "${name}".`);
   }
-  return result;
+  return withRunOutcome(result, ctx.findRun?.(task.id, runId) ?? null);
+}
+
+/** A run's result with the outcome its record says: execution, label, and assessment. */
+function withRunOutcome(result: TaskRunResult, run: TaskRun | null): TasksRunResultOutput {
+  if (!run) return result;
+  return {
+    ...result,
+    execution: executionOf(run),
+    label: labelOf(run),
+    ...(run.assessment ? { assessment: run.assessment } : {}),
+  };
 }
 
 /**
@@ -911,6 +981,10 @@ interface InlineDefinition {
   allowedTools?: string[];
   limits?: { maxIterations?: number; maxInputTokens?: number; maxRunDurationMs?: number };
   budget?: TokenBudget;
+  criteria?: Criterion[];
+  confidenceThreshold?: number;
+  judge?: TaskJudge;
+  onPoorResult?: OnPoorResult;
 }
 
 /** The fields of `tasks__run` that make it an inline one-off. */
@@ -922,6 +996,10 @@ const INLINE_FIELDS = [
   "allowedTools",
   "limits",
   "budget",
+  "criteria",
+  "confidenceThreshold",
+  "judge",
+  "onPoorResult",
 ] as const;
 
 /** `tasks__run`'s arguments, already shape-checked by the tool's input schema. */
@@ -971,6 +1049,10 @@ const ONEOFF_DEFINITION_FIELDS = [
   "maxInputTokens",
   "maxRunDurationMs",
   "tokenBudget",
+  "criteria",
+  "confidenceThreshold",
+  "judge",
+  "onPoorResult",
 ] as const;
 
 /** JSON with object keys sorted and undefined dropped, so equal definitions compare equal. */
@@ -994,6 +1076,20 @@ function oneoffDefinition(
   return canonicalJson(Object.fromEntries(ONEOFF_DEFINITION_FIELDS.map((f) => [f, source[f]])));
 }
 
+/** The assessment fields an inline definition sets, and only those. */
+function assessmentDefinition(
+  args: InlineDefinition,
+): Pick<InlineDefinition, "criteria" | "confidenceThreshold" | "judge" | "onPoorResult"> {
+  return {
+    ...(args.criteria ? { criteria: args.criteria } : {}),
+    ...(args.confidenceThreshold !== undefined
+      ? { confidenceThreshold: args.confidenceThreshold }
+      : {}),
+    ...(args.judge ? { judge: args.judge } : {}),
+    ...(args.onPoorResult ? { onPoorResult: args.onPoorResult } : {}),
+  };
+}
+
 /**
  * Find or create the `oneoff` task an inline `tasks__run` names.
  * The definition and the run's input are checked before anything is written,
@@ -1014,6 +1110,7 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Task {
     ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
     ...(args.inputSchema ? { inputSchema: args.inputSchema } : {}),
     ...(args.outputSchema ? { outputSchema: args.outputSchema } : {}),
+    ...assessmentDefinition(args),
   });
   const id = oneoffId(args.idempotencyKey);
   const prompt =
@@ -1027,6 +1124,7 @@ function ensureOneoff(args: RunArgs, ctx: ToolContext): Task {
     ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
     ...limits,
     ...(args.budget ? { tokenBudget: args.budget } : {}),
+    ...assessmentDefinition(args),
   };
 
   checkRunInput(id, args.inputSchema, args.input);
@@ -1152,7 +1250,7 @@ function existingRunAnswer(task: Task, ticket: RunTicket, ctx: ToolContext): Tas
   const same = "An earlier call with this idempotencyKey already started this run";
   const { run } = ticket;
   if (!isOpenRun(run)) {
-    return { run, enabled, message: `${same}; this is its record.` };
+    return { run: toRunView(run), enabled, message: `${same}; this is its record.` };
   }
   const where =
     `Its record appears in tasks__runs (taskId "${task.id}") when it ends; ` +
@@ -1192,7 +1290,7 @@ export async function handleRun(
   if (ticket.state === "refused") {
     const { enabled } = disabledState(ctx, name, task);
     return {
-      run: ticket.run,
+      run: toRunView(ticket.run),
       enabled,
       message: `"${name}" did not run: ${ticket.run.error ?? "the scheduler refused it"}`,
     };
@@ -1276,8 +1374,8 @@ export async function handleRun(
   }
 
   return disabledNote
-    ? { run: outcome, enabled, message: disabledNote.trim() }
-    : { run: outcome, enabled };
+    ? { run: toRunView(outcome), enabled, message: disabledNote.trim() }
+    : { run: toRunView(outcome), enabled };
 }
 
 /**
@@ -1320,6 +1418,118 @@ export function handleCancel(args: Record<string, unknown>, ctx: ToolContext): T
     message: cancelled
       ? `Task "${name}" run cancelled.`
       : `Task "${name}" has no running or queued run to cancel.`,
+  };
+}
+
+/** `tasks__assess`'s arguments, already shape-checked by its input schema. */
+interface AssessInput {
+  runId: string;
+  name?: string;
+  verdict?: "pass" | "fail";
+  note?: string;
+  reassess?: boolean;
+}
+
+/**
+ * One of the caller's runs by id, with its task: through the task named, the
+ * run's ticket, or the hot run index of each of the caller's tasks.
+ */
+function findOwnRun(
+  ctx: ToolContext,
+  runId: string,
+  name: string | undefined,
+): { task: Task; run: TaskRun } {
+  const defs = ctx.definitions();
+  if (name) {
+    const task = findByName(defs, name);
+    if (!task) throw new Error(`Task not found: "${name}"`);
+    const run = ctx.findRun?.(task.id, runId) ?? null;
+    if (!run) throw new Error(`Run not found: "${runId}" for task "${name}".`);
+    return { task, run };
+  }
+  const ticket = ctx.readRunTicket?.(runId);
+  const ticketTask = ticket ? defs.get(ticket.taskId) : undefined;
+  if (ticket && ticketTask) {
+    return { task: ticketTask, run: ctx.findRun?.(ticketTask.id, runId) ?? ticket.run };
+  }
+  for (const task of defs.values()) {
+    const run = ctx.readRuns(task.id).find((r) => r.id === runId);
+    if (run) return { task, run };
+  }
+  throw new Error(`Run not found: "${runId}". Pass the task's name too for an older run.`);
+}
+
+/**
+ * Set a person's verdict on a run, or judge it again. A person's verdict is
+ * recorded beside the judge's (`assessment.human`) and replaces it in how the
+ * run reads; a re-assessment replaces the judge's part and keeps a person's.
+ * Only a run that left a deliverable has an assessment to set.
+ */
+export async function handleAssess(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<TasksAssessOutput> {
+  const { runId, name, verdict, note, reassess } = args as unknown as AssessInput;
+  if ((verdict === undefined) === (reassess !== true)) {
+    throw new Error("Give `verdict` (pass or fail) or `reassess: true`: one of the two.");
+  }
+  if (note !== undefined && verdict === undefined) {
+    throw new Error("`note` goes with a `verdict`.");
+  }
+  const { task, run } = findOwnRun(ctx, runId, name);
+  if (!isAssessable(run)) {
+    throw new Error(
+      `Run "${runId}" left no deliverable to assess (it ${executionOf(run)}); only a run that ` +
+        "completed, or stopped at a limit with a partial deliverable, has an assessment.",
+    );
+  }
+
+  if (reassess) {
+    if (!ctx.reassessRun) throw new Error("Re-assessment is not available in this runtime.");
+    const updated = await ctx.reassessRun(task, run);
+    if (!updated?.assessment) throw new Error(`Run "${runId}" could not be re-assessed.`);
+    const { verdict: judged, reason } = updated.assessment;
+    return {
+      run: toRunView(updated),
+      message: `Run "${runId}" re-assessed: ${judged}${reason ? ` (${reason})` : ""}.`,
+    };
+  }
+
+  return setHumanVerdict(ctx, task, runId, verdict as "pass" | "fail", note);
+}
+
+/** Record a person's verdict on a run beside the judge's. */
+function setHumanVerdict(
+  ctx: ToolContext,
+  task: Task,
+  runId: string,
+  verdict: "pass" | "fail",
+  note: string | undefined,
+): TasksAssessOutput {
+  if (!ctx.updateRun) throw new Error("Setting a verdict is not available in this runtime.");
+  const at = new Date().toISOString();
+  const human = {
+    verdict,
+    ...(note ? { note } : {}),
+    by: ctx.currentUserId ?? "unknown",
+    via: ctx.callerVia?.() ?? ("remote" as const),
+    at,
+  };
+  const updated = ctx.updateRun(task.id, runId, (r) => ({
+    ...r,
+    assessment: {
+      ...(r.assessment ?? {
+        verdict: "not_assessed" as const,
+        reason: "not judged before a person's verdict",
+        assessedAt: at,
+      }),
+      human,
+    },
+  }));
+  if (!updated) throw new Error(`Run "${runId}" has no record to set a verdict on.`);
+  return {
+    run: toRunView(updated),
+    message: `Your verdict on run "${runId}" is recorded: ${human.verdict}. It now reads ${labelOf(updated)}.`,
   };
 }
 

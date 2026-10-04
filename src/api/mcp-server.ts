@@ -888,7 +888,16 @@ function createHandlers(
     // Identity request (bare `<source>__<tool>`): dispatch against the caller's
     // identity, no workspace. See `executeIdentityToolCall` for the rationale.
     if (routed.kind === "identity") {
-      return executeIdentityToolCall(routed, name, args, ask, features, sessionCtx, runtime);
+      return executeIdentityToolCall(
+        routed,
+        name,
+        args,
+        ask,
+        features,
+        sessionCtx,
+        runtime,
+        isAppCall(appSource, sessionCtx),
+      );
     }
     return executeWorkspaceToolCall(
       routed,
@@ -1255,6 +1264,8 @@ async function executeIdentityToolCall(
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
   runtime: Runtime,
+  /** Whether an app view in the first-party shell made the call (`isAppCall`). */
+  appCall = false,
 ): Promise<ToolCallAnswer> {
   const fullName = routed.toolName;
   if (!isToolEnabled(fullName, features)) {
@@ -1296,6 +1307,7 @@ async function executeIdentityToolCall(
     // Workspace-owned identity data resolves in the session's workspace,
     // consistent with the resources wall.
     workspaceId: sessionCtx.workspaceId,
+    ...(appCall ? { shellCall: true } : {}),
   };
 
   if (ask.era === "modern" && !routed.policyOwner) {

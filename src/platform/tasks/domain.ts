@@ -26,11 +26,14 @@
 
 import { computeBudgetResetAt, computeNextRunAt, setNextRunAt } from "./scheduler.ts";
 import {
+  type Criterion,
   isEventSchedule,
   isOnceSchedule,
+  type OnPoorResult,
   onceRetirement,
   type ScheduleSpec,
   type Task,
+  type TaskJudge,
   type TaskKind,
   type TaskSource,
   type TokenBudget,
@@ -124,6 +127,10 @@ export interface DomainCreateInput {
   allowedTools?: string[];
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  criteria?: Criterion[];
+  confidenceThreshold?: number;
+  judge?: TaskJudge;
+  onPoorResult?: OnPoorResult;
   // Operator/runtime fields:
   source?: TaskSource;
   ownerId?: string;
@@ -148,6 +155,14 @@ export interface DomainUpdatePatch {
   inputSchema?: Record<string, unknown> | null;
   /** `null` removes it: the deliverable is not checked. */
   outputSchema?: Record<string, unknown> | null;
+  /** `null` removes them: runs are not judged. */
+  criteria?: Criterion[] | null;
+  /** `null` removes it: the default threshold applies. */
+  confidenceThreshold?: number | null;
+  /** `null` removes it: the one connected judge server is used. */
+  judge?: TaskJudge | null;
+  /** `null` removes it: the default policy applies. */
+  onPoorResult?: OnPoorResult | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +259,12 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
     allowedTools: input.allowedTools,
     ...(input.inputSchema ? { inputSchema: input.inputSchema } : {}),
     ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
+    ...(input.criteria ? { criteria: input.criteria } : {}),
+    ...(input.confidenceThreshold !== undefined
+      ? { confidenceThreshold: input.confidenceThreshold }
+      : {}),
+    ...(input.judge ? { judge: input.judge } : {}),
+    ...(input.onPoorResult ? { onPoorResult: input.onPoorResult } : {}),
     maxIterations: input.maxIterations,
     maxInputTokens: input.maxInputTokens,
     maxRunDurationMs: input.maxRunDurationMs,
@@ -302,6 +323,10 @@ const UPDATABLE_FIELDS = [
   "allowedTools",
   "inputSchema",
   "outputSchema",
+  "criteria",
+  "confidenceThreshold",
+  "judge",
+  "onPoorResult",
   "maxIterations",
   "maxInputTokens",
   "maxRunDurationMs",
@@ -323,14 +348,19 @@ function reanchorNextRunAt(task: Task, defaultTimezone?: string): void {
 }
 
 /** Patch fields where `null` deletes the key rather than storing a null. */
-const CLEARABLE_FIELDS = ["schedule", "inputSchema", "outputSchema"] as const satisfies readonly (
-  | keyof DomainUpdatePatch
-  | keyof Task
-)[];
+const CLEARABLE_FIELDS = [
+  "schedule",
+  "inputSchema",
+  "outputSchema",
+  "criteria",
+  "confidenceThreshold",
+  "judge",
+  "onPoorResult",
+] as const satisfies readonly (keyof DomainUpdatePatch | keyof Task)[];
 
 /**
  * Copy the patch's fields onto `task`. `null` on a clearable field
- * (`schedule`, `inputSchema`, `outputSchema`) deletes the key, so a schedule
+ * (`CLEARABLE_FIELDS`) deletes the key, so a schedule
  * cleared reads as manual-only. Returns whether anything was written.
  */
 function applyPatchFields(task: Task, patch: DomainUpdatePatch): boolean {

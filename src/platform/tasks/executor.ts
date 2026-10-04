@@ -661,6 +661,9 @@ function mapResultToRun(
     );
   }
   error ??= unrecognizedStopError(status, stopReason, data);
+  // Recorded whatever the status, and read without any criteria: the derived
+  // label never reads Succeeded while part of the work did not happen.
+  const unrecovered = unresolvedFailures(data.toolCalls).map((u) => u.name);
 
   return {
     // Adopt the runtime's runId verbatim — the run, its index summary, and its
@@ -681,6 +684,7 @@ function mapResultToRun(
     ...(data.spendAccountId !== undefined ? { spendAccountId: data.spendAccountId } : {}),
     trigger,
     ...(error ? { error } : {}),
+    ...(unrecovered.length > 0 ? { unrecoveredToolFailures: unrecovered } : {}),
   };
 }
 

@@ -29,6 +29,7 @@ import {
 } from "../../tools/types.ts";
 import { validateToolInput } from "../../tools/validate-input.ts";
 import { TasksRunInput } from "../schemas/tasks.ts";
+import { executionOf, labelOf } from "./assessment.ts";
 import { isOpenRun } from "./scheduler.ts";
 import { prepareRun, type ToolContext } from "./server.ts";
 import type { RunTicket, TaskRun, TaskRunResult } from "./types.ts";
@@ -64,26 +65,22 @@ export interface TaskRunSourceDeps {
 }
 
 /**
- * The task status a run's record maps to:
+ * The task status a run's record maps to, through its execution
+ * (`executionOf`):
  *
  *   queued, running        → working
- *   success, degraded      → completed (the result carries the deliverable and the record)
- *   timeout with a partial
- *     deliverable          → completed (an incomplete run: it ended at a limit)
- *   timeout with none,
- *     failure, skipped     → failed, with the record's reason
+ *   completed, incomplete  → completed (the result carries the deliverable and the record)
+ *   failed, skipped        → failed, with the record's reason
  *   cancelled              → cancelled
  */
 export function taskStatusOf(run: TaskRun): McpTask["status"] {
-  switch (run.status) {
+  switch (executionOf(run)) {
     case "queued":
     case "running":
       return "working";
-    case "success":
-    case "degraded":
+    case "completed":
+    case "incomplete":
       return "completed";
-    case "timeout":
-      return run.resultPreview ? "completed" : "failed";
     case "cancelled":
       return "cancelled";
     default:
@@ -131,10 +128,13 @@ export function createTaskRunSource(deps: TaskRunSourceDeps): IdentityTaskSource
     return ticket;
   }
 
-  /** The ticket once the run has ended, waiting for a run this process carries. */
+  /**
+   * The ticket once the run has ended, waiting for a run this process carries.
+   * A run this process carries is waited for until its assessment is
+   * recorded too, so the result carries it.
+   */
   async function terminal(taskId: string, owner: TaskOwnerContext): Promise<RunTicket> {
-    const ticket = lookup(taskId, owner);
-    if (!isOpenRun(ticket.run)) return ticket;
+    lookup(taskId, owner);
     await deps.runEnded(taskId)?.catch(() => {});
     return lookup(taskId, owner);
   }
@@ -197,7 +197,10 @@ export function createTaskRunSource(deps: TaskRunSourceDeps): IdentityTaskSource
       );
       return {
         content: [{ type: "text", text: result?.output ?? run.resultPreview ?? "" }],
-        structuredContent: { run, result },
+        structuredContent: {
+          run: { ...run, execution: executionOf(run), label: labelOf(run) },
+          result,
+        },
       };
     },
 

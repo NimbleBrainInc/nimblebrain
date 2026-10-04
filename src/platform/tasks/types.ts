@@ -81,6 +81,35 @@ export interface Task {
   outputSchema?: Record<string, unknown>;
 
   /**
+   * Acceptance criteria: plain-language rules a judge answers about each run's
+   * deliverable (see `assessment.ts`). Absent: no judging; the output schema,
+   * when set, is the only check.
+   */
+  criteria?: Criterion[];
+
+  /**
+   * Judge confidence below which a run whose criteria all passed is
+   * `uncertain` rather than `pass`. 0..1, default
+   * {@link DEFAULT_CONFIDENCE_THRESHOLD}. Each criterion's own pass level is
+   * separate; this decides only `uncertain`.
+   */
+  confidenceThreshold?: number;
+
+  /**
+   * Which judge answers the criteria: `server` names a connected judge server
+   * (needed only when the workspace has more than one), `id` and `options` pick
+   * a judge on it (from its `list_judges`). Absent: the one connected judge
+   * server's default judge.
+   */
+  judge?: TaskJudge;
+
+  /**
+   * What happens when a run's assessment is `fail`. Default
+   * {@link DEFAULT_ON_POOR_RESULT}.
+   */
+  onPoorResult?: OnPoorResult;
+
+  /**
    * Max agentic iterations per run. Default: the runtime's chat default (25).
    * Held at execution to the operator's `tasks.maxRunIterations` (at
    * most 50); see `effectiveRunLimits`.
@@ -159,6 +188,120 @@ export interface Task {
   /** ISO timestamp for next budget reset. */
   budgetResetAt?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Assessment (acceptance criteria and the judge)
+// ---------------------------------------------------------------------------
+
+/**
+ * One acceptance criterion, in the judge contract's shape so a task's criteria
+ * go to the judge unchanged. `pass` is the runtime's pass rule; a judge
+ * carries it and never applies it.
+ *
+ *   - boolean: passes when the answer equals `pass` (default `true`).
+ *   - score:   `levels` are ordered lowest first; passes when the level reached
+ *              is at least `pass` (default: the upper half, see
+ *              `defaultScorePass`).
+ *   - choice:  passes when the answer is `pass` or one of `pass` (required).
+ */
+export interface Criterion {
+  id: string;
+  rule: string;
+  type: "boolean" | "score" | "choice";
+  levels?: string[];
+  options?: string[];
+  pass?: boolean | number | string | string[];
+}
+
+/** Which judge answers a task's criteria. */
+export interface TaskJudge {
+  /** The connected source to call; required only when more than one judge server is connected. */
+  server?: string;
+  /** A judge id from that server's `list_judges`. Absent: its default judge. */
+  id?: string;
+  /** That judge's settings, valid against its `options_schema`. Needs `id`. */
+  options?: Record<string, unknown>;
+}
+
+/** What a `fail` assessment sets off (see {@link Task.onPoorResult}). */
+export type OnPoorResult = "record" | "notify" | "retry_once";
+
+/** Confidence threshold when a task sets none. */
+export const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
+
+/** `onPoorResult` when a task sets none. */
+export const DEFAULT_ON_POOR_RESULT: OnPoorResult = "notify";
+
+/** Whether a run's deliverable is acceptable (ADR-0045). */
+export type AssessmentVerdict = "pass" | "fail" | "uncertain" | "not_assessed";
+
+/** One criterion as judged and decided. */
+export interface CriterionResult {
+  id: string;
+  /** The judge's answer: a boolean, a level index, or an option. */
+  answer: boolean | number | string;
+  /** Decided by the runtime from the criterion's pass rule. */
+  passed: boolean;
+  confidence: number;
+  probabilities?: Record<string, number>;
+  rationale?: string;
+}
+
+/** A person's verdict on a run. It replaces the judge's in the derived label. */
+export interface HumanVerdict {
+  verdict: "pass" | "fail";
+  note?: string;
+  /** The user who set it. */
+  by: string;
+  /** `ui`: set from the first-party web shell. `remote`: any other caller. */
+  via: "ui" | "remote";
+  at: string;
+}
+
+/**
+ * Whether a run's deliverable is acceptable, recorded on the run. Never
+ * changes the run's execution (its `status`).
+ */
+export interface RunAssessment {
+  verdict: AssessmentVerdict;
+  /** Why the verdict is `not_assessed`, or which check failed. */
+  reason?: string;
+  /** The output schema check, when the task has an output schema. */
+  schema?: { valid: boolean; errors?: string[] };
+  criteria?: CriterionResult[];
+  /** The source called and the judge that answered. */
+  judge?: { server: string; id: string; version?: string; calibrated: boolean };
+  /** The judge's reported usage. */
+  usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
+  /** True when the state sent to the judge was cut to fit its size cap. */
+  stateTruncated?: boolean;
+  assessedAt: string;
+  human?: HumanVerdict;
+}
+
+/**
+ * How a run ended, in ADR-0045's vocabulary, derived from the stored
+ * `status`, `stopReason`, and whether a deliverable exists (never stored).
+ */
+export type RunExecution =
+  | "queued"
+  | "running"
+  | "skipped"
+  | "completed"
+  | "incomplete"
+  | "failed"
+  | "cancelled";
+
+/** The one label a person sees for a run, derived from execution and assessment (never stored). */
+export type RunLabel =
+  | "Succeeded"
+  | "Poor result"
+  | "Needs review"
+  | "Failed"
+  | "Skipped"
+  | "Cancelled"
+  | "Queued"
+  | "Running";
 
 // ---------------------------------------------------------------------------
 // Token Budget
@@ -375,6 +518,15 @@ export interface TaskRun {
   outputSchemaValid?: boolean;
   /** Why the deliverable did not match the `outputSchema`, when it did not. */
   outputSchemaErrors?: string[];
+  /**
+   * Tools whose calls failed with no later call making them good, so part of
+   * the run's work did not happen. Recorded whatever the status.
+   */
+  unrecoveredToolFailures?: string[];
+  /** Whether the deliverable is acceptable; absent until assessed, and on runs with no deliverable. */
+  assessment?: RunAssessment;
+  /** The run this one retries (`onPoorResult: "retry_once"`). */
+  retryOf?: string;
 }
 
 /**
@@ -484,6 +636,10 @@ export type UpdateTaskInput = Partial<
     | "allowedTools"
     | "inputSchema"
     | "outputSchema"
+    | "criteria"
+    | "confidenceThreshold"
+    | "judge"
+    | "onPoorResult"
     | "maxIterations"
     | "maxInputTokens"
     | "maxRunDurationMs"

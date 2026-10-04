@@ -12,6 +12,7 @@
  * executor function injected at construction time.
  */
 
+import { randomBytes } from "node:crypto";
 import { Cron } from "croner";
 import { taskRunsTotal } from "../../api/metrics.ts";
 import { log } from "../../observability/log.ts";
@@ -24,6 +25,7 @@ import {
 } from "../../runtime/admission.ts";
 import { runDetached } from "../../runtime/request-context.ts";
 import { WorkspaceRootMissingError } from "../../workspace/context.ts";
+import { isAssessable, retryGuidance } from "./assessment.ts";
 import {
   appendRun,
   loadAllTasks,
@@ -32,13 +34,16 @@ import {
   saveRunResult,
   saveRunTicket,
   saveTask,
+  updateRun,
 } from "./store.ts";
 import {
+  DEFAULT_ON_POOR_RESULT,
   isEventSchedule,
   isOnceSchedule,
   ONCE_GRACE_MS,
   ONCE_MISSED_REASON,
   ONCE_RAN_REASON,
+  type RunAssessment,
   type RunTicket,
   type Task,
   type TaskRun,
@@ -128,6 +133,10 @@ export interface RequestedRun {
   requestedAt: string;
   input?: unknown;
   idempotencyKey?: string;
+  /** The run this one retries (`onPoorResult: "retry_once"`); recorded on the run. */
+  retryOf?: string;
+  /** Goes ahead of the prompt for this run only: a retry's account of what failed. */
+  guidance?: string;
 }
 
 /**
@@ -213,6 +222,13 @@ export interface SchedulerConfig {
    * announces the change to that owner's views.
    */
   onRunRecorded?: (ownerId: string) => void;
+  /**
+   * Assess a run that left a deliverable, once its record is written (see
+   * `judge.ts::assessRun`). Never rejects. Absent: runs are not assessed.
+   */
+  assess?: (task: Task, run: TaskRun, result: TaskRunResult | null) => Promise<RunAssessment>;
+  /** Tell the task's owner a run's assessment failed (`onPoorResult: "notify"`). */
+  notifyPoorResult?: (task: Task, run: TaskRun) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -750,8 +766,22 @@ function withRequest(run: TaskRun, requested: RequestedRun): TaskRun {
     id: requested.runId,
     ...(requested.input !== undefined ? { input: requested.input } : {}),
     ...(requested.idempotencyKey !== undefined ? { idempotencyKey: requested.idempotencyKey } : {}),
+    ...(requested.retryOf !== undefined ? { retryOf: requested.retryOf } : {}),
   };
 }
+
+/** A requested run's per-run input: the caller's JSON and a retry's guidance. */
+function requestedInput(requested: RequestedRun | undefined): RunInput | undefined {
+  if (!requested) return undefined;
+  const input: RunInput = {
+    ...(requested.guidance ? { preamble: requested.guidance } : {}),
+    ...(requested.input !== undefined ? { data: requested.input } : {}),
+  };
+  return Object.keys(input).length > 0 ? input : undefined;
+}
+
+/** Whether a dispatch's promise settles once the run is recorded or once its assessment is too. */
+type DispatchSettles = "recorded" | "assessed";
 
 /** Whether a run record is still open: asked for, and not yet ended or refused. */
 export function isOpenRun(run: Pick<TaskRun, "status">): boolean {
@@ -796,6 +826,8 @@ export class Scheduler {
   private readonly openRuns: Map<string, { key: string; ended: Promise<TaskRun> }> = new Map();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  /** Assessments in flight, so a test (or a caller) can wait for them. */
+  private readonly pendingAssessments = new Set<Promise<TaskRun>>();
 
   private readonly executor: Executor;
   private config: SchedulerConfig;
@@ -1049,8 +1081,7 @@ export class Scheduler {
     const budget = runNowBudgetRefusal(auto, Date.now());
     if (budget) return refuse(budget);
 
-    const input: RunInput | undefined =
-      requested?.input !== undefined ? { data: requested.input } : undefined;
+    const input = requestedInput(requested);
     const admitted = this.admit(key, "manual", input, requested);
     // Only an admitted run claims its idempotency key: a refused attempt
     // leaves the key free, so the same call retried later runs.
@@ -1229,7 +1260,9 @@ export class Scheduler {
     }
     const admitted = this.admit(key, "event", input);
     if (admitted.state === "started") {
-      return { run: await this.dispatchRun(auto, "event", input, admitted.lease) };
+      return {
+        run: await this.dispatchRun(auto, "event", input, admitted.lease, undefined, "recorded"),
+      };
     }
     if (admitted.state === "refused") {
       this.recordSkipped(auto, this.refusalReason(admitted.reason, "event"), "event");
@@ -1342,7 +1375,10 @@ export class Scheduler {
       entry.reject(err);
       return;
     }
-    this.dispatchRun(auto, entry.trigger, entry.input, lease, entry.requested).then(
+    // A Run now waits for its assessment, so its caller gets the judged record;
+    // an event run settles its batch once the run is recorded.
+    const settles: DispatchSettles = entry.trigger === "manual" ? "assessed" : "recorded";
+    this.dispatchRun(auto, entry.trigger, entry.input, lease, entry.requested, settles).then(
       (run) => entry.resolve({ run, started: true }),
       entry.reject,
     );
@@ -1576,20 +1612,28 @@ export class Scheduler {
     const ticket = this.admission.request(Scheduler.admissionOf(key));
     if (ticket.state !== "admitted") return null;
 
-    return this.dispatchRun(auto, "scheduled", undefined, ticket.lease);
+    // The timer waits for its runs to be recorded, not judged.
+    return this.dispatchRun(auto, "scheduled", undefined, ticket.lease, undefined, "recorded");
   }
 
   // -----------------------------------------------------------------------
   // Run dispatch
   // -----------------------------------------------------------------------
 
-  /** Run `auto` in the slot `lease` holds, and free it when the run is recorded. */
+  /**
+   * Run `auto` in the slot `lease` holds, free it when the run is recorded,
+   * then assess the run. Settles with the recorded run (`recorded`) or with
+   * the run once its assessment is recorded too (`assessed`, the default);
+   * either way the assessment goes on, and it never changes the record's
+   * execution.
+   */
   private async dispatchRun(
     auto: Task,
     trigger: TaskRunTrigger,
     input: RunInput | undefined,
     lease: AdmissionLease,
     requested?: RequestedRun,
+    settles: DispatchSettles = "assessed",
   ): Promise<TaskRun> {
     const key = Scheduler.keyOf(auto);
     const controller = new AbortController();
@@ -1605,8 +1649,9 @@ export class Scheduler {
     const firedOnceAt =
       trigger === "scheduled" && isOnceSchedule(auto.schedule) ? auto.schedule?.at : undefined;
 
+    let recorded: { run: TaskRun; result: TaskRunResult | null };
     try {
-      return await this.executeAndRecord(auto, controller, {
+      recorded = await this.executeAndRecord(auto, controller, {
         startedAt,
         trigger,
         input,
@@ -1620,6 +1665,100 @@ export class Scheduler {
       // the run ends; this covers an executor that never reached it.
       this.activeRuns.delete(key);
       lease.release();
+    }
+    // After the slot is free and the task is no longer running, so a retry
+    // the assessment asks for is an ordinary run.
+    const assessed = this.assessRecorded(auto, recorded.run, recorded.result);
+    return settles === "recorded" ? recorded.run : assessed;
+  }
+
+  /**
+   * Assess a recorded run that left a deliverable, record the assessment on
+   * its record, and act on a poor result. Resolves with the run as it now
+   * stands; never rejects, and resolves with the run unchanged when there is
+   * nothing to assess or assessing fails.
+   */
+  private assessRecorded(auto: Task, run: TaskRun, result: TaskRunResult | null): Promise<TaskRun> {
+    const assess = this.config.assess;
+    if (!assess || !isAssessable(run) || !auto.workspaceId || !auto.ownerId) {
+      return Promise.resolve(run);
+    }
+    const pending = (async () => {
+      const assessment = await assess(auto, run, result);
+      const updated = this.recordAssessment(auto, run.id, assessment) ?? { ...run, assessment };
+      this.afterAssessed(auto, updated);
+      return updated;
+    })().catch((err) => {
+      log.warn("[tasks] could not record a run's assessment", {
+        taskId: auto.id,
+        runId: run.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return run;
+    });
+    this.pendingAssessments.add(pending);
+    pending.finally(() => this.pendingAssessments.delete(pending));
+    return pending;
+  }
+
+  /**
+   * Write an assessment onto a run's record (index line and ticket), keeping a
+   * person's verdict already there, and announce the change. Null when the run
+   * has no record.
+   */
+  recordAssessment(task: Task, runId: string, assessment: RunAssessment): TaskRun | null {
+    const { workspaceId: wsId, ownerId } = task;
+    if (!wsId || !ownerId) return null;
+    const updated = updateRun(this.config.workDir, wsId, ownerId, task.id, runId, (r) => ({
+      ...r,
+      assessment: { ...assessment, ...(r.assessment?.human ? { human: r.assessment.human } : {}) },
+    }));
+    if (updated) this.config.onRunRecorded?.(ownerId);
+    return updated;
+  }
+
+  /**
+   * Act on a `fail` assessment by the task's `onPoorResult`:
+   *
+   *   record      nothing more
+   *   notify      the owner's notification (the default)
+   *   retry_once  run the task again with the failed criteria as guidance,
+   *               once per original run: a retry that fails too, or a retry
+   *               that could not be started, notifies instead
+   *
+   * `uncertain` sets off nothing: judge doubt alone is a review, not a poor
+   * result.
+   */
+  private afterAssessed(auto: Task, run: TaskRun): void {
+    const assessment = run.assessment;
+    if (assessment?.verdict !== "fail") return;
+    const policy = auto.onPoorResult ?? DEFAULT_ON_POOR_RESULT;
+    if (policy === "record") return;
+    if (policy === "retry_once" && !run.retryOf && this.retry(auto, run, assessment)) return;
+    this.config.notifyPoorResult?.(auto, run);
+  }
+
+  /** Ask for the one retry of a poor run; whether it was admitted (started or queued). */
+  private retry(auto: Task, run: TaskRun, assessment: RunAssessment): boolean {
+    const { workspaceId: wsId, ownerId } = auto;
+    if (!wsId || !ownerId) return false;
+    const requested: RequestedRun = {
+      runId: `run_${randomBytes(6).toString("hex")}`,
+      requestedAt: new Date().toISOString(),
+      ...(run.input !== undefined ? { input: run.input } : {}),
+      retryOf: run.id,
+      guidance: retryGuidance(auto, run.id, assessment),
+    };
+    const ticket = this.requestRunNow(wsId, ownerId, auto.id, requested);
+    if (!ticket || ticket.state === "refused") return false;
+    ticket.run.catch(() => {});
+    return true;
+  }
+
+  /** Resolves once every assessment in flight has been recorded. */
+  async assessmentsSettled(): Promise<void> {
+    while (this.pendingAssessments.size > 0) {
+      await Promise.allSettled([...this.pendingAssessments]);
     }
   }
 
@@ -1635,7 +1774,7 @@ export class Scheduler {
       firedOnceAt: string | undefined;
       requested: RequestedRun | undefined;
     },
-  ): Promise<TaskRun> {
+  ): Promise<{ run: TaskRun; result: TaskRunResult | null }> {
     const { startedAt, trigger, input, lease, firedOnceAt, requested } = dispatch;
     const ticket = (run: TaskRun) => {
       if (requested && auto.workspaceId && auto.ownerId) {
@@ -1672,7 +1811,7 @@ export class Scheduler {
       if (result) this.persistRunResult(auto, result);
       ticket(run);
       this.runRecorded(auto);
-      return run;
+      return { run, result };
     } catch (err) {
       const { status, suffix, error, transient } = classifyRunFailure(err);
       const failed: TaskRun = {
@@ -1693,7 +1832,7 @@ export class Scheduler {
       this.updateAfterRun(auto, failedRun, trigger, firedOnceAt);
       ticket(failedRun);
       this.runRecorded(auto);
-      return failedRun;
+      return { run: failedRun, result: null };
     }
   }
 

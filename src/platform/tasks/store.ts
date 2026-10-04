@@ -564,6 +564,93 @@ function applyFilters(runs: TaskRun[], opts?: ReadRunsOptions): TaskRun[] {
 }
 
 // ---------------------------------------------------------------------------
+// One run's record, found and rewritten in place (its assessment)
+// ---------------------------------------------------------------------------
+
+/** The index files a task's runs live in: the hot index, then each archive month, newest first. */
+function runIndexFiles(workDir: string, wsId: string, ownerId: string, taskId: string): string[] {
+  return [
+    taskRunIndexPath(workDir, wsId, ownerId, taskId),
+    ...listRunSegmentMonths(workDir, wsId, ownerId, taskId).map((month) =>
+      taskRunSegmentPath(workDir, wsId, ownerId, taskId, month),
+    ),
+  ];
+}
+
+/** A run's record by id, from the hot index or an archive month; null when it has none. */
+export function findRun(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  taskId: string,
+  runId: string,
+): TaskRun | null {
+  for (const file of runIndexFiles(workDir, wsId, ownerId, taskId)) {
+    const found = readIndexFile(file).findLast((r) => r.id === runId);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Rewrite one run's record wherever it is: its index line (hot or archived,
+ * one atomic replace of that file) and its ticket when it has one. Returns
+ * the new record, or null when the run has no record. Used only for what is
+ * recorded after a run ends: its assessment and a person's verdict.
+ *
+ * Synchronous from read to write, like `appendRun`, so the two cannot
+ * interleave within the process that owns the store.
+ */
+export function updateRun(
+  workDir: string,
+  wsId: string,
+  ownerId: string,
+  taskId: string,
+  runId: string,
+  update: (run: TaskRun) => TaskRun,
+): TaskRun | null {
+  let updated: TaskRun | null = null;
+  for (const file of runIndexFiles(workDir, wsId, ownerId, taskId)) {
+    updated = rewriteRunLine(file, runId, update);
+    if (updated) break;
+  }
+  if (!updated) return null;
+  const ticket = readRunTicket(workDir, wsId, ownerId, runId);
+  if (ticket && ticket.taskId === taskId) {
+    saveRunTicket(workDir, wsId, ownerId, { ...ticket, run: updated });
+  }
+  return updated;
+}
+
+/** The index of the last line in `lines` that records `runId`, or -1. */
+function lastLineOf(lines: string[], runId: string): number {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      if ((JSON.parse(lines[i] ?? "") as TaskRun).id === runId) return i;
+    } catch {
+      // malformed line: never the one asked for
+    }
+  }
+  return -1;
+}
+
+/** Rewrite `runId`'s line in one index file (one atomic replace); null when the file has none. */
+function rewriteRunLine(
+  file: string,
+  runId: string,
+  update: (run: TaskRun) => TaskRun,
+): TaskRun | null {
+  if (!existsSync(file)) return null;
+  const lines = readFileSync(file, "utf-8").trimEnd().split("\n");
+  const at = lastLineOf(lines, runId);
+  if (at < 0) return null;
+  const updated = update(JSON.parse(lines[at] ?? "") as TaskRun);
+  lines[at] = JSON.stringify(updated);
+  atomicWrite(file, `${lines.join("\n")}\n`);
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
 // Run results — runs/<taskId>/<runId>.result.json (the deliverable)
 // ---------------------------------------------------------------------------
 

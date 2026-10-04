@@ -762,8 +762,8 @@ function buildRestToolCallContext(
   workspaceId: string,
 ): RequestContext {
   // Every kernel source is workspace-owned, so the call lands in the workspace
-  // in the URL.
-  return { identity: identity ?? null, workspaceId };
+  // in the URL. This door is the first-party web shell's.
+  return { identity: identity ?? null, workspaceId, shellCall: true };
 }
 
 /**
