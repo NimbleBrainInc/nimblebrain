@@ -425,6 +425,28 @@ describe("the task wire", () => {
     }
   });
 
+  it("starts a 2025-era tool as an already-completed task, calling it inline", async () => {
+    const { served, seen } = legacyTaskServer("optional");
+    const source = await connect(served.url);
+    const ownerContext = { workspaceId: "ws-test" };
+    try {
+      await source.tools();
+      const { task } = await source.startToolAsTask("echo", { text: "deep" }, { ownerContext });
+      expect(task.taskId).toStartWith("nb-inline-");
+      expect(task.status).toBe("completed");
+      const result = await source.awaitToolTaskResult(task.taskId, { ownerContext });
+      expect(result.content).toEqual([{ type: "text", text: "echo:deep" }]);
+      expect((await source.getTaskStatus(task.taskId, { ownerContext })).status).toBe("completed");
+      const calls = seen.filter((r) => r.method === "tools/call");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.params?.task).toBeUndefined();
+      expect(seen.some((r) => r.method.startsWith("tasks/"))).toBe(false);
+    } finally {
+      await source.stop();
+      served.close();
+    }
+  });
+
   it("refuses a 2025-era tool whose taskSupport is required before dispatch, naming the reason", async () => {
     const { served, seen } = legacyTaskServer("required");
     const source = await connect(served.url);
