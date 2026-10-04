@@ -83,6 +83,8 @@ export interface NotificationListOptions {
   source?: string;
   /** Only items with a `seq` greater than this. */
   after?: number;
+  /** Only items with a `seq` less than this — the newest-first page before one held. */
+  before?: number;
   /** Only items whose `timestamp` is at or after this ISO 8601 instant. */
   since?: string;
   /** Only items whose title or event name contains this text, ignoring case. */
@@ -219,17 +221,24 @@ export class NotificationStore {
    * {@link list}'s page and the whole inbox's {@link unreadCount}, from one
    * read of the day files. `notifications__list` answers with both.
    */
-  listWithUnread(opts: NotificationListOptions = {}): { items: Notification[]; unread: number } {
+  listWithUnread(opts: NotificationListOptions = {}): {
+    items: Notification[];
+    unread: number;
+    hasMore: boolean;
+  } {
     const limit = clampLimit(opts.limit);
     const all = this.#loadAll();
     if (opts.order !== "asc") all.reverse();
     const items: Notification[] = [];
     let unread = 0;
+    let hasMore = false;
     for (const item of all) {
       if (!item.readAt) unread++;
-      if (items.length < limit && matchesFilters(item, opts)) items.push(item);
+      if (!matchesFilters(item, opts)) continue;
+      if (items.length < limit) items.push(item);
+      else hasMore = true;
     }
-    return { items, unread };
+    return { items, unread, hasMore };
   }
 
   /**
@@ -500,6 +509,7 @@ function matchesFilters(item: Notification, opts: NotificationListOptions): bool
   if (opts.unreadOnly && item.readAt) return false;
   if (opts.source && item.source !== opts.source) return false;
   if (opts.after !== undefined && item.seq <= opts.after) return false;
+  if (opts.before !== undefined && item.seq >= opts.before) return false;
   if (opts.since !== undefined && Date.parse(item.envelope.timestamp) < Date.parse(opts.since)) {
     return false;
   }
