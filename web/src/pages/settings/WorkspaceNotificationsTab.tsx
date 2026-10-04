@@ -27,7 +27,6 @@ import { NOTIFICATION_LEVELS } from "../../lib/notification-levels";
 import { cn } from "../../lib/utils";
 import {
   AutosaveField,
-  AutosaveStatus,
   EmptyState,
   InlineError,
   RequireActiveWorkspace,
@@ -227,7 +226,6 @@ function NotificationSettings({ wsId }: { wsId: string }) {
         flush
         title="Sources"
         description="Every connector in this workspace that declares an outbox. The ceiling is the highest level its notifications may reach a route at — a new source starts at info, so a route asking for attention or urgency never fires for it until you raise this."
-        action={settings?.sources.length ? <AutosaveStatus status={ceilings.status} /> : null}
       >
         {settings ? <SourceList sources={settings.sources} ceilings={ceilings} /> : null}
       </Section>

@@ -70,7 +70,7 @@ import {
   AppProvider,
   useToolResult,
   useCallTool,
-  useConnectTheme,
+  useTheme,
 } from '@nimblebrain/synapse/react';
 
 function App() {
@@ -84,7 +84,7 @@ function App() {
 function TaskBoard() {
   const result = useToolResult();
   const { call, isPending, data } = useCallTool('create_task');
-  const theme = useConnectTheme();
+  const theme = useTheme();
 
   if (result) {
     console.log('Last tool result:', result.content);
@@ -465,20 +465,19 @@ app.updateModelContext(
 
 When the user sends a chat message while viewing your app, this state is included in the system prompt. The agent can reference it to provide contextual responses.
 
-The `summary` parameter is optional but recommended — it's used as a fallback when the full state exceeds the token budget. Calls are debounced (250ms) to avoid flooding.
+The `summary` parameter is optional but recommended — it's used as a fallback when the full state exceeds the token budget. `app.updateModelContext` sends immediately; in React, `useModelContext()` debounces rapid changes for you.
 
 <Aside type="note">
 State injection is bounded by a token budget. When the serialized state exceeds the budget, the host falls back to the `summary` string (or truncates the state if no summary was provided). The state is wrapped in a `<app-state>` containment tag in the system prompt — supply a concise `summary` so the agent still gets the gist when the full state is too large.
 </Aside>
 
-Legacy API (via `createSynapse`):
+React hook:
 
 ```tsx
-synapse.setVisibleState({ filter: 'overdue', count: 3 }, 'Viewing 3 overdue tasks');
+import { useModelContext } from '@nimblebrain/synapse/react';
 
-// React hook
-const setVisible = useVisibleState();
-setVisible({ filter: 'overdue', count: 3 }, 'Viewing 3 overdue tasks');
+const push = useModelContext();
+push({ filter: 'overdue', count: 3 }, 'Viewing 3 overdue tasks');
 ```
 
 ## Shell actions
@@ -498,34 +497,32 @@ action(app, 'openConnectorSettings'); // this connector's settings page
 
 To tell the agent what the user is acting on, push it with `app.updateModelContext()` (see [LLM-aware UI state](#llm-aware-ui-state)) before `sendMessage`; the next turn carries it.
 
-Legacy API (via `createSynapse`):
+## Files
+
+Save a file to the user's machine, or open the host's native file picker:
 
 ```typescript
-synapse.action('openConversation', { id: 'conv_abc123' });
-synapse.action('openApp', { name: '@nimblebraininc/contacts' });
-synapse.action('openConnectorSettings'); // this connector's settings page
+import { downloadFile, pickFile } from '@nimblebrain/synapse';
 
-synapse.chat('Show me the Q2 report');
+await downloadFile(app, 'report.csv', csvContent, 'text/csv');
 
-synapse.openLink('https://example.com');
-synapse.saveFile('report.csv', csvContent, 'text/csv');
-
-// Open the host's native file picker. The host persists each picked
-// file to the workspace store and returns a stable file ID — bytes
-// never cross the iframe boundary, so uploads aren't bounded by the
-// tool-call JSON limit.
-const file = await synapse.pickFile({ accept: '.csv,.json' });
+// The host persists each picked file to the workspace store and returns a
+// stable file ID — bytes never cross the iframe boundary, so uploads aren't
+// bounded by the tool-call JSON limit.
+const file = await pickFile(app, { accept: '.csv,.json' });
 // → { id: 'fl_…', filename: 'data.csv', mimeType: 'text/csv', size: 12345 } | null
 
 // Pass the ID to a tool. Tools read the bytes server-side via the
 // host's file APIs.
 if (file) {
-  await synapse.callTool('ingest_csv', { file_id: file.id });
+  await app.callTool('ingest_csv', { file_id: file.id });
 }
 ```
 
+`pickFiles(app, options)` picks several. In React, `useFileUpload()` returns the pickers with a pending flag.
+
 <Aside type="note">
-`action()` and `pickFile()` / `pickFiles()` work only where the host declares the matching `ai.nimblebrain/` extension: `action()` is a silent no-op otherwise and the picker throws `HostCapabilityError`, since it depends on host-side persistence. `chat()` sends nothing without the `message` capability, and `openLink()` falls back to `window.open()` without `openLinks`. Read `app.hostCapabilities` to decide whether to render a control at all.
+`action()` and `pickFile()` / `pickFiles()` work only where the host declares the matching `ai.nimblebrain/` extension: `action()` is a silent no-op otherwise and the picker throws `HostCapabilityError`, since it depends on host-side persistence. `downloadFile()` throws `HostCapabilityError` without the `downloadFile` capability, `sendMessage()` sends nothing without `message`, and `openLink()` falls back to `window.open()` without `openLinks`. To decide whether to render a control at all, call `hostSupports(app, 'requestFile')` for an `ai.nimblebrain/` extension, or read `app.hostCapabilities` for a spec capability such as `downloadFile`.
 </Aside>
 
 <Aside type="caution">
@@ -551,37 +548,36 @@ app.on('theme-changed', (theme) => {
 });
 ```
 
-React hooks:
+React hook:
 
 ```tsx
-// Connect API — returns Theme (mode + tokens)
-const theme = useConnectTheme();
-
-// Legacy API — returns SynapseTheme (mode + primaryColor + tokens)
+// Returns Theme (mode + tokens); re-renders when the theme changes.
 const theme = useTheme();
 ```
 
-Both re-render automatically when the theme changes.
-
 ## Keyboard forwarding
 
-When an iframe has focus, keyboard events fire on the iframe's document, not the host's. Synapse automatically forwards Ctrl/Cmd combos and Escape to the host so global shortcuts (like Ctrl+J to open the chat panel) still work.
-
-Customize which keys are forwarded (via the legacy `createSynapse` API):
+When an iframe has focus, keyboard events fire on the iframe's document, not the host's. Pass `forwardKeys` to `connect()` so the host's global shortcuts (like Ctrl+J to open the chat panel) still work while focus is inside the app:
 
 ```typescript
-const synapse = createSynapse({
+const app = await connect({
+  name: 'my-app',
+  version: '1.0.0',
+  forwardKeys: true, // Escape and every Ctrl/Cmd combo except the clipboard keys
+});
+
+// Or forward exactly the listed combos
+const app = await connect({
   name: 'my-app',
   version: '1.0.0',
   forwardKeys: [
     { key: 'j', ctrl: true },   // Ctrl+J
-    { key: '/', ctrl: true },   // Ctrl+/
     { key: 'Escape' },
   ],
 });
 ```
 
-Pass an empty array to disable forwarding entirely: `forwardKeys: []`
+Without `forwardKeys`, nothing is forwarded. Forwarding is on only where the host declares `ai.nimblebrain/keydown`.
 
 ## Dev mode
 
@@ -679,39 +675,40 @@ Synapse detects its host during the ext-apps handshake. In NimbleBrain, `hostInf
 | Theme | Full | From ext-apps handshake |
 | Keyboard forwarding | Full | No-op |
 | Open link | Via bridge | `window.open()` fallback |
-| Save file | Via bridge | No-op |
+| Download file | Via bridge | Via `ui/download-file` where the host supports it |
 | Pick file | Via bridge | Throws |
 
 ## Package exports
 
 | Export | Contents |
 |--------|----------|
-| `@nimblebrain/synapse` | `connect`, `createSynapse`, all types |
-| `@nimblebrain/synapse/react` | `AppProvider`, `useApp`, `useToolResult`, `useToolInput`, `useResize`, `useConnectTheme`, `SynapseProvider`, `useSynapse`, `useCallTool`, `useDataSync`, `useTheme`, `useAction`, `useAgentAction`, `useChat`, `useVisibleState`, `useFileUpload` |
+| `@nimblebrain/synapse` | `connect`, the extension helpers (`action`, `pickFile`, `pickFiles`, `uploadFiles`, `notify`, `setLocation`, `onNavigate`, `hostSupports`, `downloadFile`, `callToolAsTask`), `NIMBLEBRAIN_EXTENSIONS`, `connectUI`, `detectHostKind`, `HostCapabilityError`, `TaskError`, all types |
+| `@nimblebrain/synapse/react` | `AppProvider`, `useApp`, `useToolResult`, `useToolInput`, `useResize`, `useTheme`, `useHostContext`, `useCallTool`, `useCallToolAsTask`, `useDataSync`, `useModelContext`, `useSendMessage`, `useAction`, `useNotify`, `useFileUpload`, `useTrail` |
 | `@nimblebrain/synapse/iife` | `connect.iife.global.js` — `window.Synapse` global for `<script>` tags |
 | `@nimblebrain/synapse/vite` | `synapseVite` Vite plugin |
 | `@nimblebrain/synapse/codegen` | `readFromManifest`, `readFromServer`, `generateTypes` |
 
 ### React hooks reference
 
-| Hook | Source | Returns | Subscribes to |
-|------|--------|---------|---------------|
-| `useApp()` | Connect API | `App` object | — |
-| `useToolResult()` | Connect API | `ToolResultData \| null` | `tool-result` event |
-| `useToolInput()` | Connect API | `Record<string, unknown> \| null` | `tool-input` event |
-| `useConnectTheme()` | Connect API | `Theme` | `theme-changed` event |
-| `useResize()` | Connect API | `(w?, h?) => void` | — |
-| `useCallTool(name)` | Legacy API | `{ call, data, isPending, error }` | — |
-| `useTheme()` | Legacy API | `SynapseTheme` | Theme changes |
-| `useDataSync(cb)` | Connect API | — | `notifications/resources/list_changed` from the app's server |
-| `useChat()` | Legacy API | `(msg, ctx?) => void` | — |
-| `useAction()` | Legacy API | `(action, params?) => void` | — |
-| `useAgentAction(cb)` | Legacy API | — | Agent action events |
-| `useVisibleState()` | Legacy API | `(state, summary?) => void` | — |
-| `useFileUpload()` | Legacy API | `{ pickFile, pickFiles }` | — |
-| `useSynapse()` | Legacy API | `Synapse` object | — |
+| Hook | Returns | Subscribes to |
+|------|---------|---------------|
+| `useApp()` | `App` object | — |
+| `useToolResult()` | `ToolResultData \| null` | `tool-result` event |
+| `useToolInput()` | `Record<string, unknown> \| null` | `tool-input` event |
+| `useTheme()` | `Theme` | `theme-changed` event |
+| `useHostContext()` | `McpUiHostContext` | `host-context-changed` event |
+| `useResize()` | `(w?, h?) => void` | — |
+| `useCallTool(name)` | `{ call, data, isPending, error }` | — |
+| `useCallToolAsTask(name)` | `{ fire, task, result, error, isWorking, isTerminal, cancel }` | Task status, by polling |
+| `useDataSync(cb)` | — | `notifications/resources/list_changed` from the app's server |
+| `useModelContext()` | `(state, summary?) => void`, debounced | — |
+| `useSendMessage()` | `(text) => void` | — |
+| `useAction()` | `(action, params?) => void` | — |
+| `useNotify()` | `(notice) => Promise<boolean>` | — |
+| `useFileUpload()` | `{ pickFile, pickFiles, uploadFiles, isPending }` | — |
+| `useTrail(trail, navigate)` | `boolean` — whether the host shows the title and breadcrumb | `ai.nimblebrain/navigate` |
 
-Hooks labeled "Connect API" require an `<AppProvider>` ancestor. Hooks labeled "Legacy API" require a `<SynapseProvider>` ancestor. Both providers can coexist in the same tree.
+Every hook requires an `<AppProvider>` ancestor.
 
 ## Synapse vs. raw bridge
 
@@ -721,39 +718,9 @@ Synapse wraps the [MCP App Bridge](/apps/bridge) protocol. You don't need to use
 |---|---|---|
 | **Use when** | Building a new app with a build step (Vite, webpack) | Simple static HTML, no build step, or vanilla ext-apps |
 | **Tool calls** | Typed, parsed, error-handled | Raw JSON-RPC postMessage |
-| **Agent awareness** | `updateModelContext` / `setVisibleState` | Not available |
+| **Agent awareness** | `updateModelContext` / `useModelContext` | Not available |
 | **Data sync** | `useDataSync` or `app.on("notifications/resources/list_changed")` | Listen for `notifications/resources/list_changed` manually |
 | **Dev experience** | `npm run dev` with preview + HMR | Manual server restart |
 | **Framework support** | Vanilla JS + React hooks | Any (raw postMessage) |
 
 The bridge protocol docs remain the reference for the underlying wire format. Synapse is the SDK that makes it ergonomic.
-
-## Legacy API: createSynapse
-
-The original `createSynapse()` API remains fully functional and is used by existing apps. New apps should prefer `connect()` and `AppProvider`, but migration is not required.
-
-```typescript
-import { createSynapse } from '@nimblebrain/synapse';
-
-const synapse = createSynapse({ name: 'my-app', version: '1.0.0' });
-await synapse.ready;
-
-synapse.callTool('create_task', { title: 'Review Q2' });
-synapse.setVisibleState({ filter: 'overdue' }, 'Viewing overdue tasks');
-synapse.saveFile('report.csv', csvContent, 'text/csv');
-synapse.chat('Show me the Q2 report');
-```
-
-Key differences from `connect()`:
-
-| | `connect()` | `createSynapse()` |
-|---|---|---|
-| Handshake | `await connect()` resolves when ready | `await synapse.ready` |
-| Events | `app.on("tool-result", cb)` | No tool-result event |
-| Resize | `app.resize()` / `autoResize` option | Not available |
-| Model context | `app.updateModelContext()` | `synapse.setVisibleState()` |
-| Messages | `app.sendMessage()` | `synapse.chat()` |
-| File save | Not on App object (use legacy) | `synapse.saveFile()` |
-| File pick | Not on App object (use legacy) | `synapse.pickFile()` / `synapse.pickFiles()` |
-| Shell actions | Not on App object (use legacy) | `synapse.action()` |
-| React provider | `<AppProvider>` | `<SynapseProvider>` |

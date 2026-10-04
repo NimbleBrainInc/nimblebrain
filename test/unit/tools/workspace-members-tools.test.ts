@@ -168,7 +168,7 @@ describe("nb__manage_workspaces member actions", () => {
       expect(resultText(result)).toBe("User not found");
     });
 
-    test("requires userId", async () => {
+    test("requires userId or email", async () => {
       const ws = await createWsAsAdmin("Team Epsilon");
 
       const result = await tool.handler({
@@ -177,7 +177,43 @@ describe("nb__manage_workspaces member actions", () => {
       });
 
       expect(result.isError).toBe(true);
-      expect(resultText(result)).toContain("userId is required");
+      expect(resultText(result)).toContain("userId or email is required");
+    });
+
+    test("a workspace admin who cannot list users adds someone by email, in any case", async () => {
+      const ws = await wsStore.create("Team Email");
+      await wsStore.addMember(ws.id, "usr_wsadmin0000001", "admin");
+      currentIdentity = makeIdentity({
+        id: "usr_wsadmin0000001",
+        email: "wsadmin@example.com",
+        displayName: "WS Admin",
+        orgRole: "member",
+      });
+      tool = createManageWorkspacesTool(makeCtx());
+
+      const result = await tool.handler({
+        action: "add_member",
+        workspaceId: ws.id,
+        email: "  Member@Example.com ",
+        role: "admin",
+      });
+
+      expect(result.isError).toBe(false);
+      const parsed = parseResult(result) as { added: { userId: string; role: string } };
+      expect(parsed.added).toEqual({ userId: memberUser.id, role: "admin" });
+    });
+
+    test("an email no active person in the org has is refused, and seats no one", async () => {
+      const ws = await createWsAsAdmin("Team Unknown");
+      await userStore.softDelete(anotherUser.id);
+
+      for (const email of ["nobody@example.com", "another@example.com"]) {
+        const result = await tool.handler({ action: "add_member", workspaceId: ws.id, email });
+        expect(result.isError).toBe(true);
+        expect(resultText(result)).toContain("No one in this organization has the email");
+      }
+      const after = await wsStore.get(ws.id);
+      expect(after!.members.map((m) => m.userId)).toEqual([currentIdentity!.id]);
     });
   });
 
@@ -484,7 +520,7 @@ describe("nb__manage_workspaces member actions", () => {
     });
 
     test("non-member is denied listing a non-existent workspace", async () => {
-      // canManageMembers now gates on membership first: a missing workspace is
+      // memberActionAllowed gates on membership first: a missing workspace is
       // indistinguishable from one the requester can't manage — both deny.
       const result = await tool.handler({
         action: "list_members",
@@ -496,7 +532,7 @@ describe("nb__manage_workspaces member actions", () => {
   });
 
   describe("role enforcement", () => {
-    test("non-admin cannot manage members", async () => {
+    test("a plain member can list the roster but not change it", async () => {
       const ws = await wsStore.create("Team Restricted");
       await wsStore.addMember(ws.id, memberUser.id, "member");
 
@@ -509,12 +545,36 @@ describe("nb__manage_workspaces member actions", () => {
       });
       tool = createManageWorkspacesTool(makeCtx());
 
-      const result = await tool.handler({
-        action: "list_members",
-        workspaceId: ws.id,
-      });
+      const listed = await tool.handler({ action: "list_members", workspaceId: ws.id });
+      expect(listed.isError).toBe(false);
+      const parsed = parseResult(listed) as {
+        members: Array<{ userId: string; displayName: string }>;
+      };
+      expect(parsed.members).toEqual([
+        expect.objectContaining({ userId: memberUser.id, displayName: "Member User" }),
+      ]);
 
-      expect(result.isError).toBe(false);
+      const added = await tool.handler({
+        action: "add_member",
+        workspaceId: ws.id,
+        userId: anotherUser.id,
+      });
+      expect(resultText(added)).toContain("don't have permission");
+      expect((await wsStore.get(ws.id))!.members).toHaveLength(1);
+    });
+
+    test("someone outside the workspace cannot list its roster", async () => {
+      const ws = await wsStore.create("Team Closed");
+      await wsStore.addMember(ws.id, memberUser.id, "member");
+      currentIdentity = makeIdentity({
+        id: anotherUser.id,
+        email: "another@example.com",
+        displayName: "Another",
+        orgRole: "member",
+      });
+      tool = createManageWorkspacesTool(makeCtx());
+
+      const result = await tool.handler({ action: "list_members", workspaceId: ws.id });
       expect(resultText(result)).toContain("don't have permission");
     });
 

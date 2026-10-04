@@ -53,17 +53,17 @@ The agent uses `nb__manage_workspaces` with `action: "create"` to set it up. The
 
 ## Managing members
 
-Add, remove, and change members on the workspace's **Members** settings page (`/w/<id>/settings/members`). The page calls the `nb__manage_workspaces` tool with these actions:
+Add, remove, and change members from the workspace's **Settings → Members** (`/w/<id>/settings/members`). The page calls the `nb__manage_workspaces` tool with these actions:
 
 | Action | Description |
 |--------|-------------|
-| `add_member` | Add a user to the workspace with a specified role |
+| `add_member` | Add a user, named by `userId` or `email`, to the workspace with a specified role |
 | `remove_member` | Remove a user from the workspace |
 | `update_member` | Change a member's role |
 | `list_members` | List all members and their roles |
 
 <Aside type="note">
-Workspace admins and org admins/owners can manage members. An org admin can manage any workspace's members without joining it. Regular members cannot add or remove other users.
+Every member can see who else is in a workspace. Workspace admins and org admins/owners can manage members: add someone in the organization by email, change roles, and remove people, from the workspace's **Settings → Members**. An org admin can manage any workspace's members without joining it. Regular members cannot add or remove other users. The same people can rename the workspace, from **Settings → General**.
 </Aside>
 
 ## Workspace-scoped apps

@@ -153,12 +153,11 @@ async function choose(el: HTMLSelectElement, value: string) {
 const saves = () => calls.filter((c) => c.tool === "set_model_config").map((c) => c.args);
 
 describe("the Model tab", () => {
-  test("has no Save button and says changes save automatically", async () => {
+  test("has no Save button", async () => {
     const c = await mount();
     expect(Array.from(c.querySelectorAll("button")).some((b) => b.textContent === "Save")).toBe(
       false,
     );
-    expect(c.textContent).toContain("Changes save automatically");
   });
 
   test("clearing a limit saves that field alone, as null, when the field loses focus", async () => {
@@ -176,7 +175,7 @@ describe("the Model tab", () => {
     expect(field<HTMLInputElement>(c, "maxOutputTokens").placeholder).toBe(
       String(CATALOG_MAX_OUTPUT),
     );
-    expect(c.textContent).toContain("All changes saved");
+    expect(c.textContent).toContain("Saved");
     expect(document.body.querySelector("[data-testid='notice']")?.textContent).toContain(
       "Max Output Tokens updated",
     );
@@ -191,7 +190,7 @@ describe("the Model tab", () => {
 
     expect(c.textContent).toContain("maxIterations must be an integer between 1 and 50.");
     expect(c.textContent).toContain("Not saved");
-    expect(c.textContent).not.toContain("All changes saved");
+    expect(c.textContent).not.toContain("Saved");
     // The typed value is kept for a retry.
     expect(field<HTMLInputElement>(c, "maxIterations").value).toBe("99");
   });
@@ -203,7 +202,7 @@ describe("the Model tab", () => {
     const maxOutput = field<HTMLInputElement>(c, "maxOutputTokens");
     await type(maxOutput, "");
     await blur(maxOutput);
-    expect(c.textContent).toContain("All changes saved");
+    expect(c.textContent).toContain("Saved");
   });
 
   test("an edit to another field while a save is in flight is kept", async () => {
@@ -257,11 +256,11 @@ describe("the Model tab", () => {
     const budget = field<HTMLInputElement>(c, "thinkingBudgetTokens");
     await type(budget, "500");
     await blur(budget);
-    expect(c.textContent).toContain("Some changes were not saved");
+    expect(c.textContent).toContain("Not saved");
 
     await choose(field<HTMLSelectElement>(c, "thinking"), "adaptive");
     expect(c.querySelector("#thinkingBudgetTokens")).toBeNull();
-    expect(c.textContent).not.toContain("Some changes were not saved");
+    expect(c.textContent).not.toContain("Not saved");
 
     // Back to a mode that shows it: the saved value, not the refused one.
     await choose(field<HTMLSelectElement>(c, "thinking"), "enabled");

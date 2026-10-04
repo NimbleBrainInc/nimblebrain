@@ -12,7 +12,6 @@ import { useAutosaveForm } from "../../hooks/useAutosaveForm";
 import { cn } from "../../lib/utils";
 import {
   AutosaveField,
-  AutosaveStatus,
   type ModelEntry,
   ModelSelect,
   Section,
@@ -149,7 +148,6 @@ export function ProfileTab() {
     <SettingsFormPage
       title="Profile"
       description="Identity and personal preferences. Workspace ID and shared settings live under This Workspace → General."
-      action={loading || loadError ? undefined : <AutosaveStatus status={form.status} />}
       loading={loading}
       loadingMessage="Loading profile..."
       loadError={loadError}

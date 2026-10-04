@@ -8,9 +8,10 @@
  * content. This mirrors the existing skills behavior and the HTTP
  * `requireWorkspace` middleware, which already requires membership.
  *
- * Membership management is the exception, decided by
- * `canManageWorkspaceMembers` below: who may reach a workspace is an org
- * concern, so an org admin governs it without being a member.
+ * Governance is the exception, decided by `canManageWorkspaceMembers` below:
+ * who may reach a workspace, and what it is called, are org concerns, so an
+ * org admin governs them without being a member. Reading the roster is open
+ * to every member (`canReadWorkspaceMembers`).
  *
  * Pure (no I/O): callers fetch the `Workspace` and pass it in. The
  * structured `WorkspaceWriteDecision` lets each call site adapt to its own
@@ -83,4 +84,40 @@ export function canManageWorkspaceMembers(
     return { allowed: true };
   }
   return canWriteWorkspaceScoped(identity, ws);
+}
+
+/**
+ * Decide whether `identity` may rename `ws`.
+ *
+ * A workspace's name, like its roster, is governance rather than content: the
+ * workspace's own admins and an org admin/owner decide it, as they decide who
+ * belongs. So the rule is `canManageWorkspaceMembers`'. Its connector list stays
+ * with org admins (`manage_workspaces update` with `connectors`).
+ */
+export function canRenameWorkspace(
+  identity: Pick<UserIdentity, "id" | "orgRole"> | null | undefined,
+  ws: Workspace | null | undefined,
+): WorkspaceWriteDecision {
+  return canManageWorkspaceMembers(identity, ws);
+}
+
+/**
+ * Decide whether `identity` may read `ws`'s roster: who its members are and
+ * their roles.
+ *
+ * Any member may, as they share the workspace with everyone on it, and so may
+ * an org admin/owner, who may manage it. Changing the roster stays with
+ * `canManageWorkspaceMembers`.
+ */
+export function canReadWorkspaceMembers(
+  identity: Pick<UserIdentity, "id" | "orgRole"> | null | undefined,
+  ws: Workspace | null | undefined,
+): WorkspaceWriteDecision {
+  if (!identity) return { allowed: false, reason: "Not authenticated" };
+  if (!ws) return { allowed: false, reason: "Workspace not found" };
+  if (ORG_ADMIN_ROLES.has(identity.orgRole)) return { allowed: true };
+  if (Array.isArray(ws.members) && ws.members.some((m) => m.userId === identity.id)) {
+    return { allowed: true };
+  }
+  return { allowed: false, reason: `Not a member of workspace "${ws.id}"` };
 }

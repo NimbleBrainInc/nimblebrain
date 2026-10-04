@@ -22,7 +22,7 @@ import { SettingsPageHeader, type SettingsPageHeaderProps } from "./SettingsPage
  *
  * Pages that don't have a save bar can omit the `save` prop entirely: a
  * read-only form, or one whose fields save as they change (`useAutosaveForm`),
- * which puts `AutosaveStatus` in the header's `action` slot instead.
+ * where each field shows its own status and a save raises a notice.
  */
 export interface SettingsFormPageProps extends SettingsPageHeaderProps {
   /**

@@ -3,6 +3,8 @@ import type { UserIdentity } from "../../../src/identity/provider.ts";
 import type { OrgRole } from "../../../src/identity/types.ts";
 import {
   canManageWorkspaceMembers,
+  canReadWorkspaceMembers,
+  canRenameWorkspace,
   canWriteWorkspaceScoped,
 } from "../../../src/workspace/authz.ts";
 import type { Workspace, WorkspaceRole } from "../../../src/workspace/types.ts";
@@ -121,5 +123,39 @@ describe("canManageWorkspaceMembers", () => {
   test("leaves content writes strict: the same org admin is refused by canWriteWorkspaceScoped", () => {
     const ws = workspace([{ userId: "u1", role: "admin" }]);
     expect(canWriteWorkspaceScoped(identity("org", "admin"), ws).allowed).toBe(false);
+  });
+});
+
+describe("canReadWorkspaceMembers", () => {
+  test("allows every member, whatever their role, and an org admin or owner outside it", () => {
+    const ws = workspace([
+      { userId: "u1", role: "admin" },
+      { userId: "u2", role: "member" },
+    ]);
+    expect(canReadWorkspaceMembers(identity("u1"), ws)).toEqual({ allowed: true });
+    expect(canReadWorkspaceMembers(identity("u2"), ws)).toEqual({ allowed: true });
+    expect(canReadWorkspaceMembers(identity("org", "admin"), ws)).toEqual({ allowed: true });
+    expect(canReadWorkspaceMembers(identity("org", "owner"), ws)).toEqual({ allowed: true });
+  });
+
+  test("denies a non-member, a missing identity, and a missing or malformed workspace", () => {
+    const ws = workspace([{ userId: "u1", role: "member" }]);
+    expect(canReadWorkspaceMembers(identity("u3"), ws).allowed).toBe(false);
+    expect(canReadWorkspaceMembers(null, ws).allowed).toBe(false);
+    expect(canReadWorkspaceMembers(identity("u1"), null).allowed).toBe(false);
+    const malformed = { ...ws, members: undefined } as unknown as Workspace;
+    expect(canReadWorkspaceMembers(identity("u1"), malformed).allowed).toBe(false);
+  });
+});
+
+describe("canRenameWorkspace", () => {
+  test("allows a workspace admin member and an org admin; denies a plain member", () => {
+    const ws = workspace([
+      { userId: "u1", role: "admin" },
+      { userId: "u2", role: "member" },
+    ]);
+    expect(canRenameWorkspace(identity("u1"), ws)).toEqual({ allowed: true });
+    expect(canRenameWorkspace(identity("org", "admin"), ws)).toEqual({ allowed: true });
+    expect(canRenameWorkspace(identity("u2"), ws).allowed).toBe(false);
   });
 });
