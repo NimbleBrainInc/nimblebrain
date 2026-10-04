@@ -286,5 +286,8 @@ describe("the Members tab", () => {
       userId: "usr_bo",
     });
     expect(document.body.textContent).toContain("Bo was removed from Acme");
+    // The dialog closes once the removal lands, rather than holding on "Removing…".
+    expect(document.body.textContent).not.toContain("Remove Bo?");
+    expect(document.body.textContent).not.toContain("Removing…");
   });
 });
