@@ -1,4 +1,4 @@
-import { useApp, useFileUpload } from "@nimblebrain/synapse/react";
+import { useApp, useFileUpload, useNotify } from "@nimblebrain/synapse/react";
 import { useCallback, useState } from "react";
 import { errorText } from "./Dialogs";
 import { ROOT } from "./types";
@@ -28,10 +28,30 @@ export function useFileActions(reload: () => void) {
     [app],
   );
 
-  const flash = useCallback((message: string) => {
-    setNotice(message);
-    setTimeout(() => setNotice((n) => (n === message ? null : n)), NOTICE_MS);
-  }, []);
+  const notify = useNotify();
+
+  /**
+   * Confirm a finished action in the host's notice, so it reads like every
+   * other app's and the shell's own. Where the host shows none (it does not
+   * declare notify, or refuses a burst), the app shows its own pill instead.
+   */
+  const flash = useCallback(
+    (message: string) => {
+      const showOwn = () => {
+        setNotice(message);
+        setTimeout(() => setNotice((n) => (n === message ? null : n)), NOTICE_MS);
+      };
+      // The host takes a title of up to 120 characters; a long filename is cut.
+      const title = message.length > 120 ? `${message.slice(0, 119)}…` : message;
+      notify({ level: "success", title }).then(
+        (shown) => {
+          if (!shown) showOwn();
+        },
+        showOwn,
+      );
+    },
+    [notify],
+  );
 
   const move = useCallback(
     async (ids: string[], target: string) => {
@@ -73,17 +93,19 @@ export function useFileActions(reload: () => void) {
       await call("create_folder", {
         manifest: { name, ...(parentId === ROOT ? {} : { parentId }) },
       });
+      flash(`Created folder ${name}`);
       reload();
     },
-    [call, reload],
+    [call, flash, reload],
   );
 
   const renameFolder = useCallback(
     async (id: string, name: string) => {
       await call("update_folder", { id, manifest: { name } });
+      flash(`Renamed folder to ${name}`);
       reload();
     },
-    [call, reload],
+    [call, flash, reload],
   );
 
   /**
