@@ -176,6 +176,37 @@ Browse and manage automations from the **Automations** panel in the sidebar, or 
 Pausing keeps the definition and its run history intact; the scheduler simply skips it. Resume re-enables it on its existing schedule. To remove an automation entirely, ask the agent to delete it (run history is preserved even then).
 </Aside>
 
+## Running from an MCP client
+
+A remote agent connected to `/mcp/<workspace-id>` runs an automation with `automations__run`. Every call answers with the run's id (`runId`), and `automations__run_result` with that `runId` alone reads the run's full result once it has ended.
+
+<Steps>
+
+1. **A saved automation or an inline one-off.** Pass `name` to run a saved automation. Or leave `name` out and pass the definition inline: `prompt` (or `skill`), and optionally `inputSchema`, `outputSchema`, `allowedTools`, `limits` (`maxIterations`, `maxInputTokens`, `maxRunDurationMs`), and `budget` (a token budget). An inline call creates a one-off automation with no schedule, owned by you in that workspace, runs it once, and keeps it with its run. Nothing deletes it.
+
+2. **Input.** `input` is any JSON value, at most 64 KiB serialized. When the automation has an `inputSchema`, an input that does not match it, or a missing one, is refused before the run starts, with the reasons. The input is kept on the run record and given to the run as data, inside a block the model is told never to follow as instructions.
+
+3. **Output schema.** When the automation has an `outputSchema`, the run is told to answer with JSON matching it. The final answer is parsed (a fenced code block is accepted) and checked: the parsed value is kept as the result's `structured`, and the run record says whether it matched (`outputSchemaValid`) and, when it did not, why (`outputSchemaErrors`). A mismatch is recorded, not a failure: the run's status still says how it ended.
+
+4. **Idempotency.** Pass `idempotencyKey` to make a call safe to repeat. A later call with the same key for the same automation returns the run the first call started, whether it is still running or has ended, instead of starting another. For an inline one-off the key also names the one-off, so a repeat finds the same one-off and the same run.
+
+</Steps>
+
+### As a task
+
+On the `2026-07-28` protocol, a client that declares the MCP tasks extension (`io.modelcontextprotocol/tasks`) on its call gets a task handle back at once instead of an answer. The handle names the run, and the run's record is written before the handle is returned, so a lost connection or a restart of the runtime does not lose it. Poll it with `tasks/get` and stop it with `tasks/cancel`; only the identity that started the run, in the workspace it started in, can read or cancel it, and anyone else gets "task not found".
+
+| Run state | Task status |
+|---|---|
+| queued, running | `working` |
+| `success`, `degraded`, or a `timeout` that left a partial result | `completed`, with the deliverable and the run record inline |
+| `failure`, `skipped`, or a `timeout` that left nothing | `failed`, with the run's reason |
+| `cancelled` | `cancelled` |
+
+`tasks/cancel` cancels a queued run or one in flight. When the runtime stops, a run still queued reads `failed` (it never started), and one in flight reads `cancelled`, or `failed` if the process died without stopping.
+
+Task handles are offered on the `2026-07-28` protocol only. On an earlier protocol, or without the extension, `automations__run` answers as it always has: the run record when the run ends within about 30 seconds, otherwise a `dispatched` or `queued` answer carrying the `runId` to poll with `automations__run_result`.
+
 ## Run history
 
 Every run is recorded with its status, start and completion times, iteration count, tool calls, and any error. View it in the Automations panel or by asking the agent. If the runtime restarts while a run is in flight, the orphaned run is swept and marked failed so history stays accurate.
