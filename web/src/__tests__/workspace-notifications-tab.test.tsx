@@ -276,8 +276,8 @@ describe("the ceiling", () => {
     expect(container.textContent).toContain("Not saved");
   });
 
-  // A ceiling save used to reload the whole page from the answer, which
-  // replaced the route drafts with what was stored.
+  // A ceiling save takes only the sources from its answer: the route drafts
+  // are unsaved work, and the answer's routes are what is stored.
   test("changing a ceiling keeps an unsaved route draft", async () => {
     const container = await mount();
     await click(buttonLabelled(container, "Add route"));
