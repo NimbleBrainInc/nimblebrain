@@ -63,11 +63,10 @@ describe("GET /v1/workspaces/:wsId/shell", () => {
     expect(Array.isArray(body.placements)).toBe(true);
   });
 
-  it("response includes chatEndpoint and eventsEndpoint", async () => {
+  it("response includes eventsEndpoint", async () => {
     const res = await fetch(shellUrl());
     const body = await readJson<ShellResponse>(res);
 
-    expect(body.chatEndpoint).toBe(`/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`);
     expect(body.eventsEndpoint).toBe("/v1/events");
   });
 });

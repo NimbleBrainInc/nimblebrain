@@ -532,12 +532,13 @@
     "connectorRef": {
       "description": "One entry in a workspace's `connectors[]` — a remote MCP server, addressed by URL. Workspace records live at `<workDir>/workspaces/<wsId>/workspace.json`, not in this file.",
       "type": "object",
-      "required": ["url"],
+      "required": ["url", "serverName"],
       "properties": {
         "url": { "type": "string", "description": "Remote MCP server URL." },
         "serverName": {
           "type": "string",
-          "description": "Server name to register the connector under."
+          "minLength": 1,
+          "description": "Server name to register the connector under: the slugified canonical server name, and the connector's lifecycle and route key."
         },
         "transport": {
           "type": "object",

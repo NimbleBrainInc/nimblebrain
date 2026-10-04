@@ -1,4 +1,3 @@
-export { CallbackEventSink } from "./callback-events.ts";
 export { ConsoleEventSink } from "./console-events.ts";
 export { DebugEventSink } from "./debug-events.ts";
 export { NoopEventSink } from "./noop-events.ts";

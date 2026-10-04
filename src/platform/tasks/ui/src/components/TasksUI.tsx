@@ -1,3 +1,4 @@
+import { hostSupports } from "@nimblebrain/synapse";
 import { useApp, useDataSync } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { ClockIcon, PlusIcon } from "../icons.tsx";
@@ -48,7 +49,7 @@ export function TasksUI() {
   // The host draws this view's title in its own chrome when it declares
   // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
   // twice. A host without it (any other MCP Apps host) gets the view's title.
-  const hostShowsTitle = "ai.nimblebrain/location" in (app.hostCapabilities.experimental ?? {});
+  const hostShowsTitle = hostSupports(app, "location");
   // Tool hooks
   const listTool = useTool<string>("list");
   const runsTool = useTool<string>("runs");

@@ -121,11 +121,9 @@ export type ConnectorRef = {
   url: string;
   /**
    * Canonical reverse-DNS server name from the source `ServerDetail.name`
-   * (e.g. `com.stripe/mcp`), slugified. When present, used as the
-   * lifecycle / route key directly. When absent (legacy installs),
-   * `serverNameFromRef` falls back to `deriveServerName(url)`.
+   * (e.g. `com.stripe/mcp`), slugified. The lifecycle / route key.
    */
-  serverName?: string;
+  serverName: string;
   transport?: RemoteTransportConfig;
   ui?: ConnectorUiMeta | null;
   /** Materialized connector-skill overlays bound to this connector. */

@@ -25,7 +25,7 @@
 // behavior.
 //
 // Spec methods use the `ui/` and `tools/` prefixes (ext-apps spec
-// 2026-01-26). NimbleBrain extensions use the `synapse/` prefix.
+// 2026-01-26). NimbleBrain extensions use the `ai.nimblebrain/` prefix.
 // ---------------------------------------------------------------------------
 
 import { type Static, Type } from "@sinclair/typebox";

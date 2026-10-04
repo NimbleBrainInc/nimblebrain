@@ -1,7 +1,6 @@
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps";
 import type {
   ComposioConnectField,
-  ComposioConnectorConfig,
   SecretHeaderRef,
 } from "../_generated/connector-catalog/connectors/catalog/server-detail";
 import type {
@@ -15,7 +14,6 @@ import type {
   ApiErrorBody,
   BootstrapResponse,
   ChatRequest,
-  ChatResponse,
   ChatStartResponse,
   ComposioInitiateResponse,
   OAuthInitiateResponse,
@@ -89,16 +87,6 @@ export function addAuthLifecycleHandler(handler: () => void): () => void {
   return () => {
     authLifecycleHandlers.delete(handler);
   };
-}
-
-/**
- * @deprecated Use `addAuthLifecycleHandler`. Single-slot semantics
- * (clear-all-and-set) are preserved for external callers that haven't
- * migrated, but the multi-listener API is the supported path.
- */
-export function setAuthLifecycleHandler(handler: (() => void) | null): void {
-  authLifecycleHandlers.clear();
-  if (handler) authLifecycleHandlers.add(handler);
 }
 
 function fireAuthLifecycle(): void {
@@ -479,14 +467,6 @@ export async function uploadResource(files: File[]): Promise<UploadResourceRespo
 // ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------
-
-/** Synchronous chat — waits for full agent turn. */
-export async function chat(req: ChatRequest): Promise<ChatResponse> {
-  return request<ChatResponse>(workspacePath("/chat"), {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
 
 /**
  * Start a server-authoritative turn. Returns the conversation id immediately;
@@ -1028,14 +1008,12 @@ export async function listWorkspaceSecretKeys(): Promise<{ keys: WorkspaceSecret
  * `src/connectors/catalog/types.ts` via `bun run codegen`, and `check:codegen` fails CI
  * when the server type moves without a regen.
  *
- * `ComposioConfig` / `ComposioField` keep their shell-side names because the
- * components read better for it; the shapes are the server's.
+ * `ComposioField` keeps its shell-side name because the components read
+ * better for it; the shape is the server's.
  */
 export type {
   CatalogListing,
   ComposioConnectField as ComposioField,
-  ComposioConnectorConfig as ComposioConfig,
-  ConnectorCatalogEntry,
   RemoteOAuthInstall,
   SecretHeaderRef,
 };

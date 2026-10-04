@@ -87,7 +87,7 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
 
   test("returns true (and never re-spawns) when the source is already registered", async () => {
     registry.addSource(stubSource("granola"));
-    seedInstance(lifecycle, "granola", { url: "https://example.test/mcp" });
+    seedInstance(lifecycle, "granola", { url: "https://example.test/mcp", serverName: "granola" });
     const callCount = spyEnsure(lifecycle, async () => {});
 
     expect(await lifecycle.tryRecoverSource("granola", WS, WORK_DIR)).toBe(true);
@@ -114,7 +114,10 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
   });
 
   test("re-spawns once and returns true when recovery registers the source", async () => {
-    seedInstance(lifecycle, "dropbox", { url: "https://mcp.dropbox.com/mcp" });
+    seedInstance(lifecycle, "dropbox", {
+      url: "https://mcp.dropbox.com/mcp",
+      serverName: "dropbox",
+    });
     const callCount = spyEnsure(lifecycle, async (name) => {
       registry.addSource(stubSource(name)); // simulate startConnectorSource → addSource
     });
@@ -125,7 +128,10 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
   });
 
   test("never throws when the re-spawn fails — returns false", async () => {
-    seedInstance(lifecycle, "dropbox", { url: "https://mcp.dropbox.com/mcp" });
+    seedInstance(lifecycle, "dropbox", {
+      url: "https://mcp.dropbox.com/mcp",
+      serverName: "dropbox",
+    });
     spyEnsure(lifecycle, async () => {
       throw new Error("startConnectorSource refused");
     });
@@ -136,7 +142,10 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
   });
 
   test("cooldown: a failed attempt suppresses a second re-spawn within the window", async () => {
-    seedInstance(lifecycle, "dropbox", { url: "https://mcp.dropbox.com/mcp" });
+    seedInstance(lifecycle, "dropbox", {
+      url: "https://mcp.dropbox.com/mcp",
+      serverName: "dropbox",
+    });
     const callCount = spyEnsure(lifecycle, async () => {
       throw new Error("still broken");
     });
@@ -149,7 +158,10 @@ describe("ConnectorLifecycleManager.tryRecoverSource", () => {
   });
 
   test("a successful recovery clears the cooldown so a later miss can retry", async () => {
-    seedInstance(lifecycle, "dropbox", { url: "https://mcp.dropbox.com/mcp" });
+    seedInstance(lifecycle, "dropbox", {
+      url: "https://mcp.dropbox.com/mcp",
+      serverName: "dropbox",
+    });
     let attempt = 0;
     const callCount = spyEnsure(lifecycle, async (name) => {
       attempt += 1;

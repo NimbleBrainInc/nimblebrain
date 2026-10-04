@@ -1,4 +1,5 @@
 import type { ApiErrorBody, ChatResponse } from "../../src/api/schemas/responses.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { readJson } from "../helpers/http.ts";
 /**
  * E2E — conversation access after the owner is removed from its workspace.
@@ -151,8 +152,7 @@ describe("conversation access after the owner is removed from its workspace", ()
     // 1. Alice POSTs a chat in shared_a — produces a conversation born in the
     //    workspace the request is addressed to (sharedA, from the path), stored
     //    under `workspaces/<sharedA>/conversations/<ownerId>/` and sealed to it.
-    const createRes = await fetch(`${baseUrl}/v1/workspaces/${sharedA}/chat`, {
-      method: "POST",
+    const createRes = await postChatTurn(baseUrl, sharedA, {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ALICE_TOKEN}`,
@@ -213,7 +213,7 @@ describe("conversation access after the owner is removed from its workspace", ()
     //    answer for a workspace the caller cannot reach (404, indistinguishable
     //    from an unknown workspace) — the `:wsId` gate runs at the HTTP
     //    boundary before the runtime even sees the request.
-    const refusedRes = await fetch(`${baseUrl}/v1/workspaces/${sharedA}/chat`, {
+    const refusedRes = await fetch(`${baseUrl}/v1/workspaces/${sharedA}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -231,7 +231,7 @@ describe("conversation access after the owner is removed from its workspace", ()
     //    (sharedB passes the door's membership check). A chat runs in the
     //    workspace its path names, and the conversation is not stored in
     //    sharedB, so the answer is the one an unknown conversation gets.
-    const continueRes = await fetch(`${baseUrl}/v1/workspaces/${sharedB}/chat`, {
+    const continueRes = await fetch(`${baseUrl}/v1/workspaces/${sharedB}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

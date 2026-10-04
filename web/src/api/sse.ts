@@ -7,13 +7,6 @@ export interface ConnectEventsOptions {
   apiBase?: string;
   /** Bearer token for authorization. */
   token?: string;
-  /**
-   * @deprecated The `/v1/events` route is identity-scoped server-side
-   * (see `src/api/routes/events.ts`); the server reads memberships from
-   * `WorkspaceStore` and takes no workspace from the client. The option is
-   * preserved for callers we haven't migrated, but is a no-op.
-   */
-  workspaceId?: string;
   /** Called when a typed SSE event is received. */
   onEvent: <K extends keyof WorkspaceStreamEvents>(type: K, data: WorkspaceStreamEvents[K]) => void;
   /** Called when the connection is established (each open, not just the first). */

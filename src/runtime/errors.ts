@@ -109,7 +109,7 @@ export class WorkspaceMembershipRevokedError extends Error {
  * Recovery is to stamp an `ownerId` on the file's
  * line-1 metadata (when the owner is known) or remove the file. Without this
  * typed error, the unwrapped `Error("missing ownerId in ...")` from
- * `event-sourced-store` bubbles to `handleChat` as a 500; with it, the HTTP
+ * `event-sourced-store` bubbles to `handleChatStart` as a 500; with it, the HTTP
  * layer returns a clean `422 conversation_corrupted` that explains the triage.
  */
 export class ConversationCorruptedError extends Error {

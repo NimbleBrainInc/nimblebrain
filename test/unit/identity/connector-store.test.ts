@@ -96,16 +96,6 @@ describe("IdentityConnectorStore — add / persistence", () => {
     const list = await store.add("usr_alice", urlRef("granola"));
     expect(list.map((r) => (r as { serverName: string }).serverName)).toEqual(["gmail", "granola"]);
   });
-
-  it("keys on the derived serverName for a ref with no explicit serverName", async () => {
-    const workDir = freshWorkDir();
-    const store = new IdentityConnectorStore({ workDir });
-    const ref: ConnectorRef = { url: "https://mcp.example.com/notion", ui: null };
-    await store.add("usr_alice", ref);
-    // serverNameFromRef derives the key from the url; get by that same key hits.
-    const { serverNameFromRef } = await import("../../../src/connectors/runtime/paths.ts");
-    expect(await store.get("usr_alice", serverNameFromRef(ref))).toEqual(ref);
-  });
 });
 
 describe("IdentityConnectorStore — get", () => {

@@ -6,7 +6,7 @@ import type {
 	PreparingTool,
 	StreamingState,
 	ToolCallDisplay,
-} from "../src/hooks/useChat.ts";
+} from "../src/hooks/chat-store.ts";
 
 /**
  * Locks in the first-principles UX:

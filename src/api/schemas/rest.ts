@@ -10,7 +10,7 @@
 // nothing so the web codegen can emit it alone.
 //
 // This module covers `/v1/workspaces/:wsId/tools/call` and
-// `/v1/workspaces/:wsId/chat`. The other routes parse their small bodies by
+// `/v1/workspaces/:wsId/chat/start`. The other routes parse their small bodies by
 // hand; a new route with a JSON body declares its schema here.
 // ---------------------------------------------------------------------------
 
@@ -39,14 +39,14 @@ export const ToolCallRequestEnvelope = Type.Object(
 );
 export type ToolCallRequestEnvelope = Static<typeof ToolCallRequestEnvelope>;
 
-// ── /v1/workspaces/:wsId/chat ───────────────────────────────────────────────
+// ── /v1/workspaces/:wsId/chat/start ─────────────────────────────────────────
 
 const ContentPart = Type.Object({ type: Type.String() }, { additionalProperties: true });
 
 const FileReference = Type.Object({ id: Type.String() }, { additionalProperties: true });
 
 /**
- * JSON body schema for `/v1/workspaces/:wsId/chat` and `/v1/workspaces/:wsId/chat/stream`. Multipart form
+ * JSON body schema for `/v1/workspaces/:wsId/chat/start`. Multipart form
  * uploads have their own parse path (parseMultipartChatBody) and don't
  * go through this schema.
  *

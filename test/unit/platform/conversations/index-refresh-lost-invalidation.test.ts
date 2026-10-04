@@ -32,8 +32,11 @@ function writeConv(id: string): void {
     lastModel: null,
     ownerId: "usr_test",
   };
+  // `dir` is the workspaces root the index walks.
+  const ownerDir = join(dir, "ws_00859aff6f095b0e", "conversations", "usr_test");
+  mkdirSync(ownerDir, { recursive: true });
   writeFileSync(
-    join(dir, `${id}.jsonl`),
+    join(ownerDir, `${id}.jsonl`),
     `${JSON.stringify(meta)}\n${JSON.stringify({ role: "user", content: "hi" })}\n`,
   );
 }

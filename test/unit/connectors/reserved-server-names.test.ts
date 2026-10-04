@@ -15,7 +15,6 @@
 
 import { describe, expect, test } from "bun:test";
 import {
-  deriveServerName,
   isReservedServerName,
   slugifyServerName,
   validateServerName,
@@ -65,19 +64,6 @@ describe("reserved server names", () => {
     for (const canonical of ["@my/thing", "my-notes/mcp", "my.company/mcp", "com.acme/my_weird"]) {
       expect(isReservedServerName(slugifyServerName(canonical))).toBe(false);
     }
-  });
-
-  test("an existing URL connector can derive a newly-reserved name — it stops starting", () => {
-    // The upgrade consequence, pinned rather than left implicit: `deriveServerName`
-    // takes the last path segment, so these were installable before and refuse to
-    // start after. Contained per-entry (siblings are unaffected), but an operator
-    // sees only a stderr line, so the message has to say what to do.
-    for (const url of ["https://example.com/conversations", "https://example.com/files"]) {
-      const name = deriveServerName(url);
-      expect(isReservedServerName(name)).toBe(true);
-      expect(() => validateServerName(name)).toThrow(/reserved/);
-    }
-    expect(isReservedServerName(deriveServerName("https://example.com/crm"))).toBe(false);
   });
 
   test("an ordinary source name is not reserved", () => {

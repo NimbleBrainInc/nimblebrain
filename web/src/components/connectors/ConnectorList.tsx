@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getAuthToken, getInstalledConnectors, type InstalledConnector } from "../../api/client";
-import { useWorkspaceContext } from "../../context/WorkspaceContext";
+import { getInstalledConnectors, type InstalledConnector } from "../../api/client";
 import { useEvents } from "../../hooks/useEvents";
 import { EmptyState } from "../../pages/settings/components";
 import { ConnectorIcon } from "./ConnectorIcon";
@@ -25,7 +24,6 @@ export function ConnectorList({ configureBasePath }: { configureBasePath: string
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const wsCtx = useWorkspaceContext();
 
   const refresh = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
@@ -48,8 +46,7 @@ export function ConnectorList({ configureBasePath }: { configureBasePath: string
   // redirected back here while the backend code-exchange + tools/list
   // is still settling. Without a state-changed listener the row sticks
   // at "Connecting…" until reload.
-  const token = getAuthToken() ?? "";
-  useEvents(token, wsCtx.activeWorkspace?.id, {
+  useEvents({
     onConnectionStateChanged: () => {
       refresh({ silent: true });
     },

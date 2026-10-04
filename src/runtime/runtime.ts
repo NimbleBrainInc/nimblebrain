@@ -262,8 +262,6 @@ import { clearUsageLedger, recordLlmCall, setUsageLedger } from "../usage/record
 import type { TokenUsage } from "../usage/types.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
-import { retireLegacyPersonalWorkspaces } from "../workspace/legacy-personal.ts";
-import { assertWorkspaceIdsConform } from "../workspace/migration-guard.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { createRunAdmission, type RunAdmission } from "./admission.ts";
@@ -757,8 +755,6 @@ export class Runtime {
     const instanceConfig = await loadInstanceConfig(workDir);
     const userStore = new UserStore(workDir);
     const workspaceStore = new WorkspaceStore(workDir);
-    await assertWorkspaceIdsConform(workspaceStore);
-    await retireLegacyPersonalWorkspaces(workspaceStore, userStore);
     // Route targets stored under their old key take the `task` key once, before
     // anything reads a route.
     const retargeted = await migrateAgentTargetKeys(workspaceStore);
@@ -849,12 +845,8 @@ export class Runtime {
     // System tools (search, status, use_skill). Skill mutation lives in the
     // dedicated `nb__skills` source — registered separately via
     // `createPlatformSources`.
-    // Use a late-bound holder so reloadSkills can reference `rt` after construction.
+    // Use a late-bound holder so getSkills can reference `rt` after construction.
     const rtHolder: { rt?: Runtime } = {};
-    const boundReloadSkills = async () => {
-      if (rtHolder.rt) await rtHolder.rt.reloadSkills();
-    };
-    const skillDirPath = globalSkillDir(config);
     const boundGetSkills = () => {
       const rt = rtHolder.rt;
       return {
@@ -931,8 +923,7 @@ export class Runtime {
       // Declared here rather than beside `manageUsersCtx` above: both carry the
       // runtime, because `manage_workspaces delete` cascades connector teardown
       // through `Runtime.deleteWorkspace` rather than calling the store.
-      const manageWorkspacesCtx = { getIdentity, workspaceStore, runtime: rt };
-      const manageMembersCtx = { getIdentity, workspaceStore, userStore, runtime: rt };
+      const manageWorkspacesCtx = { getIdentity, workspaceStore, userStore, runtime: rt };
 
       // Brokered teardown and boot-state derivation dispatch through the
       // configured providers; without this the lifecycle can only do the kernel's
@@ -977,26 +968,16 @@ export class Runtime {
       // Register the `nb` system source. Built as an in-process MCP server
       // — `createSystemTools` returns it already-started so it's ready to
       // serve tools and resources to every workspace registry.
-      const systemTools = await createSystemTools(
-        () => rt.getRegistryForCurrentWorkspace(),
-        config.configPath,
-        gate,
-        lifecycle,
-        undefined, // reserved slot — was the nb__delegate spawn context (removed)
-        skillDirPath,
-        boundReloadSkills,
-        boundGetSkills,
-        events,
+      const systemTools = await createSystemTools(() => rt.getRegistryForCurrentWorkspace(), {
+        getSkills: boundGetSkills,
+        eventSink: events,
         features,
-        rt,
-        undefined, // reserved slot — was a registry-SDK home (legacy connector-search path, removed)
+        runtime: rt,
         manageUsersCtx,
         manageWorkspacesCtx,
-        manageMembersCtx,
-        undefined, // reserved slot — was manageConnectorCtx (nb__manage_app, removed)
         toolPromotionCtx,
         toolEligibilityCtx,
-      );
+      });
       rt._systemSource = systemTools;
 
       // Phase 2: Create platform capability sources. Each is an in-process
@@ -1107,11 +1088,6 @@ export class Runtime {
       rt._bootReady.reject(err);
       throw err;
     }
-  }
-
-  /** True if a chat() is currently in flight on this conversation. */
-  isConversationActive(conversationId: string): boolean {
-    return this.activeConversations.has(conversationId);
   }
 
   /** Process a chat message. Optional per-request EventSink for SSE streaming. */
@@ -2779,8 +2755,8 @@ export class Runtime {
    * workspace. Identity handles that case exactly — they are literally the same
    * object — while keeping the sources a name-keyed set would wrongly collapse.
    *
-   * A URL connector's source name comes from the connector (`ref.serverName ??
-   * deriveServerName(ref.url)`) and carries no workspace, so the same fleet
+   * A URL connector's source name comes from the connector (`ref.serverName`)
+   * and carries no workspace, so the same fleet
    * connector installed in N workspaces yields N SEPARATE `McpSource` instances —
    * separate transports, separate sessions — sharing one name.
    *
@@ -4130,26 +4106,22 @@ export class Runtime {
     // The rows are read once, ahead of the loop, and that matters: each
     // teardown rewrites `workspace.json#connectors[]`, so re-reading per
     // iteration would walk a shrinking list and skip entries. Deduplicated
-    // because two rows can derive one server name, and the second pass would
+    // because two rows can name one server, and the second pass would
     // tear down nothing and report a failure that never happened.
     const seen = new Set<string>();
     for (const ref of ws?.connectors ?? []) {
       // The same predicate boot skips on (`buildWorkspaceProcessInventory` in
-      // `workspace-runtime.ts`), so the set torn down here is exactly the set
-      // that could have been started. NOT `matchesServerName`, which
-      // `paths.ts` argues is deliberately more permissive — that one answers
-      // "is this row the connector I am removing", asked once a server name is
-      // already in hand; this one answers "does this row name one at all".
+      // `workspace-runtime.ts`): "does this row name a server at all".
       const serverName = serverNameFromRef(ref);
       if (!serverName) {
-        // A row naming neither a serverName nor a usable url addresses no live
-        // connection — every teardown step keys on a server name, and
-        // `matchesServerName` reads such a row as matching nothing. Reported
-        // rather than skipped: a delete is the last moment anyone looks.
+        // A row with no serverName addresses no live connection — every
+        // teardown step keys on a server name, and `matchesServerName` reads
+        // such a row as matching nothing. Reported rather than skipped: a
+        // delete is the last moment anyone looks.
         connectors.push({
           serverName: "",
           ok: false,
-          error: "Connector row names neither a serverName nor a usable url.",
+          error: "Connector row names no serverName.",
           secrets: { deleted: [], failed: [] },
         });
         continue;
@@ -6056,12 +6028,6 @@ async function bootCatalogEntries(rt: Runtime): Promise<ConnectorCatalogEntry[] 
  * failed to start is seeded too, carrying `startError` so its Connection is
  * recorded honestly. Seeding it is what keeps the app in the shell and gives
  * `tryRecoverSource` the persisted ref it needs to revive the source on next use.
- *
- * Operators are expected to have run `bun run migrate:user-creds` before
- * deploying Stage 2 (see the Stage 2 deploy runbook). The runtime no longer
- * migrates or normalizes legacy `oauthScope: "user"` records at boot; a legacy
- * ref reaches `seedInstance` only via `buildProcessInventory` and throws
- * `LegacyOAuthScopeError` there.
  */
 async function seedWorkspaceConnectorInstances(
   lifecycle: ConnectorLifecycleManager,

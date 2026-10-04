@@ -141,7 +141,7 @@ function AuthenticatedApp({
       <NoticeProvider>
         <SessionProvider session={session}>
           <WorkspaceProvider initialWorkspaces={initialWorkspaces}>
-            <WorkspaceUnreadProvider token={token} workspaces={bootstrap.workspaces}>
+            <WorkspaceUnreadProvider workspaces={bootstrap.workspaces}>
               <BootstrappedShell
                 token={token}
                 initialConfig={initialConfig}
@@ -209,8 +209,8 @@ function BootstrappedShell({
 
   return (
     <SidebarProvider>
-      <WorkspaceAppIconsProvider token={token} workspaceId={activeWorkspace?.id}>
-        <NotificationsProvider token={token} workspaceId={activeWorkspace?.id}>
+      <WorkspaceAppIconsProvider workspaceId={activeWorkspace?.id}>
+        <NotificationsProvider workspaceId={activeWorkspace?.id}>
           <ChatProvider initialConfig={initialConfig} currentUserId={currentUserId}>
             <ChatPanelProvider>
               <ArtifactPanelProvider>
@@ -218,7 +218,6 @@ function BootstrappedShell({
                   <FocusedAppProvider>
                     <AppLocationProvider>
                       <AuthenticatedAppContent
-                        token={token}
                         forSlot={forSlot}
                         mainRoutes={mainRoutes}
                         shellWorkspaceId={shellWorkspaceId}
@@ -246,14 +245,12 @@ function BootstrappedShell({
  * ActionBridge, a non-rendering child component.
  */
 function AuthenticatedAppContent({
-  token,
   forSlot,
   mainRoutes,
   shellWorkspaceId,
   refreshShell,
   onLogout,
 }: {
-  token: string;
   forSlot: (slot: string) => PlacementEntry[];
   mainRoutes: () => PlacementEntry[];
   shellWorkspaceId: string | undefined;
@@ -264,7 +261,7 @@ function AuthenticatedAppContent({
   const { applyPreference } = useTheme();
   const wsCtx = useWorkspaceContext();
   const onServerNotification = useServerNotificationRelay();
-  useEvents(token, wsCtx.activeWorkspace?.id, {
+  useEvents({
     onServerNotification,
     onConfigChanged: () => config.refreshConfig(),
     // Auto-title arrived — update the matching conversation's slice so the

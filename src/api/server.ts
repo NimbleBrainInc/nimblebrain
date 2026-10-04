@@ -145,8 +145,8 @@ export function startServer(options: ServerOptions): ServerHandle {
   //   - `/v1/workspaces/:wsId/tools/call` (toolCallLimiter) is the trusted first-party shell.
   //     Its only failure mode is a runaway client loop, so the ceiling is
   //     high — far above human navigation, low enough to stop a hot loop.
-  //   - `/v1/workspaces/:wsId/chat` (chatLimiter) is first-party + LLM-expensive, so it stays
-  //     modest.
+  //   - `/v1/workspaces/:wsId/chat/start` (chatLimiter) is first-party +
+  //     LLM-expensive, so it stays modest.
   const chatRateLimit = Number(process.env.NB_CHAT_RATE_LIMIT) || 20;
   const toolRateLimit = Number(process.env.NB_TOOL_RATE_LIMIT) || 600;
   const mcpRateLimit = Number(process.env.NB_MCP_RATE_LIMIT) || 300;

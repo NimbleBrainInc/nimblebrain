@@ -1,5 +1,4 @@
-import type { SkillsLoadedContext } from "../hooks/chat-store";
-import type { ChatMessage } from "../hooks/useChat";
+import type { ChatMessage, SkillsLoadedContext } from "../hooks/chat-store";
 
 /**
  * Which turns should draw a Context Ledger line.

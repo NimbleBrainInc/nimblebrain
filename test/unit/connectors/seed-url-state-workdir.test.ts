@@ -58,11 +58,7 @@ afterEach(() => {
 });
 
 function urlConnector(): ConnectorRef {
-  return {
-    type: "url",
-    url: "https://example.invalid/mcp",
-    transport: "http",
-  } as ConnectorRef;
+  return { url: "https://example.invalid/mcp", serverName: SERVER };
 }
 
 /**

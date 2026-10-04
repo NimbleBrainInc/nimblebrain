@@ -34,7 +34,7 @@ function remoteSource(name: string): McpSource {
 describe("Runtime.mcpSources — what HealthMonitor gets to watch", () => {
   it("keeps every per-workspace instance of a connector installed in many workspaces", () => {
     // A URL connector's source name comes from the connector, not the workspace
-    // (`ref.serverName ?? deriveServerName(ref.url)`), so the SAME fleet connector
+    // (`ref.serverName`), so the SAME fleet connector
     // in N workspaces produces N separate McpSource objects — separate
     // transports, separate sessions — under one name. Keying the de-dup on the
     // name kept the first and dropped the rest, so a source that went down in

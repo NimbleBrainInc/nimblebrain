@@ -15,7 +15,6 @@ import {
   brokeredConnectionPresent,
   connectorHasStaticAuth,
 } from "../connectors/runtime/connector-auth.ts";
-import { assertConnectorRefIsPostStage2 } from "../connectors/runtime/lifecycle.ts";
 import { resolveConnectorDataDirForRef, serverNameFromRef } from "../connectors/runtime/paths.ts";
 import { setPendingAuth } from "../connectors/runtime/pending-auth-buffer.ts";
 import type { ConnectorMcpDeps } from "../connectors/runtime/startup.ts";
@@ -29,7 +28,7 @@ import { createServerNotificationRelay } from "../tools/server-notifications.ts"
 import type { ToolSource } from "../tools/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
 import { isHttpUrl } from "../util/url.ts";
-import { assertWorkspaceIsMigrated } from "../workspace/migration-guard.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 
@@ -65,15 +64,12 @@ export interface ProcessInventoryEntry {
 
 /**
  * Name an unusable `connectors[]` row for an operator, without assuming its shape.
- * A legacy row carries `name:` or `path:` where `url` should be; a malformed
- * one carries neither.
  */
 function describeUnusableRef(ref: ConnectorRef): string {
-  const legacy = ref as unknown as { name?: unknown; path?: unknown };
-  if (typeof legacy.name === "string") return `legacy name: "${legacy.name}"`;
-  if (typeof legacy.path === "string") return `legacy path: "${legacy.path}"`;
-  if (typeof ref.url === "string") return `unusable url: ${JSON.stringify(ref.url)}`;
-  return `no url and no legacy key (keys: ${Object.keys(ref).join(", ") || "none"})`;
+  const keys = Object.keys(ref).join(", ") || "none";
+  if (typeof ref.url !== "string") return `no url (keys: ${keys})`;
+  if (!isHttpUrl(ref.url)) return `unusable url: ${JSON.stringify(ref.url)}`;
+  return `no serverName (keys: ${keys})`;
 }
 
 /**
@@ -90,31 +86,20 @@ export function buildProcessInventory(
   const entries: ProcessInventoryEntry[] = [];
 
   for (const ws of workspaces) {
-    // Disk-read boundary: a workspace.json that still declares its connectors
-    // under the pre-rename key hard-errors here, naming the one-shot the
-    // operator runs. The runtime does not rewrite tenant state on boot.
-    assertWorkspaceIsMigrated(ws);
     for (const connector of ws.connectors) {
-      // Disk-read boundary: refs carrying the legacy `oauthScope: "user"`
-      // literal hard-error here. Operators are expected to have run
-      // `bun run migrate:user-creds` before deploying Stage 2 — see
-      // the Stage 2 deploy runbook.
-      assertConnectorRefIsPostStage2(connector);
       // A row this build can neither name nor reach is skipped, not thrown on.
       // Boot reads every workspace's `connectors[]` in one pass before any
       // per-entry containment, so throwing here takes the whole instance down
-      // over one bad row — a legacy `name:`/`path:` entry that predates the
-      // URL-only ref, or a url that is blank or unparseable. Dropping just
-      // that entry is what makes the documented per-entry break ("that entry
-      // no longer starts") true, and the warn names the row so it can be
-      // fixed. `serverNameFromRef` is the single predicate: it returns null on
-      // exactly the rows nothing downstream could have used.
+      // over one bad row — one with no serverName, or a url that is blank or
+      // unparseable. Dropping just that entry is what makes the documented
+      // per-entry break ("that entry no longer starts") true, and the warn
+      // names the row so it can be fixed.
       const serverName = serverNameFromRef(connector);
       if (serverName === null || !isHttpUrl(connector.url)) {
         log.warn(
-          `[connectors] ${ws.id}: skipping a connector entry with no reachable url — ` +
-            `${describeUnusableRef(connector)}. A connector is addressed by URL; ` +
-            "re-install it from the catalog against the server's endpoint.",
+          `[connectors] ${ws.id}: skipping a connector entry it cannot start — ` +
+            `${describeUnusableRef(connector)}. ` +
+            "Re-install it from the catalog against the server's endpoint.",
         );
         continue;
       }
@@ -368,8 +353,7 @@ export async function startWorkspaceConnectors(
     try {
       const result = await startConnectorSource(entry.connector, wsRegistry, eventSink, {
         allowInsecureRemotes: opts?.allowInsecureRemotes,
-        wsId: entry.wsId,
-        workDir,
+        workspaceContext: new WorkspaceContext({ wsId: entry.wsId, workDir }),
         // URL connectors that hit interactive OAuth fire this BEFORE
         // ConnectorLifecycleManager exists (it's constructed in
         // `Runtime.start` after this boot loop). Buffer the

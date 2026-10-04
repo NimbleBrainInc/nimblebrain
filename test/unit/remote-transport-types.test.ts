@@ -9,11 +9,12 @@ describe("Remote transport — JSON Schema validation", () => {
     return validate(ref) as boolean;
   }
 
-  it("accepts a url connector and refuses one without a url", () => {
-    // Every connector is a remote MCP endpoint; `url` is the only addressing form.
-    expect(isValid({ url: "https://example.com/mcp" })).toBe(true);
-    expect(isValid({ name: "@nimblebraininc/echo" })).toBe(false);
-    expect(isValid({ path: "../mcp-servers/hello" })).toBe(false);
+  it("accepts a url connector with a serverName and refuses one missing either", () => {
+    // Every connector is a remote MCP endpoint registered under its serverName.
+    expect(isValid({ url: "https://example.com/mcp", serverName: "example" })).toBe(true);
+    expect(isValid({ url: "https://example.com/mcp" })).toBe(false);
+    expect(isValid({ url: "https://example.com/mcp", serverName: "" })).toBe(false);
+    expect(isValid({ serverName: "example" })).toBe(false);
   });
 });
 

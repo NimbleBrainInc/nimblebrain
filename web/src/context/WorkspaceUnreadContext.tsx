@@ -29,11 +29,9 @@ function countsFrom(workspaces: BootstrapResponse["workspaces"]): Record<string,
 }
 
 export function WorkspaceUnreadProvider({
-  token,
   workspaces,
   children,
 }: {
-  token: string;
   workspaces: BootstrapResponse["workspaces"];
   children: ReactNode;
 }) {
@@ -45,7 +43,7 @@ export function WorkspaceUnreadProvider({
     );
   }, []);
 
-  useEvents(token, undefined, {
+  useEvents({
     onNotificationCreated: (event) => set(event.workspaceId, event.unread),
     onNotificationRead: (event) => set(event.workspaceId, event.unread),
     onReconnect: () => {

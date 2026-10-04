@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { realClient, realMcpBridgeClient } from "../../test/setup";
 
 const { buildMcpRequest, readMcpAnswer, sendMcpRequest } = realMcpBridgeClient;
-const { setActiveWorkspaceId, setAuthLifecycleHandler, setAuthToken } = realClient;
+const { setActiveWorkspaceId, setAuthToken } = realClient;
 
 const ENVELOPE = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -43,7 +43,6 @@ function jsonAnswer(result: unknown, status = 200): Response {
 beforeEach(() => {
   calls = [];
   respond = () => jsonAnswer({ content: [] });
-  setAuthLifecycleHandler(null);
   setAuthToken("initial-token");
   setActiveWorkspaceId("ws-initial");
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -62,7 +61,6 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  setAuthLifecycleHandler(null);
   setAuthToken(null);
   setActiveWorkspaceId(null);
 });

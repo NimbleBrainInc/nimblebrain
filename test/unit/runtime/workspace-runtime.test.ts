@@ -90,14 +90,12 @@ describe("buildProcessInventory", () => {
     expect(entries[1].dataDir).toContain("ws_006a3c0eb78706fc");
   });
 
-  it("derives serverName from the URL when the ref carries none", () => {
+  it("skips a row that names no server", () => {
     const ws = makeWorkspace("ws_0061a3cbd4f78051", "Production", [
-      { url: "https://example.com/mcp" },
+      { url: "https://example.com/mcp" } as unknown as ConnectorRef,
     ]);
 
-    const entries = buildProcessInventory([ws], WORK_DIR);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].serverName.length).toBeGreaterThan(0);
+    expect(buildProcessInventory([ws], WORK_DIR)).toHaveLength(0);
   });
 
   it("preserves the original connector ref in each entry", () => {
@@ -135,30 +133,26 @@ describe("buildProcessInventory", () => {
   it("skips a row with no usable url instead of aborting the whole inventory", () => {
     // Boot reads every workspace's `connectors[]` in one pass before any
     // per-entry containment, so a throw here takes the instance down over one
-    // bad row. Both reachable shapes are covered: a legacy `name:`/`path:`
-    // entry predating the URL-only ref, and a `url: ""` that reached the store.
+    // bad row: a row with no url, and a blank or unparseable url that
+    // reached the store.
     const ws = makeWorkspace("ws_004ae1946ec2cba8", "Mixed", [
-      { name: "@acme/echo" } as unknown as ConnectorRef,
-      { path: "/opt/echo" } as unknown as ConnectorRef,
-      { url: "" } as ConnectorRef,
-      // Blank-but-nonempty and unparseable urls: the first guard tested
-      // `length === 0`, so these still reached `getDataPath` and threw the
-      // whole-instance boot crash the guard existed to stop.
-      { url: "   " } as ConnectorRef,
-      { url: "..." } as ConnectorRef,
+      { serverName: "echo" } as unknown as ConnectorRef,
+      { url: "", serverName: "echo" },
+      { url: "   ", serverName: "echo" },
+      { url: "...", serverName: "echo" },
       crm(),
     ]);
 
     const entries = buildProcessInventory([ws], WORK_DIR);
 
-    // The healthy row survives; the three unusable ones are dropped, not thrown on.
+    // The healthy row survives; the unusable ones are dropped, not thrown on.
     expect(entries).toHaveLength(1);
     expect(entries[0]?.serverName).toBe("crm");
   });
 
   it("one workspace's bad row does not cost another workspace its connectors", () => {
     const broken = makeWorkspace("ws_00231ca3a812703c", "Broken", [
-      { name: "@acme/echo" } as unknown as ConnectorRef,
+      { url: "", serverName: "echo" },
     ]);
     const healthy = makeWorkspace("ws_003de686f8a1bb95", "Healthy", [crm()]);
 

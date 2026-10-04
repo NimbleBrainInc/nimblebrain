@@ -45,8 +45,6 @@ describe("concurrent chat rejection", () => {
       workspaceId: TEST_WORKSPACE_ID,
     });
 
-    expect(runtime.isConversationActive(convId)).toBe(true);
-
     // A concurrent call on the same conversation must reject cleanly.
     await expect(
       runtime.chat({
@@ -59,7 +57,6 @@ describe("concurrent chat rejection", () => {
 
     // Let the in-flight call finish; lock must release.
     await inFlight;
-    expect(runtime.isConversationActive(convId)).toBe(false);
 
     // And a subsequent call on the same conversation must succeed normally.
     const third = await runtime.chat({
@@ -164,7 +161,15 @@ describe("concurrent chat rejection", () => {
       }),
     ).rejects.toThrow();
 
-    expect(runtime.isConversationActive(convId)).toBe(false);
+    // The refused call released the lock: the owner's next turn runs.
+    await expect(
+      runtime.chat({
+        message: "after",
+        conversationId: convId,
+        identity: alice,
+        workspaceId: TEST_WORKSPACE_ID,
+      }),
+    ).resolves.toBeDefined();
 
     await runtime.shutdown();
   });

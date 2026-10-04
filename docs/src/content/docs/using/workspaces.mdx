@@ -19,7 +19,7 @@ When you send a chat message, it runs in the context of your focused workspace, 
 <Aside type="note">
 Workspace IDs are opaque tokens. Every workspace has a generated ID of the form `ws_<16-hex>` (for example `ws_3f9a1c7e0b2d4856`); you cannot choose one. The ID is assigned once at creation and never derived from the name — renaming a workspace does not change its ID or its URL. Treat it as opaque: never parse it for meaning.
 
-The server refuses to start while `workspaces/` holds a workspace whose ID has any other form, such as a name (`ws_<name>`) or a user ID (`ws_user_<id>`), and names each one in the error. Rename such a workspace to a generated ID — its directory, the `id` in its `workspace.json`, and every stored reference to it — before starting the server.
+A directory under `workspaces/` whose ID has any other form, such as a name (`ws_<name>`) or a user ID (`ws_user_<id>`), is not served: the server skips it and logs a warning naming it. To serve it, rename it to a generated ID — its directory, the `id` in its `workspace.json`, and every stored reference to it.
 </Aside>
 
 ## Roles
@@ -53,20 +53,14 @@ The agent uses `nb__manage_workspaces` with `action: "create"` to set it up. The
 
 ## Managing members
 
-Add or remove members with the `nb__manage_members` tool:
-
-```
-Add sarah@example.com to the Engineering workspace as an admin
-```
-
-The tool supports these actions:
+Add, remove, and change members from the workspace's **Settings → Members** (`/w/<id>/settings/members`). The page calls the `nb__manage_workspaces` tool with these actions:
 
 | Action | Description |
 |--------|-------------|
-| `add` | Add a user to the workspace with a specified role |
-| `remove` | Remove a user from the workspace |
-| `update` | Change a member's role |
-| `list` | List all members and their roles |
+| `add_member` | Add a user, named by `userId` or `email`, to the workspace with a specified role |
+| `remove_member` | Remove a user from the workspace |
+| `update_member` | Change a member's role |
+| `list_members` | List all members and their roles |
 
 <Aside type="note">
 Every member can see who else is in a workspace. Workspace admins and org admins/owners can manage members: add someone in the organization by email, change roles, and remove people, from the workspace's **Settings → Members**. An org admin can manage any workspace's members without joining it. Regular members cannot add or remove other users. The same people can rename the workspace, from **Settings → General**.

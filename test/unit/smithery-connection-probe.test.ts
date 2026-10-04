@@ -38,21 +38,6 @@ function refWithMarker(): ConnectorRef {
   };
 }
 
-/** The pre-`brokered` shape still on disk for an install made by an older runtime. */
-function legacyRefWithMarker(): ConnectorRef {
-  return {
-    url: "https://api.smithery.ai/connect/test-ns/nb-x/mcp",
-    serverName: "ai-bassethound-mcp",
-    oauthScope: "workspace",
-    smithery: {
-      connectorId: "ai.bassethound/mcp",
-      connectionId: "nb-x",
-      namespace: "test-ns",
-      baseUrl: "https://api.smithery.ai",
-    },
-  } as unknown as ConnectorRef;
-}
-
 function targetOf(ref: ConnectorRef): ProbeTarget {
   return { serverName: "ai-bassethound-mcp", wsId: "ws_0001f3ac8053ce11", principalId: "u_1", ref };
 }
@@ -189,30 +174,5 @@ describe("SmitheryConnectionProbe — liveness mapping", () => {
     const probe = new SmitheryConnectionProbe(OPTIONS);
     const bare = { url: "https://x/mcp", serverName: "x" } as ConnectorRef;
     expect(await probe.probe(targetOf(bare), new AbortController().signal)).toBe("indeterminate");
-  });
-
-  // The read-side shim: an install made before refs shared one shape keeps
-  // probing, with no config edit and no rewrite of what is on disk.
-  it("probes a legacy per-vendor ref through the shim", async () => {
-    let requested = "";
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      requested = String(input);
-      return new Response(
-        JSON.stringify({ connectionId: "nb-x", status: { state: "connected" } }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }) as typeof fetch;
-
-    const probe = new SmitheryConnectionProbe(OPTIONS);
-    const verdict = await probe.probe(
-      targetOf(legacyRefWithMarker()),
-      new AbortController().signal,
-    );
-
-    expect(verdict).toBe("live");
-    expect(requested).toContain("https://api.smithery.ai/connect/test-ns/nb-x");
   });
 });

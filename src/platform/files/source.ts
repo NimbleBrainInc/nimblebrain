@@ -7,7 +7,7 @@
  * registry and on-disk binary storage.
  *
  * Both this tool source and the chat multipart ingest path
- * (`src/api/handlers.ts::handleChat` / `handleChatStream`) share a single
+ * (`src/api/handlers.ts::parseChatBody`) share a single
  * `FileStore` implementation from `src/files/store.ts`. Storage identity —
  * directory layout, ID scheme, registry semantics — lives there. This
  * module only defines the tool schemas and adapts calls into the store.

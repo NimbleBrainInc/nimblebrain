@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { ToolCallDisplay } from "../src/hooks/useChat";
+import type { ToolCallDisplay } from "../src/hooks/chat-store";
 import { describeCall, registerToolRenderer } from "../src/lib/tool-display";
 import { clearRenderersForTest } from "../src/lib/tool-display/registry";
 import { dominantVerb, inferVerb, phraseFor } from "../src/lib/tool-display/verbs";

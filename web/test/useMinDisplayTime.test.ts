@@ -10,7 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { renderHook } from "@testing-library/react";
-import type { ToolCallDisplay } from "../src/hooks/useChat";
+import type { ToolCallDisplay } from "../src/hooks/chat-store";
 import { useMinDisplayTime } from "../src/hooks/useMinDisplayTime";
 
 function makeCall(overrides: Partial<ToolCallDisplay> & { id: string }): ToolCallDisplay {

@@ -807,6 +807,7 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       OVERLAY_SERVER,
       {
         url: servers[1]!.url,
+        serverName: OVERLAY_SERVER,
         skillsLock: [{ identity: "pages", version: "v0.1.0", sha: "a1", path: "pages-usage.md" }],
       },
       undefined,
