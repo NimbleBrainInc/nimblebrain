@@ -1,9 +1,11 @@
-import { Check, Copy, RefreshCw } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { callTool } from "../../api/client";
 import { parseToolResult } from "../../api/tool-result";
 import { Button } from "../../components/ui/button";
 import { Label } from "../../components/ui/label";
+import { Tooltip } from "../../components/ui/tooltip";
+import { useAppDisplayName } from "../../hooks/useAppDisplayName";
 import { useFlashState } from "../../hooks/useFlashState";
 import {
   EmptyState,
@@ -16,9 +18,12 @@ import {
 /**
  * Workspace webhooks — the inbound delivery URLs this workspace holds.
  *
- * The URL is shown in full, because that is what it is FOR: an address an admin
- * hands to another system. A page that hid it would leave rotation as the only
- * way to learn one, which breaks the integration you were trying to read.
+ * A URL is a credential (anyone holding it can send this workspace events), so
+ * its secret part is masked at rest: a screen share or a screenshot of this
+ * page does not leak it. It is never out of reach, though — Copy copies the
+ * full URL while it stays masked, and Reveal shows it — because handing it to
+ * another system is what the page is for, and rotation must never be the only
+ * way to learn one.
  *
  * Admin-only, gated in two places that answer different questions. The nav
  * entry's `minRole` decides whether the tab is worth showing; the tool decides
@@ -38,6 +43,21 @@ interface Webhook {
 }
 
 /**
+ * The URL with its last path segment, the delivery id that makes it a
+ * credential, replaced by dots. The origin and path stay readable, so an admin
+ * can still tell which host and door it points at.
+ */
+export function maskHookUrl(url: string): string {
+  const cut = url.lastIndexOf("/");
+  return cut < 0 ? "••••••••••••" : `${url.slice(0, cut + 1)}••••••••••••`;
+}
+
+/** A date and time to the minute, in the reader's locale. */
+function formatWhen(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/**
  * The address, as a labelled field — the shape `CopyableWorkspaceId` established
  * for "a value you are here to copy".
  *
@@ -49,6 +69,7 @@ interface Webhook {
  */
 function WebhookUrl({ url }: { url: string | null }) {
   const [copied, flashCopied] = useFlashState(1500);
+  const [revealed, setRevealed] = useState(false);
 
   if (!url) {
     return (
@@ -65,29 +86,49 @@ function WebhookUrl({ url }: { url: string | null }) {
   return (
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">Delivery URL</Label>
-      <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/50 px-3 py-2">
-        {/* Always visible, so a failed clipboard write (Safari over plain HTTP,
-            a sandboxed iframe, a denied permission) still leaves the URL
-            selectable by hand. */}
-        <code className="block flex-1 text-xs font-mono truncate min-w-0">{url}</code>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            navigator.clipboard
-              .writeText(url)
-              .then(flashCopied)
-              .catch(() => {});
-          }}
-          className="h-7 w-7 p-0 shrink-0"
-          aria-label="Copy the delivery URL"
-        >
-          {copied ? (
-            <Check className="h-3.5 w-3.5 text-success" />
-          ) : (
-            <Copy className="h-3.5 w-3.5 text-muted-foreground" />
-          )}
-        </Button>
+      <div className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/50 py-1 pl-3 pr-1">
+        {/* Revealed, the URL is selectable by hand, so a failed clipboard write
+            (Safari over plain HTTP, a sandboxed iframe, a denied permission)
+            still leaves a way to take it. */}
+        <code className="block flex-1 text-xs font-mono truncate min-w-0" data-testid="webhook-url">
+          {revealed ? url : maskHookUrl(url)}
+        </code>
+        <Tooltip label={revealed ? "Hide URL" : "Reveal URL"}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setRevealed((r) => !r)}
+            className="h-7 w-7 p-0 shrink-0"
+            aria-label={revealed ? "Hide the delivery URL" : "Reveal the delivery URL"}
+            aria-pressed={revealed}
+          >
+            {revealed ? (
+              <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+          </Button>
+        </Tooltip>
+        <Tooltip label={copied ? "Copied" : "Copy URL"}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              navigator.clipboard
+                .writeText(url)
+                .then(flashCopied)
+                .catch(() => {});
+            }}
+            className="h-7 w-7 p-0 shrink-0"
+            aria-label="Copy the delivery URL"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-success" />
+            ) : (
+              <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+          </Button>
+        </Tooltip>
       </div>
     </div>
   );
@@ -113,6 +154,8 @@ function WebhookRow({
   flush: boolean;
   onRotated: () => void;
 }) {
+  // The connector as the sidebar names it, not its server name.
+  const appName = useAppDisplayName()(hook.connector);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -132,7 +175,7 @@ function WebhookRow({
       // deliveries stopping if nobody acts, so it has to outlive the panel.
       if (out && out.registered === false) {
         setError(
-          `Rotated, but ${hook.connector} did not register the new URL with ${hook.vendor}. ` +
+          `Rotated, but ${appName} did not register the new URL with ${hook.vendor}. ` +
             "The previous URL keeps working until its grace window closes — rotate again once " +
             "the connector is healthy, or register the new URL manually.",
         );
@@ -148,8 +191,8 @@ function WebhookRow({
 
   return (
     <Section
-      title={hook.vendor}
-      description={hook.connector}
+      title={appName}
+      description={`Receives events from ${hook.vendor}`}
       flush={flush}
       action={
         open ? null : (
@@ -169,11 +212,11 @@ function WebhookRow({
           <dt>Delivered to</dt>
           <dd className="font-mono text-foreground/80">{hook.route}</dd>
           <dt>Created</dt>
-          <dd>{new Date(hook.createdAt).toLocaleString()}</dd>
+          <dd>{formatWhen(hook.createdAt)}</dd>
           {hook.rotatedAt ? (
             <>
               <dt>Last rotated</dt>
-              <dd>{new Date(hook.rotatedAt).toLocaleString()}</dd>
+              <dd>{formatWhen(hook.rotatedAt)}</dd>
             </>
           ) : null}
         </dl>
@@ -198,8 +241,8 @@ function WebhookRow({
               Cancel
             </Button>
             <p className="text-xs text-muted-foreground flex-1 min-w-48">
-              Mints a new URL and asks {hook.connector} to register it with {hook.vendor}. The
-              current URL keeps working for a grace window, then stops.
+              Mints a new URL and asks {appName} to register it with {hook.vendor}. The current URL
+              keeps working for a grace window, then stops.
             </p>
           </div>
         ) : null}
