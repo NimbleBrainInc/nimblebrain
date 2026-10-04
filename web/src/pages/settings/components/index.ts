@@ -9,4 +9,4 @@ export { SettingsDashboardPage } from "./SettingsDashboardPage";
 export { SettingsFormPage } from "./SettingsFormPage";
 export { SettingsListPage } from "./SettingsListPage";
 export { SettingsPageHeader } from "./SettingsPageHeader";
-export { WorkspaceInstructions } from "./WorkspaceInstructions";
+export { useWorkspaceInstructions, WorkspaceInstructions } from "./WorkspaceInstructions";

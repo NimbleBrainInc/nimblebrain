@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { callTool, readResource } from "../../../api/client";
-import { Button } from "../../../components/ui/button";
-import { Label } from "../../../components/ui/label";
 import { Textarea } from "../../../components/ui/textarea";
-import { useFlashState } from "../../../hooks/useFlashState";
+import { useAutosaveForm } from "../../../hooks/useAutosaveForm";
+import { AutosaveField } from "./AutosaveField";
 import { InlineError } from "./InlineError";
 
 /**
@@ -22,146 +21,132 @@ function charLength(text: string): number {
   return n;
 }
 
+interface InstructionsValues {
+  body: string;
+}
+
+/** The refusal `write_instructions` returns is JSON `{ error }` or plain text. */
+function refusalText(res: { content?: Array<{ text?: string }> }): string {
+  const text = res.content?.[0]?.text ?? "The instructions were not saved.";
+  try {
+    return (JSON.parse(text) as { error?: string }).error ?? text;
+  } catch {
+    return text;
+  }
+}
+
 /**
- * Editor body for `instructions://workspace` — used inside a `Section`
- * provided by `WorkspaceGeneralTab`. The Section owns the title; this
- * component renders only the field, helper copy, counter, and Save/Reset
- * buttons.
+ * The workspace instructions as a form that saves when the editor loses focus
+ * (`useAutosaveForm`). Not on a pause in typing: the instructions reach every
+ * conversation in the workspace, and a half-written one would too.
  *
- * `wsId` is informational (form id only — the backend writes to whatever
- * workspace the request resolves against). `canEdit` is the UI role gate;
- * the backend tool independently re-checks role on write.
+ * Each save names `wsId`, so a save queued behind another still lands in the
+ * workspace it was written for if the reader has moved on.
  */
-export function WorkspaceInstructions({ wsId, canEdit }: { wsId: string; canEdit: boolean }) {
-  const [text, setText] = useState("");
-  const [lastSaved, setLastSaved] = useState("");
+export function useWorkspaceInstructions(wsId: string) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [savedFlash, flashSaved] = useFlashState(1500);
 
-  const load = useCallback(async () => {
-    try {
-      setLoadError(null);
-      const result = await readResource("instructions", "instructions://workspace");
-      const body = result.contents?.[0]?.text ?? "";
-      setText(body);
-      setLastSaved(body);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to load instructions");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const save = useCallback(
+    async (_field: "body", body: string) => {
+      if (charLength(body) > MAX_WORKSPACE_INSTRUCTIONS) {
+        throw new Error(
+          `Instructions are limited to ${MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()} characters.`,
+        );
+      }
+      const res = await callTool(
+        "instructions",
+        "write_instructions",
+        { body },
+        { workspaceId: wsId },
+      );
+      if (res.isError) throw new Error(refusalText(res));
+    },
+    [wsId],
+  );
+
+  const form = useAutosaveForm<InstructionsValues>(
+    { body: "" },
+    {
+      save,
+      labels: { body: "Workspace instructions" },
+      // Leaving the page blurs the editor, which starts the save, and then
+      // removes the field; a failure after that has nowhere else to show.
+      notices: { body: { undo: true, error: "notice" } },
+    },
+  );
+  const { load } = form;
 
   useEffect(() => {
-    void load();
+    readResource("instructions", "instructions://workspace")
+      .then((result) => load({ body: result.contents?.[0]?.text ?? "" }))
+      .catch((err) => {
+        setLoadError(err instanceof Error ? err.message : "Failed to load instructions");
+      })
+      .finally(() => setLoading(false));
   }, [load]);
 
-  const dirty = text !== lastSaved;
-  const charCount = charLength(text);
-  const showCounter = charCount >= MAX_WORKSPACE_INSTRUCTIONS * COUNTER_THRESHOLD;
-  const overLimit = charCount > MAX_WORKSPACE_INSTRUCTIONS;
+  return { form, loading, loadError };
+}
 
-  const handleSave = useCallback(async () => {
-    if (overLimit) return;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const res = await callTool("instructions", "write_instructions", {
-        body: text,
-      });
-      if (res.isError) {
-        const errText = res.content?.[0]?.text ?? "Save failed";
-        const parsed = (() => {
-          try {
-            return JSON.parse(errText) as { error?: string };
-          } catch {
-            return { error: errText };
-          }
-        })();
-        throw new Error(parsed.error ?? "Save failed");
-      }
-      setLastSaved(text);
-      flashSaved();
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  }, [overLimit, text, flashSaved]);
-
-  const handleReset = useCallback(() => {
-    setText(lastSaved);
-    setSaveError(null);
-  }, [lastSaved]);
+/**
+ * Editor body for `instructions://workspace`, inside a `Section` provided by
+ * `WorkspaceGeneralTab`. `canEdit` is the UI role gate; the backend tool
+ * independently re-checks role on write.
+ */
+export function WorkspaceInstructions({
+  wsId,
+  canEdit,
+  instructions,
+}: {
+  wsId: string;
+  canEdit: boolean;
+  instructions: ReturnType<typeof useWorkspaceInstructions>;
+}) {
+  const { form, loading, loadError } = instructions;
 
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading...</p>;
   }
 
+  const id = `workspace-instructions-${wsId}`;
+  const charCount = charLength(form.values.body);
+  const showCounter = charCount >= MAX_WORKSPACE_INSTRUCTIONS * COUNTER_THRESHOLD;
+  const overLimit = charCount > MAX_WORKSPACE_INSTRUCTIONS;
+
   return (
     <div className="space-y-3">
       {loadError ? <InlineError message={loadError} /> : null}
 
-      <div className="space-y-2">
-        <Label htmlFor={`workspace-instructions-${wsId}`} className="sr-only">
-          Workspace instructions
-        </Label>
+      <AutosaveField
+        id={id}
+        label="Instructions"
+        {...form.fieldState("body")}
+        hint={
+          !canEdit ? (
+            "Only workspace admins can edit these instructions."
+          ) : showCounter ? (
+            <span className={overLimit ? "text-destructive" : undefined}>
+              {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()}{" "}
+              characters
+            </span>
+          ) : (
+            "Saves when you click away."
+          )
+        }
+      >
         <Textarea
-          id={`workspace-instructions-${wsId}`}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+          id={id}
           placeholder={
             canEdit
               ? "e.g. Always cite sources for engineering claims. Prefer concise summaries."
               : "No workspace instructions set."
           }
-          disabled={!canEdit}
-          aria-invalid={overLimit}
+          disabled={!canEdit || loadError !== null}
           className="min-h-32 text-sm"
+          {...form.textareaProps("body")}
         />
-        <div className="flex items-center justify-between text-xs">
-          {showCounter ? (
-            <span className={overLimit ? "text-destructive" : "text-muted-foreground"}>
-              {charCount.toLocaleString()} / {MAX_WORKSPACE_INSTRUCTIONS.toLocaleString()}{" "}
-              characters
-            </span>
-          ) : (
-            <span />
-          )}
-          {savedFlash ? (
-            <span role="status" className="text-success dark:text-green-400">
-              Saved
-            </span>
-          ) : null}
-        </div>
-      </div>
-
-      {saveError ? <InlineError message={saveError} /> : null}
-
-      {canEdit ? (
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={saving || overLimit || !dirty}
-            aria-busy={saving}
-          >
-            {saving ? "Saving..." : "Save"}
-          </Button>
-          {dirty ? (
-            <Button size="sm" variant="outline" onClick={handleReset} disabled={saving}>
-              Reset
-            </Button>
-          ) : null}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground italic">
-          Only workspace admins can edit these instructions.
-        </p>
-      )}
+      </AutosaveField>
     </div>
   );
 }

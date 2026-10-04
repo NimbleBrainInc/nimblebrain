@@ -191,9 +191,9 @@ role only — never invocation** (ADR-0026); the session it returns is an ordina
 remote source. `dcr` and `static` are runtime-native and stay outside the seam.
 
 ### Task augmentation
-How a long-running tool call is made without holding a socket open. A server
-marks a tool `execution.taskSupport`; the runtime attaches a task, polls the
-stream, and can cancel (ADR-0029). The retry policy inverts with it: an inline
+How a long-running tool call is made without holding a socket open: the
+2026-07-28 tasks extension, and only that (ADR-0046). The server decides per call
+whether to answer with a task; the runtime polls it and can cancel (ADR-0029). The retry policy inverts with it: an inline
 call is re-issued once on a transport error, and a task call is **never**
 retried — it has already created server-side state, so replaying it would
 duplicate the side effect.
@@ -288,3 +288,4 @@ Orchestrate over remote MCP:
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
 - [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
 - [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
+- [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — *(proposed)* task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken

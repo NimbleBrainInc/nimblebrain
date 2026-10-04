@@ -13,7 +13,8 @@ import { useNotice } from "../components/notices";
  *
  * Each field holds a draft and the value last saved. A field is committed —
  * sent through `save` — when the edit is complete: a select on change, a text
- * field on blur or Enter. Escape reverts a text field to its saved value.
+ * field on blur or Enter, a textarea on blur. Escape reverts a text field to its
+ * saved value.
  *
  * Saves run one at a time, in the order they were committed, so two writes
  * never race to the server. A field committed again while its save is queued
@@ -280,6 +281,17 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
     "aria-invalid": statuses[field] === "error" || undefined,
   });
 
+  /**
+   * Bindings for a `<textarea>`: commit on blur only. Enter is a newline, and
+   * Escape does not revert, since one stray key would discard a long edit.
+   */
+  const textareaProps = <K extends StringKeys<V>>(field: K) => ({
+    value: draft[field] as string,
+    onChange: (e: ChangeEvent<HTMLTextAreaElement>) => set(field, e.target.value as V[K]),
+    onBlur: () => commit(field),
+    "aria-invalid": statuses[field] === "error" || undefined,
+  });
+
   /** Bindings for a `<select>`: a choice is a complete edit, so it commits at once. */
   const selectProps = <K extends StringKeys<V>>(field: K) => ({
     value: draft[field] as string,
@@ -303,6 +315,7 @@ export function useAutosaveForm<V extends object>(initial: V, options: AutosaveO
     commit,
     revert,
     inputProps,
+    textareaProps,
     selectProps,
     fieldState,
   };
