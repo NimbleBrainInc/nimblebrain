@@ -308,7 +308,7 @@ Wrap the tree in `<AppProvider>`. A task the user cancels ends with status `canc
 ```typescript
 import { callToolAsTask } from '@nimblebrain/synapse';
 
-const handle = await callToolAsTask<{ query: string }, { report: string }>(
+const handle = await callToolAsTask<{ report: string }>(
   app,
   'start_research',
   { query: 'Q2 metrics' },
