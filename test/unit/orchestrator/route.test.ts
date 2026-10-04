@@ -670,6 +670,28 @@ describe("routeToolCall — personal connectors (identity-door grant gate)", () 
 
     expect(routed.source).toBe(kernel); // the kernel source, not the personal connector
   });
+
+  test("a retired source name routes to its twin and carries the current tool name", async () => {
+    // `automations__<tool>` is a deprecation-window alias of `tasks__<tool>`:
+    // the route names the current tool, so every later check sees what runs.
+    const tasks = makeStubSource("tasks");
+    const runtime = makeStubRuntime({
+      registries: new Map([[SHARED_WS, [makeStubSource("crm")]]]),
+      workDir,
+      identitySources: new Map([["tasks", tasks]]),
+    });
+
+    const routed = await routeToolCall({
+      identityId: USER_ID,
+      namespacedName: "automations__list",
+      workspaceId: SHARED_WS,
+      runtime,
+    });
+
+    expect(routed.kind).toBe("identity");
+    expect(routed.source).toBe(tasks);
+    expect(routed.toolName).toBe("tasks__list");
+  });
 });
 
 describe("routeToolCall — bare names are workspace-scoped, with no legacy fallback", () => {

@@ -23,6 +23,7 @@ import {
   PROTOCOL_VERSION_META_KEY,
   type Task,
 } from "@modelcontextprotocol/server";
+import { canonicalIdentitySource } from "../tools/identity-sources.ts";
 import { TASKS_EXTENSION_ID } from "../tools/mcp-task-client.ts";
 import { TaskAlreadyTerminalError, TaskNotFoundError } from "../tools/types.ts";
 import type { TaskAwareSource, TaskScope } from "./mcp-task-store.ts";
@@ -162,15 +163,19 @@ export async function answerModernTaskRequest(
   if (typeof params.taskId !== "string" || !ctx) return notFound();
   const named = parseDoorTaskId(params.taskId);
   if (!named) return notFound();
+  // A handle minted under a retired source name (`automations`) is its twin's
+  // (`tasks`): it names the same run, so it resolves, and the answer echoes the
+  // id the client holds.
+  const sourceName = canonicalIdentitySource(named.source);
   const scope = scopeOf(params._meta);
-  if (scope && scope.source !== named.source) return notFound();
-  const source = ctx.findSource(named.source);
+  if (scope && canonicalIdentitySource(scope.source) !== sourceName) return notFound();
+  const source = ctx.findSource(sourceName);
   if (!source) return notFound();
 
   const ownerContext = {
     workspaceId: ctx.workspaceId,
     identityId: ctx.identityId,
-    originApp: named.source,
+    originApp: sourceName,
   };
   try {
     if (method === "tasks/cancel") {

@@ -32,6 +32,7 @@ describe("reserved server names", () => {
       "conversations",
       "files",
       "tasks",
+      "automations",
       `${PERSONAL_CONNECTOR_PREFIX}gmail`,
       "crm",
       "gmail",
@@ -51,7 +52,8 @@ describe("reserved server names", () => {
     // Reserved *because* workspace names went bare. While they carried a
     // `ws_<id>-` prefix a workspace `conversations` was distinguishable from the
     // identity one; now it would be silently shadowed.
-    for (const name of ["conversations", "files", "tasks"]) {
+    // `automations` stays reserved while it is an alias of `tasks`.
+    for (const name of ["conversations", "files", "tasks", "automations"]) {
       expect(isReservedServerName(name)).toBe(true);
     }
   });

@@ -33,8 +33,10 @@ import type { Runtime } from "../runtime/runtime.ts";
 import { isStreamedRunEvent } from "../runtime/turn-stream.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
+import { canonicalIdentitySource, canonicalIdentityToolName } from "../tools/identity-sources.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import { noteRetiredToolName } from "../tools/retired-tool-names.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
 import { isWorkspaceOptional } from "../tools/workspace-optional.ts";
@@ -1208,9 +1210,14 @@ export async function handleToolCall(
 
   const envelope = parseToolCallEnvelope(body);
   if (envelope instanceof Response) return envelope;
-  const { server, tool, args } = envelope;
+  const { args } = envelope;
 
   const { eventSink, identity, workspaceId } = options;
+
+  // A retired identity-source name (`automations`) runs its twin (`tasks`).
+  noteRetiredToolName(normalizeRestToolName(envelope.tool, envelope.server), identity?.id, "rest");
+  const server = canonicalIdentitySource(envelope.server);
+  const tool = canonicalIdentityToolName(envelope.tool);
 
   // Resolve the source through the two doors — the same decision the
   // orchestrator makes for `/mcp` (`routeToolCall`). Identity sources

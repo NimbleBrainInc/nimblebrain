@@ -903,6 +903,16 @@ describe("createDirectExecutor — recursive-call guard", () => {
     await expect(executor(automation)).rejects.toThrow(/allowedTools/);
   });
 
+  test("refuses a stored list naming the retired automations__delete", async () => {
+    const executor = createDirectExecutor(makeDirectTaskFn(), () => ({
+      workspaceId: "ws_0076759dbbe19fcc",
+      identity: { id: "u" },
+    }));
+    const automation = makeAutomation({ allowedTools: ["automations__delete"] });
+
+    await expect(executor(automation)).rejects.toThrow(/allowedTools/);
+  });
+
   test("sends allowedTools to the run, and none for an empty list", async () => {
     const seen: Array<string[] | undefined> = [];
     const taskFn: TaskFn = async (req) => {

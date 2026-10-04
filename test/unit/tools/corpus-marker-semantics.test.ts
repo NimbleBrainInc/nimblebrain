@@ -66,3 +66,15 @@ describe("seam: the server-notification relay key", () => {
     expect(hasAppViews("gmail")).toBe(true);
   });
 });
+
+describe("toolNameMatchesPattern — the retired automations source name", () => {
+  // A stored `allowedTools` or a skill's `tool-affinity` written against
+  // `automations__*` keeps naming the same tools after the rename, and a
+  // `tasks__*` pattern reaches a call made under the old name.
+  test("reads the alias as its twin on both sides", () => {
+    expect(toolNameMatchesPattern("tasks__list", "automations__*")).toBe(true);
+    expect(toolNameMatchesPattern("tasks__list", "automations__list")).toBe(true);
+    expect(toolNameMatchesPattern("automations__list", "tasks__*")).toBe(true);
+    expect(toolNameMatchesPattern("files__read", "automations__*")).toBe(false);
+  });
+});

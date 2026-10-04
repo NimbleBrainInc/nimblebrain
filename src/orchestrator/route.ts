@@ -38,11 +38,14 @@ import type { IdentityContext } from "../identity/context.ts";
 import type { AdminToolCall } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, PermissionStore } from "../permissions/permission-store.ts";
 import {
+  canonicalIdentitySource,
+  canonicalIdentityToolName,
   isIdentitySource,
   isPersonalConnectorName,
   personalConnectorServerName,
 } from "../tools/identity-sources.ts";
 import { parseNamespacedToolName, UnknownNamespacedToolName } from "../tools/namespace.ts";
+import { noteRetiredToolName } from "../tools/retired-tool-names.ts";
 import type { ToolSource } from "../tools/types.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import type { WorkspaceContext } from "../workspace/context.ts";
@@ -458,12 +461,16 @@ async function routeIdentityCall(
 ): Promise<RoutedToolCall> {
   const { sourcePrefix: wireSource, bareToolName, hasSeparator } = splitInnerToolName(toolName);
 
-  const kernelSource = runtime.getIdentitySource(wireSource);
+  // A retired source name (`automations__<tool>`) runs its twin (`tasks__<tool>`):
+  // the route carries the current name, so every check after this one (the
+  // in-run wall, the feature gate, the task surface) sees the tool it runs.
+  const kernelSource = runtime.getIdentitySource(canonicalIdentitySource(wireSource));
   if (kernelSource) {
+    noteRetiredToolName(toolName, identityId, "route");
     return {
       kind: "identity",
       context: runtime.getIdentityContext(identityId),
-      toolName,
+      toolName: canonicalIdentityToolName(toolName),
       source: kernelSource,
     };
   }

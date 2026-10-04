@@ -234,6 +234,7 @@ import {
 } from "../tools/credential-store-backend.ts";
 import { registerCredentialTransportCredentialProvider } from "../tools/credential-transport-credential.ts";
 import {
+  canonicalIdentitySource,
   isIdentitySource,
   isTaskForbiddenIdentityTool,
   personalConnectorWireName,
@@ -3555,7 +3556,9 @@ export class Runtime {
    */
   getIdentitySource(name: string): ToolSource | undefined {
     if (!isIdentitySource(name)) return undefined;
-    return this._platformSources.find((s) => s.name === name);
+    // A retired alias (`automations`) resolves to the source that replaced it.
+    const current = canonicalIdentitySource(name);
+    return this._platformSources.find((s) => s.name === current);
   }
 
   /**
@@ -4870,7 +4873,7 @@ export class Runtime {
   /** The task surface of the identity source by that name, or null when it has none. */
   getIdentityTaskSource(name: string): IdentityTaskSource | null {
     if (!isIdentitySource(name)) return null;
-    return this._identityTaskSources.get(name) ?? null;
+    return this._identityTaskSources.get(canonicalIdentitySource(name)) ?? null;
   }
 
   /**

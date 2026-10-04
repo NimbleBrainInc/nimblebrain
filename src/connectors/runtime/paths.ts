@@ -78,7 +78,7 @@ export function validateServerName(serverName: string): void {
     // consults the identity door first, so such a source is unreachable anyway
     // — but the operator sees only this line, so it has to say what to do.
     throw new Error(
-      `Source name '${serverName}' is reserved for platform tools (nb, conversations, files, tasks). ` +
+      `Source name '${serverName}' is reserved for platform tools (nb, conversations, files, tasks, and the retired name automations). ` +
         `Its tools would be shadowed by the identity door and unreachable. Reinstall the connector under a different ` +
         `source name, or set an explicit \`serverName\` on its ref.`,
     );
