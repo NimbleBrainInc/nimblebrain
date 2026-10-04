@@ -165,16 +165,28 @@ export function WorkspaceDetailPage() {
     fetchData();
   }, [fetchData]);
 
+  const memberName = useCallback(
+    (userId: string) => userMap.get(userId)?.displayName ?? userId,
+    [userMap],
+  );
+
   const handleAdd = useCallback(async () => {
     if (!addUserId || !id) return;
     setAdding(true);
     setAddError(null);
     try {
-      await callToolWithoutWorkspace("nb", "manage_workspaces", {
+      // A refusal comes back as a result, not a throw; parseToolResult throws on
+      // it, so the form keeps its values and shows the reason.
+      const res = await callToolWithoutWorkspace("nb", "manage_workspaces", {
         action: "add_member",
         workspaceId: id,
         userId: addUserId,
         role: addRole,
+      });
+      parseToolResult(res);
+      notify({
+        level: "success",
+        title: `${memberName(addUserId)} was added to ${workspace?.name ?? "the workspace"}`,
       });
       setAddUserId("");
       setAddRole("member");
@@ -185,12 +197,7 @@ export function WorkspaceDetailPage() {
     } finally {
       setAdding(false);
     }
-  }, [addUserId, addRole, id, fetchData]);
-
-  const memberName = useCallback(
-    (userId: string) => userMap.get(userId)?.displayName ?? userId,
-    [userMap],
-  );
+  }, [addUserId, addRole, id, fetchData, notify, memberName, workspace?.name]);
 
   // Throwing keeps the dialog open with the refusal shown (ConfirmDialog), and
   // parseToolResult throws on a refusal, which the tool returns as a result.

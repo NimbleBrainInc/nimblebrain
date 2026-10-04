@@ -32,6 +32,7 @@ mock.module("../src/api/client", () => ({
           users: [
             { id: "usr_me", email: "me@example.com", displayName: "Me" },
             { id: "usr_bo", email: "bo@example.com", displayName: "Bo" },
+            { id: "usr_cy", email: "cy@example.com", displayName: "Cy" },
           ],
         },
         isError: false,
@@ -159,5 +160,48 @@ describe("removing a member on the org workspace page", () => {
     expect(me.getAttribute("aria-disabled")).toBe("true");
     await click(me);
     expect(document.body.textContent).not.toContain("Remove Me?");
+  });
+});
+
+describe("adding a member on the org workspace page", () => {
+  async function addCy(c: HTMLElement) {
+    await click(buttonByText("Add member"));
+    const select = c.querySelector<HTMLSelectElement>("#add-member-user")!;
+    const win = (globalThis as unknown as { window: Window & typeof globalThis }).window;
+    const setter = Object.getOwnPropertyDescriptor(win.HTMLSelectElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(select, "usr_cy");
+      select.dispatchEvent(new win.Event("change", { bubbles: true }));
+    });
+    // The form's submit button shares the toggle's label; it is the last one.
+    const buttons = Array.from(document.body.querySelectorAll("button")).filter(
+      (b) => b.textContent?.trim() === "Add member",
+    );
+    await click(buttons.at(-1));
+  }
+
+  test("adds the chosen person and says so", async () => {
+    const c = await mount();
+    await addCy(c);
+
+    expect(calls.find((x) => x.args.action === "add_member")?.args).toEqual({
+      action: "add_member",
+      workspaceId: WS_ID,
+      userId: "usr_cy",
+      role: "member",
+    });
+    expect(document.body.textContent).toContain("Cy was added to Acme");
+  });
+
+  // The tool answers a refusal as a result, not a throw. Unchecked, the form
+  // closed as if the person had been added.
+  test("a refused add keeps the form open with the server's reason", async () => {
+    refusal = "You don't have permission to manage members.";
+    const c = await mount();
+    await addCy(c);
+
+    expect(document.body.textContent).toContain("You don't have permission to manage members.");
+    expect(c.querySelector("#add-member-user")).not.toBeNull();
+    expect(document.body.textContent).not.toContain("Cy was added");
   });
 });
