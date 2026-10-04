@@ -56,6 +56,9 @@ export interface JudgePort {
   }): Promise<JudgeDispatchResult>;
 }
 
+/** Why no judge server could be picked: none connected, several and none named, or the named one is not one. */
+export type JudgeMissing = "no_judge" | "judge_ambiguous" | "judge_not_found";
+
 /**
  * Pick the judge server for a task among a workspace's connected sources:
  * the one the task names, else the only one connected. Never a guess between
@@ -64,7 +67,7 @@ export interface JudgePort {
 export function findJudgeServer(
   sources: JudgeSourceView[],
   named: string | undefined,
-): { server: string } | { reason: string } {
+): { server: string } | { code: JudgeMissing; reason: string } {
   const isJudge = (s: JudgeSourceView) =>
     s.toolNames.includes(JUDGE_TOOL) && s.toolNames.includes(LIST_JUDGES_TOOL);
   const judges = sources.filter(isJudge);
@@ -72,23 +75,64 @@ export function findJudgeServer(
     if (judges.some((s) => s.name === named)) return { server: named };
     if (sources.some((s) => s.name === named)) {
       return {
+        code: "judge_not_found",
         reason: `"${named}" is connected but is not a judge server (it does not expose ${JUDGE_TOOL} and ${LIST_JUDGES_TOOL})`,
       };
     }
-    return { reason: `the judge server "${named}" is not connected in this workspace` };
+    return {
+      code: "judge_not_found",
+      reason: `the judge server "${named}" is not connected in this workspace`,
+    };
   }
   if (judges.length === 1 && judges[0]) return { server: judges[0].name };
   if (judges.length === 0) {
     return {
+      code: "no_judge",
       reason:
         "no judge server is connected in this workspace; connect one to judge this task's criteria",
     };
   }
   return {
+    code: "judge_ambiguous",
     reason:
       `more than one judge server is connected (${judges.map((s) => s.name).join(", ")}); ` +
       "name one in the task's judge.server",
   };
+}
+
+/** A warning a write returns about a task it saved. */
+export interface JudgeWarning {
+  code: JudgeMissing;
+  message: string;
+}
+
+/**
+ * What a saved task with criteria will meet when it runs: a warning when its
+ * workspace has no judge it can use, read with the same `findJudgeServer` the
+ * pipeline uses so the two cannot disagree. Empty for a task without criteria,
+ * and when the sources cannot be read (the write stands; a run says why).
+ */
+export async function judgeWarnings(
+  task: Pick<Task, "criteria" | "judge" | "workspaceId">,
+  port: Pick<JudgePort, "sources">,
+): Promise<JudgeWarning[]> {
+  if (!task.criteria?.length || !task.workspaceId) return [];
+  let sources: JudgeSourceView[];
+  try {
+    sources = await port.sources(task.workspaceId);
+  } catch {
+    return [];
+  }
+  const found = findJudgeServer(sources, task.judge?.server);
+  if ("server" in found) return [];
+  const until =
+    found.code === "no_judge" ? "a judge server is connected" : "a judge server is named";
+  return [
+    {
+      code: found.code,
+      message: `Saved, but its runs will be not_assessed until ${until}: ${found.reason}.`,
+    },
+  ];
 }
 
 /** Judge error codes worth another try: the judge or its upstream is briefly unavailable. */

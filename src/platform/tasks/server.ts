@@ -28,6 +28,7 @@ import type {
   TasksRunsOutput,
   TasksStatusOutput,
   TasksUpdateOutput,
+  TaskWarning,
 } from "../schemas/tasks.ts";
 import {
   executionOf,
@@ -1531,6 +1532,29 @@ function setHumanVerdict(
     run: toRunView(updated),
     message: `Your verdict on run "${runId}" is recorded: ${human.verdict}. It now reads ${labelOf(updated)}.`,
   };
+}
+
+/**
+ * Attach warnings about the saved task to a write's answer: as `warnings`,
+ * and appended to its `message`, which is what a reader of the text sees. The
+ * answer is returned unchanged when there are none.
+ */
+export function withWarnings<T extends { message?: string; warnings?: TaskWarning[] }>(
+  out: T,
+  warnings: TaskWarning[],
+): T {
+  if (warnings.length === 0) return out;
+  const notes = warnings.map((w) => `Warning: ${w.message}`).join(" ");
+  return {
+    ...out,
+    message: out.message ? `${out.message} ${notes}` : notes,
+    warnings: [...(out.warnings ?? []), ...warnings],
+  };
+}
+
+/** The task a `tasks__run` answer is about. */
+export function runOutputTaskId(out: TasksRunOutput): string {
+  return "run" in out ? out.run.taskId : out.taskId;
 }
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import {
   type JudgeDispatchResult,
   type JudgePort,
   type JudgeSourceView,
+  judgeWarnings,
 } from "../../../../src/platform/tasks/judge.ts";
 import type { Task, TaskRun, TaskRunResult } from "../../../../src/platform/tasks/types.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
@@ -107,6 +108,7 @@ describe("findJudgeServer: the runtime names no judge", () => {
 
   it("none connected: not assessed, saying to connect one", () => {
     expect(findJudgeServer([other("crm")], undefined)).toEqual({
+      code: "no_judge",
       reason: expect.stringContaining("connect one"),
     });
   });
@@ -117,17 +119,22 @@ describe("findJudgeServer: the runtime names no judge", () => {
   });
   it("more than one connected: refuses to guess", () => {
     const found = findJudgeServer([judge("a"), judge("b")], undefined);
-    expect(found).toEqual({ reason: expect.stringContaining("more than one judge server") });
-    expect(found).toEqual({ reason: expect.stringContaining("name one") });
+    expect(found).toEqual({
+      code: "judge_ambiguous",
+      reason: expect.stringContaining("more than one judge server"),
+    });
+    expect(found).toMatchObject({ reason: expect.stringContaining("name one") });
   });
   it("named: that one, even among several", () => {
     expect(findJudgeServer([judge("a"), judge("b")], "b")).toEqual({ server: "b" });
   });
   it("named but not a judge server, or not connected", () => {
     expect(findJudgeServer([other("crm")], "crm")).toEqual({
+      code: "judge_not_found",
       reason: expect.stringContaining("not a judge server"),
     });
     expect(findJudgeServer([judge("a")], "b")).toEqual({
+      code: "judge_not_found",
       reason: expect.stringContaining("not connected"),
     });
   });
@@ -333,5 +340,33 @@ describe("assessRun", () => {
     });
     const a = await assessRun(task(), run, result, { port: broken });
     expect(a.verdict).toBe("not_assessed");
+  });
+});
+
+describe("judgeWarnings: a write warns when its task's runs would not be judged", () => {
+  const judge = (name: string): JudgeSourceView => ({ name, toolNames: ["judge", "list_judges"] });
+  const port = (sources: JudgeSourceView[]) => ({ sources: async () => sources });
+
+  it("warns no_judge, judge_ambiguous, and judge_not_found from the pipeline's own discovery", async () => {
+    expect((await judgeWarnings(task(), port([])))[0]?.code).toBe("no_judge");
+    expect((await judgeWarnings(task(), port([judge("a"), judge("b")])))[0]?.code).toBe(
+      "judge_ambiguous",
+    );
+    const named = task({ judge: { server: "missing" } });
+    const [notFound] = await judgeWarnings(named, port([judge("a")]));
+    expect(notFound?.code).toBe("judge_not_found");
+    expect(notFound?.message).toContain("not_assessed");
+    const notAJudge = task({ judge: { server: "crm" } });
+    expect(
+      (await judgeWarnings(notAJudge, port([{ name: "crm", toolNames: ["search"] }])))[0]?.code,
+    ).toBe("judge_not_found");
+  });
+
+  it("is silent with one usable judge, or with no criteria", async () => {
+    expect(await judgeWarnings(task(), port([judge("a")]))).toEqual([]);
+    expect(
+      await judgeWarnings(task({ judge: { server: "b" } }), port([judge("a"), judge("b")])),
+    ).toEqual([]);
+    expect(await judgeWarnings(task({ criteria: undefined }), port([]))).toEqual([]);
   });
 });

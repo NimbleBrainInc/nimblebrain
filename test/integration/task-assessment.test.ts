@@ -15,8 +15,10 @@ import type { ToolResult } from "../../src/engine/types.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import type {
   TasksAssessOutput,
+  TasksCreateOutput,
   TasksRunOutput,
   TasksRunResultOutput,
+  TasksUpdateOutput,
 } from "../../src/platform/schemas/tasks.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
@@ -62,7 +64,7 @@ beforeEach(() => {
 async function call<T>(
   tool: string,
   args: Record<string, unknown>,
-  extra: { unattended?: boolean; shellCall?: boolean } = {},
+  extra: { unattended?: boolean; shellCall?: boolean; workspaceId?: string } = {},
 ): Promise<{ data: T; isError: boolean; text: string }> {
   const result: ToolResult = await runWithRequestContext(
     { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, ...extra },
@@ -158,5 +160,65 @@ describe("assessment through the runtime", () => {
     expect(out.isError).toBe(false);
     expect(out.data.run.assessment?.verdict).toBe("pass");
     expect(out.data.run.label).toBe("Succeeded");
+  });
+});
+
+describe("a write warns when its task's runs would not be judged", () => {
+  const BARE_WS = "ws_00aa11bb22cc33dd";
+  const create = (name: string, manifest: Record<string, unknown>, workspaceId?: string) =>
+    call<TasksCreateOutput>(
+      "create",
+      { manifest: { name, criteria: SOURCED, ...manifest }, body: "Write it." },
+      workspaceId ? { workspaceId } : {},
+    );
+
+  beforeAll(async () => {
+    await provisionTestWorkspace(runtime, BARE_WS, "No judge");
+  });
+
+  it("no warning with one judge connected, or without criteria", async () => {
+    const judged = await create("warn-none", {});
+    expect(judged.data.warnings).toBeUndefined();
+    const plain = await call<TasksCreateOutput>(
+      "create",
+      { manifest: { name: "warn-plain" }, body: "x" },
+      { workspaceId: BARE_WS },
+    );
+    expect(plain.data.warnings).toBeUndefined();
+  });
+
+  it("no_judge: saved, with the warning in the text and as a field", async () => {
+    const out = await create("warn-no-judge", {}, BARE_WS);
+    expect(out.isError).toBe(false);
+    expect(out.data.created).toBe(true);
+    expect(out.data.warnings?.map((w) => w.code)).toEqual(["no_judge"]);
+    expect(out.data.message).toContain("not_assessed");
+  });
+
+  it("judge_not_found on update naming a source that is not a connected judge", async () => {
+    await create("warn-named", {});
+    const out = await call<TasksUpdateOutput>("update", {
+      name: "warn-named",
+      manifest: { judge: { server: "missing" } },
+    });
+    expect(out.data.updated).toBe(true);
+    expect(out.data.warnings?.map((w) => w.code)).toEqual(["judge_not_found"]);
+  });
+
+  it("judge_ambiguous with two judges and none named; an inline run warns too", async () => {
+    const second = await createStubJudge("grader2");
+    runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(second.source);
+    try {
+      const out = await create("warn-two", {});
+      expect(out.data.warnings?.map((w) => w.code)).toEqual(["judge_ambiguous"]);
+      const run = await call<TasksRunOutput>("run", {
+        prompt: "Inline with criteria.",
+        idempotencyKey: "warn-inline",
+        criteria: SOURCED,
+      });
+      expect(run.data.warnings?.map((w) => w.code)).toEqual(["judge_ambiguous"]);
+    } finally {
+      await runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).removeSource("grader2");
+    }
   });
 });

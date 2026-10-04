@@ -17,6 +17,7 @@ import {
   JUDGE_CALL_TIMEOUT_MS,
   JUDGE_RESULT_MAX_BYTES,
   type JudgePort,
+  judgeWarnings,
 } from "./judge.ts";
 import { migrateTaskStorage } from "./migrate-storage.ts";
 import { countsAsEventFire, isOpenRun, Scheduler } from "./scheduler.ts";
@@ -32,7 +33,9 @@ import {
   handleRuns,
   handleStatus,
   handleUpdate,
+  runOutputTaskId,
   type ToolContext,
+  withWarnings,
 } from "./server.ts";
 import {
   deleteTaskDefinition,
@@ -444,6 +447,18 @@ export async function createTasksSource(
     };
   }
 
+  /** A write's answer with warnings about the judge its saved task will find. */
+  async function withJudgeWarnings<T extends { message?: string }>(
+    out: T,
+    task: Task | undefined,
+  ): Promise<T> {
+    return task ? withWarnings(out, await judgeWarnings(task, judgePort)) : out;
+  }
+
+  function warnAboutJudge<T extends { task: Task; message: string }>(out: T): Promise<T> {
+    return withJudgeWarnings(out, out.task);
+  }
+
   const tools: InProcessTool[] = TOOL_SCHEMAS.map((schema) => ({
     ...schema,
     handler: withErrorHandling((input) => {
@@ -460,9 +475,9 @@ export async function createTasksSource(
       const ctx = getToolContext();
       switch (schema.name) {
         case "create":
-          return handleCreate(input, ctx);
+          return warnAboutJudge(handleCreate(input, ctx));
         case "update":
-          return handleUpdate(input, ctx);
+          return warnAboutJudge(handleUpdate(input, ctx));
         case "delete":
           return handleDelete(input, ctx);
         case "list":
@@ -474,7 +489,13 @@ export async function createTasksSource(
         case "run_result":
           return handleRunResult(input, ctx);
         case "run":
-          return handleRun(input, ctx);
+          return handleRun(input, ctx).then((out) =>
+            // An inline one-off is saved by the call, so it is warned about
+            // like a create; a saved task was warned about when it was written.
+            input.name === undefined
+              ? withJudgeWarnings(out, ctx.definitions().get(runOutputTaskId(out)))
+              : out,
+          );
         case "cancel":
           return handleCancel(input, ctx);
         case "assess":

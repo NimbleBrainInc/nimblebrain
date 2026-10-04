@@ -547,10 +547,22 @@ export interface TasksRunsOutput {
  * dereferencing `run.*` — `as { run: ... }` is the anti-pattern that
  * caused the production CLI crash this type prevents.
  */
+/**
+ * A warning a write returns about the task it saved, which it saved anyway.
+ * `no_judge`, `judge_ambiguous`, `judge_not_found`: the task has criteria and
+ * its workspace has no judge server it can use (none connected, several and
+ * none named, or the named one is not a connected judge), so its runs are
+ * `not_assessed` until one is connected or named.
+ */
+export interface TaskWarning {
+    code: "no_judge" | "judge_ambiguous" | "judge_not_found";
+    message: string;
+}
 export type TasksRunOutput = {
     run: TaskRunView;
     enabled: boolean;
     message?: string;
+    warnings?: TaskWarning[];
 } | {
     status: "dispatched";
     taskId: string;
@@ -559,6 +571,7 @@ export type TasksRunOutput = {
     startedAt: string;
     enabled: boolean;
     message: string;
+    warnings?: TaskWarning[];
 } | {
     status: "queued";
     taskId: string;
@@ -569,6 +582,7 @@ export type TasksRunOutput = {
     queuedAt: string;
     enabled: boolean;
     message: string;
+    warnings?: TaskWarning[];
 };
 /** `tasks__assess`: the run's record with its new assessment, as it now reads. */
 export interface TasksAssessOutput {
@@ -640,12 +654,16 @@ export interface TasksCreateOutput {
     created: boolean;
     message: string;
     effectiveLimits: TaskEffectiveLimits;
+    /** About the saved task, which was saved anyway. */
+    warnings?: TaskWarning[];
 }
 export interface TasksUpdateOutput {
     task: TaskRecord;
     updated: boolean;
     message: string;
     effectiveLimits: TaskEffectiveLimits;
+    /** About the saved task, which was saved anyway. */
+    warnings?: TaskWarning[];
 }
 export interface TasksDeleteOutput {
     deleted: boolean;
