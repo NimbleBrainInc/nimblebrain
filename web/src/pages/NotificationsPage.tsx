@@ -17,6 +17,7 @@ import { useNotifications } from "../context/NotificationsContext";
 import { useShellContext } from "../context/ShellContext";
 import { useWorkspaceAppIcons } from "../context/WorkspaceAppIconsContext";
 import { useWorkspaceContext } from "../context/WorkspaceContext";
+import { formatInstant, formatInstantFull } from "../lib/format";
 import { INBOX_PAGE_SIZE, LEVEL_RANK } from "../lib/notification-levels";
 import { resolveNotificationLink } from "../lib/notification-link";
 import { cn } from "../lib/utils";
@@ -50,7 +51,14 @@ const LEVEL_META: Record<
   NotificationLevel,
   { label: string; icon: typeof Info; className: string; edge: string }
 > = {
-  info: { label: "Info", icon: Info, className: "text-muted-foreground", edge: "" },
+  info: {
+    label: "Info",
+    icon: Info,
+    className: "text-muted-foreground",
+    // Transparent, not absent: every row carries the same edge width, so an
+    // info row's text lines up with the coloured rows around it.
+    edge: "border-l-2 border-l-transparent",
+  },
   attention: {
     label: "Attention",
     icon: AlertTriangle,
@@ -64,12 +72,6 @@ const LEVEL_META: Record<
     edge: "border-l-2 border-l-destructive",
   },
 };
-
-/** Absolute, not relative: "2 hours ago" hides the one thing an operator is checking. */
-function formatInstant(iso: string): string {
-  const at = new Date(iso);
-  return Number.isNaN(at.getTime()) ? iso : at.toLocaleString();
-}
 
 /** The time filter's windows, by their URL value. */
 const WITHIN: Record<string, { label: string; ms: number }> = {
@@ -328,7 +330,7 @@ export function NotificationsPage() {
           />
         ) : null}
 
-        <ul className="space-y-px">
+        <ul className="divide-y divide-border/60 overflow-hidden rounded-sm border border-border/60 bg-card empty:hidden">
           {ordered.map((item) => (
             <NotificationRow
               key={item.id}
@@ -397,7 +399,7 @@ function InboxFilterBar({
   const selectClass = "h-8 w-auto";
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="inbox-filters">
-      <fieldset className="flex rounded-sm border border-input p-0.5">
+      <fieldset className="flex gap-0.5 rounded-sm border border-input bg-secondary p-0.5">
         <legend className="sr-only">Status</legend>
         {[
           { value: undefined, label: "All" },
@@ -413,8 +415,8 @@ function InboxFilterBar({
               className={cn(
                 "rounded-xs px-2.5 py-0.5 text-sm transition-colors",
                 active
-                  ? "bg-foreground/10 text-foreground"
-                  : "text-muted-foreground hover:bg-foreground/5",
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {option.label}
@@ -493,15 +495,12 @@ function useScrollIntoViewWhen<T extends HTMLElement>(active: boolean) {
 }
 
 /**
- * The row's own border, which doubles as the "this is the one you followed a
- * link to" marker. A named function rather than a ternary inside the row so the
- * row's complexity stays about the row.
+ * The rows share one bordered list and are split by its dividers, so a row
+ * draws a border only to mark "this is the one you followed a link to". Inset,
+ * so the ring sits inside the list's border instead of over a neighbour's.
  */
 function rowChrome(focused: boolean): string {
-  return cn(
-    "rounded-sm border bg-card",
-    focused ? "border-primary ring-1 ring-primary" : "border-border/60",
-  );
+  return cn(focused && "ring-1 ring-inset ring-primary");
 }
 
 function NotificationRow({
@@ -548,7 +547,7 @@ function NotificationRow({
             <dt>Event</dt>
             <dd className="font-mono text-foreground/80">{item.name}</dd>
             <dt>Received</dt>
-            <dd>{formatInstant(item.receivedAt)}</dd>
+            <dd>{formatInstantFull(item.receivedAt)}</dd>
             {/* Only when a ceiling actually held the item down. Shown here and
                 not on the row because it explains the ledger below it: a route
                 asking for a level above this one did not fire, and this is the
@@ -599,7 +598,7 @@ function NotificationRowHead({
       data-testid="notification-row"
       data-level={item.level}
       data-unread={unread ? "true" : "false"}
-      className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left rounded-sm hover:bg-muted/50 transition-colors"
+      className="w-full flex items-start gap-2.5 px-3 py-3 text-left hover:bg-foreground/5 transition-colors"
     >
       {/* The bell's dot, on the row it stands for. Read rows keep the
             slot so titles stay aligned. */}
@@ -629,7 +628,9 @@ function NotificationRowHead({
             {appName}
           </span>
           <span aria-hidden="true">·</span>
-          <span>{formatInstant(item.timestamp)}</span>
+          <time dateTime={item.timestamp} title={formatInstantFull(item.timestamp)}>
+            {formatInstant(item.timestamp)}
+          </time>
           {item.subject ? (
             <>
               <span aria-hidden="true">·</span>
