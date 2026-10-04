@@ -24,12 +24,41 @@ import {
   type Task,
 } from "@modelcontextprotocol/server";
 import { TASKS_EXTENSION_ID } from "../tools/mcp-task-client.ts";
-import { TaskAlreadyTerminalError, TaskNotFoundError } from "../tools/types.ts";
-import type { TaskAwareSource, TaskScope } from "./mcp-task-store.ts";
+import {
+  TaskAlreadyTerminalError,
+  TaskNotFoundError,
+  type TaskOwnerContext,
+} from "../tools/types.ts";
 import type { McpTaskAnswer, McpTaskAnswerBody } from "./schemas/responses.ts";
 import { json } from "./types.ts";
 
 export { TASKS_EXTENSION_ID };
+
+/**
+ * The task surface of a source the door can start a task on and answer polls
+ * for: a connector's `McpSource`, or a kernel identity source's task surface.
+ * Each checks the caller's owner context against the one stamped on the task.
+ */
+export interface TaskAwareSource {
+  getTaskStatus(taskId: string, opts: { ownerContext: TaskOwnerContext }): Promise<Task>;
+  awaitToolTaskResult(
+    taskId: string,
+    opts: { ownerContext: TaskOwnerContext },
+  ): Promise<{
+    content: unknown[];
+    structuredContent?: Record<string, unknown>;
+    isError?: boolean;
+    _meta?: Record<string, unknown>;
+  }>;
+  cancelTask(taskId: string, opts: { ownerContext: TaskOwnerContext }): Promise<Task>;
+}
+
+/** The one source a task request is for, in the workspace the request is bound to. */
+export interface TaskScope {
+  source: string;
+  /** The request's validated workspace. None reaches no workspace's task. */
+  workspaceId: string | undefined;
+}
 
 /** A task's own fields on the 2026-07-28 wire (SEP-2663 `Task`). */
 interface ModernTaskFields {
@@ -136,8 +165,8 @@ async function taskRequestBody(request: Request): Promise<TaskRequestBody | null
  * `MCP-Protocol-Version` names the envelope's version, `Mcp-Method` the
  * method, and `Mcp-Name` the task id.
  *
- * `scopeOf` reads the source a request names under `RESOURCE_SOURCE_META_KEY`,
- * as on the 2025 leg: a scoped request reaches only a task that source ran.
+ * `scopeOf` reads the source a request names under `RESOURCE_SOURCE_META_KEY`:
+ * a scoped request reaches only a task that source ran.
  * Another identity's task, another workspace's, another source's and one that
  * never existed all answer the same `-32602`.
  */

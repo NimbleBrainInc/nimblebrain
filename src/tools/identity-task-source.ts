@@ -14,7 +14,7 @@
  * (`TaskNotFoundError`).
  */
 
-import type { Task } from "@modelcontextprotocol/sdk/types.js";
+import type { Task } from "@modelcontextprotocol/server";
 import type { TaskOwnerContext } from "./types.ts";
 
 /** A tool result, as `tasks/get` inlines a completed task's. */

@@ -2695,10 +2695,8 @@ export class McpSource implements ToolSource {
     // via `terminalDeferred.reject` — there's no outer `await` to catch them.
     void this.drainTaskStream(handle, stream, toolName);
 
-    // CreateTaskResult per MCP spec 2025-11-25 wraps the Task in a `task`
-    // field. The SDK's stream doesn't surface the outer envelope directly
-    // (it hands us the parsed inner Task), but the JSON-RPC contract the
-    // `/mcp` handler needs to re-emit is `{ task: Task }`.
+    // The SDK's stream hands us the parsed inner Task; callers read it from
+    // `{ task }` (the `/mcp` door re-emits it as a flat 2026 task).
     return { task };
   }
 

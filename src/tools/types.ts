@@ -167,7 +167,7 @@ export interface ResourceData {
  * (the app the task belongs to, which is the name of the source that runs it —
  * an app is its server). `/mcp` stamps `originApp` on every task it starts, and
  * a request an iframe scopes to one source reaches only a task stamped with
- * that source (`mcp-task-store.ts`). When set on the stamped context,
+ * that source (`mcp-modern-tasks.ts`). When set on the stamped context,
  * subsequent lookups MUST supply matching values.
  */
 export interface TaskOwnerContext {
@@ -181,8 +181,8 @@ export interface TaskOwnerContext {
  * caller's `TaskOwnerContext` doesn't match the one stamped at creation.
  *
  * Unified on purpose: we don't want to leak task existence to callers who
- * don't own the task. The `/mcp` layer maps this to JSON-RPC `-32602` per
- * MCP tasks spec (draft 2025-11-25).
+ * don't own the task. The `/mcp` layer maps this to JSON-RPC `-32602`, as the
+ * tasks extension (SEP-2663) asks.
  */
 export class TaskNotFoundError extends Error {
   readonly taskId: string;

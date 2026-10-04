@@ -19,9 +19,9 @@ import { toToolSchema } from "./types.ts";
 /**
  * Structural check for "looks like an McpSource task-aware surface".
  *
- * The `/mcp` task handlers (Task 002) need a source that exposes the
- * per-phase task methods so they can route `tasks/get`, `tasks/result`,
- * and `tasks/cancel` back to the originating McpSource. We probe by shape
+ * The `/mcp` task handlers need a source that exposes the per-phase task
+ * methods so they can route `tasks/get` and `tasks/cancel` back to the
+ * originating McpSource. We probe by shape
  * rather than `instanceof` to stay friendly to `SharedSourceRef`-wrapped
  * sources and to test doubles.
  */
@@ -423,8 +423,8 @@ export class ToolRegistry implements ToolRouter {
    *
    * Returns `null` if the name doesn't resolve to a source, or if the
    * underlying source doesn't implement the split task API. Used by the
-   * `/mcp` endpoint (Task 002) to route `tasks/{get,result,cancel}` back
-   * to the originating McpSource.
+   * `/mcp` endpoint to route `tasks/get` and `tasks/cancel` back to the
+   * originating McpSource.
    */
   findTaskAwareSource(
     name: string,

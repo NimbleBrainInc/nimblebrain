@@ -68,10 +68,12 @@ only.
 ## Consequences
 
 - One vocabulary to build, test and document, in each of the three places.
-- The 2025 leg can move to SDK 2. SDK v1 leaves the runtime once two other
-  holders of it move too: `@modelcontextprotocol/ext-apps` 1.x, which declares
-  SDK v1 as a peer dependency (2.x declares SDK 2), and the bridge's `/mcp`
-  client in `web/`, which is built on the SDK v1 `Client`.
+- The 2025 leg no longer needs SDK v1 for tasks, and it is the runtime's last
+  holder of it. It stays on SDK v1 because an SDK 2 server's 2025 codec
+  rewrites answers a 2025 client sees: a resource-not-found `-32002` goes out
+  as `-32602`, and a non-object `outputSchema` (with its `structuredContent`)
+  is wrapped under `result`. Moving it is a change to the 2025 wire, decided on
+  its own.
 - A 2025 client loses long-running calls on `/mcp`. Its calls still work, as
   ordinary blocking calls, and one that outlasts a timeout in the path fails the
   way any long blocking request does.

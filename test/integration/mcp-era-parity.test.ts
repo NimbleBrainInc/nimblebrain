@@ -1,12 +1,13 @@
 /**
- * `/mcp/<wsId>` serves both protocol eras, and they are equivalent: a client on
- * `2026-07-28` can do everything a client on `2025-11-25` can. This suite is
- * the guard on that rule. One set of scenarios runs against each leg through a
+ * `/mcp/<wsId>` serves both protocol eras, and they are equivalent apart from
+ * tasks, which only the 2026-07-28 leg serves (ADR-0046). This suite is the
+ * guard on that rule. One set of scenarios runs against each leg through a
  * driver per era, and every assertion is shared, so a change that lets the legs
  * drift fails here.
  *
- * - 2025 leg: the SDK v1 client, sessionful, tasks as `params.task` +
- *   `tasks/get` / `tasks/result` / `tasks/cancel`.
+ * - 2025 leg: the SDK v2 client on its plain 2025 `initialize` handshake,
+ *   sessionful. It serves no tasks: no `tasks` capability, `params.task`
+ *   ignored, `tasks/*` answered `-32601`.
  * - 2026 leg: the SDK v2 client for what it speaks, and the tasks extension
  *   (SEP-2663) on the wire for what it does not (typescript-sdk#2189): opt-in
  *   per request, a flat task, `tasks/get` inlining the outcome.
@@ -18,23 +19,14 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type CallToolResult,
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
-  Client as ModernClient,
-  StreamableHTTPClientTransport as ModernTransport,
+  Client,
   PROTOCOL_VERSION_META_KEY,
-} from "@modelcontextprotocol/client";
-import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport as LegacyTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import {
-  type CallToolResult,
-  CallToolResultSchema,
-  CancelTaskResultSchema,
-  CreateTaskResultSchema,
-  GetTaskPayloadResultSchema,
-  GetTaskResultSchema,
+  StreamableHTTPClientTransport,
   type Task,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { TASKS_EXTENSION_ID } from "../../src/api/mcp-modern-tasks.ts";
 import { RESOURCE_SOURCE_META_KEY } from "../../src/api/mcp-server.ts";
@@ -141,7 +133,7 @@ class JobsSource implements ToolSource {
   async startToolAsTask(
     _tool: string,
     _args: Record<string, unknown>,
-    opts: { ownerContext: TaskOwnerContext; ttlMs?: number },
+    opts: { ownerContext: TaskOwnerContext },
   ): Promise<{ task: Task }> {
     const now = new Date().toISOString();
     const task: Task = {
@@ -149,7 +141,7 @@ class JobsSource implements ToolSource {
       status: "working",
       createdAt: now,
       lastUpdatedAt: now,
-      ttl: opts.ttlMs ?? 60_000,
+      ttl: 60_000,
       pollInterval: 10,
     };
     let settle!: (result: CallToolResult) => void;
@@ -257,18 +249,22 @@ afterAll(async () => {
 
 /** What a scenario does at the door, in each era's own vocabulary. */
 interface EraDriver {
-  /** Tasks are advertised where this era's client looks before it calls. */
+  /** Whether tasks are advertised where this era's client looks before it calls. */
   advertisesTasks(): Promise<boolean>;
   listTools(): Promise<string[]>;
   callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
+  readResource(uri: string): Promise<string | undefined>;
+  close(): Promise<void>;
+}
+
+/** The 2026 leg's driver, which also runs tasks. */
+interface TaskDriver extends EraDriver {
   /** Start `name` as a task; the task's id. */
   startTask(name: string): Promise<string>;
   status(taskId: string, as?: "owner" | "other"): Promise<Task["status"]>;
   /** The terminal result of a completed task. */
   result(taskId: string): Promise<CallToolResult>;
   cancel(taskId: string): Promise<void>;
-  readResource(uri: string): Promise<string | undefined>;
-  close(): Promise<void>;
 }
 
 /** A JSON-RPC error's code, from whichever SDK or wire raised it. */
@@ -281,62 +277,55 @@ async function errorCode(p: Promise<unknown>): Promise<number | undefined> {
   }
 }
 
+const LEGACY_VERSION = "2025-11-25";
+
+/** A 2025 session: the SDK v2 client on its plain `initialize` handshake. */
+async function legacySession(): Promise<{ client: Client; sessionId: string }> {
+  const client = new Client({ name: "parity-2025", version: "1.0.0" });
+  const transport = new StreamableHTTPClientTransport(mcpUrl());
+  await client.connect(transport);
+  expect(client.getNegotiatedProtocolVersion()).toBe(LEGACY_VERSION);
+  if (!transport.sessionId) throw new Error("the 2025 leg allocated no session");
+  return { client, sessionId: transport.sessionId };
+}
+
 async function legacyDriver(): Promise<EraDriver> {
-  const connect = async (headers: Record<string, string>) => {
-    const client = new LegacyClient(
-      { name: "parity-2025", version: "1.0.0" },
-      { capabilities: { tasks: { requests: { tools: { call: {} } }, cancel: {} } } },
-    );
-    await client.connect(new LegacyTransport(mcpUrl(), { requestInit: { headers } }));
-    return client;
-  };
-  const owner = await connect({});
-  const other = await connect({ [OTHER_HEADER]: "1" });
+  const { client } = await legacySession();
   return {
-    advertisesTasks: async () => owner.getServerCapabilities()?.tasks !== undefined,
-    listTools: async () => (await owner.listTools()).tools.map((t) => t.name),
-    callTool: async (name, args) =>
-      (await owner.callTool({ name, arguments: args }, CallToolResultSchema)) as CallToolResult,
-    startTask: async (name) => {
-      const created = await owner.request(
-        { method: "tools/call", params: { name, arguments: {}, task: { ttl: 60_000 } } },
-        CreateTaskResultSchema,
-      );
-      return created.task.taskId;
-    },
-    status: async (taskId, as = "owner") =>
-      (
-        await (as === "owner" ? owner : other).request(
-          { method: "tasks/get", params: { taskId } },
-          GetTaskResultSchema,
-        )
-      ).status,
-    result: async (taskId) =>
-      stripTaskMeta(
-        (await owner.request(
-          { method: "tasks/result", params: { taskId } },
-          GetTaskPayloadResultSchema,
-        )) as CallToolResult,
-      ),
-    cancel: async (taskId) => {
-      await owner.request({ method: "tasks/cancel", params: { taskId } }, CancelTaskResultSchema);
-    },
+    advertisesTasks: async () => client.getServerCapabilities()?.tasks !== undefined,
+    listTools: async () => (await client.listTools()).tools.map((t) => t.name),
+    callTool: async (name, args) => client.callTool({ name, arguments: args }),
     readResource: async (uri) => {
-      const read = await owner.readResource({ uri });
+      const read = await client.readResource({ uri });
       const first = read.contents[0];
       return first && "text" in first ? first.text : undefined;
     },
-    close: async () => {
-      await owner.close();
-      await other.close();
-    },
+    close: () => client.close(),
   };
 }
 
-/** A 2025 `tasks/result` carries the related-task `_meta`; the outcome is the rest. */
-function stripTaskMeta(result: CallToolResult): CallToolResult {
-  const { _meta: _dropped, ...rest } = result;
-  return rest as CallToolResult;
+/**
+ * One 2025 request on the wire, in an existing session: what a client that
+ * still speaks the 2025-11-25 tasks utility would send.
+ */
+async function legacyPost(
+  sessionId: string,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<{ result?: Record<string, unknown>; error?: { code: number } }> {
+  const res = await fetch(mcpUrl(), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-session-id": sessionId,
+      "mcp-protocol-version": LEGACY_VERSION,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const text = await res.text();
+  const json = text.startsWith("{") ? text : (text.match(/^data: (.*)$/m)?.[1] ?? "{}");
+  return JSON.parse(json);
 }
 
 const MODERN_VERSION = "2026-07-28";
@@ -396,12 +385,12 @@ async function modernResult(
   return body.result ?? {};
 }
 
-async function modernDriver(): Promise<EraDriver> {
-  const client = new ModernClient(
+async function modernDriver(): Promise<TaskDriver> {
+  const client = new Client(
     { name: "parity-2026", version: "1.0.0" },
     { versionNegotiation: { mode: "auto" } },
   );
-  await client.connect(new ModernTransport(mcpUrl()));
+  await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
   expect(client.getNegotiatedProtocolVersion()).toBe(MODERN_VERSION);
   const taskGet = (taskId: string, as: "owner" | "other" = "owner") =>
     modernResult("tasks/get", { taskId }, { as });
@@ -437,9 +426,9 @@ async function modernDriver(): Promise<EraDriver> {
 // ── The scenarios, once per era ──────────────────────────────────────
 
 describe.each([
-  { era: "2025-11-25", driver: legacyDriver },
-  { era: "2026-07-28", driver: modernDriver },
-])("/mcp/<wsId> on $era", ({ driver }) => {
+  { era: "2025-11-25", driver: legacyDriver, servesTasks: false },
+  { era: "2026-07-28", driver: modernDriver, servesTasks: true },
+])("/mcp/<wsId> on $era", ({ driver, servesTasks }) => {
   let d: EraDriver;
 
   beforeAll(async () => {
@@ -450,8 +439,8 @@ describe.each([
     await d.close();
   });
 
-  it("advertises tasks before any call", async () => {
-    expect(await d.advertisesTasks()).toBe(true);
+  it("advertises tasks before any call only where it serves them", async () => {
+    expect(await d.advertisesTasks()).toBe(servesTasks);
   });
 
   it("lists the workspace's tools by their bare names", async () => {
@@ -472,6 +461,67 @@ describe.each([
     await expect(d.callTool("nb__workspace_info", {})).rejects.toThrow(/not callable by an agent/);
   });
 
+  it("reads a resource", async () => {
+    expect(await d.readResource(APP_URI)).toBe(APP_HTML);
+  });
+});
+
+// ── The 2025 leg serves no tasks ──────────────────────────────────────
+
+describe("/mcp/<wsId> serves no tasks on 2025-11-25", () => {
+  let client: Client;
+  let sessionId: string;
+
+  beforeAll(async () => {
+    ({ client, sessionId } = await legacySession());
+  });
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  it("lists no tool with an execution.taskSupport", async () => {
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).toContain(`${SOURCE}__research`);
+    expect(tools.filter((t) => t.execution !== undefined)).toEqual([]);
+  });
+
+  it.each(["research", "batch"])(
+    "runs a tools/call carrying params.task to %s as an ordinary call",
+    async (tool) => {
+      const { result, error } = await legacyPost(sessionId, "tools/call", {
+        name: `${SOURCE}__${tool}`,
+        arguments: { text: "now" },
+        task: { ttl: 60_000 },
+      });
+      expect(error).toBeUndefined();
+      expect(result).toEqual({ content: [{ type: "text", text: `${tool}:now` }], isError: false });
+    },
+  );
+
+  it.each([
+    ["tasks/get", { taskId: "t" }],
+    ["tasks/result", { taskId: "t" }],
+    ["tasks/cancel", { taskId: "t" }],
+    ["tasks/list", {}],
+  ])("answers %s as method not found", async (method, params) => {
+    expect((await legacyPost(sessionId, method, params)).error?.code).toBe(-32601);
+  });
+});
+
+// ── Tasks on the 2026 leg ──────────────────────────────────────────────
+
+describe("/mcp/<wsId> tasks on 2026-07-28", () => {
+  let d: TaskDriver;
+
+  beforeAll(async () => {
+    d = await modernDriver();
+  });
+
+  afterAll(async () => {
+    await d.close();
+  });
+
   it("runs a task to completion", async () => {
     const taskId = await d.startTask(`${SOURCE}__research`);
     expect(await d.status(taskId)).toBe("working");
@@ -486,10 +536,6 @@ describe.each([
     expect(await d.status(taskId)).toBe("cancelled");
   });
 
-  it("reads a resource", async () => {
-    expect(await d.readResource(APP_URI)).toBe(APP_HTML);
-  });
-
   it("refuses another identity's task as not found", async () => {
     const taskId = await d.startTask(`${SOURCE}__research`);
     try {
@@ -499,11 +545,7 @@ describe.each([
       await d.cancel(taskId);
     }
   });
-});
 
-// ── What only the 2026 wire can get wrong ─────────────────────────────
-
-describe("/mcp/<wsId> tasks on 2026-07-28", () => {
   it("answers outright a call that did not opt in to the tasks extension", async () => {
     const result = await modernResult("tools/call", { name: `${SOURCE}__research`, arguments: {} });
     expect(result.resultType).toBe("complete");

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Task } from "@modelcontextprotocol/sdk/types.js";
+import type { Task } from "@modelcontextprotocol/server";
 import {
   type Executor,
   isOpenRun,
