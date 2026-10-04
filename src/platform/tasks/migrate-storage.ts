@@ -11,7 +11,9 @@
  *   result sidecars, run tickets) has its `"automationId":` key rewritten to
  *   `"taskId":`, each file replaced atomically. A file already rewritten holds
  *   no such key and is left alone, so a crash mid-rewrite is finished by the
- *   next boot, and nothing in the new tree is ever read in the old shape.
+ *   next boot. The rewrite runs only on the old dir: a record written
+ *   directly under `tasks/` by a runtime that predates the field rename keeps
+ *   `automationId` and reads as a run of an unknown task.
  * - **One rename per owner dir** when the owner has no `tasks/` dir yet. A
  *   rename is atomic, so a crash leaves each owner either moved or not.
  * - **A merge, file by file, when both exist** (a process still on the old
