@@ -9,9 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
-    "@modelcontextprotocol/core": "^2.0.0",
-    "@modelcontextprotocol/ext-apps": "^2.0.0",
+    "@modelcontextprotocol/client": "^2.3.0",
+    "@modelcontextprotocol/core": "^2.3.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
     "@nimblebrain/synapse": "0.25.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
