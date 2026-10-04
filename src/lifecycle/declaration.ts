@@ -61,6 +61,35 @@ function drop(reason: string): void {
   log.debug("lifecycle", `[lifecycle] dropping malformed declaration: ${reason}`);
 }
 
+/**
+ * What an operator is told about a catalog entry that declares `lifecycle`: the
+ * catalog form is deprecated and a later release stops reading it. The
+ * projection logs it ({@link warnCatalogLifecycleDeprecated}) and the catalog
+ * lint reports it, so both say the same thing.
+ */
+export function catalogLifecycleDeprecation(entry: string): string {
+  return (
+    `catalog entry "${entry}" declares \`lifecycle\` in _meta["ai.nimblebrain/host"], which is ` +
+    "deprecated: advertise the ai.nimblebrain/lifecycle MCP extension and mark the handler tools " +
+    "instead (https://docs.nimblebrain.ai/extensions/lifecycle/). A later release stops reading " +
+    "this block."
+  );
+}
+
+/** Catalog entries already reported by {@link warnCatalogLifecycleDeprecated}. */
+const deprecationWarned = new Set<string>();
+
+/**
+ * Warn once per catalog entry, per process, that it declares the deprecated
+ * `lifecycle` block. The projection runs on every catalog lookup, so the set
+ * keeps a long-lived host to one line per entry.
+ */
+export function warnCatalogLifecycleDeprecated(entry: string): void {
+  if (deprecationWarned.has(entry)) return;
+  deprecationWarned.add(entry);
+  log.warn(`[lifecycle] ${catalogLifecycleDeprecation(entry)}`, { connector: entry });
+}
+
 export class LifecycleContractError extends Error {
   constructor(message: string) {
     super(message);

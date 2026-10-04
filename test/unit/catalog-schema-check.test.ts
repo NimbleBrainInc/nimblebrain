@@ -218,6 +218,25 @@ describe("validateCatalog", () => {
     expect(validateCatalog(dir)).toEqual([]);
   });
 
+  test("a catalog lifecycle block is a warning that names the extension, and the entry loads", () => {
+    // The release of notice before the runtime stops reading the block: the
+    // gate says so, and the entry still reaches Browse exactly as written.
+    const withLifecycle = (lifecycle: unknown) => ({
+      ...VALID_ENTRY,
+      _meta: { "ai.nimblebrain/host": { host_version: "1.4", lifecycle } },
+    });
+    for (const block of [{ on_ready: "workspace_ready" }, 42]) {
+      writeCatalog("catalog.json", [withLifecycle(block)]);
+      const diagnostics = validateCatalog(dir);
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]?.warning).toBe(true);
+      expect(diagnostics[0]?.name).toBe("com.example/mcp");
+      expect(diagnostics[0]?.message).toContain("deprecated");
+      expect(diagnostics[0]?.message).toContain("ai.nimblebrain/lifecycle");
+      expect(readCatalogServers(dir).map((s) => s.name)).toEqual(["com.example/mcp"]);
+    }
+  });
+
   test("an entry with neither packages nor remotes is reported as not installable", () => {
     // `packages` and `remotes` are both optional in ServerDetail, so this
     // is schema-valid and safety-clean, and the directory's projection

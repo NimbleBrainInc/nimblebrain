@@ -106,6 +106,7 @@
 
 ### Changed
 
+- **A catalog `lifecycle` block now warns.** The host logs once per entry that declares one, and `scripts/check-catalog-schema.ts` reports it as a warning that does not fail the gate. A later release stops reading the block; advertise the [`ai.nimblebrain/lifecycle` extension](https://docs.nimblebrain.ai/extensions/lifecycle/) instead.
 - **The host block has no `name`, `icon`, `category` or `primaryView`.** A connector's display name is its catalog entry's `title` (or `name`) on every surface — the connector page, the workspace listing, the briefing, and the system prompt — and a valid placement is projected without a `name`. A block that still declares them loads; the host ignores them, and placements alone declare a connector's views. [Docs](https://docs.nimblebrain.ai/apps/manifest/).
 - **The event streams carry only what a client reads.** A conversation's stream no longer sends `run.start` (with its system prompt), connector skill bodies, or run accounting events, and `/v1/events` no longer sends `skill.*` or `bridge.tool.*`. Those events still reach logs, metrics and the conversation record.
 - **Every engine event has one typed payload.** Connector crash, restart and liveness events are `connector.health` (they were carried on `run.error`), and MCP task status is `tool.task_status` (it was carried on `tool.progress`); a structured-log query on the old names needs the new ones. The console line for a crashed source is unchanged. The detached turn's `done` event now carries the same fields as `POST …/chat`.

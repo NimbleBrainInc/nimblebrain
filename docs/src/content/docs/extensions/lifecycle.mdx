@@ -379,7 +379,9 @@ guarantee, or adding a required argument would ship under a new identifier
 <Aside type="caution" title="Deprecated">
 Before this extension, a server's handlers were named in a `lifecycle` block of
 the [`ai.nimblebrain/host`](/apps/manifest/) catalog block. That block still
-works for now, and will be removed. New servers advertise the extension instead.
+works for now, and will be removed. The host logs a warning once for each catalog
+entry that declares it, and the catalog check reports it. New servers advertise
+the extension instead.
 </Aside>
 
 ```json title="manifest.json"

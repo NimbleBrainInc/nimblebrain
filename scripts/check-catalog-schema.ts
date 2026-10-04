@@ -10,7 +10,9 @@
  * is scrubbed at the directory boundary for an unsafe URL or a
  * reserved OAuth param, or resolves to nothing installable — and every
  * entry whose malformed `admin_tools` makes all its tools admin-only.
- * Exit 1 if there is any, 0 if every entry reaches Browse as written.
+ * Exit 1 if there is any, 0 if every entry reaches Browse as written. An
+ * entry that declares the deprecated catalog `lifecycle` block is printed as
+ * a warning and does not fail the gate.
  *
  * **Why this exists.** A catalog entry is validated at load, and an
  * invalid one is dropped with a warn log while its siblings load fine
@@ -42,7 +44,11 @@ function main(): void {
     process.exit(2);
   }
 
-  const diagnostics = validateCatalog(path);
+  const all = validateCatalog(path);
+  // A warning names a deprecated form that still loads, so it is printed and
+  // never fails the gate.
+  for (const d of all) if (d.warning) console.error(`⚠ ${d.message}`);
+  const diagnostics = all.filter((d) => !d.warning);
   if (diagnostics.length === 0) {
     console.log(`✓ ${path}: every entry reaches Browse (schema, safety, installable)`);
     return;

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { serverDetailToCatalogEntry } from "../../../src/connectors/catalog/projection.ts";
 import type { ServerDetail } from "../../../src/connectors/catalog/server-detail.ts";
 import type { HostManifestMeta } from "../../../src/connectors/runtime/types.ts";
@@ -7,6 +7,7 @@ import {
   parseLifecycleDeclaration,
   verifyLifecycleTools,
 } from "../../../src/lifecycle/declaration.ts";
+import { log } from "../../../src/observability/log.ts";
 import type { Tool } from "../../../src/tools/types.ts";
 
 function meta(lifecycle: unknown): HostManifestMeta {
@@ -89,6 +90,30 @@ describe("the block reaches the catalog entry", () => {
     const entry = serverDetailToCatalogEntry(detail({ host_version: "1.4", lifecycle: 42 }));
     expect(entry).not.toBeNull();
     expect(entry?.lifecycle).toBeUndefined();
+  });
+
+  test("a declared block is warned deprecated once per entry, however often it is projected", () => {
+    // The projection runs on every catalog lookup; a long-lived host says it once.
+    const warn = spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const named = (name: string, hostMeta: Record<string, unknown>) => ({
+        ...detail(hostMeta),
+        name,
+      });
+      const declared = named("com.acme/deprecated-once", { host_version: "1.4", lifecycle: GOOD });
+      serverDetailToCatalogEntry(declared);
+      serverDetailToCatalogEntry(declared);
+      serverDetailToCatalogEntry(named("com.acme/no-block", { host_version: "1.4" }));
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('"com.acme/deprecated-once"');
+      expect(String(warn.mock.calls[0]?.[0])).toContain("deprecated");
+
+      // A malformed block is still a declared one, and still on its way out.
+      serverDetailToCatalogEntry(named("com.acme/deprecated-malformed", { lifecycle: 42 }));
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

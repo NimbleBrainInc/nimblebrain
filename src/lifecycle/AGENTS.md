@@ -19,7 +19,9 @@ for one connection (`Runtime.lifecycleDeclarationFor`):
   the extension is not a handler. Never identify a handler by its name.
 - **In the catalog**, as `_meta["ai.nimblebrain/host"].lifecycle`, for a server
   that does not advertise the extension. Each value names a tool on that same
-  server.
+  server. Deprecated: the projection warns once per entry and the catalog lint
+  reports a non-failing warning (`warnCatalogLifecycleDeprecated`). Do not add
+  behavior to this path; a later release deletes it.
 
 Developer contract:
 [`docs/extensions/lifecycle.mdx`](../../docs/src/content/docs/extensions/lifecycle.mdx).
