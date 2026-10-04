@@ -42,6 +42,14 @@ describe("mergeFirstPage", () => {
     expect(pages.hasMore).toBe(true);
   });
 
+  test("a restart drops held rows below the fresh page, so Load older leaves no hole", () => {
+    const loaded = { items: range(100, 26), hasMore: true };
+    const pages = mergeFirstPage(loaded, range(140, 116), true, new Set(["acme:e30"]));
+    expect(seqs(pages)).toEqual(range(140, 116).map((i) => i.seq));
+    expect(oldestSeq(pages)).toBe(116);
+    expect(pages.hasMore).toBe(true);
+  });
+
   test("a first page with nothing beyond it is the whole list", () => {
     const loaded = { items: range(10, 5), hasMore: true };
     const pages = mergeFirstPage(loaded, range(10, 9), false, none);

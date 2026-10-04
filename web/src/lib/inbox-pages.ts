@@ -28,7 +28,10 @@ export function sortedUnique(items: NotificationView[]): NotificationView[] {
  * into them; when it does not — more arrived since than one page holds — the
  * run would have a hole in it, so the older pages are dropped and paging
  * starts again from the fresh page. `held` are rows the page has promised to
- * keep in view (marked read under the Unread filter) whatever the read says.
+ * keep in view (marked read under the Unread filter) whatever the read says,
+ * as long as they sit within the run; a restart lets them go, because a held
+ * row below the fresh page would become the oldest row and "Load older" would
+ * continue from it, skipping everything between.
  */
 export function mergeFirstPage(
   current: InboxPages,
@@ -43,9 +46,7 @@ export function mergeFirstPage(
   }
   const oldest = Math.min(...page.map((item) => item.seq));
   const newestLoaded = current.items.reduce((max, item) => Math.max(max, item.seq), -1);
-  if (newestLoaded < oldest) {
-    return { items: sortedUnique([...page, ...kept]), hasMore: true };
-  }
+  if (newestLoaded < oldest) return { items: sortedUnique(page), hasMore: true };
   const below = current.items.filter((item) => item.seq < oldest);
   return {
     items: sortedUnique([...page, ...below, ...kept]),

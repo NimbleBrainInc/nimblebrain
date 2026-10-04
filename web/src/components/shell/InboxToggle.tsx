@@ -83,10 +83,12 @@ function useUnreadPreview(workspaceId: string | undefined, open: boolean, revisi
     }
     Promise.all([
       listNotifications({ unreadOnly: true, limit: INBOX_READ_MAX }, workspaceId),
+      // The pressing read only re-orders the preview, so its failure leaves
+      // the unread read standing rather than erroring the whole preview.
       listNotifications(
         { unreadOnly: true, level: "attention", limit: INBOX_PREVIEW_SIZE },
         workspaceId,
-      ),
+      ).catch(() => ({ notifications: [] })),
     ])
       .then(([newest, pressing]) => {
         if (mine !== seq.current) return;
