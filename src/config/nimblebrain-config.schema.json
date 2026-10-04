@@ -358,7 +358,7 @@
         },
         "workspaceManagement": {
           "type": "boolean",
-          "description": "Enable workspace CRUD and member management via nb__manage_workspaces (admin only). Default: true.",
+          "description": "Enable workspace CRUD and member management via nb__manage_workspaces (org admins create and delete; workspace admins rename and manage members). Default: true.",
           "default": true
         },
         "compaction": {
