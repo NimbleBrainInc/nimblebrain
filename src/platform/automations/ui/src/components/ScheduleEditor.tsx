@@ -1,23 +1,33 @@
 import { useState } from "react";
+import { defaultOnceLocal, isoFromLocalInput, localInputFromIso } from "./SchedulePicker.tsx";
 
+/**
+ * Inline editor for an automation's schedule. `schedule` null is an automation
+ * with none (manual only); saving "Manual only" sends `null`, which clears it.
+ */
 export function ScheduleEditor({
   schedule,
   onSave,
   onCancel,
 }: {
-  schedule: Record<string, unknown>;
-  onSave: (spec: Record<string, unknown>) => void;
+  schedule: Record<string, unknown> | null;
+  onSave: (spec: Record<string, unknown> | null) => void;
   onCancel: () => void;
 }) {
-  const initialType = (schedule.type as string) || "interval";
-  const initialMinutes = schedule.intervalMs ? Number(schedule.intervalMs) / 60_000 : 30;
-  const initialExpression = (schedule.expression as string) || "";
-  const initialTimezone = (schedule.timezone as string) || "Pacific/Honolulu";
+  const initialType = schedule ? (schedule.type as string) || "interval" : "manual";
+  const initialMinutes = schedule?.intervalMs ? Number(schedule.intervalMs) / 60_000 : 30;
+  const initialExpression = (schedule?.expression as string) || "";
+  const initialTimezone = (schedule?.timezone as string) || "Pacific/Honolulu";
+  // A once that has run keeps its old time; the editor offers a fresh one to re-arm it.
+  const initialAt = localInputFromIso(schedule?.at as string | undefined);
 
   const [type, setType] = useState(initialType);
   const [minutes, setMinutes] = useState(initialMinutes);
   const [expression, setExpression] = useState(initialExpression);
   const [timezone, setTimezone] = useState(initialTimezone);
+  const [onceAt, setOnceAt] = useState(
+    initialAt && new Date(initialAt).getTime() > Date.now() ? initialAt : defaultOnceLocal(),
+  );
 
   // An event schedule is not editable here. This picker writes a cron or an
   // interval and nothing else, so offering it for an event automation would
@@ -37,7 +47,11 @@ export function ScheduleEditor({
   }
 
   function handleSave() {
-    if (type === "interval") {
+    if (type === "manual") {
+      onSave(null);
+    } else if (type === "once") {
+      onSave({ type: "once", at: isoFromLocalInput(onceAt) });
+    } else if (type === "interval") {
       onSave({ type: "interval", intervalMs: Math.max(1, minutes) * 60_000 });
     } else {
       onSave({ type: "cron", expression, timezone });
@@ -55,9 +69,28 @@ export function ScheduleEditor({
         >
           <option value="interval">Interval</option>
           <option value="cron">Cron</option>
+          <option value="once">Once at…</option>
+          <option value="manual">Manual only</option>
         </select>
       </div>
-      {type === "interval" ? (
+      {type === "manual" ? (
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+          Nothing runs it on its own. Run it with Run Now.
+        </div>
+      ) : type === "once" ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>At</span>
+          <input
+            className="inline-edit-input"
+            type="datetime-local"
+            value={onceAt}
+            onChange={(e) => setOnceAt(e.target.value)}
+            style={{ width: 200 }}
+            // biome-ignore lint/a11y/noAutofocus: intentional focus on edit activation
+            autoFocus
+          />
+        </div>
+      ) : type === "interval" ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Every</span>
           <input

@@ -21,7 +21,7 @@ export declare const USAGE_STACK_BYS: readonly ["model", "user", "origin", "prov
 export declare const USAGE_ORIGINS: readonly ["chat", "task", "system"];
 export declare const UsageReportInput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "org">>;
-    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"day" | "week" | "month" | "all">>;
+    period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "day" | "week" | "month">>;
     from: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     to: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     groupBy: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<"model" | "user" | "workspace" | "day" | "conversation" | "turn" | "origin" | "provider">, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<"model" | "user" | "workspace" | "day" | "conversation" | "turn" | "origin" | "provider">>]>>;

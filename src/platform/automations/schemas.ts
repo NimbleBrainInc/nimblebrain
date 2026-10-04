@@ -30,8 +30,10 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: "create",
     description:
-      "Create a scheduled automation. `manifest` is the config; `body` is the prompt that " +
-      "opens each run. Generates a kebab-case id from `manifest.name`. " +
+      "Create an automation. `manifest` is the config; `body` is the prompt that " +
+      "opens each run. Generates a kebab-case id from `manifest.name`. Its schedule recurs " +
+      "(cron, interval), fires once at a set time (once), fires on routed notifications " +
+      "(event), or is omitted for an automation that runs only when someone runs it. " +
       "Idempotent: returns the existing automation if one with the same id exists. " +
       "Scope: an automation belongs to the workspace it is created in, and runs as the creating " +
       "user. A run reaches only that workspace's tools and connectors (including personal " +
@@ -67,7 +69,9 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   },
   {
     name: "runs",
-    description: "Query run history across automations with filters.",
+    description:
+      "Query run history across automations with filters. History is kept indefinitely: for " +
+      "one automation, pass the response's `nextBefore` back as `before` to page further back.",
     inputSchema: AutomationsRunsInput,
   },
   {

@@ -34,16 +34,19 @@ import type {
 import { createAutomation, deleteAutomation, updateAutomation } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
 import type { RunNowTicket } from "./scheduler.ts";
-import type { ReadRunsOptions } from "./store.ts";
+import type { ReadRunsOptions, RunsPage } from "./store.ts";
 import {
   type Automation,
+  type AutomationKind,
   type AutomationRun,
   type AutomationRunResult,
   DEFAULT_EVENT_DEBOUNCE_MS,
   DEFAULT_EVENT_MAX_FIRES_PER_HOUR,
   isEventSchedule,
+  kindOf,
   MAX_EVENT_DEBOUNCE_MS,
   MAX_EVENT_MAX_FIRES_PER_HOUR,
+  onceRetirement,
   type ScheduleSpec,
 } from "./types.ts";
 
@@ -61,8 +64,24 @@ function log(msg: string): void {
 // Human-readable formatting helpers (exported for testing)
 // ---------------------------------------------------------------------------
 
-/** Convert a ScheduleSpec into a human-readable string. */
-export function formatSchedule(schedule: ScheduleSpec): string {
+/**
+ * Convert a schedule into a human-readable string. `state` lets a once
+ * schedule say whether it has run ("Ran once at …") or is still to come.
+ */
+export function formatSchedule(
+  schedule: ScheduleSpec | undefined,
+  state?: Pick<Automation, "onceDone">,
+): string {
+  if (!schedule) return "Manual only";
+
+  if (schedule.type === "once" && schedule.at) {
+    const when = formatInstant(schedule.at, schedule.timezone);
+    const retired = state ? onceRetirement({ schedule, ...state }) : null;
+    if (retired === "ran") return `Ran once at ${when}`;
+    if (retired === "missed") return `Missed its time (${when})`;
+    return `Once at ${when}`;
+  }
+
   if (schedule.type === "interval" && schedule.intervalMs) {
     return formatIntervalSchedule(schedule.intervalMs);
   }
@@ -89,6 +108,26 @@ function formatEventSchedule(schedule: ScheduleSpec): string {
   if (match.name) parts.push(`matching ${match.name}`);
   if (match.level) parts.push(`at ${match.level} or above`);
   return parts.length > 0 ? `On notifications ${parts.join(", ")}` : "On any routed notification";
+}
+
+/** Render an ISO instant as a date and time in `timezone` (default the instance's). */
+function formatInstant(iso: string, timezone?: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const tz = timezone ?? DEFAULT_TIMEZONE;
+  try {
+    const text = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+    return `${text} ${formatTimezoneAbbr(tz)}`;
+  } catch {
+    return iso;
+  }
 }
 
 /** Render an interval (in ms) as "Every N minutes/hours/days". */
@@ -225,7 +264,10 @@ export function getModelRates(model: string | null | undefined): { input: number
   return MODEL_RATES["claude-sonnet"]!; // fallback
 }
 
-export function estimateRunsPerDay(schedule: ScheduleSpec): number {
+export function estimateRunsPerDay(schedule: ScheduleSpec | undefined): number {
+  // No schedule, or one moment: no daily rate to project. A once's single run
+  // is a one-time cost, not a daily one.
+  if (!schedule || schedule.type === "once") return 0;
   if (schedule.type === "interval" && schedule.intervalMs) {
     return 86_400_000 / schedule.intervalMs;
   }
@@ -296,6 +338,8 @@ export interface ToolContext {
   cancelRun: (automationId: string) => boolean;
   /** Read one automation's run history (workspace + owner bound at construction). */
   readRuns: (automationId: string, opts?: ReadRunsOptions) => AutomationRun[];
+  /** Read one page of an automation's full history, back through its archive months. */
+  readRunsPage: (automationId: string, opts: ReadRunsOptions) => RunsPage;
   /** Read run history across this owner's automations in the focused workspace. */
   readAllRuns: (opts?: ReadRunsOptions) => AutomationRun[];
   /** Read one run's full result sidecar (the deliverable). */
@@ -331,7 +375,8 @@ export interface ToolContext {
  * callers don't need synthetic flat-record casts.
  */
 export interface ValidatableAutomationFields {
-  schedule?: ScheduleSpec;
+  /** `null` is an update's clear: nothing to validate. */
+  schedule?: ScheduleSpec | null;
   maxIterations?: number;
   maxInputTokens?: number;
   maxRunDurationMs?: number;
@@ -386,8 +431,50 @@ function validateEventSchedule(schedule: ScheduleSpec): void {
   }
 }
 
+/** An ISO-8601 timestamp that names its offset (`Z` or `±HH:MM`), so it means one instant. */
+const ISO_WITH_OFFSET_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Validate a once schedule. Throws on invalid input.
+ *
+ * The offset is required because a bare local time names a different instant
+ * on every server, and a time in the past is refused because the schedule
+ * would never fire it (creating one, or re-arming one, is a request to act
+ * later, never "now").
+ */
+function validateOnceSchedule(schedule: ScheduleSpec, now: number): void {
+  const at = schedule.at;
+  if (!at) {
+    throw new Error(
+      'at is required for once schedules — an ISO-8601 time with an offset, e.g. "2026-07-01T13:12:00-07:00"',
+    );
+  }
+  const ms = new Date(at).getTime();
+  if (!ISO_WITH_OFFSET_RE.test(at) || Number.isNaN(ms)) {
+    throw new Error(
+      `Invalid once time "${at}": use an ISO-8601 time with an offset, e.g. "2026-07-01T13:12:00-07:00"`,
+    );
+  }
+  if (ms <= now) {
+    throw new Error(
+      `Once time "${at}" has already passed. Give a time in the future; to run it now, use automations__run.`,
+    );
+  }
+  if (schedule.timezone !== undefined) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: schedule.timezone });
+    } catch {
+      throw new Error(`Unknown timezone "${schedule.timezone}"`);
+    }
+  }
+}
+
 /** Validate a schedule spec's type-specific fields. Throws on invalid input. */
 function validateSchedule(schedule: ScheduleSpec): void {
+  if (schedule.type === "once") {
+    validateOnceSchedule(schedule, Date.now());
+    return;
+  }
   if (schedule.type === "interval") {
     if (schedule.intervalMs == null) {
       throw new Error("intervalMs is required for interval schedules");
@@ -454,7 +541,7 @@ interface CreateInput {
   manifest: {
     name: string;
     description?: string;
-    schedule: ScheduleSpec;
+    schedule?: ScheduleSpec;
     enabled?: boolean;
     skill?: string;
     model?: string;
@@ -463,6 +550,7 @@ interface CreateInput {
     maxRunDurationMs?: number;
     allowedTools?: string[];
     tokenBudget?: Automation["tokenBudget"];
+    kind?: AutomationKind;
   };
   body: string;
 }
@@ -489,6 +577,7 @@ export function handleCreate(
       allowedTools: manifest.allowedTools,
       tokenBudget: manifest.tokenBudget,
       enabled: manifest.enabled,
+      kind: manifest.kind,
       // LLM-facing path: stamp `agent` source and derive ownership from
       // request context.
       source: "agent",
@@ -523,7 +612,10 @@ function withEffectiveLimits<T extends { automation: Automation; message: string
  */
 interface UpdateInput {
   name: string;
-  manifest?: Partial<Omit<CreateInput["manifest"], "name">>;
+  manifest?: Partial<Omit<CreateInput["manifest"], "name" | "schedule" | "kind">> & {
+    /** `null` clears it: nothing fires the automation unattended. */
+    schedule?: ScheduleSpec | null;
+  };
   body?: string;
 }
 
@@ -572,6 +664,12 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
   if (args.source !== undefined) {
     automations = automations.filter((a) => a.source === args.source);
   }
+  // Saved by default: a one-off is kept with its history, not listed with the
+  // automations someone keeps.
+  const kind = (args.kind as AutomationKind | "all" | undefined) ?? "saved";
+  if (kind !== "all") {
+    automations = automations.filter((a) => kindOf(a) === kind);
+  }
 
   // Page AFTER filtering so `total` describes the filter's real match count,
   // which is what a caller deciding whether it has seen everything needs.
@@ -611,7 +709,10 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Aut
     id: a.id,
     name: a.name,
     description: a.description,
-    schedule: formatSchedule(a.schedule),
+    schedule: formatSchedule(a.schedule, a),
+    scheduleType: a.schedule?.type ?? "none",
+    kind: kindOf(a),
+    ...(a.onceDone ? { onceDone: a.onceDone } : {}),
     enabled: a.enabled,
     source: a.source,
     runCount: a.runCount,
@@ -674,7 +775,7 @@ export function handleStatus(
   return {
     automation: {
       ...automation,
-      scheduleHuman: formatSchedule(automation.schedule),
+      scheduleHuman: formatSchedule(automation.schedule, automation),
       lastRunAtHuman: automation.lastRunAt ? formatRelativeTime(automation.lastRunAt, now) : null,
       nextRunAtHuman: automation.nextRunAt ? formatRelativeTime(automation.nextRunAt, now) : null,
       cumulativeInputTokens: automation.cumulativeInputTokens,
@@ -694,16 +795,25 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Aut
   const automationId = args.automationId as string | undefined;
   const status = args.status as AutomationRun["status"] | undefined;
   const since = args.since as string | undefined;
+  const before = args.before as string | undefined;
   const limit = (args.limit as number) ?? 20;
-
-  let runs: AutomationRun[];
-
-  if (automationId) {
-    runs = ctx.readRuns(automationId, { limit, status, since });
-  } else {
-    runs = ctx.readAllRuns({ limit, status, since });
+  if (before !== undefined && Number.isNaN(new Date(before).getTime())) {
+    throw new Error(`Invalid before timestamp: "${before}"`);
   }
 
+  // One automation's history pages back through its archive with a cursor.
+  // The first page (no `before`) reads only the hot index; its `nextBefore`
+  // says older runs exist.
+  if (automationId) {
+    const page = ctx.readRunsPage(automationId, { limit, status, since, before });
+    return {
+      runs: page.runs,
+      total: page.runs.length,
+      ...(page.nextBefore ? { nextBefore: page.nextBefore } : {}),
+    };
+  }
+
+  const runs = ctx.readAllRuns({ limit, status, since, before });
   return { runs, total: runs.length };
 }
 
@@ -874,10 +984,13 @@ function disabledState(
   name: string,
   automation: Automation,
 ): { enabled: boolean; disabledNote: string } {
-  const enabled = findByName(ctx.definitions(), name)?.enabled ?? automation.enabled;
-  const disabledNote = enabled
-    ? ""
-    : ` "${name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;
+  const current = findByName(ctx.definitions(), name) ?? automation;
+  const enabled = current.enabled;
+  // `enabled` gates only the trigger; with none there is nothing to say.
+  const disabledNote =
+    enabled || !current.schedule
+      ? ""
+      : ` "${name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;
   return { enabled, disabledNote };
 }
 

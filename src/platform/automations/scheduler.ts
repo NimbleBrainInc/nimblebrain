@@ -36,6 +36,10 @@ import {
   type AutomationRun,
   type AutomationRunResult,
   isEventSchedule,
+  isOnceSchedule,
+  ONCE_GRACE_MS,
+  ONCE_MISSED_REASON,
+  ONCE_RAN_REASON,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -238,6 +242,9 @@ export function computeNextRunAt(
 ): number | null {
   const { schedule } = automation;
 
+  // No schedule: nothing fires it unattended, so it has no next run.
+  if (!schedule) return null;
+
   // An event schedule has no position in time. Null means "no next run": every
   // caller clears nextRunAt on it (see setNextRunAt), so the timer never arms
   // for it and no backoff or skip path invents a moment for it either.
@@ -248,6 +255,14 @@ export function computeNextRunAt(
     const cron = new Cron(schedule.expression, { timezone: tz });
     const next = cron.nextRun(new Date(now));
     return next ? next.getTime() : null;
+  }
+
+  // A once schedule's one moment. Whether it has already fired is not this
+  // function's question: firing disables the automation (`retireOnce`), and a
+  // disabled automation is never due.
+  if (schedule.type === "once" && schedule.at) {
+    const at = new Date(schedule.at).getTime();
+    return Number.isNaN(at) ? null : at;
   }
 
   if (schedule.type === "interval" && schedule.intervalMs) {
@@ -312,7 +327,7 @@ function byNextRunAt(automations: Iterable<Automation>): Automation[] {
  */
 function isPendingOccurrence(auto: Automation, defaultTimezone?: string): boolean {
   const { schedule, nextRunAt } = auto;
-  if (schedule.type !== "cron" || !schedule.expression || !nextRunAt) return false;
+  if (schedule?.type !== "cron" || !schedule.expression || !nextRunAt) return false;
   try {
     const tz = schedule.timezone ?? defaultTimezone;
     return new Cron(schedule.expression, { timezone: tz }).match(new Date(nextRunAt));
@@ -328,7 +343,7 @@ function isPendingOccurrence(auto: Automation, defaultTimezone?: string): boolea
  * schedule never has one.
  */
 function dueWithoutNextRunAt(automation: Automation): boolean {
-  return automation.schedule.type === "interval";
+  return automation.schedule?.type === "interval";
 }
 
 /**
@@ -336,6 +351,8 @@ function dueWithoutNextRunAt(automation: Automation): boolean {
  */
 export function isDue(automation: Automation, now: number): boolean {
   if (!automation.enabled) return false;
+  // No schedule, no unattended run: only Run now starts one.
+  if (!automation.schedule) return false;
   // Never due from the timer. An event schedule has no `nextRunAt` by
   // construction, and the timer would otherwise fire it with the wrong
   // trigger, an empty batch, and none of the fire ceiling.
@@ -470,6 +487,36 @@ function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: numbe
     auto.disabledAt = new Date(now).toISOString();
     auto.disabledReason = `Auto-disabled after ${auto.consecutiveErrors} consecutive failures. Last error: ${(run.error ?? "unknown").slice(0, 200)}`;
   }
+}
+
+/**
+ * Leave a once automation inert: disabled, with no next run, and a reason that
+ * says what happened. Its schedule stays, so its history still reads, and a new
+ * `at` re-arms it (`updateAutomation`).
+ */
+export function retireOnce(
+  auto: Automation,
+  outcome: "ran" | "missed",
+  settledAt: string,
+  reason: string,
+  now: number,
+): void {
+  auto.enabled = false;
+  auto.nextRunAt = undefined;
+  auto.onceDone = { at: settledAt, outcome };
+  auto.disabledAt = new Date(now).toISOString();
+  auto.disabledReason = reason;
+}
+
+/**
+ * Whether an armed once was missed while the runtime was down: its time passed
+ * more than {@link ONCE_GRACE_MS} ago. Asked only by `start()`, so a once
+ * deferred at runtime because every run slot was busy is never judged late.
+ */
+export function onceMissedWhileDown(auto: Automation, now: number): boolean {
+  if (!auto.enabled || auto.onceDone || !isOnceSchedule(auto.schedule)) return false;
+  const at = new Date(auto.schedule?.at ?? "").getTime();
+  return !Number.isNaN(at) && now - at > ONCE_GRACE_MS;
 }
 
 /** Compute and set nextRunAt, pushing it out by backoff during an error streak. */
@@ -789,8 +836,32 @@ export class Scheduler {
     if (this.running) return;
     this.running = true;
     this.definitions = this.loadAll();
+    this.retireOncesMissedWhileDown();
     this.seedNextRunAt();
     this.armTimer();
+  }
+
+  /**
+   * At start, retire every armed once whose time passed more than the grace
+   * window ago: the runtime was not running when it was due. Only here, never
+   * on a tick or a reload, so a once the running scheduler deferred for want
+   * of a run slot fires whenever a slot frees, however late. A once within the
+   * window stays due and fires on the first tick.
+   */
+  private retireOncesMissedWhileDown(): void {
+    const now = Date.now();
+    for (const auto of [...this.definitions.values()]) {
+      if (!onceMissedWhileDown(auto, now)) continue;
+      try {
+        this.recordMissedOnce(auto, now);
+      } catch (err) {
+        log.warn("[automations] could not record a missed once", {
+          automationId: auto.id,
+          workspaceId: auto.workspaceId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   /**
@@ -1331,9 +1402,19 @@ export class Scheduler {
     // to the millisecond — operators can't tell the failure modes apart
     // from the run record alone.
     const startedAt = new Date().toISOString();
+    // The once occurrence this run is, if any: an `at` edited while it runs is
+    // a new occurrence, which the run must not retire.
+    const firedOnceAt =
+      trigger === "scheduled" && isOnceSchedule(auto.schedule) ? auto.schedule?.at : undefined;
 
     try {
-      return await this.executeAndRecord(auto, controller, startedAt, trigger, input, lease);
+      return await this.executeAndRecord(auto, controller, {
+        startedAt,
+        trigger,
+        input,
+        lease,
+        firedOnceAt,
+      });
     } finally {
       // The slot is free whether the run's record landed or its write threw.
       // Releasing it admits the next queued run. `executeTask` releases it as
@@ -1347,14 +1428,18 @@ export class Scheduler {
   private async executeAndRecord(
     auto: Automation,
     controller: AbortController,
-    startedAt: string,
-    trigger: AutomationRunTrigger,
-    input: RunInput | undefined,
-    lease: AdmissionLease,
+    dispatch: {
+      startedAt: string;
+      trigger: AutomationRunTrigger;
+      input: RunInput | undefined;
+      lease: AdmissionLease;
+      firedOnceAt: string | undefined;
+    },
   ): Promise<AutomationRun> {
+    const { startedAt, trigger, input, lease, firedOnceAt } = dispatch;
     try {
       const { run, result } = await this.executor(auto, controller.signal, trigger, input, lease);
-      this.updateAfterRun(auto, run);
+      this.updateAfterRun(auto, run, trigger, firedOnceAt);
       // Persist the full deliverable sidecar alongside the run summary. Present
       // for both the scheduled and manual (runNow) paths; null only when the
       // executor had no clean data (it rejected instead — see the catch below).
@@ -1377,7 +1462,7 @@ export class Scheduler {
         transient,
         trigger,
       };
-      this.updateAfterRun(auto, failedRun);
+      this.updateAfterRun(auto, failedRun, trigger, firedOnceAt);
       this.runRecorded(auto);
       return failedRun;
     }
@@ -1399,8 +1484,18 @@ export class Scheduler {
    * Re-reads definitions from disk before merging run-state fields to avoid
    * overwriting concurrent changes (e.g., a user pausing via the UI while
    * a run is in flight).
+   *
+   * `firedOnceAt` is the `at` of the once occurrence this run was (captured at
+   * dispatch; defaults to the dispatched automation's). The once is retired
+   * only while the stored schedule still names that `at`: one edited during
+   * the run is a new occurrence and stays armed.
    */
-  updateAfterRun(automation: Automation, run: AutomationRun): void {
+  updateAfterRun(
+    automation: Automation,
+    run: AutomationRun,
+    trigger?: AutomationRunTrigger,
+    firedOnceAt: string | undefined = automation.schedule?.at,
+  ): void {
     const wsId = automation.workspaceId;
     const ownerId = automation.ownerId;
     if (!wsId || !ownerId) return; // defensive — every fired automation carries both
@@ -1427,7 +1522,16 @@ export class Scheduler {
     auto.cumulativeOutputTokens = (auto.cumulativeOutputTokens ?? 0) + run.outputTokens;
 
     applyConsecutiveErrors(auto, run, now);
-    applyNextRunAt(auto, now, this.config.defaultTimezone);
+    if (!isOnceSchedule(auto.schedule)) {
+      applyNextRunAt(auto, now, this.config.defaultTimezone);
+    } else if ((trigger ?? run.trigger) === "scheduled" && auto.schedule?.at === firedOnceAt) {
+      // The schedule's one occurrence ran, whatever its outcome (success,
+      // failure, timeout, cancel): cleanup is the schedule's, not the prompt's.
+      // A Run now or event run is not that occurrence and leaves it armed, and
+      // so does an `at` changed during the run: the stored `nextRunAt` is the
+      // new occurrence's.
+      retireOnce(auto, "ran", run.startedAt, `${ONCE_RAN_REASON}${run.startedAt}`, now);
+    }
     auto.updatedAt = new Date(now).toISOString();
     applyTokenBudget(auto, run, now, this.config.defaultTimezone);
 
@@ -1466,23 +1570,10 @@ export class Scheduler {
     status: "skipped" | "cancelled" = "skipped",
   ): AutomationRun {
     const now = Date.now();
-    const run: AutomationRun = {
-      id: `run_${now}_${status === "cancelled" ? "cancel" : "skip"}`,
-      automationId: auto.id,
-      startedAt: new Date(now).toISOString(),
-      completedAt: new Date(now).toISOString(),
-      status,
-      inputTokens: 0,
-      outputTokens: 0,
-      toolCalls: 0,
-      iterations: 0,
-      error: reason,
-    };
+    const run = this.writeNotStarted(auto, reason, status, now);
     const wsId = auto.workspaceId;
     const ownerId = auto.ownerId;
     if (!wsId || !ownerId) return run; // defensive — can't locate the store
-    appendRun(this.config.workDir, wsId, ownerId, auto.id, run);
-    automationRunsTotal.inc({ status: run.status });
 
     if (trigger !== undefined && trigger !== "scheduled") {
       this.runRecorded(auto);
@@ -1501,7 +1592,8 @@ export class Scheduler {
       if (nextRun !== null) {
         // Ensure nextRunAt is in the future — if the computed time is past
         // (e.g., interval based on old lastRunAt), advance by intervalMs from now
-        const effectiveNext = nextRun > now ? nextRun : now + (fresh.schedule.intervalMs ?? 60_000);
+        const effectiveNext =
+          nextRun > now ? nextRun : now + (fresh.schedule?.intervalMs ?? 60_000);
         setNextRunAt(fresh, effectiveNext);
       } else {
         setNextRunAt(fresh, null);
@@ -1513,6 +1605,60 @@ export class Scheduler {
 
     this.runRecorded(auto);
     return run;
+  }
+
+  /**
+   * Write the record of a run that did not start (no `trigger`, see
+   * {@link countsAsEventFire}) to the automation's history, and count it.
+   * Returns the record; writes nothing when the automation's store cannot be
+   * located.
+   */
+  private writeNotStarted(
+    auto: Automation,
+    reason: string,
+    status: "skipped" | "cancelled",
+    now: number,
+  ): AutomationRun {
+    const at = new Date(now).toISOString();
+    const run: AutomationRun = {
+      id: `run_${now}_${status === "cancelled" ? "cancel" : "skip"}`,
+      automationId: auto.id,
+      startedAt: at,
+      completedAt: at,
+      status,
+      inputTokens: 0,
+      outputTokens: 0,
+      toolCalls: 0,
+      iterations: 0,
+      error: reason,
+    };
+    if (!auto.workspaceId || !auto.ownerId) return run;
+    appendRun(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, run);
+    automationRunsTotal.inc({ status: run.status });
+    return run;
+  }
+
+  /**
+   * Record a once schedule's occurrence as skipped because it is too late to
+   * fire (see {@link onceMissedWhileDown}), and leave the automation inert.
+   */
+  private recordMissedOnce(auto: Automation, now: number): void {
+    const at = auto.schedule?.at ?? "";
+    const reason =
+      `${ONCE_MISSED_REASON}${at}: the runtime was not running then, and it started more ` +
+      `than ${ONCE_GRACE_MS / 60_000} minutes later, so it did not run. Set a new time to run it.`;
+    const wsId = auto.workspaceId;
+    const ownerId = auto.ownerId;
+    if (!wsId || !ownerId) return;
+    this.writeNotStarted(auto, reason, "skipped", now);
+    const fresh = loadAutomation(this.config.workDir, wsId, ownerId, auto.id) ?? auto;
+    fresh.workspaceId = wsId;
+    fresh.ownerId = ownerId;
+    retireOnce(fresh, "missed", new Date(now).toISOString(), reason, now);
+    fresh.updatedAt = new Date(now).toISOString();
+    saveAutomation(this.config.workDir, wsId, ownerId, fresh);
+    this.definitions.set(Scheduler.keyOf(fresh), fresh);
+    this.runRecorded(auto);
   }
 
   // -----------------------------------------------------------------------

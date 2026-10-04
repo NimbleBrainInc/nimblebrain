@@ -541,6 +541,33 @@ describe("?item= — where a link from outside the shell lands", () => {
   });
 });
 
+describe("subject", () => {
+  test("shows on the row only when the title does not already name it", async () => {
+    const { container } = await mount({
+      items: [
+        item({
+          id: "a:1",
+          seq: 1,
+          title: "acme-outreach.com is active",
+          subject: "acme-outreach.com",
+        }),
+        item({ id: "a:2", seq: 2, title: "Sequence finished", subject: "Q4 founders" }),
+      ],
+    });
+    const text = rows(container).map((r) => r.textContent ?? "");
+    expect(text[0]).toContain("Q4 founders");
+    expect(text[1]?.split("acme-outreach.com").length).toBe(2);
+  });
+
+  test("counts as named when only the case differs", async () => {
+    const { container } = await mount({
+      items: [item({ title: "Acme-Outreach.com is active", subject: "acme-outreach.com" })],
+    });
+    const text = (rows(container)[0]?.textContent ?? "").toLowerCase();
+    expect(text.split("acme-outreach.com").length).toBe(2);
+  });
+});
+
 describe("unread", () => {
   test("an unread row carries the dot and a read row does not", async () => {
     const { container } = await mount({
