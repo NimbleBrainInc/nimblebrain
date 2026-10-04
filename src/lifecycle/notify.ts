@@ -62,11 +62,9 @@ export interface ReadyOutcome {
 
 export interface LifecycleNotifyDeps {
   /**
-   * The lifecycle declaration for a connector installed in `wsId`: the binding
-   * its server advertises through `ai.nimblebrain/lifecycle` when it advertises
-   * the extension, and otherwise the OPERATOR-TRUSTED catalog block — the
-   * published catalog entry the installed ref is (`catalog/binding.ts`), never a
-   * caller-supplied one. Never both. `undefined` when it declares none.
+   * The lifecycle binding for a connector installed in `wsId`: what its server
+   * declares through `ai.nimblebrain/lifecycle`. `undefined` when it does not
+   * advertise the extension.
    */
   declarationFor(wsId: string, serverName: string): Promise<LifecycleBinding | undefined>;
   /**
@@ -78,7 +76,7 @@ export interface LifecycleNotifyDeps {
   /**
    * The install warnings for marked tools the extension binding rejected (a
    * duplicate marker, an unknown event, a required argument). Optional: a
-   * catalog declaration has none.
+   * connector with no rejected marker has none.
    */
   contractWarningsFor?(wsId: string, serverName: string): Promise<string[]>;
   /**
@@ -105,7 +103,7 @@ export interface LifecycleNotifyDeps {
  *
  * A {@link LifecycleContractError} propagates rather than being swallowed: a
  * declared handler that does not exist, or that cannot be called with no
- * arguments, is a manifest bug and the caller decides how loud it is. The
+ * arguments, is a server bug and the caller decides how loud it is. The
  * install path reports it as a warning on a successful install — it cannot
  * refuse an install that has already committed — and the connection-running
  * path logs it.
@@ -135,19 +133,19 @@ export async function notifyReady(
 
   const tools = await port.tools();
   // An empty tool list is NOT a contract violation, and the difference is the
-  // whole reason this branch exists. A violation says "this manifest is wrong,
+  // whole reason this branch exists. A violation says "this binding is wrong,
   // no retry will help"; an empty list says the source is up but has not
   // advertised anything yet. Every declared name is absent from an empty list,
-  // so checking one against it would accuse a manifest that is correct.
+  // so checking one against it would accuse a binding that is correct.
   if (tools.length === 0) {
     log.debug("lifecycle", `[lifecycle] ${connector} is running but advertises no tools yet`);
     return { settled: false };
   }
-  // On the extension path the handlers are read off the listing in hand, not
-  // the held binding: the binding is refreshed by its own tool-surface watch,
-  // which the retry of this call races on the same change.
-  const wire = decl.declaredBy === "extension" ? selectLifecycleHandlers(tools) : undefined;
-  const current = wire?.binding ?? decl;
+  // The handlers are read off the listing in hand, not the held binding: the
+  // binding is refreshed by its own tool-surface watch, which the retry of this
+  // call races on the same change.
+  const wire = selectLifecycleHandlers(tools);
+  const current = wire.binding;
   verifyLifecycleTools(tools, current, connector);
 
   const handler = current.on_ready;
@@ -155,12 +153,10 @@ export async function notifyReady(
   // there is nothing to call now and nothing to come back for. A `ready`
   // handler the host rejected is different: the server is still to be fixed,
   // and the fix arrives as a tool-set change, so the attempt stays open.
-  if (!handler) return { settled: !wire?.rejected.some((r) => r.event === "on_ready") };
+  if (!handler) return { settled: !wire.rejected.some((r) => r.event === "on_ready") };
 
-  // The catalog path sends `reason` whether or not the handler declares it;
-  // the extension sends it only to a handler that does.
-  const args =
-    decl.declaredBy === "extension" ? readyArguments(findTool(tools, handler), reason) : { reason };
+  // `reason` goes only to a handler that declares it.
+  const args = readyArguments(findTool(tools, handler), reason);
   await deps.positionOutbox?.(wsId, connector).catch((err: unknown) => {
     log.warn("[lifecycle] could not position the outbox before on_ready", {
       connector,

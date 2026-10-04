@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { LifecycleContractError } from "../../../src/lifecycle/declaration.ts";
 import {
   forgetReadyNotification,
   type LifecycleNotifyDeps,
@@ -8,7 +7,8 @@ import {
   notifyRemoving,
   resetReadyNotifications,
 } from "../../../src/lifecycle/notify.ts";
-import type { LifecycleDeclaration } from "../../../src/lifecycle/types.ts";
+import type { LifecycleBinding } from "../../../src/lifecycle/types.ts";
+import { LIFECYCLE_EXTENSION_ID } from "../../../src/services/lifecycle-extension.ts";
 import {
   type ConnectorPort,
   stopAllToolSurfaceWatches,
@@ -33,18 +33,26 @@ import type { Tool, ToolResult } from "../../../src/tools/types.ts";
 const WS = "ws_000f7ed6658f9d30";
 const CONNECTOR = "acme-billing-mcp";
 
-const DECL: LifecycleDeclaration = {
+const DECL: LifecycleBinding = {
   on_ready: "workspace_ready",
   on_removing: "workspace_removing",
 };
 
-/** A handler as a well-behaved server advertises it: no required arguments. */
+/**
+ * A handler as a well-behaved server advertises it: marked for its event, with
+ * no required arguments, and a `ready` handler declaring `reason`.
+ */
 function handler(name: string): Tool {
+  const event = name.endsWith("_removing") ? "removing" : "ready";
   return {
     name,
     description: "Lifecycle handler",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: {
+      type: "object",
+      properties: event === "ready" ? { reason: { type: "string" } } : {},
+    },
     source: CONNECTOR,
+    meta: { [LIFECYCLE_EXTENSION_ID]: { event } },
   };
 }
 
@@ -91,8 +99,8 @@ function makeFake(tools: Tool[], notice = "Setting up your workspace — watch t
   };
 }
 
-/** `null` means the connector declares no lifecycle block at all. */
-function makeDeps(fake: Fake | undefined, decl: LifecycleDeclaration | null = DECL) {
+/** `null` means the connector does not advertise the extension. */
+function makeDeps(fake: Fake | undefined, decl: LifecycleBinding | null = DECL) {
   const deps: LifecycleNotifyDeps = {
     declarationFor: async () => decl ?? undefined,
     portFor: () => fake?.port,
@@ -204,7 +212,7 @@ describe("on_ready", () => {
     expect(outcome).toEqual({ settled: false });
   });
 
-  test("an empty tool list defers rather than accusing a correct manifest", async () => {
+  test("an empty tool list defers rather than accusing a correct binding", async () => {
     // Every declared name is absent from an empty list, so checking one against
     // it would report a manifest that is correct. The tool-surface signal is
     // what brings the pass back when the list materializes.
@@ -220,15 +228,7 @@ describe("on_ready", () => {
     expect(fake.calls[0]?.input).toEqual({ reason: "resume" });
   });
 
-  test("a declared handler the server does not advertise is a contract error", async () => {
-    const fake = makeFake([handler("something_else")]);
-    await expect(notifyReady(makeDeps(fake), WS, CONNECTOR, "install")).rejects.toBeInstanceOf(
-      LifecycleContractError,
-    );
-    expect(fake.calls).toHaveLength(0);
-  });
-
-  test("a connector that declares no lifecycle block is a silent no-op", async () => {
+  test("a connector that does not advertise the extension is a silent no-op", async () => {
     const fake = makeFake([handler("workspace_ready")]);
     const outcome = await notifyReady(makeDeps(fake, null), WS, CONNECTOR, "install");
     expect(outcome).toEqual({ settled: true });

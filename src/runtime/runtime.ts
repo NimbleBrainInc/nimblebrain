@@ -453,6 +453,15 @@ export interface WorkspaceDeleteResult {
   deleteError?: string;
 }
 
+/**
+ * What narrows who may call a connector's tools: the catalog's `admin_tools`,
+ * and the lifecycle handlers its server binds, which only the host may call.
+ */
+interface ConnectorGates {
+  adminTools?: ConnectorCatalogEntry["adminTools"];
+  lifecycle?: LifecycleBinding;
+}
+
 export class Runtime {
   private resolveModelFn: (modelString: string) => LanguageModelV4;
   private skillMatcher: SkillMatcher;
@@ -4301,21 +4310,14 @@ export class Runtime {
   }
 
   /**
-   * The lifecycle declaration that governs `(wsId, serverName)`: one source per
-   * connection, never both.
-   *
-   * - **The server advertises `ai.nimblebrain/lifecycle`:** its wire binding,
-   *   even one with no handler (the server wants no events). A catalog
-   *   `lifecycle` block for the same connector is superseded, and that is
-   *   logged once.
-   * - **It does not:** the catalog block, read through the bound catalog entry
-   *   exactly as before the extension existed.
+   * The lifecycle binding that governs `(wsId, serverName)`: what its server
+   * declares through `ai.nimblebrain/lifecycle`, even a binding with no handler
+   * (the server wants no events). `undefined` when it does not advertise the
+   * extension, or when the connection cannot be made.
    *
    * Rediscovers when no binding is held, reconnecting a dropped connection
    * first: the uninstall path reaches here inside `notifyRemoving`'s deadline,
-   * after the connection may have idle-closed. A connection that cannot be made
-   * leaves the binding unknown, and the catalog block applies, which is what
-   * the host did before it read the wire.
+   * after the connection may have idle-closed.
    */
   private async lifecycleDeclarationFor(
     wsId: string,
@@ -4327,25 +4329,7 @@ export class Runtime {
       this.lifecycleSourceFor(wsId, serverName),
       { rediscover: true },
     );
-    const catalog = (await this.trustedCatalogEntryFor(wsId, serverName))?.lifecycle;
-    if (!wire?.advertised) return catalog;
-    if (catalog) this.warnCatalogLifecycleSuperseded(wsId, serverName);
-    return wire.binding;
-  }
-
-  /** Connectors already reported by {@link warnCatalogLifecycleSuperseded}, as `wsId/serverName`. */
-  private readonly catalogLifecycleSuperseded = new Set<string>();
-
-  /** Say once per (workspace, connector) that its wire binding supersedes its catalog block. */
-  private warnCatalogLifecycleSuperseded(wsId: string, serverName: string): void {
-    const key = `${wsId}/${serverName}`;
-    if (this.catalogLifecycleSuperseded.has(key)) return;
-    this.catalogLifecycleSuperseded.add(key);
-    log.info(
-      `[lifecycle] "${serverName}" advertises ai.nimblebrain/lifecycle; its catalog lifecycle ` +
-        "block is superseded for this connection",
-      { workspace_id: wsId, connector: serverName },
-    );
+    return wire?.advertised ? wire.binding : undefined;
   }
 
   /**
@@ -4382,7 +4366,7 @@ export class Runtime {
    * The live MCP source of a workspace connector, as the lifecycle binding
    * reads it, or `undefined` when none is registered.
    *
-   * Workspace connectors only, the scope of the catalog block too: a personal
+   * Workspace connectors only, the scope of `admin_tools` too: a personal
    * connector is not in the workspace registry, so one that advertises the
    * extension is neither notified nor has its handlers withheld.
    */
@@ -4428,7 +4412,7 @@ export class Runtime {
   private async admissionWith(
     wsId: string,
     principal: Pick<UserIdentity, "id"> | null | undefined,
-    declared: Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>,
+    declared: Map<string, ConnectorGates>,
   ): Promise<ConnectorAdmission> {
     const ws = principal ? await this._workspaceStore.get(wsId) : null;
     const isAdmin = canWriteWorkspaceScoped(principal, ws).allowed;
@@ -4552,31 +4536,32 @@ export class Runtime {
     } catch {
       tools = undefined;
     }
+    const wire = await lifecycleBindingFor(
+      wsId,
+      serverName,
+      this.lifecycleSourceFor(wsId, serverName),
+    ).catch(() => undefined);
     return adminToolsContractWarnings({
       connector: serverName,
       adminTools: entry.adminTools,
-      ...(entry.lifecycle ? { lifecycle: entry.lifecycle } : {}),
+      ...(wire?.advertised ? { lifecycle: wire.binding } : {}),
       ...(entry.hooks ? { hooks: entry.hooks } : {}),
       ...(tools ? { tools } : {}),
     });
   }
 
   /**
-   * The gating declarations of `wsId`'s connectors: {@link catalogGatesByServer},
-   * with each lifecycle replaced by the one that won for that workspace's
-   * connection ({@link lifecycleDeclarationFor}'s rule). A connector that
-   * advertises `ai.nimblebrain/lifecycle` has its wire-declared handlers
-   * withheld, and its catalog block none; one that does not keeps its catalog
-   * block. One predicate, `isHostOnlyTool`, holds either.
+   * The gating declarations of `wsId`'s connectors: each catalog entry's
+   * `admin_tools` ({@link catalogAdminToolsByServer}), and the lifecycle
+   * handlers each connection's server binds through `ai.nimblebrain/lifecycle`,
+   * which are withheld. One predicate, `isHostOnlyTool`, holds the handlers.
    *
    * Reads only bindings that are held or readable from a live connection: a
    * listing never dials a server. A connector whose connection has not come up
    * has no tools to list or call, so its binding is read when it does.
    */
-  private async connectorGatesFor(
-    wsId: string,
-  ): Promise<Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>> {
-    const declared = await this.catalogGatesByServer();
+  private async connectorGatesFor(wsId: string): Promise<Map<string, ConnectorGates>> {
+    const out = new Map<string, ConnectorGates>(await this.catalogAdminToolsByServer());
     const sources = this._workspaceRegistries.get(wsId)?.getSources() ?? [];
     const wires = await Promise.all(
       sources.map(
@@ -4588,39 +4573,29 @@ export class Runtime {
         ],
       ),
     );
-    const out = new Map(declared);
     for (const [name, wire] of wires) {
       if (!wire?.advertised) continue;
-      const { lifecycle: _superseded, ...rest } = declared.get(name) ?? {};
-      out.set(name, { ...rest, lifecycle: wire.binding });
+      out.set(name, { ...out.get(name), lifecycle: wire.binding });
     }
     return out;
   }
 
   /**
-   * The gating declarations (`admin_tools`, `lifecycle`) by source name: each
-   * catalog entry's, under the server name its id slugifies to. A connector that
-   * declares neither is absent.
+   * Each catalog entry's `admin_tools`, under the server name its id slugifies
+   * to. A connector that declares none is absent.
    *
    * By name alone, NOT held to the ref's identity as every grant is
-   * ({@link boundCatalogEntries}). These are restrictions: they narrow who may
-   * call a tool, so applying one to a ref that is another server under the
+   * ({@link boundCatalogEntries}). This is a restriction: it narrows who may
+   * call a tool, so applying it to a ref that is another server under the
    * entry's name over-restricts that server and opens nothing, while skipping
    * it would open the entry's admin tools to every member of a workspace whose
    * ref stopped binding, for example after the entry's URL changed. The catalog
    * read refuses colliding names, so a name is one entry.
    */
-  private async catalogGatesByServer(): Promise<
-    Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>
-  > {
-    const out = new Map<string, Pick<ConnectorCatalogEntry, "adminTools" | "lifecycle">>();
+  private async catalogAdminToolsByServer(): Promise<Map<string, ConnectorGates>> {
+    const out = new Map<string, ConnectorGates>();
     for (const e of await this.getConnectorCatalog().catalogEntries()) {
-      if (e.adminTools || e.lifecycle) {
-        out.set(slugifyServerName(e.id), {
-          ...(e.adminTools ? { adminTools: e.adminTools } : {}),
-          ...(e.lifecycle ? { lifecycle: e.lifecycle } : {}),
-        });
-      }
+      if (e.adminTools) out.set(slugifyServerName(e.id), { adminTools: e.adminTools });
     }
     return out;
   }
@@ -4636,7 +4611,7 @@ export class Runtime {
   /**
    * The catalog entry each connector installed in `wsId` is, by source name.
    * Every catalog grant (host UI aside, which boot binds from the same rule)
-   * is read through here; the restrictions are not ({@link catalogGatesByServer}).
+   * is read through here; the restrictions are not ({@link catalogAdminToolsByServer}).
    *
    * The installed ref does not persist the catalog id, so the entry is found by
    * the server name its id slugifies to and then held to the ref's identity —

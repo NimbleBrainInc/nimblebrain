@@ -29,7 +29,6 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
-import { catalogLifecycleDeprecation } from "../../lifecycle/declaration.ts";
 import { log } from "../../observability/log.ts";
 import { slugifyServerName } from "../runtime/paths.ts";
 import {
@@ -37,11 +36,7 @@ import {
   serverDetailToCatalogEntry,
   validateServerDetailSafety,
 } from "./projection.ts";
-import {
-  getNimbleBrainHostMeta,
-  type ServerDetail,
-  validateServerDetail,
-} from "./server-detail.ts";
+import { type ServerDetail, validateServerDetail } from "./server-detail.ts";
 
 const CATALOG_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
 
@@ -70,12 +65,6 @@ export interface CatalogDiagnostic {
    * connectors and neither installs.
    */
   collision?: true;
-  /**
-   * Reported, but the entry still loads exactly as written: a deprecated form
-   * the operator should migrate off before a later release stops reading it.
-   * The gate prints it and passes.
-   */
-  warning?: true;
 }
 
 /** A surviving entry, kept with where it came from so a later stage can name it. */
@@ -136,10 +125,6 @@ export function readCatalogServers(path: string): ServerDetail[] {
  * imports this module, so the edge would be a cycle. Tracked as a
  * follow-up.
  *
- * It also reports, as a `warning`, every entry that declares the deprecated
- * catalog `lifecycle` block. That entry loads as written; the warning is the
- * release of notice before the runtime stops reading the block.
- *
  * One stage is deliberately not covered: the scope filter
  * (`applyScopeFilter`) is registry configuration, not a property of the
  * catalog file, so it is not this gate's business.
@@ -181,15 +166,6 @@ export function validateCatalog(path: string): CatalogDiagnostic[] {
         index,
         name: detail.name,
         message: `${tag} every tool is admin-only — ${adminTools.reason}`,
-      });
-    }
-    if (getNimbleBrainHostMeta(detail)?.lifecycle !== undefined) {
-      diagnostics.push({
-        source,
-        index,
-        name: detail.name,
-        message: `${source}[${index}] ${catalogLifecycleDeprecation(detail.name)}`,
-        warning: true,
       });
     }
   }

@@ -1,94 +1,13 @@
-import type { HostManifestMeta } from "../connectors/runtime/types.ts";
-import { log } from "../observability/log.ts";
 import { summarizeToolNames } from "../tools/connector-surface.ts";
 import type { Tool } from "../tools/types.ts";
-import {
-  LIFECYCLE_EVENTS,
-  type LifecycleBinding,
-  type LifecycleDeclaration,
-  type LifecycleEvent,
-} from "./types.ts";
+import { LIFECYCLE_EVENTS, type LifecycleBinding, type LifecycleEvent } from "./types.ts";
 
 /**
- * Reading and checking the `lifecycle` block a server declares in
- * `_meta["ai.nimblebrain/host"]`.
- *
- * Two checks live here and they answer different questions, the same split
- * `src/hooks/declaration.ts` makes. {@link parseLifecycleDeclaration} asks "is
- * this block well-formed?" and drops what isn't, matching how the host treats
- * every other field in this extension — a malformed entry costs that entry,
- * never the install. {@link verifyLifecycleTools} asks "can the runtime ever
- * successfully call what this names?" and needs the server's advertised tool
- * list to answer.
+ * Checking a connection's lifecycle binding against the tools its server
+ * advertises: {@link verifyLifecycleTools} asks "can the runtime ever
+ * successfully call what this names?" The binding itself is read off the wire
+ * (`src/services/lifecycle-extension.ts`).
  */
-
-/** Longest tool name admitted. A name is an identifier, not a payload. */
-const TOOL_NAME_MAX = 128;
-
-/**
- * Extract the lifecycle declaration, or `undefined` when there is none or
- * nothing in it is well-formed.
- *
- * One loop over {@link LIFECYCLE_EVENTS}, which is what keying the block by
- * event buys: a third event is a new entry in that list and no new branch here.
- */
-export function parseLifecycleDeclaration(
-  meta: HostManifestMeta | undefined,
-): LifecycleDeclaration | undefined {
-  // `meta` is an unchecked cast over manifest / registry JSON, so the declared
-  // type is a claim about intent, not a guarantee about bytes. Re-derive the
-  // shape from `unknown`.
-  const raw = meta?.lifecycle as unknown;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    if (raw !== undefined && raw !== null) drop("lifecycle is not an object");
-    return undefined;
-  }
-  const entry = raw as Record<string, unknown>;
-  const decl: LifecycleDeclaration = {};
-  for (const event of LIFECYCLE_EVENTS) {
-    const name = entry[event];
-    if (name === undefined) continue;
-    if (typeof name !== "string" || name.length === 0 || name.length > TOOL_NAME_MAX) {
-      drop(`${event} is not a tool name`);
-      continue;
-    }
-    decl[event] = name;
-  }
-  return Object.keys(decl).length > 0 ? decl : undefined;
-}
-
-function drop(reason: string): void {
-  log.debug("lifecycle", `[lifecycle] dropping malformed declaration: ${reason}`);
-}
-
-/**
- * What an operator is told about a catalog entry that declares `lifecycle`: the
- * catalog form is deprecated and a later release stops reading it. The
- * projection logs it ({@link warnCatalogLifecycleDeprecated}) and the catalog
- * lint reports it, so both say the same thing.
- */
-export function catalogLifecycleDeprecation(entry: string): string {
-  return (
-    `catalog entry "${entry}" declares \`lifecycle\` in _meta["ai.nimblebrain/host"], which is ` +
-    "deprecated: advertise the ai.nimblebrain/lifecycle MCP extension and mark the handler tools " +
-    "instead (https://docs.nimblebrain.ai/extensions/lifecycle/). A later release stops reading " +
-    "this block."
-  );
-}
-
-/** Catalog entries already reported by {@link warnCatalogLifecycleDeprecated}. */
-const deprecationWarned = new Set<string>();
-
-/**
- * Warn once per catalog entry, per process, that it declares the deprecated
- * `lifecycle` block. The projection runs on every catalog lookup, so the set
- * keeps a long-lived host to one line per entry.
- */
-export function warnCatalogLifecycleDeprecated(entry: string): void {
-  if (deprecationWarned.has(entry)) return;
-  deprecationWarned.add(entry);
-  log.warn(`[lifecycle] ${catalogLifecycleDeprecation(entry)}`, { connector: entry });
-}
 
 export class LifecycleContractError extends Error {
   constructor(message: string) {
@@ -98,25 +17,16 @@ export class LifecycleContractError extends Error {
 }
 
 /**
- * Check every declared handler against the server's advertised tool list — that
- * it exists, and that it accepts a call with no *required* arguments.
+ * Check every bound handler against the server's advertised tool list — that it
+ * exists, that it accepts a call with no *required* arguments, and that it is
+ * not task-required.
  *
- * This is `verifyRegisterTool`'s shape with a weaker predicate, and the
- * asymmetry is load-bearing. That check verifies `{vendor, url}` are accepted
- * because a `register_tool` that cannot receive them can never be handed
- * anything. Here the runtime sends `on_ready` a `reason` the schema **need not
- * mention**: `reason` is an optional refinement, and requiring it declared
- * would break every bundle that does not care about it — which is most of them.
- *
- * That rests on a dependency worth naming rather than leaving to be discovered:
- * **the server framework must accept and ignore unknown arguments.**
- * FastMCP/pydantic does. A server that errors on an undeclared argument would
- * fail every call, so the developer page states it as a requirement on the
- * handler. What is checked here is only the half the runtime can see — that a
- * call carrying no arguments at all would be accepted.
+ * This is `verifyRegisterTool`'s shape with a weaker predicate. The runtime
+ * sends `on_ready` a `reason` only when the handler's schema declares it, so a
+ * handler that takes nothing is the common case and must pass.
  *
  * `tools` must be the source's POPULATED list. Every name is absent from an
- * empty one, so calling this with an empty list would report a correct manifest
+ * empty one, so calling this with an empty list would report a correct binding
  * as a contract violation — the caller separates the two.
  */
 export function verifyLifecycleTools(
@@ -127,7 +37,7 @@ export function verifyLifecycleTools(
   for (const event of LIFECYCLE_EVENTS) {
     const toolName = decl[event];
     if (!toolName) continue;
-    verifyOne(tools, event, toolName, connector, decl.declaredBy === "extension");
+    verifyOne(tools, event, toolName, connector);
   }
 }
 
@@ -136,7 +46,6 @@ function verifyOne(
   event: LifecycleEvent,
   toolName: string,
   connector: string,
-  fromExtension: boolean,
 ): void {
   const tool = tools.find((t) => t.name === toolName);
   if (!tool) {
@@ -161,24 +70,13 @@ function verifyOne(
   }
   // A lifecycle call is AWAITED by an operation the user is waiting on — the
   // uninstall waits behind `on_removing`, and the install behind `on_ready` —
-  // so it has to be an operation the runtime can bound. An ordinary inline
-  // `tools/call` is: the MCP client applies its own request deadline. A
-  // task-augmented one is not: `execution.taskSupport` of "optional" or
-  // "required" routes the call through the task API, whose await settles only
-  // when the task terminates or the source is torn down — and on the uninstall
-  // path the teardown is what is waiting behind the call. Nothing else here
-  // holds a deadline, so this is the check that keeps the "never fails the
-  // uninstall" guarantee from meaning "hangs it instead".
-  //
-  // The pair of values mirrors `isTaskAugmented` in `McpSource.execute`, which
-  // is the dispatch this predicate is about; they must move together.
-  //
-  // A handler declared through the `ai.nimblebrain/lifecycle` extension may be
-  // "optional": the extension permits it, and every lifecycle call is made
-  // inline (the lifecycle port), never through that dispatch. "required" never
-  // reaches here on that path, because the binding already refused it.
+  // so it has to be an operation the runtime can bound. Every lifecycle call is
+  // made inline (the lifecycle port), never task-augmented, so a handler that
+  // REQUIRES a task can never be called. "optional" is admitted: the inline
+  // call is one the server accepts. The binding already refuses "required";
+  // this holds the same line for the listing `notifyReady` reads.
   const taskSupport = tool.execution?.taskSupport;
-  if (taskSupport === "required" || (taskSupport === "optional" && !fromExtension)) {
+  if (taskSupport === "required") {
     throw new LifecycleContractError(
       `Connector "${connector}" declares lifecycle "${event}" as "${toolName}", which advertises ` +
         `execution.taskSupport "${taskSupport}". A lifecycle handler must be an ordinary inline ` +

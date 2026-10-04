@@ -47,9 +47,9 @@
       "scripts/**",
       "test/**/*.ts",
       "test/**/*.tsx",
-      "!**/dist/**",
-      "!web/src/_generated/**",
-      "!web/src/assets/**"
+      "!**/dist",
+      "!web/src/_generated",
+      "!web/src/assets"
     ]
   },
   "overrides": [

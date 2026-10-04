@@ -1,18 +1,9 @@
-import { describe, expect, spyOn, test } from "bun:test";
-import { serverDetailToCatalogEntry } from "../../../src/connectors/catalog/projection.ts";
-import type { ServerDetail } from "../../../src/connectors/catalog/server-detail.ts";
-import type { HostManifestMeta } from "../../../src/connectors/runtime/types.ts";
+import { describe, expect, test } from "bun:test";
 import {
   LifecycleContractError,
-  parseLifecycleDeclaration,
   verifyLifecycleTools,
 } from "../../../src/lifecycle/declaration.ts";
-import { log } from "../../../src/observability/log.ts";
 import type { Tool } from "../../../src/tools/types.ts";
-
-function meta(lifecycle: unknown): HostManifestMeta {
-  return { host_version: "1.4", lifecycle } as unknown as HostManifestMeta;
-}
 
 const GOOD = { on_ready: "workspace_ready", on_removing: "workspace_removing" };
 
@@ -26,96 +17,6 @@ function handler(name: string, over: Partial<Tool> = {}): Tool {
     ...over,
   };
 }
-
-describe("parseLifecycleDeclaration", () => {
-  test("keeps a well-formed block", () => {
-    expect(parseLifecycleDeclaration(meta(GOOD))).toEqual(GOOD);
-  });
-
-  test("keeps either event declared alone", () => {
-    expect(parseLifecycleDeclaration(meta({ on_ready: "ready" }))).toEqual({ on_ready: "ready" });
-    expect(parseLifecycleDeclaration(meta({ on_removing: "bye" }))).toEqual({ on_removing: "bye" });
-  });
-
-  test("is absent-tolerant", () => {
-    expect(parseLifecycleDeclaration(undefined)).toBeUndefined();
-    expect(parseLifecycleDeclaration(meta(undefined))).toBeUndefined();
-    expect(parseLifecycleDeclaration(meta({}))).toBeUndefined();
-  });
-
-  test("ignores a key that is not an event", () => {
-    // Keyed by event, so an unknown key is a later contract this build does not
-    // implement — dropped, never fatal, exactly like an unknown placement slot.
-    expect(parseLifecycleDeclaration(meta({ ...GOOD, on_teatime: "kettle" }))).toEqual(GOOD);
-  });
-
-  test.each([
-    ["a non-object block", "workspace_ready"],
-    ["an array", [{ on_ready: "workspace_ready" }]],
-  ])("drops %s entirely", (_label, bad) => {
-    expect(parseLifecycleDeclaration(meta(bad))).toBeUndefined();
-  });
-
-  test.each([
-    ["a non-string handler", { on_ready: 7, on_removing: "workspace_removing" }],
-    ["an empty handler", { on_ready: "", on_removing: "workspace_removing" }],
-    ["an over-long handler", { on_ready: "x".repeat(129), on_removing: "workspace_removing" }],
-  ])("drops %s without dropping the sibling event", (_label, bad) => {
-    // A typo costs that event, not the block and never the install — the same
-    // tolerance `parseHookDeclarations` gives a malformed stream.
-    expect(parseLifecycleDeclaration(meta(bad))).toEqual({ on_removing: "workspace_removing" });
-  });
-});
-
-describe("the block reaches the catalog entry", () => {
-  /** The smallest projectable `ServerDetail`. */
-  function detail(hostMeta: Record<string, unknown>): ServerDetail {
-    return {
-      name: "com.acme/billing",
-      description: "Billing",
-      version: "1.0.0",
-      remotes: [{ type: "streamable-http", url: "https://billing.acme.test/mcp" }],
-      _meta: { "ai.nimblebrain/host": hostMeta },
-    } as unknown as ServerDetail;
-  }
-
-  test("a declared block is carried; an absent one leaves the field off", () => {
-    expect(
-      serverDetailToCatalogEntry(detail({ host_version: "1.4", lifecycle: GOOD }))?.lifecycle,
-    ).toEqual(GOOD);
-    expect(serverDetailToCatalogEntry(detail({ host_version: "1.0" }))?.lifecycle).toBeUndefined();
-  });
-
-  test("a malformed block leaves the entry installable", () => {
-    const entry = serverDetailToCatalogEntry(detail({ host_version: "1.4", lifecycle: 42 }));
-    expect(entry).not.toBeNull();
-    expect(entry?.lifecycle).toBeUndefined();
-  });
-
-  test("a declared block is warned deprecated once per entry, however often it is projected", () => {
-    // The projection runs on every catalog lookup; a long-lived host says it once.
-    const warn = spyOn(log, "warn").mockImplementation(() => {});
-    try {
-      const named = (name: string, hostMeta: Record<string, unknown>) => ({
-        ...detail(hostMeta),
-        name,
-      });
-      const declared = named("com.acme/deprecated-once", { host_version: "1.4", lifecycle: GOOD });
-      serverDetailToCatalogEntry(declared);
-      serverDetailToCatalogEntry(declared);
-      serverDetailToCatalogEntry(named("com.acme/no-block", { host_version: "1.4" }));
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(String(warn.mock.calls[0]?.[0])).toContain('"com.acme/deprecated-once"');
-      expect(String(warn.mock.calls[0]?.[0])).toContain("deprecated");
-
-      // A malformed block is still a declared one, and still on its way out.
-      serverDetailToCatalogEntry(named("com.acme/deprecated-malformed", { lifecycle: 42 }));
-      expect(warn).toHaveBeenCalledTimes(2);
-    } finally {
-      warn.mockRestore();
-    }
-  });
-});
 
 describe("verifyLifecycleTools", () => {
   const tools = [handler("workspace_ready"), handler("workspace_removing")];
@@ -165,37 +66,25 @@ describe("verifyLifecycleTools", () => {
     ).toThrow(LifecycleContractError);
   });
 
-  test.each([["required"], ["optional"]])(
-    "refuses a handler advertising execution.taskSupport %s",
-    (taskSupport) => {
-      // Both values route through `McpSource.execute`'s task path, whose await
-      // settles only when the task terminates or the source is torn down. On
-      // the uninstall path the teardown is what waits behind the call, so a
-      // task-augmented handler turns "never fails the uninstall" into "hangs
-      // it". An inline call is bounded by the MCP client's request deadline.
-      const augmented = [
-        handler("workspace_removing", {
-          execution: { taskSupport: taskSupport as "required" | "optional" },
-        }),
-      ];
-      expect(() =>
-        verifyLifecycleTools(augmented, { on_removing: "workspace_removing" }, "acme-mcp"),
-      ).toThrow(LifecycleContractError);
-      // Naming the branch: a pass that threw for some other reason (a missing
-      // tool, a required property) would satisfy the line above and prove
-      // nothing about the check this test exists for.
-      expect(() =>
-        verifyLifecycleTools(augmented, { on_removing: "workspace_removing" }, "acme-mcp"),
-      ).toThrow(/taskSupport/);
-    },
-  );
+  test("refuses a handler advertising execution.taskSupport required", () => {
+    // Every lifecycle call is made inline, never task-augmented, so a handler
+    // that requires a task can never be called.
+    const augmented = [handler("workspace_removing", { execution: { taskSupport: "required" } })];
+    // Naming the branch: a pass that threw for some other reason (a missing
+    // tool, a required property) would prove nothing about this check.
+    expect(() =>
+      verifyLifecycleTools(augmented, { on_removing: "workspace_removing" }, "acme-mcp"),
+    ).toThrow(/taskSupport/);
+  });
 
-  test.each([["forbidden"], [undefined]])(
-    "admits a handler whose taskSupport is %s — that is the inline path",
+  test.each([["forbidden"], ["optional"], [undefined]])(
+    "admits a handler whose taskSupport is %s — the host calls it inline",
     (taskSupport) => {
       const inline = [
         handler("workspace_removing", {
-          ...(taskSupport ? { execution: { taskSupport: taskSupport as "forbidden" } } : {}),
+          ...(taskSupport
+            ? { execution: { taskSupport: taskSupport as "forbidden" | "optional" } }
+            : {}),
         }),
       ];
       expect(() =>

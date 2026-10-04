@@ -374,50 +374,6 @@ it does not recognise. Removing an event, changing its meaning or its delivery
 guarantee, or adding a required argument would ship under a new identifier
 (`ai.nimblebrain/lifecycle-v2`).
 
-## The catalog form (deprecated)
-
-<Aside type="caution" title="Deprecated">
-Before this extension, a server's handlers were named in a `lifecycle` block of
-the [`ai.nimblebrain/host`](/apps/manifest/) catalog block. That block still
-works for now, and will be removed. The host logs a warning once for each catalog
-entry that declares it, and the catalog check reports it. New servers advertise
-the extension instead.
-</Aside>
-
-```json title="manifest.json"
-"_meta": {
-  "ai.nimblebrain/host": {
-    "host_version": "1.0",
-    "lifecycle": {
-      "on_ready": "workspace_ready",
-      "on_removing": "workspace_removing"
-    }
-  }
-}
-```
-
-`on_ready` names the `ready` handler and `on_removing` the `removing` handler,
-by tool name, on the same server. The events, delivery, withholding and failure
-semantics above are the same. The differences:
-
-- **The advertised extension wins.** A connector whose server advertises
-  `ai.nimblebrain/lifecycle` on a connection has its handlers read from the
-  wire, and a `lifecycle` block in its catalog entry is ignored for that
-  connection, even if the server marks no tool. The host never delivers an event
-  through both. A server that advertises nothing keeps the catalog block.
-- **`reason` is sent to `on_ready` whether or not its schema declares it.** A
-  catalog-named handler must accept and ignore an argument it does not declare,
-  which FastMCP, the MCP TypeScript SDK and anything built on pydantic do.
-- **A named handler your server does not list, that has a required property,
-  or whose `execution.taskSupport` is `"optional"` or `"required"`** is
-  reported as an install warning, and `on_ready` is not called. The check
-  re-runs on every reconnect, so fixing your server is enough: no reinstall.
-  `on_removing` is still attempted at uninstall, under the same deadline.
-
-To move, advertise the extension and mark the tools the block names. Keep the
-block while your server still serves a NimbleBrain release that reads only the
-catalog, then delete it.
-
 ## Where `pre_install` and `post_uninstall` went
 
 If you have written a Helm chart (`pre-install` … `post-delete`) or an npm

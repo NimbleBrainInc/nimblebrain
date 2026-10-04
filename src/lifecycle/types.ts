@@ -44,28 +44,12 @@ export const LIFECYCLE_EVENTS = ["on_ready", "on_removing"] as const;
 export type LifecycleEvent = (typeof LIFECYCLE_EVENTS)[number];
 
 /**
- * The `lifecycle` block, as a server declares it. Both entries optional; a
- * server may declare either alone.
- *
- * ```json
- * "lifecycle": { "on_ready": "workspace_ready", "on_removing": "workspace_removing" }
- * ```
- *
- * The value is the tool that handles the event, named in the server's own bare
- * vocabulary.
+ * The handlers a connection's server binds through the `ai.nimblebrain/lifecycle`
+ * extension (`src/services/lifecycle-extension.ts`), by event. Both optional; a
+ * server may bind either alone. Each value is the tool that handles the event,
+ * in the server's own bare vocabulary.
  */
-export type LifecycleDeclaration = Partial<Record<LifecycleEvent, string>>;
-
-/**
- * The declaration that governs one connection: the catalog block, or the
- * binding a server declares on the wire through the `ai.nimblebrain/lifecycle`
- * extension (`src/services/lifecycle-extension.ts`), marked
- * `declaredBy: "extension"`. A wire binding's handlers are called as the
- * extension requires: `reason` only to a `ready` handler that declares it, and
- * a `taskSupport: "optional"` handler admitted, because every lifecycle call is
- * made inline.
- */
-export type LifecycleBinding = LifecycleDeclaration & { declaredBy?: "extension" };
+export type LifecycleBinding = Partial<Record<LifecycleEvent, string>>;
 
 /**
  * Why `on_ready` is firing.
