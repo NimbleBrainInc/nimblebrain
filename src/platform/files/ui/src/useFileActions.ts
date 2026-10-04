@@ -1,6 +1,7 @@
 import { useApp, useFileUpload, useNotify } from "@nimblebrain/synapse/react";
 import { useCallback, useState } from "react";
 import { errorText } from "./Dialogs";
+import { confirmAction } from "./notice";
 import { ROOT } from "./types";
 import { readUploadRefusal, type UploadRefusal } from "./upload";
 
@@ -32,20 +33,15 @@ export function useFileActions(reload: () => void) {
 
   /**
    * Confirm a finished action in the host's notice, so it reads like every
-   * other app's and the shell's own. Where the host shows none (it does not
-   * declare notify, or refuses a burst), the app shows its own pill instead.
+   * other app's and the shell's own; the app's own pill only where the host
+   * shows none.
    */
   const flash = useCallback(
     (message: string) => {
-      const showOwn = () => {
-        setNotice(message);
-        setTimeout(() => setNotice((n) => (n === message ? null : n)), NOTICE_MS);
-      };
-      // The host takes a title of up to 120 characters; a long filename is cut.
-      const title = message.length > 120 ? `${message.slice(0, 119)}…` : message;
-      notify({ level: "success", title }).then((shown) => {
-        if (!shown) showOwn();
-      }, showOwn);
+      void confirmAction(notify, message, (own) => {
+        setNotice(own);
+        setTimeout(() => setNotice((n) => (n === own ? null : n)), NOTICE_MS);
+      });
     },
     [notify],
   );
