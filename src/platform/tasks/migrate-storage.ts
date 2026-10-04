@@ -1,11 +1,17 @@
 /**
  * Boot reconcile: task storage moves from `workspaces/<wsId>/automations/<ownerId>/`
- * to `workspaces/<wsId>/tasks/<ownerId>/` (ADR-0045: automation storage becomes
+ * to `workspaces/<wsId>/tasks/<ownerId>/` (ADR-0045: the old storage becomes
  * task storage, reconciled at boot so no step depends on an operator).
  *
  * Runs in `createTasksSource` before the scheduler loads, so the scheduler and
  * every reader only ever see the new layout.
  *
+ * - **Records name their task as `taskId`.** Before anything moves, every
+ *   `.json` / `.jsonl` file in the old owner dir (run index lines, archives,
+ *   result sidecars, run tickets) has its `"automationId":` key rewritten to
+ *   `"taskId":`, each file replaced atomically. A file already rewritten holds
+ *   no such key and is left alone, so a crash mid-rewrite is finished by the
+ *   next boot, and nothing in the new tree is ever read in the old shape.
  * - **One rename per owner dir** when the owner has no `tasks/` dir yet. A
  *   rename is atomic, so a crash leaves each owner either moved or not.
  * - **A merge, file by file, when both exist** (a process still on the old
@@ -31,11 +37,23 @@ import {
   rmdirSync,
   statSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { log } from "../../observability/log.ts";
 import { ensureWorkspaceDir } from "../../workspace/context.ts";
-import { legacyWorkspaceTaskRoot, workspaceTasksDir, workspaceTasksRoot } from "./paths.ts";
+import { workspaceTasksDir, workspaceTasksRoot } from "./paths.ts";
+
+/** The directory a workspace's task storage used before the rename, beside `tasks/`. */
+const LEGACY_SEGMENT = "automations";
+
+/** How a record named its task before the rename, and how it names it now. */
+const LEGACY_ID_KEY = '"automationId":';
+const ID_KEY = '"taskId":';
+
+function legacyRoot(workDir: string, wsId: string): string {
+  return join(dirname(workspaceTasksRoot(workDir, wsId)), LEGACY_SEGMENT);
+}
 
 /** What one reconcile did, for the log and for tests. */
 export interface TaskStorageMigration {
@@ -45,6 +63,8 @@ export interface TaskStorageMigration {
   merged: string[];
   /** Files left in the old tree because the new tree holds a different file at that path. */
   conflicts: string[];
+  /** Record files whose legacy id key was rewritten to `taskId`. */
+  rewritten: number;
 }
 
 function isDir(path: string): boolean {
@@ -116,13 +136,35 @@ function mergeInto(from: string, to: string, out: TaskStorageMigration, label: s
   }
 }
 
+/**
+ * Rewrite the legacy id key in every record file under `dir`, one atomic
+ * replace per file. A file without the key is untouched.
+ */
+function rewriteRecordKeys(dir: string, out: TaskStorageMigration): void {
+  for (const name of listDir(dir)) {
+    const path = join(dir, name);
+    if (isDir(path)) {
+      rewriteRecordKeys(path, out);
+      continue;
+    }
+    if (!name.endsWith(".json") && !name.endsWith(".jsonl")) continue;
+    const text = readFileSync(path, "utf-8");
+    if (!text.includes(LEGACY_ID_KEY)) continue;
+    const tmp = `${path}.migrate-tmp`;
+    writeFileSync(tmp, text.split(LEGACY_ID_KEY).join(ID_KEY));
+    renameSync(tmp, path);
+    out.rewritten += 1;
+  }
+}
+
 /** Move one workspace's `automations/` tree under `tasks/`. */
 function migrateWorkspace(workDir: string, wsId: string, out: TaskStorageMigration): void {
-  const legacyRoot = legacyWorkspaceTaskRoot(workDir, wsId);
-  if (!isDir(legacyRoot)) return;
-  for (const ownerId of listDir(legacyRoot)) {
-    const from = join(legacyRoot, ownerId);
+  const root = legacyRoot(workDir, wsId);
+  if (!isDir(root)) return;
+  for (const ownerId of listDir(root)) {
+    const from = join(root, ownerId);
     if (!isDir(from)) continue;
+    rewriteRecordKeys(from, out);
     const to = workspaceTasksDir(workDir, wsId, ownerId);
     if (!existsSync(to)) {
       ensureWorkspaceDir(workspaceTasksRoot(workDir, wsId));
@@ -133,7 +175,7 @@ function migrateWorkspace(workDir: string, wsId: string, out: TaskStorageMigrati
     mergeInto(from, to, out, `${wsId}/${ownerId}`);
     removeIfEmpty(from);
   }
-  removeIfEmpty(legacyRoot);
+  removeIfEmpty(root);
 }
 
 /**
@@ -142,7 +184,7 @@ function migrateWorkspace(workDir: string, wsId: string, out: TaskStorageMigrati
  * scheduler that never starts fails every workspace's tasks.
  */
 export function migrateTaskStorage(workDir: string): TaskStorageMigration {
-  const out: TaskStorageMigration = { moved: [], merged: [], conflicts: [] };
+  const out: TaskStorageMigration = { moved: [], merged: [], conflicts: [], rewritten: 0 };
   const wsRoot = join(workDir, "workspaces");
   for (const wsId of listDir(wsRoot)) {
     if (!isDir(join(wsRoot, wsId))) continue;
@@ -159,6 +201,7 @@ export function migrateTaskStorage(workDir: string): TaskStorageMigration {
     log.info("[tasks] moved task storage from automations/ to tasks/", {
       ownersMoved: out.moved,
       filesMerged: out.merged.length,
+      recordsRewritten: out.rewritten,
     });
   }
   if (out.conflicts.length > 0) {

@@ -83,7 +83,7 @@ async function checkWritePermission(
     return {
       allowed: false,
       reason:
-        "Instructions cannot be written from inside an unattended automation run — " +
+        "Instructions cannot be written from inside an unattended task run — " +
         "they persist across every later conversation in the workspace and there is no one " +
         "present to confirm the change. Write them from an interactive session.",
     };

@@ -1,10 +1,10 @@
 /**
- * Compile-time drift guard for automation output types.
+ * Compile-time drift guard for task output types.
  *
  * The output types in `src/platform/schemas/tasks.ts`
- * (`AutomationRecord`, `AutomationSummary`, `AutomationStatusDetail`,
- * `AutomationRunRecord`, etc.) are STRUCTURAL MIRRORS of the canonical `Automation` /
- * `AutomationRun` / `ScheduleSpec` / `TokenBudget` types in `./types.ts`.
+ * (`TaskRecord`, `TaskSummary`, `TaskStatusDetail`,
+ * `TaskRunRecord`, etc.) are STRUCTURAL MIRRORS of the canonical `Task` /
+ * `TaskRun` / `ScheduleSpec` / `TokenBudget` types in `./types.ts`.
  * They're duplicated because the schemas tree is self-contained for the
  * web codegen (`scripts/codegen-web-platform-schemas.ts` pins `rootDir`
  * to `schemas/`; cross-tree imports break the boundary).
@@ -18,7 +18,7 @@
  * schema types surfaces as a build failure here, not as a silent
  * disagreement at consumer call sites.
  *
- * When you change `Automation` or `AutomationRun` (or their nested
+ * When you change `Task` or `TaskRun` (or their nested
  * `ScheduleSpec` / `TokenBudget`) and this file fails to compile, the
  * matching schema type in `schemas/tasks.ts` needs an update.
  * Treat it like a database migration — shape moves and consumers move
@@ -29,14 +29,14 @@
  */
 
 import type {
-  AutomationRecord,
-  AutomationRunRecord,
-  AutomationScheduleSpec,
-  AutomationStatusDetail,
-  AutomationSummary,
-  AutomationTokenBudget,
+  TaskRecord,
+  TaskRunRecord,
+  TaskScheduleSpec,
+  TaskStatusDetail,
+  TaskSummary,
+  TaskTokenBudget,
 } from "../schemas/tasks.ts";
-import type { Automation, AutomationRun, ScheduleSpec, TokenBudget } from "./types.ts";
+import type { ScheduleSpec, Task, TaskRun, TokenBudget } from "./types.ts";
 
 /**
  * Constrained-generic assertion. `A extends B` is checked at the
@@ -80,25 +80,25 @@ type AssertNever<_T extends never> = unknown;
 // overlay list per type. Each entry in that list is a conscious
 // decision (handler coerces / formats / computes the field).
 
-// AutomationRunRecord ↔ AutomationRun — bidirectional structural mirror,
+// TaskRunRecord ↔ TaskRun — bidirectional structural mirror,
 // no overlays.
-export type DriftRunRecordA = AssertAssignable<AutomationRunRecord, AutomationRun>;
-export type DriftRunRecordB = AssertAssignable<AutomationRun, AutomationRunRecord>;
+export type DriftRunRecordA = AssertAssignable<TaskRunRecord, TaskRun>;
+export type DriftRunRecordB = AssertAssignable<TaskRun, TaskRunRecord>;
 
-// AutomationRecord ↔ Automation — bidirectional structural mirror, no
-// overlays: create and update return the stored automation as-is.
-export type DriftRecordA = AssertAssignable<AutomationRecord, Automation>;
-export type DriftRecordB = AssertAssignable<Automation, AutomationRecord>;
+// TaskRecord ↔ Task — bidirectional structural mirror, no
+// overlays: create and update return the stored task as-is.
+export type DriftRecordA = AssertAssignable<TaskRecord, Task>;
+export type DriftRecordB = AssertAssignable<Task, TaskRecord>;
 
-// AutomationScheduleSpec ↔ ScheduleSpec — identical structural mirror.
-export type DriftScheduleA = AssertAssignable<AutomationScheduleSpec, ScheduleSpec>;
-export type DriftScheduleB = AssertAssignable<ScheduleSpec, AutomationScheduleSpec>;
+// TaskScheduleSpec ↔ ScheduleSpec — identical structural mirror.
+export type DriftScheduleA = AssertAssignable<TaskScheduleSpec, ScheduleSpec>;
+export type DriftScheduleB = AssertAssignable<ScheduleSpec, TaskScheduleSpec>;
 
-// AutomationTokenBudget ↔ TokenBudget — identical structural mirror.
-export type DriftTokenBudgetA = AssertAssignable<AutomationTokenBudget, TokenBudget>;
-export type DriftTokenBudgetB = AssertAssignable<TokenBudget, AutomationTokenBudget>;
+// TaskTokenBudget ↔ TokenBudget — identical structural mirror.
+export type DriftTokenBudgetA = AssertAssignable<TaskTokenBudget, TokenBudget>;
+export type DriftTokenBudgetB = AssertAssignable<TokenBudget, TaskTokenBudget>;
 
-// AutomationStatusDetail — overlays are: handler-computed display
+// TaskStatusDetail — overlays are: handler-computed display
 // strings, computed cost numbers, and `undefined` → `null` coercions
 // on a few optional fields.
 type StatusOverlay =
@@ -111,19 +111,19 @@ type StatusOverlay =
   | "estimatedCostPerMonth"
   | "tokenBudget" // canonical: `TokenBudget | undefined`, schema: `... | null`
   | "budgetResetAt"; // canonical: `string | undefined`, schema: `... | null`
-type StatusShared = Exclude<keyof Automation & keyof AutomationStatusDetail, StatusOverlay>;
+type StatusShared = Exclude<keyof Task & keyof TaskStatusDetail, StatusOverlay>;
 export type DriftStatusSharedA = AssertAssignable<
-  Pick<AutomationStatusDetail, StatusShared>,
-  Pick<Automation, StatusShared>
+  Pick<TaskStatusDetail, StatusShared>,
+  Pick<Task, StatusShared>
 >;
 export type DriftStatusSharedB = AssertAssignable<
-  Pick<Automation, StatusShared>,
-  Pick<AutomationStatusDetail, StatusShared>
+  Pick<Task, StatusShared>,
+  Pick<TaskStatusDetail, StatusShared>
 >;
-type StatusUnexpected = Exclude<keyof AutomationStatusDetail, keyof Automation | StatusOverlay>;
+type StatusUnexpected = Exclude<keyof TaskStatusDetail, keyof Task | StatusOverlay>;
 export type DriftStatusUnexpected = AssertNever<StatusUnexpected>;
 
-// AutomationSummary — overlays are: derived fields (cost estimate, the
+// TaskSummary — overlays are: derived fields (cost estimate, the
 // schedule's type), formatted fields (schedule rendered to string, timestamps
 // to relative strings), and coerced optionals (`disabledAt`, `disabledReason`,
 // `lastRunStatus` get the `?? null` treatment; an absent `kind` reads `saved`).
@@ -137,14 +137,14 @@ type SummaryOverlay =
   | "disabledAt"
   | "disabledReason"
   | "estimatedCostPerDay";
-type SummaryShared = Exclude<keyof Automation & keyof AutomationSummary, SummaryOverlay>;
+type SummaryShared = Exclude<keyof Task & keyof TaskSummary, SummaryOverlay>;
 export type DriftSummarySharedA = AssertAssignable<
-  Pick<AutomationSummary, SummaryShared>,
-  Pick<Automation, SummaryShared>
+  Pick<TaskSummary, SummaryShared>,
+  Pick<Task, SummaryShared>
 >;
 export type DriftSummarySharedB = AssertAssignable<
-  Pick<Automation, SummaryShared>,
-  Pick<AutomationSummary, SummaryShared>
+  Pick<Task, SummaryShared>,
+  Pick<TaskSummary, SummaryShared>
 >;
-type SummaryUnexpected = Exclude<keyof AutomationSummary, keyof Automation | SummaryOverlay>;
+type SummaryUnexpected = Exclude<keyof TaskSummary, keyof Task | SummaryOverlay>;
 export type DriftSummaryUnexpected = AssertNever<SummaryUnexpected>;

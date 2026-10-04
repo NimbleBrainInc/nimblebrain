@@ -3,7 +3,7 @@ import type { UserIdentity } from "./provider.ts";
 /**
  * Resolve the owning user id for a request, applying one strict rule used
  * everywhere identity-scoped data is reached (conversations, files,
- * automations): the request MUST carry an identity, under every identity
+ * tasks): the request MUST carry an identity, under every identity
  * provider (`dev` included). Absence means a caller skipped authentication —
  * throw, never silently own the data as a sentinel user.
  *

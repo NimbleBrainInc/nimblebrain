@@ -7,7 +7,7 @@ import { join } from "node:path";
  * Where a `WorkspaceContext` scopes data to one workspace
  * (`workspaces/{wsId}/...`), an `IdentityContext` scopes data to one user
  * across every workspace they belong to — the home for surfaces the North
- * Star calls user-owned: conversations, files, automations.
+ * Star calls user-owned: conversations, files, tasks.
  *
  * The orchestrator constructs one when routing an identity-scoped tool
  * name (bare `<tool>` — global scope; see `src/tools/namespace.ts`). Identity-scoped tools
@@ -31,23 +31,17 @@ import { join } from "node:path";
  *     not a path helper here.
  *
  * What it owns: per-user data directories at `{workDir}/users/{userId}/...`
- * (`files`, `skills`, `automations`) — the North Star `users/{userId}/files/`
- * layout that Phase B migrates onto, and the owner-partitioned automations
- * store Phase C migrates onto.
+ * (`files`, `skills`) — the North Star `users/{userId}/files/` layout. Task
+ * data is workspace-owned and never lives here.
  */
 
 /**
  * Scopes available under a user's root directory (`{workDir}/users/{userId}/`).
  *   - `files`       — user-owned files (North Star `users/{userId}/files/`)
  *   - `skills`      — per-user skills (existing layout, `users/<userId>/skills/`)
- *   - `automations` — owner-partitioned automations (`automations.json` +
- *                     `runs/`). Owner-partitioned rather than flat top-level
- *                     (the conversations layout) because automation ids are
- *                     kebab-case and collide across owners; partitioning makes
- *                     ownership structural and ids unique per owner.
  * `root` returns the user root itself.
  */
-export type IdentityScope = "root" | "files" | "skills" | "automations";
+export type IdentityScope = "root" | "files" | "skills";
 
 const SUBPATH_FORBIDDEN_RE = /\0/;
 

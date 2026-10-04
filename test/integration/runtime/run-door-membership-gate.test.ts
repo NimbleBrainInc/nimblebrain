@@ -3,17 +3,17 @@
  *
  * ADR-0007's invariant is that the workspace a run acts in is membership-
  * validated at session establishment on EVERY door. It used to hold because
- * each door re-implemented it: `chat()` gated a resume, `executeTask()` gated an
- * automation run, and nothing tied the two together. `startRun` is now the only
+ * each door re-implemented it: `chat()` gated a resume, `executeTask()` gated a
+ * task run, and nothing tied the two together. `startRun` is now the only
  * place a run is established, so the check has one call site and the invariant
  * holds by construction.
  *
  * This test pins that: a removed member's conversation resume and the same
- * member's automation run are refused by the SAME code path (both stacks name
+ * member's task run are refused by the SAME code path (both stacks name
  * `startRun`), while each keeps the outcome its caller's contract needs —
  * `conversation_access_denied` (the 403 a person sees) and
  * `workspace_membership_revoked` (the code the scheduler records as SKIPPED, so
- * the automation self-heals if the owner is re-added).
+ * the task self-heals if the owner is re-added).
  *
  * It also pins that a refused run touches nothing: the gate runs before the
  * turn's user message is written, so a rejected resume leaves the conversation
@@ -53,7 +53,7 @@ async function refusal(run: () => Promise<unknown>): Promise<unknown> {
 }
 
 describe("the run-start door gates workspace membership for every trigger", () => {
-  it("refuses a removed member's chat resume and automation run through one gate", async () => {
+  it("refuses a removed member's chat resume and task run through one gate", async () => {
     const workDir = join(testDir, "one-gate");
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({

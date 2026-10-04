@@ -1,9 +1,9 @@
 /**
- * Scheduling engine for automations.
+ * Scheduling engine for tasks.
  *
  * Uses setTimeout-based timer armed to the next-due job (max 60s wake).
  * Evaluates cron expressions via Croner. Handles interval scheduling,
- * per-automation concurrency guards, and exponential backoff. How many runs
+ * per-task concurrency guards, and exponential backoff. How many runs
  * execute at once, and the queue beyond that, belong to the runtime's run
  * admission (`src/runtime/admission.ts`); the scheduler asks it for a slot and
  * renders its answers as run records.
@@ -13,7 +13,7 @@
  */
 
 import { Cron } from "croner";
-import { automationRunsTotal } from "../../api/metrics.ts";
+import { taskRunsTotal } from "../../api/metrics.ts";
 import { log } from "../../observability/log.ts";
 import {
   type AdmissionLease,
@@ -26,23 +26,23 @@ import { runDetached } from "../../runtime/request-context.ts";
 import { WorkspaceRootMissingError } from "../../workspace/context.ts";
 import {
   appendRun,
-  loadAllAutomations,
-  loadAutomation,
-  saveAutomation,
+  loadAllTasks,
+  loadTask,
   saveIdempotencyKey,
   saveRunResult,
   saveRunTicket,
+  saveTask,
 } from "./store.ts";
 import {
-  type Automation,
-  type AutomationRun,
-  type AutomationRunResult,
   isEventSchedule,
   isOnceSchedule,
   ONCE_GRACE_MS,
   ONCE_MISSED_REASON,
   ONCE_RAN_REASON,
   type RunTicket,
+  type Task,
+  type TaskRun,
+  type TaskRunResult,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -62,19 +62,19 @@ export const MAX_CONSECUTIVE_ERRORS = 10;
 const STOPPED_REASON = "the scheduler is stopped";
 
 /**
- * Prefix on the admission key of every automation run. Admission keys are
+ * Prefix on the admission key of every task run. Admission keys are
  * opaque to the runtime and shared by every source, so the scheduler's own
  * are namespaced: `stop()` and `dropWorkspace` withdraw only these.
  */
-const ADMISSION_KEY_PREFIX = "automation:";
+const ADMISSION_KEY_PREFIX = "task:";
 
 /** The withdrawal reason `dropWorkspace` gives the runs it takes out of the queue. */
 const WORKSPACE_DELETED = "workspace_deleted";
 
-/** What `runFromEvent` answers when the automation already has a run. */
+/** What `runFromEvent` answers when the task already has a run. */
 const EVENT_DUPLICATE_ANSWER = {
-  "Already running": "a previous run of this automation is still in flight",
-  "Already queued": "a previous run of this automation is still queued",
+  "Already running": "a previous run of this task is still in flight",
+  "Already queued": "a previous run of this task is still queued",
 } as const;
 
 /** Patterns that classify an error message as transient. */
@@ -95,9 +95,9 @@ const TRANSIENT_PATTERNS: RegExp[] = [
  * What initiated a run: the timer (`scheduled`), an operator's Run now
  * (`manual`), or a batch of notifications (`event`). It is recorded on the run
  * and decides nothing about who the run acts as: every run acts as the
- * automation's owner, in its workspace (see `resolveExecutorContext`).
+ * task's owner, in its workspace (see `resolveExecutorContext`).
  */
-export type AutomationRunTrigger = "scheduled" | "manual" | "event";
+export type TaskRunTrigger = "scheduled" | "manual" | "event";
 
 /**
  * Per-run input, for a trigger that carries something the stored prompt does
@@ -106,11 +106,11 @@ export type AutomationRunTrigger = "scheduled" | "manual" | "event";
  * nothing and passes none.
  *
  * It goes ahead of the prompt rather than into it, and it is never persisted
- * on the automation: it is one run's input, not part of the definition and not
+ * on the task: it is one run's input, not part of the definition and not
  * part of any cached prefix.
  */
 export interface RunInput {
-  /** Goes ahead of the automation's own prompt, separated by a blank line. */
+  /** Goes ahead of the task's own prompt, separated by a blank line. */
   preamble?: string;
   /** The caller's JSON input, rendered as data ahead of the prompt (see the executor). */
   data?: unknown;
@@ -141,14 +141,14 @@ export interface RequestedRun {
  * instead of acquiring a second one.
  */
 export type Executor = (
-  automation: Automation,
+  task: Task,
   signal: AbortSignal,
-  trigger: AutomationRunTrigger,
+  trigger: TaskRunTrigger,
   input?: RunInput,
   lease?: AdmissionLease,
   /** The run's id when it was minted ahead of the run (a requested run); the runtime adopts it. */
   runId?: string,
-) => Promise<{ run: AutomationRun; result: AutomationRunResult | null }>;
+) => Promise<{ run: TaskRun; result: TaskRunResult | null }>;
 
 /**
  * What a Run now request became, known as soon as it is made.
@@ -165,9 +165,9 @@ export type Executor = (
  * caller that wants to wait can, and one that wants to answer now can too.
  */
 export type RunNowTicket =
-  | { state: "started"; run: Promise<AutomationRun> }
-  | { state: "queued"; position: number; run: Promise<AutomationRun> }
-  | { state: "refused"; run: AutomationRun };
+  | { state: "started"; run: Promise<TaskRun> }
+  | { state: "queued"; position: number; run: Promise<TaskRun> }
+  | { state: "refused"; run: TaskRun };
 
 /**
  * How a queued run left the queue: `started` when it took a slot and ran
@@ -175,7 +175,7 @@ export type RunNowTicket =
  * refused on the way out (`run` is the not-started record saying why).
  */
 interface QueuedOutcome {
-  run: AutomationRun;
+  run: TaskRun;
   started: boolean;
 }
 
@@ -193,13 +193,13 @@ export interface SchedulerConfig {
   /**
    * The runtime work directory (`{workDir}`). The scheduler is multi-workspace:
    * it scans `{workDir}/workspaces/<wsId>/tasks/<ownerId>/` across every
-   * workspace and owner and fires each automation as its owner, focused on its
-   * provenance workspace. Automations are workspace-owned (the path is the wall).
+   * workspace and owner and fires each task as its owner, focused on its
+   * provenance workspace. Tasks are workspace-owned (the path is the wall).
    */
   workDir: string;
   /**
    * The run admission every run is admitted through: the runtime's
-   * (`Runtime.getRunAdmission`), so automation runs share its slots and queue
+   * (`Runtime.getRunAdmission`), so task runs share its slots and queue
    * with every other unattended run. Default: a pool of its own with the
    * default limits, for a scheduler run without a runtime (tests).
    */
@@ -208,8 +208,8 @@ export interface SchedulerConfig {
   defaultTimezone?: string;
   /**
    * Called once a run's record is written — completed, failed, cancelled or
-   * skipped — with the automation's owner. The owner is known here and nowhere
-   * upstream of a scheduled run, so this is where the automations source
+   * skipped — with the task's owner. The owner is known here and nowhere
+   * upstream of a scheduled run, so this is where the tasks source
    * announces the change to that owner's views.
    */
   onRunRecorded?: (ownerId: string) => void;
@@ -230,7 +230,7 @@ export function isTransientError(message: string): boolean {
  * Compute the backoff delay for a given number of consecutive errors.
  * Returns 0 when consecutiveErrors is 0.
  *
- * `ladder` defaults to an automation's own, which runs out to an hour because
+ * `ladder` defaults to a task's own, which runs out to an hour because
  * a schedule that keeps failing should be asked less and less often. A caller
  * with a different bound passes its own — the shape (index, clamp at the last
  * entry, zero below one) is what is shared, and the delays are the caller's
@@ -247,23 +247,19 @@ export function backoffDelay(
 }
 
 /**
- * Returns true if the automation is currently in backoff (should be skipped).
+ * Returns true if the task is currently in backoff (should be skipped).
  */
-export function isInBackoff(automation: Automation, now: number): boolean {
-  if (automation.consecutiveErrors <= 0) return false;
-  if (!automation.nextRunAt) return false;
-  return now < new Date(automation.nextRunAt).getTime();
+export function isInBackoff(task: Task, now: number): boolean {
+  if (task.consecutiveErrors <= 0) return false;
+  if (!task.nextRunAt) return false;
+  return now < new Date(task.nextRunAt).getTime();
 }
 
 /**
- * Compute the next run time for an automation based on its schedule.
+ * Compute the next run time for a task based on its schedule.
  */
-export function computeNextRunAt(
-  automation: Automation,
-  now: number,
-  defaultTimezone?: string,
-): number | null {
-  const { schedule } = automation;
+export function computeNextRunAt(task: Task, now: number, defaultTimezone?: string): number | null {
+  const { schedule } = task;
 
   // No schedule: nothing fires it unattended, so it has no next run.
   if (!schedule) return null;
@@ -281,37 +277,37 @@ export function computeNextRunAt(
   }
 
   // A once schedule's one moment. Whether it has already fired is not this
-  // function's question: firing disables the automation (`retireOnce`), and a
-  // disabled automation is never due.
+  // function's question: firing disables the task (`retireOnce`), and a
+  // disabled task is never due.
   if (schedule.type === "once" && schedule.at) {
     const at = new Date(schedule.at).getTime();
     return Number.isNaN(at) ? null : at;
   }
 
   if (schedule.type === "interval" && schedule.intervalMs) {
-    if (!automation.lastRunAt) {
+    if (!task.lastRunAt) {
       // First run fires immediately
       return now;
     }
-    return new Date(automation.lastRunAt).getTime() + schedule.intervalMs;
+    return new Date(task.lastRunAt).getTime() + schedule.intervalMs;
   }
 
   return null;
 }
 
 /**
- * Store a computed next run on `automation`, clearing `nextRunAt` when there is
+ * Store a computed next run on `task`, clearing `nextRunAt` when there is
  * none. A cron schedule can have no next run: a date that never occurs
  * (`0 9 31 2 *`) or a year field that has passed. Keeping the old value there
- * would leave a past `nextRunAt` that never advances, so the automation stays
+ * would leave a past `nextRunAt` that never advances, so the task stays
  * due and re-runs back to back.
  */
-export function setNextRunAt(automation: Automation, nextRun: number | null): void {
-  automation.nextRunAt = nextRun === null ? undefined : new Date(nextRun).toISOString();
+export function setNextRunAt(task: Task, nextRun: number | null): void {
+  task.nextRunAt = nextRun === null ? undefined : new Date(nextRun).toISOString();
 }
 
 /**
- * The next run of a stored automation, or null when its schedule cannot be
+ * The next run of a stored task, or null when its schedule cannot be
  * placed in time. Create and update refuse a schedule that throws here (an
  * unknown timezone), so a stored one reaches it only by a hand edit or a
  * default timezone that stopped resolving. Null clears `nextRunAt` like a
@@ -319,12 +315,12 @@ export function setNextRunAt(automation: Automation, nextRun: number | null): vo
  * would re-run on every tick. A later reconcile re-seeds it once the schedule
  * resolves again.
  */
-function nextRunOrNone(auto: Automation, now: number, defaultTimezone?: string): number | null {
+function nextRunOrNone(auto: Task, now: number, defaultTimezone?: string): number | null {
   try {
     return computeNextRunAt(auto, now, defaultTimezone);
   } catch (err) {
     log.warn("[tasks] could not compute next run", {
-      automationId: auto.id,
+      taskId: auto.id,
       workspaceId: auto.workspaceId,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -333,22 +329,22 @@ function nextRunOrNone(auto: Automation, now: number, defaultTimezone?: string):
 }
 
 /**
- * Automations ordered by `nextRunAt`, earliest first, so the oldest due run
+ * Tasks ordered by `nextRunAt`, earliest first, so the oldest due run
  * takes a free slot. One with no `nextRunAt` (an interval's first run, due
  * immediately) sorts first.
  */
-function byNextRunAt(automations: Iterable<Automation>): Automation[] {
-  const at = (a: Automation) => (a.nextRunAt ? new Date(a.nextRunAt).getTime() : 0);
-  return [...automations].sort((a, b) => at(a) - at(b));
+function byNextRunAt(tasks: Iterable<Task>): Task[] {
+  const at = (a: Task) => (a.nextRunAt ? new Date(a.nextRunAt).getTime() : 0);
+  return [...tasks].sort((a, b) => at(a) - at(b));
 }
 
 /**
- * Whether `nextRunAt` is a moment the automation's cron schedule actually
+ * Whether `nextRunAt` is a moment the task's cron schedule actually
  * fires at. A cron that never occurs (`0 9 31 2 *`) cannot have produced one,
  * so a stored value there is stale; a real occurrence that has passed is a run
  * still owed.
  */
-function isPendingOccurrence(auto: Automation, defaultTimezone?: string): boolean {
+function isPendingOccurrence(auto: Task, defaultTimezone?: string): boolean {
   const { schedule, nextRunAt } = auto;
   if (schedule?.type !== "cron" || !schedule.expression || !nextRunAt) return false;
   try {
@@ -360,28 +356,28 @@ function isPendingOccurrence(auto: Automation, defaultTimezone?: string): boolea
 }
 
 /**
- * Whether an automation with no `nextRunAt` is due now. Only an interval
+ * Whether a task with no `nextRunAt` is due now. Only an interval
  * schedule that has not been given one yet is (its first run fires
  * immediately); a cron schedule without one has no next run, and an event
  * schedule never has one.
  */
-function dueWithoutNextRunAt(automation: Automation): boolean {
-  return automation.schedule?.type === "interval";
+function dueWithoutNextRunAt(task: Task): boolean {
+  return task.schedule?.type === "interval";
 }
 
 /**
- * Check if an automation is due to run.
+ * Check if a task is due to run.
  */
-export function isDue(automation: Automation, now: number): boolean {
-  if (!automation.enabled) return false;
+export function isDue(task: Task, now: number): boolean {
+  if (!task.enabled) return false;
   // No schedule, no unattended run: only Run now starts one.
-  if (!automation.schedule) return false;
+  if (!task.schedule) return false;
   // Never due from the timer. An event schedule has no `nextRunAt` by
   // construction, and the timer would otherwise fire it with the wrong
   // trigger, an empty batch, and none of the fire ceiling.
-  if (isEventSchedule(automation.schedule)) return false;
-  if (!automation.nextRunAt) return dueWithoutNextRunAt(automation);
-  return now >= new Date(automation.nextRunAt).getTime();
+  if (isEventSchedule(task.schedule)) return false;
+  if (!task.nextRunAt) return dueWithoutNextRunAt(task);
+  return now >= new Date(task.nextRunAt).getTime();
 }
 
 /**
@@ -441,7 +437,7 @@ function getTimezoneOffsetMs(tz: string, date: Date): number {
  * flag together so they can't drift apart.
  */
 function classifyRunFailure(err: unknown): {
-  status: AutomationRun["status"];
+  status: TaskRun["status"];
   suffix: string;
   error: string;
   transient: boolean;
@@ -450,10 +446,10 @@ function classifyRunFailure(err: unknown): {
     return { status: "cancelled", suffix: "cancel", error: "Cancelled by user", transient: false };
   }
   const errorMsg = err instanceof Error ? err.message : String(err);
-  // Owner removed from the automation's provenance workspace: the runtime denied
+  // Owner removed from the task's provenance workspace: the runtime denied
   // the run (`executeTask` throws `WorkspaceMembershipRevokedError`). SKIPPED, not a
   // failure — it must not count toward consecutiveErrors or trip the auto-disable,
-  // so the automation self-heals the moment the owner is re-added. Matched by the
+  // so the task self-heals the moment the owner is re-added. Matched by the
   // error's stable `code`, which crosses the in-process runtime→app boundary.
   if ((err as { code?: string })?.code === "workspace_membership_revoked") {
     return { status: "skipped", suffix: "skip", error: errorMsg, transient: false };
@@ -475,13 +471,11 @@ function classifyRunFailure(err: unknown): {
 }
 
 // ---------------------------------------------------------------------------
-// State-update helpers (mutate the passed automation in place)
+// State-update helpers (mutate the passed task in place)
 // ---------------------------------------------------------------------------
 
 /** Map a run's terminal status onto the persisted lastRunStatus field. */
-function resolveLastRunStatus(
-  status: AutomationRun["status"],
-): NonNullable<Automation["lastRunStatus"]> {
+function resolveLastRunStatus(status: TaskRun["status"]): NonNullable<Task["lastRunStatus"]> {
   if (status === "success") return "success";
   if (status === "degraded") return "degraded";
   if (status === "timeout") return "timeout";
@@ -495,7 +489,7 @@ function resolveLastRunStatus(
  * clears the streak like a success: it ran to completion, and backoff exists
  * for runs that could not run, not for work a tool refused.
  */
-function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: number): void {
+function applyConsecutiveErrors(auto: Task, run: TaskRun, now: number): void {
   if (run.status === "success" || run.status === "degraded") {
     auto.consecutiveErrors = 0;
     return;
@@ -513,12 +507,12 @@ function applyConsecutiveErrors(auto: Automation, run: AutomationRun, now: numbe
 }
 
 /**
- * Leave a once automation inert: disabled, with no next run, and a reason that
+ * Leave a once task inert: disabled, with no next run, and a reason that
  * says what happened. Its schedule stays, so its history still reads, and a new
- * `at` re-arms it (`updateAutomation`).
+ * `at` re-arms it (`updateTask`).
  */
 export function retireOnce(
-  auto: Automation,
+  auto: Task,
   outcome: "ran" | "missed",
   settledAt: string,
   reason: string,
@@ -536,14 +530,14 @@ export function retireOnce(
  * more than {@link ONCE_GRACE_MS} ago. Asked only by `start()`, so a once
  * deferred at runtime because every run slot was busy is never judged late.
  */
-export function onceMissedWhileDown(auto: Automation, now: number): boolean {
+export function onceMissedWhileDown(auto: Task, now: number): boolean {
   if (!auto.enabled || auto.onceDone || !isOnceSchedule(auto.schedule)) return false;
   const at = new Date(auto.schedule?.at ?? "").getTime();
   return !Number.isNaN(at) && now - at > ONCE_GRACE_MS;
 }
 
 /** Compute and set nextRunAt, pushing it out by backoff during an error streak. */
-function applyNextRunAt(auto: Automation, now: number, defaultTimezone?: string): void {
+function applyNextRunAt(auto: Task, now: number, defaultTimezone?: string): void {
   const nextRun = nextRunOrNone(auto, now, defaultTimezone);
   if (nextRun === null) {
     setNextRunAt(auto, null);
@@ -563,16 +557,13 @@ function applyNextRunAt(auto: Automation, now: number, defaultTimezone?: string)
 }
 
 /**
- * Where an automation with a token budget stands in its window: `current`
+ * Where a task with a token budget stands in its window: `current`
  * before its boundary, `elapsed` once the boundary has passed, `unseeded` for
  * a periodic budget with no boundary yet, and `lifetime` for a budget with no
  * period. The next recorded run starts an `elapsed` or `unseeded` window
  * afresh (`rollBudgetWindow`), so until then its counters belong to no window.
  */
-function budgetWindow(
-  auto: Automation,
-  now: number,
-): "current" | "elapsed" | "unseeded" | "lifetime" {
+function budgetWindow(auto: Task, now: number): "current" | "elapsed" | "unseeded" | "lifetime" {
   const reset = auto.budgetResetAt;
   if (reset) return new Date(reset).getTime() <= now ? "elapsed" : "current";
   return auto.tokenBudget?.period ? "unseeded" : "lifetime";
@@ -586,12 +577,7 @@ function budgetWindow(
  * spend from before the boundary existed (a definition written before windows
  * were anchored at write time), and that spend belongs to no window.
  */
-function rollBudgetWindow(
-  auto: Automation,
-  run: AutomationRun,
-  now: number,
-  defaultTimezone?: string,
-): void {
+function rollBudgetWindow(auto: Task, run: TaskRun, now: number, defaultTimezone?: string): void {
   if (!auto.tokenBudget) return;
 
   const window = budgetWindow(auto, now);
@@ -603,13 +589,13 @@ function rollBudgetWindow(
 }
 
 /**
- * Why the automation's token budget is spent for the current window, or null
+ * Why the task's token budget is spent for the current window, or null
  * when it is not (or there is none).
  *
  * A window whose boundary has passed is not spent, though its counters still
  * hold the old window's total: the next recorded run resets them.
  */
-export function tokenBudgetExceeded(auto: Automation, now: number): string | null {
+export function tokenBudgetExceeded(auto: Task, now: number): string | null {
   const budget = auto.tokenBudget;
   if (!budget) return null;
   if (auto.budgetResetAt && new Date(auto.budgetResetAt).getTime() <= now) return null;
@@ -636,7 +622,7 @@ export interface RunSpendAccount {
 }
 
 /** What every id `budgetSpendAccounts` produces starts with. */
-const BUDGET_ACCOUNT_PREFIX = "automation-budget:";
+const BUDGET_ACCOUNT_PREFIX = "task-budget:";
 
 /**
  * The token budget as the spend accounts a run names: one per cap, holding
@@ -646,11 +632,11 @@ const BUDGET_ACCOUNT_PREFIX = "automation-budget:";
  * spend past the budget.
  *
  * The ids are this app's to choose and mean nothing to the door: the
- * automation's key, the window, and the unit. A window whose boundary has
+ * task's key, the window, and the unit. A window whose boundary has
  * passed is a fresh one (the next recorded run resets the counters), so it
  * starts full and gets an id of its own.
  */
-export function budgetSpendAccounts(auto: Automation, now: number): RunSpendAccount[] {
+export function budgetSpendAccounts(auto: Task, now: number): RunSpendAccount[] {
   const budget = auto.tokenBudget;
   if (!budget) return [];
   const window = budgetWindow(auto, now);
@@ -684,23 +670,18 @@ export function budgetSpendAccounts(auto: Automation, now: number): RunSpendAcco
 
 /**
  * Account a run against the token budget: roll the window, and disable an
- * enabled automation whose window is spent.
+ * enabled task whose window is spent.
  *
- * Every run counts, whatever triggered it and whether or not the automation
+ * Every run counts, whatever triggered it and whether or not the task
  * is enabled. The window is spent when the counters pass a cap, or when the
  * run was stopped by one of the budget's spend accounts: too little was left
  * for its next model call, so the counters stop just short of a cap. A
- * disabled automation has nothing left to disable, so its budget is enforced
+ * disabled task has nothing left to disable, so its budget is enforced
  * where its runs start: Run now refuses it until the window resets (see
  * `Scheduler.requestRunNow`), and the door clamps and stops any run against
  * what is left.
  */
-function applyTokenBudget(
-  auto: Automation,
-  run: AutomationRun,
-  now: number,
-  defaultTimezone?: string,
-): void {
+function applyTokenBudget(auto: Task, run: TaskRun, now: number, defaultTimezone?: string): void {
   if (!auto.tokenBudget) return;
 
   rollBudgetWindow(auto, run, now, defaultTimezone);
@@ -721,10 +702,10 @@ function applyTokenBudget(
 
 /**
  * Why Run now refuses `auto` on budget grounds, or null when it may run. Only
- * a disabled automation is refused here: an enabled one is disabled by the run
+ * a disabled task is refused here: an enabled one is disabled by the run
  * that spends its budget, so its next Run now finds it disabled.
  */
-function runNowBudgetRefusal(auto: Automation, now: number): string | null {
+function runNowBudgetRefusal(auto: Task, now: number): string | null {
   if (auto.enabled) return null;
   const exceeded = tokenBudgetExceeded(auto, now);
   if (!exceeded) return null;
@@ -735,8 +716,8 @@ function runNowBudgetRefusal(auto: Automation, now: number): string | null {
 }
 
 /**
- * A not-started run record for a queued run whose automation is gone, so it
- * cannot be written to that automation's history. Returned to the waiter only.
+ * A not-started run record for a queued run whose task is gone, so it
+ * cannot be written to that task's history. Returned to the waiter only.
  * It carries no `trigger`, like every record of a run that never started (see
  * {@link countsAsEventFire}).
  */
@@ -747,9 +728,9 @@ function notStartedRun(
   requested?: RequestedRun,
 ): QueuedOutcome {
   const now = new Date().toISOString();
-  const run: AutomationRun = {
+  const run: TaskRun = {
     id: requested?.runId ?? `run_${Date.now()}_${status === "cancelled" ? "cancel" : "skip"}`,
-    automationId: key.slice(key.lastIndexOf("/") + 1),
+    taskId: key.slice(key.lastIndexOf("/") + 1),
     startedAt: now,
     completedAt: now,
     status,
@@ -763,7 +744,7 @@ function notStartedRun(
 }
 
 /** A requested run's record, carrying its id and what it was asked with. */
-function withRequest(run: AutomationRun, requested: RequestedRun): AutomationRun {
+function withRequest(run: TaskRun, requested: RequestedRun): TaskRun {
   return {
     ...run,
     id: requested.runId,
@@ -773,12 +754,12 @@ function withRequest(run: AutomationRun, requested: RequestedRun): AutomationRun
 }
 
 /** Whether a run record is still open: asked for, and not yet ended or refused. */
-export function isOpenRun(run: Pick<AutomationRun, "status">): boolean {
+export function isOpenRun(run: Pick<TaskRun, "status">): boolean {
   return run.status === "queued" || run.status === "running";
 }
 
 /**
- * Whether a run record counts as one fire toward an event automation's hourly
+ * Whether a run record counts as one fire toward an event task's hourly
  * ceiling (`maxFiresPerHour`): an event-triggered run that actually started.
  *
  * A run that never started carries no `trigger` — `recordSkipped` does not
@@ -788,7 +769,7 @@ export function isOpenRun(run: Pick<AutomationRun, "status">): boolean {
  * membership re-check), which did no work either. A run that started and was
  * then cancelled still counts: it ran, and its work may have produced events.
  */
-export function countsAsEventFire(run: AutomationRun): boolean {
+export function countsAsEventFire(run: TaskRun): boolean {
   return run.trigger === "event" && run.status !== "skipped";
 }
 
@@ -798,22 +779,21 @@ export function countsAsEventFire(run: AutomationRun): boolean {
 
 export class Scheduler {
   /**
-   * Loaded automations across every workspace + owner, keyed by
+   * Loaded tasks across every workspace + owner, keyed by
    * `${wsId}/${ownerId}/${id}` — see `keyOf`. Composite-keyed (not bare id)
-   * because automation ids are kebab-case and collide across workspaces/owners.
+   * because task ids are kebab-case and collide across workspaces/owners.
    * `activeRuns` uses the same key.
    */
-  private definitions: Map<string, Automation> = new Map();
+  private definitions: Map<string, Task> = new Map();
   /** In-flight runs' abort controllers, for cancel and stop. Slots are admission's. */
   private readonly activeRuns: Map<string, AbortController> = new Map();
   /**
    * Requested runs this process is carrying, by run id: queued or in flight,
-   * with the automation key and the promise of the run's record. A ticket that
+   * with the task key and the promise of the run's record. A ticket that
    * says a run is open while this map has no entry for it was left by a
    * process that stopped before the run ended (see `settleLostRun`).
    */
-  private readonly openRuns: Map<string, { key: string; ended: Promise<AutomationRun> }> =
-    new Map();
+  private readonly openRuns: Map<string, { key: string; ended: Promise<TaskRun> }> = new Map();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
 
@@ -834,11 +814,11 @@ export class Scheduler {
   }
 
   /** Composite key for the cross-workspace/owner definitions/activeRuns maps. */
-  private static keyOf(automation: Pick<Automation, "id" | "ownerId" | "workspaceId">): string {
-    return `${automation.workspaceId ?? ""}/${automation.ownerId ?? ""}/${automation.id}`;
+  private static keyOf(task: Pick<Task, "id" | "ownerId" | "workspaceId">): string {
+    return `${task.workspaceId ?? ""}/${task.ownerId ?? ""}/${task.id}`;
   }
 
-  /** The run admission request for the automation at `key`. */
+  /** The run admission request for the task at `key`. */
   private static admissionOf(key: string): { workspaceId: string; key: string } {
     return { workspaceId: key.slice(0, key.indexOf("/")), key: ADMISSION_KEY_PREFIX + key };
   }
@@ -849,27 +829,27 @@ export class Scheduler {
   }
 
   /**
-   * Load every workspace + owner's automations into one composite-keyed map via
-   * `store.loadAllAutomations` (which scans every workspace + owner dir and
+   * Load every workspace + owner's tasks into one composite-keyed map via
+   * `store.loadAllTasks` (which scans every workspace + owner dir and
    * backfills `workspaceId`/`ownerId` from the path — the directory is the
    * binding).
    */
-  private loadAll(): Map<string, Automation> {
-    const all = new Map<string, Automation>();
-    for (const auto of loadAllAutomations(this.config.workDir)) {
+  private loadAll(): Map<string, Task> {
+    const all = new Map<string, Task>();
+    for (const auto of loadAllTasks(this.config.workDir)) {
       all.set(Scheduler.keyOf(auto), auto);
     }
     return all;
   }
 
   /**
-   * Persist one automation to its own `<id>.json` under its provenance
-   * workspace + owner. No-op if the automation lacks a workspace or owner
-   * (defensive — every loaded automation carries both via the path backfill).
+   * Persist one task to its own `<id>.json` under its provenance
+   * workspace + owner. No-op if the task lacks a workspace or owner
+   * (defensive — every loaded task carries both via the path backfill).
    */
-  private persistAutomation(auto: Automation): void {
+  private persistTask(auto: Task): void {
     if (!auto.workspaceId || !auto.ownerId) return;
-    saveAutomation(this.config.workDir, auto.workspaceId, auto.ownerId, auto);
+    saveTask(this.config.workDir, auto.workspaceId, auto.ownerId, auto);
   }
 
   // -----------------------------------------------------------------------
@@ -903,7 +883,7 @@ export class Scheduler {
         this.recordMissedOnce(auto, now);
       } catch (err) {
         log.warn("[tasks] could not record a missed once", {
-          automationId: auto.id,
+          taskId: auto.id,
           workspaceId: auto.workspaceId,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -912,18 +892,18 @@ export class Scheduler {
   }
 
   /**
-   * Compute initial `nextRunAt` for any enabled automation missing one, clear
-   * it on any whose schedule has no next run, and persist the automations that
-   * changed. Shared by start + reload, so a stored automation whose `nextRunAt`
+   * Compute initial `nextRunAt` for any enabled task missing one, clear
+   * it on any whose schedule has no next run, and persist the tasks that
+   * changed. Shared by start + reload, so a stored task whose `nextRunAt`
    * outlived its schedule is corrected before the timer reads it.
    */
   private seedNextRunAt(): void {
     const now = Date.now();
-    const dirty: Automation[] = [];
+    const dirty: Task[] = [];
     for (const auto of this.definitions.values()) {
       if (this.reconcileNextRunAt(auto, now)) dirty.push(auto);
     }
-    for (const auto of dirty) this.persistAutomation(auto);
+    for (const auto of dirty) this.persistTask(auto);
   }
 
   /**
@@ -934,7 +914,7 @@ export class Scheduler {
    * cron whose last date has passed that is the only run it has left. Returns
    * whether it changed.
    */
-  private reconcileNextRunAt(auto: Automation, now: number): boolean {
+  private reconcileNextRunAt(auto: Task, now: number): boolean {
     if (isEventSchedule(auto.schedule)) return false;
     if (!auto.enabled || !auto.ownerId || !auto.workspaceId) return false;
     const next = nextRunOrNone(auto, now, this.config.defaultTimezone);
@@ -966,12 +946,12 @@ export class Scheduler {
 
   /**
    * Re-scan every workspace + owner's store and re-arm the timer. Called after
-   * a tool mutates an automation (create/update/delete) so the timer reflects
+   * a tool mutates a task (create/update/delete) so the timer reflects
    * the change. Multi-workspace: always re-reads every workspace + owner store.
    *
    * This is a full-tenant filesystem rescan on every mutation. Acceptable under
-   * the one-process-per-tenant model (a tenant's automation count is small); if
-   * a tenant ever accrues enough automations for the rescan to matter, switch to
+   * the one-process-per-tenant model (a tenant's task count is small); if
+   * a tenant ever accrues enough tasks for the rescan to matter, switch to
    * a per-(wsId,ownerId) incremental reload keyed off the mutation.
    */
   reload(): void {
@@ -984,12 +964,12 @@ export class Scheduler {
   }
 
   /**
-   * Forget every automation belonging to `wsId`, and re-arm.
+   * Forget every task belonging to `wsId`, and re-arm.
    *
    * The in-memory `definitions` map is the only thing that decides what the
    * timer fires, and nothing reloads it on a workspace delete —
-   * `reload()` is called from the automations tool surface alone, so a deleted
-   * workspace's automations stayed armed here until the process restarted.
+   * `reload()` is called from the tasks tool surface alone, so a deleted
+   * workspace's tasks stayed armed here until the process restarted.
    * When one fired it wrote back through the store, and the store's mkdir
    * re-created the workspace directory that had just been archived.
    *
@@ -1021,30 +1001,30 @@ export class Scheduler {
   }
 
   /**
-   * Trigger an immediate run of a specific automation, bypassing schedule
+   * Trigger an immediate run of a specific task, bypassing schedule
    * and backoff checks, and answer at once with what became of it (see
-   * {@link RunNowTicket}). Null when the automation is not loaded.
+   * {@link RunNowTicket}). Null when the task is not loaded.
    *
-   * Runs a disabled automation. `enabled` decides whether the automation fires
+   * Runs a disabled task. `enabled` decides whether the task fires
    * unattended — from its schedule or from events — and Run now is a person's
-   * deliberate act, which is how a disabled automation is tested before it is
+   * deliberate act, which is how a disabled task is tested before it is
    * enabled (the create form's test run creates it disabled and runs it).
-   * `handleRun` tells the caller the automation is disabled.
+   * `handleRun` tells the caller the task is disabled.
    *
    * Run now shares the runtime's run slots with every other unattended run.
    * At the limit it waits in the run queue rather than starting over the limit
    * or being dropped. It is refused, with a skipped record, when the
-   * automation already has a run in flight or queued, when the queue is full,
-   * when the automation is disabled and its token budget is spent for the
+   * task already has a run in flight or queued, when the queue is full,
+   * when the task is disabled and its token budget is spent for the
    * window, and when the scheduler is stopped (nothing would drain the queue).
    */
   requestRunNow(
     wsId: string,
     ownerId: string,
-    automationId: string,
+    taskId: string,
     requested?: RequestedRun,
   ): RunNowTicket | null {
-    const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
+    const key = Scheduler.keyOf({ id: taskId, ownerId, workspaceId: wsId });
     const auto = this.definitions.get(key);
     if (!auto) {
       const keys = Array.from(this.definitions.keys());
@@ -1092,7 +1072,7 @@ export class Scheduler {
   }
 
   /** Record that a requested run admitted (started or queued) claims its idempotency key. */
-  private recordKey(auto: Automation, requested: RequestedRun): void {
+  private recordKey(auto: Task, requested: RequestedRun): void {
     const { workspaceId: wsId, ownerId } = auto;
     if (!wsId || !ownerId || requested.idempotencyKey === undefined) return;
     saveIdempotencyKey(
@@ -1106,12 +1086,12 @@ export class Scheduler {
   }
 
   /** Write a requested run's first ticket (queued). */
-  private openTicket(auto: Automation, requested: RequestedRun): void {
+  private openTicket(auto: Task, requested: RequestedRun): void {
     const { workspaceId: wsId, ownerId } = auto;
     if (!wsId || !ownerId) return;
     this.writeTicket(wsId, ownerId, auto.id, requested, {
       id: requested.runId,
-      automationId: auto.id,
+      taskId: auto.id,
       startedAt: requested.requestedAt,
       status: "queued",
       inputTokens: 0,
@@ -1125,13 +1105,13 @@ export class Scheduler {
   private writeTicket(
     wsId: string,
     ownerId: string,
-    automationId: string,
+    taskId: string,
     requested: RequestedRun,
-    run: AutomationRun,
+    run: TaskRun,
   ): void {
     const ticket: RunTicket = {
       runId: requested.runId,
-      automationId,
+      taskId,
       requestedAt: requested.requestedAt,
       run: withRequest(run, requested),
     };
@@ -1142,8 +1122,8 @@ export class Scheduler {
   private trackOpen(
     key: string,
     requested: RequestedRun | undefined,
-    ended: Promise<AutomationRun>,
-  ): Promise<AutomationRun> {
+    ended: Promise<TaskRun>,
+  ): Promise<TaskRun> {
     if (!requested) return ended;
     const { runId } = requested;
     this.openRuns.set(runId, { key, ended });
@@ -1160,7 +1140,7 @@ export class Scheduler {
   }
 
   /** The record of a requested run this process is carrying, once it ends; undefined when it carries none. */
-  runEnded(runId: string): Promise<AutomationRun> | undefined {
+  runEnded(runId: string): Promise<TaskRun> | undefined {
     return this.openRuns.get(runId)?.ended;
   }
 
@@ -1172,8 +1152,8 @@ export class Scheduler {
   cancelRunById(wsId: string, ownerId: string, runId: string): boolean {
     const open = this.openRuns.get(runId);
     if (!open?.key.startsWith(`${wsId}/${ownerId}/`)) return false;
-    const automationId = open.key.slice(open.key.lastIndexOf("/") + 1);
-    return this.cancelRun(wsId, ownerId, automationId);
+    const taskId = open.key.slice(open.key.lastIndexOf("/") + 1);
+    return this.cancelRun(wsId, ownerId, taskId);
   }
 
   /**
@@ -1186,7 +1166,7 @@ export class Scheduler {
     if (!isOpenRun(ticket.run) || this.openRuns.has(ticket.runId)) return ticket;
     const wasRunning = ticket.run.status === "running";
     const now = new Date().toISOString();
-    const run: AutomationRun = {
+    const run: TaskRun = {
       ...ticket.run,
       completedAt: now,
       status: wasRunning ? "failure" : "skipped",
@@ -1194,8 +1174,8 @@ export class Scheduler {
         ? "The runtime stopped while this run was in flight, so it did not finish."
         : "The runtime stopped before this queued run started.",
     };
-    appendRun(this.config.workDir, wsId, ownerId, ticket.automationId, run);
-    automationRunsTotal.inc({ status: run.status });
+    appendRun(this.config.workDir, wsId, ownerId, ticket.taskId, run);
+    taskRunsTotal.inc({ status: run.status });
     const settled: RunTicket = { ...ticket, run };
     saveRunTicket(this.config.workDir, wsId, ownerId, settled);
     this.config.onRunRecorded?.(ownerId);
@@ -1205,23 +1185,23 @@ export class Scheduler {
   /**
    * Run now, awaited: the run's record once it ends (a queued run's once it
    * has waited for its slot and run), the skipped record when it is refused,
-   * or null when the automation is not loaded.
+   * or null when the task is not loaded.
    */
-  async runNow(wsId: string, ownerId: string, automationId: string): Promise<AutomationRun | null> {
-    const ticket = this.requestRunNow(wsId, ownerId, automationId);
+  async runNow(wsId: string, ownerId: string, taskId: string): Promise<TaskRun | null> {
+    const ticket = this.requestRunNow(wsId, ownerId, taskId);
     if (!ticket) return null;
     return ticket.run;
   }
 
   /**
-   * Run one automation from a batch of notifications, bypassing schedule and
+   * Run one task from a batch of notifications, bypassing schedule and
    * backoff the way {@link runNow} does, and carrying the batch as this run's
    * input.
    *
    * Separate from `runNow` for two reasons that are not cosmetic: the run must
    * carry `trigger: "event"` so its record says what woke it and the fire
    * ceiling can count it, and the caller needs to be told the run did not start
-   * — a per-automation collision is a ledger row, not a silent no-op.
+   * — a per-task collision is a ledger row, not a silent no-op.
    *
    * At the global limit the batch waits in the same queue Run now uses and the
    * returned promise settles when its run ends: the limit is transient
@@ -1233,14 +1213,14 @@ export class Scheduler {
   async runFromEvent(
     wsId: string,
     ownerId: string,
-    automationId: string,
+    taskId: string,
     input: RunInput,
-  ): Promise<{ run: AutomationRun } | { skipped: string }> {
-    const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
+  ): Promise<{ run: TaskRun } | { skipped: string }> {
+    const key = Scheduler.keyOf({ id: taskId, ownerId, workspaceId: wsId });
     const auto = this.definitions.get(key);
-    if (!auto) return { skipped: "the automation is no longer in this workspace" };
+    if (!auto) return { skipped: "the task is no longer in this workspace" };
     // Unattended, so `enabled` gates it; `runNow` is the attended trigger that does not.
-    if (!auto.enabled) return { skipped: "the automation is disabled" };
+    if (!auto.enabled) return { skipped: "the task is disabled" };
     if (!this.running) return { skipped: STOPPED_REASON };
     const duplicate = this.duplicateOf(key);
     if (duplicate) {
@@ -1260,7 +1240,7 @@ export class Scheduler {
     return { run: outcome.run };
   }
 
-  /** Whether the automation at `key` already has a run holding a slot or waiting for one. */
+  /** Whether the task at `key` already has a run holding a slot or waiting for one. */
   private duplicateOf(key: string): "Already running" | "Already queued" | null {
     const { key: admissionKey } = Scheduler.admissionOf(key);
     if (this.activeRuns.has(key) || this.admission.isRunning(admissionKey))
@@ -1325,8 +1305,8 @@ export class Scheduler {
 
   /**
    * Start a queued run that admission has just given a slot, re-checking what
-   * may have changed while it waited: the automation deleted, an event
-   * automation disabled, a Run now whose budget another run spent. A run
+   * may have changed while it waited: the task deleted, an event
+   * task disabled, a Run now whose budget another run spent. A run
    * refused here gives its slot straight back.
    */
   private startQueued(entry: QueuedRun, lease: AdmissionLease): void {
@@ -1334,7 +1314,7 @@ export class Scheduler {
     if (!auto) {
       lease.release();
       try {
-        entry.resolve(this.notStartedForKey(entry, "the automation was deleted while queued"));
+        entry.resolve(this.notStartedForKey(entry, "the task was deleted while queued"));
       } catch (err) {
         entry.reject(err);
       }
@@ -1370,7 +1350,7 @@ export class Scheduler {
 
   /**
    * A queued run left the queue without a slot: cancelled, the scheduler
-   * stopped, or its workspace deleted. Recorded where its automation can still
+   * stopped, or its workspace deleted. Recorded where its task can still
    * hold the record; a deleted workspace's runs are answered without writing.
    */
   private leftQueue(entry: QueuedRun, reason: AdmissionWithdrawal): void {
@@ -1399,8 +1379,8 @@ export class Scheduler {
   }
 
   /**
-   * The not-started record of a queued run whose automation is gone. Not
-   * written to the run index (there is no automation to hold it), but a
+   * The not-started record of a queued run whose task is gone. Not
+   * written to the run index (there is no task to hold it), but a
    * requested run's ticket is rewritten so its handle reads the outcome.
    */
   private notStartedForKey(
@@ -1412,7 +1392,7 @@ export class Scheduler {
     if (entry.requested) {
       const [wsId, ownerId] = entry.key.split("/");
       if (wsId && ownerId) {
-        this.writeTicket(wsId, ownerId, outcome.run.automationId, entry.requested, outcome.run);
+        this.writeTicket(wsId, ownerId, outcome.run.taskId, entry.requested, outcome.run);
       }
     }
     return outcome;
@@ -1421,7 +1401,7 @@ export class Scheduler {
   /**
    * Get the current definitions (for inspection/testing).
    */
-  getDefinitions(): Map<string, Automation> {
+  getDefinitions(): Map<string, Task> {
     return this.definitions;
   }
 
@@ -1433,12 +1413,12 @@ export class Scheduler {
   }
 
   /**
-   * Cancel an automation's run: abort it when in flight, or take it out of the
+   * Cancel a task's run: abort it when in flight, or take it out of the
    * queue (recording it as cancelled) when waiting. Returns false when it has
    * neither.
    */
-  cancelRun(wsId: string, ownerId: string, automationId: string): boolean {
-    const key = Scheduler.keyOf({ id: automationId, ownerId, workspaceId: wsId });
+  cancelRun(wsId: string, ownerId: string, taskId: string): boolean {
+    const key = Scheduler.keyOf({ id: taskId, ownerId, workspaceId: wsId });
     const controller = this.activeRuns.get(key);
     if (controller) {
       controller.abort();
@@ -1468,13 +1448,13 @@ export class Scheduler {
   // -----------------------------------------------------------------------
 
   /**
-   * Arm the timer to fire at the next due automation or after MAX_TIMER_MS.
+   * Arm the timer to fire at the next due task or after MAX_TIMER_MS.
    */
   armTimer(): void {
     if (!this.running) return;
     this.clearTimer();
 
-    // With no free run slot a due automation is deferred, not skipped, so it
+    // With no free run slot a due task is deferred, not skipped, so it
     // stays due: arming for it would tick at zero delay and defer it again, in a
     // loop. Wake on the heartbeat instead. A tick whose own runs free the slots
     // re-arms when they settle; the heartbeat covers slots held by Run now and
@@ -1491,7 +1471,7 @@ export class Scheduler {
       if (!auto.enabled) continue;
       // Never arms a timer: an event schedule's absent `nextRunAt` is not a
       // pending first run, and reading it as one would spin the timer at zero
-      // delay for as long as such an automation exists.
+      // delay for as long as such a task exists.
       if (isEventSchedule(auto.schedule)) continue;
       if (!auto.nextRunAt) {
         if (!dueWithoutNextRunAt(auto)) continue;
@@ -1506,8 +1486,8 @@ export class Scheduler {
       }
     }
 
-    // Detached: `reload()` arms from inside the tool call that mutated an
-    // automation, and each fire re-arms from the previous one, so a timer that
+    // Detached: `reload()` arms from inside the tool call that mutated a
+    // task, and each fire re-arms from the previous one, so a timer that
     // kept its creator's context would run every later tick as that request.
     this.timer = runDetached(() => setTimeout(() => this.onTimer(), minDelay));
   }
@@ -1521,17 +1501,17 @@ export class Scheduler {
     if (!this.running) return;
 
     const now = Date.now();
-    const dispatched: Promise<AutomationRun>[] = [];
+    const dispatched: Promise<TaskRun>[] = [];
 
     for (const auto of byNextRunAt(this.definitions.values())) {
-      // One automation cannot take the timer down with it. `armTimer()` below
+      // One task cannot take the timer down with it. `armTimer()` below
       // is the only thing that re-arms, and the promise this runs inside is
       // discarded by the `setTimeout` that scheduled it — so a throw reaching
       // here would stop the scheduler for EVERY workspace, silently and until
       // the process restarts. `recordSkipped` writes to the store before it
       // reads, so a store that refuses a write (a workspace archived under a
       // run) is one way to throw. That refusal is permanent — the workspace is
-      // gone — and it lands before `nextRunAt` advances, so the automation is
+      // gone — and it lands before `nextRunAt` advances, so the task is
       // dropped as `dropWorkspace` would have; kept, it stays due and the timer
       // re-arms at zero delay.
       try {
@@ -1541,8 +1521,8 @@ export class Scheduler {
         if (err instanceof WorkspaceRootMissingError) {
           this.definitions.delete(Scheduler.keyOf(auto));
         }
-        log.warn("[tasks] scheduler sweep skipped one automation", {
-          automationId: auto.id,
+        log.warn("[tasks] scheduler sweep skipped one task", {
+          taskId: auto.id,
           workspaceId: auto.workspaceId,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -1551,7 +1531,7 @@ export class Scheduler {
 
     // Wait for all dispatched runs to complete so updateAfterRun sets
     // nextRunAt before we re-arm. Without this, the timer re-arms with
-    // stale nextRunAt values and fires the same automation repeatedly.
+    // stale nextRunAt values and fires the same task repeatedly.
     if (dispatched.length > 0) {
       await Promise.allSettled(dispatched);
     }
@@ -1564,15 +1544,15 @@ export class Scheduler {
    * Whether `auto` runs on this tick, and the dispatched run when it does.
    *
    * Lifted out of {@link onTimer} so that method stays a loop plus the
-   * per-automation try/catch that keeps one failure from stopping the sweep;
+   * per-task try/catch that keeps one failure from stopping the sweep;
    * the predicate chain itself is unchanged.
    */
-  private considerForDispatch(auto: Automation, now: number): Promise<AutomationRun> | null {
+  private considerForDispatch(auto: Task, now: number): Promise<TaskRun> | null {
     if (!auto.enabled) return null;
     if (!isDue(auto, now)) return null;
     if (isInBackoff(auto, now)) return null;
 
-    // Per-automation concurrency guard
+    // Per-task concurrency guard
     const key = Scheduler.keyOf(auto);
     if (this.duplicateOf(key) === "Already running") {
       this.recordSkipped(auto, "Previous run still active");
@@ -1590,7 +1570,7 @@ export class Scheduler {
     // without a waiter): its persisted `nextRunAt` already holds its place,
     // survives a restart (the in-memory queue does not, and a one-shot cron
     // would lose its only run), and admits one pending occurrence per
-    // automation by construction. Queued runs take a freed slot first, since
+    // task by construction. Queued runs take a freed slot first, since
     // admission hands it to them as it frees and the timer ticks later; a free
     // slot with runs waiting is not offered here.
     const ticket = this.admission.request(Scheduler.admissionOf(key));
@@ -1605,12 +1585,12 @@ export class Scheduler {
 
   /** Run `auto` in the slot `lease` holds, and free it when the run is recorded. */
   private async dispatchRun(
-    auto: Automation,
-    trigger: AutomationRunTrigger,
+    auto: Task,
+    trigger: TaskRunTrigger,
     input: RunInput | undefined,
     lease: AdmissionLease,
     requested?: RequestedRun,
-  ): Promise<AutomationRun> {
+  ): Promise<TaskRun> {
     const key = Scheduler.keyOf(auto);
     const controller = new AbortController();
     this.activeRuns.set(key, controller);
@@ -1645,26 +1625,26 @@ export class Scheduler {
 
   /** Run the executor and record the outcome; the slot is released by the caller. */
   private async executeAndRecord(
-    auto: Automation,
+    auto: Task,
     controller: AbortController,
     dispatch: {
       startedAt: string;
-      trigger: AutomationRunTrigger;
+      trigger: TaskRunTrigger;
       input: RunInput | undefined;
       lease: AdmissionLease;
       firedOnceAt: string | undefined;
       requested: RequestedRun | undefined;
     },
-  ): Promise<AutomationRun> {
+  ): Promise<TaskRun> {
     const { startedAt, trigger, input, lease, firedOnceAt, requested } = dispatch;
-    const ticket = (run: AutomationRun) => {
+    const ticket = (run: TaskRun) => {
       if (requested && auto.workspaceId && auto.ownerId) {
         this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);
       }
     };
     ticket({
       id: requested?.runId ?? "",
-      automationId: auto.id,
+      taskId: auto.id,
       startedAt,
       status: "running",
       inputTokens: 0,
@@ -1695,9 +1675,9 @@ export class Scheduler {
       return run;
     } catch (err) {
       const { status, suffix, error, transient } = classifyRunFailure(err);
-      const failed: AutomationRun = {
+      const failed: TaskRun = {
         id: `run_${Date.now()}_${suffix}`,
-        automationId: auto.id,
+        taskId: auto.id,
         startedAt,
         completedAt: new Date().toISOString(),
         status,
@@ -1718,7 +1698,7 @@ export class Scheduler {
   }
 
   /** Report a written run record to `onRunRecorded`, after every file for it has landed. */
-  private runRecorded(auto: Automation): void {
+  private runRecorded(auto: Task): void {
     if (!auto.workspaceId || !auto.ownerId) return;
     this.config.onRunRecorded?.(auto.ownerId);
   }
@@ -1728,31 +1708,31 @@ export class Scheduler {
   // -----------------------------------------------------------------------
 
   /**
-   * Update automation state after a run completes.
+   * Update task state after a run completes.
    *
    * Re-reads definitions from disk before merging run-state fields to avoid
    * overwriting concurrent changes (e.g., a user pausing via the UI while
    * a run is in flight).
    *
    * `firedOnceAt` is the `at` of the once occurrence this run was (captured at
-   * dispatch; defaults to the dispatched automation's). The once is retired
+   * dispatch; defaults to the dispatched task's). The once is retired
    * only while the stored schedule still names that `at`: one edited during
    * the run is a new occurrence and stays armed.
    */
   updateAfterRun(
-    automation: Automation,
-    run: AutomationRun,
-    trigger?: AutomationRunTrigger,
-    firedOnceAt: string | undefined = automation.schedule?.at,
+    task: Task,
+    run: TaskRun,
+    trigger?: TaskRunTrigger,
+    firedOnceAt: string | undefined = task.schedule?.at,
   ): void {
-    const wsId = automation.workspaceId;
-    const ownerId = automation.ownerId;
-    if (!wsId || !ownerId) return; // defensive — every fired automation carries both
+    const wsId = task.workspaceId;
+    const ownerId = task.ownerId;
+    if (!wsId || !ownerId) return; // defensive — every fired task carries both
 
-    // Re-read THIS automation's own file to pick up concurrent changes (pause,
-    // config edits) without clobbering them. Per-automation files mean a
-    // concurrent edit to a sibling automation can never be lost here.
-    const auto = loadAutomation(this.config.workDir, wsId, ownerId, automation.id);
+    // Re-read THIS task's own file to pick up concurrent changes (pause,
+    // config edits) without clobbering them. Per-task files mean a
+    // concurrent edit to a sibling task can never be lost here.
+    const auto = loadTask(this.config.workDir, wsId, ownerId, task.id);
     if (!auto) return;
     // Stamp the authoritative workspace + owner (the path IS the binding) — same
     // backfill `loadAll` does on read, so `keyOf(auto)` below matches the
@@ -1786,17 +1766,17 @@ export class Scheduler {
 
     // Persist the run summary + the updated definition, then sync the single
     // in-memory entry so the timer sees the new nextRunAt without re-scanning.
-    appendRun(this.config.workDir, wsId, ownerId, automation.id, run);
-    automationRunsTotal.inc({ status: run.status });
-    saveAutomation(this.config.workDir, wsId, ownerId, auto);
+    appendRun(this.config.workDir, wsId, ownerId, task.id, run);
+    taskRunsTotal.inc({ status: run.status });
+    saveTask(this.config.workDir, wsId, ownerId, auto);
     this.definitions.set(Scheduler.keyOf(auto), auto);
   }
 
   /**
-   * Persist a run's full result sidecar under the automation's provenance
+   * Persist a run's full result sidecar under the task's provenance
    * workspace + owner. No-op when either is missing (defensive).
    */
-  private persistRunResult(auto: Automation, result: AutomationRunResult): void {
+  private persistRunResult(auto: Task, result: TaskRunResult): void {
     if (!auto.workspaceId || !auto.ownerId) return;
     saveRunResult(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, result);
   }
@@ -1813,12 +1793,12 @@ export class Scheduler {
    * occurrence of the schedule and leaves it alone.
    */
   private recordSkipped(
-    auto: Automation,
+    auto: Task,
     reason: string,
-    trigger?: AutomationRunTrigger,
+    trigger?: TaskRunTrigger,
     status: "skipped" | "cancelled" = "skipped",
     requested?: RequestedRun,
-  ): AutomationRun {
+  ): TaskRun {
     const now = Date.now();
     const run = this.writeNotStarted(auto, reason, status, now, requested);
     const wsId = auto.workspaceId;
@@ -1830,9 +1810,9 @@ export class Scheduler {
       return run;
     }
 
-    // Advance nextRunAt so this automation isn't immediately "due" again.
-    // Re-read THIS automation's file to avoid overwriting concurrent changes.
-    const fresh = loadAutomation(this.config.workDir, wsId, ownerId, auto.id);
+    // Advance nextRunAt so this task isn't immediately "due" again.
+    // Re-read THIS task's file to avoid overwriting concurrent changes.
+    const fresh = loadTask(this.config.workDir, wsId, ownerId, auto.id);
     if (fresh) {
       // Stamp the authoritative workspace + owner (see updateAfterRun) so the
       // composite key stays consistent with what `loadAll` keyed under.
@@ -1849,7 +1829,7 @@ export class Scheduler {
         setNextRunAt(fresh, null);
       }
       fresh.updatedAt = new Date(now).toISOString();
-      saveAutomation(this.config.workDir, wsId, ownerId, fresh);
+      saveTask(this.config.workDir, wsId, ownerId, fresh);
       this.definitions.set(Scheduler.keyOf(fresh), fresh);
     }
 
@@ -1859,21 +1839,21 @@ export class Scheduler {
 
   /**
    * Write the record of a run that did not start (no `trigger`, see
-   * {@link countsAsEventFire}) to the automation's history, and count it.
-   * Returns the record; writes nothing when the automation's store cannot be
+   * {@link countsAsEventFire}) to the task's history, and count it.
+   * Returns the record; writes nothing when the task's store cannot be
    * located.
    */
   private writeNotStarted(
-    auto: Automation,
+    auto: Task,
     reason: string,
     status: "skipped" | "cancelled",
     now: number,
     requested?: RequestedRun,
-  ): AutomationRun {
+  ): TaskRun {
     const at = new Date(now).toISOString();
-    const notStarted: AutomationRun = {
+    const notStarted: TaskRun = {
       id: `run_${now}_${status === "cancelled" ? "cancel" : "skip"}`,
-      automationId: auto.id,
+      taskId: auto.id,
       startedAt: at,
       completedAt: at,
       status,
@@ -1886,16 +1866,16 @@ export class Scheduler {
     const run = requested ? withRequest(notStarted, requested) : notStarted;
     if (!auto.workspaceId || !auto.ownerId) return run;
     appendRun(this.config.workDir, auto.workspaceId, auto.ownerId, auto.id, run);
-    automationRunsTotal.inc({ status: run.status });
+    taskRunsTotal.inc({ status: run.status });
     if (requested) this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);
     return run;
   }
 
   /**
    * Record a once schedule's occurrence as skipped because it is too late to
-   * fire (see {@link onceMissedWhileDown}), and leave the automation inert.
+   * fire (see {@link onceMissedWhileDown}), and leave the task inert.
    */
-  private recordMissedOnce(auto: Automation, now: number): void {
+  private recordMissedOnce(auto: Task, now: number): void {
     const at = auto.schedule?.at ?? "";
     const reason =
       `${ONCE_MISSED_REASON}${at}: the runtime was not running then, and it started more ` +
@@ -1904,12 +1884,12 @@ export class Scheduler {
     const ownerId = auto.ownerId;
     if (!wsId || !ownerId) return;
     this.writeNotStarted(auto, reason, "skipped", now);
-    const fresh = loadAutomation(this.config.workDir, wsId, ownerId, auto.id) ?? auto;
+    const fresh = loadTask(this.config.workDir, wsId, ownerId, auto.id) ?? auto;
     fresh.workspaceId = wsId;
     fresh.ownerId = ownerId;
     retireOnce(fresh, "missed", new Date(now).toISOString(), reason, now);
     fresh.updatedAt = new Date(now).toISOString();
-    saveAutomation(this.config.workDir, wsId, ownerId, fresh);
+    saveTask(this.config.workDir, wsId, ownerId, fresh);
     this.definitions.set(Scheduler.keyOf(fresh), fresh);
     this.runRecorded(auto);
   }

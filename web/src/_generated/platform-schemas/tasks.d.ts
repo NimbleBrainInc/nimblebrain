@@ -3,7 +3,7 @@
  * Regenerate: bun run codegen. AI agents: edit the source, not this file.
  */
 /**
- * Tool input schemas for the automations app. Imported by both the
+ * Tool input schemas for the tasks app. Imported by both the
  * in-process source (`src/platform/tasks/source.ts`) and the tool
  * handlers beside it (`src/platform/tasks/server.ts`) so the two
  * consumers always agree on the wire shape.
@@ -13,7 +13,7 @@
  *   create: { manifest: { ...config }, body: <prompt> }
  *   update: { name, manifest?: Partial<config>, body?: <new prompt> }
  *
- * `manifest` is the persistent automation definition; `body` is the prompt
+ * `manifest` is the persistent task definition; `body` is the prompt
  * that opens each run — the analog of a skill's markdown
  * body. The operator-only field `source` is intentionally absent from the
  * LLM-facing schema; it lives on the stored type and is set by the runtime,
@@ -21,7 +21,7 @@
  */
 import { type Static } from "@sinclair/typebox";
 import { NotificationRouteMatch } from "./notifications.ts";
-export declare const AutomationsCreateInput: import("@sinclair/typebox").TObject<{
+export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TObject<{
         name: import("@sinclair/typebox").TString;
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -57,8 +57,8 @@ export declare const AutomationsCreateInput: import("@sinclair/typebox").TObject
     }>;
     body: import("@sinclair/typebox").TString;
 }>;
-export type AutomationsCreateInput = Static<typeof AutomationsCreateInput>;
-export declare const AutomationsUpdateInput: import("@sinclair/typebox").TObject<{
+export type TasksCreateInput = Static<typeof TasksCreateInput>;
+export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
         description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -93,33 +93,33 @@ export declare const AutomationsUpdateInput: import("@sinclair/typebox").TObject
     }>>;
     body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
-export type AutomationsUpdateInput = Static<typeof AutomationsUpdateInput>;
-export declare const AutomationsDeleteInput: import("@sinclair/typebox").TObject<{
+export type TasksUpdateInput = Static<typeof TasksUpdateInput>;
+export declare const TasksDeleteInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
 }>;
-export type AutomationsDeleteInput = Static<typeof AutomationsDeleteInput>;
-export declare const AutomationsListInput: import("@sinclair/typebox").TObject<{
+export type TasksDeleteInput = Static<typeof TasksDeleteInput>;
+export declare const TasksListInput: import("@sinclair/typebox").TObject<{
     enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
     source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"user" | "agent">>;
     kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"all" | "saved" | "oneoff">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
-export type AutomationsListInput = Static<typeof AutomationsListInput>;
-export declare const AutomationsStatusInput: import("@sinclair/typebox").TObject<{
+export type TasksListInput = Static<typeof TasksListInput>;
+export declare const TasksStatusInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
-export type AutomationsStatusInput = Static<typeof AutomationsStatusInput>;
-export declare const AutomationsRunsInput: import("@sinclair/typebox").TObject<{
-    automationId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+export type TasksStatusInput = Static<typeof TasksStatusInput>;
+export declare const TasksRunsInput: import("@sinclair/typebox").TObject<{
+    taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
 }>;
-export type AutomationsRunsInput = Static<typeof AutomationsRunsInput>;
-export declare const AutomationsRunInput: import("@sinclair/typebox").TObject<{
+export type TasksRunsInput = Static<typeof TasksRunsInput>;
+export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<unknown>>;
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -139,31 +139,31 @@ export declare const AutomationsRunInput: import("@sinclair/typebox").TObject<{
         period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
     }>>;
 }>;
-export type AutomationsRunInput = Static<typeof AutomationsRunInput>;
-export declare const AutomationsCancelInput: import("@sinclair/typebox").TObject<{
+export type TasksRunInput = Static<typeof TasksRunInput>;
+export declare const TasksCancelInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TString;
 }>;
-export type AutomationsCancelInput = Static<typeof AutomationsCancelInput>;
-export declare const AutomationsRunResultInput: import("@sinclair/typebox").TObject<{
+export type TasksCancelInput = Static<typeof TasksCancelInput>;
+export declare const TasksRunResultInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     runId: import("@sinclair/typebox").TString;
 }>;
-export type AutomationsRunResultInput = Static<typeof AutomationsRunResultInput>;
+export type TasksRunResultInput = Static<typeof TasksRunResultInput>;
 /**
- * Status of the most recent automation run, as exposed via the list/
- * summary surface. Mirrors `AutomationRun["status"]` minus `"running"`
+ * Status of the most recent task run, as exposed via the list/
+ * summary surface. Mirrors `TaskRun["status"]` minus `"running"`
  * — the list view shows the most recent COMPLETED run's outcome, never
  * one in flight.
  */
-export type AutomationLastRunStatus = "success" | "degraded" | "failure" | "timeout" | "skipped";
+export type TaskLastRunStatus = "success" | "degraded" | "failure" | "timeout" | "skipped";
 /**
- * Summary row returned per automation by `handleList`. Subset of the
- * stored `Automation` shape plus a couple of human-formatted fields the
+ * Summary row returned per task by `handleList`. Subset of the
+ * stored `Task` shape plus a couple of human-formatted fields the
  * UI surfaces directly. `lastRunAt` / `nextRunAt` are human-relative
  * strings (e.g. "in 2h", "4h ago") — the raw ISO timestamps stay on the
- * stored `Automation`.
+ * stored `Task`.
  */
-export interface AutomationSummary {
+export interface TaskSummary {
     id: string;
     name: string;
     description?: string;
@@ -172,21 +172,21 @@ export interface AutomationSummary {
     /** The schedule's type, or `none` when nothing fires it unattended. */
     scheduleType: "cron" | "interval" | "event" | "once" | "none";
     kind: "saved" | "oneoff";
-    /** Set when a once schedule has fired or missed its time; the automation is inert until re-armed. */
-    onceDone?: AutomationOnceDone;
+    /** Set when a once schedule has fired or missed its time; the task is inert until re-armed. */
+    onceDone?: TaskOnceDone;
     enabled: boolean;
     source: "user" | "agent";
     runCount: number;
-    lastRunStatus: AutomationLastRunStatus | null;
+    lastRunStatus: TaskLastRunStatus | null;
     lastRunAt: string | null;
     nextRunAt: string | null;
     disabledAt: string | null;
     disabledReason: string | null;
     estimatedCostPerDay: number;
 }
-export interface AutomationsListOutput {
-    automations: AutomationSummary[];
-    /** Matches for the given filters BEFORE the page cap — not `automations.length`. */
+export interface TasksListOutput {
+    tasks: TaskSummary[];
+    /** Matches for the given filters BEFORE the page cap — not `tasks.length`. */
     total: number;
     /** How many are in this response. */
     returned: number;
@@ -211,14 +211,14 @@ export interface AutomationsListOutput {
     truncated?: string;
 }
 /**
- * Structural mirror of a single AutomationRun record as returned by
- * the handlers. Kept in sync with `AutomationRun` in
+ * Structural mirror of a single TaskRun record as returned by
+ * the handlers. Kept in sync with `TaskRun` in
  * `platform/tasks/types.ts` via the assertion test referenced
  * above. New fields added there MUST also appear here.
  */
-export interface AutomationRunRecord {
+export interface TaskRunRecord {
     id: string;
-    automationId: string;
+    taskId: string;
     startedAt: string;
     completedAt?: string;
     status: "queued" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled" | "skipped";
@@ -237,7 +237,7 @@ export interface AutomationRunRecord {
     input?: unknown;
     /** The idempotency key the run was requested with. */
     idempotencyKey?: string;
-    /** Whether the deliverable matched the automation's outputSchema; absent without one. */
+    /** Whether the deliverable matched the task's outputSchema; absent without one. */
     outputSchemaValid?: boolean;
     /** Why the deliverable did not match the outputSchema. */
     outputSchemaErrors?: string[];
@@ -262,13 +262,13 @@ export interface RunFileRefRecord {
 }
 /**
  * The full deliverable of a run, returned by `handleRunResult`. Mirror of
- * `AutomationRunResult` in `platform/tasks/types.ts`. A run is not a
+ * `TaskRunResult` in `platform/tasks/types.ts`. A run is not a
  * conversation: the result carries the final output, the activity log, and refs
  * to any files the run wrote in the workspace file store.
  */
-export interface AutomationsRunResultOutput {
+export interface TasksRunResultOutput {
     runId: string;
-    automationId: string;
+    taskId: string;
     completedAt: string;
     output: string;
     activityLog: RunToolCallRecord[];
@@ -279,28 +279,28 @@ export interface AutomationsRunResultOutput {
         iterations: number;
     };
     stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
-    /** The deliverable parsed as JSON, when the automation has an outputSchema and it parsed. */
+    /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
     structured?: unknown;
 }
 /**
- * Token budget block on a stored automation. Mirror of the
+ * Token budget block on a stored task. Mirror of the
  * `TokenBudget` interface; kept here to avoid a cross-tree import
  * (see top-of-section comment).
  */
-export interface AutomationTokenBudget {
+export interface TaskTokenBudget {
     maxInputTokens?: number;
     maxOutputTokens?: number;
     period?: "daily" | "monthly";
 }
 /** How a once schedule's occurrence ended, and when. Mirror of `OnceDone`. */
-export interface AutomationOnceDone {
+export interface TaskOnceDone {
     at: string;
     outcome: "ran" | "missed";
 }
 /**
- * Schedule spec block on a stored automation. Mirror of `ScheduleSpec`.
+ * Schedule spec block on a stored task. Mirror of `ScheduleSpec`.
  */
-export interface AutomationScheduleSpec {
+export interface TaskScheduleSpec {
     type: "cron" | "interval" | "event" | "once";
     expression?: string;
     timezone?: string;
@@ -311,20 +311,20 @@ export interface AutomationScheduleSpec {
     maxFiresPerHour?: number;
 }
 /**
- * Automation detail returned by `handleStatus`. Spreads the stored
- * Automation and overlays a few computed fields the UI consumes
+ * Task detail returned by `handleStatus`. Spreads the stored
+ * Task and overlays a few computed fields the UI consumes
  * directly: humanized schedule + relative-time strings, cost numbers,
  * and undefined→null coercion on optional fields (`tokenBudget`,
  * `budgetResetAt`) so JSON consumers see a consistent shape per field.
  */
-export interface AutomationStatusDetail {
+export interface TaskStatusDetail {
     id: string;
     name: string;
     description?: string;
     prompt: string;
-    schedule?: AutomationScheduleSpec;
+    schedule?: TaskScheduleSpec;
     kind?: "saved" | "oneoff";
-    onceDone?: AutomationOnceDone;
+    onceDone?: TaskOnceDone;
     scheduleHuman: string;
     enabled: boolean;
     source: "user" | "agent";
@@ -342,11 +342,11 @@ export interface AutomationStatusDetail {
     consecutiveErrors: number;
     cumulativeInputTokens: number;
     cumulativeOutputTokens: number;
-    tokenBudget: AutomationTokenBudget | null;
+    tokenBudget: TaskTokenBudget | null;
     budgetResetAt: string | null;
     lastRunAt?: string;
     lastRunAtHuman: string | null;
-    lastRunStatus?: AutomationLastRunStatus;
+    lastRunStatus?: TaskLastRunStatus;
     nextRunAt?: string;
     nextRunAtHuman: string | null;
     disabledAt?: string;
@@ -358,27 +358,27 @@ export interface AutomationStatusDetail {
     estimatedCostPerDay: number;
     estimatedCostPerMonth: number;
 }
-export interface AutomationsStatusOutput {
-    automation: AutomationStatusDetail;
-    recentRuns: AutomationRunRecord[];
+export interface TasksStatusOutput {
+    task: TaskStatusDetail;
+    recentRuns: TaskRunRecord[];
 }
-export interface AutomationsRunsOutput {
-    runs: AutomationRunRecord[];
+export interface TasksRunsOutput {
+    runs: TaskRunRecord[];
     total: number;
     /**
-     * Pass as `before` for the next older page of one automation's history;
-     * absent when nothing older remains (or when runs span every automation).
+     * Pass as `before` for the next older page of one task's history;
+     * absent when nothing older remains (or when runs span every task).
      */
     nextBefore?: string;
 }
 /**
  * Discriminated union — `handleRun` returns one of two shapes:
  *
- *   { run: AutomationRunRecord; enabled; message? }  when the run finishes
+ *   { run: TaskRunRecord; enabled; message? }  when the run finishes
  *                                                    inside the sync-wait
  *                                                    window (~30s default).
  *
- *   { status: "dispatched"; automationId;            when the run is still
+ *   { status: "dispatched"; taskId;            when the run is still
  *     startedAt; enabled; message }                  in flight after the
  *                                                    window. It keeps going;
  *                                                    its record lands in
@@ -386,7 +386,7 @@ export interface AutomationsRunsOutput {
  *                                                    (`since: startedAt`)
  *                                                    when it ends.
  *
- *   { status: "queued"; automationId; position;     when every run slot was
+ *   { status: "queued"; taskId; position;     when every run slot was
  *     queuedAt; enabled; message }                   busy. It starts as soon
  *                                                    as a slot frees; its record
  *                                                    lands in `tasks__runs`
@@ -398,9 +398,9 @@ export interface AutomationsRunsOutput {
  * spent token budget) returns the first shape with a `skipped` run whose
  * `error` says why.
  *
- * `enabled` is the automation's own flag. Run now runs a disabled automation,
+ * `enabled` is the task's own flag. Run now runs a disabled task,
  * because it is a deliberate act and the create form's test run depends on
- * it; a disabled automation is not fired by its schedule or by events, and
+ * it; a disabled task is not fired by its schedule or by events, and
  * `message` says so.
  *
  * Both shapes indicate the dispatch succeeded; only an error response
@@ -408,13 +408,13 @@ export interface AutomationsRunsOutput {
  * dereferencing `run.*` — `as { run: ... }` is the anti-pattern that
  * caused the production CLI crash this type prevents.
  */
-export type AutomationsRunOutput = {
-    run: AutomationRunRecord;
+export type TasksRunOutput = {
+    run: TaskRunRecord;
     enabled: boolean;
     message?: string;
 } | {
     status: "dispatched";
-    automationId: string;
+    taskId: string;
     /** The run's id: read its result with tasks__run_result. */
     runId: string;
     startedAt: string;
@@ -422,7 +422,7 @@ export type AutomationsRunOutput = {
     message: string;
 } | {
     status: "queued";
-    automationId: string;
+    taskId: string;
     /** The run's id: read its result with tasks__run_result. */
     runId: string;
     /** 1 is next to start. */
@@ -431,24 +431,24 @@ export type AutomationsRunOutput = {
     enabled: boolean;
     message: string;
 };
-export interface AutomationsCancelOutput {
+export interface TasksCancelOutput {
     cancelled: boolean;
     id: string;
     message: string;
 }
 /**
- * A stored automation, as `tasks__create` and `tasks__update`
- * return it. Mirror of `Automation` (`src/platform/tasks/types.ts`),
+ * A stored task, as `tasks__create` and `tasks__update`
+ * return it. Mirror of `Task` (`src/platform/tasks/types.ts`),
  * held to it by `src/platform/tasks/output-types-drift-guard.ts`.
  */
-export interface AutomationRecord {
+export interface TaskRecord {
     id: string;
     name: string;
     description?: string;
     prompt: string;
-    schedule?: AutomationScheduleSpec;
+    schedule?: TaskScheduleSpec;
     kind?: "saved" | "oneoff";
-    onceDone?: AutomationOnceDone;
+    onceDone?: TaskOnceDone;
     skill?: string;
     allowedTools?: string[];
     inputSchema?: Record<string, unknown>;
@@ -464,7 +464,7 @@ export interface AutomationRecord {
     createdAt: string;
     updatedAt: string;
     lastRunAt?: string;
-    lastRunStatus?: AutomationLastRunStatus;
+    lastRunStatus?: TaskLastRunStatus;
     nextRunAt?: string;
     runCount: number;
     consecutiveErrors: number;
@@ -472,34 +472,34 @@ export interface AutomationRecord {
     disabledReason?: string;
     cumulativeInputTokens: number;
     cumulativeOutputTokens: number;
-    tokenBudget?: AutomationTokenBudget;
+    tokenBudget?: TaskTokenBudget;
     budgetResetAt?: string;
 }
 /**
- * The caps a run of the automation executes under: each cap the definition
+ * The caps a run of the task executes under: each cap the definition
  * sets, lowered to the runtime's per-run ceiling, and the runtime default held
  * to the ceiling where it sets none. `maxInputTokens` is absent when the run
  * has no input-token cap (neither the definition nor the runtime sets one).
  * `message` names any cap that was lowered.
  */
-export interface AutomationEffectiveLimits {
+export interface TaskEffectiveLimits {
     maxIterations: number;
     maxInputTokens?: number;
     maxRunDurationMs: number;
 }
-export interface AutomationsCreateOutput {
-    automation: AutomationRecord;
+export interface TasksCreateOutput {
+    task: TaskRecord;
     created: boolean;
     message: string;
-    effectiveLimits: AutomationEffectiveLimits;
+    effectiveLimits: TaskEffectiveLimits;
 }
-export interface AutomationsUpdateOutput {
-    automation: AutomationRecord;
+export interface TasksUpdateOutput {
+    task: TaskRecord;
     updated: boolean;
     message: string;
-    effectiveLimits: AutomationEffectiveLimits;
+    effectiveLimits: TaskEffectiveLimits;
 }
-export interface AutomationsDeleteOutput {
+export interface TasksDeleteOutput {
     deleted: boolean;
     id: string;
     message: string;

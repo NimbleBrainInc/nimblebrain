@@ -236,7 +236,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     features: fileConfig.features as RuntimeConfig["features"],
     connectors: fileConfig.connectors as RuntimeConfig["connectors"],
     files: fileConfig.files as RuntimeConfig["files"],
-    automations: fileConfig.automations as RuntimeConfig["automations"],
+    tasks: fileConfig.tasks as RuntimeConfig["tasks"],
     usage: fileConfig.usage as RuntimeConfig["usage"],
     sessionStore: fileConfig.sessionStore as RuntimeConfig["sessionStore"],
     notifications: fileConfig.notifications as RuntimeConfig["notifications"],

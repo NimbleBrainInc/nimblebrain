@@ -447,7 +447,7 @@ describe("LLM latency + error metrics", () => {
   });
 
   // The point of the `origin` label is that a p99 can separate a person waiting
-  // from an automation nobody is watching. A label that is present but always
+  // from a task nobody is watching. A label that is present but always
   // the same value would satisfy a shape assertion and still answer nothing, so
   // these drive the two origins through the real derivation (the request
   // context) rather than asserting the label exists.

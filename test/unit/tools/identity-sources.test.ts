@@ -16,15 +16,15 @@ describe("identity sources", () => {
 });
 
 describe("task-forbidden identity tools", () => {
-  // An unattended automation run must not reach the automation-authoring
+  // An unattended task run must not reach the task-authoring
   // surface — that is the persistence vector an injected prompt would exploit.
-  it("bars every mutating and run-triggering automations tool", () => {
+  it("bars every mutating and run-triggering tasks tool", () => {
     for (const tool of ["tasks__create", "tasks__update", "tasks__delete", "tasks__run"]) {
       expect(isTaskForbiddenIdentityTool(tool)).toBe(true);
     }
   });
 
-  it("leaves read-only automations tools and other identity tools reachable", () => {
+  it("leaves read-only tasks tools and other identity tools reachable", () => {
     for (const tool of [
       "tasks__list",
       "tasks__status",
@@ -38,8 +38,8 @@ describe("task-forbidden identity tools", () => {
     }
   });
 
-  it("fails closed: a new automations tool is barred unless explicitly marked safe (allowlist)", () => {
-    // The defense is an allowlist within the automations namespace, not a
+  it("fails closed: a new tasks tool is barred unless explicitly marked safe (allowlist)", () => {
+    // The defense is an allowlist within the tasks namespace, not a
     // denylist of known-bad names — so a future authoring tool is denied by
     // default instead of silently reopening the vector.
     expect(isTaskForbiddenIdentityTool("tasks__set_schedule")).toBe(true);
@@ -47,7 +47,7 @@ describe("task-forbidden identity tools", () => {
     expect(isTaskForbiddenIdentityTool("tasks__anything_new")).toBe(true);
   });
 
-  it("gates only the automations namespace", () => {
+  it("gates only the tasks namespace", () => {
     expect(isTaskForbiddenIdentityTool("nb__search")).toBe(false);
     for (const safe of TASK_RUN_SAFE_TOOLS) {
       expect(safe.startsWith("tasks__")).toBe(true);

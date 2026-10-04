@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { BackArrowIcon } from "../icons.tsx";
-import type { AutomationRun } from "../types.ts";
+import type { TaskRun } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatCost, formatDuration, formatTokens, statusDotClass } from "../utils.ts";
 import { SchedulePicker, type ScheduleSpec } from "./SchedulePicker.tsx";
@@ -114,7 +114,7 @@ function ScheduleSummary({ schedule }: { schedule: ScheduleSpec | null }) {
   );
 }
 
-export function CreateAutomationForm({
+export function CreateTaskForm({
   onCreated,
   onCancel,
   initialTemplate,
@@ -140,7 +140,7 @@ export function CreateAutomationForm({
   const [allowedTools, setAllowedTools] = useState("");
   const [creating, setCreating] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<Partial<AutomationRun> | null>(null);
+  const [testResult, setTestResult] = useState<Partial<TaskRun> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -183,7 +183,7 @@ export function CreateAutomationForm({
     try {
       const result = await createTool.call({ manifest, body: prompt.trim() });
       const data = asDict(result.data);
-      return ((data.automation as Record<string, unknown>)?.name as string) ?? name;
+      return ((data.task as Record<string, unknown>)?.name as string) ?? name;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task");
       return null;
@@ -214,7 +214,7 @@ export function CreateAutomationForm({
       // A run that outlasts the tool's sync wait returns a dispatched envelope
       // (status, startedAt), and one waiting for a run slot a queued envelope
       // (status "queued"), in place of `run`; all render through the same fields.
-      setTestResult((data.run as AutomationRun | undefined) ?? (data as Partial<AutomationRun>));
+      setTestResult((data.run as TaskRun | undefined) ?? (data as Partial<TaskRun>));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Test run failed");
     }
@@ -352,7 +352,7 @@ export function CreateAutomationForm({
           )}
           <div style={hintStyle}>
             Counted in tokens, not dollars. Checked before each step: a run stops when too little of
-            the day's budget is left, and the automation turns off until you turn it back on.
+            the day's budget is left, and the task turns off until you turn it back on.
           </div>
 
           <div className="detail-config-label" style={{ marginTop: 12 }}>

@@ -14,7 +14,7 @@
  * workspace-scoped writer against a workspace that is gone and asserts the
  * refusal names the workspace — and then drives the same write inside a live
  * root, because "create your own subdirectory on first write" is still how
- * conversations, files, notifications and automations are meant to behave.
+ * conversations, files, notifications and tasks are meant to behave.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -32,9 +32,9 @@ import { parseNotificationEnvelope } from "../../../src/notifications/envelope.t
 import { NotificationStore } from "../../../src/notifications/store.ts";
 import type { NotificationEnvelope } from "../../../src/notifications/types.ts";
 import { PermissionStore } from "../../../src/permissions/permission-store.ts";
-import { automationRunsDir, workspaceTasksDir } from "../../../src/platform/tasks/paths.ts";
-import { appendRun, saveAutomation } from "../../../src/platform/tasks/store.ts";
-import type { Automation, AutomationRun } from "../../../src/platform/tasks/types.ts";
+import { taskRunsDir, workspaceTasksDir } from "../../../src/platform/tasks/paths.ts";
+import { appendRun, saveTask } from "../../../src/platform/tasks/store.ts";
+import type { Task, TaskRun } from "../../../src/platform/tasks/types.ts";
 import { materializeConnectorSkill } from "../../../src/skills/connector-skill-store.ts";
 import { writeSkill } from "../../../src/skills/writer.ts";
 import { FileCredentialStore } from "../../../src/tools/credential-store.ts";
@@ -62,7 +62,7 @@ function ctx(): WorkspaceContext {
   return new WorkspaceContext({ wsId: WS, workDir });
 }
 
-function automation(): Automation {
+function task(): Task {
   return {
     id: "daily-digest",
     name: "Daily digest",
@@ -81,10 +81,10 @@ function automation(): Automation {
   };
 }
 
-function run(): AutomationRun {
+function run(): TaskRun {
   return {
     id: "run_1",
-    automationId: "daily-digest",
+    taskId: "daily-digest",
     startedAt: "2026-01-01T00:00:00.000Z",
     completedAt: "2026-01-01T00:00:01.000Z",
     status: "success",
@@ -121,11 +121,11 @@ Confirm the recipient before calling gmail__send.
  */
 const WRITERS: Array<{ name: string; write: () => void | Promise<void> }> = [
   {
-    name: "automations — a definition",
-    write: () => saveAutomation(workDir, WS, OWNER, automation()),
+    name: "tasks — a definition",
+    write: () => saveTask(workDir, WS, OWNER, task()),
   },
   {
-    name: "automations — a run summary",
+    name: "tasks — a run summary",
     write: () => appendRun(workDir, WS, OWNER, "daily-digest", run()),
   },
   {
@@ -249,10 +249,10 @@ describe("the same write inside a live workspace", () => {
     expect(existsSync(workspaceConversationsDir(workDir, WS, OWNER))).toBe(true);
 
     expect(existsSync(workspaceTasksDir(workDir, WS, OWNER))).toBe(false);
-    saveAutomation(workDir, WS, OWNER, automation());
-    expect(existsSync(automationRunsDir(workDir, WS, OWNER, "daily-digest"))).toBe(false);
+    saveTask(workDir, WS, OWNER, task());
+    expect(existsSync(taskRunsDir(workDir, WS, OWNER, "daily-digest"))).toBe(false);
     appendRun(workDir, WS, OWNER, "daily-digest", run());
-    expect(existsSync(automationRunsDir(workDir, WS, OWNER, "daily-digest"))).toBe(true);
+    expect(existsSync(taskRunsDir(workDir, WS, OWNER, "daily-digest"))).toBe(true);
   });
 });
 
@@ -274,8 +274,8 @@ describe("outside any workspace tree", () => {
     // The leak this guard shipped with: the scan tested the segment after the
     // LAST `workspaces`, so a path ENDING in `workspaces` had no successor to
     // test, read as "not a workspace tree", and fell through to the unguarded
-    // mkdir. `automationRunsDir` ends in `runs/<automationId>` and an
-    // automation named "Workspaces" slugs to exactly that, so this was
+    // mkdir. `taskRunsDir` ends in `runs/<taskId>` and a
+    // task named "Workspaces" slugs to exactly that, so this was
     // reachable by naming one.
     expect(() => appendRun(workDir, WS, OWNER, "workspaces", run())).toThrow(
       WorkspaceRootMissingError,
@@ -285,7 +285,7 @@ describe("outside any workspace tree", () => {
     // And it still creates the dir inside a live root.
     seedWorkspaceRoot(workDir, WS);
     appendRun(workDir, WS, OWNER, "workspaces", run());
-    expect(existsSync(automationRunsDir(workDir, WS, OWNER, "workspaces"))).toBe(true);
+    expect(existsSync(taskRunsDir(workDir, WS, OWNER, "workspaces"))).toBe(true);
   });
 
   test("a `workspaces/` segment followed by a non-workspace id is not a root", () => {

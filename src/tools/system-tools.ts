@@ -606,8 +606,8 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
           "## This turn",
           `Running on: ${running}`,
           // True of every run, not just a chat: a conversation's model is
-          // pinned at create, a sub-agent's comes from its profile, and an
-          // automation's is resolved at start. In all three the model is
+          // pinned at create, a sub-agent's comes from its profile, and a
+          // task's is resolved at start. In all three the model is
           // settled before the turn begins and the config below cannot move it.
           "Fixed for this turn — changing the configuration below does not affect it.",
           "",

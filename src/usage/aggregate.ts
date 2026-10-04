@@ -68,7 +68,7 @@ export interface UsageTotals {
   llmMs: number;
   /** Distinct chat conversations. Task runs are counted by `runs`, not here. */
   conversations: number;
-  /** Distinct task runs — automations, which have no conversation to count. */
+  /** Distinct task runs — tasks, which have no conversation to count. */
   runs?: number;
   /**
    * Calls whose model no price could be found for, at write time or now.
@@ -77,7 +77,7 @@ export interface UsageTotals {
    * is not, so a report carrying this is saying its dollar figure is
    * incomplete — as distinct from a spend of zero, which is what a bare
    * `$0.00` beside a large token count would otherwise imply. Backfilled
-   * automation history is the common case.
+   * task history is the common case.
    */
   unpricedCalls?: number;
   /** Input-side cache-hit rate (0–1). See `computeCacheHitRate`. */
@@ -115,7 +115,7 @@ export interface BreakdownEntry {
   llmCalls: number;
   /** Distinct chat conversations. Task runs are counted by `runs`, not here. */
   conversations: number;
-  /** Distinct task runs — automations, which have no conversation to count. */
+  /** Distinct task runs — tasks, which have no conversation to count. */
   runs?: number;
   /**
    * Calls whose model no price could be found for, at write time or now.
@@ -124,7 +124,7 @@ export interface BreakdownEntry {
    * is not, so a report carrying this is saying its dollar figure is
    * incomplete — as distinct from a spend of zero, which is what a bare
    * `$0.00` beside a large token count would otherwise imply. Backfilled
-   * automation history is the common case.
+   * task history is the common case.
    */
   unpricedCalls?: number;
   /** Input-side cache-hit rate (0–1). See `computeCacheHitRate`. */
@@ -258,7 +258,7 @@ export function providerOf(model: string): string {
  * Whether this line's cost is a real number rather than an absence.
  *
  * True when the line carries stored rates, or when the catalog can still price
- * its model. False for a backfilled automation line (`model: "unknown"`) and
+ * its model. False for a backfilled task line (`model: "unknown"`) and
  * for anything else the catalog has never known — those contribute tokens and
  * no dollars, and are counted separately so the total reads as incomplete
  * rather than as zero.
@@ -290,7 +290,7 @@ function normalizeGroupBys(groupBy: string | string[]): UsageGroupBy[] {
 // ── Legacy `sessionId` normalization ─────────────────────────────────────
 //
 // Records written before the id split carry one `sessionId` holding either a
-// conversation or an automation run, told apart by `origin`. Records written
+// conversation or a task run, told apart by `origin`. Records written
 // since carry `conversationId` / `taskRunId` under their own names. Both shapes
 // are in the retention window at once, so every read goes through these two
 // helpers rather than touching either field directly.
@@ -306,10 +306,10 @@ function conversationOf(record: LlmCallRecord): string | undefined {
   return record.origin === "task" ? undefined : record.sessionId;
 }
 
-/** The automation run a record belongs to, new shape or old. */
+/** The task run a record belongs to, new shape or old. */
 function taskRunOf(record: LlmCallRecord): string | undefined {
   if (record.taskRunId) return record.taskRunId;
-  // Legacy: `sessionId` was an automation run only when the call was a task.
+  // Legacy: `sessionId` was a task run only when the call was a task.
   return record.origin === "task" ? record.sessionId : undefined;
 }
 
@@ -702,7 +702,7 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
   addCost(sink.totals.cost, cost);
   sink.totals.llmMs += record.llmMs;
   // `conversationOf` / `taskRunOf` decide which of the two a record belongs to,
-  // so an automation is never counted as a conversation.
+  // so a task is never counted as a conversation.
   const conversationId = conversationOf(record);
   const taskRunId = taskRunOf(record);
   if (conversationId) sink.conversationIds.add(conversationId);
@@ -728,7 +728,7 @@ function accumulateRecord(record: LlmCallRecord, sink: AggregationSink): void {
     addCost(bucket.cost, cost);
     bucket.llmCalls++;
     // Same split as `totals`, through the same two helpers, so a breakdown row
-    // cannot report an automation as a conversation while the totals disagree.
+    // cannot report a task as a conversation while the totals disagree.
     if (conversationId) bucket.sids.add(conversationId);
     if (taskRunId) bucket.runIds.add(taskRunId);
     if (!priced) bucket.unpricedCalls++;

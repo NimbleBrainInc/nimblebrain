@@ -19,7 +19,7 @@ export interface RequestContext {
    * wall).
    *
    * Set on every door: chat (the workspace its request addresses, which a
-   * resume shares with its conversation), automation runs
+   * resume shares with its conversation), task runs
    * (provenance), `/mcp` (the membership-validated workspace in its URL),
    * REST (the membership-validated workspace in its URL), and each
    * per-call restamp (the routed workspace, which the wall guarantees is the
@@ -62,7 +62,7 @@ export interface RequestContext {
    * had to know which caller populated it — which five of the nine readers
    * did not. They looked the id up as a conversation and got a miss: a tool
    * reporting `Conversation not found: run_…`, a dedupe check reading a
-   * conversation that does not exist, and a skill an automation created
+   * conversation that does not exist, and a skill a task created
    * persisting `origin: "chat"` with a run id attached.
    *
    * A reader wanting "the conversation" reads `conversationId` and correctly
@@ -87,11 +87,11 @@ export interface RequestContext {
   model?: string;
   toolPromotion?: ToolPromotionControls;
   /**
-   * True when this context belongs to an unattended run (`executeTask` — an
-   * automation), false/undefined for interactive chat. Set once by the runtime
+   * True when this context belongs to an unattended run (`executeTask` — a
+   * task), false/undefined for interactive chat. Set once by the runtime
    * (never from caller input) and, because it rides the AsyncLocalStorage
    * context, inherited by every tool dispatched below it. Consumers use it to
-   * bar the automation-authoring surface from a run that has no human present
+   * bar the task-authoring surface from a run that has no human present
    * to confirm — a restriction, never an escalation, which is why it is
    * safe for `IdentityToolRouter` to read at execute time even though identity
    * is not (see that module's trust-boundary note).

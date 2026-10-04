@@ -92,7 +92,7 @@ export interface IdentityToolRouterOptions {
    * records it: a chat, an unattended run, or an unattended dispatch. The
    * constructor's caller knows; nothing downstream can tell.
    */
-  caller: Extract<AdminToolCaller, "chat" | "automation" | "dispatch">;
+  caller: Extract<AdminToolCaller, "chat" | "task" | "dispatch">;
   /**
    * Narrows what the run may reach: a tool name it rejects is neither listed
    * (so `nb__manage_tools` cannot activate it) nor dispatched. The run's
@@ -136,7 +136,7 @@ function buildPerCallContext(
     ...(outer?.model !== undefined ? { model: outer.model } : {}),
     ...(outer?.toolPromotion !== undefined ? { toolPromotion: outer.toolPromotion } : {}),
     // `unattended` rides the restamp so a tool dispatched from an unattended
-    // run stays walled from the automation-authoring surface. Dropping it here
+    // run stays walled from the task-authoring surface. Dropping it here
     // would reopen the wall for anything below the top level.
     ...(outer?.unattended !== undefined ? { unattended: outer.unattended } : {}),
   };
@@ -271,8 +271,8 @@ export class IdentityToolRouter implements ToolRouter {
    * `disallow` gate. Only a workspace route is checked: a personal connector acts on its owner's own
    * account, and a kernel identity source keeps its own gates.
    *
-   * The principal is the router's own `identityId` — the chat user, an
-   * automation's owner, or an unattended dispatch's principal — the identity
+   * The principal is the router's own `identityId` — the chat user, a
+   * task's owner, or an unattended dispatch's principal — the identity
    * the wall already commits this router to, not whatever is ambient.
    */
   private async connectorAdminDenial(

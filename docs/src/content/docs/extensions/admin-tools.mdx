@@ -33,7 +33,7 @@ For anyone who is not a **workspace admin** of the workspace the call is bound t
   agent's tools in chat, tool search, and the [MCP endpoint](/connect/mcp-endpoint/).
   A member's agent never sees a tool it would be refused.
 - **Calls are refused on every path**: chat, the MCP endpoint, your app's UI
-  through the [app bridge](/apps/bridge/), REST, and automations and other
+  through the [app bridge](/apps/bridge/), REST, and tasks and other
   unattended runs. A refused call never reaches your server.
 - **The refusal is structured.** It is an error result whose `structuredContent` is:
 
@@ -82,7 +82,7 @@ This is the same rule as the [settings section](/extensions/settings-sections/)'
 - **Every call is audited.** The host writes an
   [`audit.admin_tool_call`](/config/logging/#event-types) line to the workspace
   log for each call to one of these tools, admitted or refused. It names the
-  person and whether the call came from chat, an automation, your app's UI or
+  person and whether the call came from chat, a task, your app's UI or
   another client, and records the arguments. Mark every secret
   `"writeOnly": true` in the tool's input schema. An argument whose schema
   contains it anywhere (an optional secret's `anyOf` branch, a nested field, a
@@ -93,7 +93,7 @@ This is the same rule as the [settings section](/extensions/settings-sections/)'
 
 <Aside type="caution" title="It gates who calls, not whether a person is present">
 `admin_tools` controls **who** can call a tool. A workspace admin's agent acts as
-that admin and passes the check, and so does an automation run as that admin. An
+that admin and passes the check, and so does a task run as that admin. An
 admin-only tool must still be safe for that agent to call: validate its
 arguments, keep it idempotent where you can, and do not treat an admitted call
 as proof that a human reviewed it.

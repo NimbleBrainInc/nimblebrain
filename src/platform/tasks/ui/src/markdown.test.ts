@@ -1,5 +1,5 @@
 /**
- * Sanitization contract for the automations reader's markdown renderer.
+ * Sanitization contract for the tasks reader's markdown renderer.
  *
  * `renderMarkdown()` runs LLM output (which may include third-party
  * content fetched by tools) through marked + DOMPurify before injection

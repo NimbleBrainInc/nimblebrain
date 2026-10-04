@@ -1,9 +1,9 @@
 /**
- * Backoff behavior tests for the automation scheduler.
+ * Backoff behavior tests for the task scheduler.
  *
  * Verifies exponential backoff delays after consecutive failures,
  * reset on success, transient vs non-transient error classification,
- * and that backoff-delayed automations are not executed prematurely.
+ * and that backoff-delayed tasks are not executed prematurely.
  *
  * Uses time manipulation (not real waits) via direct scheduler state
  * and the exported helper functions.
@@ -20,8 +20,8 @@ import {
   isTransientError,
   Scheduler,
 } from "../../../../src/platform/tasks/scheduler.ts";
-import { saveAutomation } from "../../../../src/platform/tasks/store.ts";
-import type { Automation, AutomationRun } from "../../../../src/platform/tasks/types.ts";
+import { saveTask } from "../../../../src/platform/tasks/store.ts";
+import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 // ---------------------------------------------------------------------------
@@ -30,10 +30,10 @@ import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
 let tmpDir: string;
 
-// Automations are workspace-owned: the scheduler scans
+// Tasks are workspace-owned: the scheduler scans
 // `{workDir}/workspaces/<wsId>/tasks/<ownerId>/`. `makeTmpDir` returns the
 // workDir root handed straight to the Scheduler; `seedDefs`/`loadDefs` write/read
-// the per-automation store; `defOf` looks up the composite-keyed definitions.
+// the per-task store; `defOf` looks up the composite-keyed definitions.
 const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 
@@ -43,24 +43,24 @@ function makeTmpDir(): string {
   return dir;
 }
 
-function seedDefs(workDir: string, defs: Map<string, Automation>): void {
+function seedDefs(workDir: string, defs: Map<string, Task>): void {
   for (const auto of defs.values()) {
     if (!auto.workspaceId) auto.workspaceId = WS;
     if (!auto.ownerId) auto.ownerId = OWNER;
-    saveAutomation(workDir, WS, OWNER, auto);
+    saveTask(workDir, WS, OWNER, auto);
   }
 }
 
-function defOf(scheduler: Scheduler, id: string, owner = OWNER, ws = WS): Automation | undefined {
+function defOf(scheduler: Scheduler, id: string, owner = OWNER, ws = WS): Task | undefined {
   return scheduler.getDefinitions().get(`${ws}/${owner}/${id}`);
 }
 
 /** Wrap a run in the executor's `{ run, result }` return shape. */
-function execOk(run: AutomationRun): { run: AutomationRun; result: null } {
+function execOk(run: TaskRun): { run: TaskRun; result: null } {
   return { run, result: null };
 }
 
-function makeAutomation(overrides: Partial<Automation> = {}): Automation {
+function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "backoff-test",
     ownerId: OWNER,
@@ -80,10 +80,10 @@ function makeAutomation(overrides: Partial<Automation> = {}): Automation {
   };
 }
 
-function makeFailureRun(automationId: string, error = "Something broke"): AutomationRun {
+function makeFailureRun(taskId: string, error = "Something broke"): TaskRun {
   return {
     id: `run_fail_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    automationId,
+    taskId,
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
     status: "failure",
@@ -96,10 +96,10 @@ function makeFailureRun(automationId: string, error = "Something broke"): Automa
   };
 }
 
-function makeSuccessRun(automationId: string): AutomationRun {
+function makeSuccessRun(taskId: string): TaskRun {
   return {
     id: `run_ok_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    automationId,
+    taskId,
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
     status: "success",
@@ -124,20 +124,20 @@ afterEach(() => {
 
 describe("backoff delay progression", () => {
   test("3 consecutive failures produce increasing backoff delays (respecting natural interval)", async () => {
-    // 1-min interval automation. Backoff uses max(backoff, naturalInterval):
+    // 1-min interval task. Backoff uses max(backoff, naturalInterval):
     // Failure 1: max(30s, 60s) = 60s
     // Failure 2: max(60s, 60s) = 60s
     // Failure 3: max(300s, 60s) = 300s
-    const auto = makeAutomation({
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
       lastRunAt: new Date(Date.now() - 60_001).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
     let failCount = 0;
-    const executor: Executor = mock(async (a: Automation, _signal: AbortSignal) => {
+    const executor: Executor = mock(async (a: Task, _signal: AbortSignal) => {
       failCount++;
       return execOk(makeFailureRun(a.id, `Failure #${failCount}`));
     }) as Executor;
@@ -191,15 +191,15 @@ describe("backoff delay progression", () => {
 describe("backoff reset on success", () => {
   test("success after failures resets consecutiveErrors to 0", async () => {
     // Start with 3 consecutive errors, next run due now
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 3,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
-    const executor: Executor = mock(async (a: Automation, _signal: AbortSignal) =>
+    const executor: Executor = mock(async (a: Task, _signal: AbortSignal) =>
       execOk(makeSuccessRun(a.id)),
     ) as Executor;
 
@@ -270,21 +270,21 @@ describe("transient vs non-transient error classification", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Backoff-delayed automation is not executed before backoff expires
+// Backoff-delayed task is not executed before backoff expires
 // ---------------------------------------------------------------------------
 
 describe("backoff prevents premature execution", () => {
-  test("automation in backoff period is skipped by onTimer", async () => {
-    // Set up an automation with 2 errors and nextRunAt 60s in the future
-    const auto = makeAutomation({
+  test("task in backoff period is skipped by onTimer", async () => {
+    // Set up a task with 2 errors and nextRunAt 60s in the future
+    const auto = makeTask({
       consecutiveErrors: 2,
       nextRunAt: new Date(Date.now() + 60_000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
-    const executor: Executor = mock(async (a: Automation, _signal: AbortSignal) =>
+    const executor: Executor = mock(async (a: Task, _signal: AbortSignal) =>
       execOk(makeSuccessRun(a.id)),
     ) as Executor;
 
@@ -299,17 +299,17 @@ describe("backoff prevents premature execution", () => {
     scheduler.stop();
   });
 
-  test("automation executes after backoff period expires", async () => {
+  test("task executes after backoff period expires", async () => {
     // Set nextRunAt to the past (backoff has expired)
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 1,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
-    const executor: Executor = mock(async (a: Automation, _signal: AbortSignal) =>
+    const executor: Executor = mock(async (a: Task, _signal: AbortSignal) =>
       execOk(makeSuccessRun(a.id)),
     ) as Executor;
 
@@ -325,19 +325,19 @@ describe("backoff prevents premature execution", () => {
   });
 
   test("isInBackoff correctly identifies active backoff", () => {
-    const futureAuto = makeAutomation({
+    const futureAuto = makeTask({
       consecutiveErrors: 2,
       nextRunAt: new Date(Date.now() + 60_000).toISOString(),
     });
     expect(isInBackoff(futureAuto, Date.now())).toBe(true);
 
-    const pastAuto = makeAutomation({
+    const pastAuto = makeTask({
       consecutiveErrors: 2,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
     expect(isInBackoff(pastAuto, Date.now())).toBe(false);
 
-    const noErrorAuto = makeAutomation({
+    const noErrorAuto = makeTask({
       consecutiveErrors: 0,
       nextRunAt: new Date(Date.now() + 60_000).toISOString(),
     });

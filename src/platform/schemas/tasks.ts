@@ -1,5 +1,5 @@
 /**
- * Tool input schemas for the automations app. Imported by both the
+ * Tool input schemas for the tasks app. Imported by both the
  * in-process source (`src/platform/tasks/source.ts`) and the tool
  * handlers beside it (`src/platform/tasks/server.ts`) so the two
  * consumers always agree on the wire shape.
@@ -9,7 +9,7 @@
  *   create: { manifest: { ...config }, body: <prompt> }
  *   update: { name, manifest?: Partial<config>, body?: <new prompt> }
  *
- * `manifest` is the persistent automation definition; `body` is the prompt
+ * `manifest` is the persistent task definition; `body` is the prompt
  * that opens each run — the analog of a skill's markdown
  * body. The operator-only field `source` is intentionally absent from the
  * LLM-facing schema; it lives on the stored type and is set by the runtime,
@@ -26,10 +26,10 @@ const Schedule = Type.Object(
   {
     type: StringEnum(["cron", "interval", "event", "once"] as const, {
       description:
-        "`cron` and `interval` recur. `once` fires one time, at `at`, and then the automation " +
+        "`cron` and `interval` recur. `once` fires one time, at `at`, and then the task " +
         "is disabled with no next run until a new `at` re-arms it: use it for a single action " +
         "at a set time instead of a cron with a fixed date, which recurs every year. `event` " +
-        "has no next run: the automation fires when a notification a workspace admin routed to " +
+        "has no next run: the task fires when a notification a workspace admin routed to " +
         "it arrives.",
     }),
     expression: Type.Optional(
@@ -57,9 +57,9 @@ const Schedule = Type.Object(
       Type.Object(NotificationRouteMatch.properties, {
         additionalProperties: false,
         description:
-          "Which notifications this automation wants (when type=event). Required for an event " +
+          "Which notifications this task wants (when type=event). Required for an event " +
           "schedule. A workspace admin must ALSO have written a delivery route naming this " +
-          "automation — this narrows what arrives down that route, it does not open one.",
+          "task — this narrows what arrives down that route, it does not open one.",
       }),
     ),
     debounceMs: Type.Optional(
@@ -81,8 +81,8 @@ const Schedule = Type.Object(
         minimum: 1,
         maximum: 60,
         description:
-          "Most runs this automation may fire from events in a rolling hour (when type=event). " +
-          "Default 12, max 60. Exceeding it disables the automation — it is what terminates a " +
+          "Most runs this task may fire from events in a rolling hour (when type=event). " +
+          "Default 12, max 60. Exceeding it disables the task — it is what terminates a " +
           "loop in which a run's own work produces the event that fires it again.",
       }),
     ),
@@ -95,13 +95,13 @@ const TokenBudget = Type.Object(
     maxInputTokens: Type.Optional(
       Type.Number({
         minimum: 1,
-        description: "Most input tokens this automation's runs may use in total per period.",
+        description: "Most input tokens this task's runs may use in total per period.",
       }),
     ),
     maxOutputTokens: Type.Optional(
       Type.Number({
         minimum: 1,
-        description: "Most output tokens this automation's runs may use in total per period.",
+        description: "Most output tokens this task's runs may use in total per period.",
       }),
     ),
     period: Type.Optional(
@@ -116,9 +116,9 @@ const TokenBudget = Type.Object(
     description:
       "Spending limit across runs, in tokens (not dollars). Checked before each model " +
       "call: each step may write only what is left of the period's budget, and a run with " +
-      "too little left for another step stops with stopReason spend_limit. The automation " +
+      "too little left for another step stops with stopReason spend_limit. The task " +
       "is then disabled and stays disabled until someone re-enables it. To bound a single " +
-      "run, use maxInputTokens and maxIterations. Offer one when the automation runs often " +
+      "run, use maxInputTokens and maxIterations. Offer one when the task runs often " +
       "or unattended for long.",
   },
 );
@@ -152,12 +152,12 @@ const OutputSchemaField = jsonSchemaField(
 // (renames are not patchable; the kebab-case id would drift).
 const ManifestFields = {
   name: Type.String({ description: "Human-readable name. Becomes the kebab-case id." }),
-  description: Type.Optional(Type.String({ description: "What this automation does." })),
+  description: Type.Optional(Type.String({ description: "What this task does." })),
   schedule: Type.Optional(
     Type.Object(Schedule.properties, {
       required: ["type"],
       description:
-        "What fires it unattended. Omit for an automation that runs only when someone runs it " +
+        "What fires it unattended. Omit for a task that runs only when someone runs it " +
         "(tasks__run).",
     }),
   ),
@@ -169,7 +169,7 @@ const ManifestFields = {
   ),
   skill: Type.Optional(
     Type.String({
-      description: "Force a specific skill match for this automation's runs.",
+      description: "Force a specific skill match for this task's runs.",
     }),
   ),
   model: Type.Optional(
@@ -200,7 +200,7 @@ const ManifestFields = {
   allowedTools: Type.Optional(
     Type.Array(Type.String(), {
       description:
-        "Tools this automation's runs may use, as names or globs: `gmail__*` for a workspace " +
+        "Tools this task's runs may use, as names or globs: `gmail__*` for a workspace " +
         "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
         "run cannot activate or call a tool outside the list; only nb__search and " +
         "nb__manage_tools pass without being listed, so name any other nb__ tool a run needs " +
@@ -222,7 +222,7 @@ const ManifestFields = {
   kind: Type.Optional(
     StringEnum(["saved", "oneoff"] as const, {
       description:
-        "`saved` (default) for an automation to keep and list. `oneoff` for one made to be run " +
+        "`saved` (default) for a task to keep and list. `oneoff` for one made to be run " +
         "once with no schedule: it is kept with its run history but left out of " +
         "tasks__list unless asked for.",
     }),
@@ -230,15 +230,15 @@ const ManifestFields = {
 };
 
 // Update is a partial of the create-shape minus `name` and `kind` (a one-off
-// does not become a saved automation by a patch). `schedule: null` clears the
-// schedule, leaving an automation that runs only when someone runs it.
+// does not become a saved task by a patch). `schedule: null` clears the
+// schedule, leaving a task that runs only when someone runs it.
 const UpdateManifestFields = {
   description: ManifestFields.description,
   schedule: Type.Optional(
     Type.Union([Schedule, Type.Null()], {
       description:
         "New schedule, or null to remove it so nothing fires it unattended. Setting a new once " +
-        "`at` on an automation that already ran once (or missed its time) re-arms and enables it.",
+        "`at` on a task that already ran once (or missed its time) re-arms and enables it.",
     }),
   ),
   enabled: ManifestFields.enabled,
@@ -263,11 +263,11 @@ const UpdateManifestFields = {
 
 // ── Tool input schemas ───────────────────────────────────────────────────
 
-export const AutomationsCreateInput = Type.Object(
+export const TasksCreateInput = Type.Object(
   {
     manifest: Type.Object(ManifestFields, {
       required: ["name"],
-      description: "Automation definition: identity, schedule, run-time policy.",
+      description: "Task definition: identity, schedule, run-time policy.",
     }),
     body: Type.String({
       description:
@@ -277,11 +277,11 @@ export const AutomationsCreateInput = Type.Object(
   },
   { required: ["manifest", "body"] },
 );
-export type AutomationsCreateInput = Static<typeof AutomationsCreateInput>;
+export type TasksCreateInput = Static<typeof TasksCreateInput>;
 
-export const AutomationsUpdateInput = Type.Object(
+export const TasksUpdateInput = Type.Object(
   {
-    name: Type.String({ description: "Name of the automation to update." }),
+    name: Type.String({ description: "Name of the task to update." }),
     manifest: Type.Optional(
       Type.Object(UpdateManifestFields, {
         description: "Partial manifest patch. Omitted fields keep their current values.",
@@ -293,15 +293,15 @@ export const AutomationsUpdateInput = Type.Object(
   },
   { required: ["name"] },
 );
-export type AutomationsUpdateInput = Static<typeof AutomationsUpdateInput>;
+export type TasksUpdateInput = Static<typeof TasksUpdateInput>;
 
-export const AutomationsDeleteInput = Type.Object(
-  { name: Type.String({ description: "Name of the automation to delete." }) },
+export const TasksDeleteInput = Type.Object(
+  { name: Type.String({ description: "Name of the task to delete." }) },
   { required: ["name"] },
 );
-export type AutomationsDeleteInput = Static<typeof AutomationsDeleteInput>;
+export type TasksDeleteInput = Static<typeof TasksDeleteInput>;
 
-export const AutomationsListInput = Type.Object({
+export const TasksListInput = Type.Object({
   enabled: Type.Optional(Type.Boolean({ description: "Filter by enabled status." })),
   source: Type.Optional(
     StringEnum(["user", "agent"] as const, { description: "Filter by source." }),
@@ -312,7 +312,7 @@ export const AutomationsListInput = Type.Object({
     }),
   ),
   limit: Type.Optional(
-    // Default/cap mirror AUTOMATIONS_LIST_DEFAULT_LIMIT / AUTOMATIONS_LIST_MAX_LIMIT
+    // Default/cap mirror TASKS_LIST_DEFAULT_LIMIT / TASKS_LIST_MAX_LIMIT
     // in src/limits.ts. Literals for the same reason as maxIterations above: this
     // schema is codegen'd under a strict rootDir that forbids importing from
     // outside src/platform/schemas/. server.ts imports the real constants.
@@ -320,7 +320,7 @@ export const AutomationsListInput = Type.Object({
       minimum: 1,
       maximum: 500,
       description:
-        "Max automations to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
+        "Max tasks to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
     }),
   ),
   cursor: Type.Optional(
@@ -330,19 +330,19 @@ export const AutomationsListInput = Type.Object({
     }),
   ),
 });
-export type AutomationsListInput = Static<typeof AutomationsListInput>;
+export type TasksListInput = Static<typeof TasksListInput>;
 
-export const AutomationsStatusInput = Type.Object(
+export const TasksStatusInput = Type.Object(
   {
-    name: Type.String({ description: "Name of the automation." }),
+    name: Type.String({ description: "Name of the task." }),
     limit: Type.Optional(Type.Number({ description: "Max recent runs to include. Default: 5." })),
   },
   { required: ["name"] },
 );
-export type AutomationsStatusInput = Static<typeof AutomationsStatusInput>;
+export type TasksStatusInput = Static<typeof TasksStatusInput>;
 
-export const AutomationsRunsInput = Type.Object({
-  automationId: Type.Optional(Type.String({ description: "Filter by automation ID." })),
+export const TasksRunsInput = Type.Object({
+  taskId: Type.Optional(Type.String({ description: "Filter by task ID." })),
   status: Type.Optional(
     StringEnum(
       ["running", "success", "degraded", "failure", "timeout", "cancelled", "skipped"] as const,
@@ -361,19 +361,19 @@ export const AutomationsRunsInput = Type.Object({
       description:
         "ISO timestamp — only runs started before this time. Pages back through the full run " +
         "history, which is kept indefinitely: pass the previous response's `nextBefore`. " +
-        "Without it, only the most recent runs (up to 1000 per automation) are read.",
+        "Without it, only the most recent runs (up to 1000 per task) are read.",
     }),
   ),
   limit: Type.Optional(Type.Number({ description: "Max runs to return. Default: 20." })),
 });
-export type AutomationsRunsInput = Static<typeof AutomationsRunsInput>;
+export type TasksRunsInput = Static<typeof TasksRunsInput>;
 
-export const AutomationsRunInput = Type.Object({
+export const TasksRunInput = Type.Object({
   name: Type.Optional(
     Type.String({
       description:
-        "Name of a saved automation to run. Omit it and give `prompt` (or `skill`) instead to " +
-        "run an inline one-off: a `oneoff` automation with no schedule is created, owned by " +
+        "Name of a saved task to run. Omit it and give `prompt` (or `skill`) instead to " +
+        "run an inline one-off: a `oneoff` task with no schedule is created, owned by " +
         "you in this workspace, run once, and kept with its run.",
     }),
   ),
@@ -381,7 +381,7 @@ export const AutomationsRunInput = Type.Object({
     Type.Unsafe<unknown>({
       description:
         "JSON input for this run (any JSON value, at most 64 KiB serialized). Checked against " +
-        "the automation's inputSchema when it has one, kept on the run record, and given to " +
+        "the task's inputSchema when it has one, kept on the run record, and given to " +
         "the run as data, never as instructions.",
     }),
   ),
@@ -390,7 +390,7 @@ export const AutomationsRunInput = Type.Object({
       minLength: 1,
       maxLength: 256,
       description:
-        "Repeat-safe key. A later call with the same key for the same automation (or the same " +
+        "Repeat-safe key. A later call with the same key for the same task (or the same " +
         "inline one-off) returns the run the first call started instead of starting another.",
     }),
   ),
@@ -423,20 +423,20 @@ export const AutomationsRunInput = Type.Object({
   ),
   budget: Type.Optional(TokenBudget),
 });
-export type AutomationsRunInput = Static<typeof AutomationsRunInput>;
+export type TasksRunInput = Static<typeof TasksRunInput>;
 
-export const AutomationsCancelInput = Type.Object(
-  { name: Type.String({ description: "Name of the automation to cancel." }) },
+export const TasksCancelInput = Type.Object(
+  { name: Type.String({ description: "Name of the task to cancel." }) },
   { required: ["name"] },
 );
-export type AutomationsCancelInput = Static<typeof AutomationsCancelInput>;
+export type TasksCancelInput = Static<typeof TasksCancelInput>;
 
-export const AutomationsRunResultInput = Type.Object(
+export const TasksRunResultInput = Type.Object(
   {
     name: Type.Optional(
       Type.String({
         description:
-          "Name of the automation. Optional for a run tasks__run started, which is found " +
+          "Name of the task. Optional for a run tasks__run started, which is found " +
           "by its id alone.",
       }),
     ),
@@ -444,7 +444,7 @@ export const AutomationsRunResultInput = Type.Object(
   },
   { required: ["runId"] },
 );
-export type AutomationsRunResultInput = Static<typeof AutomationsRunResultInput>;
+export type TasksRunResultInput = Static<typeof TasksRunResultInput>;
 
 // ── Tool output types ────────────────────────────────────────────────────
 //
@@ -465,11 +465,11 @@ export type AutomationsRunResultInput = Static<typeof AutomationsRunResultInput>
 // `scripts/codegen-web-platform-schemas.ts`
 // emits .d.ts files for the web package with `rootDir` pinned to
 // `schemas/`. Cross-tree imports break that boundary. Drift between
-// these types and the canonical `Automation` / `AutomationRun` is
+// these types and the canonical `Task` / `TaskRun` is
 // guarded at COMPILE time by
 // `src/platform/tasks/output-types-drift-guard.ts`, which
 // `bun run check` validates as part of the standard CI gate. When you
-// change `Automation` or `AutomationRun`, that file's type-level
+// change `Task` or `TaskRun`, that file's type-level
 // constraints fail to compile against the corresponding mirror here —
 // the build error points at the field that drifted.
 //
@@ -477,21 +477,21 @@ export type AutomationsRunResultInput = Static<typeof AutomationsRunResultInput>
 // type here in the same commit. The output type is the contract.
 
 /**
- * Status of the most recent automation run, as exposed via the list/
- * summary surface. Mirrors `AutomationRun["status"]` minus `"running"`
+ * Status of the most recent task run, as exposed via the list/
+ * summary surface. Mirrors `TaskRun["status"]` minus `"running"`
  * — the list view shows the most recent COMPLETED run's outcome, never
  * one in flight.
  */
-export type AutomationLastRunStatus = "success" | "degraded" | "failure" | "timeout" | "skipped";
+export type TaskLastRunStatus = "success" | "degraded" | "failure" | "timeout" | "skipped";
 
 /**
- * Summary row returned per automation by `handleList`. Subset of the
- * stored `Automation` shape plus a couple of human-formatted fields the
+ * Summary row returned per task by `handleList`. Subset of the
+ * stored `Task` shape plus a couple of human-formatted fields the
  * UI surfaces directly. `lastRunAt` / `nextRunAt` are human-relative
  * strings (e.g. "in 2h", "4h ago") — the raw ISO timestamps stay on the
- * stored `Automation`.
+ * stored `Task`.
  */
-export interface AutomationSummary {
+export interface TaskSummary {
   id: string;
   name: string;
   description?: string;
@@ -500,12 +500,12 @@ export interface AutomationSummary {
   /** The schedule's type, or `none` when nothing fires it unattended. */
   scheduleType: "cron" | "interval" | "event" | "once" | "none";
   kind: "saved" | "oneoff";
-  /** Set when a once schedule has fired or missed its time; the automation is inert until re-armed. */
-  onceDone?: AutomationOnceDone;
+  /** Set when a once schedule has fired or missed its time; the task is inert until re-armed. */
+  onceDone?: TaskOnceDone;
   enabled: boolean;
   source: "user" | "agent";
   runCount: number;
-  lastRunStatus: AutomationLastRunStatus | null;
+  lastRunStatus: TaskLastRunStatus | null;
   lastRunAt: string | null;
   nextRunAt: string | null;
   disabledAt: string | null;
@@ -513,9 +513,9 @@ export interface AutomationSummary {
   estimatedCostPerDay: number;
 }
 
-export interface AutomationsListOutput {
-  automations: AutomationSummary[];
-  /** Matches for the given filters BEFORE the page cap — not `automations.length`. */
+export interface TasksListOutput {
+  tasks: TaskSummary[];
+  /** Matches for the given filters BEFORE the page cap — not `tasks.length`. */
   total: number;
   /** How many are in this response. */
   returned: number;
@@ -541,14 +541,14 @@ export interface AutomationsListOutput {
 }
 
 /**
- * Structural mirror of a single AutomationRun record as returned by
- * the handlers. Kept in sync with `AutomationRun` in
+ * Structural mirror of a single TaskRun record as returned by
+ * the handlers. Kept in sync with `TaskRun` in
  * `platform/tasks/types.ts` via the assertion test referenced
  * above. New fields added there MUST also appear here.
  */
-export interface AutomationRunRecord {
+export interface TaskRunRecord {
   id: string;
-  automationId: string;
+  taskId: string;
   startedAt: string;
   completedAt?: string;
   status:
@@ -583,7 +583,7 @@ export interface AutomationRunRecord {
   input?: unknown;
   /** The idempotency key the run was requested with. */
   idempotencyKey?: string;
-  /** Whether the deliverable matched the automation's outputSchema; absent without one. */
+  /** Whether the deliverable matched the task's outputSchema; absent without one. */
   outputSchemaValid?: boolean;
   /** Why the deliverable did not match the outputSchema. */
   outputSchemaErrors?: string[];
@@ -611,13 +611,13 @@ export interface RunFileRefRecord {
 
 /**
  * The full deliverable of a run, returned by `handleRunResult`. Mirror of
- * `AutomationRunResult` in `platform/tasks/types.ts`. A run is not a
+ * `TaskRunResult` in `platform/tasks/types.ts`. A run is not a
  * conversation: the result carries the final output, the activity log, and refs
  * to any files the run wrote in the workspace file store.
  */
-export interface AutomationsRunResultOutput {
+export interface TasksRunResultOutput {
   runId: string;
-  automationId: string;
+  taskId: string;
   completedAt: string;
   output: string;
   activityLog: RunToolCallRecord[];
@@ -632,31 +632,31 @@ export interface AutomationsRunResultOutput {
     | "content_filter"
     | "error"
     | "other";
-  /** The deliverable parsed as JSON, when the automation has an outputSchema and it parsed. */
+  /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
   structured?: unknown;
 }
 
 /**
- * Token budget block on a stored automation. Mirror of the
+ * Token budget block on a stored task. Mirror of the
  * `TokenBudget` interface; kept here to avoid a cross-tree import
  * (see top-of-section comment).
  */
-export interface AutomationTokenBudget {
+export interface TaskTokenBudget {
   maxInputTokens?: number;
   maxOutputTokens?: number;
   period?: "daily" | "monthly";
 }
 
 /** How a once schedule's occurrence ended, and when. Mirror of `OnceDone`. */
-export interface AutomationOnceDone {
+export interface TaskOnceDone {
   at: string;
   outcome: "ran" | "missed";
 }
 
 /**
- * Schedule spec block on a stored automation. Mirror of `ScheduleSpec`.
+ * Schedule spec block on a stored task. Mirror of `ScheduleSpec`.
  */
-export interface AutomationScheduleSpec {
+export interface TaskScheduleSpec {
   type: "cron" | "interval" | "event" | "once";
   expression?: string;
   timezone?: string;
@@ -668,20 +668,20 @@ export interface AutomationScheduleSpec {
 }
 
 /**
- * Automation detail returned by `handleStatus`. Spreads the stored
- * Automation and overlays a few computed fields the UI consumes
+ * Task detail returned by `handleStatus`. Spreads the stored
+ * Task and overlays a few computed fields the UI consumes
  * directly: humanized schedule + relative-time strings, cost numbers,
  * and undefined→null coercion on optional fields (`tokenBudget`,
  * `budgetResetAt`) so JSON consumers see a consistent shape per field.
  */
-export interface AutomationStatusDetail {
+export interface TaskStatusDetail {
   id: string;
   name: string;
   description?: string;
   prompt: string;
-  schedule?: AutomationScheduleSpec;
+  schedule?: TaskScheduleSpec;
   kind?: "saved" | "oneoff";
-  onceDone?: AutomationOnceDone;
+  onceDone?: TaskOnceDone;
   scheduleHuman: string;
   enabled: boolean;
   source: "user" | "agent";
@@ -699,11 +699,11 @@ export interface AutomationStatusDetail {
   consecutiveErrors: number;
   cumulativeInputTokens: number;
   cumulativeOutputTokens: number;
-  tokenBudget: AutomationTokenBudget | null;
+  tokenBudget: TaskTokenBudget | null;
   budgetResetAt: string | null;
   lastRunAt?: string;
   lastRunAtHuman: string | null;
-  lastRunStatus?: AutomationLastRunStatus;
+  lastRunStatus?: TaskLastRunStatus;
   nextRunAt?: string;
   nextRunAtHuman: string | null;
   disabledAt?: string;
@@ -716,17 +716,17 @@ export interface AutomationStatusDetail {
   estimatedCostPerMonth: number;
 }
 
-export interface AutomationsStatusOutput {
-  automation: AutomationStatusDetail;
-  recentRuns: AutomationRunRecord[];
+export interface TasksStatusOutput {
+  task: TaskStatusDetail;
+  recentRuns: TaskRunRecord[];
 }
 
-export interface AutomationsRunsOutput {
-  runs: AutomationRunRecord[];
+export interface TasksRunsOutput {
+  runs: TaskRunRecord[];
   total: number;
   /**
-   * Pass as `before` for the next older page of one automation's history;
-   * absent when nothing older remains (or when runs span every automation).
+   * Pass as `before` for the next older page of one task's history;
+   * absent when nothing older remains (or when runs span every task).
    */
   nextBefore?: string;
 }
@@ -734,11 +734,11 @@ export interface AutomationsRunsOutput {
 /**
  * Discriminated union — `handleRun` returns one of two shapes:
  *
- *   { run: AutomationRunRecord; enabled; message? }  when the run finishes
+ *   { run: TaskRunRecord; enabled; message? }  when the run finishes
  *                                                    inside the sync-wait
  *                                                    window (~30s default).
  *
- *   { status: "dispatched"; automationId;            when the run is still
+ *   { status: "dispatched"; taskId;            when the run is still
  *     startedAt; enabled; message }                  in flight after the
  *                                                    window. It keeps going;
  *                                                    its record lands in
@@ -746,7 +746,7 @@ export interface AutomationsRunsOutput {
  *                                                    (`since: startedAt`)
  *                                                    when it ends.
  *
- *   { status: "queued"; automationId; position;     when every run slot was
+ *   { status: "queued"; taskId; position;     when every run slot was
  *     queuedAt; enabled; message }                   busy. It starts as soon
  *                                                    as a slot frees; its record
  *                                                    lands in `tasks__runs`
@@ -758,9 +758,9 @@ export interface AutomationsRunsOutput {
  * spent token budget) returns the first shape with a `skipped` run whose
  * `error` says why.
  *
- * `enabled` is the automation's own flag. Run now runs a disabled automation,
+ * `enabled` is the task's own flag. Run now runs a disabled task,
  * because it is a deliberate act and the create form's test run depends on
- * it; a disabled automation is not fired by its schedule or by events, and
+ * it; a disabled task is not fired by its schedule or by events, and
  * `message` says so.
  *
  * Both shapes indicate the dispatch succeeded; only an error response
@@ -768,11 +768,11 @@ export interface AutomationsRunsOutput {
  * dereferencing `run.*` — `as { run: ... }` is the anti-pattern that
  * caused the production CLI crash this type prevents.
  */
-export type AutomationsRunOutput =
-  | { run: AutomationRunRecord; enabled: boolean; message?: string }
+export type TasksRunOutput =
+  | { run: TaskRunRecord; enabled: boolean; message?: string }
   | {
       status: "dispatched";
-      automationId: string;
+      taskId: string;
       /** The run's id: read its result with tasks__run_result. */
       runId: string;
       startedAt: string;
@@ -781,7 +781,7 @@ export type AutomationsRunOutput =
     }
   | {
       status: "queued";
-      automationId: string;
+      taskId: string;
       /** The run's id: read its result with tasks__run_result. */
       runId: string;
       /** 1 is next to start. */
@@ -791,25 +791,25 @@ export type AutomationsRunOutput =
       message: string;
     };
 
-export interface AutomationsCancelOutput {
+export interface TasksCancelOutput {
   cancelled: boolean;
   id: string;
   message: string;
 }
 
 /**
- * A stored automation, as `tasks__create` and `tasks__update`
- * return it. Mirror of `Automation` (`src/platform/tasks/types.ts`),
+ * A stored task, as `tasks__create` and `tasks__update`
+ * return it. Mirror of `Task` (`src/platform/tasks/types.ts`),
  * held to it by `src/platform/tasks/output-types-drift-guard.ts`.
  */
-export interface AutomationRecord {
+export interface TaskRecord {
   id: string;
   name: string;
   description?: string;
   prompt: string;
-  schedule?: AutomationScheduleSpec;
+  schedule?: TaskScheduleSpec;
   kind?: "saved" | "oneoff";
-  onceDone?: AutomationOnceDone;
+  onceDone?: TaskOnceDone;
   skill?: string;
   allowedTools?: string[];
   inputSchema?: Record<string, unknown>;
@@ -825,7 +825,7 @@ export interface AutomationRecord {
   createdAt: string;
   updatedAt: string;
   lastRunAt?: string;
-  lastRunStatus?: AutomationLastRunStatus;
+  lastRunStatus?: TaskLastRunStatus;
   nextRunAt?: string;
   runCount: number;
   consecutiveErrors: number;
@@ -833,38 +833,38 @@ export interface AutomationRecord {
   disabledReason?: string;
   cumulativeInputTokens: number;
   cumulativeOutputTokens: number;
-  tokenBudget?: AutomationTokenBudget;
+  tokenBudget?: TaskTokenBudget;
   budgetResetAt?: string;
 }
 
 /**
- * The caps a run of the automation executes under: each cap the definition
+ * The caps a run of the task executes under: each cap the definition
  * sets, lowered to the runtime's per-run ceiling, and the runtime default held
  * to the ceiling where it sets none. `maxInputTokens` is absent when the run
  * has no input-token cap (neither the definition nor the runtime sets one).
  * `message` names any cap that was lowered.
  */
-export interface AutomationEffectiveLimits {
+export interface TaskEffectiveLimits {
   maxIterations: number;
   maxInputTokens?: number;
   maxRunDurationMs: number;
 }
 
-export interface AutomationsCreateOutput {
-  automation: AutomationRecord;
+export interface TasksCreateOutput {
+  task: TaskRecord;
   created: boolean;
   message: string;
-  effectiveLimits: AutomationEffectiveLimits;
+  effectiveLimits: TaskEffectiveLimits;
 }
 
-export interface AutomationsUpdateOutput {
-  automation: AutomationRecord;
+export interface TasksUpdateOutput {
+  task: TaskRecord;
   updated: boolean;
   message: string;
-  effectiveLimits: AutomationEffectiveLimits;
+  effectiveLimits: TaskEffectiveLimits;
 }
 
-export interface AutomationsDeleteOutput {
+export interface TasksDeleteOutput {
   deleted: boolean;
   id: string;
   message: string;

@@ -12,7 +12,7 @@ A file lives at `workspaces/<wsId>/files/<ownerId>/<fileId>_<name>` (per-owner r
   | Door | Workspace |
   |---|---|
   | chat | the workspace in the URL, which a resume shares with its conversation (a conversation stored elsewhere is refused) |
-  | automation run | provenance |
+  | task run | provenance |
   | `/mcp/<wsId>` | the membership-validated workspace in the URL |
   | REST `/v1/workspaces/<wsId>/…` | the membership-validated workspace in the URL |
 
@@ -21,4 +21,4 @@ A file lives at `workspaces/<wsId>/files/<ownerId>/<fileId>_<name>` (per-owner r
 - **The locator's `fileId → wsId` memo is never the source of truth.** `getWorkspaceFileStore` keeps it current (remember on write, forget on delete), and a stale hit self-heals via a disk re-walk.
 - **Reading a file SHARED by another owner** (future `visibility: shared`) is a separate, visibility-checked path — never a widening of this locator to other owners.
 
-Files an automation run writes land in the run owner's partition here, referenced from the run result.
+Files a task run writes land in the run owner's partition here, referenced from the run result.

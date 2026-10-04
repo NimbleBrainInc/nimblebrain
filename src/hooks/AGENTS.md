@@ -39,9 +39,9 @@ Three more rules that are load-bearing, not stylistic:
   make it safe rather than its absence: it runs only through a delivery route a
   workspace **admin** wrote, two durable hops from the door (the door writes to
   a connector's own store; the runtime polls that store into a workspace inbox;
-  a route matches an inbox item), only into an automation whose own schedule
+  a route matches an inbox item), only into a task whose own schedule
   asked for those notifications, batched, and capped by a fires-per-hour ceiling
-  that disables the automation rather than throttling it. A delivery still
+  that disables the task rather than throttling it. A delivery still
   reaches nothing on its own, which is the property this rule was protecting.
 
 **The URL's secret is an opaque delivery id** — 256 bits of randomness, and the

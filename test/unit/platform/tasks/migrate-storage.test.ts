@@ -66,12 +66,17 @@ describe("migrateTaskStorage", () => {
 
     const again = migrateTaskStorage(workDir);
 
-    expect(again).toEqual({ moved: [], merged: [], conflicts: [] });
+    expect(again).toEqual({ moved: [], merged: [], conflicts: [], rewritten: 0 });
     expect(existsSync(at("tasks", OWNER, "digest.json"))).toBe(true);
 
     const empty = mkdtempSync(join(tmpdir(), "nb-task-storage-empty-"));
     try {
-      expect(migrateTaskStorage(empty)).toEqual({ moved: [], merged: [], conflicts: [] });
+      expect(migrateTaskStorage(empty)).toEqual({
+        moved: [],
+        merged: [],
+        conflicts: [],
+        rewritten: 0,
+      });
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
@@ -99,6 +104,37 @@ describe("migrateTaskStorage", () => {
     expect(report.conflicts).toEqual([`${WS}/${OWNER}/digest.json`]);
     expect(report.moved).toEqual([]);
     expect(report.merged).toContain(`${WS}/${OWNER}/weekly.json`);
+  });
+
+  test("rewrites records' old id key to taskId before moving them", () => {
+    write(at("automations", OWNER, "digest.json"), '{"id":"digest"}');
+    write(
+      at("automations", OWNER, "runs/digest/index.jsonl"),
+      '{"id":"run_a","automationId":"digest"}\n{"id":"run_b","automationId":"digest"}\n',
+    );
+    write(
+      at("automations", OWNER, "runs/digest/run_a.result.json"),
+      '{"runId":"run_a","automationId":"digest"}',
+    );
+    write(
+      at("automations", OWNER, "run-tickets/run_a.json"),
+      '{"runId":"run_a","automationId":"digest","run":{"id":"run_a","automationId":"digest"}}',
+    );
+
+    const report = migrateTaskStorage(workDir);
+
+    expect(report.rewritten).toBe(3);
+    expect(readFileSync(at("tasks", OWNER, "runs/digest/index.jsonl"), "utf-8")).toBe(
+      '{"id":"run_a","taskId":"digest"}\n{"id":"run_b","taskId":"digest"}\n',
+    );
+    expect(readFileSync(at("tasks", OWNER, "runs/digest/run_a.result.json"), "utf-8")).toBe(
+      '{"runId":"run_a","taskId":"digest"}',
+    );
+    expect(readFileSync(at("tasks", OWNER, "run-tickets/run_a.json"), "utf-8")).toBe(
+      '{"runId":"run_a","taskId":"digest","run":{"id":"run_a","taskId":"digest"}}',
+    );
+    // The definition carried no such key and is moved as it was.
+    expect(readFileSync(at("tasks", OWNER, "digest.json"), "utf-8")).toBe('{"id":"digest"}');
   });
 
   test("a rerun after a crash mid-way finishes the move", () => {

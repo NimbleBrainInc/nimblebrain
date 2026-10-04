@@ -1,8 +1,8 @@
 /**
- * The `automations` block of `nimblebrain.json`: how much the runtime lets
- * automations spend at once, and the most any one run may spend.
+ * The `tasks` block of `nimblebrain.json`: how much the runtime lets
+ * tasks spend at once, and the most any one run may spend.
  *
- * The block is the operator's, not the automation author's. An author sets a
+ * The block is the operator's, not the task author's. An author sets a
  * run's caps on the definition (`maxIterations`, `maxInputTokens`,
  * `maxRunDurationMs`); these ceilings bound what the author set, and what the
  * runtime fills in for what they left unset, at execution time. Enforcing
@@ -12,8 +12,8 @@
 
 import { DEFAULT_MAX_ITERATIONS, MAX_ITERATIONS } from "../limits.ts";
 
-/** The `automations` block, as an operator writes it. */
-export interface AutomationsConfig {
+/** The `tasks` block, as an operator writes it. */
+export interface TasksConfig {
   /**
    * Unattended runs in flight at once across every workspace in the process
    * (the runtime's run admission, `src/runtime/admission.ts`). Chat is not admitted.
@@ -37,7 +37,7 @@ export interface AutomationsConfig {
  * sets none, because input tokens have no runtime default: a run is capped
  * only by its definition or by an operator ceiling.
  */
-export type ResolvedAutomationsConfig = Required<Omit<AutomationsConfig, "maxRunInputTokens">> & {
+export type ResolvedTasksConfig = Required<Omit<TasksConfig, "maxRunInputTokens">> & {
   maxRunInputTokens: number | undefined;
 };
 
@@ -52,10 +52,7 @@ export const DEFAULT_RUN_DURATION_MS = 120_000;
  * past the create range so an operator can set one that admits the large runs
  * uncapped definitions make.
  */
-export const AUTOMATIONS_CONFIG_BOUNDS: Record<
-  keyof AutomationsConfig,
-  { min: number; max: number }
-> = {
+export const TASKS_CONFIG_BOUNDS: Record<keyof TasksConfig, { min: number; max: number }> = {
   maxConcurrentRuns: { min: 1, max: 100 },
   maxQueuedRuns: { min: 0, max: 1000 },
   maxRunIterations: { min: 1, max: MAX_ITERATIONS },
@@ -67,13 +64,13 @@ export const AUTOMATIONS_CONFIG_BOUNDS: Record<
  * Resolve the block, clamping each value into its range.
  *
  * A value that is not a finite number resolves to its default rather than
- * throwing: this runs when the automations source starts, and a mistyped
+ * throwing: this runs when the tasks source starts, and a mistyped
  * ceiling must not keep the runtime from booting when the documented default
  * is the unambiguous fallback. The schema rejects such a value at load anyway.
  */
-export function resolveAutomationsConfig(config?: AutomationsConfig): ResolvedAutomationsConfig {
-  const pick = (key: keyof AutomationsConfig): number | undefined => {
-    const { min, max } = AUTOMATIONS_CONFIG_BOUNDS[key];
+export function resolveTasksConfig(config?: TasksConfig): ResolvedTasksConfig {
+  const pick = (key: keyof TasksConfig): number | undefined => {
+    const { min, max } = TASKS_CONFIG_BOUNDS[key];
     const raw = config?.[key];
     if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
     return Math.min(Math.max(Math.floor(raw), min), max);
@@ -92,11 +89,9 @@ export function resolveAutomationsConfig(config?: AutomationsConfig): ResolvedAu
  * the resolver clamps against, so a key added here cannot be forgotten in the
  * schema.
  */
-export const AUTOMATIONS_CONFIG_KEYS = Object.keys(
-  AUTOMATIONS_CONFIG_BOUNDS,
-) as (keyof AutomationsConfig)[];
+export const TASKS_CONFIG_KEYS = Object.keys(TASKS_CONFIG_BOUNDS) as (keyof TasksConfig)[];
 
-/** The per-run caps an automation definition may set (`Automation` in the automations app). */
+/** The per-run caps a task definition may set (`Task` in the tasks app). */
 export interface RunCaps {
   maxIterations?: number;
   maxInputTokens?: number;
@@ -117,12 +112,12 @@ export interface EffectiveRunLimits {
  * unset cap runs under the operator's ceiling when one is configured, and
  * uncapped when none is.
  *
- * `defaultIterations` is the runtime's chat default, so an automation that
+ * `defaultIterations` is the runtime's chat default, so a task that
  * names no iteration cap runs with the same one a chat turn does.
  */
 export function effectiveRunLimits(
   auto: RunCaps,
-  config: ResolvedAutomationsConfig = resolveAutomationsConfig(),
+  config: ResolvedTasksConfig = resolveTasksConfig(),
   defaultIterations: number = DEFAULT_MAX_ITERATIONS,
 ): EffectiveRunLimits {
   const ceiling = config.maxRunInputTokens;

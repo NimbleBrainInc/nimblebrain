@@ -46,10 +46,9 @@ describe("IdentityContext — path helpers", () => {
     expect(ctx.getDataPath("skills")).toBe("/tmp/nb-test/users/usr_abc/skills");
   });
 
-  test("automations scope", () => {
-    expect(ctx.getDataPath("automations")).toBe("/tmp/nb-test/users/usr_abc/automations");
-    expect(ctx.getDataPath("automations", "runs", "daily-digest.jsonl")).toBe(
-      "/tmp/nb-test/users/usr_abc/automations/runs/daily-digest.jsonl",
+  test("subpaths join under a scope", () => {
+    expect(ctx.getDataPath("skills", "drafts", "daily-digest.md")).toBe(
+      "/tmp/nb-test/users/usr_abc/skills/drafts/daily-digest.md",
     );
   });
 

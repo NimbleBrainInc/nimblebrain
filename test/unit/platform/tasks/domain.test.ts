@@ -8,7 +8,7 @@
  * `updated: false` — silently no-op'ing while the caller assumes success.
  *
  * Fix: the CLI bypasses the LLM-facing tool and calls the domain API
- * directly. These tests pin that contract — `updateAutomation` flips
+ * directly. These tests pin that contract — `updateTask` flips
  * `enabled` end-to-end via the same path the CLI exercises.
  */
 
@@ -17,39 +17,39 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type AutomationDomainContext,
-  createAutomation,
-  deleteAutomation,
-  updateAutomation,
+  createTask,
+  deleteTask,
+  type TaskDomainContext,
+  updateTask,
 } from "../../../../src/platform/tasks/domain.ts";
 import {
-  deleteAutomationDefinition,
-  loadOwnerAutomations,
-  saveAutomation,
+  deleteTaskDefinition,
+  loadOwnerTasks,
+  saveTask,
 } from "../../../../src/platform/tasks/store.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
-// Automations are workspace-owned: the domain's collection context is backed by
-// the per-automation store, scoped to one workspace + owner (the focus the tool
+// Tasks are workspace-owned: the domain's collection context is backed by
+// the per-task store, scoped to one workspace + owner (the focus the tool
 // surface would resolve). `save` reconciles the map against disk.
 const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 let workDir: string;
 let reloadCount: number;
 
-function makeCtx(): AutomationDomainContext {
+function makeCtx(): TaskDomainContext {
   reloadCount = 0;
   return {
-    definitions: () => loadOwnerAutomations(workDir, WS, OWNER),
+    definitions: () => loadOwnerTasks(workDir, WS, OWNER),
     save: (map) => {
-      const onDisk = loadOwnerAutomations(workDir, WS, OWNER);
+      const onDisk = loadOwnerTasks(workDir, WS, OWNER);
       for (const auto of map.values()) {
         if (!auto.workspaceId) auto.workspaceId = WS;
         if (!auto.ownerId) auto.ownerId = OWNER;
-        saveAutomation(workDir, WS, OWNER, auto);
+        saveTask(workDir, WS, OWNER, auto);
       }
       for (const id of onDisk.keys()) {
-        if (!map.has(id)) deleteAutomationDefinition(workDir, WS, OWNER, id);
+        if (!map.has(id)) deleteTaskDefinition(workDir, WS, OWNER, id);
       }
     },
     reloadScheduler: () => {
@@ -60,7 +60,7 @@ function makeCtx(): AutomationDomainContext {
 }
 
 beforeEach(() => {
-  workDir = mkdtempSync(join(tmpdir(), "automations-domain-"));
+  workDir = mkdtempSync(join(tmpdir(), "tasks-domain-"));
   mkdirSync(workDir, { recursive: true });
   seedWorkspaceRoot(workDir, WS);
 });
@@ -69,10 +69,10 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("updateAutomation — pause/resume regression (CLI path)", () => {
+describe("updateTask — pause/resume regression (CLI path)", () => {
   test("update with { enabled: false } actually flips enabled", () => {
     const ctx = makeCtx();
-    const created = createAutomation(
+    const created = createTask(
       {
         name: "Daily Sync",
         prompt: "Sync everything",
@@ -81,20 +81,20 @@ describe("updateAutomation — pause/resume regression (CLI path)", () => {
       ctx,
     );
     expect(created.created).toBe(true);
-    expect(created.automation.enabled).toBe(true);
+    expect(created.task.enabled).toBe(true);
 
-    const result = updateAutomation("Daily Sync", { enabled: false }, ctx);
+    const result = updateTask("Daily Sync", { enabled: false }, ctx);
     expect(result.updated).toBe(true);
-    expect(result.automation.enabled).toBe(false);
+    expect(result.task.enabled).toBe(false);
 
     // Re-read from disk to verify persistence (not just in-memory mutation).
-    const fromDisk = ctx.definitions().get(created.automation.id);
+    const fromDisk = ctx.definitions().get(created.task.id);
     expect(fromDisk?.enabled).toBe(false);
   });
 
   test("update with { enabled: true } re-enables and clears disable state", () => {
     const ctx = makeCtx();
-    const created = createAutomation(
+    const created = createTask(
       {
         name: "Recovering",
         prompt: "Try again",
@@ -105,24 +105,24 @@ describe("updateAutomation — pause/resume regression (CLI path)", () => {
     );
     // Manually stamp the disable-state fields the auto-disable path would set.
     const defs = ctx.definitions();
-    const auto = defs.get(created.automation.id)!;
+    const auto = defs.get(created.task.id)!;
     auto.consecutiveErrors = 5;
     auto.disabledAt = new Date().toISOString();
     auto.disabledReason = "Token budget exceeded";
     ctx.save(defs);
 
-    const result = updateAutomation("Recovering", { enabled: true }, ctx);
+    const result = updateTask("Recovering", { enabled: true }, ctx);
     expect(result.updated).toBe(true);
-    expect(result.automation.enabled).toBe(true);
-    expect(result.automation.consecutiveErrors).toBe(0);
-    expect(result.automation.disabledAt).toBeUndefined();
-    expect(result.automation.disabledReason).toBeUndefined();
+    expect(result.task.enabled).toBe(true);
+    expect(result.task.consecutiveErrors).toBe(0);
+    expect(result.task.disabledAt).toBeUndefined();
+    expect(result.task.disabledReason).toBeUndefined();
   });
 
   test("test_reenable_one_off_paused_past_its_date_clears_the_stale_run", () => {
     const ctx = makeCtx();
     const year = new Date().getUTCFullYear() + 1;
-    const created = createAutomation(
+    const created = createTask(
       {
         name: "One-off send",
         prompt: "Send it",
@@ -130,41 +130,41 @@ describe("updateAutomation — pause/resume regression (CLI path)", () => {
       },
       ctx,
     );
-    updateAutomation("One-off send", { enabled: false }, ctx);
+    updateTask("One-off send", { enabled: false }, ctx);
 
     // The date passes while it is paused: its only occurrence is now behind it,
     // and the stored nextRunAt is that occurrence.
     const defs = ctx.definitions();
-    const auto = defs.get(created.automation.id)!;
+    const auto = defs.get(created.task.id)!;
     auto.schedule = { type: "cron", expression: "0 0 9 1 1 * 2020", timezone: "UTC" };
     auto.nextRunAt = "2020-01-01T09:00:00.000Z";
     ctx.save(defs);
 
-    const result = updateAutomation("One-off send", { enabled: true }, ctx);
-    expect(result.automation.enabled).toBe(true);
-    expect(result.automation.nextRunAt).toBeUndefined();
-    expect(ctx.definitions().get(created.automation.id)?.nextRunAt).toBeUndefined();
+    const result = updateTask("One-off send", { enabled: true }, ctx);
+    expect(result.task.enabled).toBe(true);
+    expect(result.task.nextRunAt).toBeUndefined();
+    expect(ctx.definitions().get(created.task.id)?.nextRunAt).toBeUndefined();
   });
 
   test("test_reenable_recurring_cron_keeps_its_past_run_for_one_catch_up", () => {
     const ctx = makeCtx();
-    const created = createAutomation(
+    const created = createTask(
       { name: "Daily", prompt: "Digest", schedule: { type: "cron", expression: "0 9 * * *" } },
       ctx,
     );
-    updateAutomation("Daily", { enabled: false }, ctx);
+    updateTask("Daily", { enabled: false }, ctx);
     const defs = ctx.definitions();
     const past = new Date(Date.now() - 86_400_000).toISOString();
-    defs.get(created.automation.id)!.nextRunAt = past;
+    defs.get(created.task.id)!.nextRunAt = past;
     ctx.save(defs);
 
-    const result = updateAutomation("Daily", { enabled: true }, ctx);
-    expect(result.automation.nextRunAt).toBe(past);
+    const result = updateTask("Daily", { enabled: true }, ctx);
+    expect(result.task.nextRunAt).toBe(past);
   });
 
   test("scheduler reload fires once per mutation, not on no-op", () => {
     const ctx = makeCtx();
-    createAutomation(
+    createTask(
       {
         name: "Counter",
         prompt: "Count",
@@ -174,11 +174,11 @@ describe("updateAutomation — pause/resume regression (CLI path)", () => {
     );
     expect(reloadCount).toBe(1); // From create
 
-    updateAutomation("Counter", { enabled: false }, ctx);
+    updateTask("Counter", { enabled: false }, ctx);
     expect(reloadCount).toBe(2); // Mutation triggered reload
 
     // Calling update with no actual change should NOT trigger reload.
-    updateAutomation("Counter", {}, ctx);
+    updateTask("Counter", {}, ctx);
     expect(reloadCount).toBe(2);
   });
 });
@@ -186,7 +186,7 @@ describe("updateAutomation — pause/resume regression (CLI path)", () => {
 describe("token budget window anchoring", () => {
   test("create anchors budgetResetAt when the budget has a period", () => {
     const ctx = makeCtx();
-    const { automation } = createAutomation(
+    const { task } = createTask(
       {
         name: "Watcher",
         prompt: "watch",
@@ -197,13 +197,13 @@ describe("token budget window anchoring", () => {
     );
     // Anchored at write time (mirrors nextRunAt), so the scheduler's window can
     // roll from the first run instead of never — a future ISO boundary.
-    expect(automation.budgetResetAt).toBeDefined();
-    expect(new Date(automation.budgetResetAt!).getTime()).toBeGreaterThan(Date.now());
+    expect(task.budgetResetAt).toBeDefined();
+    expect(new Date(task.budgetResetAt!).getTime()).toBeGreaterThan(Date.now());
   });
 
   test("create leaves budgetResetAt unset for a periodless (lifetime) budget", () => {
     const ctx = makeCtx();
-    const { automation } = createAutomation(
+    const { task } = createTask(
       {
         name: "Lifetime",
         prompt: "watch",
@@ -212,16 +212,16 @@ describe("token budget window anchoring", () => {
       },
       ctx,
     );
-    expect(automation.budgetResetAt).toBeUndefined();
+    expect(task.budgetResetAt).toBeUndefined();
   });
 
   test("changing the budget via update starts a fresh window: resets counters and re-anchors", () => {
     // The reported incident: a run from an earlier, unrelated design left a
-    // large cumulative total. Rebuilding the automation via update set a new
+    // large cumulative total. Rebuilding the task via update set a new
     // budget, but the stale total carried over and, on the next run, summed
-    // past the new ceiling and auto-disabled a freshly rebuilt automation.
+    // past the new ceiling and auto-disabled a freshly rebuilt task.
     const ctx = makeCtx();
-    const { automation } = createAutomation(
+    const { task } = createTask(
       {
         name: "Rebuilt",
         prompt: "reply/bounce watcher",
@@ -233,33 +233,33 @@ describe("token budget window anchoring", () => {
 
     // Simulate spend accrued under the prior design.
     const defs = ctx.definitions();
-    const auto = defs.get(automation.id)!;
+    const auto = defs.get(task.id)!;
     auto.cumulativeInputTokens = 490_000;
     auto.cumulativeOutputTokens = 12_000;
     ctx.save(defs);
 
     // Rebuild: raise the budget via update (the operator's "rebuild on real
     // tools" edit).
-    const result = updateAutomation(
+    const result = updateTask(
       "Rebuilt",
       { tokenBudget: { maxInputTokens: 500_000, period: "daily" } },
       ctx,
     );
 
     // A written budget is a new window: totals cleared, boundary re-anchored.
-    expect(result.automation.cumulativeInputTokens).toBe(0);
-    expect(result.automation.cumulativeOutputTokens).toBe(0);
-    expect(result.automation.budgetResetAt).toBeDefined();
-    expect(new Date(result.automation.budgetResetAt!).getTime()).toBeGreaterThan(Date.now());
+    expect(result.task.cumulativeInputTokens).toBe(0);
+    expect(result.task.cumulativeOutputTokens).toBe(0);
+    expect(result.task.budgetResetAt).toBeDefined();
+    expect(new Date(result.task.budgetResetAt!).getTime()).toBeGreaterThan(Date.now());
 
     // Persisted, not just mutated in memory.
-    const fromDisk = ctx.definitions().get(automation.id);
+    const fromDisk = ctx.definitions().get(task.id);
     expect(fromDisk?.cumulativeInputTokens).toBe(0);
   });
 
   test("an update that does NOT touch tokenBudget leaves the running totals intact", () => {
     const ctx = makeCtx();
-    const { automation } = createAutomation(
+    const { task } = createTask(
       {
         name: "Keep",
         prompt: "watch",
@@ -269,18 +269,18 @@ describe("token budget window anchoring", () => {
       ctx,
     );
     const defs = ctx.definitions();
-    const auto = defs.get(automation.id)!;
+    const auto = defs.get(task.id)!;
     auto.cumulativeInputTokens = 120_000;
     ctx.save(defs);
 
     // Editing the prompt must not reset the window mid-period.
-    const result = updateAutomation("Keep", { prompt: "watch harder" }, ctx);
-    expect(result.automation.cumulativeInputTokens).toBe(120_000);
+    const result = updateTask("Keep", { prompt: "watch harder" }, ctx);
+    expect(result.task.cumulativeInputTokens).toBe(120_000);
   });
 
   test("re-sending an unchanged budget does NOT reset the window (change-gated, not write-gated)", () => {
     const ctx = makeCtx();
-    const { automation } = createAutomation(
+    const { task } = createTask(
       {
         name: "Resend",
         prompt: "watch",
@@ -290,25 +290,25 @@ describe("token budget window anchoring", () => {
       ctx,
     );
     const defs = ctx.definitions();
-    const auto = defs.get(automation.id)!;
+    const auto = defs.get(task.id)!;
     auto.cumulativeInputTokens = 200_000;
     ctx.save(defs);
 
     // A caller re-sends the identical budget alongside an unrelated edit. The
     // budget didn't change, so accumulated spend must survive.
-    const result = updateAutomation(
+    const result = updateTask(
       "Resend",
       { prompt: "watch harder", tokenBudget: { maxInputTokens: 300_000, period: "daily" } },
       ctx,
     );
-    expect(result.automation.cumulativeInputTokens).toBe(200_000);
+    expect(result.task.cumulativeInputTokens).toBe(200_000);
   });
 });
 
-describe("createAutomation / deleteAutomation — internal caller path", () => {
+describe("createTask / deleteTask — internal caller path", () => {
   test("an explicit source overrides the agent default", () => {
     const ctx = makeCtx();
-    createAutomation(
+    createTask(
       {
         name: "operator-authored",
         prompt: "ping",
@@ -317,7 +317,7 @@ describe("createAutomation / deleteAutomation — internal caller path", () => {
       },
       ctx,
     );
-    createAutomation(
+    createTask(
       {
         name: "tool-authored",
         prompt: "agent stuff",
@@ -333,7 +333,7 @@ describe("createAutomation / deleteAutomation — internal caller path", () => {
 
   test("delete by name removes from store", () => {
     const ctx = makeCtx();
-    createAutomation(
+    createTask(
       {
         name: "Delete Me",
         prompt: "x",
@@ -341,7 +341,7 @@ describe("createAutomation / deleteAutomation — internal caller path", () => {
       },
       ctx,
     );
-    const result = deleteAutomation("Delete Me", ctx);
+    const result = deleteTask("Delete Me", ctx);
     expect(result.deleted).toBe(true);
     expect(ctx.definitions().size).toBe(0);
   });
@@ -355,11 +355,11 @@ describe("an event schedule", () => {
 
   test("carries no nextRunAt, because it has no position in time", () => {
     const ctx = makeCtx();
-    const { automation } = createAutomation(
+    const { task } = createTask(
       { name: "Reply triage", prompt: "Triage.", schedule: eventSchedule, source: "user" },
       ctx,
     );
-    expect(automation.nextRunAt).toBeUndefined();
+    expect(task.nextRunAt).toBeUndefined();
   });
 
   // A clock schedule leaves a nextRunAt behind. The timer ignores it, but the
@@ -367,7 +367,7 @@ describe("an event schedule", () => {
   // none at all.
   test("clears a nextRunAt left over from the clock schedule it replaced", () => {
     const ctx = makeCtx();
-    createAutomation(
+    createTask(
       {
         name: "Reply triage",
         prompt: "Triage.",
@@ -379,12 +379,12 @@ describe("an event schedule", () => {
     const before = ctx.definitions().get("reply-triage");
     expect(before?.nextRunAt).toBeDefined();
 
-    updateAutomation("Reply triage", { schedule: eventSchedule }, ctx);
+    updateTask("Reply triage", { schedule: eventSchedule }, ctx);
     expect(ctx.definitions().get("reply-triage")?.nextRunAt).toBeUndefined();
   });
 
   /**
-   * A connector that could give itself an automation subscribed to its own
+   * A connector that could give itself a task subscribed to its own
    * outbox has written a self-wake loop with no operator anywhere in it. The
    * tool schema cannot carry `source` at all, so this is the only door the
    * check can sit on.
@@ -392,7 +392,7 @@ describe("an event schedule", () => {
   test("is refused for a provenance outside user and agent", () => {
     const ctx = makeCtx();
     expect(() =>
-      createAutomation(
+      createTask(
         {
           name: "Self wake",
           prompt: "Go.",
@@ -405,9 +405,9 @@ describe("an event schedule", () => {
     expect(ctx.definitions().size).toBe(0);
   });
 
-  test("cannot be patched onto an automation with such a provenance either", () => {
+  test("cannot be patched onto a task with such a provenance either", () => {
     const ctx = makeCtx();
-    createAutomation(
+    createTask(
       {
         name: "Bundle job",
         prompt: "Go.",
@@ -416,7 +416,7 @@ describe("an event schedule", () => {
       },
       ctx,
     );
-    expect(() => updateAutomation("Bundle job", { schedule: eventSchedule }, ctx)).toThrow(
+    expect(() => updateTask("Bundle job", { schedule: eventSchedule }, ctx)).toThrow(
       /cannot run on events/,
     );
     expect(ctx.definitions().get("bundle-job")?.schedule.type).toBe("interval");
@@ -425,19 +425,19 @@ describe("an event schedule", () => {
   test("is allowed for a user and for the agent acting on one's instruction", () => {
     const ctx = makeCtx();
     for (const source of ["user", "agent"] as const) {
-      const { automation } = createAutomation(
+      const { task } = createTask(
         { name: `Triage ${source}`, prompt: "Triage.", schedule: eventSchedule, source },
         ctx,
       );
-      expect(automation.schedule.type).toBe("event");
+      expect(task.schedule.type).toBe("event");
     }
   });
 });
 
-describe("updateAutomation — a schedule with no next run", () => {
+describe("updateTask — a schedule with no next run", () => {
   test("clears the nextRunAt left by the schedule it replaced", () => {
     const ctx = makeCtx();
-    createAutomation(
+    createTask(
       {
         name: "Morning",
         prompt: "Say good morning",
@@ -445,10 +445,10 @@ describe("updateAutomation — a schedule with no next run", () => {
       },
       ctx,
     );
-    expect(loadOwnerAutomations(workDir, WS, OWNER).get("morning")?.nextRunAt).toBeDefined();
+    expect(loadOwnerTasks(workDir, WS, OWNER).get("morning")?.nextRunAt).toBeDefined();
 
-    updateAutomation("Morning", { schedule: { type: "cron", expression: "0 9 31 2 *" } }, ctx);
+    updateTask("Morning", { schedule: { type: "cron", expression: "0 9 31 2 *" } }, ctx);
 
-    expect(loadOwnerAutomations(workDir, WS, OWNER).get("morning")?.nextRunAt).toBeUndefined();
+    expect(loadOwnerTasks(workDir, WS, OWNER).get("morning")?.nextRunAt).toBeUndefined();
   });
 });

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { defaultOnceLocal, isoFromLocalInput, localInputFromIso } from "./SchedulePicker.tsx";
 
 /**
- * Inline editor for an automation's schedule. `schedule` null is an automation
+ * Inline editor for a task's schedule. `schedule` null is a task
  * with none (manual only); saving "Manual only" sends `null`, which clears it.
  */
 export function ScheduleEditor({
@@ -30,7 +30,7 @@ export function ScheduleEditor({
   );
 
   // An event schedule is not editable here. This picker writes a cron or an
-  // interval and nothing else, so offering it for an event automation would
+  // interval and nothing else, so offering it for an event task would
   // convert one to a timer the moment anybody pressed Save — silently deleting
   // the match and the fire ceiling. Read-only until the picker learns the shape.
   if (initialType === "event") {

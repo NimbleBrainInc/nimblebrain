@@ -315,10 +315,10 @@ export type UseSkillInput = Static<typeof UseSkillInput>;
 
 // ── Tool output types ────────────────────────────────────────────────────
 //
-// Same convention as `automations.ts` §2.1 in `platform/AGENTS.md`:
+// Same convention as `tasks.ts` §2.1 in `platform/AGENTS.md`:
 // type-only exports, the handler's return type IS the contract, web and
 // server both import from here. Skills is a cleaner case than
-// automations — the read-side shapes lived nowhere canonical before
+// tasks — the read-side shapes lived nowhere canonical before
 // (both server's `platform/skills/source.ts` AND web's
 // `pages/settings/SkillsTab.tsx` / `components/InContextPopover.tsx`
 // hand-rolled identical interfaces). This file becomes the source of

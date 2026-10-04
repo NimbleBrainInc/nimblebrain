@@ -668,7 +668,7 @@ export type FinishReason = "stop" | "length" | "content-filter" | "tool-calls" |
  *   - `error`            — last LLM call's finish reason was `error`
  *   - `other`            — anything else (provider returned `other` / `unknown`)
  *   - `cancelled`        — the run's abort signal fired, whatever the cause
- *                          (the Stop button, an automation cancel or timeout,
+ *                          (the Stop button, a task cancel or timeout,
  *                          the per-run event cap, shutdown). It appears only
  *                          on the `run.done` event: the engine rethrows the
  *                          abort, so no EngineResult carries it.
@@ -731,7 +731,7 @@ export interface ToolCallRecord {
    * from the workspace, disconnected, or in a workspace the caller can't
    * reach — `unknown_tool_source`, `workspace_access_denied`, …; see
    * `src/orchestrator/error-mapping.ts`) from a tool that ran and returned a
-   * logical error the agent handled. The automations executor reads this to
+   * logical error the agent handled. The tasks executor reads this to
    * de-mask runs that "completed" only by writing around an unreachable
    * connector. Absent when the call succeeded or carried no structured reason.
    */

@@ -12,5 +12,5 @@ function loadPanelHtml(): string {
   return FALLBACK_HTML;
 }
 
-/** Pre-loaded Automations panel HTML (read once at import time). */
-export const AUTOMATIONS_PANEL_HTML: string = loadPanelHtml();
+/** Pre-loaded Tasks panel HTML (read once at import time). */
+export const TASKS_PANEL_HTML: string = loadPanelHtml();
