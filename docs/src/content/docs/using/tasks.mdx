@@ -182,11 +182,11 @@ A remote agent connected to `/mcp/<workspace-id>` runs a task with `tasks__run`.
 
 <Steps>
 
-1. **A saved task or an inline one-off.** Pass `name` to run a saved task. Or leave `name` out and pass the definition inline: `prompt` (or `skill`), and optionally `inputSchema`, `outputSchema`, `allowedTools`, `limits` (`maxIterations`, `maxInputTokens`, `maxRunDurationMs`), and `budget` (a token budget). An inline call creates a one-off task with no schedule, owned by you in that workspace, runs it once, and keeps it with its run. Nothing deletes it.
+1. **A saved task or an inline one-off.** Pass `name` to run a saved task. Or leave `name` out and pass the definition inline: `prompt` (or `skill`), and optionally `inputSchema`, `outputSchema`, `criteria`, `confidenceThreshold`, `judge`, `onPoorResult` (see [Judging results](#judging-results)), `allowedTools`, `limits` (`maxIterations`, `maxInputTokens`, `maxRunDurationMs`), and `budget` (a token budget). An inline call creates a one-off task with no schedule, owned by you in that workspace, runs it once, and keeps it with its run. Nothing deletes it.
 
 2. **Input.** `input` is any JSON value, at most 64 KiB serialized. When the task has an `inputSchema`, an input that does not match it, or a missing one, is refused before the run starts, with the reasons. The input is kept on the run record and given to the run as data, inside a block the model is told never to follow as instructions.
 
-3. **Output schema.** When the task has an `outputSchema`, the run is told to answer with JSON matching it. The final answer is parsed (a fenced code block is accepted) and checked: the parsed value is kept as the result's `structured`, and the run record says whether it matched (`outputSchemaValid`) and, when it did not, why (`outputSchemaErrors`). A mismatch is recorded, not a failure: the run's status still says how it ended.
+3. **Output schema.** When the task has an `outputSchema`, the run is told to answer with JSON matching it. The final answer is parsed (a fenced code block is accepted) and checked: the parsed value is kept as the result's `structured`, and the run record says whether it matched (`outputSchemaValid`) and, when it did not, why (`outputSchemaErrors`). A mismatch is recorded, not a failure: the run's status still says how it ended. It makes the run's assessment `fail` (see [Judging results](#judging-results)).
 
 4. **Idempotency.** Pass `idempotencyKey` to make a call safe to repeat. A later call with the same key for the same task returns the run the first call started, whether it is still running or has ended, instead of starting another. For an inline one-off the key also names the one-off, so a repeat finds the same one-off and the same run.
 
@@ -196,11 +196,11 @@ A remote agent connected to `/mcp/<workspace-id>` runs a task with `tasks__run`.
 
 On the `2026-07-28` protocol, a client that declares the MCP tasks extension (`io.modelcontextprotocol/tasks`) on its call gets a task handle back at once instead of an answer. The handle names the run, and the run's record is written before the handle is returned, so a lost connection or a restart of the runtime does not lose it. Poll it with `tasks/get` and stop it with `tasks/cancel`; only the identity that started the run, in the workspace it started in, can read or cancel it, and anyone else gets "task not found".
 
-| Run state | Task status |
+| Run execution | Task status |
 |---|---|
 | queued, running | `working` |
-| `success`, `degraded`, or a `timeout` that left a partial result | `completed`, with the deliverable and the run record inline |
-| `failure`, `skipped`, or a `timeout` that left nothing | `failed`, with the run's reason |
+| `completed` or `incomplete` | `completed`, with the deliverable and the run record (its assessment and label included) inline |
+| `failed` or `skipped` | `failed`, with the run's reason |
 | `cancelled` | `cancelled` |
 
 `tasks/cancel` cancels a queued run or one in flight. When the runtime stops, a run still queued reads `failed` (it never started), and one in flight reads `cancelled`, or `failed` if the process died without stopping.
@@ -223,7 +223,60 @@ A run's status comes from what its tool calls did, not from what its final answe
 | `timeout` | The run hit its duration or iteration limit. |
 | `skipped` / `cancelled` | The run did not start (already running or queued, the queue was full, the token budget was spent, or it was still queued when the runtime stopped), or was stopped or removed from the queue. The error says which. |
 
+Each run also carries its `execution`, how it ended in the [task vocabulary](#how-a-run-reads): `completed` (`success` or `degraded`), `incomplete` (stopped at its iteration, input-token, output-length, duration, or token-budget limit with a partial deliverable), `failed` (stopped without one, or a failure the tool calls showed), `skipped`, or `cancelled`. It is derived from the status, so the status keeps its meaning: an `incomplete` run still counts toward the consecutive failures that pause a task exactly as its status did.
+
 A failed call counts as retried when a later call to the same tool with the same input succeeds. When a tool succeeded on only one input in the run, a failure before that success counts as an earlier attempt at it, such as a rejected argument the agent then corrected. A later success with different argument names counts too, since that is the corrected form of a call the tool rejected. Only a later call to the same tool counts, so two healthy patterns still read `degraded`: a lookup that fails as not found and is followed by a create on another tool, and a fallback to a different tool after one fails. A degraded run does not count toward the ten consecutive failures that pause a task, and does not delay its next run.
+
+## Judging results
+
+A run that ended is not necessarily a good run. A task can say what a good deliverable is, and every run that leaves one is judged against it.
+
+- **Output schema** (`outputSchema`). Checked first, without a judge: a deliverable that does not match is `fail`, and no judge is called.
+- **Criteria** (`criteria`). Plain-language rules, each typed:
+
+  | Type | The judge answers | Passes when |
+  |---|---|---|
+  | `boolean` | true or false | the answer equals `pass` (default `true`) |
+  | `score` | a level from `levels`, lowest first | the level reached is at least `pass`, a level index (default: the upper half, so two of four levels, or two of three) |
+  | `choice` | one of `options` | the answer is `pass` or one of `pass` (required) |
+
+  Up to 50 criteria, each with an `id` (letters, digits, `_ . -`) and a `rule` of up to 4,000 characters. When the judge gives probabilities, a score or choice passes on the probability of a passing answer (at least one half), not on the single most likely answer.
+- **Confidence threshold** (`confidenceThreshold`, 0 to 1, default 0.7). A run whose criteria all pass, but where the judge's confidence on any one is below the threshold, is `uncertain`. Each criterion's pass rule is separate; the threshold decides only `uncertain`.
+
+### The judge, and consent
+
+The runtime has no judge of its own. A judge is an MCP server the workspace connects, like any connector, that exposes the `judge` and `list_judges` tools of the judge tool contract. **Connecting one is the workspace's decision to send it data**: for each judged run it receives the criteria, the run's input, the deliverable, and a summary of the run's tool calls (each tool's name, whether it worked, and the first 200 characters of its input and of any error). The state sent is capped at about 48,000 characters (the input to 8,000, the tool-call summary to 8,000, the deliverable to the rest); anything cut is marked, and the assessment says the state was cut. Nothing connects a judge for you.
+
+With one judge server connected, it is used. With more than one, name it in the task's `judge.server`; `judge.id` and `judge.options` pick one of that server's judges and its settings. With none connected, or more than one and none named, a run with criteria is recorded `not_assessed` with that reason, and its output schema is still checked.
+
+The judge is called as the task's owner, in the task's workspace, through the same gates as any tool the run calls. If it is briefly unavailable (`rate_limited`, `upstream_unavailable`, `upstream_timeout`), the call is retried three times over about 30 seconds; any other error is recorded at once. Either way the run is `not_assessed` with the reason, and how the run ended is never changed.
+
+### How a run reads
+
+A run's assessment is `pass`, `fail`, `uncertain`, or `not_assessed`, recorded on the run with each criterion's answer, pass or fail, confidence, and the judge's rationale, plus which judge answered and the tokens it reports. The run list, a run's result, and the Tasks panel show one label derived from how the run ended and its assessment:
+
+| Label | When |
+|---|---|
+| **Succeeded** | completed, assessment `pass` or none, and no tool call left failed |
+| **Poor result** | completed or incomplete, assessment `fail` |
+| **Needs review** | assessment `uncertain`; incomplete with no failing criterion; or completed with a tool call left failed and no failing criterion |
+| **Failed**, **Skipped**, **Cancelled**, **Queued**, **Running** | how the run ended |
+
+The label is computed when it is read, never stored.
+
+### Your verdict
+
+Accept or Reject on a run in the Tasks panel, or `tasks__assess` with `{ runId, verdict: "pass" | "fail", note? }`, records your verdict beside the judge's. It replaces the judge's in the label: a rejected run reads Poor result, and an accepted one Succeeded unless it was incomplete or left a tool call failed. The record says who set it and whether it came from the Tasks panel (`ui`) or another client (`remote`). After editing a task's criteria or schema, `tasks__assess` with `{ runId, reassess: true }` judges a run again and keeps your verdict. A task's own runs cannot call `tasks__assess`.
+
+### After a poor result
+
+`onPoorResult` says what a `fail` does:
+
+- `notify` (the default): a notification in the workspace inbox naming the task and the criteria that failed, which the workspace's [notification routes](/using/notifications) can deliver. The inbox is the workspace's, so its other members can see it.
+- `record`: nothing beyond the assessment.
+- `retry_once`: the task runs again, once, with the same input and the failed criteria given to it as guidance. The retry is an ordinary run (it takes a run slot and counts against the token budget) and records `retryOf`. If the retry fails too, or cannot start, the owner is notified instead.
+
+An `uncertain` run sets off nothing; it reads Needs review.
 
 ## What's next
 
