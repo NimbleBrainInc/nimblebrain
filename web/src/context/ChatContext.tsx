@@ -276,9 +276,15 @@ export function ChatProvider({
   // limits are instance config that does not change while the shell is open.
   const fileLimits = initialConfig?.fileLimits;
 
+  // Each `config.changed` starts a fetch, and responses can arrive out of
+  // order; only the latest request's answer is applied, so an older read
+  // never replaces a newer one.
+  const configRequest = useRef(0);
   const fetchConfig = useCallback(() => {
+    const request = ++configRequest.current;
     callToolWithoutWorkspace("nb", "get_config")
       .then((result) => {
+        if (request !== configRequest.current) return;
         const data = extractConfigPayload(result) as ConfigInfo;
         setConfiguredProviders(data.configuredProviders);
         setNewConversationModel(data.newConversationModel);
