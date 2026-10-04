@@ -45,6 +45,7 @@ import {
   CLIENT_INFO_META_KEY,
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/client";
+import { log } from "../observability/log.ts";
 
 /** The SEP-2663 extension identifier. */
 export const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
@@ -90,6 +91,8 @@ export class TaskWire {
   private seq = 0;
 
   private constructor(
+    /** The source this connection belongs to, for log lines. */
+    readonly source: string,
     private readonly transport: Transport,
     private readonly envelope: Record<string, unknown>,
   ) {}
@@ -101,6 +104,7 @@ export class TaskWire {
    * have attached, plus the tasks extension this request opts in to.
    */
   static attach(
+    source: string,
     client: Client,
     transport: Transport,
     clientInfo: Implementation,
@@ -116,7 +120,7 @@ export class TaskWire {
         extensions: { ...(capabilities.extensions ?? {}), [TASKS_EXTENSION_ID]: {} },
       },
     };
-    const wire = new TaskWire(transport, envelope);
+    const wire = new TaskWire(source, transport, envelope);
     const inner = transport.onmessage;
     transport.onmessage = (message: JSONRPCMessage, extra?: MessageExtraInfo) => {
       if (wire.claim(message)) return;
@@ -243,14 +247,19 @@ export async function getTask(wire: TaskWire, taskId: string): Promise<Task> {
 
 /**
  * `tasks/cancel` — cooperative and best-effort: the server acknowledges the
- * intent and may still finish the work. Failures are swallowed; the caller is
- * already tearing down.
+ * intent and may still finish the work. A failure does not reach the caller,
+ * which is already tearing down, but it is logged: it means the remote job may
+ * still be running.
  */
 export async function cancelTask(wire: TaskWire, taskId: string): Promise<void> {
   try {
     await wire.request("tasks/cancel", { taskId });
-  } catch {
-    // Best-effort by contract.
+  } catch (err) {
+    log.warn("[mcp] tasks/cancel failed; the remote task may still be running", {
+      source: wire.source,
+      taskId,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

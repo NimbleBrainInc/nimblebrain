@@ -113,13 +113,13 @@ The host implements the MCP Apps specification: `ui/initialize`, tool input and 
 
 ## As a server to external clients
 
-Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It serves both eras on the same URL, and they are equivalent: a client on `2026-07-28` can do everything a client on 2025 can. A request carrying the `2026-07-28` `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. Anything else is 2025 traffic, served in a session opened by `initialize`. Both eras list the same tools and resources, run the same tools as tasks, and return the same errors. It advertises:
+Each workspace is its own MCP server at `/mcp/<workspaceId>`, over Streamable HTTP with OAuth 2.0 protected-resource discovery. It serves both eras on the same URL, and they are equivalent but for tasks, which only `2026-07-28` serves. A request carrying the `2026-07-28` `_meta` envelope is answered on its own, with no session, and `server/discover` answers the capabilities. Anything else is 2025 traffic, served in a session opened by `initialize`. Both eras list the same tools and resources and return the same errors. It advertises:
 
 | Capability | 2025 | `2026-07-28` | Notes |
 |---|---|---|---|
 | `tools` | Yes | Yes | The workspace's tools and the caller's identity tools, with the same filtering the agent gets |
 | `resources` | Yes | Yes | Resources from the workspace's servers |
-| `tasks` | Yes | Yes, as the `io.modelcontextprotocol/tasks` extension | Long-running tools stay long-running through the endpoint. On 2025: `tasks` in `initialize`, task-augmented `tools/call` (`params.task`), `tasks/get`, `tasks/result`, `tasks/cancel`. On `2026-07-28`: the extension in `server/discover`'s `capabilities.extensions`; a `tools/call` whose request names the extension in its client capabilities is answered with a task when the tool can run as one, `tasks/get` inlines the result once the task ends, and `tasks/cancel` acknowledges. A call that does not opt in runs to completion inside the request. |
+| `tasks` | No | Yes, as the `io.modelcontextprotocol/tasks` extension | Long-running tools stay long-running through the endpoint on `2026-07-28` only. On 2025 no `tasks` capability is declared: every `tools/call` runs to completion and answers its result, a `params.task` on it is ignored, and `tasks/*` answer `-32601`. On `2026-07-28`: the extension in `server/discover`'s `capabilities.extensions`; a `tools/call` whose request names the extension in its client capabilities is answered with a task when the tool can run as one, `tasks/get` inlines the result once the task ends, and `tasks/cancel` acknowledges. A call that does not opt in runs to completion inside the request. |
 
 Neither era advertises `listChanged` or `resources.subscribe`. The endpoint does not serve the optional `GET` server-to-client stream, so progress and task updates arrive on the `POST` that started them. The [MCP endpoint reference](/connect/mcp-endpoint/) covers authentication, sessions, and the audience rule.
 

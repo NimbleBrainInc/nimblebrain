@@ -167,7 +167,7 @@ export interface ResourceData {
  * (the app the task belongs to, which is the name of the source that runs it —
  * an app is its server). `/mcp` stamps `originApp` on every task it starts, and
  * a request an iframe scopes to one source reaches only a task stamped with
- * that source (`mcp-task-store.ts`). When set on the stamped context,
+ * that source (`mcp-modern-tasks.ts`). When set on the stamped context,
  * subsequent lookups MUST supply matching values.
  */
 export interface TaskOwnerContext {

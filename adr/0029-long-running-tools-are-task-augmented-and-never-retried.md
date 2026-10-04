@@ -1,6 +1,6 @@
 # 0029. Long-running tools are task-augmented; inline calls retry on transport error, task calls never do
 
-- Status: Accepted
+- Status: Accepted; amended by ADR-0046
 - Date: 2026-09-03
 - Serves: orchestrate remote MCP
 
@@ -35,6 +35,11 @@ The client advertises `tasks` because it exercises it (ADR-0023): the stream is
 opened, status is polled, and cancellation dispatches `tasks/cancel`. A server
 marks a tool `execution.taskSupport`, and the runtime reads that off the listing
 and attaches a task rather than blocking.
+
+- *Amended by ADR-0046:* task augmentation is the 2026-07-28 tasks extension
+  only. On a 2025-era connection no task is attached: an `"optional"` tool is
+  called inline (and so retries as one), and a `"required"` tool is refused
+  before dispatch. The retry policy here is unchanged.
 
 **An inline call is treated as idempotent for recovery purposes.** On a transport
 failure it routes through the shared recovery path — classify, then surface,
