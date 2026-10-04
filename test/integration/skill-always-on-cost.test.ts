@@ -50,7 +50,7 @@ async function createAlwaysOn(scope: string, name: string, body: string) {
 beforeAll(async () => {
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

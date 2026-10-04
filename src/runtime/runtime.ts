@@ -4902,10 +4902,7 @@ export class Runtime {
    * was given back to `set_model_config` — so a tinted value there does not
    * just display wrong, it persists.
    */
-  configuredModelSlots(pending?: {
-    models?: Partial<Record<string, string | null>>;
-    defaultModel?: string;
-  }): ModelSlots {
+  configuredModelSlots(pending?: { models?: Partial<Record<string, string | null>> }): ModelSlots {
     // `pending` asks what the slots WOULD be if that patch were applied, so a
     // caller validating a write does not have to re-derive the merge rules. It
     // is the same chain either way — one implementation, not two that drift.
@@ -4916,10 +4913,9 @@ export class Runtime {
       if (value === null) delete models[slot];
       else if (value !== undefined) models[slot] = value;
     }
-    const fallback = pending?.defaultModel ?? this.config.defaultModel ?? DEFAULT_MODEL;
     return {
-      default: resolveModelString(models.default ?? fallback),
-      fast: resolveModelString(models.fast ?? fallback),
+      default: resolveModelString(models.default ?? DEFAULT_MODEL),
+      fast: resolveModelString(models.fast ?? DEFAULT_MODEL),
     };
   }
 
@@ -4952,7 +4948,7 @@ export class Runtime {
    * Whether a model a *caller* named is permitted here.
    *
    * False only where a policy exists and excludes it. Absence of policy is not
-   * denial: on the legacy single-provider config, or behind a custom adapter
+   * denial: with no `providers` block, or behind an injected `languageModel`
    * that serves every string, `getProviderConfigs()` reports a display default
    * (`{anthropic:{}}`) rather than a reachability claim, so consulting it would
    * refuse every non-Anthropic model on a deployment that can serve them.
@@ -5121,14 +5117,6 @@ export class Runtime {
     if (this.config.providers) {
       return Object.keys(this.config.providers);
     }
-    // Legacy config: single provider from model.provider
-    if (
-      this.config.model &&
-      "provider" in this.config.model &&
-      this.config.model.provider !== "custom"
-    ) {
-      return [this.config.model.provider];
-    }
     return ["anthropic"];
   }
 
@@ -5140,13 +5128,6 @@ export class Runtime {
         result[id] = { models: (cfg as { models?: string[] }).models };
       }
       return result;
-    }
-    if (
-      this.config.model &&
-      "provider" in this.config.model &&
-      this.config.model.provider !== "custom"
-    ) {
-      return { [this.config.model.provider]: {} };
     }
     return { anthropic: {} };
   }
@@ -5223,7 +5204,6 @@ export class Runtime {
    * thinking fields, `resolveMaxOutputTokens` and friends for the limits).
    */
   updateConfig(patch: {
-    defaultModel?: string;
     models?: Partial<Record<ModelSlot, string | null>>;
     maxIterations?: number | null;
     maxInputTokens?: number | null;
@@ -5245,13 +5225,6 @@ export class Runtime {
         // cleared slot indistinguishable from one never set.
         if (model === null) delete this.config.models[slot as ModelSlot];
         else if (model !== undefined) this.config.models[slot as ModelSlot] = model;
-      }
-    }
-    if (patch.defaultModel !== undefined) {
-      this.config.defaultModel = patch.defaultModel;
-      // Also update models.default for consistency
-      if (this.config.models) {
-        this.config.models.default = patch.defaultModel;
       }
     }
     if (patch.maxToolResultSize !== undefined)
@@ -6109,44 +6082,10 @@ async function seedWorkspaceConnectorInstances(
 }
 
 function resolveModel(config: RuntimeConfig): (modelString: string) => LanguageModelV4 {
-  // New multi-provider config takes precedence
-  if (config.providers) {
-    return buildModelResolver({
-      providers: config.providers,
-    });
-  }
-
-  // Legacy config.model support
-  if (config.model) {
-    if (config.model.provider === "custom") {
-      const adapter = config.model.adapter;
-      return () => adapter;
-    }
-
-    // Convert legacy named provider to new format
-    const providerName = config.model.provider;
-    const providersCfg: Record<string, Record<string, unknown>> = {};
-
-    if (providerName === "anthropic") {
-      providersCfg.anthropic = { apiKey: config.model.apiKey };
-    } else if (providerName === "openai") {
-      providersCfg.openai = {
-        apiKey: (config.model as { apiKey?: string }).apiKey,
-        baseURL: (config.model as { baseURL?: string }).baseURL,
-      };
-    } else if (providerName === "google") {
-      providersCfg.google = { apiKey: (config.model as { apiKey?: string }).apiKey };
-    } else {
-      throw new Error(`Unknown model provider: "${providerName}"`);
-    }
-
-    return buildModelResolver({
-      providers: providersCfg as RuntimeConfig["providers"],
-    });
-  }
-
-  // Default: anthropic with env var fallback
-  return buildModelResolver({ providers: { anthropic: {} } });
+  const adapter = config.languageModel;
+  if (adapter) return () => adapter;
+  // No providers configured means Anthropic, keyed from the environment.
+  return buildModelResolver({ providers: config.providers ?? { anthropic: {} } });
 }
 
 /** Initialize work directory env vars and sync core skills. */

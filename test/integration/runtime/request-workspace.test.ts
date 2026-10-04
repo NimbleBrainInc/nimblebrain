@@ -41,7 +41,7 @@ async function startDev(name: string, events: EngineEvent[] = []): Promise<Runti
   mkdirSync(workDir, { recursive: true });
   return Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
     events: [{ emit: (e) => events.push(e) }],
@@ -63,7 +63,7 @@ async function startWithProvider(name: string): Promise<Runtime> {
     }),
   );
   return Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });

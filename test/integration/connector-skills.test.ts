@@ -156,7 +156,7 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createCapturingModel() },
+    languageModel: createCapturingModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },
@@ -404,7 +404,7 @@ describe("connector-skill adapter — mid-turn tool promotion", () => {
 
     promoRuntime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       logging: { disabled: true },
       workDir: promoDir,
       telemetry: { enabled: false },
@@ -591,7 +591,7 @@ describe("connector-skill adapter — honors declared loading-strategy", () => {
 
     multiRuntime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: capturing },
+      languageModel: capturing,
       logging: { disabled: true },
       workDir: multiDir,
       telemetry: { enabled: false },
@@ -777,7 +777,7 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
     mkdirSync(dir, { recursive: true });
     affinityRuntime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: dir,
       telemetry: { enabled: false },

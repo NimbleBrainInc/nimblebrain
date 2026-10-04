@@ -223,7 +223,7 @@ beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), "nb-mcp-era-parity-"));
   runtime = await Runtime.start({
     identityProvider: ({ workDir: dir, userStore }) => new TwoIdentityProvider(dir, userStore),
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });

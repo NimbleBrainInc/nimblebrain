@@ -76,7 +76,7 @@ describe("integration: full flow with auth", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: testAuthAdapter(API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -166,7 +166,7 @@ describe("integration: concurrent authenticated load", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: testAuthAdapter(API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -248,7 +248,7 @@ describe("integration: windowing under load", () => {
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       maxInputTokens: 2000, // Low budget to trigger windowing
       workDir: windowTestDir,
@@ -364,7 +364,7 @@ describe("integration: auth boundary", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: testAuthAdapter(API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -439,7 +439,7 @@ describe("E2E: registered app -> tool call via API", () => {
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: testDir,
     });
@@ -518,7 +518,7 @@ describe("E2E: tool call via API", () => {
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: sseTestDir,
     });
@@ -584,7 +584,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: multiStepDir,
     });

@@ -109,7 +109,7 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     identityProvider: ({ workDir, userStore }: IdentityStores) =>
       new CookieSessionProvider(API_KEY, userStore, workDir),
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });

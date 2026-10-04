@@ -65,7 +65,7 @@ describe("Stage 2 — legacy oauthScope on disk hard-errors at boot", () => {
     try {
       const rt = await Runtime.start({
         identityProvider: devProvider,
-        model: { provider: "custom", adapter: createEchoModel() },
+        languageModel: createEchoModel(),
         logging: { disabled: true },
         workDir,
       });

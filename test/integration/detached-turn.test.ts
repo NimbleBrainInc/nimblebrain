@@ -21,7 +21,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -276,13 +276,10 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
     mkdirSync(dir, { recursive: true });
     rt = await Runtime.start({
       identityProvider: devProvider,
-      model: {
-        provider: "custom",
-        adapter: createMockModel(async () => {
-          await gate;
-          return { content: [{ type: "text", text: "unreached" }] };
-        }),
-      },
+      languageModel: createMockModel(async () => {
+        await gate;
+        return { content: [{ type: "text", text: "unreached" }] };
+      }),
       logging: { disabled: true },
       workDir: dir,
     });
@@ -332,14 +329,11 @@ describe("shutdown aborts in-flight detached turns (RunBus teardown)", () => {
 
     const rt = await Runtime.start({
       identityProvider: devProvider,
-      model: {
-        provider: "custom",
-        adapter: createMockModel(async (options) => {
-          capturedSignal = options.abortSignal;
-          await gate;
-          return { content: [{ type: "text", text: "unreached" }] };
-        }),
-      },
+      languageModel: createMockModel(async (options) => {
+        capturedSignal = options.abortSignal;
+        await gate;
+        return { content: [{ type: "text", text: "unreached" }] };
+      }),
       logging: { disabled: true },
       workDir: dir,
     });

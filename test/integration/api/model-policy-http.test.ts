@@ -29,10 +29,9 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
-    // Carries the allowlist. It also displaces the echo adapter, so a turn that
-    // clears the gate then fails against a placeholder key — which is fine
-    // here: every assertion is about the response the gate produces.
+    languageModel: createEchoModel(),
+    // Carries the allowlist. The echo adapter serves every turn that clears
+    // the gate; every assertion is about the response the gate produces.
     providers: { anthropic: { apiKey: "test-key", models: ["claude-sonnet-4-6"] } },
     logging: { disabled: true },
     workDir: testDir,

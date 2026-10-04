@@ -72,7 +72,7 @@ describe("Runtime.chat() appContext wiring", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: freshWorkDir(),
-      model: { provider: "custom", adapter },
+      languageModel: adapter,
       logging: { disabled: true },
     });
 
@@ -107,7 +107,7 @@ describe("Runtime.chat() appContext wiring", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: freshWorkDir(),
-      model: { provider: "custom", adapter },
+      languageModel: adapter,
       logging: { disabled: true },
     });
 
@@ -130,7 +130,7 @@ describe("Runtime.chat() appContext wiring", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: freshWorkDir(),
-      model: { provider: "custom", adapter },
+      languageModel: adapter,
       logging: { disabled: true },
     });
 

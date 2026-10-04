@@ -254,7 +254,7 @@ describe("Remote integration: registering remote connectors in workspace registr
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: testDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       allowInsecureRemotes: true,
     });
@@ -283,7 +283,7 @@ describe("Remote integration: registering remote connectors in workspace registr
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: testDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       allowInsecureRemotes: true,
     });

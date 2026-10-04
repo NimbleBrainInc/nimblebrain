@@ -45,7 +45,7 @@ afterAll(() => {
 function boot(): Promise<Runtime> {
   return Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     secrets: { backend: "file", config: { seal: { keyEnv: KEY_ENV } } },

@@ -94,7 +94,7 @@ describe("a resume scopes the file TOOL to the workspace it runs in", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createResumeFileToolModel() },
+      languageModel: createResumeFileToolModel(),
       logging: { disabled: true },
       workDir,
     });

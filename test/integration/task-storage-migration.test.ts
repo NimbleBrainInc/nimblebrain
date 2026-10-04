@@ -22,7 +22,7 @@ let runtime: Runtime;
 async function boot(): Promise<Runtime> {
   return Runtime.start({
     identityProvider: ({ workDir: dir, userStore }) => new DevIdentityProvider(dir, userStore),
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });

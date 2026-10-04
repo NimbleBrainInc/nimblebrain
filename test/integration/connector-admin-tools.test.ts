@@ -144,7 +144,7 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: recordingModel() },
+    languageModel: recordingModel(),
     logging: { disabled: true },
     events: [auditSink],
     workDir: testDir,

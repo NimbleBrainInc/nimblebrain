@@ -160,10 +160,8 @@ function policyStrandingError(input: Record<string, unknown>, runtime: Runtime):
 /**
  * Would this allowed-list leave a slot pointing outside it once the call lands?
  *
- * Judged on the **post-write** slots, which the runtime computes — an earlier
- * version derived them here from `input.models` alone and missed the deprecated
- * `defaultModel` input, which also repoints the default slot, while rejecting
- * a slot clear because it read the sentinel as a model name.
+ * Judged on the **post-write** slots, which the runtime computes, so a slot
+ * clear is read as a fallback to the default model rather than as a model name.
  *
  * Read from `configuredModelSlots`, not `getDefaultModel`: the latter is tinted
  * by the calling admin's own preference, so an admin whose personal model
@@ -178,10 +176,8 @@ function strandedSlotError(
   runtime: Runtime,
   allowed: string[],
 ): string | null {
-  const pendingDefault = typeof input.defaultModel === "string" ? input.defaultModel : undefined;
   const slots = runtime.configuredModelSlots({
     models: (input.models ?? {}) as Partial<Record<string, string | null>>,
-    ...(pendingDefault !== undefined ? { defaultModel: pendingDefault } : {}),
   });
 
   for (const slot of MODEL_SLOTS) {
@@ -212,12 +208,6 @@ function unwritableFieldError(input: Record<string, unknown>): string | null {
     return `\`${key}\` is not a field this tool writes.`;
   }
   return null;
-}
-
-/** The deprecated top-level `defaultModel` input. `models.default` supersedes it. */
-function validateDefaultModel(input: Record<string, unknown>, runtime: Runtime): string | null {
-  if (input.defaultModel === undefined) return null;
-  return unreachableModelError(String(input.defaultModel), runtime);
 }
 
 function validateModelConfigLimits(input: Record<string, unknown>): string | null {
@@ -254,7 +244,6 @@ function validateModelConfigPatch(input: Record<string, unknown>, runtime: Runti
   return (
     unwritableFieldError(input) ??
     validateModelSlots(input, runtime) ??
-    validateDefaultModel(input, runtime) ??
     policyStrandingError(input, runtime) ??
     validateModelConfigLimits(input) ??
     validateModelConfigThinking(input)
@@ -282,7 +271,6 @@ function mergeModelConfigOverride(
   input: Record<string, unknown>,
 ): void {
   mergeModelSlots(existing, input);
-  if (input.defaultModel !== undefined) existing.defaultModel = String(input.defaultModel);
   // null = clear the operator override; undefined = leave alone. Fields are
   // independent: clearing the thinking mode does not clear the depth or budget.
   for (const { key, coerce } of CLEARABLE_FIELDS) {
@@ -312,7 +300,6 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
   }
   return {
     ...(modelsPatch ? { models: modelsPatch } : {}),
-    ...(input.defaultModel !== undefined ? { defaultModel: String(input.defaultModel) } : {}),
     ...scalarPatch,
   };
 }
@@ -581,13 +568,9 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
               fast: {
                 ...nullable({ type: "string" }),
                 description:
-                  "Cheap/fast model for auxiliary tasks. null clears the slot (falls back to the default model).",
+                  "Cheap/fast model for auxiliary tasks. null clears the slot (falls back to the built-in default model).",
               },
             },
-          },
-          defaultModel: {
-            type: "string",
-            description: "Default model ID. Deprecated — use models.default instead.",
           },
           maxIterations: {
             ...nullable({ type: "number" }),

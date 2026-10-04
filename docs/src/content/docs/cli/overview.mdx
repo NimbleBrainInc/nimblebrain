@@ -30,7 +30,6 @@ The server and dev mode share most flags:
 |------|----------|-------------|
 | `--config <path>`, `-c` | serve, dev | Path to a `nimblebrain.json` config file |
 | `--port <number>` | serve, dev | HTTP server port (default: `27247`) |
-| `--model <name>` | serve | Override the default model (e.g., `claude-sonnet-4-6`) |
 | `--debug` | serve, dev | Verbose event logging to stderr |
 | `--no-web` | dev | Skip the web dev server (API only) |
 
@@ -59,8 +58,6 @@ If no config file exists at the resolved path, NimbleBrain auto-creates one with
   "version": "1"
 }
 ```
-
-CLI flags override values from the config file. For example, `--model claude-sonnet-4-6` overrides whatever `defaultModel` is set in your config.
 
 ## Exit codes
 

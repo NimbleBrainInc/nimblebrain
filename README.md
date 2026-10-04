@@ -231,11 +231,9 @@ A fully specified example:
 }
 ```
 
-**Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. The older single-`model` / `defaultModel` shape is still accepted for backward compatibility but is deprecated.
+**Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. A slot left unset resolves to the built-in default model, `anthropic:claude-sonnet-4-6`.
 
 **Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/workspaces/:wsId/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
-
-**Deprecated fields.** `identity` and `contextFile` are ignored with a warning — use a skill with `type: "context"` instead.
 
 ### `workspace.json` (per-workspace config)
 
@@ -280,7 +278,6 @@ Pass flags after the command, e.g. `bun run start --port 8080` or `bun run dev -
 | Flag | Scope | Purpose |
 |------|-------|---------|
 | `--config <path>`, `-c` | serve, dev | Config file (default: `./nimblebrain.json`) |
-| `--model <id>` | serve | Override default model |
 | `--debug` | serve, dev | Enable debug event logging |
 | `--port <number>` | serve, dev | HTTP server port (default: 27247) |
 | `--no-web` | dev | Skip web dev server (API only) |
@@ -329,7 +326,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 import { Runtime } from "nimblebrain";
 
 const runtime = await Runtime.start({
-  model: { provider: "anthropic" },
+  providers: { anthropic: {} },
   store: { type: "memory" },
 });
 
@@ -592,7 +589,7 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 ### Configuration Reference
 
 **Files:**
-- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load. `identity` and `contextFile` are deprecated with a warning.
+- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load.
 - `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
 - `<workDir>/instance.json` — the identity provider (`dev`, `oidc`, or `workos` adapter). Required: `serve` refuses to start without it.
 

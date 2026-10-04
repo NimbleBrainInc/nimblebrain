@@ -66,7 +66,7 @@ describe("skill lifecycle (end-to-end)", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -127,7 +127,7 @@ describe("skill lifecycle (end-to-end)", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -190,7 +190,7 @@ describe("skill lifecycle (end-to-end)", () => {
     const { model } = createCapturingModel();
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -221,7 +221,7 @@ describe("skill lifecycle (end-to-end)", () => {
     const { model } = createCapturingModel();
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -256,7 +256,7 @@ describe("skill lifecycle (end-to-end)", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },

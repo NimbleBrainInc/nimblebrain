@@ -22,7 +22,7 @@ async function makeRuntime(overrides?: Record<string, unknown>): Promise<Runtime
   mkdirSync(workDir, { recursive: true });
   return Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     workDir,
     logging: { disabled: true },
     ...overrides,
@@ -81,7 +81,7 @@ describe("get_config tool", () => {
   });
 
   it("returns correct default model from config", async () => {
-    const runtime = await makeRuntime({ defaultModel: "anthropic:claude-sonnet-4-6" });
+    const runtime = await makeRuntime({ models: { default: "anthropic:claude-sonnet-4-6" } });
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() => source.execute("get_config", {}));
@@ -130,13 +130,13 @@ describe("get_config tool", () => {
       configPath,
       JSON.stringify({
         version: "1",
-        defaultModel: "anthropic:claude-sonnet-4-6",
+        models: { default: "anthropic:claude-sonnet-4-6" },
         providers: { anthropic: {}, openai: {} },
       }),
     );
 
     const runtime = await makeRuntime({
-      defaultModel: "anthropic:claude-sonnet-4-6",
+      models: { default: "anthropic:claude-sonnet-4-6" },
       providers: { anthropic: {}, openai: {} },
       workDir,
       configPath,
@@ -145,7 +145,7 @@ describe("get_config tool", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
 
       const setResult = await asDevUser(() =>
-        source.execute("set_model_config", { defaultModel: "openai:gpt-4o" }),
+        source.execute("set_model_config", { models: { default: "openai:gpt-4o" } }),
       );
       expect(setResult.isError).toBe(false);
 
@@ -179,7 +179,7 @@ describe("get_config tool", () => {
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() =>
-        source.execute("set_model_config", { defaultModel: "openai:gpt-4o" }),
+        source.execute("set_model_config", { models: { default: "openai:gpt-4o" } }),
       );
       expect(result.isError).toBe(true);
       expect(extractText(result.content)).toContain("Invalid model");

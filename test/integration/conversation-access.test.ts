@@ -119,7 +119,7 @@ describe("runtime.chat — single-owner ownership check", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -227,7 +227,7 @@ describe("runtime.chat — identity-provider gate", () => {
       },
     });
     runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -287,7 +287,7 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
           [ALICE_TOKEN]: ALICE,
           [BOB_TOKEN]: BOB,
         }),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });

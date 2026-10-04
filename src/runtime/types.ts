@@ -32,14 +32,15 @@ export interface IdentityStores {
 }
 
 export interface RuntimeConfig {
-  /** Model provider configuration. */
-  model?:
-    | { provider: "anthropic"; apiKey?: string }
-    | { provider: "openai"; apiKey?: string; baseURL?: string }
-    | { provider: "google"; apiKey?: string }
-    | { provider: "custom"; adapter: LanguageModelV4 };
+  /**
+   * One model that serves every model string, in place of the provider
+   * registry. For tests and embedders that bring their own adapter; it has no
+   * `nimblebrain.json` form. Slots, policy and provider listings still read
+   * `models` and `providers`.
+   */
+  languageModel?: LanguageModelV4;
 
-  /** Multi-provider configuration. Takes precedence over `model` when set. */
+  /** Provider configuration. Absent means Anthropic, keyed from the environment. */
   providers?: ProvidersConfig["providers"];
 
   /** Allow HTTP (non-TLS) remote connector connections. Dev only. */
@@ -48,7 +49,6 @@ export interface RuntimeConfig {
   /** Directories to scan for skill files. */
   skillDirs?: string[];
 
-  /** Role-based model slots. Takes precedence over `defaultModel`. */
   /**
    * Slots the operator set. Partial because setting one slot is not setting
    * the other — the resolved view where both are always present is
@@ -69,9 +69,6 @@ export interface RuntimeConfig {
    * reachable.
    */
   modelPolicy?: { allowed?: string[] };
-
-  /** @deprecated Use models.default instead. Kept for backward compat. */
-  defaultModel?: string;
 
   /** Max agentic iterations per request. Capped at 25. Default: 10. */
   maxIterations?: number;

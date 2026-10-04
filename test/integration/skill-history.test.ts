@@ -60,7 +60,7 @@ async function createSkill(name: string): Promise<string> {
 beforeAll(async () => {
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

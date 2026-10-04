@@ -49,8 +49,8 @@ export async function getEvalRuntime(): Promise<Runtime> {
 
   _runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "anthropic", apiKey },
-    defaultModel: DEFAULT_MODEL,
+    providers: { anthropic: { apiKey } },
+    models: { default: DEFAULT_MODEL, fast: DEFAULT_MODEL },
     workDir: _workDir,
     maxIterations: DEFAULT_MAX_ITERATIONS,
     telemetry: { enabled: false },

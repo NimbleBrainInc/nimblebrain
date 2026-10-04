@@ -181,7 +181,7 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createCapturingModel() },
+    languageModel: createCapturingModel(),
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

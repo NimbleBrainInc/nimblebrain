@@ -47,7 +47,7 @@ describe("Runtime.start() identity wiring under the dev provider", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     const userStore = runtime.getUserStore();
@@ -72,7 +72,7 @@ describe("Runtime.start() identity wiring under the dev provider", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     const wsStore = runtime.getWorkspaceStore();
@@ -95,7 +95,7 @@ describe("Runtime.start() identity wiring under the dev provider", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     expect(runtime.getIdentityProvider()).toBeInstanceOf(DevIdentityProvider);
@@ -115,7 +115,7 @@ describe("Management tools in registry", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     await provisionTestWorkspace(runtime);
@@ -145,7 +145,7 @@ describe("Chat without a workspace", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     await expect(

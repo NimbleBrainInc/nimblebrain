@@ -96,7 +96,7 @@ async function runtimeWithRecordedRun(
   const workDir = join(testDir, subdir);
   const runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: makeModel() },
+    languageModel: makeModel(),
     workDir,
     logging: { disabled: true },
     telemetry: { enabled: false },
@@ -192,7 +192,7 @@ describe("compose__assembled_context — access + resolution", () => {
     const workDir = join(testDir, "not-found");
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: makeModel() },
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },
@@ -210,7 +210,7 @@ describe("compose__assembled_context — access + resolution", () => {
     const workDir = join(testDir, "no-conv");
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: makeModel() },
+      languageModel: makeModel(),
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },

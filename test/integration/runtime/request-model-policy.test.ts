@@ -21,7 +21,7 @@ async function startWithAllowlist(name: string, models: string[], slots?: Record
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     providers: { anthropic: { apiKey: "test-key", models } },
     ...(slots ? { models: slots as never } : {}),
     workDir,
@@ -130,7 +130,7 @@ describe("a deployment with no providers config has no policy to enforce", () =>
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);

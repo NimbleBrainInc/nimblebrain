@@ -335,7 +335,7 @@ export async function createTwoWorkspaceFixture(
 
   const runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: model },
+    languageModel: model,
     logging: { disabled: true },
     workDir,
     events: [sink],

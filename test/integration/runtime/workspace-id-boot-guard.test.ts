@@ -37,7 +37,7 @@ function start(workspaceIds: readonly string[]): Promise<Runtime> {
   writeFileSync(join(dir.workDir, "instance.json"), JSON.stringify({ auth: { adapter: "dev" } }));
   for (const id of workspaceIds) placeWorkspace(dir.workDir, id);
   return Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: dir.workDir,
   });

@@ -32,7 +32,7 @@ beforeAll(async () => {
   testDir = mkdtempSync(join(tmpdir(), "secrets-not-a-tool-"));
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });

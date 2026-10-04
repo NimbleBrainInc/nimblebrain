@@ -38,12 +38,9 @@ async function start(): Promise<Runtime> {
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: {
-      provider: "custom",
-      adapter: createMockModel(() => ({
-        content: [{ type: "text", text: "ok" }],
-      })),
-    },
+    languageModel: createMockModel(() => ({
+      content: [{ type: "text", text: "ok" }],
+    })),
     logging: { disabled: true },
     workDir,
   });

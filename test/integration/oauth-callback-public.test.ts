@@ -41,7 +41,7 @@ beforeAll(async () => {
   _resetComposioConfigForTest();
   runtime = await Runtime.start({
     identityProvider: testAuthAdapter(API_KEY),
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     http: { port: 0, host: "127.0.0.1" },
     workDir: testDir,

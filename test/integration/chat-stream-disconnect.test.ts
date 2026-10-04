@@ -91,7 +91,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: gatedModel },
+      languageModel: gatedModel,
       logging: { disabled: true },
       workDir,
     });

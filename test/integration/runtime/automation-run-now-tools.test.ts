@@ -84,7 +84,7 @@ describe("Run now gets the scheduled run's tools", () => {
     const { model, offered } = recordingModel();
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       logging: { disabled: true },
       workDir,
     });

@@ -39,7 +39,7 @@ async function startRuntime(instance: unknown | null): Promise<Runtime> {
     writeFileSync(join(dir.workDir, "instance.json"), JSON.stringify(instance));
   }
   return Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: dir.workDir,
   });

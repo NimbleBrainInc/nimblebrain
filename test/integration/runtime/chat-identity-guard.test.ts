@@ -59,7 +59,7 @@ describe("runtime.chat() with auth configured", () => {
 
     const runtime = await Runtime.start({
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     try {
@@ -75,7 +75,7 @@ describe("runtime.chat() with auth configured", () => {
 
     const runtime = await Runtime.start({
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     try {
@@ -107,7 +107,7 @@ describe("runtime.chat() under the dev identity provider", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     try {
@@ -124,7 +124,7 @@ describe("runtime.chat() under the dev identity provider", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     try {

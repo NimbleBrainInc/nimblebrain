@@ -119,7 +119,7 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     identityProvider: ({ workDir, userStore }: IdentityStores) =>
       new GrantingDevProvider(workDir, userStore),
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
