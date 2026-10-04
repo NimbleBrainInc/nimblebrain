@@ -10,9 +10,9 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.3.0",
-    "@modelcontextprotocol/core": "^2.3.0",
-    "@modelcontextprotocol/ext-apps": "^2.0.3",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/core": "^2.0.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
     "@nimblebrain/synapse": "0.25.1",
     "dompurify": "^3.2.4",
     "marked": "^18.0.0",

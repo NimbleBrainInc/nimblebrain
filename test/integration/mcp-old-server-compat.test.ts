@@ -21,6 +21,8 @@ import { McpSource } from "../../src/tools/mcp-source.ts";
 
 interface OldSdk {
   label: string;
+  /** The transports this SDK can serve; 1.0 predates Streamable HTTP. */
+  transports: ReadonlyArray<"sse" | "streamable">;
   /** The protocol version the server answers with. */
   version: string;
   load: () => Promise<{
@@ -38,6 +40,7 @@ interface OldSdk {
 const SDKS: OldSdk[] = [
   {
     label: "SDK 1.0.4",
+    transports: ["sse"],
     version: "2024-11-05",
     load: async () => ({
       Server: (await import("mcp-sdk-v1-0/server/index.js")).Server,
@@ -48,6 +51,7 @@ const SDKS: OldSdk[] = [
   },
   {
     label: "SDK 1.10.2",
+    transports: ["sse", "streamable"],
     version: "2024-11-05",
     load: async () => ({
       Server: (await import("mcp-sdk-v1-10/server/index.js")).Server,
@@ -59,6 +63,7 @@ const SDKS: OldSdk[] = [
   },
   {
     label: "SDK 1.13.3",
+    transports: ["sse", "streamable"],
     version: "2025-06-18",
     load: async () => ({
       Server: (await import("mcp-sdk-v1-13/server/index.js")).Server,
@@ -161,10 +166,9 @@ async function serve(
 
 describe("the runtime reaches servers on old MCP SDKs", () => {
   for (const old of SDKS) {
-    for (const mode of ["sse", "streamable"] as const) {
+    for (const mode of old.transports) {
       it(`${old.label} over ${mode === "sse" ? "SSE" : "Streamable HTTP"}`, async () => {
         const sdk = await old.load();
-        if (mode === "streamable" && !sdk.Streamable) return; // predates Streamable HTTP
         const url = await serve(sdk, mode);
         const source = new McpSource(
           "old",
