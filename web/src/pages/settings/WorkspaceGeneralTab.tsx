@@ -8,6 +8,7 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../../context/Workspace
 import { useAutosaveForm } from "../../hooks/useAutosaveForm";
 import { useFlashState } from "../../hooks/useFlashState";
 import { canManageWorkspaceMembers, useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
+import { MAX_WORKSPACE_NAME_LENGTH } from "../../lib/workspace-name";
 import {
   AutosaveField,
   RequireActiveWorkspace,
@@ -86,7 +87,7 @@ function Inner({
           <Input
             id={`workspace-name-${wsId}`}
             disabled={!canRename}
-            maxLength={MAX_NAME_LENGTH}
+            maxLength={MAX_WORKSPACE_NAME_LENGTH}
             {...nameForm.inputProps("name")}
           />
         </AutosaveField>
@@ -101,13 +102,6 @@ function Inner({
     </SettingsFormPage>
   );
 }
-
-/**
- * Long enough for any real name, short enough to fit the sidebar and switcher.
- * Matches the server's `MAX_WORKSPACE_NAME_CHARS` (`src/workspace/types.ts`),
- * which refuses a longer name; this only stops the field accepting one.
- */
-const MAX_NAME_LENGTH = 80;
 
 /**
  * The workspace name as a form that saves on blur or Enter (`useAutosaveForm`).
