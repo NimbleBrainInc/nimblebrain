@@ -69,7 +69,7 @@ export interface CriterionResult {
 /** Whether a run's deliverable is acceptable (mirror of the runtime's RunAssessment). */
 export interface RunAssessment {
   verdict: "pass" | "fail" | "uncertain" | "not_assessed";
-  reason?: string;
+  reason?: { code: string; message: string };
   schema?: { valid: boolean; errors?: string[] };
   criteria?: CriterionResult[];
   judge?: { server: string; id: string; version?: string; calibrated: boolean };

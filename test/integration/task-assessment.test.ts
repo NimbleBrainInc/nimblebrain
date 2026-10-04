@@ -192,7 +192,7 @@ describe("a write warns when its task's runs would not be judged", () => {
     expect(out.isError).toBe(false);
     expect(out.data.created).toBe(true);
     expect(out.data.warnings?.map((w) => w.code)).toEqual(["no_judge"]);
-    expect(out.data.message).toContain("not_assessed");
+    expect(out.data.message).toContain("Needs review");
   });
 
   it("judge_not_found on update naming a source that is not a connected judge", async () => {
@@ -217,6 +217,8 @@ describe("a write warns when its task's runs would not be judged", () => {
         criteria: SOURCED,
       });
       expect(run.data.warnings?.map((w) => w.code)).toEqual(["judge_ambiguous"]);
+      expect(run.data.warnings?.[0]?.message).toStartWith("This run's criteria cannot be judged");
+      expect(out.data.warnings?.[0]?.message).toStartWith("Saved, but");
     } finally {
       await runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).removeSource("grader2");
     }

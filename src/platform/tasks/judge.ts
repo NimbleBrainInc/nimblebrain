@@ -5,7 +5,7 @@
  * connected that exposes both `judge` and `list_judges` (the judge tool
  * contract). Connecting one is the workspace's consent to send deliverables to
  * it, so nothing here connects one: with none connected, a run with criteria
- * is `not_assessed` and says so.
+ * is `uncertain` and says why.
  *
  * The call goes through the unattended dispatch door as the task's owner, in
  * the run's workspace, so the owner's tool policy and the wall apply exactly as
@@ -32,6 +32,8 @@ export const LIST_JUDGES_TOOL = "list_judges";
 export interface JudgeSourceView {
   name: string;
   toolNames: string[];
+  /** True when the source could not list its tools, so whether it is a judge is unknown. */
+  unlisted?: boolean;
 }
 
 /** One tool call's outcome, as the unattended dispatch door reports it. */
@@ -71,8 +73,15 @@ export function findJudgeServer(
   const isJudge = (s: JudgeSourceView) =>
     s.toolNames.includes(JUDGE_TOOL) && s.toolNames.includes(LIST_JUDGES_TOOL);
   const judges = sources.filter(isJudge);
+  const unlisted = sources.filter((s) => s.unlisted).map((s) => s.name);
   if (named !== undefined) {
     if (judges.some((s) => s.name === named)) return { server: named };
+    if (unlisted.includes(named)) {
+      return {
+        code: "judge_not_found",
+        reason: `"${named}" is connected but could not list its tools, so it cannot be called as a judge`,
+      };
+    }
     if (sources.some((s) => s.name === named)) {
       return {
         code: "judge_not_found",
@@ -86,10 +95,13 @@ export function findJudgeServer(
   }
   if (judges.length === 1 && judges[0]) return { server: judges[0].name };
   if (judges.length === 0) {
+    const notListed =
+      unlisted.length > 0 ? ` (${unlisted.join(", ")} could not list its tools)` : "";
     return {
       code: "no_judge",
       reason:
-        "no judge server is connected in this workspace; connect one to judge this task's criteria",
+        `no judge server is connected in this workspace${notListed}; ` +
+        "connect one to judge this task's criteria",
     };
   }
   return {
@@ -115,6 +127,8 @@ export interface JudgeWarning {
 export async function judgeWarnings(
   task: Pick<Task, "criteria" | "judge" | "workspaceId">,
   port: Pick<JudgePort, "sources">,
+  /** `task`: a create or update saved it. `run`: an inline one-off run of it. */
+  about: "task" | "run" = "task",
 ): Promise<JudgeWarning[]> {
   if (!task.criteria?.length || !task.workspaceId) return [];
   let sources: JudgeSourceView[];
@@ -130,7 +144,11 @@ export async function judgeWarnings(
   return [
     {
       code: found.code,
-      message: `Saved, but its runs will be not_assessed until ${until}: ${found.reason}.`,
+      message:
+        (about === "run"
+          ? "This run's criteria cannot be judged, so it is recorded uncertain and reads Needs review"
+          : "Saved, but its criteria cannot be judged, so its runs are recorded uncertain and read Needs review") +
+        `, until ${until}: ${found.reason}.`,
     },
   ];
 }
@@ -140,7 +158,7 @@ const RETRYABLE_CODES = new Set(["rate_limited", "upstream_unavailable", "upstre
 
 /**
  * Waits before each retry of a retryable judge error: three retries over about
- * 30 seconds, then the run is `not_assessed`. Short, because a run's
+ * 30 seconds, then the run is `uncertain`. Short, because a run's
  * assessment holds its record open for a waiting caller (`tasks__run`), and
  * bounded, because a judge that is down for a minute is down for this run.
  */
@@ -174,7 +192,15 @@ function errorCodeOf(result: ToolResult | undefined): string {
   return "unclassified";
 }
 
-type JudgeCall = { ok: true; payload: Record<string, unknown> } | { ok: false; reason: string };
+/** Why judging produced no answers: a code and what it means. */
+type JudgeFailure = { code: string; message: string };
+
+type JudgeCall = { ok: true; payload: Record<string, unknown> } | { ok: false; why: JudgeFailure };
+
+const UNREADABLE: JudgeFailure = {
+  code: "judge_unreadable",
+  message: "the judge returned a result the runtime could not read",
+};
 
 /** The structured payload of a successful call: `structuredContent`, else its text parsed as JSON. */
 function payloadOf(result: ToolResult | undefined): Record<string, unknown> | null {
@@ -199,15 +225,15 @@ function payloadOf(result: ToolResult | undefined): Record<string, unknown> | nu
 function readDispatch(res: JudgeDispatchResult): JudgeCall | { code: string } {
   if (res.outcome === "ok") {
     const payload = payloadOf(res.result);
-    return payload
-      ? { ok: true, payload }
-      : { ok: false, reason: "the judge returned a result the runtime could not read" };
+    return payload ? { ok: true, payload } : { ok: false, why: UNREADABLE };
   }
   if (res.outcome === "skipped") {
-    return { ok: false, reason: "the task's owner is not a member of its workspace" };
+    const message = "the task's owner is not a member of its workspace";
+    return { ok: false, why: { code: "owner_not_member", message } };
   }
   if (res.outcome === "denied") {
-    return { ok: false, reason: `the judge call was refused (${res.classification ?? "denied"})` };
+    const message = `the judge call was refused (${res.classification ?? "denied"})`;
+    return { ok: false, why: { code: "judge_refused", message } };
   }
   if (res.classification === "tool_error") return { code: errorCodeOf(res.result) };
   // The door's own deadline is the judge not answering in time.
@@ -241,12 +267,15 @@ async function callJudge(
     if (!("code" in read)) return read;
     const retryable = RETRYABLE_CODES.has(read.code);
     const delay = delays[attempt];
-    if (!retryable) return { ok: false, reason: `the judge answered ${read.code}` };
-    if (delay === undefined) {
+    if (!retryable) {
       return {
         ok: false,
-        reason: `the judge was unavailable (${read.code}) after ${attempt + 1} attempts`,
+        why: { code: "judge_error", message: `the judge answered ${read.code}` },
       };
+    }
+    if (delay === undefined) {
+      const message = `the judge was unavailable (${read.code}) after ${attempt + 1} attempts`;
+      return { ok: false, why: { code: "judge_unavailable", message } };
     }
     await sleep(delay);
   }
@@ -309,9 +338,12 @@ function readJudgeOutput(payload: Record<string, unknown>): {
  *   2. The criteria, judged in one call to the workspace's judge server, each
  *      decided here by its pass rule, the verdict by the task's threshold.
  *
- * No schema and no criteria is `not_assessed`. Every failure to judge (no
- * judge, a refused call, an error, an unreadable answer) is `not_assessed`
- * with its reason. Never throws, and never touches the run's execution.
+ * No schema and no criteria is `not_assessed`: there is nothing to check
+ * (ADR-0045). Criteria that could not be judged (no usable judge, a refused
+ * call, an error, retries exhausted, an unreadable answer) are `uncertain` with
+ * the reason and no criterion answers, so the run reads Needs review until a
+ * person settles it; a failure to judge is never a pass. Never throws, and
+ * never touches the run's execution.
  */
 export async function assessRun(
   task: Task,
@@ -323,17 +355,15 @@ export async function assessRun(
   const schema = task.outputSchema ? schemaCheckOf(run) : undefined;
   const base = { assessedAt, ...(schema ? { schema } : {}) };
   if (schema && !schema.valid) {
-    return { ...base, verdict: "fail", reason: "the deliverable does not match the output schema" };
+    const message = "the deliverable does not match the output schema";
+    return { ...base, verdict: "fail", reason: { code: "schema_invalid", message } };
   }
   const criteria = task.criteria ?? [];
   if (criteria.length === 0) {
+    const message = "the task has no output schema and no criteria";
     return schema
       ? { ...base, verdict: "pass" }
-      : {
-          ...base,
-          verdict: "not_assessed",
-          reason: "the task has no output schema and no criteria",
-        };
+      : { ...base, verdict: "not_assessed", reason: { code: "nothing_to_check", message } };
   }
   try {
     return { ...base, ...(await judgeCriteria(task, criteria, run, result, deps)) };
@@ -343,7 +373,8 @@ export async function assessRun(
       runId: run.id,
       error: err instanceof Error ? err.message : String(err),
     });
-    return { ...base, verdict: "not_assessed", reason: "assessment failed inside the runtime" };
+    const message = "assessment failed inside the runtime";
+    return { ...base, verdict: "uncertain", reason: { code: "internal", message } };
   }
 }
 
@@ -355,14 +386,18 @@ async function judgeCriteria(
   result: TaskRunResult | null,
   deps: AssessDeps,
 ): Promise<Omit<RunAssessment, "assessedAt" | "schema">> {
-  const notAssessed = (reason: string) => ({ verdict: "not_assessed" as const, reason });
-  if (!result) return notAssessed("the run left no result to judge");
+  const unjudged = (why: JudgeFailure) => ({ verdict: "uncertain" as const, reason: why });
+  if (!result) {
+    return unjudged({ code: "no_result", message: "the run left no result to judge" });
+  }
   const wsId = task.workspaceId;
   const ownerId = task.ownerId;
-  if (!wsId || !ownerId) return notAssessed("the task names no workspace or owner");
+  if (!wsId || !ownerId) {
+    return unjudged({ code: "no_owner", message: "the task names no workspace or owner" });
+  }
 
   const found = findJudgeServer(await deps.port.sources(wsId), task.judge?.server);
-  if ("reason" in found) return notAssessed(found.reason);
+  if ("reason" in found) return unjudged({ code: found.code, message: found.reason });
 
   const { state, truncated } = buildJudgeState(run, result);
   const input: Record<string, unknown> = { criteria: contractCriteria(criteria), state };
@@ -380,20 +415,16 @@ async function judgeCriteria(
     reason: `task-assessment:${task.id}/${run.id}`,
   });
   const withTruncation = truncated ? { stateTruncated: true } : {};
-  if (!called.ok) return { ...notAssessed(called.reason), ...withTruncation };
+  if (!called.ok) return { ...unjudged(called.why), ...withTruncation };
 
   const out = readJudgeOutput(called.payload);
-  if (!out) {
-    return {
-      ...notAssessed("the judge returned a result the runtime could not read"),
-      ...withTruncation,
-    };
-  }
+  if (!out) return { ...unjudged(UNREADABLE), ...withTruncation };
   const judge = { server: found.server, ...out.judge };
   const usage = out.usage ? { usage: out.usage } : {};
   const decided = decideCriteria(criteria, out.answers);
   if ("unreadable" in decided) {
-    return { ...notAssessed(decided.unreadable), judge, ...usage, ...withTruncation };
+    const why = { code: "judge_unreadable", message: decided.unreadable };
+    return { ...unjudged(why), judge, ...usage, ...withTruncation };
   }
   return {
     verdict: verdictOf(decided.results, thresholdOf(task)),

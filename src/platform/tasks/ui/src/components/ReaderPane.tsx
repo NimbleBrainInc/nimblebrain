@@ -338,7 +338,7 @@ function ReaderAssessment({
         Assessment · {VERDICT_TEXT[a.verdict]}
         {a.judge ? ` · judged by ${a.judge.version ?? a.judge.id}` : ""}
       </div>
-      {a.reason && <div className="reader-assessment-note">{a.reason}</div>}
+      {a.reason && <div className="reader-assessment-note">{a.reason.message}</div>}
       {a.schema && (
         <div className="reader-assessment-note">
           Output schema:{" "}

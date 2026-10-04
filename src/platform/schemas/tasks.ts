@@ -736,7 +736,7 @@ export interface TaskHumanVerdict {
 /** Whether a run's deliverable is acceptable. Mirror of `RunAssessment`. */
 export interface TaskRunAssessment {
   verdict: "pass" | "fail" | "uncertain" | "not_assessed";
-  reason?: string;
+  reason?: { code: string; message: string };
   schema?: { valid: boolean; errors?: string[] };
   criteria?: TaskCriterionResult[];
   judge?: { server: string; id: string; version?: string; calibrated: boolean };
@@ -986,6 +986,18 @@ export interface TasksRunsOutput {
 }
 
 /**
+ * A warning a write returns about the task it saved, which it saved anyway.
+ * `no_judge`, `judge_ambiguous`, `judge_not_found`: the task has criteria and
+ * its workspace has no judge server it can use (none connected, several and
+ * none named, or the named one is not a connected judge), so its runs are
+ * `uncertain` (Needs review) until one is connected or named.
+ */
+export interface TaskWarning {
+  code: "no_judge" | "judge_ambiguous" | "judge_not_found";
+  message: string;
+}
+
+/**
  * Discriminated union — `handleRun` returns one of two shapes:
  *
  *   { run: TaskRunRecord; enabled; message? }  when the run finishes
@@ -1022,18 +1034,6 @@ export interface TasksRunsOutput {
  * dereferencing `run.*` — `as { run: ... }` is the anti-pattern that
  * caused the production CLI crash this type prevents.
  */
-/**
- * A warning a write returns about the task it saved, which it saved anyway.
- * `no_judge`, `judge_ambiguous`, `judge_not_found`: the task has criteria and
- * its workspace has no judge server it can use (none connected, several and
- * none named, or the named one is not a connected judge), so its runs are
- * `not_assessed` until one is connected or named.
- */
-export interface TaskWarning {
-  code: "no_judge" | "judge_ambiguous" | "judge_not_found";
-  message: string;
-}
-
 export type TasksRunOutput =
   | { run: TaskRunView; enabled: boolean; message?: string; warnings?: TaskWarning[] }
   | {

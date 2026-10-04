@@ -397,13 +397,22 @@ export function defaultScorePass(levels: number): number {
   return Math.floor(levels / 2);
 }
 
-/** The probability mass on `keys`, or undefined when no probabilities were given. */
+/**
+ * The probability mass on `passing`, read from the contract's keys (a score's
+ * level index as a string, a choice's option). Undefined when no probabilities
+ * were given or none is keyed by any of the criterion's `allKeys`, so the
+ * caller falls back to the answer rather than reading a distribution keyed
+ * some other way as zero.
+ */
 function massOn(
   probabilities: Record<string, number> | null | undefined,
-  keys: string[],
+  passing: string[],
+  allKeys: string[],
 ): number | undefined {
-  if (!probabilities || Object.keys(probabilities).length === 0) return undefined;
-  return keys.reduce((sum, k) => sum + (probabilities[k] ?? 0), 0);
+  if (!probabilities || !allKeys.some((k) => typeof probabilities[k] === "number")) {
+    return undefined;
+  }
+  return passing.reduce((sum, k) => sum + (probabilities[k] ?? 0), 0);
 }
 
 /**
@@ -441,7 +450,8 @@ function decideScore(criterion: Criterion, a: JudgeAnswer): boolean | null {
   }
   const pass = typeof criterion.pass === "number" ? criterion.pass : defaultScorePass(n);
   const keys = Array.from({ length: n - pass }, (_, i) => String(pass + i));
-  const p = massOn(a.probabilities, keys);
+  const levels = Array.from({ length: n }, (_, i) => String(i));
+  const p = massOn(a.probabilities, keys, levels);
   return p !== undefined ? p >= 0.5 : answer >= pass;
 }
 
@@ -450,7 +460,7 @@ function decideChoice(criterion: Criterion, a: JudgeAnswer): boolean | null {
   if (typeof a.answer !== "string" || !options.includes(a.answer)) return null;
   const pass = typeof criterion.pass === "string" ? [criterion.pass] : criterion.pass;
   const passing = Array.isArray(pass) ? pass : [];
-  const p = massOn(a.probabilities, passing);
+  const p = massOn(a.probabilities, passing, options);
   return p !== undefined ? p >= 0.5 : passing.includes(a.answer);
 }
 

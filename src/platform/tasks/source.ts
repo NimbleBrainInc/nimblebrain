@@ -143,7 +143,7 @@ function createJudgePort(runtime: Runtime): JudgePort {
             };
           } catch {
             // A source that cannot list its tools offers no judge right now.
-            return { name: source.name, toolNames: [] };
+            return { name: source.name, toolNames: [], unlisted: true };
           }
         }),
       );
@@ -451,8 +451,9 @@ export async function createTasksSource(
   async function withJudgeWarnings<T extends { message?: string }>(
     out: T,
     task: Task | undefined,
+    about: "task" | "run" = "task",
   ): Promise<T> {
-    return task ? withWarnings(out, await judgeWarnings(task, judgePort)) : out;
+    return task ? withWarnings(out, await judgeWarnings(task, judgePort, about)) : out;
   }
 
   function warnAboutJudge<T extends { task: Task; message: string }>(out: T): Promise<T> {
@@ -493,7 +494,7 @@ export async function createTasksSource(
             // An inline one-off is saved by the call, so it is warned about
             // like a create; a saved task was warned about when it was written.
             input.name === undefined
-              ? withJudgeWarnings(out, ctx.definitions().get(runOutputTaskId(out)))
+              ? withJudgeWarnings(out, ctx.definitions().get(runOutputTaskId(out)), "run")
               : out,
           );
         case "cancel":

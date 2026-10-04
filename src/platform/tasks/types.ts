@@ -264,8 +264,13 @@ export interface HumanVerdict {
  */
 export interface RunAssessment {
   verdict: AssessmentVerdict;
-  /** Why the verdict is `not_assessed`, or which check failed. */
-  reason?: string;
+  /**
+   * Why: `nothing_to_check` for `not_assessed`, `schema_invalid` for a schema
+   * `fail`, or why criteria could not be judged for an `uncertain` with no
+   * criterion answers (`no_judge`, `judge_ambiguous`, `judge_not_found`,
+   * `judge_error`, `judge_unavailable`, `judge_refused`, `judge_unreadable`, ...).
+   */
+  reason?: { code: string; message: string };
   /** The output schema check, when the task has an output schema. */
   schema?: { valid: boolean; errors?: string[] };
   criteria?: CriterionResult[];

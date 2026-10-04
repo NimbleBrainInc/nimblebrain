@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { labelOf } from "../../../../src/platform/tasks/assessment.ts";
+import { assessRun } from "../../../../src/platform/tasks/judge.ts";
 import { type RequestedRun, Scheduler } from "../../../../src/platform/tasks/scheduler.ts";
 import {
   loadTask,
@@ -302,5 +303,60 @@ describe("onPoorResult", () => {
     expect(calls).toHaveLength(2);
     expect(notified).toHaveLength(1);
     expect(notified[0]?.retryOf).toBe(first.id);
+  });
+
+  it("retry_once falls back to notify when the retry is refused (token budget spent)", async () => {
+    // The first run spends past the budget, so the task is disabled and Run now refuses the retry.
+    makeTask({ onPoorResult: "retry_once", tokenBudget: { maxInputTokens: 5 } });
+    const calls: ExecCall[] = [];
+    const notified: TaskRun[] = [];
+    start(calls, { assess: () => verdict("fail"), notified });
+    const first = await runOnce();
+    await scheduler?.assessmentsSettled();
+    expect(calls).toHaveLength(1);
+    expect(notified.map((r) => r.id)).toEqual([first.id]);
+    const refused = readRuns(workDir, WS, OWNER, "judged").find((r) => r.id !== first.id);
+    expect(refused?.status).toBe("skipped");
+  });
+
+  it("criteria the judge could not answer are uncertain: Needs review, and no policy fires", async () => {
+    makeTask({ onPoorResult: "retry_once" });
+    const calls: ExecCall[] = [];
+    const notified: TaskRun[] = [];
+    scheduler = new Scheduler(executor(calls), {
+      workDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 4, maxQueuedRuns: 4 }),
+      // No judge connected in the workspace.
+      assess: (task, run, result) =>
+        assessRun(task, run, result, {
+          port: { sources: async () => [], call: async () => ({ outcome: "error" }) },
+        }),
+      notifyPoorResult: (_t, run) => notified.push(run),
+    });
+    scheduler.start();
+    const run = await runOnce();
+    await scheduler.assessmentsSettled();
+    expect(run.assessment?.verdict).toBe("uncertain");
+    expect(run.assessment?.reason?.code).toBe("no_judge");
+    expect(labelOf(run)).toBe("Needs review");
+    expect(calls).toHaveLength(1);
+    expect(notified).toHaveLength(0);
+  });
+
+  it("a task with nothing to check is not_assessed and reads Succeeded", async () => {
+    makeTask({ criteria: undefined });
+    const calls: ExecCall[] = [];
+    scheduler = new Scheduler(executor(calls), {
+      workDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 4, maxQueuedRuns: 4 }),
+      assess: (task, run, result) =>
+        assessRun(task, run, result, {
+          port: { sources: async () => [], call: async () => ({ outcome: "error" }) },
+        }),
+    });
+    scheduler.start();
+    const run = await runOnce();
+    expect(run.assessment?.verdict).toBe("not_assessed");
+    expect(labelOf(run)).toBe("Succeeded");
   });
 });

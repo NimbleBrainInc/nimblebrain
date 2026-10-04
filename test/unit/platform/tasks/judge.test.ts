@@ -231,13 +231,16 @@ describe("assessRun", () => {
   it("no schema and no criteria is not assessed", async () => {
     const a = await assessRun(task({ criteria: undefined }), run, result, { port: portOver([]) });
     expect(a.verdict).toBe("not_assessed");
-    expect(a.reason).toContain("no output schema and no criteria");
+    expect(a.reason?.code).toBe("nothing_to_check");
+    expect(a.reason?.message).toContain("no output schema and no criteria");
   });
 
-  it("with no judge connected, criteria are not assessed and nothing is called", async () => {
+  it("with no judge connected, criteria are uncertain (never a pass) and nothing is called", async () => {
     const a = await assessRun(task(), run, result, { port: portOver([]) });
-    expect(a.verdict).toBe("not_assessed");
-    expect(a.reason).toContain("connect one");
+    expect(a.verdict).toBe("uncertain");
+    expect(a.criteria).toBeUndefined();
+    expect(a.reason?.code).toBe("no_judge");
+    expect(a.reason?.message).toContain("connect one");
   });
 
   it("forwards the task's judge id and options", async () => {
@@ -261,14 +264,17 @@ describe("assessRun", () => {
     expect(slept).toEqual([2_000, 8_000]);
   });
 
-  it("a retryable error that persists is not assessed after the bounded retries", async () => {
+  it("a retryable error that persists is uncertain after the bounded retries", async () => {
     stub.answer = () => ({ error: "upstream_unavailable" });
     const a = await assessRun(task(), run, result, {
       port: portOver([stub.source]),
       sleep: noSleep,
     });
-    expect(a.verdict).toBe("not_assessed");
-    expect(a.reason).toBe("the judge was unavailable (upstream_unavailable) after 4 attempts");
+    expect(a.verdict).toBe("uncertain");
+    expect(a.reason).toEqual({
+      code: "judge_unavailable",
+      message: "the judge was unavailable (upstream_unavailable) after 4 attempts",
+    });
     expect(stub.calls).toHaveLength(4);
   });
 
@@ -286,43 +292,43 @@ describe("assessRun", () => {
   });
 
   for (const code of ["bad_input", "upstream_rejected", "auth_required", "internal"]) {
-    it(`${code} is not assessed at once, with the classified reason`, async () => {
+    it(`${code} is uncertain at once, with the classified reason`, async () => {
       stub.answer = () => ({ error: code });
       const a = await assessRun(task(), run, result, {
         port: portOver([stub.source]),
         sleep: noSleep,
       });
-      expect(a.verdict).toBe("not_assessed");
-      expect(a.reason).toBe(`the judge answered ${code}`);
+      expect(a.verdict).toBe("uncertain");
+      expect(a.reason).toEqual({ code: "judge_error", message: `the judge answered ${code}` });
       expect(stub.calls).toHaveLength(1);
     });
   }
 
-  it("a refused or skipped call is not assessed with why", async () => {
+  it("a refused or skipped call is uncertain with why", async () => {
     const denied = portOver([stub.source], {
       call: async () => ({ outcome: "denied", classification: "tool_permission_denied" }),
     });
-    expect((await assessRun(task(), run, result, { port: denied })).reason).toContain(
+    expect((await assessRun(task(), run, result, { port: denied })).reason?.message).toContain(
       "tool_permission_denied",
     );
     const skipped = portOver([stub.source], {
       call: async () => ({ outcome: "skipped", classification: "owner_not_member" }),
     });
-    expect((await assessRun(task(), run, result, { port: skipped })).reason).toContain(
+    expect((await assessRun(task(), run, result, { port: skipped })).reason?.message).toContain(
       "not a member",
     );
   });
 
-  it("an answer the runtime cannot read is not assessed rather than guessed", async () => {
+  it("an answer the runtime cannot read is uncertain rather than guessed", async () => {
     stub.answer = () => ({ malformed: { verdict: "looks good" } });
     const a = await assessRun(task(), run, result, { port: portOver([stub.source]) });
-    expect(a).toMatchObject({ verdict: "not_assessed" });
-    expect(a.reason).toContain("could not read");
+    expect(a).toMatchObject({ verdict: "uncertain", reason: { code: "judge_unreadable" } });
+    expect(a.reason?.message).toContain("could not read");
 
     stub.answer = (c) => answerAll(c, "maybe");
     const b = await assessRun(task(), run, result, { port: portOver([stub.source]) });
-    expect(b.verdict).toBe("not_assessed");
-    expect(b.reason).toContain("does not fit its type");
+    expect(b.verdict).toBe("uncertain");
+    expect(b.reason?.message).toContain("does not fit its type");
   });
 
   it("marks a capped state", async () => {
@@ -332,14 +338,29 @@ describe("assessRun", () => {
     expect(String(stub.calls[0]?.state.deliverable)).toContain("…[truncated:");
   });
 
-  it("a port that throws is not assessed, never a throw", async () => {
+  it("a port that throws is uncertain, never a throw", async () => {
     const broken = portOver([], {
       sources: async () => {
         throw new Error("registry gone");
       },
     });
     const a = await assessRun(task(), run, result, { port: broken });
-    expect(a.verdict).toBe("not_assessed");
+    expect(a.verdict).toBe("uncertain");
+  });
+
+  it("a source that cannot list its tools is named in the reason", async () => {
+    const unlisted = portOver([], {
+      sources: async () => [{ name: "flaky", toolNames: [], unlisted: true }],
+    });
+    const a = await assessRun(task(), run, result, { port: unlisted });
+    expect(a.reason?.code).toBe("no_judge");
+    expect(a.reason?.message).toContain("flaky could not list its tools");
+    const named = await assessRun(task({ judge: { server: "flaky" } }), run, result, {
+      port: unlisted,
+    });
+    expect(named.reason?.code).toBe("judge_not_found");
+    expect(named.reason?.message).toContain("could not list its tools");
+    expect(named.reason?.message).not.toContain("not a judge server");
   });
 });
 
@@ -355,7 +376,7 @@ describe("judgeWarnings: a write warns when its task's runs would not be judged"
     const named = task({ judge: { server: "missing" } });
     const [notFound] = await judgeWarnings(named, port([judge("a")]));
     expect(notFound?.code).toBe("judge_not_found");
-    expect(notFound?.message).toContain("not_assessed");
+    expect(notFound?.message).toContain("Needs review");
     const notAJudge = task({ judge: { server: "crm" } });
     expect(
       (await judgeWarnings(notAJudge, port([{ name: "crm", toolNames: ["search"] }])))[0]?.code,

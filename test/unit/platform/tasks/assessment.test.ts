@@ -150,7 +150,23 @@ describe("labelOf (derived, never stored)", () => {
   const cases: Array<[string, Partial<TaskRun>, string]> = [
     ["completed, not assessed", {}, "Succeeded"],
     ["completed, pass", { assessment: assessed("pass") }, "Succeeded"],
-    ["completed, not_assessed", { assessment: assessed("not_assessed") }, "Succeeded"],
+    // not_assessed means nothing to check (no schema, no criteria).
+    ["completed, nothing to check", { assessment: assessed("not_assessed") }, "Succeeded"],
+    [
+      "completed, criteria the judge could not answer",
+      { assessment: { ...assessed("uncertain"), reason: { code: "no_judge", message: "x" } } },
+      "Needs review",
+    ],
+    [
+      "a person's accept settles a run the judge could not answer",
+      {
+        assessment: {
+          ...assessed("uncertain", "pass"),
+          reason: { code: "judge_unavailable", message: "x" },
+        },
+      },
+      "Succeeded",
+    ],
     ["completed, fail", { assessment: assessed("fail") }, "Poor result"],
     ["completed, uncertain", { assessment: assessed("uncertain") }, "Needs review"],
     [
@@ -241,6 +257,17 @@ describe("deciding a criterion (the judge applies no pass rule)", () => {
     expect(decideCriterion(score, a(2, q))).toBe(false);
     // Exactly half passes.
     expect(decideCriterion(score, a(1, { "1": 0.5, "2": 0.5 }))).toBe(true);
+  });
+
+  it("reads the contract's probability keys, and falls back to the answer when none is present", () => {
+    // Keyed by level name or option text, not the contract's keys: the answer decides.
+    expect(decideCriterion(score, a(2, { good: 0.9, bad: 0.1 }))).toBe(true);
+    expect(decideCriterion(score, a(1, { weak: 0.9 }))).toBe(false);
+    expect(decideCriterion(choice, a("formal", { "0": 0.9 }))).toBe(true);
+    expect(decideCriterion(choice, a("rude", { "2": 0.9 }))).toBe(false);
+    // Keyed by the contract's keys: the mass decides.
+    expect(decideCriterion(score, a(1, { "1": 0.4, "2": 0.6 }))).toBe(true);
+    expect(decideCriterion(choice, a("rude", { rude: 0.4, casual: 0.6 }))).toBe(true);
   });
 
   it("choice passes when the answer is one of pass, by probability mass when given", () => {

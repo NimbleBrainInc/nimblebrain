@@ -1492,7 +1492,7 @@ export async function handleAssess(
     const { verdict: judged, reason } = updated.assessment;
     return {
       run: toRunView(updated),
-      message: `Run "${runId}" re-assessed: ${judged}${reason ? ` (${reason})` : ""}.`,
+      message: `Run "${runId}" re-assessed: ${judged}${reason ? ` (${reason.message})` : ""}.`,
     };
   }
 
@@ -1521,7 +1521,7 @@ function setHumanVerdict(
     assessment: {
       ...(r.assessment ?? {
         verdict: "not_assessed" as const,
-        reason: "not judged before a person's verdict",
+        reason: { code: "not_judged", message: "not judged before a person's verdict" },
         assessedAt: at,
       }),
       human,
