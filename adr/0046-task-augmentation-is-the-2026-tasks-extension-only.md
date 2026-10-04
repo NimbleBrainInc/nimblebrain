@@ -18,13 +18,17 @@ extension per request, the server alone decides whether to task a call and
 answers either a complete result or a flat task (`resultType: "task"`), and
 `tasks/get` carries the outcome.
 
-The runtime uses task augmentation in three places, and today each speaks both
-vocabularies:
+The runtime uses task augmentation in three places. Inbound and outbound speak
+both vocabularies; app to host speaks the 2025 utility under the extension's
+name:
 
 - **Inbound.** `/mcp` serves each era on its own leg (`src/api/AGENTS.md`). The
   2025 leg advertises `tasks` and answers task-augmented calls.
 - **App to host.** A view starts a long call with Synapse's `callToolAsTask`,
-  in the 2025 shape, and the iframe bridge forwards it to the 2025 leg.
+  in the 2025 shape, and the iframe bridge forwards it to the 2025 leg. The
+  bridge advertises this to the view under the extension's identifier
+  (`web/src/bridge/host-capabilities.ts`) while serving the 2025 methods,
+  `tasks/result` among them.
 - **Outbound.** `mcp-task-client.ts` drives whichever vocabulary a connector
   negotiated.
 
@@ -64,7 +68,10 @@ only.
 ## Consequences
 
 - One vocabulary to build, test and document, in each of the three places.
-- The 2025 leg can move to SDK 2, and SDK v1 leaves the runtime.
+- The 2025 leg can move to SDK 2. SDK v1 leaves the runtime once two other
+  holders of it move too: `@modelcontextprotocol/ext-apps` 1.x, which declares
+  SDK v1 as a peer dependency (2.x declares SDK 2), and the bridge's `/mcp`
+  client in `web/`, which is built on the SDK v1 `Client`.
 - A 2025 client loses long-running calls on `/mcp`. Its calls still work, as
   ordinary blocking calls, and one that outlasts a timeout in the path fails the
   way any long blocking request does.
