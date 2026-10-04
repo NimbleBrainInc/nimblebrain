@@ -4,22 +4,20 @@ Scope: `src/lifecycle/` and the tool-surface watch in `src/tools/connector-surfa
 
 ## Connector lifecycle — the two callable moments
 
-`src/lifecycle/` (`declaration.ts` parses, `notify.ts` calls) tells a connector
-it became reachable in a workspace (`on_ready`, with
-`{ reason: "install" | "resume" }`) and that it is about to be removed
-(`on_removing`, no arguments). Declared in one of two places, never both
-for one connection (`Runtime.lifecycleDeclarationFor`):
+`src/lifecycle/` (`bindings.ts` reads, `notify.ts`
+calls) tells a connector it became reachable in a workspace (`on_ready`, with
+`{ reason: "install" | "resume" }` when the handler declares `reason`) and that
+it is about to be removed (`on_removing`, no arguments).
 
-- **On the wire**, as the `ai.nimblebrain/lifecycle` MCP extension: a server
-  that advertises it marks its handler tools in `_meta`. The wire shape is
-  `src/services/lifecycle-extension.ts` (no I/O); `bindings.ts` holds each
-  connection's binding in memory, snapshotted on `running` and on every
-  tool-set change, and rediscovered (reconnecting first) inside the removal
-  deadline when none is held. A marker from a server that did not advertise
-  the extension is not a handler. Never identify a handler by its name.
-- **In the catalog**, as `_meta["ai.nimblebrain/host"].lifecycle`, for a server
-  that does not advertise the extension. Each value names a tool on that same
-  server.
+**The declaration is the `ai.nimblebrain/lifecycle` MCP extension, and nothing
+else** (`Runtime.lifecycleDeclarationFor`). A server that advertises it marks
+its handler tools in `_meta`. The wire shape is
+`src/services/lifecycle-extension.ts` (no I/O); `bindings.ts` holds each
+connection's binding in memory, snapshotted on `running` and on every tool-set
+change, and rediscovered (reconnecting first) inside the removal deadline when
+none is held. A marker from a server that did not advertise the extension is
+not a handler. Never identify a handler by its name. The catalog host block
+carries no lifecycle field; do not add one back.
 
 Developer contract:
 [`docs/extensions/lifecycle.mdx`](../../docs/src/content/docs/extensions/lifecycle.mdx).
@@ -62,8 +60,8 @@ Three rules that are load-bearing rather than stylistic:
   Every lifecycle call is a plain inline `tools/call` (the lifecycle port in
   `getLifecycleNotifyDeps` passes `inline`), so it never waits on a task, but a
   merely slow inline handler is bounded by nothing else, and with no binding
-  held the deadline also covers rediscovering it. Do not read
-  `verifyLifecycleTools` as the bound and delete the deadline as redundant;
+  held the deadline also covers rediscovering it. Do not read the binding's
+  `taskSupport` refusal as the bound and delete the deadline as redundant;
   the wait is held where the guarantee is made. It also may never
   arrive — the docs say so in those words, because
   a bundle that leaks a third-party resource without it is relying on a call
@@ -73,21 +71,17 @@ Three rules that are load-bearing rather than stylistic:
 absent from every listing and refused on every door, for every principal,
 admins included, through the same `Runtime.connectorAdmission` /
 `connectorAdminDenial` pair `admin_tools` uses. `connectorGatesFor` feeds that
-one predicate whichever declaration won; there is no second withholding path.
+one predicate from the connection's binding; there is no second withholding path.
 The kernel's own calls reach the source through `connectorPortForSource` and
 pass no door, so they need no exemption; never add one by caller name.
 `test/integration/connector-lifecycle-host-only.test.ts` pins both.
 
-The contract check (`verifyLifecycleTools`) mirrors `verifyRegisterTool` with a
-weaker predicate — the tool exists and takes no *required* argument — and
-deliberately does **not** require `reason` in the schema. On the catalog path
-the runtime sends an argument the schema need not mention, which rests on the
-server framework accepting and ignoring unknown arguments (FastMCP/pydantic
-does). On the extension path it sends `reason` only to a handler that declares
-it, and admits `taskSupport: "optional"`; the binding's own rejections
-(duplicate marker, unknown event, required argument) are install warnings too.
-Like the hooks check it is a warning on a **successful** install, and an empty
-tool list is "not ready yet", not a violation.
+The binding is its own contract check (`selectLifecycleHandlers`): a marked
+tool with a required argument or `taskSupport: "required"`, a duplicate marker
+or an unknown event binds nothing, and each is an install warning on a
+**successful** install. `reason` is deliberately not required in the schema:
+the runtime sends it only to a handler that declares it. An empty tool list is
+"not ready yet", not a violation.
 
 `ConnectorPort` and the tool-surface watch both reconciles run on live in
 `src/tools/connector-surface.ts`. Three purposes subscribe independently
@@ -95,6 +89,6 @@ tool list is "not ready yet", not a violation.
 drops them all on uninstall and `stopAllToolSurfaceWatches` on shutdown, beside
 `resetReadyNotifications` and `resetLifecycleBindings`.
 The `"lifecycle"` and `"lifecycle-binding"` watches fire on the same change in
-no fixed order, so on the extension path `notifyReady` reads the handlers off
+no fixed order, so `notifyReady` reads the handlers off
 the listing it fetched, never the held binding. A `ready` handler that listing
 rejects leaves the attempt unsettled, so the fix is called on the next change.

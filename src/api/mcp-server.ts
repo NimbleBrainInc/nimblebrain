@@ -999,8 +999,8 @@ function createHandlers(
   //
   // One source, when `_meta` names it (`RESOURCE_SOURCE_META_KEY`): the source
   // a listing scoped by the same key reaches, and nothing else. That is how the
-  // iframe bridge reads for an app — every iframe shares one `/mcp` session, so
-  // the key is the only thing that says which app is reading.
+  // iframe bridge reads for an app — every iframe's requests reach `/mcp` as one
+  // client, so the key is the only thing that says which app is reading.
   //
   // Without it, identity resources (files, conversations, tasks) resolve
   // first (below), then the session's one workspace — never a sweep across
@@ -1052,8 +1052,7 @@ function createHandlers(
  * required when the body carries 'task'"). A server cannot send one, explicit
  * result schema or not; a client receives one only through a request that
  * carries its own result schema, since the typed `callTool` refuses it too.
- * The iframe bridge and any 2025 client starting a task-augmented call depend
- * on that result. When SDK v2 sends a task-shaped `tools/call` result on the
+ * A 2025 client starting a task-augmented call depends on that result. When SDK v2 sends a task-shaped `tools/call` result on the
  * 2025 era, this leg moves to it and the v1 dependency goes.
  *
  * The task store is identity-bound. `ProtocolOptions.taskStore` makes the SDK

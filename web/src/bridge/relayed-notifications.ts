@@ -13,7 +13,7 @@
 import type {
   ResourceListChangedNotification,
   ToolListChangedNotification,
-} from "@modelcontextprotocol/sdk/types.js";
+} from "@modelcontextprotocol/client";
 
 /** Typed from the SDK so a spec rename fails the build. */
 export const RESOURCES_LIST_CHANGED: ResourceListChangedNotification["method"] =

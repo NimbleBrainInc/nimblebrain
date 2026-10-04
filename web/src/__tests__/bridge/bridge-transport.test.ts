@@ -1,94 +1,71 @@
 // ---------------------------------------------------------------------------
 // Bridge transport tests
 //
-// The bridge always forwards `tools/call` and `resources/read` through the
-// MCP SDK bridge client. These tests verify:
+// The bridge forwards `tools/call` and `resources/read` to `/mcp` through
+// `sendMcpRequest`. These tests verify:
 //
-//   - `tools/call` and `resources/read` route through the MCP client
-//     (`callTool` / `readResource`), with the wire name qualified by the
-//     calling app's server.
+//   - `tools/call` and `resources/read` are sent with the wire name qualified
+//     by the calling app's server, and that server named in `_meta`.
 //   - Own-server scope: no app reaches another server, whether it names one
 //     in `_meta`, in the top-level `server`, or in a qualified tool name —
 //     whatever the app's name.
-//   - Task-augmented `tools/call` (`params.task` present) routes through
-//     the SDK's generic `request()` path so `CreateTaskResult` flows back
-//     to the iframe verbatim within the fast-path budget.
 //   - A tool execution error (`isError: true`) is a result, forwarded with
 //     its `structuredContent`. A call with no result (a server's refusal, a
-//     transport failure, a thrown `readResource`) is a JSON-RPC error; a
+//     request that got no answer, a failed read) is a JSON-RPC error; a
 //     server's refusal keeps its code and `data`.
 //
-// Strategy: mock the MCP client so we can inspect call shape, argument
+// Strategy: mock `sendMcpRequest` so we can inspect call shape, argument
 // forwarding, and error propagation. Inbound iframe traffic is simulated
 // by dispatching a MessageEvent with `source` set to the iframe's
 // contentWindow stub — happy-dom wires postMessage through the same path.
+// The tasks extension's half of `tools/call` is in bridge-tasks.test.ts.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { realClient } from "../../../test/setup";
+import { realClient, realMcpBridgeClient } from "../../../test/setup";
+import type { McpAnswer, McpRequestOptions } from "../../mcp-bridge-client";
 
 // ---------------------------------------------------------------------------
 // Mocks — each dependency is replaced with an observable stub so tests can
 // inspect call shape, argument forwarding, and error propagation.
 // ---------------------------------------------------------------------------
 
-// mcp-bridge-client (SDK transport)
-//
-// We don't care about the real SDK — only that `callTool`, `readResource`,
-// and `request` get invoked with the right shapes. The returned promise is
-// configurable per-test via `mcpBehavior`.
+// mcp-bridge-client: `sendMcpRequest` dispatches by method to a stub per
+// method, whose answer is configurable per test via `mcpBehavior`.
+type Params = Record<string, unknown>;
 interface McpBehavior {
-  callTool: (params: {
-    name: string;
-    arguments?: Record<string, unknown>;
-  }) => Promise<Record<string, unknown>>;
-  readResource: (params: {
-    uri: string;
-    _meta?: Record<string, unknown>;
-  }) => Promise<Record<string, unknown>>;
-  request: (
-    req: { method: string; params: unknown },
-    schema: unknown,
-  ) => Promise<Record<string, unknown>>;
+  callTool: (params: Params, options?: McpRequestOptions) => Promise<McpAnswer>;
+  readResource: (params: Params) => Promise<McpAnswer>;
 }
 
-let mcpBehavior: McpBehavior = {
-  callTool: async () => ({
-    content: [{ type: "text", text: "mcp-ok" }],
-    structuredContent: { via: "mcp" },
-  }),
-  readResource: async () => ({
-    contents: [{ uri: "ui://demo", text: "mcp-bytes" }],
-  }),
-  request: async () => ({
-    task: {
-      taskId: "task-abc",
-      status: "working",
-      ttl: 1000,
-      createdAt: "2026-01-01T00:00:00Z",
-      lastUpdatedAt: "2026-01-01T00:00:00Z",
-    },
-  }),
-};
+function defaultBehavior(): McpBehavior {
+  return {
+    callTool: async () => ({
+      result: { content: [{ type: "text", text: "mcp-ok" }], structuredContent: { via: "mcp" } },
+    }),
+    readResource: async () => ({
+      result: { contents: [{ uri: "ui://demo", text: "mcp-bytes" }] },
+    }),
+  };
+}
+let mcpBehavior: McpBehavior = defaultBehavior();
 
-const mcpCallTool = mock(
-  (p: { name: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> }) =>
-    mcpBehavior.callTool(p),
+const mcpCallTool = mock((p: Params, options?: McpRequestOptions) =>
+  mcpBehavior.callTool(p, options),
 );
-const mcpReadResource = mock((p: { uri: string; _meta?: Record<string, unknown> }) =>
-  mcpBehavior.readResource(p),
-);
-const mcpRequest = mock((req: { method: string; params: unknown }, schema: unknown) =>
-  mcpBehavior.request(req, schema),
+const mcpReadResource = mock((p: Params) => mcpBehavior.readResource(p));
+
+/** When set, `sendMcpRequest` rejects: the request got no JSON-RPC answer. */
+let sendShouldReject: Error | null = null;
+const mcpSend = mock(
+  async (method: string, params: Params, options?: McpRequestOptions): Promise<McpAnswer> => {
+    if (sendShouldReject) throw sendShouldReject;
+    if (method === "tools/call") return mcpCallTool(params, options);
+    if (method === "resources/read") return mcpReadResource(params);
+    return { error: { code: -32601, message: `Method not found: ${method}` } };
+  },
 );
 
-let getClientShouldReject: Error | null = null;
-const getClientCalls = { count: 0 };
-// The bridge now namespaces tool names with `ws_<active>-` before
-// dispatching (Q3 auto-prefix). Mock `getActiveWorkspaceId` to return
-// a stable workspace id so the wire-name assertions below are
-// deterministic.
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
 // whole-module mock exposes every api/client export; only the two below are
 // overridden. Keeps the process-global mock registry complete even when it
@@ -103,24 +80,8 @@ mock.module("../../api/client", () => ({
 }));
 
 mock.module("../../mcp-bridge-client", () => ({
-  getMcpBridgeClient: async () => {
-    getClientCalls.count += 1;
-    if (getClientShouldReject) throw getClientShouldReject;
-    return {
-      callTool: mcpCallTool,
-      readResource: mcpReadResource,
-      request: mcpRequest,
-    };
-  },
-  resetMcpBridgeClient: () => {
-    /* noop */
-  },
-  // Passthrough: this file doesn't exercise the session-miss recovery path,
-  // so the wrapper just runs the op once. Mocking it is required because
-  // bridge.ts named-imports it; without this the file fails to link in
-  // isolation (passes under `bun test` only because mcp-bridge-client.test.ts
-  // happens to load the real module first and Bun shares link state).
-  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
+  ...realMcpBridgeClient,
+  sendMcpRequest: mcpSend,
 }));
 
 // Import bridge AFTER mocks are registered so it picks up the stubs.
@@ -199,29 +160,11 @@ function makeTestIframe(): TestIframe {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  getClientShouldReject = null;
-  getClientCalls.count = 0;
+  sendShouldReject = null;
+  mcpSend.mockClear();
   mcpCallTool.mockClear();
   mcpReadResource.mockClear();
-  mcpRequest.mockClear();
-  mcpBehavior = {
-    callTool: async () => ({
-      content: [{ type: "text", text: "mcp-ok" }],
-      structuredContent: { via: "mcp" },
-    }),
-    readResource: async () => ({
-      contents: [{ uri: "ui://demo", text: "mcp-bytes" }],
-    }),
-    request: async () => ({
-      task: {
-        taskId: "task-abc",
-        status: "working",
-        ttl: 1000,
-        createdAt: "2026-01-01T00:00:00Z",
-        lastUpdatedAt: "2026-01-01T00:00:00Z",
-      },
-    }),
-  };
+  mcpBehavior = defaultBehavior();
 });
 
 let activeBridge: { destroy(): void } | null = null;
@@ -246,8 +189,8 @@ function mount(appName: string): TestIframe {
 // ---------------------------------------------------------------------------
 
 describe("tools/call — MCP transport", () => {
-  test("routes tools/call through the MCP client", async () => {
-    const frame = mount("synapse-research");
+  test("sends tools/call to /mcp, qualified and scoped to the app's server", async () => {
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -262,61 +205,20 @@ describe("tools/call — MCP transport", () => {
     expect(reply.result.structuredContent).toEqual({ via: "mcp" });
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
 
-    // The wire name is namespaced with the active workspace (Q3
-    // auto-prefix) and qualified with the app's own server per
-    // REST-parity. Mock `getActiveWorkspaceId` returns `ws_0076759dbbe19fcc`. The app's
+    // The wire name is qualified with the app's own server, and the app's
     // server is named under `RESOURCE_SOURCE_META_KEY`, which is how `/mcp`
     // holds the call to the MCP Apps app scope.
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
     expect(callParams).toEqual({
-      name: "synapse-research__search",
+      name: "research__search",
       arguments: { q: "mcp" },
-      _meta: { [RESOURCE_SOURCE_META_KEY]: "synapse-research" },
+      _meta: { [RESOURCE_SOURCE_META_KEY]: "research" },
     });
   });
 
-  test("task-augmented call returns CreateTaskResult to the iframe (<1s)", async () => {
-    const frame = mount("synapse-research");
-
-    const t0 = Date.now();
-    frame.send({
-      jsonrpc: "2.0",
-      id: "t1",
-      method: "tools/call",
-      params: {
-        name: "start_research",
-        arguments: { query: "deep" },
-        task: { ttl: 1000 },
-      },
-    });
-
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "t1", 1000)) as {
-      result: { task: { taskId: string; status: string } };
-    };
-    const elapsed = Date.now() - t0;
-
-    expect(elapsed).toBeLessThan(1000);
-    expect(reply.result.task?.taskId).toBe("task-abc");
-    expect(reply.result.task?.status).toBe("working");
-
-    // Task-augmented path uses the generic request() — not callTool —
-    // because CreateTaskResult doesn't match CallToolResultSchema.
-    expect(mcpRequest).toHaveBeenCalledTimes(1);
-    expect(mcpCallTool).not.toHaveBeenCalled();
-
-    const [req] = mcpRequest.mock.calls[0] ?? [];
-    expect(req).toMatchObject({
-      method: "tools/call",
-      params: expect.objectContaining({
-        task: { ttl: 1000 },
-        _meta: { [RESOURCE_SOURCE_META_KEY]: "synapse-research" },
-      }),
-    });
-  });
-
-  test("MCP client connection failure surfaces as JSON-RPC error (not silent)", async () => {
-    getClientShouldReject = new Error("connect refused");
-    const frame = mount("synapse-research");
+  test("a request that got no answer surfaces as a JSON-RPC error (not silent)", async () => {
+    sendShouldReject = new Error("connect refused");
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -337,11 +239,13 @@ describe("tools/call — MCP transport", () => {
       error: { code: "not_found", message: "No such record", next_step: "list records" },
     };
     mcpBehavior.callTool = async () => ({
-      isError: true,
-      content: [{ type: "text", text: JSON.stringify(refusal) }],
-      structuredContent: refusal,
+      result: {
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify(refusal) }],
+        structuredContent: refusal,
+      },
     });
-    const frame = mount("synapse-research");
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -363,12 +267,14 @@ describe("tools/call — MCP transport", () => {
   });
 
   test("a server's refusal is a JSON-RPC error that keeps its code and data", async () => {
-    mcpBehavior.callTool = async () => {
-      throw new McpError(-32602, 'Tool "x" is not callable from an app', {
-        reason: "not_app_callable",
-      });
-    };
-    const frame = mount("synapse-research");
+    mcpBehavior.callTool = async () => ({
+      error: {
+        code: -32602,
+        message: 'Tool "x" is not callable from an app',
+        data: { reason: "not_app_callable" },
+      },
+    });
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -390,7 +296,7 @@ describe("tools/call — MCP transport", () => {
 
 describe("tools/call — scoped to the app's own server", () => {
   test("an app naming another server in params.server is locked to its own", async () => {
-    const frame = mount("synapse-research");
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -403,7 +309,7 @@ describe("tools/call — scoped to the app's own server", () => {
     // The MCP client received a name qualified with the app's own server.
     expect(mcpCallTool).toHaveBeenCalledTimes(1);
     const [callParams] = mcpCallTool.mock.calls[0] ?? [];
-    expect((callParams as { name: string }).name).toBe("synapse-research__t");
+    expect((callParams as { name: string }).name).toBe("research__t");
   });
 
   test("an app naming another source in _meta still names its own", async () => {
@@ -505,7 +411,7 @@ describe("tools/call — scoped to the app's own server", () => {
     };
     expect(reply.error?.code).toBe(-32000);
     expect(reply.error?.message).toContain("scoped");
-    // Refused in the bridge — the call never reaches the shared `/mcp` session.
+    // Refused in the bridge — the call never reaches `/mcp`.
     expect(mcpCallTool).not.toHaveBeenCalled();
   });
 
@@ -527,8 +433,8 @@ describe("tools/call — scoped to the app's own server", () => {
 });
 
 describe("resources/read — MCP transport", () => {
-  test("routes resources/read through the MCP client", async () => {
-    const frame = mount("synapse-research");
+  test("sends resources/read to /mcp", async () => {
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -568,11 +474,11 @@ describe("resources/read — MCP transport", () => {
     });
   });
 
-  test("MCP readResource error forwards as JSON-RPC -32000", async () => {
-    mcpBehavior.readResource = async () => {
-      throw new Error("resource not found");
-    };
-    const frame = mount("synapse-research");
+  test("a refused read forwards as JSON-RPC -32000", async () => {
+    mcpBehavior.readResource = async () => ({
+      error: { code: -32002, message: "resource not found" },
+    });
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -594,7 +500,7 @@ describe("a method the host does not serve", () => {
   const settle = () => new Promise((r) => setTimeout(r, 20));
 
   test("a request gets method-not-found, so the view's call does not hang", async () => {
-    const frame = mount("synapse-research");
+    const frame = mount("research");
 
     frame.send({ jsonrpc: "2.0", id: "l1", method: "sampling/createMessage", params: {} });
 
@@ -603,11 +509,11 @@ describe("a method the host does not serve", () => {
     };
     expect(reply.error?.code).toBe(-32601);
     expect(reply.error?.message).toContain("sampling/createMessage");
-    expect(mcpRequest).not.toHaveBeenCalled();
+    expect(mcpSend).not.toHaveBeenCalled();
   });
 
   test("a numeric request id is answered with that id", async () => {
-    const frame = mount("synapse-research");
+    const frame = mount("research");
 
     frame.send({ jsonrpc: "2.0", id: 7, method: "prompts/list" });
 
@@ -618,7 +524,7 @@ describe("a method the host does not serve", () => {
   });
 
   test("a notification and a methodless message get no reply", async () => {
-    const frame = mount("synapse-research");
+    const frame = mount("research");
 
     frame.send({ jsonrpc: "2.0", method: "notifications/unknown" });
     frame.send({ jsonrpc: "2.0", id: "resp-1", result: {} });
@@ -630,7 +536,7 @@ describe("a method the host does not serve", () => {
 
 describe("widget state is not a host extension", () => {
   test("a synapse/persist-state request gets method-not-found", async () => {
-    const frame = mount("synapse-research");
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -648,7 +554,7 @@ describe("widget state is not a host extension", () => {
   });
 
   test("a handshake after a persist-state request sends no synapse/state-loaded", async () => {
-    const frame = mount("synapse-research");
+    const frame = mount("research");
 
     frame.send({
       jsonrpc: "2.0",
@@ -664,7 +570,7 @@ describe("widget state is not a host extension", () => {
       method: "ui/initialize",
       params: {
         protocolVersion: "2026-01-26",
-        appInfo: { name: "synapse-research", version: "1.0.0" },
+        appInfo: { name: "research", version: "1.0.0" },
         appCapabilities: {},
       },
     });
@@ -679,8 +585,8 @@ describe("widget state is not a host extension", () => {
   });
 });
 
-// Every iframe shares one `/mcp` session, so `/mcp` cannot tell which app a
-// read came from. The bridge can: it names the resolved server under
+// Every iframe's requests reach `/mcp` as one client, so `/mcp` cannot tell
+// which app a read came from. The bridge can: it names the resolved server under
 // `RESOURCE_SOURCE_META_KEY`, as it does for listings, and `/mcp` reads from
 // that source alone.
 describe("resources/read — scoped to the app's own server", () => {

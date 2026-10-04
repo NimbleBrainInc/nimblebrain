@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { realClient } from "../../../test/setup";
+import { realClient, realMcpBridgeClient } from "../../../test/setup";
 import { NOTIFY_METHOD } from "../../bridge/extensions";
 import type { AppNotice, BridgeCallbacks } from "../../bridge/types";
 
@@ -20,15 +20,8 @@ mock.module("../../api/client", () => ({
 }));
 
 mock.module("../../mcp-bridge-client", () => ({
-  getMcpBridgeClient: async () => ({
-    callTool: mock(async () => ({ content: [], structuredContent: {} })),
-    readResource: mock(async () => ({ contents: [] })),
-    request: mock(async () => ({})),
-    setNotificationHandler: mock(() => {}),
-    removeNotificationHandler: mock(() => {}),
-  }),
-  resetMcpBridgeClient: () => {},
-  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
+  ...realMcpBridgeClient,
+  sendMcpRequest: mock(async () => ({ result: { content: [] } })),
 }));
 
 const { createBridge, createNoticeLimiter } = await import("../../bridge/bridge");

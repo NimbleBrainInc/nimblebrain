@@ -52,6 +52,7 @@ import {
   type Tool,
   type ToolSource,
 } from "../../src/tools/types.ts";
+import { buildMcpRequest, readMcpAnswer } from "../../web/src/mcp-bridge-client.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -611,5 +612,82 @@ describe("/mcp/<wsId> tasks on 2026-07-28", () => {
     const { status, body } = await modernPost("tasks/get", { taskId: "t" }, { name: "other" });
     expect(status).toBe(400);
     expect(body.error?.code).toBe(-32020);
+  });
+});
+
+// ── The app bridge's requests, as the web shell builds them ──────────────
+
+describe("/mcp/<wsId> answers the app bridge on 2026-07-28", () => {
+  /** One request exactly as the web shell's bridge sends it, scoped to `app`. */
+  async function bridgeSend(
+    method: string,
+    params: Record<string, unknown>,
+    opts: { app?: string; tasks?: boolean } = {},
+  ) {
+    const { headers, body } = buildMcpRequest(
+      "bridge-1",
+      method,
+      { ...params, _meta: { [RESOURCE_SOURCE_META_KEY]: opts.app ?? SOURCE } },
+      { tasks: opts.tasks },
+    );
+    return readMcpAnswer(await fetch(mcpUrl(), { method: "POST", headers, body }));
+  }
+
+  async function bridgeResult(...args: Parameters<typeof bridgeSend>) {
+    const answer = await bridgeSend(...args);
+    if ("error" in answer) throw answer.error;
+    return answer.result;
+  }
+
+  it("runs an opted-in call as a task, and answers its polls with the outcome inline", async () => {
+    const created = await bridgeResult(
+      "tools/call",
+      { name: `${SOURCE}__research`, arguments: {} },
+      { tasks: true },
+    );
+    expect(created.resultType).toBe("task");
+    const taskId = String(created.taskId);
+    expect((await bridgeResult("tasks/get", { taskId })).status).toBe("working");
+
+    const done: CallToolResult = { content: [{ type: "text", text: "report" }] };
+    jobs.settleWorking(done);
+    const got = await bridgeResult("tasks/get", { taskId });
+    expect(got.status).toBe("completed");
+    expect(got.result).toEqual(done);
+  });
+
+  it("answers a call that did not opt in outright", async () => {
+    const result = await bridgeResult("tools/call", {
+      name: `${SOURCE}__echo`,
+      arguments: { text: "hi" },
+    });
+    expect(result.content).toEqual([{ type: "text", text: "echo:hi" }]);
+  });
+
+  it("cancels a task, and refuses a poll scoped to another app as not found", async () => {
+    const created = await bridgeResult(
+      "tools/call",
+      { name: `${SOURCE}__research`, arguments: {} },
+      { tasks: true },
+    );
+    const taskId = String(created.taskId);
+    const elsewhere = await bridgeSend("tasks/get", { taskId }, { app: "parity" });
+    expect("error" in elsewhere && elsewhere.error.code).toBe(-32602);
+    expect(await bridgeResult("tasks/cancel", { taskId })).toEqual({ resultType: "complete" });
+    expect((await bridgeResult("tasks/get", { taskId })).status).toBe("cancelled");
+  });
+
+  it("reads and lists the app's own resources", async () => {
+    const read = await bridgeResult("resources/read", { uri: APP_URI }, { app: "parity" });
+    expect((read.contents as Array<{ text?: string }>)[0]?.text).toBe(APP_HTML);
+    const listed = await bridgeResult("resources/list", {}, { app: "parity" });
+    expect(Array.isArray(listed.resources)).toBe(true);
+    const templates = await bridgeResult("resources/templates/list", {}, { app: "parity" });
+    expect(Array.isArray(templates.resourceTemplates)).toBe(true);
+  });
+
+  it("refuses a read of another app's resource as not found", async () => {
+    const read = await bridgeSend("resources/read", { uri: APP_URI }, { app: SOURCE });
+    expect("error" in read).toBe(true);
   });
 });

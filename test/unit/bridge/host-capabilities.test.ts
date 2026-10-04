@@ -74,11 +74,16 @@ describe("the host declares what it serves", () => {
     }
   });
 
-  test("tasks is declared under the extension identifier the SDK reads", () => {
+  test("the tasks extension is declared under its identifier, as an empty object", () => {
     // The official ext-apps `App` parses the handshake result against the spec
     // schema, which has no `tasks` field and strips one. `experimental`, keyed
     // by the registered extension identifier, is the one slot that survives.
-    expect(declaredExtensions()).toContain(TASKS_EXTENSION_ID);
+    // The extension has no settings: an app opts each call in on the request.
+    const { experimental } = buildHostCapabilities("db-query") as {
+      experimental: Record<string, object>;
+    };
+    expect(TASKS_EXTENSION_ID).toBe("io.modelcontextprotocol/tasks");
+    expect(experimental[TASKS_EXTENSION_ID]).toEqual({});
     expect(Object.keys(buildHostCapabilities("files"))).not.toContain("tasks");
   });
 

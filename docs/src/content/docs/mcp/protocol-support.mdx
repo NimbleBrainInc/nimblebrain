@@ -9,7 +9,7 @@ This page is the contract a server developer builds against: what the host speak
 
 ## Specification revisions
 
-NimbleBrain uses the official TypeScript SDK v2 (`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.x) as a client and for the `2026-07-28` side of its MCP endpoint. The endpoint's 2025 side and the [MCP App Bridge](/apps/bridge/) stay on SDK 1.x (`@modelcontextprotocol/sdk`), because SDK v2 cannot yet send a task-shaped `tools/call` result.
+NimbleBrain uses the official TypeScript SDK v2 (`@modelcontextprotocol/client` and `@modelcontextprotocol/server` 2.x) as a client and for the `2026-07-28` side of its MCP endpoint. The endpoint's 2025 side stays on SDK 1.x (`@modelcontextprotocol/sdk`), because SDK v2 cannot yet send a task-shaped `tools/call` result. The [MCP App Bridge](/apps/bridge/) reaches the endpoint on `2026-07-28`.
 
 The revisions fall into two eras. `2026-07-28` has no `initialize` handshake: a client probes with `server/discover`, and every request carries its protocol version, client info and client capabilities in its own `_meta` envelope. Every earlier revision is negotiated once, by `initialize`, under the specification's [lifecycle rules](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#version-negotiation).
 

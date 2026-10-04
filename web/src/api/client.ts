@@ -47,11 +47,10 @@ export function getAuthToken(): string | null {
  * Hooks fired on logout / auth-token change — used by stateful clients
  * that hold a session bound to the identity. Callers register via
  * `addAuthLifecycleHandler` and unsubscribe via the returned function;
- * `setAuthToken` iterates the set so multiple stateful clients (the MCP
- * bridge, the SSE event clients) each drop their identity-bound state
- * on logout independently. Stateless callers (REST helpers,
- * `fetchWithRefresh`) read the current token per-request and need no
- * hook.
+ * `setAuthToken` iterates the set so each stateful client (the SSE event
+ * clients) drops its identity-bound state on logout independently.
+ * Stateless callers (REST helpers, `fetchWithRefresh`, the bridge's `/mcp`
+ * sender) read the current token per-request and need no hook.
  *
  * A workspace switch does not fire these; clients holding workspace-bound
  * state register with `addWorkspaceLifecycleHandler` instead.
@@ -59,10 +58,9 @@ export function getAuthToken(): string | null {
 const authLifecycleHandlers = new Set<() => void>();
 
 /**
- * Hooks fired when the active workspace changes. The MCP bridge registers
- * here: its session is bound to the workspace whose `/mcp/<wsId>` it opened,
- * so a switch closes it. REST helpers read the active workspace per request
- * and need no hook.
+ * Hooks fired when the active workspace changes, for a client holding state
+ * bound to one workspace. REST helpers and the bridge's `/mcp` sender read the
+ * active workspace per request and need no hook.
  */
 const workspaceLifecycleHandlers = new Set<() => void>();
 

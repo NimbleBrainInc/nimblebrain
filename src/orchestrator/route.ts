@@ -247,7 +247,7 @@ export interface OrchestratorRuntime {
 
   /**
    * The connector gate: the `host_only_tool` refusal when the connector's
-   * catalog `lifecycle` block names `toolName`, whoever calls; the
+   * server binds `toolName` as a lifecycle handler, whoever calls; the
    * `workspace_admin_required` refusal when `principal` is not a workspace
    * admin of `wsId` and the connector declares `toolName` in its catalog
    * `admin_tools`; else `null`. Callers run it beside
