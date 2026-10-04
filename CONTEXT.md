@@ -288,4 +288,4 @@ Orchestrate over remote MCP:
 - [0033](adr/0033-an-events-family-names-its-subject.md) — an event's family names its subject; process liveness is a connector fact
 - [0035](adr/0035-the-secrets-backend-is-configuration-and-a-sealed-value-opens-or-refuses.md) — the secrets backend is configuration; a value that claims to be sealed opens or refuses
 - [0045](adr/0045-a-task-is-the-unattended-primitive-and-its-trigger-is-optional.md) — *(proposed)* a task is the unattended primitive; its trigger is optional; a run's outcome separates execution from assessment
-- [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — *(proposed)* task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken
+- [0046](adr/0046-task-augmentation-is-the-2026-tasks-extension-only.md) — task augmentation is the 2026-07-28 tasks extension, inbound, outbound and app to host; the 2025-11-25 tasks utility is not spoken
