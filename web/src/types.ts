@@ -4,7 +4,6 @@
 
 // SSE events, by stream, generated from `src/api/schemas/events.ts`.
 export type {
-  ChatStartEvent,
   ConfigChangedEvent,
   ConnectionStateChangedEvent,
   ConversationStreamEvents,

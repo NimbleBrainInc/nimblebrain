@@ -146,7 +146,7 @@ runtime-native kinds, `dcr` and `static`, put no third party in the trust path a
 ### Platform apps
 
 NimbleBrain installs no connectors by default, and it still has tools on a fresh install.
-The kernel's own capabilities — conversations, files, automations, usage, skills,
+The kernel's own capabilities — conversations, files, tasks, usage, skills,
 instructions, hooks, notifications, compose — are **platform apps**: in-process MCP servers
 the runtime hosts, reached over the same MCP boundary as a remote server. Nothing above the
 source can tell them apart, which is why the platform needs only one extension mechanism.
@@ -241,8 +241,7 @@ Every NimbleBrain instance has these `nb__*` tools available:
 | `nb__read_resource` | Read an MCP resource by URI |
 | `nb__open_app` | Open an app on the user's screen, optionally at a view inside it (by its resource URI) |
 | `manage_connectors` | List the connector catalog, install/disconnect remote MCP connectors per workspace or per user |
-| `manage_workspaces` | Create and manage workspaces |
-| `manage_members` | Manage workspace membership |
+| `manage_workspaces` | Create and manage workspaces and their members |
 | `manage_users` | Manage users (when a managed identity adapter is configured) |
 
 App-platform capabilities are exposed through prefixed tool families: `conversations__*`, `files__*`, `tasks__*`, `skills__*`, `usage__report`, and `compose__effective_context`. (Workspace instructions are edited in the settings UI; the tool behind that UI is internal and not part of the agent's surface.)
@@ -308,7 +307,7 @@ Any connector that declares UI resources and placements becomes an MCP App. See 
 
 ## Platform as MCP server
 
-Each workspace has a `/mcp/<workspaceId>` endpoint that turns it into a Streamable HTTP MCP server. External MCP clients — Claude, Claude Code, Open WebUI, or another NimbleBrain instance — connect to one workspace's URL, which serves that workspace's tools plus your identity tools (conversations, files, automations) while you are a member, and nothing from any other workspace. Bare `/mcp` is refused.
+Each workspace has a `/mcp/<workspaceId>` endpoint that turns it into a Streamable HTTP MCP server. External MCP clients — Claude, Claude Code, Open WebUI, or another NimbleBrain instance — connect to one workspace's URL, which serves that workspace's tools plus your identity tools (conversations, files, tasks) while you are a member, and nothing from any other workspace. Bare `/mcp` is refused.
 
 This means NimbleBrain is both an MCP **client** (connecting to installed connectors) and an MCP **server** (exposing composed tools to external hosts). See [MCP Endpoint Reference](/connect/mcp-endpoint) for configuration and usage.
 

@@ -69,16 +69,10 @@ export interface UseEventsOptions {
  * `App` + `WorkspaceAppIconsProvider` (+ optionally `ConnectorList`)
  * each mounted it.
  *
- * The `token` and `workspaceId` parameters are vestigial — the
- * singleton reads the current token internally per (re)connect and
- * `/v1/events` is identity-scoped server-side. The signature is
- * preserved so call sites need no edits.
+ * The singleton reads the current token per (re)connect, and `/v1/events`
+ * is identity-scoped server-side, so the hook takes neither.
  */
-export function useEvents(
-  _token: string,
-  _workspaceId: string | undefined,
-  options?: UseEventsOptions,
-): void {
+export function useEvents(options?: UseEventsOptions): void {
   const onServerNotificationRef = useRef(options?.onServerNotification);
   onServerNotificationRef.current = options?.onServerNotification;
   const onConfigChangedRef = useRef(options?.onConfigChanged);

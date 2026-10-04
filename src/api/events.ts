@@ -8,35 +8,21 @@ import { CONNECTED_FRAME } from "./sse-heartbeat.ts";
 /**
  * SSE client connection tracked by the event manager.
  *
- * Workspace-scoped fan-out is filtered through `workspaceMemberships`:
- *
- *   - `undefined` — receive every event regardless of `wsId`. This is the
- *     legacy `addClient()` no-arg semantic, kept for internal consumers
- *     (activity dashboards, tests) that need the unfiltered firehose.
- *   - `Set<string>` — receive only events whose `wsId` is in the set.
- *
- * Identity-scoped clients (the `/v1/events` route) carry both an
- * `identityId` and a memberships set computed from the workspaces the
- * identity belongs to. The set is refreshed when the injected
- * `WorkspaceStore` fires a `membershipChanged` for that identity, so a
- * mid-stream `addMember` / `removeMember` is reflected without a
- * reconnect.
- *
- * Legacy single-workspace clients (`addClient(wsId)`) store a one-element
- * set. The unified filter delivers identical behavior to the prior
- * `client.workspaceId === wsId` check, so all existing tests pass.
+ * Every client is bound to an identity (the `/v1/events` route) and carries
+ * the set of workspaces that identity belongs to. A workspace-scoped event
+ * reaches the client only when its `wsId` is in the set. The set is refreshed
+ * when the injected `WorkspaceStore` fires a `membershipChanged` for that
+ * identity, so a mid-stream `addMember` / `removeMember` is reflected without
+ * a reconnect.
  */
 interface SseClient {
   id: string;
   controller: ReadableStreamDefaultController<Uint8Array>;
   closed: boolean;
-  /** Identity the connection is bound to. Only set for `addIdentityClient`. */
-  identityId?: string;
-  /**
-   * Workspaces this client should receive events for. `undefined` = no
-   * filter (legacy firehose); a `Set` is the explicit allowlist.
-   */
-  workspaceMemberships?: Set<string>;
+  /** Identity the connection is bound to. */
+  identityId: string;
+  /** Workspaces this client receives workspace-scoped events for. */
+  workspaceMemberships: Set<string>;
 }
 
 const encoder = new TextEncoder();
@@ -152,19 +138,9 @@ type SseAudience = { wsId: string | undefined } | { identityId: string };
 
 /** Whether a client is in a broadcast's audience. */
 function clientReceives(client: SseClient, audience: SseAudience): boolean {
-  if ("identityId" in audience) {
-    // A client bound to no identity is either the legacy firehose (no
-    // memberships), which receives everything, or a legacy single-workspace
-    // client, which has no identity to match.
-    if (client.identityId === undefined) return client.workspaceMemberships === undefined;
-    return client.identityId === audience.identityId;
-  }
+  if ("identityId" in audience) return client.identityId === audience.identityId;
   const { wsId } = audience;
-  if (wsId === undefined) return true;
-  // `undefined` memberships is the legacy firehose (all events); an explicit
-  // set requires the wsId to be a member.
-  const memberships = client.workspaceMemberships;
-  return memberships === undefined || memberships.has(wsId);
+  return wsId === undefined || client.workspaceMemberships.has(wsId);
 }
 
 /**
@@ -191,10 +167,9 @@ export class SseEventManager implements EventSink {
 
   /**
    * @param heartbeatIntervalMs - heartbeat cadence in ms. Default 30s.
-   * @param workspaceStore - optional. When supplied, `addIdentityClient`
-   *   queries it for memberships and the manager refreshes a client's
-   *   cached set on membership-change events. Tests and internal
-   *   consumers that only use `addClient()` may omit it.
+   * @param workspaceStore - optional. When supplied, the manager refreshes a
+   *   client's cached memberships on membership-change events. Tests that
+   *   fix a client's memberships for its lifetime may omit it.
    */
   constructor(heartbeatIntervalMs = 30_000, workspaceStore?: WorkspaceStore) {
     this.heartbeatIntervalMs = heartbeatIntervalMs;
@@ -246,30 +221,6 @@ export class SseEventManager implements EventSink {
   }
 
   /**
-   * Create an SSE stream for a legacy workspace-scoped or unfiltered
-   * client.
-   *
-   *   - `addClient()` — no filter; receives every event.
-   *   - `addClient(wsId)` — single-workspace filter; receives events
-   *     where `event.wsId === wsId` plus all global events.
-   *
-   * **No production caller today.** Both forms are kept solely as the
-   * surface that the V5 workspace-isolation security regression tests
-   * (`test/integration/security/workspace-isolation.test.ts`) and the
-   * `SseEventManager` routing-table unit tests
-   * (`test/unit/sse-event-manager.test.ts`) were written against. Those
-   * suites lock in the workspace-isolation contract under the legacy
-   * frozen-workspace model; migrating them to `addIdentityClient` would
-   * subtly change what they assert. Production code uses
-   * `addIdentityClient` via the `/v1/events` route.
-   */
-  addClient(workspaceId?: string): ReadableStream<Uint8Array> {
-    return this.attachClient({
-      workspaceMemberships: workspaceId ? new Set([workspaceId]) : undefined,
-    });
-  }
-
-  /**
    * Create an SSE stream bound to an identity. The connection receives
    * events for any workspace currently in the identity's membership set,
    * plus all global events. The set is refreshed automatically when the
@@ -277,21 +228,9 @@ export class SseEventManager implements EventSink {
    *
    * `memberships` is the initial set, typically computed by the caller
    * via `workspaceStore.getWorkspacesForUser(identityId)`. An empty set
-   * means "global events only" — distinct from legacy `addClient()`
-   * which receives the workspace firehose unfiltered.
+   * means global events and this identity's own events only.
    */
   addIdentityClient(identityId: string, memberships: Set<string>): ReadableStream<Uint8Array> {
-    return this.attachClient({
-      identityId,
-      workspaceMemberships: memberships,
-    });
-  }
-
-  /** Shared client-attachment path. */
-  private attachClient(opts: {
-    identityId?: string;
-    workspaceMemberships?: Set<string>;
-  }): ReadableStream<Uint8Array> {
     const id = crypto.randomUUID();
 
     return new ReadableStream<Uint8Array>({
@@ -300,8 +239,8 @@ export class SseEventManager implements EventSink {
           id,
           controller,
           closed: false,
-          identityId: opts.identityId,
-          workspaceMemberships: opts.workspaceMemberships,
+          identityId,
+          workspaceMemberships: memberships,
         };
         this.clients.set(id, client);
         controller.enqueue(CONNECTED_FRAME);
@@ -355,9 +294,6 @@ export class SseEventManager implements EventSink {
    *
    * Filter rules per client:
    *   - No `wsId` passed (global / heartbeat) → enqueue unconditionally.
-   *   - `client.workspaceMemberships === undefined` → legacy firehose;
-   *     enqueue. Internal consumers only — the public `/v1/events` route
-   *     never produces this shape.
    *   - `client.workspaceMemberships.has(wsId)` → enqueue.
    *   - Otherwise → skip.
    */
@@ -369,9 +305,7 @@ export class SseEventManager implements EventSink {
   /**
    * Broadcast an SSE event to one identity's connections only — every tab that
    * identity has open, whatever workspace each is showing. For a change that
-   * belongs to a person rather than a workspace. A legacy firehose client
-   * (`addClient()`) receives it too; a legacy single-workspace client, bound to
-   * no identity, does not.
+   * belongs to a person rather than a workspace.
    */
   broadcastToIdentity(eventType: string, data: Record<string, unknown>, identityId: string): void {
     this.fanOut(frameSseEvent(eventType, data), { identityId });

@@ -9,7 +9,7 @@ The `connectors` array lives in [`workspace.json`](/config/workspace-json/), **n
 
 Every entry is one remote MCP server, addressed by URL. The runtime orchestrates over remote MCP: it connects to a URL with a credential, and does not download, verify, or execute a server's code. There is no by-name or by-path entry, and nothing runs as a subprocess of the platform.
 
-NimbleBrain ships with no connectors by default. Platform capabilities (conversations, files, usage, automations) are built in as in-process tool sources — install connectors to give a workspace domain-specific tools.
+NimbleBrain ships with no connectors by default. Platform capabilities (conversations, files, usage, tasks) are built in as in-process tool sources — install connectors to give a workspace domain-specific tools.
 
 <Aside type="note">
   Connectors are workspace-scoped. Two workspaces that install the same server hold independent credentials and independent connection state. See [`workspace.json`](/config/workspace-json/) for where the array lives and how workspaces are managed.

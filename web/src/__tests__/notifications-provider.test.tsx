@@ -105,7 +105,6 @@ async function mount(seen: { unread: number }): Promise<void> {
   await act(async () => {
     root.render(
       React.createElement(NotificationsProvider, {
-        token: "t",
         workspaceId: WS,
         children: probeElement(seen),
       }),

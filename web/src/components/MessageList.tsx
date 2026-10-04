@@ -1,8 +1,12 @@
 import { AlertCircle, Check, ChevronDown, Copy, RotateCcw, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
-import type { SkillsLoadedContext } from "../hooks/chat-store";
-import type { ChatMessage, PreparingTool, StreamingState } from "../hooks/useChat";
+import type {
+  ChatMessage,
+  PreparingTool,
+  SkillsLoadedContext,
+  StreamingState,
+} from "../hooks/chat-store";
 import { ledgerChanges } from "../lib/ledger-changes";
 import { linkSafety, rehypePlugins } from "../lib/streamdown-config";
 import type { DisplayDetail } from "../lib/tool-display";

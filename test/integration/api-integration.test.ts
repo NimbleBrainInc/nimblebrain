@@ -666,7 +666,7 @@ describe("E2E: SSE event filtering — only routed events pass through", () => {
     const { SseEventManager } = await import("../../src/api/events.ts");
     const manager = new SseEventManager(60_000);
 
-    const stream = manager.addClient();
+    const stream = manager.addIdentityClient("usr_test", new Set(["ws_0076759dbbe19fcc"]));
     const reader = stream.getReader();
     await readConnected(reader);
 

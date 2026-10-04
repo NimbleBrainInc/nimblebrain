@@ -29,6 +29,7 @@ import { createServerNotificationRelay } from "../tools/server-notifications.ts"
 import type { ToolSource } from "../tools/types.ts";
 import { mapWithConcurrency } from "../util/concurrency.ts";
 import { isHttpUrl } from "../util/url.ts";
+import { WorkspaceContext } from "../workspace/context.ts";
 import { assertWorkspaceIsMigrated } from "../workspace/migration-guard.ts";
 import type { Workspace } from "../workspace/types.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
@@ -368,8 +369,7 @@ export async function startWorkspaceConnectors(
     try {
       const result = await startConnectorSource(entry.connector, wsRegistry, eventSink, {
         allowInsecureRemotes: opts?.allowInsecureRemotes,
-        wsId: entry.wsId,
-        workDir,
+        workspaceContext: new WorkspaceContext({ wsId: entry.wsId, workDir }),
         // URL connectors that hit interactive OAuth fire this BEFORE
         // ConnectorLifecycleManager exists (it's constructed in
         // `Runtime.start` after this boot loop). Buffer the

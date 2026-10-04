@@ -4,10 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { resolveWithCode } from "../../src/tools/oauth-flow-registry.ts";
-import {
-  InteractiveOAuthNotSupportedError,
-  WorkspaceOAuthProvider,
-} from "../../src/tools/workspace-oauth-provider.ts";
+import { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 
 // Moved from `test/unit/` per AGENTS.md: any test that calls Bun.serve()
 // belongs in integration. These cases exercise the provider's authorize-
@@ -254,13 +251,6 @@ describe("WorkspaceOAuthProvider — authorize redirect probe (interactive)", ()
     } finally {
       mockAuthServer.stop(true);
     }
-  });
-
-  it("InteractiveOAuthNotSupportedError class still exists for backwards compat (deprecated)", () => {
-    // Smoke test — the class is kept exported for any consumer still
-    // importing the symbol. Should not be thrown by the provider.
-    const err = new InteractiveOAuthNotSupportedError("https://x/");
-    expect(err.name).toBe("InteractiveOAuthNotSupportedError");
   });
 });
 

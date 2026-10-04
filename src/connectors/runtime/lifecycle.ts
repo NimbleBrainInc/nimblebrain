@@ -1609,8 +1609,7 @@ export class ConnectorLifecycleManager {
       // failed attempt is a no-op rather than a downgrade — the source stays
       // registered and unstopped, and HealthMonitor keeps working on it.
       keepRegisteredOnStartFailure: true,
-      wsId,
-      workDir,
+      workspaceContext: new WorkspaceContext({ wsId, workDir }),
       // Re-thread on reconnect so a Composio OAuth callback doesn't
       // silently drop the connector's host-resources handlers. The
       // composio-auth callback path goes through here.
@@ -1689,8 +1688,7 @@ export class ConnectorLifecycleManager {
 
     await startConnectorSource(ref, registry, this.eventSink, {
       allowInsecureRemotes: this.allowInsecureRemotes,
-      workDir,
-      identityOwner: { userId },
+      identityOwner: { userId, workDir },
     });
     return registry.getSource(serverName);
   }
@@ -1859,8 +1857,7 @@ export class ConnectorLifecycleManager {
         serverName,
         undefined, // no workspace context — identity-owned
         {
-          identityOwner: { userId },
-          workDir: opts.workDir,
+          identityOwner: { userId, workDir: opts.workDir },
           allowInsecureRemotes: opts.allowInsecureRemotes === true,
           abortSignal: providerAbort.signal,
         },

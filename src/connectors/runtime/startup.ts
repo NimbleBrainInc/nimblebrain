@@ -10,11 +10,11 @@ import { personalConnectorWireName } from "../../tools/identity-sources.ts";
 import { type ConnectorMcpContext, McpSource } from "../../tools/mcp-source.ts";
 import type { ToolRegistry } from "../../tools/registry.ts";
 import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts";
-import { WorkspaceContext } from "../../workspace/context.ts";
+import type { WorkspaceContext } from "../../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../../workspace/workspace-store.ts";
 import { connectorHasStaticAuth } from "./connector-auth.ts";
 import { resolveStaticOAuthClient } from "./oauth-static-client.ts";
-import { defaultWorkDir, deriveServerName, validateServerName } from "./paths.ts";
+import { deriveServerName, validateServerName } from "./paths.ts";
 import { notifyConnectionRunning } from "./pending-auth-buffer.ts";
 import type { ConnectorRef, RemoteTransportConfig, StartConnectorResult } from "./types.ts";
 import { validateConnectorUrl } from "./url-validator.ts";
@@ -52,51 +52,6 @@ export function composeConnectorMcpContext(
     hostResources: deps.hostResources,
     rateLimit: deps.rateLimit,
   };
-}
-
-/**
- * Reconcile the three workspace-identity inputs `startConnectorSource` accepts:
- *
- *   1. `workspaceContext` (preferred) — typed handle, owns wsId + workDir.
- *   2. `wsId` + `workDir` (legacy) — separate fields the old callers pass.
- *   3. Neither (a connector with static auth, which opens no OAuth flow).
- *
- * Returns a single `WorkspaceContext` (or undefined when no workspace is
- * in play). If both forms are passed, they must agree — otherwise we
- * silently pick one and the credential boundary becomes ambiguous, which
- * is the exact failure mode this whole refactor is meant to eliminate.
- */
-function resolveWorkspaceContext(
-  opts:
-    | {
-        workspaceContext?: WorkspaceContext;
-        wsId?: string;
-        workDir?: string;
-      }
-    | undefined,
-): WorkspaceContext | undefined {
-  if (!opts) return undefined;
-  if (opts.workspaceContext) {
-    if (opts.wsId !== undefined && opts.wsId !== opts.workspaceContext.workspaceId) {
-      throw new Error(
-        `[connectors] startConnectorSource opts.wsId="${opts.wsId}" disagrees with ` +
-          `opts.workspaceContext.workspaceId="${opts.workspaceContext.workspaceId}" — ` +
-          `pass workspaceContext alone, or drop wsId.`,
-      );
-    }
-    if (opts.workDir !== undefined && opts.workDir !== opts.workspaceContext.workDir) {
-      throw new Error(
-        `[connectors] startConnectorSource opts.workDir disagrees with ` +
-          `opts.workspaceContext.workDir — pass one form or the other.`,
-      );
-    }
-    return opts.workspaceContext;
-  }
-  if (opts.wsId) {
-    const workDir = opts.workDir ?? defaultWorkDir();
-    return new WorkspaceContext({ wsId: opts.wsId, workDir });
-  }
-  return undefined;
 }
 
 /** Options accepted by `startConnectorSource`. */
@@ -148,8 +103,9 @@ interface StartConnectorOpts {
    * Identity owner for a personal connector. When set, the URL connector's OAuth
    * credentials bind to the user (the `WorkspaceOAuthProvider` `{type:"user"}`
    * arm) and live in the credential store at user scope, outside any
-   * workspace. Mutually exclusive with `workspaceContext` / `wsId` — a
-   * personal connector belongs to no workspace.
+   * workspace. `workDir` is the instance work directory that holds the user's
+   * records. Mutually exclusive with `workspaceContext` — a personal connector
+   * belongs to no workspace.
    *
    * Honored ONLY on the URL-connector path (a personal connector is a remote MCP
    * connection). A named/local ref ignores it and falls through to the
@@ -157,33 +113,14 @@ interface StartConnectorOpts {
    * `"url" in ref`, so this is a documentation guard against a future caller,
    * not a live case.
    */
-  identityOwner?: { userId: string };
+  identityOwner?: { userId: string; workDir: string };
   dataDir?: string;
   /**
-   * Workspace context for credential resolution and on-disk path
-   * derivation. Preferred over the legacy `wsId` + `workDir` pair —
-   * carries both fields plus the credential store and is validated
-   * once at construction. When provided, `wsId` and `workDir` MUST be
-   * omitted or match (the function asserts consistency); the context
-   * wins.
+   * Workspace context for credential resolution and on-disk path derivation.
+   * Required for a connector that opens an OAuth flow — its tokens are
+   * workspace-scoped by design.
    */
   workspaceContext?: WorkspaceContext;
-  /**
-   * Workspace id for credential resolution. Required for a connector that
-   * opens an OAuth flow — its tokens are workspace-scoped by design.
-   *
-   * @deprecated Pass `workspaceContext` instead. Kept for incremental
-   * migration; see a follow-up migration.
-   */
-  wsId?: string;
-  /**
-   * Work directory for credential resolution. Defaults to `NB_WORK_DIR` or
-   * `~/.nimblebrain` — the same default the named-connector branch already uses
-   * for `connectorDataDir`.
-   *
-   * @deprecated Pass `workspaceContext` instead.
-   */
-  workDir?: string;
   /**
    * Optional callback fired when a URL connector's OAuth provider determines
    * the flow requires a real browser. Threaded into
@@ -250,11 +187,11 @@ function warnUnrecognizedUrlAuthType(ref: ConnectorRef, serverName: string): voi
 async function buildUserOAuthProvider(
   ref: ConnectorRef,
   serverName: string,
-  identityOwner: { userId: string },
+  identityOwner: { userId: string; workDir: string },
   opts: StartConnectorOpts | undefined,
   onInteractiveAuthRequired: (authorizationUrl: string) => void,
 ): Promise<WorkspaceOAuthProvider> {
-  const workDir = opts?.workDir ?? defaultWorkDir();
+  const { workDir } = identityOwner;
   // Human-readable owner for the vendor consent screen ("NimbleBrain (<name>)")
   // in place of the opaque `user:<id>`; mirrors the workspace arm's
   // `resolveWorkspaceDisplayName`. Best-effort — falls back to the id.
@@ -313,7 +250,7 @@ export async function buildUrlOAuthProvider(
   if (!wsContext) {
     throw new Error(
       `[connectors] URL connector "${serverName}" without static auth requires opts.workspaceContext ` +
-        "(or the legacy opts.wsId) — OAuth credentials are workspace-scoped and silent defaults " +
+        "— OAuth credentials are workspace-scoped and silent defaults " +
         "would cross tenants. Thread workspaceContext through the caller that invoked " +
         "startConnectorSource().",
     );
@@ -623,9 +560,5 @@ export async function startConnectorSource(
   eventSink: EventSink,
   opts?: StartConnectorOpts,
 ): Promise<StartConnectorResult> {
-  // Reconcile workspaceContext / wsId / workDir into a single context for
-  // the rest of this function. Callers may pass either form; once
-  // the follow-up migration lands, everyone passes workspaceContext.
-  const wsContext: WorkspaceContext | undefined = resolveWorkspaceContext(opts);
-  return startUrlConnectorSource(ref, registry, eventSink, wsContext, opts);
+  return startUrlConnectorSource(ref, registry, eventSink, opts?.workspaceContext, opts);
 }

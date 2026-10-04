@@ -4,7 +4,7 @@ import { realClient } from "./setup";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { ChatProvider, useChatContext } from "../src/context/ChatContext.tsx";
-import type { StreamingState } from "../src/hooks/useChat.ts";
+import type { StreamingState } from "../src/hooks/chat-store.ts";
 
 // ---------------------------------------------------------------------------
 // Drive the streaming state machine through the server-authoritative path:

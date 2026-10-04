@@ -183,7 +183,6 @@ describe("a conversation's live title goes to its owner", () => {
     test("reaches the owner's tabs alone, not the other members of the workspace", async () => {
       const alice = collect(mgr.addIdentityClient(ALICE.id, new Set(["ws_0071a5bbf40116e6"])));
       const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_0071a5bbf40116e6"])));
-      const workspaceClient = collect(mgr.addClient("ws_0071a5bbf40116e6"));
 
       mgr.emit({
         type: "conversation.title",
@@ -193,7 +192,6 @@ describe("a conversation's live title goes to its owner", () => {
 
       expect(alice).toEqual(["conversation.title"]);
       expect(bob).toEqual([]);
-      expect(workspaceClient).toEqual([]);
     });
   });
 });
