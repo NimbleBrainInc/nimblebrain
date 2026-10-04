@@ -14,9 +14,9 @@
 // `globalThis.fetch` stubbing (which is fragile across the suite's
 // mock.module + dynamic-import patterns):
 //
-//   - `setActiveWorkspaceId` → the bridge closes the old workspace's session
-//     and opens one at the new `/mcp/<wsId>`: `mcp-bridge-client.test.ts`
-//     ("bridge session lifecycle vs auth/workspace setters").
+//   - `setActiveWorkspaceId` → the bridge's next request goes to the new
+//     `/mcp/<wsId>`: `mcp-bridge-client.test.ts` ("posts to the active
+//     workspace's /mcp path, read per request").
 //   - `setAuthToken` fires lifecycle handler, `setActiveWorkspaceId`
 //     does not: `api-client-lifecycle.test.ts`.
 //

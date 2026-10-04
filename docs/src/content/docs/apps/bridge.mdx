@@ -32,7 +32,6 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/notifications/tool-result` | Notification | Forwarded tool result from the agent. |
 | `ui/notifications/tool-input` | Notification | Tool arguments being sent to a tool on the app's server. |
 | `ui/notifications/host-context-changed` | Notification | Host context changed (theme toggle, locale, etc.). |
-| `notifications/tasks/status` | Notification | Status update for a long-running task. Forwarded verbatim from the MCP server. See [Tasks](#tasks). |
 | `notifications/resources/list_changed` | Notification | The app's own MCP server sent this; the host relays it verbatim. See [below](#notificationsresourceslist_changed). |
 
 #### App to Host
@@ -43,13 +42,12 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/notifications/initialized` | Notification | App confirms handshake complete. Host must not send tool data before this. |
 | `ui/notifications/size-changed` | Notification | Report content dimensions for auto-sizing inline views. |
 | `ui/notifications/request-teardown` | Notification | App requests the host to tear down the iframe. Currently a no-op. |
-| `tools/call` | Request | Call a tool on the app's MCP server. Returns `CallToolResult`. |
+| `tools/call` | Request | Call a tool on the app's MCP server. Returns `CallToolResult`, or a task when the call opts in to the [tasks extension](#tasks). |
 | `resources/read` | Request | Read a resource from the app's MCP server. Returns `ReadResourceResult`. See [below](#resourcesread). |
 | `resources/list` | Request | List the app's MCP server's resources, paginated. Returns `ListResourcesResult`. See [below](#resourceslist-and-resourcestemplateslist). |
 | `resources/templates/list` | Request | List the app's MCP server's resource templates, paginated. Returns `ListResourceTemplatesResult`. |
-| `tasks/get` | Request | Non-blocking fetch of a long-running task's current state. See [Tasks](#tasks). |
-| `tasks/result` | Request | Block until a task reaches a terminal state and return its payload. See [Tasks](#tasks). |
-| `tasks/cancel` | Request | Best-effort cancel of a running task. See [Tasks](#tasks). |
+| `tasks/get` | Request | A task's current state, with its outcome once it has ended. See [Tasks](#tasks). |
+| `tasks/cancel` | Request | Ask the server to cancel a task. See [Tasks](#tasks). |
 | `ui/message` | Request | Send a message to the conversation. |
 | `ui/open-link` | Request | Open a URL in a new browser tab. |
 | `ui/update-model-context` | Request | Push structured state visible to the LLM. See [below](#uiupdate-model-context). |
@@ -57,7 +55,7 @@ All messages use `window.postMessage` with JSON-RPC 2.0 envelopes:
 | `ui/request-display-mode` | Request | Ask to be displayed differently. Answered with the mode actually in effect. See [below](#uirequest-display-mode). |
 | `notifications/message` | Notification | A log line for the host's console. |
 
-A request for any other method gets a JSON-RPC `-32601` (method not found) error, so the call fails right away instead of waiting. The host ignores any other notification.
+A request for any other method (`tasks/result` and `tasks/list` among them) gets a JSON-RPC `-32601` (method not found) error, so the call fails right away instead of waiting. The host ignores any other notification.
 
 ### NimbleBrain extensions (`ai.nimblebrain/`)
 
@@ -82,7 +80,7 @@ The app initiates the handshake per the ext-apps spec:
 3. **App → Host:** `ui/notifications/initialized` notification
 4. Host sends notifications only after receiving `initialized`
 
-Until `initialized` arrives, the host posts the app nothing but the answers to its own requests, so the first frame an app receives is the `ui/initialize` response. A notification raised earlier (a host-context change, tool input or result, a task status, a relayed server notification) is held and delivered, in order, once the handshake completes.
+Until `initialized` arrives, the host posts the app nothing but the answers to its own requests, so the first frame an app receives is the `ui/initialize` response. A notification raised earlier (a host-context change, tool input or result, a relayed server notification) is held and delivered, in order, once the handshake completes.
 
 ```json
 // 1. App sends
@@ -113,7 +111,7 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
       "message": { "text": {} },
       "updateModelContext": { "text": {}, "structuredContent": {} },
       "experimental": {
-        "io.modelcontextprotocol/tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } },
+        "io.modelcontextprotocol/tasks": {},
         "ai.nimblebrain/action": {},
         "ai.nimblebrain/request-file": {},
         "ai.nimblebrain/keydown": {},
@@ -145,7 +143,7 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
 
 **Everything the host serves, it declares.** An SDK checks the declaration before it sends: without `serverTools` or `serverResources` a tool call or resource read throws at the call site, and without `message` or `updateModelContext` the send is dropped. So read `hostCapabilities` to decide whether to show a control, not to decide whether the host is NimbleBrain.
 
-**Non-spec capabilities live in `experimental`, keyed by identifier** — MCP Tasks at `io.modelcontextprotocol/tasks`, the NimbleBrain extensions under `ai.nimblebrain/`. A client that validates the response against the ext-apps schema, such as the official `App`, drops any field the schema does not name and keeps the contents of `experimental` (from ext-apps 1.7.5). That is the whole reason they travel there rather than as siblings.
+**Non-spec capabilities live in `experimental`, keyed by identifier** — the MCP tasks extension at `io.modelcontextprotocol/tasks` (an empty object: the host serves it), the NimbleBrain extensions under `ai.nimblebrain/`. A client that validates the response against the ext-apps schema, such as the official `App`, drops any field the schema does not name and keeps the contents of `experimental` (from ext-apps 1.7.5). That is the whole reason they travel there rather than as siblings.
 
 The spec negotiates extensions under `capabilities.extensions`, not `experimental`. The ext-apps bridge capability object has no `extensions` field, so `experimental` carrying the extension identifier is as close as this channel reaches. When ext-apps adds one, the identifiers move there.
 
@@ -359,20 +357,9 @@ A listing always answers from your app's own server, never another app's. A serv
 
 ### Tasks
 
-Long-running tools (work that exceeds the stock MCP request timeout) run as **task-augmented** calls. To start one, send a `tools/call` whose `params` include a `task` object; the response is a `CreateTaskResult` carrying a `taskId`. You then track progress two ways:
+Long-running tools (work that exceeds the stock MCP request timeout) run as tasks, through the MCP tasks extension (`io.modelcontextprotocol/tasks`, MCP `2026-07-28`). The host declares it in `ui/initialize` as `hostCapabilities.experimental["io.modelcontextprotocol/tasks"]: {}`.
 
-- **Status notifications** — the host forwards each `notifications/tasks/status` from the server to your iframe verbatim. Filter on the `taskId` you own.
-- **Polling** — call `tasks/get`, `tasks/result`, or `tasks/cancel` with the `taskId`.
-
-A task id is answered only for the server that ran the task: your app's own server, where your `tools/call` started it. The host sends the `taskId` and names that server; any other field you put in `params` is not forwarded. A task another server ran answers `-32602`, the same as a task that does not exist.
-
-| Method | Blocking | Returns |
-|--------|----------|---------|
-| `tasks/get` | No | Current task state (`GetTaskResult`). |
-| `tasks/result` | Yes — blocks until terminal | The original request's payload (for `tools/call`, a `CallToolResult`). |
-| `tasks/cancel` | No | The (final) task state. Cancelling an already-terminal task surfaces as JSON-RPC `-32602`. |
-
-**Start a task-augmented call:**
+**Opt a call in.** A `tools/call` opts in by naming the extension in its `_meta` client capabilities. The server alone decides whether to run it as a task, so the answer is either a complete `CallToolResult` (the server answered outright) or a task. Without that claim the call is an ordinary one and answers a `CallToolResult`. A `params.task` object (the 2025-11-25 tasks utility) is ignored: the call runs as an ordinary one.
 
 ```json
 {
@@ -382,25 +369,64 @@ A task id is answered only for the server that ran the task: your app's own serv
   "params": {
     "name": "start_research",
     "arguments": { "query": "competitive landscape" },
-    "task": { "ttl": 3600000 }
+    "_meta": {
+      "io.modelcontextprotocol/clientCapabilities": {
+        "extensions": { "io.modelcontextprotocol/tasks": {} }
+      }
+    }
   }
 }
 ```
 
-**Fetch the result when ready:**
+**A task answer** is the task itself, flat, as the server sent it:
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "tasks/result",
-  "id": "res-2",
-  "params": { "taskId": "tsk_abc123" }
+  "id": "call-2",
+  "result": {
+    "resultType": "task",
+    "taskId": "dGFza18x",
+    "status": "working",
+    "createdAt": "2026-07-28T00:00:00Z",
+    "lastUpdatedAt": "2026-07-28T00:00:00Z",
+    "ttlMs": 3600000,
+    "pollIntervalMs": 1000
+  }
 }
 ```
 
-<Aside type="tip">
-The `@nimblebrain/synapse` SDK's `callToolAsTask` handles the full flow — starting the task, subscribing to status notifications, and awaiting the result. See [Long-running tools](/apps/synapse) for the dual-channel (task + entity) pattern.
-</Aside>
+`ttlMs`, `pollIntervalMs` and `statusMessage` are present when the server sets them. A result from the server may also carry `resultType: "complete"`, the `2026-07-28` marker of a complete answer; the host passes it through.
+
+**Poll and cancel.** The host sends no status notifications; poll with `tasks/get`, at the task's `pollIntervalMs`.
+
+| Method | Returns |
+|--------|---------|
+| `tasks/get` | The task, flat. Once it ends, the outcome is inline: `result` (a `CallToolResult`) when `status` is `completed`, `error` (`{ code, message }`) when it is `failed`. A tool that ran and reported an error completed: its `CallToolResult` carries `isError: true`. |
+| `tasks/cancel` | An acknowledgement, with no task fields. Cancelling is cooperative: the server may still finish the work, and a task already ended stays as it ended. |
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "get-2",
+  "result": {
+    "resultType": "complete",
+    "taskId": "dGFza18x",
+    "status": "completed",
+    "createdAt": "2026-07-28T00:00:00Z",
+    "lastUpdatedAt": "2026-07-28T00:02:10Z",
+    "ttlMs": 3600000,
+    "result": {
+      "content": [{ "type": "text", "text": "Report ready" }],
+      "structuredContent": { "reportId": "r_42" }
+    }
+  }
+}
+```
+
+A task whose `status` is `input_required` passes through as it is; the host answers no input request, so your app decides what to do (typically cancel and report).
+
+A task id is answered only for the server that ran the task: your app's own server, where your `tools/call` started it. The host sends the `taskId` and names that server; any other field you put in `params` is not forwarded. A task another server ran answers `-32602`, the same as a task that does not exist or that the server has forgotten.
 
 ### `ui/message`
 
@@ -735,10 +761,10 @@ The host sends it only to an app that has sent a trail, so it needs no declarati
 
 The bridge enforces four security boundaries:
 
-1. **Workspace scoping** — The host reaches the platform over the workspace's own MCP endpoint, `/mcp/<workspaceId>`, for the workspace on screen. A session belongs to that one workspace: switching workspace closes it and opens one on the new workspace's path, so a request for one workspace never travels on another's session.
+1. **Workspace scoping** — The host reaches the platform over the workspace's own MCP endpoint, `/mcp/<workspaceId>`, for the workspace on screen, one request at a time on the endpoint's `2026-07-28` protocol. There is no session: each request goes to the path of the workspace on screen when it is sent.
 2. **Origin isolation** — The host only processes messages from the iframe's `contentWindow`. Messages from other sources are silently dropped.
 3. **Tool scoping** — `tools/call` requests are always routed to the app's own MCP server. An iframe cannot call tools on another app's server.
-4. **Resource and task scoping** — `resources/read`, `resources/list` and `resources/templates/list` answer from the app's own MCP server, and `tasks/get`, `tasks/result` and `tasks/cancel` answer only for a task that server ran. Every iframe in the workspace shares one MCP session, so the bridge names that server on the request; the iframe cannot name another. A URI another server serves reads as not found, the same as one that does not exist, and so does a task another server ran.
+4. **Resource and task scoping** — `resources/read`, `resources/list` and `resources/templates/list` answer from the app's own MCP server, and `tasks/get` and `tasks/cancel` answer only for a task that server ran. Every iframe's requests reach the platform as one client, so the bridge names that server on the request; the iframe cannot name another. A URI another server serves reads as not found, the same as one that does not exist, and so does a task another server ran.
 
 ## Example: making a tool call from an iframe
 

@@ -14,17 +14,11 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realMcpBridgeClient } from "../../../test/setup";
 
 mock.module("../../mcp-bridge-client", () => ({
-  getMcpBridgeClient: async () => ({
-    callTool: async () => ({ content: [], structuredContent: {} }),
-    readResource: async () => ({ contents: [] }),
-    request: async () => ({}),
-    setNotificationHandler: () => {},
-    removeNotificationHandler: () => {},
-  }),
-  resetMcpBridgeClient: () => {},
-  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
+  ...realMcpBridgeClient,
+  sendMcpRequest: mock(async () => ({ result: { content: [] } })),
 }));
 
 const { createBridge } = await import("../../bridge/bridge");

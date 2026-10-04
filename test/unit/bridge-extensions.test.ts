@@ -611,19 +611,14 @@ describe("Bridge — ext-apps dual protocol", () => {
     const { iframe, posted } = makeFakeIframe();
     const handle = createBridge(iframe, "test-app");
     const listChanged = { jsonrpc: "2.0", method: "notifications/resources/list_changed" };
-    const status = (taskId: string, status: string) => ({
-      jsonrpc: "2.0",
-      method: "notifications/tasks/status",
-      params: { taskId, status },
-    });
 
     handle.setHostContext({ theme: "dark" });
     postToApp(iframe, listChanged);
-    postToApp(iframe, status("t1", "working"));
-    postToApp(iframe, status("t2", "working"));
+    handle.sendToolInput({ arguments: { q: "a" } });
+    handle.sendToolInput({ arguments: { q: "b" } });
     handle.setHostContext({ theme: "light" });
     postToApp(iframe, listChanged);
-    postToApp(iframe, status("t1", "completed"));
+    handle.sendToolInput({ arguments: { q: "a" } });
 
     completeHandshake(iframe);
 
@@ -631,11 +626,14 @@ describe("Bridge — ext-apps dual protocol", () => {
     expect(delivered.map((m) => (m as Record<string, unknown>).method)).toEqual([
       "ui/notifications/host-context-changed",
       "notifications/resources/list_changed",
-      "notifications/tasks/status",
-      "notifications/tasks/status",
+      "ui/notifications/tool-input",
+      "ui/notifications/tool-input",
     ]);
     expect((delivered[0] as { params: { theme: string } }).params.theme).toBe("light");
-    expect(delivered.slice(2)).toEqual([status("t1", "completed"), status("t2", "working")]);
+    expect(delivered.slice(2).map((m) => (m as { params: unknown }).params)).toEqual([
+      { arguments: { q: "a" } },
+      { arguments: { q: "b" } },
+    ]);
 
     handle.destroy();
   });

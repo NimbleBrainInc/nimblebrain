@@ -37,6 +37,12 @@ import * as realSseMod from "../src/api/sse";
 
 export const realSse = { ...realSseMod };
 
+// And for `mcp-bridge-client`: every bridge suite mocks its `sendMcpRequest`,
+// and its own suite needs the real one.
+import * as realMcpBridgeClientMod from "../src/mcp-bridge-client";
+
+export const realMcpBridgeClient = { ...realMcpBridgeClientMod };
+
 const window = new Window({ url: "http://localhost" });
 
 // Register DOM globals that React and testing-library need

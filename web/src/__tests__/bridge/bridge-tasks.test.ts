@@ -1,125 +1,71 @@
 // ---------------------------------------------------------------------------
-// Bridge tasks-surface tests
+// Bridge tasks tests: the tasks extension (io.modelcontextprotocol/tasks,
+// SEP-2663, MCP 2026-07-28), app <-> host
 //
-// The bridge always advertises `hostCapabilities.tasks` and forwards the
-// `tasks/*` surface through the MCP bridge client. These tests verify:
+//   - `ui/initialize` declares the extension under `experimental`, as `{}`.
+//   - A `tools/call` opts in by naming the extension in its `_meta` client
+//     capabilities; the bridge then sends it opted in, and passes through
+//     whatever the server answered: a complete `CallToolResult` or a flat task.
+//     Without the claim it is an ordinary call. A 2025 `params.task` is not
+//     forwarded and opts nothing in.
+//   - `tasks/get` and `tasks/cancel` are forwarded and their answers passed
+//     through: the flat task, with `result` or `error` inlined once terminal,
+//     `input_required` included. `tasks/result` and `tasks/list` are not
+//     served (-32601).
+//   - Every task request is scoped to the app's own server.
 //
-//   - `ui/initialize` always advertises `hostCapabilities.tasks` so the
-//     iframe SDK's capability check permits `callToolAsTask`.
-//   - `tasks/get` / `tasks/result` / `tasks/cancel` are forwarded through
-//     the MCP bridge client. Errors translate to JSON-RPC envelopes
-//     (`-32602` for invalid/not-found, `-32603` internal, etc.).
-//   - The bridge subscribes once at creation to `notifications/tasks/status`
-//     on the MCP client; each notification is forwarded verbatim (params
-//     preserved, including `_meta`) to this iframe. `destroy()` tears down
-//     the subscription so post-destroy emissions do not reach the iframe.
-//
-// Strategy: mock the MCP bridge client with `setNotificationHandler`,
-// `removeNotificationHandler`, and `request` hooks so we can emit fake
-// `notifications/tasks/status` and assert both forwarding and teardown.
+// Strategy: mock `sendMcpRequest` and answer per method from `mcpBehavior`.
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realClient, realMcpBridgeClient } from "../../../test/setup";
+import type { McpAnswer, McpRequestOptions } from "../../mcp-bridge-client";
 
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
 
-// mcp-bridge-client
-//
-// We track notification handlers per-method so we can both (a) assert
-// that the bridge subscribed, and (b) synthesize notifications at will.
-type NotificationHandler = (notification: {
-  method: string;
-  params: Record<string, unknown>;
-}) => void | Promise<void>;
+type Params = Record<string, unknown>;
+type Behavior = (method: string, params: Params, options?: McpRequestOptions) => Promise<McpAnswer>;
 
-const handlers = new Map<string, NotificationHandler>();
-
-interface McpBehavior {
-  request: (
-    req: { method: string; params: unknown },
-    schema: unknown,
-  ) => Promise<Record<string, unknown>>;
+/** A flat task, as the 2026 leg answers one. */
+function flatTask(fields: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    taskId: "task-1",
+    status: "working",
+    createdAt: "2026-07-28T00:00:00Z",
+    lastUpdatedAt: "2026-07-28T00:00:01Z",
+    ttlMs: 60_000,
+    pollIntervalMs: 1_000,
+    ...fields,
+  };
 }
 
-const defaultBehavior: McpBehavior = {
-  request: async ({ method, params }) => {
-    const p = params as { taskId?: string };
-    if (method === "tasks/get") {
-      return {
-        taskId: p.taskId ?? "t-1",
-        status: "working",
-        ttl: 60_000,
-        createdAt: "2026-04-22T00:00:00Z",
-        lastUpdatedAt: "2026-04-22T00:00:01Z",
-      };
-    }
-    if (method === "tasks/result") {
-      return {
-        content: [{ type: "text", text: "done" }],
-        structuredContent: { ok: true },
-        _meta: {
-          "io.modelcontextprotocol/related-task": { taskId: p.taskId ?? "t-1" },
-        },
-      };
-    }
-    if (method === "tasks/cancel") {
-      return {
-        taskId: p.taskId ?? "t-1",
-        status: "cancelled",
-        ttl: 60_000,
-        createdAt: "2026-04-22T00:00:00Z",
-        lastUpdatedAt: "2026-04-22T00:00:02Z",
-      };
-    }
-    return {};
-  },
+const defaultBehavior: Behavior = async (method, params) => {
+  if (method === "tools/call") {
+    return { result: { resultType: "task", ...flatTask() } };
+  }
+  if (method === "tasks/get") {
+    return { result: { resultType: "complete", ...flatTask({ taskId: params.taskId }) } };
+  }
+  if (method === "tasks/cancel") return { result: { resultType: "complete" } };
+  return { error: { code: -32601, message: `Method not found: ${method}` } };
 };
-let mcpBehavior: McpBehavior = defaultBehavior;
+let mcpBehavior: Behavior = defaultBehavior;
 
-const mcpRequest = mock((req: { method: string; params: unknown }, schema: unknown) =>
-  mcpBehavior.request(req, schema),
+const mcpSend = mock((method: string, params: Params, options?: McpRequestOptions) =>
+  mcpBehavior(method, params, options),
 );
 
-const setNotificationHandler = mock(
-  (schema: { shape?: { method?: { value?: string } } }, handler: NotificationHandler) => {
-    // The SDK derives the method from the schema's `method` literal; in
-    // happy-dom land we read it from the zod shape. Fall back to a known
-    // constant for the tasks/status case.
-    const method = schema?.shape?.method?.value ?? "notifications/tasks/status";
-    handlers.set(method, handler);
-  },
-);
+// A tool call needs an active workspace: there is no `/mcp` to call without one.
+mock.module("../../api/client", () => ({
+  ...realClient,
+  getActiveWorkspaceId: () => "ws_0076759dbbe19fcc",
+}));
 
-const removeNotificationHandler = mock((method: string) => {
-  handlers.delete(method);
-});
-
-let getClientShouldReject: Error | null = null;
 mock.module("../../mcp-bridge-client", () => ({
-  getMcpBridgeClient: async () => {
-    if (getClientShouldReject) throw getClientShouldReject;
-    return {
-      request: mcpRequest,
-      setNotificationHandler,
-      removeNotificationHandler,
-      // These two are called by bridge.ts code paths we don't exercise
-      // in this test file (tools/call, resources/read) but need to exist
-      // so any accidental hit doesn't crash.
-      callTool: mock(async () => ({ content: [], structuredContent: {} })),
-      readResource: mock(async () => ({ contents: [] })),
-    };
-  },
-  resetMcpBridgeClient: () => {
-    /* noop */
-  },
-  // Passthrough: this file doesn't exercise the session-miss recovery path,
-  // so the wrapper just runs the op once. Mocking it is required because
-  // bridge.ts named-imports it; without this the file fails to link in
-  // isolation (passes under `bun test` only because mcp-bridge-client.test.ts
-  // happens to load the real module first and Bun shares link state).
-  withSessionRetry: async <T>(op: () => Promise<T>): Promise<T> => op(),
+  ...realMcpBridgeClient,
+  sendMcpRequest: mcpSend,
 }));
 
 // Import bridge AFTER mocks so it picks up the stubs.
@@ -181,27 +127,13 @@ function makeTestIframe(): TestIframe {
   return { iframe, inbox, send, waitFor, cleanup };
 }
 
-// Wait for the bridge's async subscription to settle (one microtask tick
-// after `getMcpBridgeClient()` resolves).
-async function waitForSubscription(): Promise<void> {
-  for (let i = 0; i < 20; i++) {
-    if (handlers.has("notifications/tasks/status")) return;
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  throw new Error("Bridge did not subscribe to notifications/tasks/status");
-}
-
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  getClientShouldReject = null;
   mcpBehavior = defaultBehavior;
-  mcpRequest.mockClear();
-  setNotificationHandler.mockClear();
-  removeNotificationHandler.mockClear();
-  handlers.clear();
+  mcpSend.mockClear();
 });
 
 let activeBridge: { destroy(): void } | null = null;
@@ -230,37 +162,44 @@ function mount(appName: string): TestIframe {
 // ui/initialize — capability advertisement
 // ---------------------------------------------------------------------------
 
+const byId = (id: string | number) => (m: unknown) => (m as { id?: unknown })?.id === id;
+
+/** The `_meta` an app sends to opt a `tools/call` in to the tasks extension. */
+const OPT_IN = {
+  "io.modelcontextprotocol/clientCapabilities": {
+    extensions: { "io.modelcontextprotocol/tasks": {} },
+  },
+};
+
+async function initialize(frame: TestIframe, id: string): Promise<Record<string, unknown>> {
+  frame.send({
+    jsonrpc: "2.0",
+    id,
+    method: "ui/initialize",
+    params: {
+      protocolVersion: "2026-01-26",
+      clientInfo: { name: "iframe", version: "1.0.0" },
+      capabilities: {},
+    },
+  });
+  const reply = (await frame.waitFor(byId(id))) as {
+    result: { hostCapabilities: Record<string, unknown> };
+  };
+  return reply.result.hostCapabilities;
+}
+
 describe("ui/initialize — tasks capability", () => {
-  test("the tasks capability is advertised under its extension identifier", async () => {
-    const frame = mount("synapse-research");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "init-1",
-      method: "ui/initialize",
-      params: {
-        protocolVersion: "2026-01-26",
-        clientInfo: { name: "iframe", version: "1.0.0" },
-        capabilities: {},
-      },
-    });
-
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "init-1")) as {
-      result: { hostCapabilities: Record<string, unknown> };
-    };
+  test("the tasks extension is declared under its identifier, as an empty object", async () => {
+    const hostCapabilities = await initialize(mount("research"), "init-1");
     // `experimental`, not a top-level `tasks`: the official ext-apps `App`
     // parses the handshake result against the spec schema, which names no
     // `tasks` field and strips one.
     expect(
-      (reply.result.hostCapabilities.experimental as Record<string, unknown>)[
-        "io.modelcontextprotocol/tasks"
-      ],
-    ).toEqual({
-      cancel: {},
-      requests: { tools: { call: {} } },
-    });
+      (hostCapabilities.experimental as Record<string, unknown>)["io.modelcontextprotocol/tasks"],
+    ).toEqual({});
+    expect(hostCapabilities.tasks).toBeUndefined();
     // Existing capabilities preserved.
-    expect(reply.result.hostCapabilities.openLinks).toEqual({});
+    expect(hostCapabilities.openLinks).toEqual({});
   });
 
   test("hostCapabilities.serverResources.listChanged is advertised, in the spec's shape", async () => {
@@ -268,302 +207,254 @@ describe("ui/initialize — tasks capability", () => {
     // to its views (hooks/useServerNotificationRelay.ts); this is the promise
     // that it does.
     const { McpUiHostCapabilitiesSchema } = await import("@modelcontextprotocol/ext-apps");
-    const frame = mount("synapse-research");
+    const hostCapabilities = await initialize(mount("research"), "init-2");
+    expect(hostCapabilities.serverResources).toEqual({ listChanged: true });
+    expect(McpUiHostCapabilitiesSchema.safeParse(hostCapabilities).success).toBe(true);
+  });
+});
 
+// ---------------------------------------------------------------------------
+// tools/call — opting in
+// ---------------------------------------------------------------------------
+
+describe("tools/call — the tasks extension", () => {
+  test("an opted-in call answered with a task gets the flat task, verbatim", async () => {
+    const frame = mount("research");
     frame.send({
       jsonrpc: "2.0",
-      id: "init-2",
-      method: "ui/initialize",
+      id: "c1",
+      method: "tools/call",
+      params: { name: "start_research", arguments: { query: "deep" }, _meta: OPT_IN },
+    });
+
+    const reply = await frame.waitFor(byId("c1"));
+    expect(reply).toEqual({
+      jsonrpc: "2.0",
+      id: "c1",
+      result: { resultType: "task", ...flatTask() },
+    });
+    // An app may never see `resultType` (the SDK in ext-apps strips it), so the
+    // task must read as one without it: `taskId` and `status` at the top level,
+    // and no `content`.
+    const result = (reply as { result: Record<string, unknown> }).result;
+    expect(result.taskId).toBe("task-1");
+    expect(result.status).toBe("working");
+    expect("content" in result).toBe(false);
+    expect(mcpSend).toHaveBeenCalledWith(
+      "tools/call",
+      {
+        name: "research__start_research",
+        arguments: { query: "deep" },
+        _meta: { [RESOURCE_SOURCE_META_KEY]: "research" },
+      },
+      { tasks: true },
+    );
+  });
+
+  test("an opted-in call the server answers outright gets the CallToolResult", async () => {
+    const answered = {
+      resultType: "complete",
+      content: [{ type: "text", text: "done" }],
+      structuredContent: { ok: true },
+    };
+    mcpBehavior = async () => ({ result: answered });
+    const frame = mount("research");
+    frame.send({
+      jsonrpc: "2.0",
+      id: "c2",
+      method: "tools/call",
+      params: { name: "start_research", arguments: {}, _meta: OPT_IN },
+    });
+
+    expect(await frame.waitFor(byId("c2"))).toEqual({ jsonrpc: "2.0", id: "c2", result: answered });
+  });
+
+  test("a call without the claim is an ordinary call", async () => {
+    mcpBehavior = async () => ({ result: { content: [] } });
+    const frame = mount("research");
+    frame.send({
+      jsonrpc: "2.0",
+      id: "c3",
+      method: "tools/call",
+      params: { name: "start_research", arguments: {} },
+    });
+
+    await frame.waitFor(byId("c3"));
+    expect(mcpSend.mock.calls[0]?.[2]).toEqual({ tasks: false });
+  });
+
+  test("a claim naming other extensions only is not an opt-in", async () => {
+    mcpBehavior = async () => ({ result: { content: [] } });
+    const frame = mount("research");
+    frame.send({
+      jsonrpc: "2.0",
+      id: "c4",
+      method: "tools/call",
       params: {
-        protocolVersion: "2026-01-26",
-        clientInfo: { name: "iframe", version: "1.0.0" },
-        capabilities: {},
+        name: "start_research",
+        arguments: {},
+        _meta: { "io.modelcontextprotocol/clientCapabilities": { extensions: { other: {} } } },
       },
     });
 
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "init-2")) as {
-      result: { hostCapabilities: Record<string, unknown> };
-    };
-    expect(reply.result.hostCapabilities.serverResources).toEqual({ listChanged: true });
-    expect(McpUiHostCapabilitiesSchema.safeParse(reply.result.hostCapabilities).success).toBe(true);
+    await frame.waitFor(byId("c4"));
+    expect(mcpSend.mock.calls[0]?.[2]).toEqual({ tasks: false });
+  });
+
+  test("a 2025 params.task is ignored: an ordinary call, with no task forwarded", async () => {
+    mcpBehavior = async () => ({ result: { content: [{ type: "text", text: "ran" }] } });
+    const frame = mount("research");
+    frame.send({
+      jsonrpc: "2.0",
+      id: "c5",
+      method: "tools/call",
+      params: { name: "start_research", arguments: {}, task: { ttl: 1000 } },
+    });
+
+    expect(await frame.waitFor(byId("c5"))).toEqual({
+      jsonrpc: "2.0",
+      id: "c5",
+      result: { content: [{ type: "text", text: "ran" }] },
+    });
+    const [, params, options] = mcpSend.mock.calls[0] ?? [];
+    expect(params).toEqual({
+      name: "research__start_research",
+      arguments: {},
+      _meta: { [RESOURCE_SOURCE_META_KEY]: "research" },
+    });
+    expect(options).toEqual({ tasks: false });
   });
 });
 
 // ---------------------------------------------------------------------------
-// tasks/* forwarding
+// tasks/get, tasks/cancel
 // ---------------------------------------------------------------------------
 
-describe("tasks/* forwarding — iframe → MCP client", () => {
-  test("tasks/get forwards taskId and returns GetTaskResult", async () => {
-    const frame = mount("synapse-research");
+describe("tasks/get and tasks/cancel — passed through", () => {
+  test("tasks/get answers the flat task", async () => {
+    const frame = mount("research");
+    frame.send({ jsonrpc: "2.0", id: "g1", method: "tasks/get", params: { taskId: "task-9" } });
 
-    frame.send({
+    expect(await frame.waitFor(byId("g1"))).toEqual({
       jsonrpc: "2.0",
-      id: "g-1",
-      method: "tasks/get",
-      params: { taskId: "task-abc" },
+      id: "g1",
+      result: { resultType: "complete", ...flatTask({ taskId: "task-9" }) },
     });
-
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "g-1")) as {
-      result: { taskId: string; status: string };
-    };
-    expect(reply.result.taskId).toBe("task-abc");
-    expect(reply.result.status).toBe("working");
-
-    expect(mcpRequest).toHaveBeenCalledTimes(1);
-    const [req] = mcpRequest.mock.calls[0] ?? [];
-    expect(req).toMatchObject({ method: "tasks/get", params: { taskId: "task-abc" } });
   });
 
-  test("tasks/result forwards taskId and returns CallToolResult payload", async () => {
-    const frame = mount("synapse-research");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "r-1",
-      method: "tasks/result",
-      params: { taskId: "task-xyz" },
-    });
-
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "r-1")) as {
-      result: {
-        content: Array<{ text?: string }>;
-        structuredContent?: { ok: boolean };
-        _meta?: Record<string, unknown>;
-      };
+  test("a completed task carries its CallToolResult inline", async () => {
+    const outcome = {
+      resultType: "complete",
+      ...flatTask({ status: "completed" }),
+      result: { content: [{ type: "text", text: "done" }], structuredContent: { ok: true } },
     };
-    expect(reply.result.content?.[0]?.text).toBe("done");
-    expect(reply.result.structuredContent).toEqual({ ok: true });
-    // _meta passthrough preserves the related-task binding (Non-Negotiable
-    // Rule 4 — forward the result verbatim).
-    expect(reply.result._meta?.["io.modelcontextprotocol/related-task"]).toEqual({
-      taskId: "task-xyz",
-    });
+    mcpBehavior = async () => ({ result: outcome });
+    const frame = mount("research");
+    frame.send({ jsonrpc: "2.0", id: "g2", method: "tasks/get", params: { taskId: "task-1" } });
 
-    const [req] = mcpRequest.mock.calls[0] ?? [];
-    expect(req).toMatchObject({ method: "tasks/result", params: { taskId: "task-xyz" } });
+    expect(await frame.waitFor(byId("g2"))).toEqual({ jsonrpc: "2.0", id: "g2", result: outcome });
   });
 
-  test("tasks/cancel forwards taskId and returns cancelled Task", async () => {
-    const frame = mount("synapse-research");
-
-    frame.send({
-      jsonrpc: "2.0",
-      id: "c-1",
-      method: "tasks/cancel",
-      params: { taskId: "task-cc" },
-    });
-
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "c-1")) as {
-      result: { taskId: string; status: string };
+  test("a failed task carries its error inline, as a result", async () => {
+    const outcome = {
+      resultType: "complete",
+      ...flatTask({ status: "failed" }),
+      error: { code: -32603, message: "connector went away" },
     };
-    expect(reply.result.taskId).toBe("task-cc");
-    expect(reply.result.status).toBe("cancelled");
+    mcpBehavior = async () => ({ result: outcome });
+    const frame = mount("research");
+    frame.send({ jsonrpc: "2.0", id: "g3", method: "tasks/get", params: { taskId: "task-1" } });
+
+    expect(await frame.waitFor(byId("g3"))).toEqual({ jsonrpc: "2.0", id: "g3", result: outcome });
   });
-});
 
-describe("tasks/* error translation", () => {
-  test("server -32602 (invalid taskId) preserved on the wire", async () => {
-    mcpBehavior = {
-      request: async () => {
-        const err = new Error("task not found") as Error & { code?: number };
-        err.code = -32602;
-        throw err;
-      },
-    };
-    const frame = mount("synapse-research");
+  test("an input_required task passes through for the app to handle", async () => {
+    const outcome = { resultType: "complete", ...flatTask({ status: "input_required" }) };
+    mcpBehavior = async () => ({ result: outcome });
+    const frame = mount("research");
+    frame.send({ jsonrpc: "2.0", id: "g4", method: "tasks/get", params: { taskId: "task-1" } });
 
-    frame.send({
+    expect(await frame.waitFor(byId("g4"))).toEqual({ jsonrpc: "2.0", id: "g4", result: outcome });
+  });
+
+  test("tasks/cancel answers what the server answered", async () => {
+    const frame = mount("research");
+    frame.send({ jsonrpc: "2.0", id: "x1", method: "tasks/cancel", params: { taskId: "task-1" } });
+
+    expect(await frame.waitFor(byId("x1"))).toEqual({
       jsonrpc: "2.0",
-      id: "e-1",
-      method: "tasks/get",
-      params: { taskId: "nope" },
+      id: "x1",
+      result: { resultType: "complete" },
     });
+    expect(mcpSend.mock.calls[0]?.[0]).toBe("tasks/cancel");
+  });
 
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "e-1")) as {
+  test("a server's -32602 (not found) keeps its code", async () => {
+    mcpBehavior = async () => ({
+      error: { code: -32602, message: "Failed to retrieve task: Task not found" },
+    });
+    const frame = mount("research");
+    frame.send({ jsonrpc: "2.0", id: "e1", method: "tasks/get", params: { taskId: "nope" } });
+
+    expect(await frame.waitFor(byId("e1"))).toEqual({
+      jsonrpc: "2.0",
+      id: "e1",
+      error: { code: -32602, message: "Failed to retrieve task: Task not found" },
+    });
+  });
+
+  test("a request that got no answer is -32000", async () => {
+    mcpBehavior = async () => {
+      throw new Error("network down");
+    };
+    const frame = mount("research");
+    frame.send({ jsonrpc: "2.0", id: "e2", method: "tasks/get", params: { taskId: "task-1" } });
+
+    const reply = (await frame.waitFor(byId("e2"))) as {
       error?: { code: number; message: string };
     };
-    expect(reply.error?.code).toBe(-32602);
-    expect(reply.error?.message).toContain("task not found");
+    expect(reply.error).toEqual({ code: -32000, message: "network down" });
   });
+});
 
-  test("unknown/internal error surfaces as -32603", async () => {
-    mcpBehavior = {
-      request: async () => {
-        throw new Error("connection dropped");
-      },
-    };
-    const frame = mount("synapse-research");
+describe("2025 task methods are not served", () => {
+  for (const method of ["tasks/result", "tasks/list"]) {
+    test(`${method} is method-not-found, and nothing reaches /mcp`, async () => {
+      const frame = mount("research");
+      frame.send({ jsonrpc: "2.0", id: `n-${method}`, method, params: { taskId: "task-1" } });
 
+      const reply = (await frame.waitFor(byId(`n-${method}`))) as { error?: { code: number } };
+      expect(reply.error?.code).toBe(-32601);
+      expect(mcpSend).not.toHaveBeenCalled();
+    });
+  }
+
+  test("no task status notification reaches the app", async () => {
+    const frame = mount("research");
+    completeHandshake(frame);
     frame.send({
       jsonrpc: "2.0",
-      id: "e-2",
-      method: "tasks/cancel",
-      params: { taskId: "x" },
+      id: "s1",
+      method: "tools/call",
+      params: { name: "t", _meta: OPT_IN },
     });
+    await frame.waitFor(byId("s1"));
+    await new Promise((r) => setTimeout(r, 20));
 
-    const reply = (await frame.waitFor((m) => (m as { id?: string })?.id === "e-2")) as {
-      error?: { code: number; message: string };
-    };
-    expect(reply.error?.code).toBe(-32603);
-    expect(reply.error?.message).toContain("connection dropped");
+    expect(
+      frame.inbox.filter((m) => (m as { method?: string }).method === "notifications/tasks/status"),
+    ).toEqual([]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// notifications/tasks/status forwarding + subscription teardown
-// ---------------------------------------------------------------------------
-
-describe("notifications/tasks/status — forwarding + teardown", () => {
-  test("bridge subscribes once at creation", async () => {
-    mount("synapse-research");
-
-    await waitForSubscription();
-    expect(setNotificationHandler).toHaveBeenCalledTimes(1);
-    const [schema] = setNotificationHandler.mock.calls[0] ?? [];
-    expect((schema as { shape?: { method?: { value?: string } } })?.shape?.method?.value).toBe(
-      "notifications/tasks/status",
-    );
-  });
-
-  test("emitted notification is forwarded to the iframe verbatim (preserves _meta)", async () => {
-    const frame = mount("synapse-research");
-    completeHandshake(frame);
-    await waitForSubscription();
-
-    const handler = handlers.get("notifications/tasks/status");
-    expect(handler).toBeDefined();
-
-    const params = {
-      taskId: "task-abc",
-      status: "working",
-      ttl: 60_000,
-      createdAt: "2026-04-22T00:00:00Z",
-      lastUpdatedAt: "2026-04-22T00:00:03Z",
-      _meta: {
-        "io.modelcontextprotocol/related-task": { taskId: "task-abc" },
-        custom: "carried-through",
-      },
-    };
-    handler?.({ method: "notifications/tasks/status", params });
-
-    const forwarded = (await frame.waitFor(
-      (m) => (m as { method?: string })?.method === "notifications/tasks/status",
-    )) as { jsonrpc: "2.0"; method: string; params: Record<string, unknown> };
-    expect(forwarded).toEqual({
-      jsonrpc: "2.0",
-      method: "notifications/tasks/status",
-      params,
-    });
-  });
-
-  test("a status emitted before the handshake completes is held until it does", async () => {
-    const frame = mount("synapse-research");
-    await waitForSubscription();
-
-    const params = {
-      taskId: "task-early",
-      status: "working",
-      ttl: 60_000,
-      createdAt: "2026-04-22T00:00:00Z",
-      lastUpdatedAt: "2026-04-22T00:00:01Z",
-    };
-    handlers.get("notifications/tasks/status")?.({ method: "notifications/tasks/status", params });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(frame.inbox).toEqual([]);
-
-    completeHandshake(frame);
-    expect(frame.inbox).toEqual([{ jsonrpc: "2.0", method: "notifications/tasks/status", params }]);
-  });
-
-  test("destroy() unsubscribes — post-destroy emissions do not reach iframe", async () => {
-    const frame = mount("synapse-research");
-    completeHandshake(frame);
-    await waitForSubscription();
-
-    const handler = handlers.get("notifications/tasks/status");
-    expect(handler).toBeDefined();
-
-    // Destroy tears down the subscription.
-    activeBridge?.destroy();
-    activeBridge = null;
-    expect(removeNotificationHandler).toHaveBeenCalledWith("notifications/tasks/status");
-
-    // Even if we invoke the stale handler reference directly (simulating
-    // the MCP client firing AFTER teardown), `destroyed` guards the
-    // postMessage so nothing reaches the iframe.
-    handler?.({
-      method: "notifications/tasks/status",
-      params: {
-        taskId: "task-abc",
-        status: "completed",
-        ttl: 60_000,
-        createdAt: "2026-04-22T00:00:00Z",
-        lastUpdatedAt: "2026-04-22T00:00:04Z",
-      },
-    });
-
-    // Give microtasks a chance to drain.
-    await new Promise((r) => setTimeout(r, 10));
-
-    const leaked = frame.inbox.find(
-      (m) => (m as { method?: string })?.method === "notifications/tasks/status",
-    );
-    expect(leaked).toBeUndefined();
-  });
-
-  test("each bridge instance handles its own forwarding (multi-iframe isolation)", async () => {
-    const frame1 = makeTestIframe();
-    const bridge1 = createBridge(frame1.iframe, "app-one");
-    completeHandshake(frame1);
-    await waitForSubscription();
-
-    // Replace the first handler's slot by creating a second bridge. Each
-    // bridge is per-iframe; the latest subscription wins at the
-    // MCP-client level (SDK's setNotificationHandler semantics). The key
-    // invariant is that post-destroy the later bridge doesn't leak to a
-    // destroyed iframe.
-    const frame2 = makeTestIframe();
-    const bridge2 = createBridge(frame2.iframe, "app-two");
-    completeHandshake(frame2);
-    // Wait until the second setNotificationHandler landed.
-    await new Promise((r) => setTimeout(r, 10));
-
-    const handler = handlers.get("notifications/tasks/status");
-    handler?.({
-      method: "notifications/tasks/status",
-      params: {
-        taskId: "task-2",
-        status: "working",
-        ttl: 60_000,
-        createdAt: "2026-04-22T00:00:00Z",
-        lastUpdatedAt: "2026-04-22T00:00:05Z",
-      },
-    });
-
-    // The latest bridge (frame2) receives the notification.
-    const hit2 = await frame2.waitFor(
-      (m) => (m as { method?: string })?.method === "notifications/tasks/status",
-    );
-    expect(hit2).toBeDefined();
-
-    bridge1.destroy();
-    bridge2.destroy();
-    frame1.cleanup();
-    frame2.cleanup();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// tasks/* — scoped to the app's own server
-//
-// Every iframe shares one `/mcp` session, so `/mcp` cannot tell which app a
-// task request came from. The bridge can: it names the resolved server under
-// `RESOURCE_SOURCE_META_KEY`, as it does for resource reads and listings, and
-// `/mcp` answers only for a task that server ran.
+// Every iframe's requests reach `/mcp` as one client, so `/mcp` cannot tell
+// which app a task request came from. The bridge can: it names the resolved
+// server under `RESOURCE_SOURCE_META_KEY`, as it does for resource reads and
+// listings, and `/mcp` answers only for a task that server ran.
 // ---------------------------------------------------------------------------
 describe("tasks/* — scoped to the app's own server", () => {
-  const METHODS = ["tasks/get", "tasks/result", "tasks/cancel"] as const;
+  const METHODS = ["tasks/get", "tasks/cancel"] as const;
   const scopedTo = (server: string) => ({ [RESOURCE_SOURCE_META_KEY]: server });
 
   /** Send each task method as `appName` with `params`; return what reached `/mcp`, in order. */
@@ -572,23 +463,23 @@ describe("tasks/* — scoped to the app's own server", () => {
     for (const method of METHODS) {
       const id = `scope-${method}`;
       frame.send({ jsonrpc: "2.0", id, method, params });
-      await frame.waitFor((m) => (m as { id?: string })?.id === id);
+      await frame.waitFor(byId(id));
     }
-    return mcpRequest.mock.calls.map(([req]) => req);
+    return mcpSend.mock.calls.map(([method, sent]) => ({ method, params: sent }));
   }
 
   test("an external app's task requests name its own server", async () => {
-    const sent = await forwardedAs("synapse-research", { taskId: "task-1" });
+    const sent = await forwardedAs("research", { taskId: "task-1" });
     expect(sent).toEqual(
       METHODS.map((method) => ({
         method,
-        params: { taskId: "task-1", _meta: scopedTo("synapse-research") },
+        params: { taskId: "task-1", _meta: scopedTo("research") },
       })),
     );
   });
 
   test("the iframe's own _meta and any other param are not forwarded", async () => {
-    const sent = await forwardedAs("synapse-research", {
+    const sent = await forwardedAs("research", {
       taskId: "task-1",
       _meta: scopedTo("files"),
       extra: "dropped",
@@ -596,13 +487,13 @@ describe("tasks/* — scoped to the app's own server", () => {
     expect(sent).toEqual(
       METHODS.map((method) => ({
         method,
-        params: { taskId: "task-1", _meta: scopedTo("synapse-research") },
+        params: { taskId: "task-1", _meta: scopedTo("research") },
       })),
     );
   });
 
   test("an app naming another server is held to its own", async () => {
-    const sent = await forwardedAs("synapse-research", {
+    const sent = await forwardedAs("research", {
       taskId: "task-1",
       server: "files",
       _meta: { "ai.nimblebrain/server": "files" },
@@ -610,7 +501,7 @@ describe("tasks/* — scoped to the app's own server", () => {
     expect(sent).toEqual(
       METHODS.map((method) => ({
         method,
-        params: { taskId: "task-1", _meta: scopedTo("synapse-research") },
+        params: { taskId: "task-1", _meta: scopedTo("research") },
       })),
     );
   });
@@ -620,8 +511,8 @@ describe("tasks/* — scoped to the app's own server", () => {
     test(`an app named "${appName}" naming another server is held to its own`, async () => {
       const sent = await forwardedAs(appName, {
         taskId: "task-1",
-        server: "synapse-research",
-        _meta: { "ai.nimblebrain/server": "synapse-research" },
+        server: "research",
+        _meta: { "ai.nimblebrain/server": "research" },
       });
       expect(sent).toEqual(
         METHODS.map((method) => ({

@@ -59,8 +59,7 @@ const EmptyParams = Type.Optional(Type.Object({}, { additionalProperties: false 
 /**
  * JSON-RPC 2.0 request id. Per spec § 4: "An identifier established by
  * the Client that MUST contain a String, Number, or NULL value if
- * included." The MCP SDK's `RequestId` (`@modelcontextprotocol/sdk/types`)
- * is `string | number`. ext-apps clients built on
+ * included." MCP's `RequestId` is `string | number`. ext-apps clients built on
  * `@reboot-dev/reboot-react` use numeric ids starting at 0; the iframe
  * boundary cannot dictate caller id shape.
  *

@@ -4,23 +4,16 @@
 // Pinning the two behavioral guarantees callers depend on:
 //
 // 1. `setAuthToken(...)` fires the registered lifecycle handler on real
-//    changes (logout / identity boundary). `mcp-bridge-client.ts` relies on
-//    this to drop its identity-bound MCP session on logout — without it,
-//    the next iframe call would dispatch against the previous identity.
+//    changes (logout / identity boundary), so a holder of identity-bound
+//    state (the SSE event clients) can drop it.
 //
 // 2. `setActiveWorkspaceId(...)` does NOT fire the auth handler. A workspace
-//    switch is not an identity boundary; the bridge's workspace-bound session
-//    listens on the separate workspace lifecycle hook, and REST helpers read
-//    the active workspace per request.
+//    switch is not an identity boundary; workspace-bound state listens on the
+//    separate workspace lifecycle hook, and REST helpers and the bridge's
+//    `/mcp` sender read the active workspace per request.
 //
 // Both setters keep their equality guard: noop sets must not fire the
-// handler (avoids tearing down the MCP transport on every benign re-set).
-//
-// We don't test the wiring at module-load time (mcp-bridge-client's call
-// to `setAuthLifecycleHandler(resetMcpBridgeClient)`) because mocking that
-// reliably across the full test suite means fighting Bun's module cache.
-// The wiring is one line and trivially verifiable by code review; the
-// contracts this file pins are the much more important properties.
+// handler (avoids tearing down a stream on every benign re-set).
 // ---------------------------------------------------------------------------
 
 import { afterEach, describe, expect, mock, test } from "bun:test";

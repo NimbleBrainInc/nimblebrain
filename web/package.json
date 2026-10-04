@@ -19,7 +19,6 @@
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/core": "^2.0.0",
     "@modelcontextprotocol/ext-apps": "^2.0.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@sentry/react": "^10.58.0",
     "@sinclair/typebox": "^0.34.49",
     "class-variance-authority": "^0.7.1",
