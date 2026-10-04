@@ -9,7 +9,7 @@ import type { TaskRequest } from "../../runtime/types.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
-import { ledgerCostOfTaskRuns } from "../../usage/aggregate.ts";
+import { ledgerCostByTaskRun } from "../../usage/aggregate.ts";
 import { splitInnerToolName } from "../../util/tool-name.ts";
 import { BatchDriver, passRateOf } from "./batch.ts";
 import { listBatches, readBatchKey } from "./batch-store.ts";
@@ -328,10 +328,10 @@ export async function createTasksSource(
     spend: runtime.getSpendBalances(),
     onChange: (owner) => runtime.announceIdentitySourceChange("tasks", owner),
     notifyPaused: (batch) => notifyBatchPaused(runtime, batch),
-    // The usage ledger, so a batch's budget counts every model call its runs
-    // made, a run lost in a crash included.
-    ledgerSpent: (batch, runIds) =>
-      ledgerCostOfTaskRuns(
+    // The usage ledger, read once at boot for runs lost in a crash, so what
+    // they spent before they could be recorded still counts against the budget.
+    ledgerCosts: (batch, runIds) =>
+      ledgerCostByTaskRun(
         workDir,
         runIds,
         { from: batch.createdAt.slice(0, 10), to: new Date().toISOString().slice(0, 10) },

@@ -779,8 +779,9 @@ export const TasksBatchControlInput = Type.Object(
       Type.Number({
         exclusiveMinimum: 0,
         description:
-          "With resume: the budget to resume under (more than already spent). Refused while " +
-          "runs sharing the old budget are still in flight.",
+          "With resume of a paused batch: the budget to resume under (more than already spent). " +
+          "A running batch refuses it (pause first), and so does one whose runs sharing the old " +
+          "budget are still in flight.",
       }),
     ),
   },

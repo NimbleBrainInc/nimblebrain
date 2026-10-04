@@ -833,35 +833,36 @@ export async function aggregateUsage(
 // ---------------------------------------------------------------------------
 
 /**
- * What the ledger says a set of task runs cost, in USD: every line in the
- * range whose task run is one of `taskRunIds` (and, when given, bound to
- * `workspaceId`), priced the way the report prices it (stored rates first,
- * then the catalog; an unpriced line adds nothing). A line is written as each
- * model call completes, so a run that never reached its record (lost in a
- * crash) is counted too. Synchronous, for a caller that seeds a spend account
- * while it holds no await point; it reads only the months the range spans.
+ * What the ledger says each of a set of task runs cost, in USD, by run id:
+ * every line from `range.from` onward whose task run is one of `taskRunIds`
+ * (and, when given, bound to `workspaceId`), priced the way the report prices
+ * it (stored rates first, then the catalog; an unpriced line adds nothing). A
+ * line is written as each model call completes, so a run that never reached
+ * its record (lost in a crash) is counted too. Synchronous, and reads only the
+ * month shards the range spans.
  */
-export function ledgerCostOfTaskRuns(
+export function ledgerCostByTaskRun(
   workDir: string,
   taskRunIds: ReadonlySet<string>,
   range: { from: string; to: string },
   workspaceId?: string,
-): number {
-  if (taskRunIds.size === 0) return 0;
+): Map<string, number> {
+  const costs = new Map<string, number>();
+  if (taskRunIds.size === 0) return costs;
   const filters = workspaceId !== undefined ? { workspaceId } : {};
-  let total = 0;
   for (const month of usageMonthsInRange(range.from, range.to)) {
     const dir = usageMonthDir(workDir, month);
     for (const shard of shardsForMonth(dir)) {
       for (const record of parseShard(readShardSync(join(dir, shard)), range, undefined, filters)) {
         const runId = taskRunOf(record);
         if (runId && taskRunIds.has(runId)) {
-          total += costBreakdown(record.model, record.usage, record.rates).total;
+          const cost = costBreakdown(record.model, record.usage, record.rates).total;
+          costs.set(runId, (costs.get(runId) ?? 0) + cost);
         }
       }
     }
   }
-  return total;
+  return costs;
 }
 
 /** A shard's text, or empty when it vanished between listing and read (retention sweep). */

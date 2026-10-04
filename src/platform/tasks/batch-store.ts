@@ -1,7 +1,7 @@
 /**
  * Persistence for batches (`tasks__run_batch`), beside the owner's tasks:
  *
- *   …/tasks/<ownerId>/batches/<batchId>.json         the batch record (definition snapshot, state, counts cache, cost)
+ *   …/tasks/<ownerId>/batches/<batchId>.json         the batch record (task id, its settings, state, counts cache, cost)
  *   …/tasks/<ownerId>/batches/<batchId>.items.jsonl  one line per item with its input, then one appended line per change
  *   …/tasks/<ownerId>/batches/keys/<sha256>.json     an idempotency key and the batch it made
  *

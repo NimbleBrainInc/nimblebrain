@@ -713,7 +713,11 @@ export interface BatchCounts {
   cancelled: number;
 }
 
-/** A batch: its definition snapshot and where it stands. `…/tasks/<ownerId>/batches/<id>.json`. */
+/**
+ * A batch: the task it runs (by id; each run reads the task as it is when the
+ * run starts), its own settings, and where it stands.
+ * `…/tasks/<ownerId>/batches/<id>.json`.
+ */
 export interface Batch {
   /** `batch_<12 hex>`. */
   id: string;

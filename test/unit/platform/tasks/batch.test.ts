@@ -14,7 +14,11 @@ import {
   batchAccountId,
   MAX_BATCH_ITEMS,
 } from "../../../../src/platform/tasks/batch.ts";
-import { listBatches, readBatchItems } from "../../../../src/platform/tasks/batch-store.ts";
+import {
+  listBatches,
+  loadBatch,
+  readBatchItems,
+} from "../../../../src/platform/tasks/batch-store.ts";
 import {
   handleBatch,
   handleBatchControl,
@@ -31,6 +35,7 @@ import {
   readRuns,
   readRunTicket,
   saveTask,
+  updateRun,
 } from "../../../../src/platform/tasks/store.ts";
 import type {
   Batch,
@@ -42,7 +47,7 @@ import type {
 import { createRunAdmission, type RunAdmission } from "../../../../src/runtime/admission.ts";
 import { createSpendBalances, type SpendBalances } from "../../../../src/runtime/spend.ts";
 import { isTaskForbiddenIdentityTool } from "../../../../src/tools/identity-sources.ts";
-import { ledgerCostOfTaskRuns } from "../../../../src/usage/aggregate.ts";
+import { ledgerCostByTaskRun } from "../../../../src/usage/aggregate.ts";
 import { UsageLedger } from "../../../../src/usage/ledger.ts";
 import type { UsageRates } from "../../../../src/usage/types.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
@@ -118,8 +123,10 @@ interface HarnessOptions {
   behave?: (input: unknown) => Partial<TaskRun>;
   spend?: SpendBalances;
   admission?: RunAdmission;
-  /** Seed the batch account from the usage ledger, as the tasks source does. */
+  /** Charge runs lost in a crash from the usage ledger, as the tasks source does. */
   ledger?: boolean;
+  /** A held run keeps waiting for its release when it is cancelled. */
+  ignoreAbort?: boolean;
 }
 
 interface Harness {
@@ -159,9 +166,11 @@ function harness(opts: HarnessOptions = {}): Harness {
       if (opts.gated) {
         await new Promise<void>((resolve, reject) => {
           gates.push({ release: resolve, input: input?.data, runId });
-          signal.addEventListener("abort", () =>
-            reject(new DOMException("The run was aborted", "AbortError")),
-          );
+          if (!opts.ignoreAbort) {
+            signal.addEventListener("abort", () =>
+              reject(new DOMException("The run was aborted", "AbortError")),
+            );
+          }
         });
       }
       let costUsd = 0;
@@ -240,8 +249,8 @@ function harness(opts: HarnessOptions = {}): Harness {
     retryDelayMs: 20,
     ...(opts.ledger
       ? {
-          ledgerSpent: (batch: Batch, runIds: ReadonlySet<string>) =>
-            ledgerCostOfTaskRuns(
+          ledgerCosts: (batch: Batch, runIds: ReadonlySet<string>) =>
+            ledgerCostByTaskRun(
               workDir,
               runIds,
               { from: batch.createdAt.slice(0, 10), to: new Date().toISOString().slice(0, 10) },
@@ -839,7 +848,7 @@ describe("restart", () => {
     for (const g of first.gates) g.release();
   });
 
-  it("seeds the batch budget from the usage ledger, so spend by a run lost in a crash still counts", async () => {
+  it("charges a run lost in a crash from the usage ledger at boot, so its spend still counts against the budget", async () => {
     const first = harness({ gated: true, ledger: true });
     makeTask();
     first.scheduler.reload();
@@ -847,7 +856,7 @@ describe("restart", () => {
       wsId: WS,
       ownerId: OWNER,
       task: makeTask(),
-      inputs: items("a", "b"),
+      inputs: items("a", "b", "c"),
       concurrency: 1,
       budgetUsd: 1,
       createdBy: OWNER,
@@ -884,10 +893,12 @@ describe("restart", () => {
     const second = harness({ gated: true, ledger: true });
     await waitFor(() => second.gates.length === 1, "the pending item's run");
     const batch = batchOf(second, created.id);
-    // Recorded cost knows nothing of the lost run; the ledger does.
-    expect(batch.costUsd).toBe(0);
+    // The lost run has no record; boot read its spend from the ledger onto its item.
+    const charged = readBatchItems(workDir, WS, OWNER, created.id)[0]!;
+    expect(charged.execution).toBe("failed");
+    expect(charged.costUsd).toBeCloseTo(0.6, 9);
+    expect(batch.costUsd).toBeCloseTo(0.6, 9);
     expect(second.spend.balance(batchAccountId(batch))).toBeCloseTo(0.4, 9);
-    expect(readBatchItems(workDir, WS, OWNER, created.id)[0]?.execution).toBe("failed");
     // A new budget is held above the ledger's spend too.
     handleBatchControl({ batchId: created.id, action: "pause" }, second.ctx);
     second.gates[0]!.release();
@@ -905,6 +916,126 @@ describe("restart", () => {
     await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
     const file = join(taskBatchesDir(workDir, WS, OWNER), `${out.batch.id}.items.jsonl`);
     expect(readFileSync(file, "utf-8").trim().split("\n")).toHaveLength(2);
+  });
+});
+
+describe("residency", () => {
+  it("leaves memory when it completes, and is still read, re-run, and synced from disk", async () => {
+    const h = harness({
+      behave: (input) =>
+        (input as { v: string }).v === "boom"
+          ? { status: "failure", stopReason: "error", resultPreview: undefined, error: "boom" }
+          : {},
+    });
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("fail", "boom") }, h.ctx);
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    expect(h.driver.isResident(WS, OWNER, out.batch.id)).toBe(false);
+
+    // A read comes from disk.
+    expect(handleBatch({ batchId: out.batch.id, results: true }, h.ctx).results).toHaveLength(2);
+    expect(h.driver.isResident(WS, OWNER, out.batch.id)).toBe(false);
+
+    // A person's verdict on an item's run follows onto the item, and the batch
+    // loaded for it goes back to disk.
+    const [judged] = readBatchItems(workDir, WS, OWNER, out.batch.id);
+    expect(judged?.verdict).toBe("fail");
+    const updated = updateRun(workDir, WS, OWNER, "enrich", judged!.runId!, (r) => ({
+      ...r,
+      assessment: {
+        ...r.assessment!,
+        human: { verdict: "pass", by: OWNER, via: "ui", at: new Date().toISOString() },
+      },
+    }));
+    h.driver.syncRun(WS, OWNER, updated!);
+    expect(readBatchItems(workDir, WS, OWNER, out.batch.id)[0]?.verdict).toBe("pass");
+    expect(batchOf(h, out.batch.id).counts).toMatchObject({ pass: 1, fail: 0, failed: 1 });
+    expect(h.driver.isResident(WS, OWNER, out.batch.id)).toBe(false);
+
+    // A control loads it, drives it, and lets it go again.
+    expect(
+      handleBatchControl({ batchId: out.batch.id, action: "rerun_failed" }, h.ctx).affected,
+    ).toBe(1);
+    await waitFor(
+      () =>
+        batchOf(h, out.batch.id).state === "completed" &&
+        !h.driver.isResident(WS, OWNER, out.batch.id),
+      "the re-run to complete and leave memory",
+    );
+  });
+
+  it("leaves memory once a cancelled batch's last run ends", async () => {
+    const h = harness({ gated: true });
+    makeTask();
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items("a", "b", "c"), concurrency: 1 },
+      h.ctx,
+    );
+    await waitFor(() => h.gates.length === 1, "first run");
+    handleBatchControl({ batchId: out.batch.id, action: "cancel" }, h.ctx);
+    await waitFor(
+      () => !h.driver.isResident(WS, OWNER, out.batch.id),
+      "the cancelled batch to leave memory",
+    );
+    expect(batchOf(h, out.batch.id).counts.cancelled).toBe(3);
+  });
+
+  it("completes a paused batch whose last runs end with nothing pending", async () => {
+    const h = harness({ gated: true });
+    makeTask();
+    const out = handleRunBatch({ taskId: "enrich", items: items("a"), concurrency: 1 }, h.ctx);
+    await waitFor(() => h.gates.length === 1, "the run");
+    handleBatchControl({ batchId: out.batch.id, action: "pause" }, h.ctx);
+    h.gates[0]!.release();
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+    expect(batchOf(h, out.batch.id).pause).toBeUndefined();
+    expect(h.driver.isResident(WS, OWNER, out.batch.id)).toBe(false);
+  });
+});
+
+describe("budget changes and cancels", () => {
+  it("refuses a new budget on a running batch, and takes one on a paused batch", async () => {
+    const h = harness({ gated: true });
+    makeTask();
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items("a", "b"), concurrency: 1, budgetUsd: 1 },
+      h.ctx,
+    );
+    await waitFor(() => h.gates.length === 1, "first run");
+    expect(() =>
+      handleBatchControl({ batchId: out.batch.id, action: "resume", budgetUsd: 5 }, h.ctx),
+    ).toThrow(/pause the batch first to change its budget/);
+    expect(loadBatch(workDir, WS, OWNER, out.batch.id)?.budgetUsd).toBe(1);
+
+    handleBatchControl({ batchId: out.batch.id, action: "pause" }, h.ctx);
+    h.gates[0]!.release();
+    await waitFor(() => batchOf(h, out.batch.id).counts.running === 0, "run to end");
+    handleBatchControl({ batchId: out.batch.id, action: "resume", budgetUsd: 5 }, h.ctx);
+    expect(loadBatch(workDir, WS, OWNER, out.batch.id)?.budgetUsd).toBe(5);
+    expect(h.spend.balance(batchAccountId(out.batch))).toBeCloseTo(5 - 0.01, 9);
+    await waitFor(() => h.gates.length === 2, "second run");
+    h.gates[1]!.release();
+    await waitFor(() => batchOf(h, out.batch.id).state === "completed", "completion");
+  });
+
+  it("settles as cancelled an item whose run a budget stops after the batch was cancelled", async () => {
+    const h = harness({ gated: true, ignoreAbort: true, door: { calls: 1 } });
+    makeTask();
+    const out = handleRunBatch(
+      { taskId: "enrich", items: items("a", "b"), concurrency: 1, budgetUsd: 0.0001 },
+      h.ctx,
+    );
+    await waitFor(() => h.gates.length === 1, "first run");
+    handleBatchControl({ batchId: out.batch.id, action: "cancel" }, h.ctx);
+    // The run goes on to its first model call, which the batch account refuses.
+    h.gates[0]!.release();
+    await waitFor(() => !h.driver.isResident(WS, OWNER, out.batch.id), "settle");
+    const settled = readBatchItems(workDir, WS, OWNER, out.batch.id);
+    expect(settled.map((i) => [i.state, i.execution])).toEqual([
+      ["done", "cancelled"],
+      ["done", "cancelled"],
+    ]);
+    expect(batchOf(h, out.batch.id).counts).toMatchObject({ cancelled: 2, pending: 0 });
   });
 });
 
