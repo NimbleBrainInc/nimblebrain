@@ -207,7 +207,7 @@ describe("the Model control on /profile", () => {
     mounted = await mount();
     await choose(select(mounted.container)!, "anthropic:claude-opus-4-6");
     expect(sets()).toEqual([{ model: "anthropic:claude-opus-4-6" }]);
-    expect(mounted.container.textContent).toContain("All changes saved");
+    expect(mounted.container.textContent).toContain("Saved");
   });
 
   // Choosing the empty option is how a person goes back to the default, so it
@@ -262,7 +262,7 @@ describe("the form does not claim more than it did", () => {
     await choose(select(mounted.container)!, "anthropic:claude-opus-4-6");
     expect(mounted.container.textContent).toContain("not permitted");
     expect(mounted.container.textContent).toContain("Not saved");
-    expect(mounted.container.textContent).not.toContain("All changes saved");
+    expect(mounted.container.textContent).not.toContain("Saved");
   });
 
   // A failed read leaves the fields holding fallbacks, not the person's

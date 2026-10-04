@@ -29,7 +29,7 @@ import { useNotice } from "../components/notices";
 
 export type FieldStatus = "clean" | "dirty" | "saving" | "saved" | "error";
 
-/** The page-level summary, for the line under the page title. */
+/** The whole form's state: the most pressing of its fields' statuses. */
 export type FormStatus = "idle" | "dirty" | "saving" | "saved" | "error";
 
 /**

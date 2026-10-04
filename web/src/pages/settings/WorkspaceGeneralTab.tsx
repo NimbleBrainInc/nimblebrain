@@ -5,12 +5,11 @@ import { Input } from "../../components/ui/input";
 import { Tooltip } from "../../components/ui/tooltip";
 import { useSession } from "../../context/SessionContext";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
-import { type FormStatus, useAutosaveForm } from "../../hooks/useAutosaveForm";
+import { useAutosaveForm } from "../../hooks/useAutosaveForm";
 import { useFlashState } from "../../hooks/useFlashState";
 import { canManageWorkspaceMembers, useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import {
   AutosaveField,
-  AutosaveStatus,
   RequireActiveWorkspace,
   Section,
   SettingsFormPage,
@@ -70,24 +69,12 @@ function Inner({
   const canEdit = useCanWriteActiveWorkspace();
   const nameForm = useWorkspaceName(wsId, name);
   const instructions = useWorkspaceInstructions(wsId);
-  const instructionsReady = !instructions.loading && !instructions.loadError;
-
-  // One line for the page: the name field's status, joined with the
-  // instructions' once they have loaded and can be edited.
-  const statuses: FormStatus[] = [];
-  if (canRename) statuses.push(nameForm.status);
-  if (instructionsReady && canEdit) statuses.push(instructions.form.status);
 
   return (
     <SettingsFormPage
       title="General"
       description="Changes here affect everyone in this workspace."
-      action={
-        <div className="flex flex-col items-end gap-1">
-          {statuses.length > 0 ? <AutosaveStatus status={combineStatus(statuses)} /> : null}
-          <WorkspaceIdChip workspaceId={wsId} />
-        </div>
-      }
+      action={<WorkspaceIdChip workspaceId={wsId} />}
     >
       <Section flush>
         <AutosaveField
@@ -156,14 +143,6 @@ function useWorkspaceName(wsId: string, initialName: string) {
       notices: { name: { undo: true } },
     },
   );
-}
-
-/** The most pressing of several form statuses: an error, then a save in flight, then unsaved edits. */
-function combineStatus(statuses: FormStatus[]): FormStatus {
-  for (const s of ["error", "saving", "dirty", "saved"] as const) {
-    if (statuses.includes(s)) return s;
-  }
-  return "idle";
 }
 
 function WorkspaceIdChip({ workspaceId }: { workspaceId: string }) {

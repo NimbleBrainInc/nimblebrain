@@ -6,7 +6,6 @@ import { Select } from "../../components/ui/select";
 import { useAutosaveForm } from "../../hooks/useAutosaveForm";
 import {
   AutosaveField,
-  AutosaveStatus,
   type ModelEntry,
   ModelSelect,
   Section,
@@ -205,7 +204,6 @@ export function ModelTab() {
     <SettingsFormPage
       title="Model"
       description="Default model assignments and runtime limits. Applies organization-wide."
-      action={loading || loadError ? undefined : <AutosaveStatus status={form.status} />}
       loading={loading}
       loadingMessage="Loading model configuration..."
       loadError={loadError}

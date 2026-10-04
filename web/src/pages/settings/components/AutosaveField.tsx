@@ -1,7 +1,7 @@
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Label } from "../../../components/ui/label";
-import type { FieldStatus, FormStatus } from "../../../hooks/useAutosaveForm";
+import type { FieldStatus } from "../../../hooks/useAutosaveForm";
 import { cn } from "../../../lib/utils";
 
 /**
@@ -93,28 +93,5 @@ function FieldStatusMarker({ status }: { status: FieldStatus }) {
         </>
       )}
     </span>
-  );
-}
-
-const FORM_STATUS_TEXT: Record<FormStatus, string> = {
-  idle: "Changes save automatically",
-  dirty: "Unsaved changes",
-  saving: "Saving…",
-  saved: "All changes saved",
-  error: "Some changes were not saved",
-};
-
-/** The form-wide line under the page title: what the reader would otherwise look for a Save button to learn. */
-export function AutosaveStatus({ status }: { status: FormStatus }) {
-  return (
-    <p
-      aria-live="polite"
-      className={cn(
-        "text-xs whitespace-nowrap",
-        status === "error" ? "text-destructive" : "text-muted-foreground",
-      )}
-    >
-      {FORM_STATUS_TEXT[status]}
-    </p>
   );
 }
