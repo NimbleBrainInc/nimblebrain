@@ -98,7 +98,7 @@ describe("each id in the ledger lands under its own name", () => {
     expect(rec.taskRunId).toBeUndefined();
   });
 
-  test("an automation's run id lands in taskRunId, not conversationId", () => {
+  test("a task's run id lands in taskRunId, not conversationId", () => {
     // The original defect one layer up: a run id occupying a conversation
     // field. It must not reappear as a conversation under a new name.
     const rec = fieldsFor({ identity: null, runId: "run-42", unattended: true });
@@ -141,7 +141,7 @@ describe("each id in the ledger lands under its own name", () => {
 });
 
 describe("recordLlmCall", () => {
-  test("a run's own turn records task, and stays recoverable as automation spend", async () => {
+  test("a run's own turn records task, and stays recoverable as task spend", async () => {
     runWithRequestContext({ identity: null, runId: "run-7", unattended: true }, () => {
       recordLlmCall({
         source: "main",
@@ -204,7 +204,7 @@ describe("origin follows the scope, whatever the source", () => {
     expect(sample?.labels.origin).toBe("chat");
   });
 
-  test("the same call inside an automation records task", async () => {
+  test("the same call inside a task records task", async () => {
     runWithRequestContext({ identity: null, runId: "run-mid", unattended: true }, () => {
       recordLlmCall({ source: "compaction", model: "test-model-f", usage: USAGE });
     });

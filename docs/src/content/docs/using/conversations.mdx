@@ -88,7 +88,7 @@ You can link directly to a conversation by sharing its URL. When you open the li
 
 Select a conversation from the sidebar list in the web UI. The full message history loads, and new messages continue the conversation. Through the API, pass `conversationId` in the chat request body to continue an existing conversation.
 
-A conversation resumes **only in its own workspace** — the one it was born in. That workspace is fixed for the conversation's whole life and decides which tools and context the agent reaches. Through the API, send the chat to that workspace's path, `/v1/workspaces/<wsId>/chat`: a `conversationId` that is not one of your conversations in the workspace in the path gets `404 conversation_not_found`, the same answer as an id that does not exist. In the web UI, opening a conversation from another workspace takes you to that workspace, and switching to a different workspace starts a fresh conversation in the workspace you are now viewing (the earlier conversation stays saved in its own workspace's list).
+A conversation resumes **only in its own workspace** — the one it was born in. That workspace is fixed for the conversation's whole life and decides which tools and context the agent reaches. Through the API, start the turn on that workspace's path, `/v1/workspaces/<wsId>/chat/start`: a `conversationId` that is not one of your conversations in the workspace in the path gets `404 conversation_not_found`, the same answer as an id that does not exist. In the web UI, opening a conversation from another workspace takes you to that workspace, and switching to a different workspace starts a fresh conversation in the workspace you are now viewing (the earlier conversation stays saved in its own workspace's list).
 
 ## Auto-titling
 

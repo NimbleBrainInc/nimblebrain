@@ -8,8 +8,8 @@ import { UserStore } from "../../../src/identity/user.ts";
 import type { Runtime } from "../../../src/runtime/runtime.ts";
 import type { InProcessTool } from "../../../src/tools/in-process-app.ts";
 import {
-  createManageMembersTool,
-  type ManageMembersContext,
+  createManageWorkspacesTool,
+  type ManageWorkspacesContext,
 } from "../../../src/tools/workspace-mgmt-tools.ts";
 import { WorkspaceStore } from "../../../src/workspace/workspace-store.ts";
 import { makeIdentity } from "../../helpers/identity.ts";
@@ -29,7 +29,7 @@ let currentIdentity: UserIdentity | null;
 let memberUser: User;
 let anotherUser: User;
 
-function makeCtx(): ManageMembersContext {
+function makeCtx(): ManageWorkspacesContext {
   return {
     getIdentity: () => currentIdentity,
     workspaceStore: wsStore,
@@ -78,7 +78,7 @@ beforeEach(async () => {
     orgRole: "admin",
   });
 
-  tool = createManageMembersTool(makeCtx());
+  tool = createManageWorkspacesTool(makeCtx());
 });
 
 afterEach(async () => {
@@ -87,7 +87,7 @@ afterEach(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────
 
-describe("nb__manage_members", () => {
+describe("nb__manage_workspaces member actions", () => {
   describe("add", () => {
     test("workspace admin adds a member", async () => {
       // Create workspace and add the requesting user as workspace admin
@@ -101,10 +101,10 @@ describe("nb__manage_members", () => {
         displayName: "WS Admin",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -125,7 +125,7 @@ describe("nb__manage_members", () => {
       const ws = await wsStore.create("Team Beta");
 
       const result = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -142,7 +142,7 @@ describe("nb__manage_members", () => {
       const ws = await createWsAsAdmin("Team Gamma");
 
       const result = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
         userId: memberUser.id,
         role: "admin",
@@ -159,7 +159,7 @@ describe("nb__manage_members", () => {
       const ws = await createWsAsAdmin("Team Delta");
 
       const result = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
         userId: "usr_nonexistent0001",
       });
@@ -172,7 +172,7 @@ describe("nb__manage_members", () => {
       const ws = await createWsAsAdmin("Team Epsilon");
 
       const result = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
       });
 
@@ -189,10 +189,10 @@ describe("nb__manage_members", () => {
         displayName: "WS Admin",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
         email: "  Member@Example.com ",
         role: "admin",
@@ -208,7 +208,7 @@ describe("nb__manage_members", () => {
       await userStore.softDelete(anotherUser.id);
 
       for (const email of ["nobody@example.com", "another@example.com"]) {
-        const result = await tool.handler({ action: "add", workspaceId: ws.id, email });
+        const result = await tool.handler({ action: "add_member", workspaceId: ws.id, email });
         expect(result.isError).toBe(true);
         expect(resultText(result)).toContain("No one in this organization has the email");
       }
@@ -230,10 +230,10 @@ describe("nb__manage_members", () => {
         displayName: "WS Admin",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "remove",
+        action: "remove_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -257,10 +257,10 @@ describe("nb__manage_members", () => {
         displayName: "Member User",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "remove",
+        action: "remove_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -276,7 +276,7 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
 
       const result = await tool.handler({
-        action: "remove",
+        action: "remove_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -298,10 +298,10 @@ describe("nb__manage_members", () => {
         displayName: "Member User",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "remove",
+        action: "remove_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -323,10 +323,10 @@ describe("nb__manage_members", () => {
         displayName: "Member User",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "remove",
+        action: "remove_member",
         workspaceId: ws.id,
         userId: anotherUser.id,
       });
@@ -338,7 +338,7 @@ describe("nb__manage_members", () => {
       const ws = await createWsAsAdmin("Team NoMember");
 
       const result = await tool.handler({
-        action: "remove",
+        action: "remove_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -354,7 +354,7 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "member");
 
       const result = await tool.handler({
-        action: "update",
+        action: "update_member",
         workspaceId: ws.id,
         userId: memberUser.id,
         role: "admin",
@@ -377,10 +377,10 @@ describe("nb__manage_members", () => {
         displayName: "Member User",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "update",
+        action: "update_member",
         workspaceId: ws.id,
         userId: memberUser.id,
         role: "member",
@@ -402,10 +402,10 @@ describe("nb__manage_members", () => {
         displayName: "Member User",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "update",
+        action: "update_member",
         workspaceId: ws.id,
         userId: memberUser.id,
         role: "member",
@@ -420,7 +420,7 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "member");
 
       const result = await tool.handler({
-        action: "update",
+        action: "update_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -433,7 +433,7 @@ describe("nb__manage_members", () => {
       const ws = await createWsAsAdmin("Team NoUser");
 
       const result = await tool.handler({
-        action: "update",
+        action: "update_member",
         workspaceId: ws.id,
         role: "admin",
       });
@@ -455,10 +455,10 @@ describe("nb__manage_members", () => {
         displayName: "Member User",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "list",
+        action: "list_members",
         workspaceId: ws.id,
       });
 
@@ -485,9 +485,9 @@ describe("nb__manage_members", () => {
         displayName: "Member User",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
-      const result = await tool.handler({ action: "list", workspaceId: ws.id });
+      const result = await tool.handler({ action: "list_members", workspaceId: ws.id });
 
       const parsed = parseResult(result) as {
         members: Array<{ userId: string; deletedAt?: string }>;
@@ -504,7 +504,7 @@ describe("nb__manage_members", () => {
       const ws = await createWsAsAdmin("Team Solo");
 
       const result = await tool.handler({
-        action: "list",
+        action: "list_members",
         workspaceId: ws.id,
       });
 
@@ -520,10 +520,10 @@ describe("nb__manage_members", () => {
     });
 
     test("non-member is denied listing a non-existent workspace", async () => {
-      // canManageMembers now gates on membership first: a missing workspace is
+      // memberActionAllowed gates on membership first: a missing workspace is
       // indistinguishable from one the requester can't manage — both deny.
       const result = await tool.handler({
-        action: "list",
+        action: "list_members",
         workspaceId: "ws_004f1f715b791487",
       });
 
@@ -543,9 +543,9 @@ describe("nb__manage_members", () => {
         displayName: "Member",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
-      const listed = await tool.handler({ action: "list", workspaceId: ws.id });
+      const listed = await tool.handler({ action: "list_members", workspaceId: ws.id });
       expect(listed.isError).toBe(false);
       const parsed = parseResult(listed) as {
         members: Array<{ userId: string; displayName: string }>;
@@ -555,7 +555,7 @@ describe("nb__manage_members", () => {
       ]);
 
       const added = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
         userId: anotherUser.id,
       });
@@ -572,19 +572,19 @@ describe("nb__manage_members", () => {
         displayName: "Another",
         orgRole: "member",
       });
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
-      const result = await tool.handler({ action: "list", workspaceId: ws.id });
+      const result = await tool.handler({ action: "list_members", workspaceId: ws.id });
       expect(resultText(result)).toContain("don't have permission");
     });
 
     test("null identity gets permission denied", async () => {
       const ws = await wsStore.create("Team Null");
       currentIdentity = null;
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "list",
+        action: "list_members",
         workspaceId: ws.id,
       });
 
@@ -595,10 +595,10 @@ describe("nb__manage_members", () => {
       const ws = await wsStore.create("Team Owner");
 
       currentIdentity = { ...currentIdentity!, orgRole: "owner" };
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -611,7 +611,7 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
       await wsStore.addMember(ws.id, anotherUser.id, "member");
 
-      const listed = await tool.handler({ action: "list", workspaceId: ws.id });
+      const listed = await tool.handler({ action: "list_members", workspaceId: ws.id });
       expect(listed.isError).toBe(false);
       const parsed = parseResult(listed) as { members: Array<{ userId: string }> };
       expect(parsed.members.map((m) => m.userId).sort()).toEqual(
@@ -619,7 +619,7 @@ describe("nb__manage_members", () => {
       );
 
       const promoted = await tool.handler({
-        action: "update",
+        action: "update_member",
         workspaceId: ws.id,
         userId: anotherUser.id,
         role: "admin",
@@ -627,7 +627,7 @@ describe("nb__manage_members", () => {
       expect(promoted.isError).toBe(false);
 
       const removed = await tool.handler({
-        action: "remove",
+        action: "remove_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
@@ -644,14 +644,14 @@ describe("nb__manage_members", () => {
       await wsStore.addMember(ws.id, memberUser.id, "admin");
 
       const removed = await tool.handler({
-        action: "remove",
+        action: "remove_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });
       expect(resultText(removed)).toContain("Cannot remove the last workspace admin");
 
       const demoted = await tool.handler({
-        action: "update",
+        action: "update_member",
         workspaceId: ws.id,
         userId: memberUser.id,
         role: "member",
@@ -662,10 +662,10 @@ describe("nb__manage_members", () => {
     test("org owner who IS a workspace admin member can manage members", async () => {
       currentIdentity = { ...currentIdentity!, orgRole: "owner" };
       const ws = await createWsAsAdmin("Team OwnerMember");
-      tool = createManageMembersTool(makeCtx());
+      tool = createManageWorkspacesTool(makeCtx());
 
       const result = await tool.handler({
-        action: "add",
+        action: "add_member",
         workspaceId: ws.id,
         userId: memberUser.id,
       });

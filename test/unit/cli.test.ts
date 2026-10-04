@@ -22,7 +22,8 @@ describe("loadConfig", () => {
     // Create an empty config to verify default values are applied
     const configPath = writeTestConfig("empty-defaults.json", {});
     const config = loadConfig({ config: configPath });
-    expect(config.model).toEqual({ provider: "anthropic" });
+    expect(config.providers).toBeUndefined();
+    expect(config.models).toBeUndefined();
     expect(config.connectors).toBeUndefined();
     expect(config.skillDirs).toBeUndefined();
   });
@@ -35,23 +36,24 @@ describe("loadConfig", () => {
 
   it("loads instance fields from config file", () => {
     const configPath = writeTestConfig("load.json", {
-      model: { provider: "anthropic" },
-      defaultModel: "claude-opus-4-6",
+      providers: { anthropic: {} },
+      models: { default: "claude-opus-4-6" },
       maxIterations: 15,
     });
 
     const config = loadConfig({ config: configPath });
-    expect(config.defaultModel).toBe("claude-opus-4-6");
+    expect(config.providers).toEqual({ anthropic: {} });
+    expect(config.models).toEqual({ default: "claude-opus-4-6" });
     expect(config.maxIterations).toBe(15);
   });
 
-  it("carries the automations block through to the runtime config", () => {
-    const configPath = writeTestConfig("automations.json", {
-      automations: { maxConcurrentRuns: 4, maxQueuedRuns: 10, maxRunIterations: 12 },
+  it("carries the tasks block through to the runtime config", () => {
+    const configPath = writeTestConfig("tasks.json", {
+      tasks: { maxConcurrentRuns: 4, maxQueuedRuns: 10, maxRunIterations: 12 },
     });
 
     const config = loadConfig({ config: configPath });
-    expect(config.automations).toEqual({
+    expect(config.tasks).toEqual({
       maxConcurrentRuns: 4,
       maxQueuedRuns: 10,
       maxRunIterations: 12,
@@ -69,12 +71,10 @@ describe("loadConfig", () => {
       ),
     ) as { properties: Record<string, unknown> };
     const samples: Record<string, unknown> = {
-      model: { provider: "anthropic" },
       providers: {},
       allowInsecureRemotes: true,
       models: {},
       modelPolicy: {},
-      defaultModel: "claude-opus-4-6",
       maxIterations: 5,
       maxInputTokens: 1000,
       maxOutputTokens: 1000,
@@ -92,7 +92,7 @@ describe("loadConfig", () => {
       features: {},
       connectors: {},
       notifications: { poll: { intervalMs: 30000 } },
-      automations: {},
+      tasks: {},
       files: {},
     };
     const fileOnly = new Set(["$schema", "version"]);
@@ -109,8 +109,7 @@ describe("loadConfig", () => {
 
   it("strips workspace-owned fields from config", () => {
     const configPath = writeTestConfig("strip-workspace.json", {
-      model: { provider: "anthropic" },
-      defaultModel: "claude-opus-4-6",
+      models: { default: "claude-opus-4-6" },
     });
     // Manually write workspace-owned fields into the JSON (bypasses schema)
     const fs = require("node:fs");
@@ -119,14 +118,13 @@ describe("loadConfig", () => {
     raw.skillDirs = ["./skills"];
     raw.preferences = { displayName: "Test" };
     raw.home = { enabled: true };
-    raw.skills = [];
     fs.writeFileSync(configPath, JSON.stringify(raw));
 
     const spy = spyOn(console, "error").mockImplementation(() => {});
     try {
       const config = loadConfig({ config: configPath });
       // Instance fields still loaded
-      expect(config.defaultModel).toBe("claude-opus-4-6");
+      expect(config.models).toEqual({ default: "claude-opus-4-6" });
       // Workspace-owned fields stripped
       expect("agents" in config).toBe(false);
       expect(config.skillDirs).toBeUndefined();
@@ -142,7 +140,6 @@ describe("loadConfig", () => {
     // connector array. Stripping it would drop every declared provider and
     // gateway at boot.
     const configPath = writeTestConfig("keep-connectors.json", {
-      model: { provider: "anthropic" },
       connectors: { gateways: { mcp360: { apiKey: "k" } } },
     });
 
@@ -232,24 +229,15 @@ describe("loadConfig", () => {
     }
   });
 
-  it("CLI flags override file config", () => {
-    const configPath = writeTestConfig("override.json", {
-      defaultModel: "claude-sonnet-4-5-20250929",
-    });
-
-    const config = loadConfig({ config: configPath, model: "claude-opus-4-6" });
-    expect(config.defaultModel).toBe("claude-opus-4-6");
-  });
-
   it("loads config from defaultWorkDir path", () => {
     const defaultDir = join(testDir, "workdir-test");
     mkdirSync(defaultDir, { recursive: true });
     const cfgPath = join(defaultDir, "nimblebrain.json");
-    writeFileSync(cfgPath, JSON.stringify({ defaultModel: "from-workdir" }));
+    writeFileSync(cfgPath, JSON.stringify({ models: { default: "from-workdir" } }));
 
     // Use explicit --config to test the loading behavior
     const config = loadConfig({ config: cfgPath });
-    expect(config.defaultModel).toBe("from-workdir");
+    expect(config.models?.default).toBe("from-workdir");
     expect(config.configPath).toBe(cfgPath);
   });
 
@@ -266,10 +254,10 @@ describe("loadConfig", () => {
     expect(existsSync(expectedPath)).toBe(false);
 
     // Write and load to verify round-trip
-    writeFileSync(expectedPath, JSON.stringify({ defaultModel: "test-model" }, null, 2));
+    writeFileSync(expectedPath, JSON.stringify({ models: { default: "test-model" } }, null, 2));
     const config = loadConfig({ config: expectedPath });
     expect(config.configPath).toBe(expectedPath);
-    expect(config.defaultModel).toBe("test-model");
+    expect(config.models?.default).toBe("test-model");
   });
 
   it("explicit --config takes precedence over defaultWorkDir config", () => {
@@ -277,23 +265,23 @@ describe("loadConfig", () => {
     mkdirSync(defaultDir, { recursive: true });
     writeFileSync(
       join(defaultDir, "nimblebrain.json"),
-      JSON.stringify({ defaultModel: "from-workdir" }),
+      JSON.stringify({ models: { default: "from-workdir" } }),
     );
 
     const explicitPath = writeTestConfig("explicit.json", {
-      defaultModel: "from-explicit",
+      models: { default: "from-explicit" },
     });
 
     const config = loadConfig({ config: explicitPath, defaultWorkDir: defaultDir });
-    expect(config.defaultModel).toBe("from-explicit");
+    expect(config.models?.default).toBe("from-explicit");
     expect(config.configPath).toBe(explicitPath);
   });
 });
 
 describe("config validation", () => {
-  it("throws on invalid model (string instead of object)", () => {
-    const configPath = writeTestConfig("bad-model.json", {
-      model: "anthropic",
+  it("throws on invalid models (string instead of object)", () => {
+    const configPath = writeTestConfig("bad-models.json", {
+      models: "anthropic",
     });
 
     expect(() => loadConfig({ config: configPath })).toThrow("Invalid config");
@@ -301,7 +289,7 @@ describe("config validation", () => {
 
   it("warns on unknown keys but does not throw", () => {
     const configPath = writeTestConfig("unknown-keys.json", {
-      model: { provider: "anthropic" },
+      maxIterations: 7,
       unknownField: true,
       anotherBadKey: 42,
     });
@@ -310,7 +298,7 @@ describe("config validation", () => {
     try {
       const config = loadConfig({ config: configPath });
       // Should still load successfully
-      expect(config.model).toEqual({ provider: "anthropic" });
+      expect(config.maxIterations).toBe(7);
       // Should have warned about both unknown keys
       const warnings = spy.mock.calls.map((c) => c[0] as string);
       expect(warnings.some((w) => w.includes("unknownField"))).toBe(true);
@@ -322,8 +310,8 @@ describe("config validation", () => {
 
   it("passes validation on a full valid config", () => {
     const configPath = writeTestConfig("valid-full.json", {
-      model: { provider: "anthropic", apiKey: "sk-test" },
-      defaultModel: "claude-opus-4-6",
+      providers: { anthropic: { apiKey: "sk-test" } },
+      models: { default: "claude-opus-4-6" },
       maxIterations: 20,
       maxInputTokens: 100000,
       maxOutputTokens: 8192,
@@ -337,7 +325,7 @@ describe("config validation", () => {
     delete process.env.NB_WORK_DIR;
     try {
       const config = loadConfig({ config: configPath });
-      expect(config.model).toEqual({ provider: "anthropic", apiKey: "sk-test" });
+      expect(config.providers).toEqual({ anthropic: { apiKey: "sk-test" } });
       expect(config.maxIterations).toBe(20);
       expect(config.logging).toEqual({ dir: "/tmp/logs", disabled: false });
       expect(config.workDir).toBe("/tmp/nimblebrain");
@@ -346,35 +334,29 @@ describe("config validation", () => {
     }
   });
 
-  it("warns when deprecated identity field is present", () => {
-    const configPath = writeTestConfig("deprecated-identity.json", {
-      identity: "I am a bot.",
+  // Keys the loader no longer reads take the unknown-key path like any other:
+  // warned by name, ignored, and never copied into the runtime config.
+  for (const [key, value] of [
+    ["model", { provider: "anthropic" }],
+    ["defaultModel", "claude-opus-4-6"],
+    ["skills", []],
+    ["identity", "I am a bot."],
+    ["contextFile", "./context.md"],
+  ] as const) {
+    it(`warns on "${key}" as an unknown key`, () => {
+      const configPath = writeTestConfig(`unknown-${key}.json`, { [key]: value });
+
+      const spy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const config = loadConfig({ config: configPath }) as unknown as Record<string, unknown>;
+        const warnings = spy.mock.calls.map((c) => c[0] as string);
+        expect(warnings.some((w) => w.includes(`Unknown key "${key}"`))).toBe(true);
+        expect(config[key]).toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
     });
-
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      loadConfig({ config: configPath });
-      const warnings = spy.mock.calls.map((c) => c[0] as string);
-      expect(warnings.some((w) => w.includes('"identity" is deprecated'))).toBe(true);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("warns when deprecated contextFile field is present", () => {
-    const configPath = writeTestConfig("deprecated-context.json", {
-      contextFile: "./context.md",
-    });
-
-    const spy = spyOn(console, "error").mockImplementation(() => {});
-    try {
-      loadConfig({ config: configPath });
-      const warnings = spy.mock.calls.map((c) => c[0] as string);
-      expect(warnings.some((w) => w.includes('"contextFile" is deprecated'))).toBe(true);
-    } finally {
-      spy.mockRestore();
-    }
-  });
+  }
 });
 
 describe("workdir resolution (§19.4)", () => {

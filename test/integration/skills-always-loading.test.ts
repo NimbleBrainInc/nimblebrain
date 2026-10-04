@@ -82,7 +82,7 @@ beforeAll(async () => {
   getSystem = cap.getSystem;
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: cap.model },
+    languageModel: cap.model,
     logging: { disabled: true },
     workDir: testDir,
     telemetry: { enabled: false },

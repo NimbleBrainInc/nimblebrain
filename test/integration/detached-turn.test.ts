@@ -21,7 +21,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -71,7 +71,7 @@ describe("detached turns (server-authoritative streaming)", () => {
     expect(events.length).toBeGreaterThan(0);
     // Sequence numbers are monotonic 1..n.
     expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
-    // `done` carries the same body as `POST …/chat`, cost included.
+    // `done` carries the finished turn's `ChatResponse`, cost included.
     const done = events[events.length - 1]?.data as ChatResponse;
     expect(done.conversationId).toBe(conversationId);
     expect(typeof done.inputTokens).toBe("number");
@@ -276,13 +276,10 @@ describe("cancel delivers a terminal frame to live viewers (Stop button)", () =>
     mkdirSync(dir, { recursive: true });
     rt = await Runtime.start({
       identityProvider: devProvider,
-      model: {
-        provider: "custom",
-        adapter: createMockModel(async () => {
-          await gate;
-          return { content: [{ type: "text", text: "unreached" }] };
-        }),
-      },
+      languageModel: createMockModel(async () => {
+        await gate;
+        return { content: [{ type: "text", text: "unreached" }] };
+      }),
       logging: { disabled: true },
       workDir: dir,
     });
@@ -332,14 +329,11 @@ describe("shutdown aborts in-flight detached turns (RunBus teardown)", () => {
 
     const rt = await Runtime.start({
       identityProvider: devProvider,
-      model: {
-        provider: "custom",
-        adapter: createMockModel(async (options) => {
-          capturedSignal = options.abortSignal;
-          await gate;
-          return { content: [{ type: "text", text: "unreached" }] };
-        }),
-      },
+      languageModel: createMockModel(async (options) => {
+        capturedSignal = options.abortSignal;
+        await gate;
+        return { content: [{ type: "text", text: "unreached" }] };
+      }),
       logging: { disabled: true },
       workDir: dir,
     });

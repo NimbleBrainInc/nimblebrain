@@ -71,7 +71,7 @@ async function makeRuntime(): Promise<Runtime> {
   mkdirSync(workDir, { recursive: true });
   return Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     workDir,
     logging: { disabled: true },
   });
@@ -156,7 +156,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -165,7 +165,7 @@ describe("Core Source", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
-          defaultModel: "claude-haiku-4-5-20251001",
+          models: { default: "claude-haiku-4-5-20251001" },
         }),
       );
       expect(result.isError).toBe(false);
@@ -176,7 +176,7 @@ describe("Core Source", () => {
       const raw = JSON.parse(
         require("node:fs").readFileSync(deriveOverridePath(configPath), "utf-8"),
       );
-      expect(raw.defaultModel).toBe("claude-haiku-4-5-20251001");
+      expect(raw.models).toEqual({ default: "claude-haiku-4-5-20251001" });
     } finally {
       await runtime.shutdown();
     }
@@ -190,7 +190,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -198,7 +198,7 @@ describe("Core Source", () => {
     try {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await source.execute("set_model_config", {
-        defaultModel: "claude-haiku-4-5-20251001",
+        models: { default: "claude-haiku-4-5-20251001" },
       });
       expect(result.isError).toBe(true);
       expect(extractText(result.content)).toContain("requires an authenticated identity");
@@ -216,7 +216,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -225,7 +225,7 @@ describe("Core Source", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(runtime));
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
-          defaultModel: "unconfigured-provider:some-model",
+          models: { default: "unconfigured-provider:some-model" },
         }),
       );
       expect(result.isError).toBe(true);
@@ -243,7 +243,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -270,7 +270,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -311,7 +311,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -339,7 +339,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -396,7 +396,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -465,7 +465,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -493,7 +493,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -536,7 +536,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -573,7 +573,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -613,7 +613,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -643,7 +643,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -681,7 +681,7 @@ describe("Core Source", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -711,7 +711,7 @@ describe("Core Source", () => {
       writeFileSync(configPath, JSON.stringify({ version: "1" }));
       const runtime = await Runtime.start({
         identityProvider: devProvider,
-        model: { provider: "custom", adapter: createEchoModel() },
+        languageModel: createEchoModel(),
         workDir,
         configPath,
         logging: { disabled: true },
@@ -874,7 +874,7 @@ describe("Core Source", () => {
       const runtime = await Runtime.start({
         identityProvider: devProvider,
         ...loaded,
-        model: { provider: "custom", adapter: createEchoModel() },
+        languageModel: createEchoModel(),
         workDir,
         logging: { disabled: true },
       });
@@ -930,10 +930,11 @@ describe("Core Source", () => {
       }
     });
 
-    it("refuses the deprecated defaultModel input pointed outside the list", async () => {
-      // `models` is not the only field that moves a slot — this one is
-      // checked by its own validator, on the same policy.
-      const { runtime, source } = await startWithPolicy("strand-via-default", [
+    it("refuses a defaultModel input as a field it does not write", async () => {
+      // `models.default` is the one way to move the default slot. Any other
+      // key is refused by name, so nothing reports as applied while the slot
+      // stays put.
+      const { runtime, source } = await startWithPolicy("default-model-input", [
         "anthropic:claude-sonnet-5",
       ]);
       try {
@@ -943,7 +944,10 @@ describe("Core Source", () => {
           }),
         );
         expect(res.isError).toBe(true);
-        expect(runtime.isModelPermitted(runtime.configuredModelSlots().default)).toBe(true);
+        expect(extractText(res.content)).toContain(
+          "`defaultModel` is not a field this tool writes",
+        );
+        expect(runtime.configuredModelSlots().default).toBe("anthropic:claude-sonnet-5");
       } finally {
         await runtime.shutdown();
       }
@@ -972,19 +976,19 @@ describe("Core Source", () => {
     });
 
     it("clears a slot with null under a policy", async () => {
-      const { runtime, source } = await startWithPolicy(
-        "clear-sentinel",
-        ["anthropic:claude-sonnet-5"],
-        // A cleared slot falls back to `defaultModel`, not to `models.default`.
-        { defaultModel: "anthropic:claude-sonnet-5" },
-      );
+      // A cleared slot falls back to the built-in default model, not to
+      // `models.default`, so the list names both.
+      const { runtime, source } = await startWithPolicy("clear-sentinel", [
+        "anthropic:claude-sonnet-5",
+        "anthropic:claude-sonnet-4-6",
+      ]);
       try {
         const res = await asDevUser(() =>
           source.execute("set_model_config", { models: { fast: null } }),
         );
         expect(`isError: ${res.isError} — ${extractText(res.content)}`).toContain("isError: false");
-        // Cleared, so it falls back to the default — which policy allows.
-        expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-5");
+        // Cleared, so it falls back to the built-in default — which policy allows.
+        expect(runtime.configuredModelSlots().fast).toBe("anthropic:claude-sonnet-4-6");
       } finally {
         await runtime.shutdown();
       }
@@ -1113,7 +1117,7 @@ describe("Core Source", () => {
       writeFileSync(configPath, JSON.stringify({ version: "1" }));
       const runtime = await Runtime.start({
         identityProvider: devProvider,
-        model: { provider: "custom", adapter: createEchoModel() },
+        languageModel: createEchoModel(),
         workDir,
         configPath,
         logging: { disabled: true },
@@ -1271,7 +1275,7 @@ describe("Core Source", () => {
 
   it("set_model_config writes survive a runtime restart (layered seed + override)", async () => {
     // Regression guard for the deploy-replay scenario: an operator runs
-    // set_model_config to pin defaultModel and thinking, then the pod
+    // set_model_config to pin the default model and thinking, then the pod
     // restarts. The init container overwrites the seed (simulated by us
     // keeping the seed file unchanged) but the override file on the PVC
     // survives, and the runtime should boot with the user's last values.
@@ -1281,13 +1285,17 @@ describe("Core Source", () => {
     const overridePath = deriveOverridePath(configPath);
     writeFileSync(
       configPath,
-      JSON.stringify({ version: "1", defaultModel: "claude-opus-4-7", maxIterations: 10 }),
+      JSON.stringify({
+        version: "1",
+        models: { default: "claude-opus-4-7" },
+        maxIterations: 10,
+      }),
     );
 
     // First runtime: simulate the operator changing config.
     const r1 = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       configPath,
       logging: { disabled: true },
@@ -1296,7 +1304,7 @@ describe("Core Source", () => {
       const source = await makeInProcessSource("nb", createCoreToolDefs(r1));
       const result = await asDevUser(() =>
         source.execute("set_model_config", {
-          defaultModel: "claude-haiku-4-5-20251001",
+          models: { default: "claude-haiku-4-5-20251001" },
           thinking: "off",
         }),
       );
@@ -1307,10 +1315,10 @@ describe("Core Source", () => {
 
     // Override file written, seed file untouched.
     const overrideAfterWrite = JSON.parse(require("node:fs").readFileSync(overridePath, "utf-8"));
-    expect(overrideAfterWrite.defaultModel).toBe("claude-haiku-4-5-20251001");
+    expect(overrideAfterWrite.models).toEqual({ default: "claude-haiku-4-5-20251001" });
     expect(overrideAfterWrite.thinking).toBe("off");
     const seedAfterWrite = JSON.parse(require("node:fs").readFileSync(configPath, "utf-8"));
-    expect(seedAfterWrite.defaultModel).toBe("claude-opus-4-7"); // unchanged
+    expect(seedAfterWrite.models).toEqual({ default: "claude-opus-4-7" }); // unchanged
     expect(seedAfterWrite.thinking).toBeUndefined();
 
     // Second runtime: load via loadConfig (the production path that
@@ -1320,7 +1328,7 @@ describe("Core Source", () => {
     const r2 = await Runtime.start({
       identityProvider: devProvider,
       ...loaded,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
       logging: { disabled: true },
     });

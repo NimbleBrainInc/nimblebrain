@@ -271,7 +271,7 @@ describe("skills source — unattended-run wall", () => {
   // invalid args would pass while proving nothing about the wall.
   const VALID_CREATE = {
     scope: "workspace",
-    manifest: { name: "injected", description: "written by an automation" },
+    manifest: { name: "injected", description: "written by a task" },
     body: "# do the attacker's bidding",
   };
 
@@ -289,11 +289,11 @@ describe("skills source — unattended-run wall", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).toContain("not available inside an unattended automation run");
+    expect(text).toContain("not available inside an unattended task run");
   });
 
   test("a read called inside an unattended run is NOT refused by the wall", async () => {
-    // The automation's whole permitted job — audit and report — must survive.
+    // The task's whole permitted job — audit and report — must survive.
     const src = await buildSource();
     const client = src.getClient()!;
     const result = await runWithRequestContext(
@@ -304,7 +304,7 @@ describe("skills source — unattended-run wall", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).not.toContain("not available inside an unattended automation run");
+    expect(text).not.toContain("not available inside an unattended task run");
   });
 
   test("the wall survives the feature-gated build path", async () => {
@@ -324,7 +324,7 @@ describe("skills source — unattended-run wall", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).toContain("not available inside an unattended automation run");
+    expect(text).toContain("not available inside an unattended task run");
   });
 
   test("the feature gate survives alongside the wall", async () => {
@@ -350,6 +350,6 @@ describe("skills source — unattended-run wall", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).not.toContain("not available inside an unattended automation run");
+    expect(text).not.toContain("not available inside an unattended task run");
   });
 });

@@ -25,15 +25,15 @@ import { parseDoorTaskId, TASKS_EXTENSION_ID } from "../../src/api/mcp-modern-ta
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DEV_IDENTITY, DevIdentityProvider } from "../../src/identity/providers/dev.ts";
-import { loadOwnerAutomations, readRunTicket } from "../../src/platform/tasks/store.ts";
-import type { AutomationRun } from "../../src/platform/tasks/types.ts";
+import { loadOwnerTasks, readRunTicket } from "../../src/platform/tasks/store.ts";
+import type { TaskRun } from "../../src/platform/tasks/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
-const OTHER_HEADER = "x-automations-identity";
-const OTHER = makeIdentity({ id: "usr_automations_other", orgRole: "member" });
+const OTHER_HEADER = "x-tasks-identity";
+const OTHER = makeIdentity({ id: "usr_tasks_other", orgRole: "member" });
 const OTHER_WORKSPACE_ID = "ws_00c47492e176e75a";
 const MODERN_VERSION = "2026-07-28";
 
@@ -109,7 +109,7 @@ let handle: ServerHandle;
 async function boot(): Promise<void> {
   runtime = await Runtime.start({
     identityProvider: ({ workDir: dir, userStore }) => new TwoIdentityProvider(dir, userStore),
-    model: { provider: "custom", adapter: scriptedModel() },
+    languageModel: scriptedModel(),
     logging: { disabled: true },
     workDir,
   });
@@ -128,7 +128,7 @@ async function shutdown(): Promise<void> {
 }
 
 beforeAll(async () => {
-  workDir = await mkdtemp(join(tmpdir(), "nb-mcp-automations-tasks-"));
+  workDir = await mkdtemp(join(tmpdir(), "nb-mcp-tasks-tasks-"));
   await boot();
 });
 
@@ -166,7 +166,7 @@ async function modern(
         ...params,
         _meta: {
           [PROTOCOL_VERSION_META_KEY]: MODERN_VERSION,
-          [CLIENT_INFO_META_KEY]: { name: "automations-2026", version: "1.0.0" },
+          [CLIENT_INFO_META_KEY]: { name: "tasks-2026", version: "1.0.0" },
           [CLIENT_CAPABILITIES_META_KEY]: opts.optIn
             ? { extensions: { [TASKS_EXTENSION_ID]: {} } }
             : {},
@@ -224,7 +224,7 @@ describe("tasks__run on the 2026-07-28 leg", () => {
 
     const done = await untilStatus(taskId, "completed");
     const result = done.result as CallToolResult;
-    const { run } = result.structuredContent as { run: AutomationRun };
+    const { run } = result.structuredContent as { run: TaskRun };
     expect(run.id).toBe(runId);
     expect(run.status).toBe("success");
     expect(run.input).toEqual({ item: 7 });
@@ -282,9 +282,9 @@ describe("tasks__run on the 2026-07-28 leg", () => {
     const call = result.toolCalls.find((c) => c.name === "tasks__run");
     expect(call?.ok).toBe(false);
     // The refused call created no one-off.
-    const prompts = [
-      ...loadOwnerAutomations(workDir, TEST_WORKSPACE_ID, DEV_IDENTITY.id).values(),
-    ].map((a) => a.prompt);
+    const prompts = [...loadOwnerTasks(workDir, TEST_WORKSPACE_ID, DEV_IDENTITY.id).values()].map(
+      (a) => a.prompt,
+    );
     expect(prompts).not.toContain("spawned");
   });
 
@@ -301,7 +301,7 @@ describe("tasks__run on the 2026-07-28 leg", () => {
 describe("tasks__run on the 2025-11-25 leg", () => {
   it("answers inline with the run, as before", async () => {
     // The SDK v2 client's default connect is the plain 2025 `initialize` handshake.
-    const client = new Client({ name: "automations-2025", version: "1.0.0" });
+    const client = new Client({ name: "tasks-2025", version: "1.0.0" });
     await client.connect(new StreamableHTTPClientTransport(mcpUrl()));
     try {
       expect(client.getNegotiatedProtocolVersion()).toBe("2025-11-25");

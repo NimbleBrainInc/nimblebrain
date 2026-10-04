@@ -5,7 +5,7 @@ import { marked } from "marked";
 marked.setOptions({ gfm: true, breaks: false });
 
 /**
- * Tags allowed in rendered automation output. Default-deny: anything
+ * Tags allowed in rendered task output. Default-deny: anything
  * NOT on this list is stripped. Covers what `marked` actually emits for
  * standard markdown (headings, paragraphs, lists, links, code, tables,
  * emphasis, hr) and leaves out everything else (script/iframe/object/
@@ -59,7 +59,7 @@ const ALLOWED_TAGS = [
 const ALLOWED_ATTR = ["href", "title", "align"];
 
 /**
- * Render an automation run's text output to sanitized HTML. The text is
+ * Render a task run's text output to sanitized HTML. The text is
  * produced by an LLM and may include third-party content fetched by
  * tools, so we sanitize before injecting via `dangerouslySetInnerHTML`.
  *

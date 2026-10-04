@@ -78,13 +78,13 @@ export class ConversationWorkspaceAccessDeniedError extends ConversationAccessDe
 }
 
 /**
- * Thrown by `executeTask` when an automation fires but its owner is no longer a
- * member of the automation's provenance workspace. An automation runs *as its
+ * Thrown by `executeTask` when a task fires but its owner is no longer a
+ * member of the task's provenance workspace. A task runs *as its
  * owner*, walled to the workspace it was created in — so a removed owner must
- * not keep acting in that workspace (the automations analog of the conversation
- * resume gate). The stable `code` lets the automations scheduler recognize this
+ * not keep acting in that workspace (the tasks analog of the conversation
+ * resume gate). The stable `code` lets the tasks scheduler recognize this
  * outcome and record the run as **skipped** (not a failure — no consecutive-error
- * count, no auto-disable) so the automation self-heals if the owner is re-added.
+ * count, no auto-disable) so the task self-heals if the owner is re-added.
  */
 export class WorkspaceMembershipRevokedError extends Error {
   readonly code = "workspace_membership_revoked";
@@ -109,7 +109,7 @@ export class WorkspaceMembershipRevokedError extends Error {
  * Recovery is to stamp an `ownerId` on the file's
  * line-1 metadata (when the owner is known) or remove the file. Without this
  * typed error, the unwrapped `Error("missing ownerId in ...")` from
- * `event-sourced-store` bubbles to `handleChat` as a 500; with it, the HTTP
+ * `event-sourced-store` bubbles to `handleChatStart` as a 500; with it, the HTTP
  * layer returns a clean `422 conversation_corrupted` that explains the triage.
  */
 export class ConversationCorruptedError extends Error {

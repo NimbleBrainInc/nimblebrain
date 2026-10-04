@@ -117,7 +117,7 @@ describe("Stage 2 T008 — ambient RequestContext.workspaceId matches the routed
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       logging: { disabled: true },
       workDir,
     });

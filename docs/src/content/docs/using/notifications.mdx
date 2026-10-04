@@ -113,7 +113,7 @@ on it.
 
 A route says: when a notification matches, deliver it there.
 
-Both kinds of target run: a **tool** target calls the tool, and an **automation**
+Both kinds of target run: a **tool** target calls the tool, and an **task**
 target starts an agent run carrying the matched notifications.
 
 ### Match
@@ -191,24 +191,24 @@ write the route knowing that. Retries are bounded (below), which limits the
 damage but does not remove it.
 </Aside>
 
-### Deliver to an automation
+### Deliver to a task
 
-Pick one of your [automations](/using/tasks) and the route wakes it,
+Pick one of your [tasks](/using/tasks) and the route wakes it,
 handing it the matched notifications as its input.
 
-The automation has to be expecting them. An **event** automation — one whose
+The task has to be expecting them. An **event** task — one whose
 schedule is a set of notifications rather than a time — carries its own match,
-and runs only for items that satisfy both it and the route. Name an automation
+and runs only for items that satisfy both it and the route. Name a task
 that runs on a clock instead and the route will match, record a *refused* row,
-and start nothing; the editor marks which of your automations can be woken.
+and start nothing; the editor marks which of your tasks can be woken.
 
-Matching items are **batched**: everything arriving inside the automation's
+Matching items are **batched**: everything arriving inside the task's
 debounce window (30 seconds by default) starts one run, not one run each. That
 run's ledger row carries the run id once it starts, so you can go from a
 notification to the run it caused.
 
-An event automation also carries a **fire ceiling** — by default twelve runs an
-hour — and exceeding it disables the automation rather than throttling it. See
+An event task also carries a **fire ceiling** — by default twelve runs an
+hour — and exceeding it disables the task rather than throttling it. See
 [Tasks](/using/tasks#the-fire-ceiling) for why that is the shape.
 
 ### Check it works, before you need it
@@ -269,9 +269,9 @@ short enough that you learn the answer while you are still looking. The
 platform never retries a *refused* or *skipped* target: nothing about those
 changes until the configuration does.
 
-**An automation target gets one offer, not three.** A batch that never reaches
+**A task target gets one offer, not three.** A batch that never reaches
 its run — because the runtime restarted while the debounce window was open, or
-the automation was already running — reads *failed* or *skipped* and is not
+the task was already running — reads *failed* or *skipped* and is not
 re-formed. Batches live only in the memory of the process that opened them, and
 re-firing hours later for events you have since dealt with is worse than saying
 plainly that the run did not happen.

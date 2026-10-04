@@ -1,9 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { CallbackEventSink } from "../adapters/callback-events.ts";
 import { isToolEnabled, isToolVisibleToRole, type ResolvedFeatures } from "../config/features.ts";
 import { CONVERSATION_ID_RE } from "../conversation/types.ts";
-import type { EngineEvent, EventSink } from "../engine/types.ts";
+import type { EventSink } from "../engine/types.ts";
 import { humanSize } from "../files/human-size.ts";
 import { ingestFiles, isAllowedMime, type UploadedFile } from "../files/ingest.ts";
 import { resolveMimeType } from "../files/mime.ts";
@@ -20,7 +19,6 @@ import type { IdentityProvider, UserIdentity } from "../identity/provider.ts";
 import { RefreshTokenError } from "../identity/provider.ts";
 import { getAvailableModels } from "../model/catalog.ts";
 import { log } from "../observability/log.ts";
-import { chatResponseBody } from "../runtime/chat-response.ts";
 import {
   ConversationAccessDeniedError,
   ConversationCorruptedError,
@@ -30,7 +28,6 @@ import {
 } from "../runtime/errors.ts";
 import { type RequestContext, runWithRequestContext } from "../runtime/request-context.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import { isStreamedRunEvent } from "../runtime/turn-stream.ts";
 import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
@@ -42,16 +39,13 @@ import { bytesToBase64 } from "../util/base64.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { ensureUserWorkspace } from "../workspace/provisioning.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
-import type { ConversationEventManager } from "./conversation-events.ts";
 import type { SseEventManager } from "./events.ts";
 import { mcpResourceUrl } from "./mcp-resource.ts";
 import { artifactResolutionsTotal } from "./metrics.ts";
-import type { ConversationStreamEvents } from "./schemas/events.ts";
 import type {
   AuthOkResponse,
   BootstrapResponse,
   ChatCancelResponse,
-  ChatResponse,
   ChatStartResponse,
   FileLimits,
   HealthResponse,
@@ -63,7 +57,6 @@ import type {
 } from "./schemas/responses.ts";
 import { ChatRequestBody, ToolCallRequestEnvelope } from "./schemas/rest.ts";
 import { validateAgainst } from "./schemas/validate.ts";
-import { CONNECTED_FRAME, startSseHeartbeat } from "./sse-heartbeat.ts";
 import { apiError, json } from "./types.ts";
 
 const pkgPath = resolve(import.meta.dirname ?? __dirname, "../../package.json");
@@ -75,83 +68,6 @@ const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
 // never bumped — the git tag is the sole source of truth for released versions
 // (see RELEASING.md §1).
 const VERSION = process.env.NB_VERSION || pkg.version;
-
-/**
- * Interval between SSE comment heartbeats on /v1/workspaces/:wsId/chat/stream. Chosen to sit
- * safely below a typical proxy/load-balancer idle-timeout (60s on AWS ALB
- * by default) while staying quiet enough to be invisible to the user.
- */
-const HEARTBEAT_INTERVAL_MS = 20_000;
-
-/** Handle POST /v1/workspaces/:wsId/chat — synchronous chat request. */
-export async function handleChat(
-  request: Request,
-  runtime: Runtime,
-  features: ResolvedFeatures,
-  identity: UserIdentity | undefined,
-  workspaceId: string,
-  conversationEventManager?: ConversationEventManager,
-): Promise<Response> {
-  const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
-  if (parsed instanceof Response) return parsed;
-
-  if (parsed.conversationId && runtime.isConversationActive(parsed.conversationId)) {
-    return runInProgressResponse(parsed.conversationId);
-  }
-
-  // Same self-echo-suppression contract as /v1/workspaces/:wsId/chat/stream: if the
-  // caller has an open conv-events SSE on this conversation, they can
-  // pass its server-issued subscriber id so the broadcast skips it.
-  const originSubscriberId = request.headers.get("x-origin-subscriber-id") ?? undefined;
-
-  try {
-    // The run is owned by the runtime, not by this HTTP request — we do
-    // NOT pass `request.signal`. A client disconnect (mobile screen-lock,
-    // backgrounded tab, network blip) must not cancel the in-flight
-    // engine loop; the run completes server-side, persists, and is
-    // replayed to any reconnecting /v1/conversations/:id/events
-    // subscriber. (The automations executor's deadline cancellation is
-    // unaffected — that path supplies its own AbortController.)
-    const result = await runtime.chat(parsed);
-    const responseBody = chatResponseBody(result);
-
-    // Same-user cross-tab broadcast — parity with /v1/workspaces/:wsId/chat/stream. A
-    // peer tab on /v1/conversations/:id/events sees the user.message
-    // (so the visible chat updates immediately) and the `done`
-    // payload (final response + usage). The synchronous caller still
-    // gets the full result inline; this just keeps any peer tabs in
-    // sync. Subscriber-keyed exclusion prevents echo to the sender
-    // (see conversation-events.ts::broadcastToConversation docblock).
-    if (conversationEventManager && identity) {
-      const broadcastConvId = parsed.conversationId ?? result.conversationId;
-      if (broadcastConvId) {
-        conversationEventManager.broadcastToConversation(
-          broadcastConvId,
-          "user.message",
-          {
-            userId: identity.id,
-            displayName: identity.displayName,
-            content: parsed.message,
-            timestamp: new Date().toISOString(),
-          },
-          originSubscriberId,
-        );
-        conversationEventManager.broadcastToConversation(
-          broadcastConvId,
-          "done",
-          responseBody,
-          originSubscriberId,
-        );
-      }
-    }
-
-    return json<ChatResponse>(responseBody);
-  } catch (err) {
-    const mapped = mapChatTurnError(err);
-    if (mapped) return mapped;
-    throw err;
-  }
-}
 
 /** Map a chat-turn error to its HTTP response, or null to rethrow. */
 function mapChatTurnError(err: unknown): Response | null {
@@ -319,256 +235,6 @@ function conversationCorruptedResponse(err: ConversationCorruptedError): Respons
     conversationId: err.conversationId,
     reason: err.reason,
   });
-}
-
-/** Handle POST /v1/workspaces/:wsId/chat/stream — SSE streaming chat request. */
-export async function handleChatStream(
-  request: Request,
-  runtime: Runtime,
-  features: ResolvedFeatures,
-  identity: UserIdentity | undefined,
-  workspaceId: string,
-  conversationEventManager?: ConversationEventManager,
-): Promise<Response> {
-  const parsed = await parseChatBody(request, runtime, features, identity, workspaceId);
-  if (parsed instanceof Response) return parsed;
-
-  if (parsed.conversationId && runtime.isConversationActive(parsed.conversationId)) {
-    return runInProgressResponse(parsed.conversationId);
-  }
-
-  // The sender's own /v1/conversations/:id/events subscription (if any)
-  // is indistinguishable from peer-tab subscriptions by userId post-
-  // Stage-1. The client passes its subscription's `subscriberId` here
-  // so the broadcast skips it and the sender's tab doesn't double-
-  // process the event (once via this chat-stream response, once via
-  // its conv-events subscription). Optional — clients that aren't
-  // subscribed get full fan-out, which is correct.
-  const originSubscriberId = request.headers.get("x-origin-subscriber-id") ?? undefined;
-
-  const convId = parsed.conversationId;
-
-  const sink = new CallbackEventSink();
-  // This HTTP stream is a detachable *observer* of the run, not its
-  // owner. `markTransportClosed` lets the stream's cancel() (client
-  // disconnect) stop writing to this response without touching the run.
-  let markTransportClosed: () => void = () => {};
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(CONNECTED_FRAME);
-      const encoder = new TextEncoder();
-      // Tracks whether THIS response is still writable. It does not track
-      // the run — the run's lifecycle is the sink subscription, torn down
-      // in `endRun()` when the run actually ends (see the .chat() call).
-      let transportOpen = true;
-      // Keep the TCP connection alive during slow tool calls (Typst
-      // compile, MCP task-augmented research) — ALB idle-timeout kills
-      // silent streams. Must be created before `markTransportClosed`
-      // captures it.
-      const heartbeat = startSseHeartbeat(controller, HEARTBEAT_INTERVAL_MS);
-      markTransportClosed = () => {
-        if (!transportOpen) return;
-        transportOpen = false;
-        heartbeat.stop();
-      };
-      // Write to this response. No-op once the client has detached — the
-      // run keeps producing events, which still reach other observers via
-      // the broadcast below and the persisted conversation.
-      const send = <K extends keyof ConversationStreamEvents>(
-        event: K,
-        data: ConversationStreamEvents[K],
-      ) => {
-        if (!transportOpen) return;
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-      };
-      // Close this response's stream (run finished while the client was
-      // still connected — the happy path). If the client already left,
-      // this is a no-op; the controller is already torn down by cancel().
-      const closeTransport = () => {
-        if (!transportOpen) return;
-        transportOpen = false;
-        heartbeat.stop();
-        controller.close();
-      };
-
-      // Cross-subscriber broadcast: streams chat-stream events to other
-      // SSE subscribers on /v1/conversations/:id/events. After Stage 1's
-      // single-owner cutover, the only legitimate consumer is the same
-      // user across browser tabs / devices (no "other participants" — the
-      // sharing primitives are gone). The broadcast survives as
-      // same-user cross-tab sync; Stage 4 reintroduces sharing with
-      // policy gates and a real multi-user audience.
-      //
-      // Deferred until chat.start so RunInProgressError doesn't produce a
-      // phantom user.message broadcast with no assistant reply.
-      let userMessageBroadcast = false;
-      const broadcastUserMessageOnce = () => {
-        if (userMessageBroadcast) return;
-        userMessageBroadcast = true;
-        if (convId && conversationEventManager && identity) {
-          conversationEventManager.broadcastToConversation(
-            convId,
-            "user.message",
-            {
-              userId: identity.id,
-              displayName: identity.displayName,
-              content: parsed.message,
-              timestamp: new Date().toISOString(),
-            },
-            originSubscriberId,
-          );
-        }
-      };
-
-      const unsubscribe = sink.subscribe((event: EngineEvent) => {
-        if (isStreamedRunEvent(event)) {
-          if (event.type === "chat.start") {
-            broadcastUserMessageOnce();
-          }
-          send(event.type, event.data);
-          // Same-user cross-tab broadcast. The exclude key is the
-          // sender's own subscriber id (if any) — see the
-          // `originSubscriberId` block above for why subscriber-keyed
-          // exclusion is correct and userId-keyed exclusion isn't.
-          if (convId && conversationEventManager && identity) {
-            conversationEventManager.forwardToConversation(convId, event, originSubscriberId);
-          }
-        }
-      });
-
-      // Called exactly once when the run terminates (success or error),
-      // independent of transport state. Releasing the sink subscription
-      // here — not on client disconnect — is what lets a run finish in
-      // the background after the phone locks or the tab is backgrounded.
-      const endRun = () => {
-        unsubscribe();
-        closeTransport();
-      };
-
-      runtime
-        // The run is deliberately NOT bound to this HTTP request: we do
-        // not pass `request.signal`. A client disconnect closes the
-        // stream (cancel() → markTransportClosed) but must not cancel the
-        // engine loop. The run completes server-side, persists to the
-        // conversation store, and replays to any reconnecting
-        // /v1/conversations/:id/events subscriber — the "leave and come
-        // back" contract. Binding the run to the connection would silently
-        // abandon a prompt the moment a mobile client dropped. The one
-        // caller that must cancel on a deadline — the automations executor —
-        // owns its own AbortController in platform/tasks/executor.ts.
-        .chat(parsed, sink)
-        .then((result) => {
-          const doneData = chatResponseBody(result);
-          send("done", doneData);
-          // Same-user cross-tab broadcast (Stage 1 single-owner).
-          // Subscriber-keyed exclude — see docblock.
-          if (conversationEventManager && identity) {
-            const broadcastConvId = convId ?? result.conversationId;
-            if (broadcastConvId) {
-              conversationEventManager.broadcastToConversation(
-                broadcastConvId,
-                "done",
-                doneData,
-                originSubscriberId,
-              );
-            }
-          }
-          endRun();
-        })
-        .catch((err) => {
-          if (err instanceof RunInProgressError) {
-            send("error", {
-              error: "run_in_progress",
-              message: "This conversation already has an active response.",
-            });
-            endRun();
-            return;
-          }
-          if (err instanceof ConversationAccessDeniedError) {
-            send("error", {
-              error: "conversation_access_denied",
-              message: "You do not have access to this conversation.",
-            });
-            endRun();
-            return;
-          }
-          if (err instanceof ConversationCorruptedError) {
-            send("error", {
-              error: "conversation_corrupted",
-              message: err.message,
-            });
-            endRun();
-            return;
-          }
-          log.error("[routes] handleChatStream failed", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          const raw = err instanceof Error ? err.message : String(err);
-          const friendly = friendlyError(raw);
-          send("error", {
-            error: friendly.code,
-            message: friendly.message,
-          });
-          endRun();
-        });
-    },
-    cancel() {
-      // The client went away (disconnect / phone lock / tab close).
-      // Detach this observer ONLY — the run continues to completion.
-      markTransportClosed();
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
-}
-
-/**
- * Translate raw API/engine errors into user-friendly messages.
- * Returns a machine-readable code and a human-readable message.
- */
-export function friendlyError(raw: string): { code: string; message: string } {
-  // Anthropic API validation errors
-  if (raw.includes("text content blocks must be non-empty")) {
-    return {
-      code: "conversation_invalid",
-      message:
-        "Something went wrong with this conversation's history. Please start a new conversation.",
-    };
-  }
-  if (raw.includes("messages: roles must alternate")) {
-    return {
-      code: "conversation_invalid",
-      message: "This conversation got into an invalid state. Please start a new conversation.",
-    };
-  }
-  // Rate limits
-  if (raw.includes("rate_limit") || raw.includes("429")) {
-    return {
-      code: "rate_limited",
-      message: "The AI service is temporarily rate-limited. Please wait a moment and try again.",
-    };
-  }
-  // Auth errors
-  if (raw.includes("authentication_error") || raw.includes("invalid x-api-key")) {
-    return {
-      code: "provider_auth_error",
-      message: "The AI provider API key is invalid or expired. Check your configuration.",
-    };
-  }
-  // Overloaded
-  if (raw.includes("overloaded")) {
-    return {
-      code: "provider_overloaded",
-      message: "The AI service is temporarily overloaded. Please try again in a moment.",
-    };
-  }
-  return { code: "engine_error", message: raw };
 }
 
 /**
@@ -858,7 +524,7 @@ function mapArtifactReadError(err: unknown, uri: string, workspaceId: string): R
 
 /**
  * Read a resource from a kernel identity source (conversations, files,
- * automations) for POST /v1/workspaces/:wsId/resources/read. Every kernel
+ * tasks) for POST /v1/workspaces/:wsId/resources/read. Every kernel
  * identity source's data is workspace-owned, so the read resolves in the
  * workspace in the URL.
  */
@@ -1466,7 +1132,6 @@ export async function handleBootstrap(
 export async function handleShell(runtime: Runtime, workspaceId: string): Promise<Response> {
   return json<ShellResponse>({
     placements: runtime.getPlacementRegistry().forWorkspace(workspaceId),
-    chatEndpoint: `/v1/workspaces/${workspaceId}/chat/stream`,
     eventsEndpoint: "/v1/events",
   });
 }

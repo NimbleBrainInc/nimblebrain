@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "bun:test";
 import { MessageList } from "../src/components/MessageList.tsx";
-import type { ChatMessage } from "../src/hooks/useChat.ts";
+import type { ChatMessage } from "../src/hooks/chat-store.ts";
 
 /**
  * The "Try again" control must track whether a retry can actually replay, not

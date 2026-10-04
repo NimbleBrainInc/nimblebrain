@@ -42,7 +42,7 @@ import {
 // workspace it was spent under, so the org surface can slice by either. One
 // usage read per filter change asks the backend for the chosen dimension, the
 // day series split by that dimension (for the stacked chart), and the origin
-// split (for the chat / automation cards) in one scan.
+// split (for the chat / task cards) in one scan.
 //
 // The report returns ids. The user and workspace rosters resolve them to
 // names here, the same way for both, and an id neither roster knows (a
@@ -473,11 +473,11 @@ export function OrgUsageBody({
                       </TableCell>
                       <TableCell className="text-right">{formatNumber(row.llmCalls)}</TableCell>
                       {/*
-                        Chats plus automation runs. The aggregator keeps them
+                        Chats plus task runs. The aggregator keeps them
                         apart on the row for the same reason the totals do — a
                         run is not a conversation — and the column sums them so
                         it stops under-reporting a row whose spend is mostly
-                        automations.
+                        tasks.
                       */}
                       <TableCell className="text-right">
                         {formatNumber(row.conversations + (row.runs ?? 0))}

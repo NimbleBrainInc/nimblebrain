@@ -91,19 +91,16 @@ describe("what nb__status reports about the running model", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       events: [sink],
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({
-          responses: [
-            ...statusThenReply("call_1"),
-            // The auto-title call lands between the two turns and draws from
-            // this same queue; without a slot of its own it would eat turn 2's
-            // tool call.
-            { text: "A title" },
-            ...statusThenReply("call_2"),
-          ],
-        }),
-      },
+      languageModel: createEchoModel({
+        responses: [
+          ...statusThenReply("call_1"),
+          // The auto-title call lands between the two turns and draws from
+          // this same queue; without a slot of its own it would eat turn 2's
+          // tool call.
+          { text: "A title" },
+          ...statusThenReply("call_2"),
+        ],
+      }),
       logging: { disabled: true },
       workDir,
       models: { default: PINNED, fast: PINNED },
@@ -147,7 +144,7 @@ describe("what nb__status reports about the running model", () => {
       await runtime.shutdown();
     }
   });
-  it("an automation run names its own model, and there is no conversation to bind it to", async () => {
+  it("a task run names its own model, and there is no conversation to bind it to", async () => {
     // `executeTask` stamps the context too. Nothing is pinned — there is no
     // conversation — so the report has to be true without appealing to one.
     const workDir = join(testDir, "status-task-model");
@@ -159,10 +156,7 @@ describe("what nb__status reports about the running model", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       events: [sink],
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({ responses: statusThenReply("t_1") }),
-      },
+      languageModel: createEchoModel({ responses: statusThenReply("t_1") }),
       logging: { disabled: true },
       workDir,
       // Default deliberately differs from what the run is told to use, or the
@@ -192,7 +186,7 @@ describe("what nb__status reports about the running model", () => {
           .toLocaleString()}`,
       );
       expect(runtime.getMaxOutputTokens(RETARGETED)).not.toBe(runtime.getMaxOutputTokens(PINNED));
-      // The binding sentence must hold here too: an automation has no
+      // The binding sentence must hold here too: a task has no
       // conversation, so it cannot claim one.
       expect(out).toContain("Fixed for this turn");
       expect(out).not.toContain("conversation was created");
@@ -211,29 +205,26 @@ describe("what nb__status reports about the running model", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       events: [sink],
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({
-          responses: [
-            // Turn 1 binds the conversation, before the default moves.
-            { text: "hello" },
-            // Auto-title takes the next slot.
-            { text: "A title" },
-            // Turn 2 asks, after the default has moved away from the pin.
-            {
-              text: "checking",
-              toolCalls: [
-                {
-                  toolCallId: "o_1",
-                  toolName: "nb__status",
-                  input: JSON.stringify({ scope: "overview" }),
-                },
-              ],
-            },
-            { text: "answered" },
-          ],
-        }),
-      },
+      languageModel: createEchoModel({
+        responses: [
+          // Turn 1 binds the conversation, before the default moves.
+          { text: "hello" },
+          // Auto-title takes the next slot.
+          { text: "A title" },
+          // Turn 2 asks, after the default has moved away from the pin.
+          {
+            text: "checking",
+            toolCalls: [
+              {
+                toolCallId: "o_1",
+                toolName: "nb__status",
+                input: JSON.stringify({ scope: "overview" }),
+              },
+            ],
+          },
+          { text: "answered" },
+        ],
+      }),
       logging: { disabled: true },
       workDir,
       models: { default: PINNED, fast: PINNED },

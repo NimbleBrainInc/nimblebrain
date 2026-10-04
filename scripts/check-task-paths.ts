@@ -1,22 +1,22 @@
 #!/usr/bin/env bun
 /**
- * Lint: automations are workspace-owned and reached through one constructor.
+ * Lint: tasks are workspace-owned and reached through one constructor.
  *
- * Automations live under the workspace that owns them, with the owner as a
+ * Tasks live under the workspace that owns them, with the owner as a
  * privacy sub-partition (`{workDir}/workspaces/<wsId>/tasks/<ownerId>/`).
  * The dir is built only by `workspaceTasksDir()` in
  * `src/platform/tasks/paths.ts`. Two regressions are forbidden in
  * `src/`:
  *
- *   1. `getIdentityContext(...).getDataPath("automations")` /
- *      `new IdentityContext(...).getDataPath("automations")` — reaching the
- *      legacy identity-owned automations dir (`users/<userId>/automations`).
- *      The owning WORKSPACE, not the caller's identity, decides where an
- *      automation lives.
- *   2. `join(..., "users", X, "automations")` — a hand-built identity-scoped
- *      automations dir, the exact shape the workspace migration removes.
+ *   1. `getIdentityContext(...).getDataPath("tasks")` /
+ *      `new IdentityContext(...).getDataPath("tasks")` — reaching the
+ *      legacy identity-owned tasks dir (`users/<userId>/tasks`).
+ *      The owning WORKSPACE, not the caller's identity, decides where a
+ *      task lives.
+ *   2. `join(..., "users", X, "tasks")` — a hand-built identity-scoped
+ *      tasks dir, the exact shape the workspace migration removes.
  *
- * Allowed: a `// lint-ok:automation-path` marker on a line just above the call,
+ * Allowed: a `// lint-ok:task-path` marker on a line just above the call,
  * for the rare future case the constructor genuinely can't cover.
  *
  * Scope: `src/**\/*.ts`. Tests and `scripts/` are out of scope (the migration
@@ -32,7 +32,7 @@ import * as ts from "typescript";
 
 const ROOT = join(import.meta.dirname ?? __dirname, "..");
 const SRC_ROOT = join(ROOT, "src");
-const ALLOW_MARKER = "lint-ok:automation-path";
+const ALLOW_MARKER = "lint-ok:task-path";
 
 interface Violation {
   file: string;
@@ -74,30 +74,30 @@ function chainsFromIdentityContext(expr: ts.Expression): boolean {
 }
 
 /**
- * True iff `node` is `<identityCtx>.getDataPath("automations", ...)` — reaching
- * the legacy identity-owned automations dir. Matches only when the
+ * True iff `node` is `<identityCtx>.getDataPath("tasks", ...)` — reaching
+ * the legacy identity-owned tasks dir. Matches only when the
  * `getDataPath` receiver chains directly from `getIdentityContext`/
- * `IdentityContext` and the first argument is the string literal `"automations"`.
+ * `IdentityContext` and the first argument is the string literal `"tasks"`.
  */
-export function isIdentityAutomationsDataPath(node: ts.CallExpression): boolean {
+export function isIdentityTasksDataPath(node: ts.CallExpression): boolean {
   const callee = node.expression;
   if (!ts.isPropertyAccessExpression(callee)) return false;
   if (callee.name.text !== "getDataPath") return false;
   const first = node.arguments[0];
-  const firstIsAutomations =
+  const firstIsTasks =
     first !== undefined &&
     (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) &&
-    first.text === "automations";
-  if (!firstIsAutomations) return false;
+    first.text === "tasks";
+  if (!firstIsTasks) return false;
   return chainsFromIdentityContext(callee.expression);
 }
 
 /**
- * True iff `node` is `join(..., "users", ..., "automations")` — a hand-built
- * identity-scoped automations dir. Matches a `join(...)` call whose string-
- * literal arguments include BOTH `"users"` and `"automations"`.
+ * True iff `node` is `join(..., "users", ..., "tasks")` — a hand-built
+ * identity-scoped tasks dir. Matches a `join(...)` call whose string-
+ * literal arguments include BOTH `"users"` and `"tasks"`.
  */
-export function isUsersScopedAutomationsJoin(node: ts.CallExpression): boolean {
+export function isUsersScopedTasksJoin(node: ts.CallExpression): boolean {
   if (calleeName(node) !== "join") return false;
   const literals = node.arguments
     .filter(
@@ -105,7 +105,7 @@ export function isUsersScopedAutomationsJoin(node: ts.CallExpression): boolean {
         ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a),
     )
     .map((a) => a.text);
-  return literals.includes("users") && literals.includes("automations");
+  return literals.includes("users") && literals.includes("tasks");
 }
 
 function hasAllowMarker(node: ts.Node, sourceFile: ts.SourceFile, src: string): boolean {
@@ -153,15 +153,15 @@ function scanFile(absPath: string, violations: Violation[]): void {
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
-      if (isIdentityAutomationsDataPath(node)) {
+      if (isIdentityTasksDataPath(node)) {
         record(
           node,
-          'getIdentityContext(...).getDataPath("automations") — automations are workspace-owned; use workspaceTasksDir()',
+          'getIdentityContext(...).getDataPath("tasks") — tasks are workspace-owned; use workspaceTasksDir()',
         );
-      } else if (isUsersScopedAutomationsJoin(node)) {
+      } else if (isUsersScopedTasksJoin(node)) {
         record(
           node,
-          'join(..., "users", ..., "automations") — identity-scoped dir; use workspaceTasksDir()',
+          'join(..., "users", ..., "tasks") — identity-scoped dir; use workspaceTasksDir()',
         );
       }
     }
@@ -185,13 +185,13 @@ async function main(): Promise<void> {
   }
 
   if (violations.length > 0) {
-    console.error(`✗ Found ${violations.length} identity-owned automations path(s) in src/:\n`);
+    console.error(`✗ Found ${violations.length} identity-owned tasks path(s) in src/:\n`);
     for (const v of violations) {
       console.error(`  ${v.file}:${v.line}:${v.column} — ${v.reason}`);
       console.error(`    ${v.snippet}\n`);
     }
     console.error(
-      "Automations are workspace-owned at `{workDir}/workspaces/<wsId>/tasks/<ownerId>/` — build the",
+      "Tasks are workspace-owned at `{workDir}/workspaces/<wsId>/tasks/<ownerId>/` — build the",
     );
     console.error("dir only via `workspaceTasksDir()` (src/platform/tasks/paths.ts).");
     console.error(
@@ -200,7 +200,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`✓ No identity-owned automations paths in ${scanned} src/ files`);
+  console.log(`✓ No identity-owned tasks paths in ${scanned} src/ files`);
 }
 
 if (import.meta.main) {

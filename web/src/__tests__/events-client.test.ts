@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { setAuthLifecycleHandler, setAuthToken } from "../api/client";
+import { setAuthToken } from "../api/client";
 import { __internal__, closeEventsClient, onReconnect, subscribe } from "../api/events-client";
 import type { ConnectEventsOptions, EventConnection } from "../api/sse";
 
@@ -58,7 +58,6 @@ function resetCounters(): void {
 
 beforeEach(() => {
   resetCounters();
-  setAuthLifecycleHandler(null);
   setAuthToken("tok-initial");
   __internal__.resetForTest();
   __internal__.setConnectorForTest(fakeConnectEvents);
@@ -67,7 +66,6 @@ beforeEach(() => {
 afterEach(() => {
   __internal__.resetForTest();
   __internal__.setConnectorForTest(null);
-  setAuthLifecycleHandler(null);
   setAuthToken(null);
 });
 

@@ -41,7 +41,7 @@ async function startDev(name: string, events: EngineEvent[] = []): Promise<Runti
   mkdirSync(workDir, { recursive: true });
   return Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
     events: [{ emit: (e) => events.push(e) }],
@@ -63,7 +63,7 @@ async function startWithProvider(name: string): Promise<Runtime> {
     }),
   );
   return Runtime.start({
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });
@@ -183,7 +183,6 @@ describe("a conversation's live title goes to its owner", () => {
     test("reaches the owner's tabs alone, not the other members of the workspace", async () => {
       const alice = collect(mgr.addIdentityClient(ALICE.id, new Set(["ws_0071a5bbf40116e6"])));
       const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_0071a5bbf40116e6"])));
-      const workspaceClient = collect(mgr.addClient("ws_0071a5bbf40116e6"));
 
       mgr.emit({
         type: "conversation.title",
@@ -193,7 +192,6 @@ describe("a conversation's live title goes to its owner", () => {
 
       expect(alice).toEqual(["conversation.title"]);
       expect(bob).toEqual([]);
-      expect(workspaceClient).toEqual([]);
     });
   });
 });

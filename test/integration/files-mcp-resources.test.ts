@@ -1,4 +1,5 @@
 import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { readJson } from "../helpers/http.ts";
 /**
  * A2: workspace files are addressable as MCP resources at `files://<id>`.
@@ -53,7 +54,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -84,14 +85,10 @@ async function uploadChatFile(
   const bytes = typeof content === "string" ? Buffer.from(content) : content;
   form.append("files", new File([new Uint8Array(bytes)], filename, { type: mimeType }));
 
-  const res = await fetch(`${baseUrl}/v1/workspaces/${DEV_WS_ID}/chat/stream`, {
-    method: "POST",
-    body: form,
-  });
+  const res = await postChatTurn(baseUrl, DEV_WS_ID, { body: form });
   if (res.status !== 200) {
-    throw new Error(`chat/stream returned ${res.status}: ${await res.text()}`);
+    throw new Error(`chat turn answered ${res.status}: ${await res.text()}`);
   }
-  await res.text();
 
   // Look the id up via files__list (the canonical workspace listing).
   const listRes = await fetch(`${baseUrl}/v1/workspaces/${DEV_WS_ID}/tools/call`, {

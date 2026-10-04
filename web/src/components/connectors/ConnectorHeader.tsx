@@ -310,7 +310,7 @@ export function DisconnectDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={`Disconnect ${name}?`}
-      description="Disconnects it for everyone in this workspace. Its tools stop working in chats and automations until someone connects it again."
+      description="Disconnects it for everyone in this workspace. Its tools stop working in chats and tasks until someone connects it again."
       confirmLabel="Disconnect"
       pendingLabel="Disconnecting…"
       onConfirm={async () => {

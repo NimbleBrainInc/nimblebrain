@@ -141,8 +141,8 @@ export function sourceMaxLevel(
 export interface RouteValidationContext {
   /** Tool names installed in this workspace, bare `<connector>__<tool>`. */
   toolNames: ReadonlySet<string>;
-  /** Automation ids the writing identity owns in this workspace. */
-  automationIds: ReadonlySet<string>;
+  /** Task ids the writing identity owns in this workspace. */
+  taskIds: ReadonlySet<string>;
   /** The identity stamped as every route's `createdBy`. */
   createdBy: string;
 }
@@ -152,7 +152,7 @@ export interface RouteValidationContext {
  *
  * The schema has already enforced shape; what is left is the part a schema
  * cannot express — that a named tool is one this workspace actually installed,
- * that a named automation exists, that a template names a placeholder the
+ * that a named task exists, that a template names a placeholder the
  * runtime resolves, and that two routes do not share an id.
  *
  * `match.source` is deliberately NOT checked against the installed set. It is a
@@ -190,6 +190,47 @@ export function validateRoutes(
   }
 
   return { ok: true, routes };
+}
+
+/** The key an `agent` target named its task by before tasks were named tasks. */
+const LEGACY_AGENT_TARGET_KEY = "automation";
+
+/**
+ * Boot reconcile: an `agent` route target stored as `{ kind: "agent",
+ * automation: <id> }` is rewritten once to `{ kind: "agent", task: <id> }`, so
+ * every reader sees one shape. Works on the raw stored block (nothing is
+ * dropped or re-derived), only touches a workspace that holds such a target,
+ * and returns how many workspaces it rewrote. A second run finds none.
+ */
+export async function migrateAgentTargetKeys(store: WorkspaceStore): Promise<number> {
+  let rewritten = 0;
+  for (const ws of await store.list()) {
+    const block = ws.notifications as unknown as Record<string, unknown> | undefined;
+    const routes = block?.routes;
+    if (!Array.isArray(routes)) continue;
+    let changed = false;
+    const nextRoutes = routes.map((route: unknown) => {
+      const deliver = (route as { deliver?: unknown } | null)?.deliver;
+      if (!Array.isArray(deliver)) return route;
+      const nextDeliver = deliver.map((target: unknown) => {
+        if (!target || typeof target !== "object") return target;
+        const t = target as Record<string, unknown>;
+        if (t.kind !== "agent" || !(LEGACY_AGENT_TARGET_KEY in t) || "task" in t) return target;
+        changed = true;
+        const { [LEGACY_AGENT_TARGET_KEY]: id, ...rest } = t;
+        return { ...rest, task: id };
+      });
+      return { ...(route as object), deliver: nextDeliver };
+    });
+    if (!changed) continue;
+    await serializePerWorkspace(ws.id, () =>
+      store.update(ws.id, {
+        notifications: { ...block, routes: nextRoutes } as unknown as WorkspaceNotificationsConfig,
+      }),
+    );
+    rewritten += 1;
+  }
+  return rewritten;
 }
 
 /** Apply a mutation to one workspace's notifications block and persist it. */
@@ -261,10 +302,10 @@ function checkTarget(
   ctx: RouteValidationContext,
 ): string | null {
   if (target.kind === "agent") {
-    return ctx.automationIds.has(target.automation)
+    return ctx.taskIds.has(target.task)
       ? null
-      : `no automation "${target.automation}" in this workspace. A route wakes one of your ` +
-          "own automations, and it has to exist when the route is written.";
+      : `no task "${target.task}" in this workspace. A route wakes one of your ` +
+          "own tasks, and it has to exist when the route is written.";
   }
 
   if (!ctx.toolNames.has(target.tool)) {

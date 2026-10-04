@@ -2,10 +2,10 @@
  * Whether one match expression admits one notification.
  *
  * One body, two callers with different authority: a delivery route's `match`
- * decides that an item leaves the inbox at all, and an event automation's
+ * decides that an item leaves the inbox at all, and an event task's
  * decides which of the items a route sends it are worth a run. The rules are
  * identical and must stay identical — a workspace admin writing the first and
- * an automation owner writing the second are reading the same grammar, and the
+ * a task owner writing the second are reading the same grammar, and the
  * settings surface validates both against the same schema.
  *
  * Keeping it in one place is not tidiness. The name glob is the one expression

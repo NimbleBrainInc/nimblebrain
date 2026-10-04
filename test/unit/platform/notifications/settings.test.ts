@@ -10,7 +10,7 @@
  *      identity a route dispatches under, so a body that names one is refused
  *      before the handler runs, and the writer's own identity is what lands.
  *   3. **A route may only name what the workspace has.** A tool outside the
- *      installed set, an automation that does not exist, or a placeholder the
+ *      installed set, a task that does not exist, or a placeholder the
  *      runtime does not resolve is refused at write time — each of those fails
  *      silently at delivery, which is the failure this surface exists to
  *      prevent.
@@ -38,13 +38,13 @@ const TOOL = "slack__send_message";
 class FakeRuntime {
   identity: { id: string } | null = { id: USER };
   workspaces = new Map<string, Workspace>();
-  automations = [
+  tasks = [
     {
       id: "auto_triage",
       name: "Triage replies",
       schedule: { type: "event", match: { source: "precision-outbound" } },
     },
-    // A clock automation is a legal thing for a route to name and a useless
+    // A clock task is a legal thing for a route to name and a useless
     // one, so the picker has to be able to say so.
     {
       id: "auto_digest",
@@ -84,8 +84,8 @@ class FakeRuntime {
   async ensureWorkspaceRegistry() {
     return { availableTools: async () => [{ name: TOOL }, { name: "slack__list_channels" }] };
   }
-  getAutomationsContext() {
-    return { definitions: () => new Map(this.automations.map((a) => [a.id, a])) };
+  getTasksContext() {
+    return { definitions: () => new Map(this.tasks.map((a) => [a.id, a])) };
   }
 
   // The source also builds the outbox poller at construction. With no lifecycle
@@ -332,17 +332,17 @@ describe("a route may only name what the workspace has", () => {
     expect(runtime.workspaces.get(WS)?.notifications?.routes).toBeUndefined();
   });
 
-  test("an automation that does not exist is rejected", async () => {
+  test("a task that does not exist is rejected", async () => {
     const res = await exec("set_routes", {
-      routes: [route({ deliver: [{ kind: "agent", automation: "auto_nope" }] })],
+      routes: [route({ deliver: [{ kind: "agent", task: "auto_nope" }] })],
     });
     expect(res.isError).toBe(true);
     expect(resultText(res)).toContain("auto_nope");
   });
 
-  test("an automation the caller owns is accepted", async () => {
+  test("a task the caller owns is accepted", async () => {
     const res = await exec("set_routes", {
-      routes: [route({ deliver: [{ kind: "agent", automation: "auto_triage" }] })],
+      routes: [route({ deliver: [{ kind: "agent", task: "auto_triage" }] })],
     });
     expect(res.isError).toBe(false);
   });
@@ -401,11 +401,11 @@ describe("what the editor is told", () => {
     expect(out.placeholders).toEqual(["title", "body", "subject", "link.resource", "inbox.url"]);
   });
 
-  test("the automation picker says which of them can actually be woken", async () => {
-    // A route may name an automation that runs on a clock — the write accepts
+  test("the task picker says which of them can actually be woken", async () => {
+    // A route may name a task that runs on a clock — the write accepts
     // it and every notification sent to it is then refused. Saying so at write
     // time is cheaper than an operator finding it in the delivery ledger.
-    expect((await settings()).automations).toEqual([
+    expect((await settings()).tasks).toEqual([
       { id: "auto_triage", name: "Triage replies", eventScheduled: true },
       { id: "auto_digest", name: "Weekly digest", eventScheduled: false },
     ]);

@@ -92,7 +92,7 @@ beforeAll(async () => {
 
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });

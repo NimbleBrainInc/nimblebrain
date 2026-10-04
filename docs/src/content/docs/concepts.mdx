@@ -75,9 +75,9 @@ The engine stops for one of these reasons:
 
 - **`complete`** — the model responded without requesting any tool calls
 - **`max_iterations`** — the iteration limit was reached
-- **`max_input_tokens`** — the run has an input-token cap (an automation's **Max Input Tokens**), and the next model call would pass it. Before each call the engine projects that call's input as the larger of its estimate of the prompt and the previous call's reported input, so the run ends within the cap unless the estimate undercounts. The cap counts cache reads, so it bounds tokens, not cost. Whatever the run produced before the stop is kept. `maxInputTokens` in `nimblebrain.json` is different: it bounds the context of one model call, not the run.
-- **`spend_limit`** — the run names spend accounts (an automation's **Token budget** is two of them, one per cap), and what is left in one cannot pay for the next model call. Before each call the runtime projects the call's input as for `max_input_tokens`, lowers the call's output ceiling to what every account can pay for, and sets that much aside until the call returns; runs naming the same account share one balance, so they cannot together spend past it. The run stops when an account cannot cover the call's input, or would leave it only a few hundred output tokens. Whatever the run produced before the stop is kept.
-- **`cancelled`** — the run was stopped before it finished: the user pressed Stop, an automation run was cancelled or timed out, or the runtime aborted it (for example on shutdown). The conversation keeps what the turn did before the stop.
+- **`max_input_tokens`** — the run has an input-token cap (a task's **Max Input Tokens**), and the next model call would pass it. Before each call the engine projects that call's input as the larger of its estimate of the prompt and the previous call's reported input, so the run ends within the cap unless the estimate undercounts. The cap counts cache reads, so it bounds tokens, not cost. Whatever the run produced before the stop is kept. `maxInputTokens` in `nimblebrain.json` is different: it bounds the context of one model call, not the run.
+- **`spend_limit`** — the run names spend accounts (a task's **Token budget** is two of them, one per cap), and what is left in one cannot pay for the next model call. Before each call the runtime projects the call's input as for `max_input_tokens`, lowers the call's output ceiling to what every account can pay for, and sets that much aside until the call returns; runs naming the same account share one balance, so they cannot together spend past it. The run stops when an account cannot cover the call's input, or would leave it only a few hundred output tokens. Whatever the run produced before the stop is kept.
+- **`cancelled`** — the run was stopped before it finished: the user pressed Stop, a task run was cancelled or timed out, or the runtime aborted it (for example on shutdown). The conversation keeps what the turn did before the stop.
 
 All tool calls within a single iteration run in parallel via `Promise.all()`.
 
@@ -146,7 +146,7 @@ runtime-native kinds, `dcr` and `static`, put no third party in the trust path a
 ### Platform apps
 
 NimbleBrain installs no connectors by default, and it still has tools on a fresh install.
-The kernel's own capabilities — conversations, files, automations, usage, skills,
+The kernel's own capabilities — conversations, files, tasks, usage, skills,
 instructions, hooks, notifications, compose — are **platform apps**: in-process MCP servers
 the runtime hosts, reached over the same MCP boundary as a remote server. Nothing above the
 source can tell them apart, which is why the platform needs only one extension mechanism.
@@ -241,8 +241,7 @@ Every NimbleBrain instance has these `nb__*` tools available:
 | `nb__read_resource` | Read an MCP resource by URI |
 | `nb__open_app` | Open an app on the user's screen, optionally at a view inside it (by its resource URI) |
 | `manage_connectors` | List the connector catalog, install/disconnect remote MCP connectors per workspace or per user |
-| `manage_workspaces` | Create and manage workspaces |
-| `manage_members` | Manage workspace membership |
+| `manage_workspaces` | Create and manage workspaces and their members |
 | `manage_users` | Manage users (when a managed identity adapter is configured) |
 
 App-platform capabilities are exposed through prefixed tool families: `conversations__*`, `files__*`, `tasks__*`, `skills__*`, `usage__report`, and `compose__effective_context`. (Workspace instructions are edited in the settings UI; the tool behind that UI is internal and not part of the agent's surface.)
@@ -308,7 +307,7 @@ Any connector that declares UI resources and placements becomes an MCP App. See 
 
 ## Platform as MCP server
 
-Each workspace has a `/mcp/<workspaceId>` endpoint that turns it into a Streamable HTTP MCP server. External MCP clients — Claude, Claude Code, Open WebUI, or another NimbleBrain instance — connect to one workspace's URL, which serves that workspace's tools plus your identity tools (conversations, files, automations) while you are a member, and nothing from any other workspace. Bare `/mcp` is refused.
+Each workspace has a `/mcp/<workspaceId>` endpoint that turns it into a Streamable HTTP MCP server. External MCP clients — Claude, Claude Code, Open WebUI, or another NimbleBrain instance — connect to one workspace's URL, which serves that workspace's tools plus your identity tools (conversations, files, tasks) while you are a member, and nothing from any other workspace. Bare `/mcp` is refused.
 
 This means NimbleBrain is both an MCP **client** (connecting to installed connectors) and an MCP **server** (exposing composed tools to external hosts). See [MCP Endpoint Reference](/connect/mcp-endpoint) for configuration and usage.
 

@@ -91,8 +91,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("connection.state_changed is forwarded to the matching workspace only", async () => {
-    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
-    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
+    const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));
     released.push(wsA.release, wsB.release);
 
     mgr.emit({
@@ -112,8 +112,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("connector.* events are workspace-scoped", async () => {
-    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
-    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
+    const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));
     released.push(wsA.release, wsB.release);
 
     mgr.emit(installed("ws_00079598e311c160", "ipinfo", "@nb/ipinfo"));
@@ -128,8 +128,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("workspace-scoped event with an empty wsId is dropped (no global fan-out)", async () => {
-    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
-    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
+    const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));
     released.push(wsA.release, wsB.release);
 
     // An empty wsId on a workspace-scoped event — emitter bug. The
@@ -143,8 +143,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("notification.created reaches the item's workspace only", async () => {
-    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
-    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
+    const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));
     released.push(wsA.release, wsB.release);
 
     mgr.emit({
@@ -168,8 +168,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("notification.read reaches the item's workspace only", async () => {
-    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
-    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
+    const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));
     released.push(wsA.release, wsB.release);
 
     mgr.emit({
@@ -183,8 +183,8 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("notification.* with an empty workspaceId is dropped, not fanned out", async () => {
-    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
-    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
+    const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));
     released.push(wsA.release, wsB.release);
 
     // The inbox is per workspace and a notification carries a connector's own
@@ -221,9 +221,9 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("global-scope events reach all clients regardless of workspace", async () => {
-    const wsA = collect(mgr.addClient("ws_00079598e311c160"));
-    const wsB = collect(mgr.addClient("ws_001c32f121060ff3"));
-    const noWs = collect(mgr.addClient(undefined));
+    const wsA = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
+    const wsB = collect(mgr.addIdentityClient("usr_b", new Set(["ws_001c32f121060ff3"])));
+    const noWs = collect(mgr.addIdentityClient("usr_c", new Set()));
     released.push(wsA.release, wsB.release, noWs.release);
 
     mgr.emit(engineEvent("config.changed", { fields: ["models.default"] }));
@@ -235,7 +235,7 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("unrouted event types (tool.progress, tool.task_status, connector.health) are dropped", async () => {
-    const ws = collect(mgr.addClient("ws_00079598e311c160"));
+    const ws = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
     released.push(ws.release);
 
     mgr.emit(engineEvent("tool.progress", { runId: "r1", id: "c1", message: "working" }));
@@ -257,7 +257,7 @@ describe("SseEventManager — routing table", () => {
   });
 
   test("events no client reads (skill.*, bridge.tool.*) are not sent", async () => {
-    const ws = collect(mgr.addClient("ws_00079598e311c160"));
+    const ws = collect(mgr.addIdentityClient("usr_a", new Set(["ws_00079598e311c160"])));
     released.push(ws.release);
 
     mgr.emit(engineEvent("skill.created", { id: "/skills/x", name: "x", scope: "user" }));
@@ -297,8 +297,7 @@ describe("SseEventManager — server.notification follows its one owner", () => 
   test("a person's own notification reaches that person alone, not their workspace's other members", async () => {
     const alice = collect(mgr.addIdentityClient("usr_alice", new Set(["ws_0071a5bbf40116e6"])));
     const bob = collect(mgr.addIdentityClient("usr_bob", new Set(["ws_0071a5bbf40116e6"])));
-    const legacyWorkspace = collect(mgr.addClient("ws_0071a5bbf40116e6"));
-    released.push(alice.release, bob.release, legacyWorkspace.release);
+    released.push(alice.release, bob.release);
 
     mgr.emit({
       type: "server.notification",
@@ -308,7 +307,6 @@ describe("SseEventManager — server.notification follows its one owner", () => 
 
     expect(alice.events).toEqual(["server.notification"]);
     expect(bob.events).toEqual([]);
-    expect(legacyWorkspace.events).toEqual([]);
   });
 
   test("a workspace's notification still reaches only that workspace's members", async () => {

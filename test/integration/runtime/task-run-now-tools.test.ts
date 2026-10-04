@@ -1,7 +1,7 @@
 /**
  * Run now tests the scheduled run, so it runs with the scheduled run's
  * authority: an org admin who clicks Run now gets the tools the schedule will
- * get, not their own. An automation run acts as `{ id: ownerId }` with no org
+ * get, not their own. A task run acts as `{ id: ownerId }` with no org
  * role, so admin-only tools are closed to both.
  *
  * Admin-only tools are app-only: they are never in a run's offered tool list,
@@ -21,7 +21,7 @@ import type { UserIdentity } from "../../../src/identity/provider.ts";
 import { DEV_IDENTITY } from "../../../src/identity/providers/dev.ts";
 import { createDirectExecutor } from "../../../src/platform/tasks/executor.ts";
 import { resolveExecutorContext } from "../../../src/platform/tasks/source.ts";
-import type { Automation } from "../../../src/platform/tasks/types.ts";
+import type { Task } from "../../../src/platform/tasks/types.ts";
 import { runWithRequestContext } from "../../../src/runtime/request-context.ts";
 import { Runtime } from "../../../src/runtime/runtime.ts";
 import type { TaskRequest } from "../../../src/runtime/types.ts";
@@ -84,7 +84,7 @@ describe("Run now gets the scheduled run's tools", () => {
     const { model, offered } = recordingModel();
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       logging: { disabled: true },
       workDir,
     });
@@ -92,13 +92,13 @@ describe("Run now gets the scheduled run's tools", () => {
       await provisionTestWorkspace(runtime, WS, "Run now");
 
       const admin = { ...DEV_IDENTITY, orgRole: "admin" } as UserIdentity;
-      const automation = {
+      const task = {
         id: "weekly-report",
         name: "Weekly report",
         prompt: "Write the weekly report",
         ownerId: admin.id,
         workspaceId: WS,
-      } as Automation;
+      } as Task;
       const executor = createDirectExecutor(
         (req) => runtime.executeTask(req as TaskRequest),
         resolveExecutorContext,
@@ -117,9 +117,9 @@ describe("Run now gets the scheduled run's tools", () => {
 
       // Run now, clicked by the admin inside their own request context.
       const manual = await runWithRequestContext({ identity: admin, workspaceId: WS }, () =>
-        executor(automation, undefined, "manual"),
+        executor(task, undefined, "manual"),
       );
-      const scheduled = await executor(automation, undefined, "scheduled");
+      const scheduled = await executor(task, undefined, "scheduled");
 
       expect(offered).toHaveLength(RUNS);
       const [, manualTools, scheduledTools] = offered;

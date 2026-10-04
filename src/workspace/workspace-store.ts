@@ -134,16 +134,6 @@ export interface ArchiveMarker {
   archivedReason: "workspace_deleted";
 }
 
-/**
- * Fields a workspace record on disk may carry and no code honors. Read only to
- * remove them
- * (`retireLegacyPersonalWorkspaces`); `update` drops them on write.
- */
-interface LegacyPersonalFields {
-  isPersonal?: boolean;
-  ownerUserId?: string;
-}
-
 // ── WorkspaceStore ─────────────────────────────────────────────────
 
 export class WorkspaceStore {
@@ -197,25 +187,6 @@ export class WorkspaceStore {
     }
   }
 
-  /**
-   * Workspaces whose record carries `isPersonal` or `ownerUserId`, each with
-   * the owner it names when `isPersonal` is true. Read by
-   * `retireLegacyPersonalWorkspaces` at boot and by nothing else — no other
-   * code may treat a workspace as personal.
-   */
-  async listLegacyPersonal(): Promise<Array<{ workspace: Workspace; ownerUserId?: string }>> {
-    const legacy: Array<{ workspace: Workspace; ownerUserId?: string }> = [];
-    for (const ws of await this.list()) {
-      const { isPersonal, ownerUserId } = ws as Workspace & LegacyPersonalFields;
-      if (isPersonal === undefined && ownerUserId === undefined) continue;
-      legacy.push({
-        workspace: ws,
-        ...(isPersonal === true && ownerUserId ? { ownerUserId } : {}),
-      });
-    }
-    return legacy;
-  }
-
   async list(): Promise<Workspace[]> {
     let entries: string[];
     try {
@@ -245,40 +216,16 @@ export class WorkspaceStore {
   }
 
   /**
-   * Names of the `ws_*` directories under `workspaces/` that hold a
-   * `workspace.json` but fail `WORKSPACE_ID_RE`, sorted. Such a directory is
-   * a workspace no door can address — `get` refuses its id like any malformed
-   * one — so boot refuses to start while one exists
-   * (`assertWorkspaceIdsConform`) rather than serve without it.
-   */
-  async listNonConformingIds(): Promise<string[]> {
-    let entries: string[];
-    try {
-      entries = await readdir(this.workspacesDir);
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw err;
-    }
-    return entries
-      .filter(
-        (entry) =>
-          entry.startsWith("ws_") && !WORKSPACE_ID_RE.test(entry) && existsSync(this.wsPath(entry)),
-      )
-      .sort();
-  }
-
-  /**
-   * `list` meets a non-conforming directory only when one was placed after
-   * boot, since boot refuses to start with one. It is skipped, because no
-   * door can address it, and named once per store so it is not invisible
-   * until the next boot refuses.
+   * `list` skips a `ws_*` directory whose name is not a workspace id, because
+   * no door can address it, and names it once per store so it is not
+   * invisible.
    */
   private warnNonConforming(entry: string): void {
     if (this.warnedNonConforming.has(entry) || !existsSync(this.wsPath(entry))) return;
     this.warnedNonConforming.add(entry);
     log.warn(
       `[workspace] skipping workspaces/${entry}: its name is not a workspace id ` +
-        "(ws_ and 16 lowercase hex chars). The next boot refuses to start until it is renamed.",
+        "(ws_ and 16 lowercase hex chars). Rename it to a generated id to serve it.",
     );
   }
 
@@ -386,15 +333,8 @@ export class WorkspaceStore {
     // level; strip it at runtime too, since a caller can cast past the type.
     const { members: _members, ...safePatch } = patch as Partial<Workspace>;
 
-    // A record on disk may carry `isPersonal` / `ownerUserId`, which no code
-    // honors; a write is where they leave the record.
-    const {
-      isPersonal: _isPersonal,
-      ownerUserId: _ownerUserId,
-      ...current
-    } = ws as Workspace & LegacyPersonalFields;
     const updated: Workspace = {
-      ...current,
+      ...ws,
       ...safePatch,
       updatedAt: new Date().toISOString(),
     };

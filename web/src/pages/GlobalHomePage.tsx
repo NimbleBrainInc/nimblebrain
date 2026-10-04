@@ -5,11 +5,11 @@
 // choose between. Anyone else sees their workspaces here, each with its unread
 // dot. Which workspace to open is never remembered or defaulted (ADR-0044).
 //
-// Stage 2 follow-up: with chat, conversations, automations, and files now
+// Stage 2 follow-up: with chat, conversations, tasks, and files now
 // identity-bound, the root URL is no longer "workspace home" — it's the
 // user's cross-workspace landing. v1 is intentionally minimal: greeting +
 // a tiled grid of the user's workspaces (each tile links to its overview
-// at `/w/<slug>/`). Recent conversations / files / automations layer in
+// at `/w/<slug>/`). Recent conversations / files / tasks layer in
 // when their data sources are ready, without changing the page shape.
 // ---------------------------------------------------------------------------
 

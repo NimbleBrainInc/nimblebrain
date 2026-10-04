@@ -1,4 +1,4 @@
-export interface AutomationSummary {
+export interface TaskSummary {
   id: string;
   name: string;
   description?: string;
@@ -20,7 +20,7 @@ export interface AutomationSummary {
   estimatedCostPerDay?: number;
 }
 
-export interface AutomationDetail {
+export interface TaskDetail {
   id: string;
   name: string;
   description?: string;
@@ -56,9 +56,9 @@ export interface AutomationDetail {
   estimatedCostPerMonth?: number;
 }
 
-export interface AutomationRun {
+export interface TaskRun {
   id: string;
-  automationId: string;
+  taskId: string;
   status: string;
   startedAt: string;
   completedAt?: string;
@@ -96,9 +96,9 @@ export interface RunFileRef {
 }
 
 /** The full result of a run — fetched on demand via the `run_result` action. */
-export interface AutomationRunResult {
+export interface TaskRunResult {
   runId: string;
-  automationId: string;
+  taskId: string;
   completedAt: string;
   output: string;
   activityLog: RunToolCall[];

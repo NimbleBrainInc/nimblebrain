@@ -1162,15 +1162,6 @@ export async function readConversationHeader(
   return { meta, preview, messageCount };
 }
 
-/**
- * Conversation JSONL file paths under `dir`. Handles BOTH layouts:
- *   - flat: `.jsonl` files directly in `dir` (legacy / test fixtures);
- *   - workspace-owned: `dir` is the workspaces root; each workspace's
- *     `conversations/` holds one `<ownerId>/` partition per member.
- * A flat directory yields its own files; the workspaces root yields every
- * workspace's files. Self-contained (no runtime imports) so the app stays
- * independently deployable.
- */
 /** Collect `.jsonl` file paths under a workspace's `conversations/<ownerId>/` partitions. */
 function listWorkspaceConversationFiles(convRoot: string): string[] {
   const out: string[] = [];
@@ -1188,14 +1179,19 @@ function listWorkspaceConversationFiles(convRoot: string): string[] {
  *
  * `wsId` comes from the directory the walk descended through, which is the
  * authoritative binding — the `workspaceId` on line 1 is a denormalised
- * convenience and can disagree. `null` only for the legacy flat layout, whose
- * files are under no workspace at all and so match no workspace-scoped read.
+ * convenience and can disagree.
  */
 export interface ConversationFileRef {
   filePath: string;
-  wsId: string | null;
+  wsId: string;
 }
 
+/**
+ * Conversation JSONL file paths under `dir`, the workspaces root: each
+ * workspace's `conversations/` holds one `<ownerId>/` partition per member.
+ * Self-contained (no runtime imports) so the app stays independently
+ * deployable.
+ */
 export function listConversationFiles(dir: string): ConversationFileRef[] {
   const out: ConversationFileRef[] = [];
   let top: Dirent[];
@@ -1205,10 +1201,6 @@ export function listConversationFiles(dir: string): ConversationFileRef[] {
     return [];
   }
   for (const ent of top) {
-    if (ent.isFile() && ent.name.endsWith(".jsonl")) {
-      out.push({ filePath: join(dir, ent.name), wsId: null });
-      continue;
-    }
     if (!ent.isDirectory() || !ent.name.startsWith("ws_")) continue;
     // Workspace-owned layout: each workspace's conversations subtree. The
     // directory name IS the workspace, so no path re-parsing is needed.

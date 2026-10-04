@@ -92,7 +92,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: () => new TokenAuthAdapter(),
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -124,7 +124,7 @@ describe("chat rate limiting", () => {
   it("returns 429 after exceeding chat limit", async () => {
     // Exhaust the limit
     for (let i = 0; i < 3; i++) {
-      const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+      const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({ message: `msg ${i}`, workspaceId: TEST_WORKSPACE_ID }),
@@ -133,7 +133,7 @@ describe("chat rate limiting", () => {
     }
 
     // Next request should be rate-limited
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ message: "over limit", workspaceId: TEST_WORKSPACE_ID }),

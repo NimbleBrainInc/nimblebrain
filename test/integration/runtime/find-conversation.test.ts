@@ -45,7 +45,7 @@ describe("Runtime.findConversation", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -125,7 +125,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: testAuthAdapter(API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -147,15 +147,6 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
     convId = seed.conversationId;
     expect(convId).toBeDefined();
   });
-
-  // NOTE: a "happy-path" 200 SSE test would need to hold the connection
-  // open and then cancel it, but Bun's fetch doesn't resolve until the
-  // first chunk arrives on an SSE stream that the server keeps idle —
-  // and forcing a chunk would couple this test to broadcast plumbing.
-  // The 404 test below + the 200/SSE coverage in
-  // `conversation-access.test.ts` (which uses /v1/workspaces/:wsId/chat/stream
-  // where the server emits chunks promptly) together prove the route resolves
-  // the conversation without a workspace in the request.
 
   test("returns 404 for a non-existent conversation", async () => {
     const res = await fetch(`${baseUrl}/v1/conversations/conv_0000000000000000/events`, {
@@ -201,7 +192,7 @@ describe("/v1/conversations/:id/events — identity-scoped", () => {
 
   /** POST a chat addressed to `wsId`, as the authenticated test user. */
   function chatIn(wsId: string): Promise<Response> {
-    return fetch(`${baseUrl}/v1/workspaces/${wsId}/chat`, {
+    return fetch(`${baseUrl}/v1/workspaces/${wsId}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
       body: JSON.stringify({ message: "hello" }),
@@ -254,7 +245,7 @@ describe("/v1/conversations/:id/events — dev provider", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -300,7 +291,7 @@ describe("/v1/conversations/:id/events — dev provider", () => {
 // workspace on both routes, and `store.load` is the one place ownership/validity is
 // checked — it throws the typed `ConversationCorruptedError`. So both the read
 // route (`/v1/conversations/:id/events`) and the chat resume path
-// (`/v1/workspaces/:wsId/chat`)
+// (`/v1/workspaces/:wsId/chat/start`)
 // surface a clean 422 with the migration command, never a 500.
 //
 // The ownerless file is planted at the exact workspace path the resume resolves
@@ -319,7 +310,7 @@ describe("ownerless conversation file — no 500s", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: testAuthAdapter(API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -360,8 +351,8 @@ describe("ownerless conversation file — no 500s", () => {
     expect(body.error).toBe("conversation_corrupted");
   });
 
-  test("POST /v1/workspaces/:wsId/chat resuming an ownerless conversation returns 422 (not 500)", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+  test("POST /v1/workspaces/:wsId/chat/start resuming an ownerless conversation returns 422 (not 500)", async () => {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

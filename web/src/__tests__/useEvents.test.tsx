@@ -52,7 +52,7 @@ const { act } = await import("react");
 const { useEvents } = await import("../hooks/useEvents");
 
 function Probe(props: { onReconnect: () => void }): null {
-  useEvents("tok", undefined, { onReconnect: props.onReconnect });
+  useEvents({ onReconnect: props.onReconnect });
   return null;
 }
 

@@ -145,7 +145,11 @@ describe("WorkspaceLogSink audit events", () => {
     const sink = new WorkspaceLogSink({ dir });
     sink.emit({
       type: "audit.auth_failure",
-      data: { ip: "192.168.1.1", method: "POST", path: "/v1/workspaces/ws_00079598e311c160/chat" },
+      data: {
+        ip: "192.168.1.1",
+        method: "POST",
+        path: "/v1/workspaces/ws_00079598e311c160/chat/start",
+      },
     });
 
     const records = readLogRecords(join(dir, "workspace"));
@@ -153,7 +157,7 @@ describe("WorkspaceLogSink audit events", () => {
     expect(records[0]!.event).toBe("audit.auth_failure");
     expect(records[0]!.ip).toBe("192.168.1.1");
     expect(records[0]!.method).toBe("POST");
-    expect(records[0]!.path).toBe("/v1/workspaces/ws_00079598e311c160/chat");
+    expect(records[0]!.path).toBe("/v1/workspaces/ws_00079598e311c160/chat/start");
   });
 
   it("persists audit.permission_denied events", () => {

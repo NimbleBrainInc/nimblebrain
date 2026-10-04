@@ -39,7 +39,7 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
       urlRef(),
       "granola",
       undefined,
-      { identityOwner: { userId: "usr_alice" }, workDir },
+      { identityOwner: { userId: "usr_alice", workDir } },
       noop,
     );
     expect(provider).toBeDefined();
@@ -78,7 +78,7 @@ describe("buildUrlOAuthProvider — owner dimension", () => {
       urlRef(),
       "granola",
       new WorkspaceContext({ wsId: "ws_0076759dbbe19fcc", workDir }),
-      { identityOwner: { userId: "usr_alice" }, workDir },
+      { identityOwner: { userId: "usr_alice", workDir } },
       noop,
     );
     expect(provider?.getOwner()).toEqual({ type: "user", userId: "usr_alice" });

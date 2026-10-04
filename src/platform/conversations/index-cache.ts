@@ -48,10 +48,9 @@ export interface IndexEntry {
    * The workspace the conversation lives in, taken from its DIRECTORY — the
    * authoritative binding. The `workspaceId` on line 1 is a denormalised
    * convenience and is deliberately not read here, so this wall and the
-   * `ConversationLocator`'s agree by construction. `null` only for the legacy
-   * flat layout, which is under no workspace and matches no scoped read.
+   * `ConversationLocator`'s agree by construction.
    */
-  workspaceId: string | null;
+  workspaceId: string;
 }
 
 /**
@@ -68,7 +67,7 @@ export interface IndexEntry {
 export interface ConversationChange {
   id: string;
   filePath: string;
-  wsId: string | null;
+  wsId: string;
 }
 
 /**
@@ -303,7 +302,7 @@ export class ConversationIndex {
    * unreadable file is simply absent); an incremental apply acts on it, because
    * nothing else will drop the entry.
    */
-  private async indexFile(filePath: string, wsId: string | null): Promise<boolean> {
+  private async indexFile(filePath: string, wsId: string): Promise<boolean> {
     const header = await readConversationHeader(filePath);
     if (!header) return false;
 

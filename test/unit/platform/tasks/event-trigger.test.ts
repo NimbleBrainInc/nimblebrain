@@ -16,20 +16,20 @@ import { join } from "node:path";
 import { parseNotificationEnvelope } from "../../../../src/notifications/envelope.ts";
 import type { Notification } from "../../../../src/notifications/types.ts";
 import {
-  AutomationEventTrigger,
-  type AutomationEventTriggerDeps,
   type EventWakeSettlement,
   MAX_EVENT_BATCH_ITEMS,
   type RunOutcome,
   renderEventBlock,
+  TaskEventTrigger,
+  type TaskEventTriggerDeps,
 } from "../../../../src/platform/tasks/event-trigger.ts";
 import {
   type Executor,
   type RunInput,
   Scheduler,
 } from "../../../../src/platform/tasks/scheduler.ts";
-import { saveAutomation } from "../../../../src/platform/tasks/store.ts";
-import type { Automation, ScheduleSpec } from "../../../../src/platform/tasks/types.ts";
+import { saveTask } from "../../../../src/platform/tasks/store.ts";
+import type { ScheduleSpec, Task } from "../../../../src/platform/tasks/types.ts";
 import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 
@@ -41,10 +41,7 @@ const SOURCE = "precision-outbound";
 /** A short window, so a batching test finishes in milliseconds rather than 30s. */
 const DEBOUNCE = 20;
 
-function automation(
-  schedule: Partial<ScheduleSpec> = {},
-  over: Partial<Automation> = {},
-): Automation {
+function task(schedule: Partial<ScheduleSpec> = {}, over: Partial<Task> = {}): Task {
   return {
     id: ID,
     name: "Reply triage",
@@ -94,7 +91,7 @@ function item(
 }
 
 interface Harness {
-  trigger: AutomationEventTrigger;
+  trigger: TaskEventTrigger;
   /** Every run the trigger started, in order. */
   runs: RunInput[];
   /** Every `disable` call, in order. */
@@ -103,14 +100,14 @@ interface Harness {
   answers: Array<{ run: RunOutcome } | { skipped: string }>;
 }
 
-function harness(over: Partial<AutomationEventTriggerDeps> = {}): Harness {
+function harness(over: Partial<TaskEventTriggerDeps> = {}): Harness {
   const runs: RunInput[] = [];
   const disabled: string[] = [];
   const answers: Array<{ run: RunOutcome } | { skipped: string }> = [
     { run: { id: "run_1", status: "success" } },
   ];
-  const trigger = new AutomationEventTrigger({
-    automation: () => automation(),
+  const trigger = new TaskEventTrigger({
+    task: () => task(),
     eventRunsSince: () => 0,
     run: async (_ws, _owner, _id, input) => {
       runs.push(input);
@@ -130,7 +127,7 @@ function offer(h: Harness, notification: Notification): { settled: EventWakeSett
   const ack = h.trigger.offer({
     wsId: WS,
     ownerId: OWNER,
-    automationId: ID,
+    taskId: ID,
     item: notification,
     settle: (r) => settled.push(r),
   });
@@ -143,33 +140,33 @@ async function settleWindow(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, DEBOUNCE + 20));
 }
 
-// -- what the automation admits -------------------------------------------
+// -- what the task admits -------------------------------------------
 
 describe("what an offer is refused for", () => {
-  test("an automation the route's author does not own here", async () => {
-    const h = harness({ automation: () => undefined });
+  test("a task the route's author does not own here", async () => {
+    const h = harness({ task: () => undefined });
     const { settled } = offer(h, item());
-    expect(settled[0]).toMatchObject({ outcome: "denied", classification: "unknown_automation" });
+    expect(settled[0]).toMatchObject({ outcome: "denied", classification: "unknown_task" });
     expect(h.runs).toHaveLength(0);
   });
 
-  test("an automation that runs on a clock", async () => {
+  test("a task that runs on a clock", async () => {
     const h = harness({
-      automation: () => automation({ type: "cron", expression: "0 9 * * *" }),
+      task: () => task({ type: "cron", expression: "0 9 * * *" }),
     });
     const { settled } = offer(h, item());
     expect(settled[0]).toMatchObject({ outcome: "denied", classification: "not_event_scheduled" });
   });
 
-  test("a disabled automation, which is a skip because re-enabling clears it", async () => {
+  test("a disabled task, which is a skip because re-enabling clears it", async () => {
     const h = harness({
-      automation: () => automation({}, { enabled: false, disabledReason: "paused by you" }),
+      task: () => task({}, { enabled: false, disabledReason: "paused by you" }),
     });
     const { settled } = offer(h, item());
-    expect(settled[0]).toMatchObject({ outcome: "skipped", classification: "automation_disabled" });
+    expect(settled[0]).toMatchObject({ outcome: "skipped", classification: "task_disabled" });
   });
 
-  test("an item the automation's own match does not want", async () => {
+  test("an item the task's own match does not want", async () => {
     const h = harness();
     expect(offer(h, item("bounce.hard")).settled[0]).toMatchObject({
       outcome: "skipped",
@@ -180,9 +177,9 @@ describe("what an offer is refused for", () => {
     });
   });
 
-  test("a minimum level below the automation's own", async () => {
+  test("a minimum level below the task's own", async () => {
     const h = harness({
-      automation: () => automation({ match: { level: "urgent" } }),
+      task: () => task({ match: { level: "urgent" } }),
     });
     expect(offer(h, item("reply.received", "evt_low")).settled[0]).toMatchObject({
       classification: "match_declined",
@@ -228,7 +225,7 @@ describe("batching", () => {
 
   test("a full batch dispatches at once rather than waiting out its window", async () => {
     // A window long enough that waiting it out would fail the test.
-    const h = harness({ automation: () => automation({ debounceMs: 600_000 }) });
+    const h = harness({ task: () => task({ debounceMs: 600_000 }) });
     for (let i = 0; i < MAX_EVENT_BATCH_ITEMS; i++) offer(h, item("reply.received", `evt_${i}`));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -238,7 +235,7 @@ describe("batching", () => {
 
   test("a run that never started is a skip naming why", async () => {
     const h = harness();
-    h.answers[0] = { skipped: "a previous run of this automation is still in flight" };
+    h.answers[0] = { skipped: "a previous run of this task is still in flight" };
     const one = offer(h, item());
     await settleWindow();
 
@@ -285,12 +282,12 @@ describe("batching", () => {
     const workDir = mkdtempSync(join(tmpdir(), "event-trigger-queue-"));
     try {
       seedWorkspaceRoot(workDir, WS);
-      saveAutomation(workDir, WS, OWNER, automation());
-      saveAutomation(
+      saveTask(workDir, WS, OWNER, task());
+      saveTask(
         workDir,
         WS,
         OWNER,
-        automation(
+        task(
           {},
           { id: "holder", enabled: false, schedule: { type: "interval", intervalMs: 60_000 } },
         ),
@@ -305,7 +302,7 @@ describe("batching", () => {
         return {
           run: {
             id: `run_${auto.id}`,
-            automationId: auto.id,
+            taskId: auto.id,
             startedAt: now,
             completedAt: now,
             status: "success",
@@ -349,7 +346,7 @@ describe("batching", () => {
 
   test("a run that started and then failed is still a delivery", async () => {
     // The notification reached an agent run. What the run made of it is the
-    // automation's own record, not this one's.
+    // task's own record, not this one's.
     const h = harness();
     h.answers[0] = { run: { id: "run_fail", status: "failure", error: "the model gave up" } };
     const one = offer(h, item());
@@ -359,7 +356,7 @@ describe("batching", () => {
   });
 
   test("stopping settles an open batch instead of losing it silently", async () => {
-    const h = harness({ automation: () => automation({ debounceMs: 600_000 }) });
+    const h = harness({ task: () => task({ debounceMs: 600_000 }) });
     const one = offer(h, item());
     h.trigger.stop();
 
@@ -374,9 +371,9 @@ describe("batching", () => {
 // -- the fire ceiling ------------------------------------------------------
 
 describe("the fire ceiling", () => {
-  test("disables the automation and settles the batch as the ceiling", async () => {
+  test("disables the task and settles the batch as the ceiling", async () => {
     const h = harness({
-      automation: () => automation({ maxFiresPerHour: 3 }),
+      task: () => task({ maxFiresPerHour: 3 }),
       eventRunsSince: () => 3,
     });
     const one = offer(h, item());
@@ -394,7 +391,7 @@ describe("the fire ceiling", () => {
   test("counts only event-fired runs inside the window, and lets one through below it", async () => {
     const seen: number[] = [];
     const h = harness({
-      automation: () => automation({ maxFiresPerHour: 3 }),
+      task: () => task({ maxFiresPerHour: 3 }),
       eventRunsSince: (_ws, _owner, _id, since) => {
         seen.push(since);
         return 2;

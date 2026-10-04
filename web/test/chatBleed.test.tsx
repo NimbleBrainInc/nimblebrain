@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { ChatProvider, useChatContext } from "../src/context/ChatContext.tsx";
-import type { ChatMessage } from "../src/hooks/useChat.ts";
+import type { ChatMessage } from "../src/hooks/chat-store.ts";
 
 // ---------------------------------------------------------------------------
 // Regression for #254 under the server-authoritative model: a turn streaming

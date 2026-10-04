@@ -39,7 +39,7 @@ describe("Runtime identity stores wiring", () => {
     const rt = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     expect(rt.getIdentityProvider()).toBeInstanceOf(DevIdentityProvider);
@@ -77,7 +77,7 @@ describe("Runtime identity stores wiring", () => {
 
     const rt = await Runtime.start({
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     expect(rt.getIdentityProvider()).toBeInstanceOf(OidcIdentityProvider);
@@ -91,7 +91,7 @@ describe("Runtime identity stores wiring", () => {
     const rt = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     const userStore = rt.getUserStore();
@@ -117,7 +117,7 @@ describe("Runtime identity stores wiring", () => {
     const rt = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     const workspaceStore = rt.getWorkspaceStore();
@@ -141,7 +141,7 @@ describe("Runtime identity stores wiring", () => {
     const rt = await Runtime.start({
       identityProvider: devProvider,
       workDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     await provisionTestWorkspace(rt);

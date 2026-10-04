@@ -1,55 +1,54 @@
 /**
  * The single sanctioned construction (and parse) site for workspace-partitioned
- * automation paths. Mirrors `src/conversation/paths.ts` and `src/files/paths.ts`:
- * every automation directory is built and parsed here, so the on-disk layout has
+ * task paths. Mirrors `src/conversation/paths.ts` and `src/files/paths.ts`:
+ * every task directory is built and parsed here, so the on-disk layout has
  * exactly one definition.
  *
- * The workspace owns the directory: an automation lives under the workspace it
+ * The workspace owns the directory: a task lives under the workspace it
  * fires against, with the owner as a privacy sub-partition. The path is the
- * binding — `Automation.workspaceId` / `Automation.ownerId` are denormalised
+ * binding — `Task.workspaceId` / `Task.ownerId` are denormalised
  * conveniences; the directory is authoritative.
  *
- *   workspaces/<wsId>/tasks/<ownerId>/<automationId>.json              the definition
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/index.jsonl  newest run summaries (the hot window)
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/<runId>.result.json  a hot run's deliverable
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
- *   workspaces/<wsId>/tasks/<ownerId>/runs/<automationId>/keys/<sha256(key)>.json  an idempotency key and the run it started
+ *   workspaces/<wsId>/tasks/<ownerId>/<taskId>.json              the definition
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/index.jsonl  newest run summaries (the hot window)
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/<runId>.result.json  a hot run's deliverable
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/archive/<YYYY-MM>/index.jsonl  older summaries, by start month (UTC)
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/archive/<YYYY-MM>/<runId>.result.json  their deliverables
+ *   workspaces/<wsId>/tasks/<ownerId>/runs/<taskId>/keys/<sha256(key)>.json  an idempotency key and the run it started
  *   workspaces/<wsId>/tasks/<ownerId>/run-tickets/<runId>.json  a requested run's current record, found by run id alone
  *
  * A run's summary and its deliverable move to the archive together, so the
  * hot runs dir holds at most the hot window of sidecars plus `index.jsonl`
  * and `archive/`, and listing it stays bounded however long history grows.
  *
- * An automation run is NOT a conversation: it leaves a *run result* (the final
+ * A task run is NOT a conversation: it leaves a *run result* (the final
  * output, the activity log, and refs to any files it wrote in the workspace file
  * store) under its own `runs/` subtree — never a chat under `conversations/`.
  *
- * This file is the only site `check:automation-paths` permits to construct a
- * workspace automations dir.
+ * This file is the only site `check:task-paths` permits to construct a
+ * workspace tasks dir.
  */
 
 import { join, sep } from "node:path";
 
 const TASKS_SEGMENT = "tasks";
-const LEGACY_SEGMENT = "automations";
 const WORKSPACES_SEGMENT = "workspaces";
 const RUNS_SEGMENT = "runs";
 const TICKETS_SEGMENT = "run-tickets";
 const KEYS_SEGMENT = "keys";
 
 /**
- * Automation ids are kebab-case (lowercase alphanumeric segments separated by
+ * Task ids are kebab-case (lowercase alphanumeric segments separated by
  * hyphens), generated from the name. Run ids are `run_<token>`. Both are
  * validated before any path construction to prevent traversal.
  */
-const AUTOMATION_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const TASK_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const RUN_ID_RE = /^run_[A-Za-z0-9_-]+$/;
 
-export function validateAutomationId(id: string): void {
-  if (!AUTOMATION_ID_RE.test(id)) {
+export function validateTaskId(id: string): void {
+  if (!TASK_ID_RE.test(id)) {
     throw new Error(
-      `Invalid automation id: ${JSON.stringify(id)}. Must be non-empty kebab-case (lowercase alphanumeric and hyphens).`,
+      `Invalid task id: ${JSON.stringify(id)}. Must be non-empty kebab-case (lowercase alphanumeric and hyphens).`,
     );
   }
 }
@@ -60,59 +59,49 @@ export function validateRunId(id: string): void {
   }
 }
 
-/**
- * Where a workspace's task storage lived before tasks were named tasks:
- * `{workDir}/workspaces/<wsId>/automations`. Read only by the boot migration
- * (`migrate-storage.ts`), which moves each owner dir under
- * {@link workspaceTasksRoot}.
- */
-export function legacyWorkspaceTaskRoot(workDir: string, wsId: string): string {
-  return join(workDir, WORKSPACES_SEGMENT, wsId, LEGACY_SEGMENT);
-}
-
 /** The directory holding every owner's tasks in one workspace: `{workDir}/workspaces/<wsId>/tasks`. */
 export function workspaceTasksRoot(workDir: string, wsId: string): string {
   return join(workDir, WORKSPACES_SEGMENT, wsId, TASKS_SEGMENT);
 }
 
 /**
- * Directory holding one owner's automations in one workspace:
+ * Directory holding one owner's tasks in one workspace:
  * `{workDir}/workspaces/<wsId>/tasks/<ownerId>`.
  */
 export function workspaceTasksDir(workDir: string, wsId: string, ownerId: string): string {
   return join(workspaceTasksRoot(workDir, wsId), ownerId);
 }
 
-/** The definition file: `…/tasks/<ownerId>/<automationId>.json`. */
-export function automationFilePath(
+/** The definition file: `…/tasks/<ownerId>/<taskId>.json`. */
+export function taskFilePath(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
 ): string {
-  validateAutomationId(automationId);
-  return join(workspaceTasksDir(workDir, wsId, ownerId), `${automationId}.json`);
+  validateTaskId(taskId);
+  return join(workspaceTasksDir(workDir, wsId, ownerId), `${taskId}.json`);
 }
 
-/** The runs dir for one automation: `…/tasks/<ownerId>/runs/<automationId>`. */
-export function automationRunsDir(
+/** The runs dir for one task: `…/tasks/<ownerId>/runs/<taskId>`. */
+export function taskRunsDir(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
 ): string {
-  validateAutomationId(automationId);
-  return join(workspaceTasksDir(workDir, wsId, ownerId), RUNS_SEGMENT, automationId);
+  validateTaskId(taskId);
+  return join(workspaceTasksDir(workDir, wsId, ownerId), RUNS_SEGMENT, taskId);
 }
 
-/** The append-only run-summary index: `…/runs/<automationId>/index.jsonl`. */
-export function automationRunIndexPath(
+/** The append-only run-summary index: `…/runs/<taskId>/index.jsonl`. */
+export function taskRunIndexPath(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
 ): string {
-  return join(automationRunsDir(workDir, wsId, ownerId, automationId), "index.jsonl");
+  return join(taskRunsDir(workDir, wsId, ownerId, taskId), "index.jsonl");
 }
 
 /** An archive month, `YYYY-MM`. */
@@ -125,80 +114,77 @@ export function isRunArchiveMonth(name: string): boolean {
   return ARCHIVE_MONTH_RE.test(name);
 }
 
-/** The archive root for one automation: `…/runs/<automationId>/archive`. */
-export function automationRunArchiveRoot(
+/** The archive root for one task: `…/runs/<taskId>/archive`. */
+export function taskRunArchiveRoot(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
 ): string {
-  return join(automationRunsDir(workDir, wsId, ownerId, automationId), ARCHIVE_SEGMENT);
+  return join(taskRunsDir(workDir, wsId, ownerId, taskId), ARCHIVE_SEGMENT);
 }
 
 /**
- * One archive month: `…/runs/<automationId>/archive/<YYYY-MM>`, holding the
+ * One archive month: `…/runs/<taskId>/archive/<YYYY-MM>`, holding the
  * summaries (`index.jsonl`) and deliverables of the runs that started that
  * month (UTC) and rolled out of the hot index.
  */
-export function automationRunArchiveDir(
+export function taskRunArchiveDir(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   month: string,
 ): string {
   if (!isRunArchiveMonth(month)) {
     throw new Error(`Invalid run archive month: ${JSON.stringify(month)}. Must be YYYY-MM.`);
   }
-  return join(automationRunArchiveRoot(workDir, wsId, ownerId, automationId), month);
+  return join(taskRunArchiveRoot(workDir, wsId, ownerId, taskId), month);
 }
 
 /** An archive month's run index: `…/archive/<YYYY-MM>/index.jsonl`. */
-export function automationRunSegmentPath(
+export function taskRunSegmentPath(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   month: string,
 ): string {
-  return join(automationRunArchiveDir(workDir, wsId, ownerId, automationId, month), "index.jsonl");
+  return join(taskRunArchiveDir(workDir, wsId, ownerId, taskId, month), "index.jsonl");
 }
 
 /** An archived run's result sidecar: `…/archive/<YYYY-MM>/<runId>.result.json`. */
-export function automationArchivedRunResultPath(
+export function taskArchivedRunResultPath(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   month: string,
   runId: string,
 ): string {
   validateRunId(runId);
-  return join(
-    automationRunArchiveDir(workDir, wsId, ownerId, automationId, month),
-    `${runId}.result.json`,
-  );
+  return join(taskRunArchiveDir(workDir, wsId, ownerId, taskId, month), `${runId}.result.json`);
 }
 
-/** A single run's result sidecar: `…/runs/<automationId>/<runId>.result.json`. */
-export function automationRunResultPath(
+/** A single run's result sidecar: `…/runs/<taskId>/<runId>.result.json`. */
+export function taskRunResultPath(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   runId: string,
 ): string {
   validateRunId(runId);
-  return join(automationRunsDir(workDir, wsId, ownerId, automationId), `${runId}.result.json`);
+  return join(taskRunsDir(workDir, wsId, ownerId, taskId), `${runId}.result.json`);
 }
 
 /**
  * A requested run's ticket: `…/tasks/<ownerId>/run-tickets/<runId>.json`.
  * Keyed by run id alone, under the owner, so a task handle (which names only
- * the run) finds its run without knowing the automation, and the owner
+ * the run) finds its run without knowing the task, and the owner
  * partition in the path is the ownership check.
  */
-export function automationRunTicketPath(
+export function taskRunTicketPath(
   workDir: string,
   wsId: string,
   ownerId: string,
@@ -212,29 +198,25 @@ export function automationRunTicketPath(
 const KEY_DIGEST_RE = /^[0-9a-f]{64}$/;
 
 /**
- * Where an idempotency key used on one automation is recorded:
- * `…/runs/<automationId>/keys/<digest>.json`. `digest` is the key's SHA-256,
+ * Where an idempotency key used on one task is recorded:
+ * `…/runs/<taskId>/keys/<digest>.json`. `digest` is the key's SHA-256,
  * so a caller's key never becomes a path segment.
  */
-export function automationIdempotencyKeyPath(
+export function taskIdempotencyKeyPath(
   workDir: string,
   wsId: string,
   ownerId: string,
-  automationId: string,
+  taskId: string,
   digest: string,
 ): string {
   if (!KEY_DIGEST_RE.test(digest)) {
     throw new Error(`Invalid idempotency key digest: ${JSON.stringify(digest)}.`);
   }
-  return join(
-    automationRunsDir(workDir, wsId, ownerId, automationId),
-    KEYS_SEGMENT,
-    `${digest}.json`,
-  );
+  return join(taskRunsDir(workDir, wsId, ownerId, taskId), KEYS_SEGMENT, `${digest}.json`);
 }
 
-/** What a parsed automation path resolves to. */
-export interface ParsedAutomationPath {
+/** What a parsed task path resolves to. */
+export interface ParsedTaskPath {
   wsId: string;
   ownerId: string;
 }
@@ -242,17 +224,17 @@ export interface ParsedAutomationPath {
 /**
  * Inverse of the builders: recover `{ wsId, ownerId }` from any path under a
  * `workspaces/<wsId>/tasks/<ownerId>/...` subtree. Returns `null` for a
- * path that isn't one (e.g. a legacy `users/<id>/automations/...` path). The
- * path is the authority; this lets the scheduler recover an automation's
+ * path that isn't one (e.g. an identity-scoped `users/<id>/...` path). The
+ * path is the authority; this lets the scheduler recover a task's
  * workspace + owner without trusting the record's fields.
  */
-export function parseAutomationPath(absPath: string): ParsedAutomationPath | null {
+export function parseTaskPath(absPath: string): ParsedTaskPath | null {
   const segments = absPath.split(sep);
   const wsIdx = segments.lastIndexOf(WORKSPACES_SEGMENT);
   if (wsIdx === -1) return null;
   const wsId = segments[wsIdx + 1];
-  const autoSeg = segments[wsIdx + 2];
+  const tasksSeg = segments[wsIdx + 2];
   const ownerId = segments[wsIdx + 3];
-  if (!wsId || autoSeg !== TASKS_SEGMENT || !ownerId) return null;
+  if (!wsId || tasksSeg !== TASKS_SEGMENT || !ownerId) return null;
   return { wsId, ownerId };
 }

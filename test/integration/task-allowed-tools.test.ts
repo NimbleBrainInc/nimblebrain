@@ -20,7 +20,7 @@ import { recordingModel } from "../helpers/recording-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 const TOOL = "crm__search";
-const dir = join(tmpdir(), `nimblebrain-automation-allowed-tools-${Date.now()}`);
+const dir = join(tmpdir(), `nimblebrain-task-allowed-tools-${Date.now()}`);
 let runtime: Runtime;
 let source: McpSource;
 let handlerCalls = 0;
@@ -45,10 +45,7 @@ describe("an unattended run's allowedTools", () => {
     mkdirSync(dir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: {
-        provider: "custom",
-        adapter: createEchoModel({ responses: [...reachForTool(), ...reachForTool()] }),
-      },
+      languageModel: createEchoModel({ responses: [...reachForTool(), ...reachForTool()] }),
       logging: { disabled: true },
       workDir: dir,
       telemetry: { enabled: false },
@@ -109,7 +106,7 @@ describe("an unattended run's allowedTools", () => {
  * two `nb__` tools the list does not name.
  */
 describe("an unattended run's allowedTools and the nb__ tools", () => {
-  const nbDir = join(tmpdir(), `nimblebrain-automation-allowed-nb-${Date.now()}`);
+  const nbDir = join(tmpdir(), `nimblebrain-task-allowed-nb-${Date.now()}`);
   let nbRuntime: Runtime;
   const recorded = recordingModel(
     createEchoModel({
@@ -146,7 +143,7 @@ describe("an unattended run's allowedTools and the nb__ tools", () => {
     mkdirSync(nbDir, { recursive: true });
     nbRuntime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: recorded.model },
+      languageModel: recorded.model,
       logging: { disabled: true },
       workDir: nbDir,
       telemetry: { enabled: false },

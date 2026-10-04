@@ -7,7 +7,7 @@
 //   - the cost total omits calls whose model has no known price, so a large
 //     token count beside a small dollar figure reads as cheap rather than as
 //     partly unknown;
-//   - automation spend and runs must be shown apart from chat, which is the
+//   - task spend and runs must be shown apart from chat, which is the
 //     exact spend that was invisible in the first place.
 //
 // Both signals are conditional, so the tests assert they appear when the data
@@ -123,8 +123,8 @@ function originRow(key: string, over: Record<string, unknown> = {}) {
   } as NonNullable<Parameters<typeof UsageTotalsCards>[0]["byOrigin"]>[number];
 }
 
-describe("chat and automation spend are shown apart", () => {
-  test("the automation card carries the task cost and counts runs", () => {
+describe("chat and task spend are shown apart", () => {
+  test("the task card carries the task cost and counts runs", () => {
     const el = render(
       React.createElement(UsageTotalsCards, {
         totals: totals({ conversations: 7, runs: 178 }),
@@ -137,9 +137,9 @@ describe("chat and automation spend are shown apart", () => {
     expect(el.textContent).toContain("Chat cost");
     expect(el.textContent).toContain("$1.25");
     expect(el.textContent).toContain("7 conversations");
-    expect(el.textContent).toContain("Automation cost");
+    expect(el.textContent).toContain("Task cost");
     expect(el.textContent).toContain("$3.75");
-    expect(el.textContent).toContain("178 automation runs");
+    expect(el.textContent).toContain("178 task runs");
   });
 
   test("system spend is named in the total's detail only when it exists", () => {
@@ -292,7 +292,7 @@ describe("the table follows the group-by dimension", () => {
       detail: "Deleted workspace",
     });
     expect(labelFor("workspace", "none", labels).name).toBe("No workspace");
-    expect(labelFor("origin", "task", labels).name).toBe("Automation");
+    expect(labelFor("origin", "task", labels).name).toBe("Task");
   });
 });
 

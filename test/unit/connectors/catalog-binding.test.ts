@@ -35,12 +35,6 @@ describe("bindCatalogEntry", () => {
     });
   });
 
-  it("refuses a ref whose name is derived from a foreign URL's last segment", () => {
-    // No `serverName`: the legacy fallback derives one from the URL path.
-    const ref: ConnectorRef = { url: `https://other.test/${SN}` };
-    expect(bindCatalogEntry(ref, [entry()]).kind).toBe("mismatch");
-  });
-
   it("names nothing for a ref no entry carries the name of", () => {
     expect(bindCatalogEntry({ url: URL_, serverName: "elsewhere" }, [entry()])).toEqual({
       kind: "uncatalogued",

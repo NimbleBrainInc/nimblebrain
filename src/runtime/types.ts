@@ -1,8 +1,8 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import type { AutomationsConfig } from "../config/automations.ts";
 import type { FeatureFlags } from "../config/features.ts";
 import type { ConfirmationGate } from "../config/privilege.ts";
 import type { SecretsConfig } from "../config/secrets.ts";
+import type { TasksConfig } from "../config/tasks.ts";
 import type { ConnectorsConfig } from "../connectors/providers/config.ts";
 import type { EventSink, ThinkingEffort } from "../engine/types.ts";
 import type { ContentPart, FileReference } from "../files/types.ts";
@@ -32,14 +32,15 @@ export interface IdentityStores {
 }
 
 export interface RuntimeConfig {
-  /** Model provider configuration. */
-  model?:
-    | { provider: "anthropic"; apiKey?: string }
-    | { provider: "openai"; apiKey?: string; baseURL?: string }
-    | { provider: "google"; apiKey?: string }
-    | { provider: "custom"; adapter: LanguageModelV4 };
+  /**
+   * One model that serves every model string, in place of the provider
+   * registry. For tests and embedders that bring their own adapter; it has no
+   * `nimblebrain.json` form. Slots, policy and provider listings still read
+   * `models` and `providers`.
+   */
+  languageModel?: LanguageModelV4;
 
-  /** Multi-provider configuration. Takes precedence over `model` when set. */
+  /** Provider configuration. Absent means Anthropic, keyed from the environment. */
   providers?: ProvidersConfig["providers"];
 
   /** Allow HTTP (non-TLS) remote connector connections. Dev only. */
@@ -48,7 +49,6 @@ export interface RuntimeConfig {
   /** Directories to scan for skill files. */
   skillDirs?: string[];
 
-  /** Role-based model slots. Takes precedence over `defaultModel`. */
   /**
    * Slots the operator set. Partial because setting one slot is not setting
    * the other — the resolved view where both are always present is
@@ -69,9 +69,6 @@ export interface RuntimeConfig {
    * reachable.
    */
   modelPolicy?: { allowed?: string[] };
-
-  /** @deprecated Use models.default instead. Kept for backward compat. */
-  defaultModel?: string;
 
   /** Max agentic iterations per request. Capped at 25. Default: 10. */
   maxIterations?: number;
@@ -266,10 +263,10 @@ export interface RuntimeConfig {
   };
 
   /**
-   * Automations — how many runs the process holds in flight and waiting, and
-   * the ceilings on any one run. See `src/config/automations.ts`.
+   * Tasks — how many runs the process holds in flight and waiting, and
+   * the ceilings on any one run. See `src/config/tasks.ts`.
    */
-  automations?: AutomationsConfig;
+  tasks?: TasksConfig;
 
   /** File context configuration. */
   files?: {
@@ -352,10 +349,10 @@ export interface ChatRequest {
    * `tasks/cancel`; inline tool calls abort their RPC.
    *
    * Without this, callers racing `runtime.chat()` against an external
-   * deadline (e.g. the automations executor's `Promise.race` against
+   * deadline (e.g. the tasks executor's `Promise.race` against
    * `maxRunDurationMs`) ORPHAN the in-flight LLM/tool work — the chat
    * keeps running, finishes, writes the conversation to disk, but the
-   * caller never sees the result. Production proof: an automation's
+   * caller never sees the result. Production proof: a task's
    * runs completed in 6-7m while the 5m
    * Promise.race silently abandoned them, leaving fake `timeout` run
    * records and ~$X of wasted LLM spend per missed run.
@@ -415,7 +412,7 @@ export interface ChatResult {
 /**
  * Request shape for `runtime.executeTask()` — the unattended agent
  * invocation primitive that sits beside `runtime.chat()`. Use this when
- * the agent runs without a user present (scheduled automations, eval
+ * the agent runs without a user present (scheduled tasks, eval
  * runs, future webhook triggers). The runtime owns the framing contract
  * (no greetings, deliverable output, no follow-up questions) via the
  * task-mode system prompt; callers supply only the task description.
@@ -445,7 +442,7 @@ export interface TaskRequest {
   /** The task description. Goes in as the user message. */
   prompt: string;
   /**
-   * What woke the agent. `schedule` is an automations cron tick, `manual` an
+   * What woke the agent. `schedule` is a tasks cron tick, `manual` an
    * operator pressing Run now; the default `api` covers a caller driving the
    * runtime directly (embedded, CLI, evals). `chat` is not reachable here —
    * that trigger has its own door.
@@ -457,7 +454,7 @@ export interface TaskRequest {
   /**
    * Identity the task runs under. Resolution mirrors `ChatRequest.identity`:
    * it MUST be set; a task without one is refused. The scheduler builds a
-   * minimal identity from the automation's `ownerId` field.
+   * minimal identity from the task's `ownerId` field.
    */
   identity?: UserIdentity;
   /**
@@ -488,8 +485,8 @@ export interface TaskRequest {
   /** Glob patterns filtering which tools are available. Matches use the same logic as chat. */
   allowedTools?: string[];
   /**
-   * Arbitrary metadata. The automations executor stamps `source` and
-   * `automationId` here so the run is correlated to its automation in logs
+   * Arbitrary metadata. The tasks executor stamps `source` and
+   * `taskId` here so the run is correlated to its task in logs
    * and audit. Pass-through; the runtime does not persist a conversation.
    */
   metadata?: Record<string, unknown>;
@@ -497,7 +494,7 @@ export interface TaskRequest {
    * Cancellation signal forwarded into the engine and threaded down to
    * every tool call. Same morning-brief contract as `ChatRequest.signal`:
    * without it, callers racing the task against an external deadline
-   * (notably the automations executor's `Promise.race` against
+   * (notably the tasks executor's `Promise.race` against
    * `maxRunDurationMs`) orphan in-flight LLM/tool work.
    *
    * A run still waiting for a run slot leaves the queue when it fires, and
@@ -534,7 +531,7 @@ export interface TaskRequest {
  *    prompt; connector-affined skills still surface via Layer 3.
  *  - `response` renamed to `output` to reflect the deliverable contract.
  *  - `runId` is a traceability anchor — the id of the run, under which the
- *    caller (the automations app) persists the run result (output +
+ *    caller (the tasks app) persists the run result (output +
  *    activity log + output-file refs). No conversation is created.
  *
  * Always returned on completion — including timeout, max_iterations,

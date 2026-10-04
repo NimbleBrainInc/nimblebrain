@@ -5,7 +5,10 @@ import { ConversationIndex } from "../../../../../src/platform/conversations/ind
 import type { DisplayMessage } from "../../../../../src/platform/conversations/jsonl-reader.ts";
 import { handleExport } from "../../../../../src/platform/conversations/tools/export.ts";
 
-const TMP_DIR = join(import.meta.dir, ".tmp-export");
+/** The workspaces root the index walks. */
+const ROOT = join(import.meta.dir, ".tmp-export");
+/** One owner partition of one workspace, where the fixtures live. */
+const TMP_DIR = join(ROOT, "ws_00859aff6f095b0e", "conversations", "usr_test");
 
 function writeTmpFile(name: string, lines: string[]): string {
   const path = join(TMP_DIR, name);
@@ -56,7 +59,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  rmSync(TMP_DIR, { recursive: true, force: true });
+  rmSync(ROOT, { recursive: true, force: true });
 });
 
 async function setupConversation(
@@ -68,7 +71,7 @@ async function setupConversation(
   const fname = filename ?? `${id}.jsonl`;
   const lines = [JSON.stringify(meta), ...messages.map((m) => JSON.stringify(m))];
   writeTmpFile(fname, lines);
-  await index.build(TMP_DIR);
+  await index.build(ROOT);
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +259,7 @@ describe("handleExport — json", () => {
 
 describe("handleExport — errors", () => {
   test("throws for non-existent conversation ID", async () => {
-    await index.build(TMP_DIR);
+    await index.build(ROOT);
 
     expect(handleExport({ id: "conv_nonexistent", format: "markdown" }, index)).rejects.toThrow(
       "Conversation not found: conv_nonexistent",

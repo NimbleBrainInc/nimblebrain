@@ -94,15 +94,15 @@ export interface UsageLedgerEntry {
    */
   runId?: string;
   /**
-   * The automation run this call belongs to (`executeTask`'s correlation id).
-   * Absent in chat. Distinct from {@link runId}: this is the id the automations
+   * The task run this call belongs to (`executeTask`'s correlation id).
+   * Absent in chat. Distinct from {@link runId}: this is the id the tasks
    * connector persists the run result under, so it is the join key from spend back
    * to a stored run.
    */
   taskRunId?: string;
   /**
    * @deprecated Legacy read-only. Held whichever id correlated the work — a
-   * conversation for chat, an automation run for a task — discriminated by
+   * conversation for chat, a task run for a task — discriminated by
    * `origin`. No longer written; `conversationId` / `taskRunId` carry those
    * two facts under their own names, and `runId` adds the per-turn grain the
    * single field could not express.

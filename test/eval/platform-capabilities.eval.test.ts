@@ -62,17 +62,17 @@ describe("platform capability discovery", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Automations
+  // Tasks
   // -----------------------------------------------------------------------
 
   describe("tasks", () => {
-    it("discovers automation tools when asked to schedule", async () => {
+    it("discovers task tools when asked to schedule", async () => {
       const result = await runEval("schedule a daily summary at 9am");
       assertSearchedFor(result, "tasks");
     }, 30_000);
 
-    it("discovers automation tools when asked about recurring tasks", async () => {
-      const result = await runEval("what automations are currently running?");
+    it("discovers task tools when asked about recurring tasks", async () => {
+      const result = await runEval("what tasks are currently running?");
       assertSearchedFor(result, "tasks");
     }, 30_000);
   });

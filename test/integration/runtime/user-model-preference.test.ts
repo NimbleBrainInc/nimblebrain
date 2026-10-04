@@ -27,7 +27,7 @@ async function start(name: string, allowlist?: string[]) {
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
     ...(allowlist ? { providers: { anthropic: { apiKey: "k", models: allowlist } } } : {}),
     workDir,
@@ -244,10 +244,10 @@ describe("an empty model id is not a choice", () => {
     }
   });
 
-  // Driven through chat, not through the predicate. Asserting
+  // Driven through chat, not through the predicate: asserting
   // `isModelPermitted("")` passes whether or not the request path reaches the
-  // floor before qualification — which is how the previous version of this
-  // test stayed green while `POST /v1/workspaces/:wsId/chat {"model":""}` still went through.
+  // floor before qualification, so it cannot show that a chat turn with
+  // `{"model":""}` is refused.
   it("is refused on the request path, where it is malformed rather than a clear", async () => {
     const runtime = await start("empty-request");
     try {
@@ -279,7 +279,7 @@ describe("a caller's own choice never becomes everyone's default", () => {
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -314,7 +314,7 @@ describe("the settings view is the configured one", () => {
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       models: { default: CONFIGURED_DEFAULT, fast: CONFIGURED_DEFAULT },
       workDir,
     });

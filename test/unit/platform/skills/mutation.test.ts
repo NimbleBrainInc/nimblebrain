@@ -175,9 +175,9 @@ describe("skills__create", () => {
     expect(sink.events.some((e) => e.type === "skill.created")).toBe(true);
   });
 
-  test("a skill cannot be created inside an automation run at all", async () => {
+  test("a skill cannot be created inside a task run at all", async () => {
     // This began as a provenance test. While a run's correlation id lived in
-    // `conversationId`, an automation-created skill was persisted as
+    // `conversationId`, a task-created skill was persisted as
     // `origin: "chat"` with a run id recorded as its conversation — wrong data
     // on disk. #1033 corrected the stamp; the unattended wall then removed the
     // path, which is the stronger guarantee: a skill is durable guidance that
@@ -199,7 +199,7 @@ describe("skills__create", () => {
           arguments: {
             scope: "org",
             manifest: { name: "run-authored", description: "made by a run", type: "skill" },
-            body: "From an automation.",
+            body: "From a task.",
           },
         }),
     );
@@ -209,7 +209,7 @@ describe("skills__create", () => {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
-    expect(text).toContain("not available inside an unattended automation run");
+    expect(text).toContain("not available inside an unattended task run");
 
     // Refused before the writer, not after it.
     expect(existsSync(join(workDir, "skills", "run-authored.md"))).toBe(false);

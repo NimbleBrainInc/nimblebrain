@@ -1,4 +1,4 @@
-import type { AutomationRun, AutomationSummary } from "../types.ts";
+import type { TaskRun, TaskSummary } from "../types.ts";
 import { relativeTime, statusDotClass } from "../utils.ts";
 
 const RUN_STATUS_LABEL: Record<string, string> = {
@@ -11,7 +11,7 @@ const RUN_STATUS_LABEL: Record<string, string> = {
   skipped: "Skipped",
 };
 
-function automationStatusLabel(s: AutomationSummary): string {
+function taskStatusLabel(s: TaskSummary): string {
   if (s.onceDone) return s.schedule;
   if (!s.enabled) return "Paused";
   if (s.disabledAt) return `Auto-disabled${s.disabledReason ? `: ${s.disabledReason}` : ""}`;
@@ -19,30 +19,30 @@ function automationStatusLabel(s: AutomationSummary): string {
   return RUN_STATUS_LABEL[s.lastRunStatus] || s.lastRunStatus;
 }
 
-/** Compact automation entry in the left rail. Click → open config view. */
-export function RailAutomationItem({
-  automation,
+/** Compact task entry in the left rail. Click → open config view. */
+export function RailTaskItem({
+  task,
   active,
   onClick,
 }: {
-  automation: AutomationSummary;
+  task: TaskSummary;
   active: boolean;
   onClick: () => void;
 }) {
   const dotClass = statusDotClass(
-    automation.lastRunStatus,
-    automation.enabled,
-    // AutomationSummary doesn't expose consecutiveErrors directly; backoff is
+    task.lastRunStatus,
+    task.enabled,
+    // TaskSummary doesn't expose consecutiveErrors directly; backoff is
     // surfaced via disabledReason / lastRunStatus. The detail view shows the
     // full state.
     undefined,
   );
   return (
     <button type="button" className={`rail-auto-item${active ? " active" : ""}`} onClick={onClick}>
-      <span className={`dot ${dotClass}`} title={automationStatusLabel(automation)} />
+      <span className={`dot ${dotClass}`} title={taskStatusLabel(task)} />
       <span className="rail-auto-text">
-        <span className="rail-auto-name">{automation.name}</span>
-        <span className="rail-auto-sub">{automation.schedule}</span>
+        <span className="rail-auto-name">{task.name}</span>
+        <span className="rail-auto-sub">{task.schedule}</span>
       </span>
     </button>
   );
@@ -51,17 +51,17 @@ export function RailAutomationItem({
 /** Compact run entry in the left rail. Click → open reader. */
 export function RailRunItem({
   run,
-  automationName,
+  taskName,
   active,
   onClick,
 }: {
-  run: AutomationRun;
-  automationName?: string;
+  run: TaskRun;
+  taskName?: string;
   active: boolean;
   onClick: () => void;
 }) {
   const dotClass = statusDotClass(run.status, true);
-  const label = automationName || run.automationId || "unknown";
+  const label = taskName || run.taskId || "unknown";
   const snippet = run.error
     ? `Error: ${run.error}`
     : run.resultPreview

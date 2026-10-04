@@ -6,7 +6,7 @@
  *  - A task leaves a RUN, not a conversation: each call returns a fresh
  *    `runId` and writes NO conversation (no resume path).
  *  - The deliverable rides back on `TaskResult.output`; the caller (the
- *    automations app) persists the run result sidecar.
+ *    tasks app) persists the run result sidecar.
  *  - `workspaceId` is required: the workspace's tool scope, and the one
  *    workspace the run is walled to. A task naming none is refused.
  *
@@ -75,7 +75,7 @@ describe("runtime.executeTask", () => {
     mkdirSync(workDir, { recursive: true });
     const r = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel(echoResponses) },
+      languageModel: createEchoModel(echoResponses),
       logging: { disabled: true },
       workDir,
     });
@@ -287,7 +287,7 @@ describe("runtime.executeTask", () => {
   });
 
   it("returns the last call's unified and raw finish reasons", async () => {
-    // The automations executor reads these to explain a run that ended
+    // The tasks executor reads these to explain a run that ended
     // "other"; its unit tests inject a TaskFnResult, so only this test covers
     // the engine → run handle → TaskResult passthrough.
     runtime = await bootRuntime({
@@ -437,7 +437,7 @@ describe("runtime.executeTask", () => {
     // Pins the event-shape contract the per-run usage accumulator in
     // runtime.executeTask depends on. The accumulator reads `data.usage`
     // off `llm.done` and counts `tool.done`; if either shape drifts it
-    // silently captures zeros — reverting automations to the exact 0/0/0/0
+    // silently captures zeros — reverting tasks to the exact 0/0/0/0
     // regression this whole change exists to kill, with the suite still
     // green. This test boots a REAL engine + echo model, aborts after the
     // first tool turn completes, and asserts the abort-return path carries
@@ -498,10 +498,10 @@ describe("runtime.executeTask", () => {
     expect(result.runId).toMatch(/^run_[a-z0-9_-]+$/i);
   });
 
-  it("refuses the automation-authoring surface from inside a run, even when named directly", async () => {
-    // The self-modification boundary. An automation runs unattended and can
+  it("refuses the task-authoring surface from inside a run, even when named directly", async () => {
+    // The self-modification boundary. A task runs unattended and can
     // ingest untrusted content, so it must not be able to rewrite/spawn/fire
-    // automations from within its own run. Surfacing subtraction keeps the model
+    // tasks from within its own run. Surfacing subtraction keeps the model
     // from seeing these tools; this test pins the HARD half — the source refuses
     // the call even when the model emits the name directly (the injection /
     // hallucination path), with VALID input so the refusal is the run-wall, not
@@ -545,10 +545,10 @@ describe("runtime.executeTask", () => {
     }
   });
 
-  it("still permits a read-only automations tool from inside a run", async () => {
+  it("still permits a read-only tasks tool from inside a run", async () => {
     // The boundary is scoped to the authoring surface: introspection tools stay
-    // reachable so an automation can report on automation health. `list` routes
-    // to the automations identity source and returns its normal result (an empty
+    // reachable so a task can report on task health. `list` routes
+    // to the tasks identity source and returns its normal result (an empty
     // list in this fresh workspace) — NOT the run-wall denial.
     runtime = await bootRuntime({
       responses: [
@@ -564,7 +564,7 @@ describe("runtime.executeTask", () => {
 
     const result = await runtime.executeTask({
       workspaceId: defaultWsId,
-      prompt: "check automation health",
+      prompt: "check task health",
       identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
     });
 
@@ -580,7 +580,7 @@ describe("runtime.executeTask", () => {
       workspaceId: defaultWsId,
       prompt: "tag check",
       identity: makeIdentity({ id: TEST_USER_ID, displayName: TEST_USER_DISPLAY }),
-      metadata: { automationId: "auto_test_123" },
+      metadata: { taskId: "auto_test_123" },
     });
 
     // A task is not a conversation: the caller's metadata has nowhere to be

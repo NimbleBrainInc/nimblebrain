@@ -37,8 +37,8 @@ export interface ParsedConversationPath {
 /**
  * Inverse of the builder: recover `{ wsId, ownerId }` from a conversation file or
  * directory path. Returns `null` for a path that is not under a
- * `workspaces/<wsId>/conversations/<ownerId>/...` subtree (e.g. a legacy flat
- * `conversations/<convId>.jsonl`), so the locator can skip it. The path is the
+ * `workspaces/<wsId>/conversations/<ownerId>/...` subtree, so the locator can
+ * skip it. The path is the
  * authority; this is how the locator recovers a conversation's workspace without
  * reading the file.
  */

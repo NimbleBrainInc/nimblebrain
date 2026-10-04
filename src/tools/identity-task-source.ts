@@ -4,7 +4,7 @@
  * 2026-07-28 leg) and to answer `tasks/get` and `tasks/cancel` for it.
  *
  * A connector's tasks live in its `McpSource` (`startToolAsTask` and friends).
- * An identity source's task is its own record: the automations source hands out
+ * An identity source's task is its own record: the tasks source hands out
  * the run id as the task id and answers a lookup from the run's ticket on disk,
  * so the handle outlives the request, the connection, and the process.
  *
@@ -28,7 +28,7 @@ export interface IdentityTaskResult {
 export type IdentityTaskStart =
   /** Started (or found already started, by idempotency key): poll this task. */
   | { task: Task }
-  /** Refused before any run existed (bad arguments, no such automation): the answer, inline. */
+  /** Refused before any run existed (bad arguments, no such task): the answer, inline. */
   | { result: IdentityTaskResult };
 
 export interface IdentityTaskSource {

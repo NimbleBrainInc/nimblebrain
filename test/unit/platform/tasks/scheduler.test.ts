@@ -3,14 +3,13 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StaticToolRouter } from "../../../../src/adapters/static-router.ts";
-import { automationRunsTotal } from "../../../../src/api/metrics.ts";
-import { resolveAutomationsConfig } from "../../../../src/config/automations.ts";
+import { taskRunsTotal } from "../../../../src/api/metrics.ts";
+import { resolveTasksConfig } from "../../../../src/config/tasks.ts";
 import { textContent } from "../../../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../../../src/engine/engine.ts";
 import type { ToolResult, ToolSchema } from "../../../../src/engine/types.ts";
 import { createDirectExecutor, type TaskFn } from "../../../../src/platform/tasks/executor.ts";
 import {
-  type AutomationRunTrigger,
   backoffDelay,
   budgetSpendAccounts,
   computeBudgetResetAt,
@@ -21,13 +20,10 @@ import {
   isInBackoff,
   isTransientError,
   Scheduler,
+  type TaskRunTrigger,
 } from "../../../../src/platform/tasks/scheduler.ts";
-import {
-  loadOwnerAutomations,
-  readRuns,
-  saveAutomation,
-} from "../../../../src/platform/tasks/store.ts";
-import type { Automation, AutomationRun } from "../../../../src/platform/tasks/types.ts";
+import { loadOwnerTasks, readRuns, saveTask } from "../../../../src/platform/tasks/store.ts";
+import type { Task, TaskRun } from "../../../../src/platform/tasks/types.ts";
 import { createRunAdmission } from "../../../../src/runtime/admission.ts";
 import {
   getRequestContext,
@@ -41,10 +37,10 @@ import { seedWorkspaceRoot } from "../../../helpers/test-workspace.ts";
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Automations are workspace-owned: the scheduler scans
+// Tasks are workspace-owned: the scheduler scans
 // `{workDir}/workspaces/<wsId>/tasks/<ownerId>/`. Tests seed ONE workspace
 // + owner; `makeTmpDir` returns the workDir root handed straight to the
-// Scheduler, and `seedDefs`/`loadDefs` write/read the per-automation store.
+// Scheduler, and `seedDefs`/`loadDefs` write/read the per-task store.
 const WS = "ws_0076759dbbe19fcc";
 const OWNER = "usr_test";
 
@@ -54,36 +50,36 @@ function makeTmpDir(): string {
   return dir;
 }
 
-/** Persist a definitions map to the per-automation store (one file per automation). */
-function seedDefs(workDir: string, defs: Map<string, Automation>, owner = OWNER, ws = WS): void {
+/** Persist a definitions map to the per-task store (one file per task). */
+function seedDefs(workDir: string, defs: Map<string, Task>, owner = OWNER, ws = WS): void {
   seedWorkspaceRoot(workDir, ws);
   for (const auto of defs.values()) {
     if (!auto.workspaceId) auto.workspaceId = ws;
     if (!auto.ownerId) auto.ownerId = owner;
-    saveAutomation(workDir, ws, owner, auto);
+    saveTask(workDir, ws, owner, auto);
   }
 }
 
-function loadDefs(workDir: string, owner = OWNER, ws = WS): Map<string, Automation> {
-  return loadOwnerAutomations(workDir, ws, owner);
+function loadDefs(workDir: string, owner = OWNER, ws = WS): Map<string, Task> {
+  return loadOwnerTasks(workDir, ws, owner);
 }
 
-/** Look up a seeded automation in the scheduler's composite-keyed map. */
-function defOf(scheduler: Scheduler, id: string, owner = OWNER, ws = WS): Automation | undefined {
+/** Look up a seeded task in the scheduler's composite-keyed map. */
+function defOf(scheduler: Scheduler, id: string, owner = OWNER, ws = WS): Task | undefined {
   return scheduler.getDefinitions().get(`${ws}/${owner}/${id}`);
 }
 
 /** Wrap a run in the executor's `{ run, result }` return shape. */
-function execOk(run: AutomationRun): { run: AutomationRun; result: null } {
+function execOk(run: TaskRun): { run: TaskRun; result: null } {
   return { run, result: null };
 }
 
-function makeAutomation(overrides: Partial<Automation> = {}): Automation {
+function makeTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "test-auto",
     ownerId: OWNER,
     workspaceId: WS,
-    name: "Test Automation",
+    name: "Test Task",
     prompt: "Do the thing",
     schedule: { type: "interval", intervalMs: 60_000 },
     enabled: true,
@@ -98,10 +94,10 @@ function makeAutomation(overrides: Partial<Automation> = {}): Automation {
   };
 }
 
-function makeSuccessRun(automationId: string): AutomationRun {
+function makeSuccessRun(taskId: string): TaskRun {
   return {
     id: `run_${Date.now()}`,
-    automationId,
+    taskId,
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
     status: "success",
@@ -112,10 +108,10 @@ function makeSuccessRun(automationId: string): AutomationRun {
   };
 }
 
-function makeFailureRun(automationId: string, error = "Something broke"): AutomationRun {
+function makeFailureRun(taskId: string, error = "Something broke"): TaskRun {
   return {
     id: `run_${Date.now()}`,
-    automationId,
+    taskId,
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
     status: "failure",
@@ -128,8 +124,8 @@ function makeFailureRun(automationId: string, error = "Something broke"): Automa
   };
 }
 
-function createMockExecutor(result?: AutomationRun): Executor {
-  return mock(async (auto: Automation, _signal: AbortSignal) => {
+function createMockExecutor(result?: TaskRun): Executor {
+  return mock(async (auto: Task, _signal: AbortSignal) => {
     return execOk(result ?? makeSuccessRun(auto.id));
   }) as Executor;
 }
@@ -144,14 +140,14 @@ function createThrowingExecutor(err: unknown): Executor {
 /** Create a delayed executor that resolves after a given delay (or never, until signaled). */
 function createBlockingExecutor(): {
   executor: Executor;
-  resolve: (run: AutomationRun) => void;
-  promise: Promise<{ run: AutomationRun; result: null }>;
+  resolve: (run: TaskRun) => void;
+  promise: Promise<{ run: TaskRun; result: null }>;
 } {
-  let resolve!: (run: AutomationRun) => void;
-  const promise = new Promise<{ run: AutomationRun; result: null }>((r) => {
-    resolve = (run: AutomationRun) => r(execOk(run));
+  let resolve!: (run: TaskRun) => void;
+  const promise = new Promise<{ run: TaskRun; result: null }>((r) => {
+    resolve = (run: TaskRun) => r(execOk(run));
   });
-  const executor: Executor = mock(async (_auto: Automation, _signal: AbortSignal) => {
+  const executor: Executor = mock(async (_auto: Task, _signal: AbortSignal) => {
     return promise;
   }) as Executor;
   return { executor, resolve, promise };
@@ -238,13 +234,13 @@ describe("backoffDelay", () => {
 
 describe("isInBackoff", () => {
   it("returns false when no errors", () => {
-    const auto = makeAutomation({ consecutiveErrors: 0 });
+    const auto = makeTask({ consecutiveErrors: 0 });
     expect(isInBackoff(auto, Date.now())).toBe(false);
   });
 
   it("returns true when in backoff period", () => {
     const futureTime = new Date(Date.now() + 60_000).toISOString();
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 1,
       nextRunAt: futureTime,
     });
@@ -253,7 +249,7 @@ describe("isInBackoff", () => {
 
   it("returns false when backoff period has passed", () => {
     const pastTime = new Date(Date.now() - 1000).toISOString();
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 1,
       nextRunAt: pastTime,
     });
@@ -261,7 +257,7 @@ describe("isInBackoff", () => {
   });
 
   it("returns false when no nextRunAt set", () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 2,
       nextRunAt: undefined,
     });
@@ -276,7 +272,7 @@ describe("isInBackoff", () => {
 describe("computeNextRunAt", () => {
   it("computes interval next run after lastRunAt", () => {
     const lastRun = Date.now() - 30_000; // 30s ago
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "interval", intervalMs: 60_000 },
       lastRunAt: new Date(lastRun).toISOString(),
     });
@@ -286,7 +282,7 @@ describe("computeNextRunAt", () => {
 
   it("interval fires immediately when no lastRunAt", () => {
     const now = Date.now();
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "interval", intervalMs: 60_000 },
       lastRunAt: undefined,
     });
@@ -296,7 +292,7 @@ describe("computeNextRunAt", () => {
 
   it("computes cron next run", () => {
     const now = Date.now();
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "cron", expression: "* * * * *" }, // every minute
     });
     const next = computeNextRunAt(auto, now);
@@ -309,7 +305,7 @@ describe("computeNextRunAt", () => {
   it("computes cron with timezone", () => {
     // "0 8 * * *" in Pacific/Honolulu should produce a valid next run
     const now = Date.now();
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: {
         type: "cron",
         expression: "0 8 * * *",
@@ -333,7 +329,7 @@ describe("computeNextRunAt", () => {
   });
 
   it("returns null for invalid schedule", () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "interval" }, // missing intervalMs
     });
     const next = computeNextRunAt(auto, Date.now());
@@ -347,24 +343,24 @@ describe("computeNextRunAt", () => {
 
 describe("isDue", () => {
   it("returns false when disabled", () => {
-    const auto = makeAutomation({ enabled: false });
+    const auto = makeTask({ enabled: false });
     expect(isDue(auto, Date.now())).toBe(false);
   });
 
   it("returns true when no nextRunAt (first interval run)", () => {
-    const auto = makeAutomation({ nextRunAt: undefined });
+    const auto = makeTask({ nextRunAt: undefined });
     expect(isDue(auto, Date.now())).toBe(true);
   });
 
   it("returns true when past nextRunAt", () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
     expect(isDue(auto, Date.now())).toBe(true);
   });
 
   it("returns false when before nextRunAt", () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() + 60_000).toISOString(),
     });
     expect(isDue(auto, Date.now())).toBe(false);
@@ -390,8 +386,8 @@ describe("Scheduler — timer arming", () => {
     const delayMs = 15_000; // 15s from now
     const nextRunAt = new Date(Date.now() + delayMs).toISOString();
 
-    const auto = makeAutomation({ nextRunAt });
-    const defs = new Map<string, Automation>();
+    const auto = makeTask({ nextRunAt });
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -419,7 +415,7 @@ describe("Scheduler — timer arming", () => {
   });
 
   it("arms the timer outside the request that triggered a reload", () => {
-    const auto = makeAutomation({ nextRunAt: new Date(Date.now() + 30_000).toISOString() });
+    const auto = makeTask({ nextRunAt: new Date(Date.now() + 30_000).toISOString() });
     seedDefs(tmpDir, new Map([[auto.id, auto]]));
     const scheduler = new Scheduler(createMockExecutor(), { workDir: tmpDir });
 
@@ -447,8 +443,8 @@ describe("Scheduler — timer arming", () => {
   it("arms timer to 60s when next-due > 60s", () => {
     const nextRunAt = new Date(Date.now() + 120_000).toISOString(); // 2 minutes out
 
-    const auto = makeAutomation({ nextRunAt });
-    const defs = new Map<string, Automation>();
+    const auto = makeTask({ nextRunAt });
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -471,9 +467,9 @@ describe("Scheduler — timer arming", () => {
     }
   });
 
-  it("arms timer to 60s when no automations are due", () => {
-    // No automations at all
-    const defs = new Map<string, Automation>();
+  it("arms timer to 60s when no tasks are due", () => {
+    // No tasks at all
+    const defs = new Map<string, Task>();
     seedDefs(tmpDir, defs);
 
     const executor = createMockExecutor();
@@ -513,12 +509,12 @@ describe("Scheduler — interval scheduling", () => {
 
   it("interval fires after intervalMs", async () => {
     const now = Date.now();
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "interval", intervalMs: 60_000 },
       lastRunAt: new Date(now - 60_001).toISOString(), // Just past due
       nextRunAt: new Date(now - 1).toISOString(), // Due now
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -534,12 +530,12 @@ describe("Scheduler — interval scheduling", () => {
   });
 
   it("interval with no lastRunAt fires immediately", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "interval", intervalMs: 60_000 },
       lastRunAt: undefined,
       nextRunAt: undefined, // Will be computed as "now" on start
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -576,7 +572,7 @@ describe("Scheduler — cron scheduling", () => {
   });
 
   it("cron 0 8 * * * with timezone Pacific/Honolulu fires at correct UTC time", () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: {
         type: "cron",
         expression: "0 8 * * *",
@@ -628,12 +624,12 @@ describe("Scheduler — cron schedule with no next run", () => {
   const PAST_YEAR = { type: "cron" as const, expression: "0 0 9 1 1 * 2020" };
 
   it("isDue is false for a cron schedule with no nextRunAt", () => {
-    const auto = makeAutomation({ schedule: FEB_31, nextRunAt: undefined });
+    const auto = makeTask({ schedule: FEB_31, nextRunAt: undefined });
     expect(isDue(auto, Date.now())).toBe(false);
   });
 
-  it("never runs a stored automation with no nextRunAt", async () => {
-    const auto = makeAutomation({ schedule: FEB_31, nextRunAt: undefined });
+  it("never runs a stored task with no nextRunAt", async () => {
+    const auto = makeTask({ schedule: FEB_31, nextRunAt: undefined });
     seedDefs(tmpDir, new Map([[auto.id, auto]]));
 
     const executor = createMockExecutor();
@@ -658,7 +654,7 @@ describe("Scheduler — cron schedule with no next run", () => {
   });
 
   it("clears a stale past nextRunAt on start and never runs it", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: FEB_31,
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
@@ -676,7 +672,7 @@ describe("Scheduler — cron schedule with no next run", () => {
   });
 
   it("runs a cron whose last date has passed once, then never again", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "cron", expression: "* * * * *" },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
@@ -689,7 +685,7 @@ describe("Scheduler — cron schedule with no next run", () => {
     // The schedule runs out of dates between reconciles: the stored file
     // now has a year that has passed while the timer still holds a due run.
     const stored = loadDefs(tmpDir).get(auto.id)!;
-    saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
+    saveTask(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
     defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
 
     await scheduler.onTimer();
@@ -701,7 +697,7 @@ describe("Scheduler — cron schedule with no next run", () => {
   });
 
   it("clears nextRunAt on a skipped run whose cron has no next run", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "cron", expression: "* * * * *" },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
@@ -716,7 +712,7 @@ describe("Scheduler — cron schedule with no next run", () => {
     // While the first run is still active, the schedule runs out of dates
     // and the timer still holds a due run, so the next tick skips it.
     const stored = loadDefs(tmpDir).get(auto.id)!;
-    saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
+    saveTask(tmpDir, WS, OWNER, { ...stored, schedule: PAST_YEAR });
     defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
     await scheduler.onTimer();
 
@@ -728,7 +724,7 @@ describe("Scheduler — cron schedule with no next run", () => {
   });
 
   it("still runs a normal cron and advances nextRunAt", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "cron", expression: "* * * * *" },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
@@ -763,11 +759,11 @@ describe("Scheduler — concurrency", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("skips second run while first is active (per-automation guard)", async () => {
-    const auto = makeAutomation({
+  it("skips second run while first is active (per-task guard)", async () => {
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -792,10 +788,10 @@ describe("Scheduler — concurrency", () => {
     scheduler.stop();
   });
 
-  /** Three automations due at staggered past moments, each run held open until resolved. */
-  function seedThreeDue(workDir: string, schedule?: Automation["schedule"]): Automation[] {
+  /** Three tasks due at staggered past moments, each run held open until resolved. */
+  function seedThreeDue(workDir: string, schedule?: Task["schedule"]): Task[] {
     const autos = [3000, 2000, 1000].map((ago, i) =>
-      makeAutomation({
+      makeTask({
         id: `auto-${i + 1}`,
         name: `Auto ${i + 1}`,
         ...(schedule ? { schedule } : {}),
@@ -812,11 +808,11 @@ describe("Scheduler — concurrency", () => {
     callLog: string[];
     release: () => void;
   } {
-    const pending: Array<(run: AutomationRun) => void> = [];
+    const pending: Array<(run: TaskRun) => void> = [];
     const callLog: string[] = [];
-    const executor: Executor = mock(async (auto: Automation, _signal: AbortSignal) => {
+    const executor: Executor = mock(async (auto: Task, _signal: AbortSignal) => {
       callLog.push(auto.id);
-      return new Promise<{ run: AutomationRun; result: null }>((resolve) => {
+      return new Promise<{ run: TaskRun; result: null }>((resolve) => {
         pending.push((run) => resolve(execOk(run)));
       });
     }) as Executor;
@@ -845,7 +841,7 @@ describe("Scheduler — concurrency", () => {
     expect(defOf(scheduler, auto3.id)?.nextRunAt).toBe(auto3.nextRunAt);
     expect(loadDefs(tmpDir).get(auto3.id)?.nextRunAt).toBe(auto3.nextRunAt);
 
-    // The slots free; the next tick runs the deferred automation.
+    // The slots free; the next tick runs the deferred task.
     release();
     await tick;
     // The settled tick re-arms at zero delay for the run it deferred.
@@ -867,9 +863,9 @@ describe("Scheduler — concurrency", () => {
     };
     // Two runs due before it hold both slots.
     const busy = ["busy-1", "busy-2"].map((id, i) =>
-      makeAutomation({ id, nextRunAt: new Date(at.getTime() - (2 - i) * 60_000).toISOString() }),
+      makeTask({ id, nextRunAt: new Date(at.getTime() - (2 - i) * 60_000).toISOString() }),
     );
-    const send = makeAutomation({ id: "send-01", schedule: oneShot, nextRunAt: at.toISOString() });
+    const send = makeTask({ id: "send-01", schedule: oneShot, nextRunAt: at.toISOString() });
     seedDefs(tmpDir, new Map([...busy, send].map((a) => [a.id, a])));
 
     const { executor, callLog, release } = createHeldExecutor();
@@ -883,7 +879,7 @@ describe("Scheduler — concurrency", () => {
     // send-01 is deferred behind the two older due runs.
     expect(callLog).toEqual(busy.map((a) => a.id));
 
-    // Any automation mutation reloads; the deferred one-shot must keep its run.
+    // Any task mutation reloads; the deferred one-shot must keep its run.
     scheduler.reload();
     expect(defOf(scheduler, send.id)?.nextRunAt).toBe(at.toISOString());
 
@@ -947,16 +943,16 @@ describe("Scheduler — backoff", () => {
   });
 
   it("records a membership-revoked run as skipped, not a failure (self-heals)", async () => {
-    // The runtime denies an automation whose owner was removed from its
+    // The runtime denies a task whose owner was removed from its
     // provenance workspace by throwing an error with this stable code. The
     // scheduler must classify it as SKIPPED, so it does NOT increment
-    // consecutiveErrors or trip the auto-disable — the automation resumes the
+    // consecutiveErrors or trip the auto-disable — the task resumes the
     // moment the owner is re-added.
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 3,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -970,16 +966,16 @@ describe("Scheduler — backoff", () => {
 
     expect(run?.status).toBe("skipped");
     const updated = defOf(scheduler, auto.id)!;
-    // consecutiveErrors unchanged (not bumped to 4), automation still enabled.
+    // consecutiveErrors unchanged (not bumped to 4), task still enabled.
     expect(updated.consecutiveErrors).toBe(3);
     expect(updated.enabled).toBe(true);
   });
 
   it("after 1 failure, next run delayed by 30s", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1000,11 +996,11 @@ describe("Scheduler — backoff", () => {
   });
 
   it("after 3 failures, next run delayed by 5m", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 2, // Already has 2 errors
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1025,11 +1021,11 @@ describe("Scheduler — backoff", () => {
   });
 
   it("backoff resets to 0 on successful run", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 3,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1072,9 +1068,9 @@ describe("Scheduler — reload", () => {
 
     expect(scheduler.getDefinitions().size).toBe(0);
 
-    // Add a new automation to the store externally
-    const auto = makeAutomation({ id: "new-auto" });
-    const defs = new Map<string, Automation>();
+    // Add a new task to the store externally
+    const auto = makeTask({ id: "new-auto" });
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1102,8 +1098,8 @@ describe("Scheduler — onRunRecorded", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function seedOne(): Automation {
-    const auto = makeAutomation({ nextRunAt: new Date(Date.now() - 1000).toISOString() });
+  function seedOne(): Task {
+    const auto = makeTask({ nextRunAt: new Date(Date.now() - 1000).toISOString() });
     seedDefs(tmpDir, new Map([[auto.id, auto]]));
     return auto;
   }
@@ -1176,11 +1172,11 @@ describe("Scheduler — runNow", () => {
 
   it("runNow() bypasses schedule and backoff", async () => {
     const futureTime = new Date(Date.now() + 999_999_999).toISOString();
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 5, // In heavy backoff
       nextRunAt: futureTime,
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1197,10 +1193,10 @@ describe("Scheduler — runNow", () => {
     scheduler.stop();
   });
 
-  it("runNow() runs a disabled automation that an event would skip", async () => {
+  it("runNow() runs a disabled task that an event would skip", async () => {
     // One rule for `enabled`: it gates unattended triggers, and Run now is
-    // the attended one. Both triggers against the same disabled automation.
-    const auto = makeAutomation({ enabled: false });
+    // the attended one. Both triggers against the same disabled task.
+    const auto = makeTask({ enabled: false });
     seedDefs(tmpDir, new Map([[auto.id, auto]]));
 
     const executor = createMockExecutor();
@@ -1208,7 +1204,7 @@ describe("Scheduler — runNow", () => {
     scheduler.start();
 
     const fromEvent = await scheduler.runFromEvent(WS, OWNER, auto.id, { preamble: "x" });
-    expect(fromEvent).toEqual({ skipped: "the automation is disabled" });
+    expect(fromEvent).toEqual({ skipped: "the task is disabled" });
     expect(executor).not.toHaveBeenCalled();
 
     const run = await scheduler.runNow(WS, OWNER, auto.id);
@@ -1218,7 +1214,7 @@ describe("Scheduler — runNow", () => {
     scheduler.stop();
   });
 
-  it("runNow() returns null for unknown automation", async () => {
+  it("runNow() returns null for unknown task", async () => {
     seedDefs(tmpDir, new Map());
 
     const executor = createMockExecutor();
@@ -1231,11 +1227,11 @@ describe("Scheduler — runNow", () => {
     scheduler.stop();
   });
 
-  it("runNow() skips if automation is already running", async () => {
-    const auto = makeAutomation({
+  it("runNow() skips if task is already running", async () => {
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1263,20 +1259,18 @@ describe("Scheduler — runNow", () => {
     // hung for 300s, the synthesized failure record had
     // startedAt == completedAt to the millisecond — operators couldn't
     // tell a 5-minute hang from a 5-millisecond setup crash.
-    const auto = makeAutomation({
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
     const SLEEP_MS = 50;
-    const executor: Executor = mock(
-      async (_auto: Automation, _signal: AbortSignal): Promise<never> => {
-        await new Promise((r) => setTimeout(r, SLEEP_MS));
-        throw new Error("Automation slow timed out after 1s");
-      },
-    );
+    const executor: Executor = mock(async (_auto: Task, _signal: AbortSignal): Promise<never> => {
+      await new Promise((r) => setTimeout(r, SLEEP_MS));
+      throw new Error("Task slow timed out after 1s");
+    });
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
 
@@ -1307,15 +1301,15 @@ describe("Scheduler — stop", () => {
   });
 
   it("stop() aborts active runs", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
     let receivedSignal: AbortSignal | null = null;
-    const executor: Executor = mock(async (_auto: Automation, signal: AbortSignal) => {
+    const executor: Executor = mock(async (_auto: Task, signal: AbortSignal) => {
       receivedSignal = signal;
       // Block forever
       return new Promise<never>(() => {});
@@ -1354,11 +1348,11 @@ describe("Scheduler — updateAfterRun", () => {
   });
 
   it("increments runCount on each run", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       runCount: 5,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1374,10 +1368,10 @@ describe("Scheduler — updateAfterRun", () => {
   });
 
   it("updates lastRunAt and lastRunStatus", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1394,10 +1388,10 @@ describe("Scheduler — updateAfterRun", () => {
   });
 
   it("persists updated definitions to disk", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1429,13 +1423,13 @@ describe("Scheduler — backoff respects natural interval", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("30-min interval automation with 1 error delays by 30min, not 30s", async () => {
-    const auto = makeAutomation({
+  it("30-min interval task with 1 error delays by 30min, not 30s", async () => {
+    const auto = makeTask({
       schedule: { type: "interval", intervalMs: 1_800_000 }, // 30 min
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
       lastRunAt: new Date(Date.now() - 1_800_001).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1453,14 +1447,14 @@ describe("Scheduler — backoff respects natural interval", () => {
     scheduler.stop();
   });
 
-  it("1-min interval automation with 5 errors delays by 1hr (backoff > interval)", async () => {
-    const auto = makeAutomation({
+  it("1-min interval task with 5 errors delays by 1hr (backoff > interval)", async () => {
+    const auto = makeTask({
       schedule: { type: "interval", intervalMs: 60_000 }, // 1 min
       consecutiveErrors: 4,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
       lastRunAt: new Date(Date.now() - 60_001).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1479,13 +1473,13 @@ describe("Scheduler — backoff respects natural interval", () => {
   });
 
   it("success resets to natural interval regardless of previous errors", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "interval", intervalMs: 1_800_000 },
       consecutiveErrors: 5,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
       lastRunAt: new Date(Date.now() - 1_800_001).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1499,7 +1493,7 @@ describe("Scheduler — backoff respects natural interval", () => {
     scheduler.stop();
   });
 
-  it("cron automation with 1 error delays to next cron occurrence, not 30s", async () => {
+  it("cron task with 1 error delays to next cron occurrence, not 30s", async () => {
     // Pin the clock to noon HST so the next 8am (daily) is ~20h out —
     // deterministically far beyond the 30s backoff. With the real clock this
     // test flaked whenever CI ran in the 07:59 HST minute: there the natural
@@ -1508,11 +1502,11 @@ describe("Scheduler — backoff respects natural interval", () => {
     const FIXED_NOW = Date.parse("2026-07-15T22:00:00.000Z"); // 12:00 Pacific/Honolulu
     const nowSpy = spyOn(Date, "now").mockReturnValue(FIXED_NOW);
     try {
-      const auto = makeAutomation({
+      const auto = makeTask({
         schedule: { type: "cron", expression: "0 8 * * *", timezone: "Pacific/Honolulu" },
         nextRunAt: new Date(Date.now() - 1000).toISOString(),
       });
-      const defs = new Map<string, Automation>();
+      const defs = new Map<string, Task>();
       defs.set(auto.id, auto);
       seedDefs(tmpDir, defs);
 
@@ -1554,14 +1548,14 @@ describe("Scheduler — skipped runs advance nextRunAt", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("a skip refused because the workspace is gone drops the automation instead of re-arming at zero delay", async () => {
+  it("a skip refused because the workspace is gone drops the task instead of re-arming at zero delay", async () => {
     // `recordSkipped` writes before it advances `nextRunAt`, so a refused
-    // write leaves the automation due. Kept, the timer would re-arm at zero
+    // write leaves the task due. Kept, the timer would re-arm at zero
     // delay and sweep it again immediately, forever.
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(
       "auto-ghost",
-      makeAutomation({
+      makeTask({
         id: "auto-ghost",
         nextRunAt: new Date(Date.now() - 1000).toISOString(),
       }),
@@ -1601,11 +1595,11 @@ describe("Scheduler — auto-disable", () => {
   });
 
   it("9 consecutive errors does not auto-disable", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 8,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1622,11 +1616,11 @@ describe("Scheduler — auto-disable", () => {
   });
 
   it("10 consecutive errors triggers auto-disable", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 9,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1644,14 +1638,14 @@ describe("Scheduler — auto-disable", () => {
     scheduler.stop();
   });
 
-  it("auto-disabled automation does not fire on next timer tick", async () => {
-    const auto = makeAutomation({
+  it("auto-disabled task does not fire on next timer tick", async () => {
+    const auto = makeTask({
       enabled: false,
       disabledAt: new Date().toISOString(),
       disabledReason: "Auto-disabled after 10 consecutive failures",
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1679,16 +1673,16 @@ describe("Scheduler — cancelRun", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("cancelRun on active automation returns true and aborts", async () => {
-    const auto = makeAutomation({
+  it("cancelRun on active task returns true and aborts", async () => {
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
     let receivedSignal: AbortSignal | null = null;
-    const executor: Executor = mock(async (_auto: Automation, signal: AbortSignal) => {
+    const executor: Executor = mock(async (_auto: Task, signal: AbortSignal) => {
       receivedSignal = signal;
       return new Promise<never>(() => {}); // block forever
     });
@@ -1706,11 +1700,11 @@ describe("Scheduler — cancelRun", () => {
     scheduler.stop();
   });
 
-  it("cancelRun on idle automation returns false", () => {
-    const auto = makeAutomation({
+  it("cancelRun on idle task returns false", () => {
+    const auto = makeTask({
       nextRunAt: new Date(Date.now() + 999_999).toISOString(), // not due
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1739,12 +1733,12 @@ describe("Scheduler — cumulative token tracking", () => {
   });
 
   it("increments cumulative tokens after each run", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       cumulativeInputTokens: 500,
       cumulativeOutputTokens: 100,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1763,13 +1757,13 @@ describe("Scheduler — cumulative token tracking", () => {
   });
 
   it("auto-disables when token budget exceeded", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       cumulativeInputTokens: 4500,
       cumulativeOutputTokens: 0,
       tokenBudget: { maxInputTokens: 5000 },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1787,14 +1781,14 @@ describe("Scheduler — cumulative token tracking", () => {
   });
 
   it("resets cumulative counters when budgetResetAt is in the past", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       cumulativeInputTokens: 50_000,
       cumulativeOutputTokens: 5_000,
       tokenBudget: { maxInputTokens: 100_000, period: "daily" },
       budgetResetAt: new Date(Date.now() - 1000).toISOString(), // 1 second ago
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1859,8 +1853,8 @@ describe("computeBudgetResetAt", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Multi-owner: the scheduler scans users/*/automations and fires each
-// automation as its owner. Colliding kebab ids across owners must stay
+// Multi-owner: the scheduler scans users/*/tasks and fires each
+// task as its owner. Colliding kebab ids across owners must stay
 // isolated (the whole point of composite ${ownerId}/${id} keys).
 // ---------------------------------------------------------------------------
 
@@ -1875,17 +1869,17 @@ describe("Scheduler — multi-owner", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("loads + fires automations across owners; colliding ids stay isolated per owner", async () => {
+  it("loads + fires tasks across owners; colliding ids stay isolated per owner", async () => {
     // Two owners in one workspace, SAME kebab id — only composite-key
     // isolation (${wsId}/${ownerId}/${id}) keeps them apart.
     const due = new Date(Date.now() - 1000).toISOString();
-    const a = makeAutomation({ id: "daily-digest", ownerId: "usr_a", nextRunAt: due });
-    const b = makeAutomation({ id: "daily-digest", ownerId: "usr_b", nextRunAt: due });
+    const a = makeTask({ id: "daily-digest", ownerId: "usr_a", nextRunAt: due });
+    const b = makeTask({ id: "daily-digest", ownerId: "usr_b", nextRunAt: due });
     seedDefs(root, new Map([[a.id, a]]), "usr_a");
     seedDefs(root, new Map([[b.id, b]]), "usr_b");
 
     const fired: Array<string | undefined> = [];
-    const executor: Executor = mock(async (auto: Automation) => {
+    const executor: Executor = mock(async (auto: Task) => {
       fired.push(auto.ownerId);
       return execOk(makeSuccessRun(auto.id));
     }) as Executor;
@@ -1895,21 +1889,21 @@ describe("Scheduler — multi-owner", () => {
     await scheduler.onTimer();
     scheduler.stop();
 
-    // Both owners' automations fired, each carrying its own owner identity.
+    // Both owners' tasks fired, each carrying its own owner identity.
     expect(fired.sort()).toEqual(["usr_a", "usr_b"]);
     // Each run persisted to ITS OWN store — no cross-owner clobber.
     expect(loadDefs(root, "usr_a").get("daily-digest")!.runCount).toBe(1);
     expect(loadDefs(root, "usr_b").get("daily-digest")!.runCount).toBe(1);
   });
 
-  it("runNow targets the owner-qualified automation when ids collide", async () => {
-    const a = makeAutomation({ id: "shared", ownerId: "usr_a", enabled: false });
-    const b = makeAutomation({ id: "shared", ownerId: "usr_b", enabled: false });
+  it("runNow targets the owner-qualified task when ids collide", async () => {
+    const a = makeTask({ id: "shared", ownerId: "usr_a", enabled: false });
+    const b = makeTask({ id: "shared", ownerId: "usr_b", enabled: false });
     seedDefs(root, new Map([[a.id, a]]), "usr_a");
     seedDefs(root, new Map([[b.id, b]]), "usr_b");
 
     const fired: string[] = [];
-    const executor: Executor = mock(async (auto: Automation) => {
+    const executor: Executor = mock(async (auto: Task) => {
       fired.push(`${auto.ownerId}/${auto.id}`);
       return execOk(makeSuccessRun(auto.id));
     }) as Executor;
@@ -1920,7 +1914,7 @@ describe("Scheduler — multi-owner", () => {
     scheduler.stop();
 
     expect(run).not.toBeNull();
-    expect(fired).toEqual(["usr_b/shared"]); // only B's automation ran
+    expect(fired).toEqual(["usr_b/shared"]); // only B's task ran
   });
 });
 
@@ -1941,19 +1935,19 @@ describe("Scheduler — run trigger", () => {
 
   /** Executor that records the `trigger` it was dispatched with. */
   function recordingExecutor(triggers: string[]): Executor {
-    return (async (auto: Automation, _signal: AbortSignal, trigger: string) => {
+    return (async (auto: Task, _signal: AbortSignal, trigger: string) => {
       triggers.push(trigger);
       return execOk(makeSuccessRun(auto.id));
     }) as Executor;
   }
 
   it("dispatches scheduled (timer) runs with trigger 'scheduled'", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "interval", intervalMs: 60_000 },
       lastRunAt: new Date(Date.now() - 60_001).toISOString(),
       nextRunAt: new Date(Date.now() - 1).toISOString(),
     });
-    const defs = new Map<string, Automation>();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1967,8 +1961,8 @@ describe("Scheduler — run trigger", () => {
   });
 
   it("dispatches runNow (test button) runs with trigger 'manual'", async () => {
-    const auto = makeAutomation();
-    const defs = new Map<string, Automation>();
+    const auto = makeTask();
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
 
@@ -1997,8 +1991,8 @@ describe("Scheduler — event schedules", () => {
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  function eventAutomation(overrides: Partial<Automation> = {}): Automation {
-    return makeAutomation({
+  function eventTask(overrides: Partial<Task> = {}): Task {
+    return makeTask({
       id: "reply-triage",
       schedule: {
         type: "event",
@@ -2009,21 +2003,19 @@ describe("Scheduler — event schedules", () => {
   }
 
   it("has no next run", () => {
-    expect(computeNextRunAt(eventAutomation(), Date.now())).toBeNull();
+    expect(computeNextRunAt(eventTask(), Date.now())).toBeNull();
   });
 
   // An absent `nextRunAt` means "due immediately" for a clock schedule that has
   // not run yet, and an event schedule has none by construction. Without the
   // explicit test, the timer fires it on every tick.
   it("is never due, even with no nextRunAt", () => {
-    expect(isDue(eventAutomation(), Date.now())).toBe(false);
-    expect(isDue(eventAutomation({ nextRunAt: new Date(0).toISOString() }), Date.now())).toBe(
-      false,
-    );
+    expect(isDue(eventTask(), Date.now())).toBe(false);
+    expect(isDue(eventTask({ nextRunAt: new Date(0).toISOString() }), Date.now())).toBe(false);
   });
 
   it("is not seeded with a nextRunAt at start", () => {
-    seedDefs(workDir, new Map([["reply-triage", eventAutomation()]]));
+    seedDefs(workDir, new Map([["reply-triage", eventTask()]]));
     const scheduler = new Scheduler(createMockExecutor(), { workDir });
     scheduler.start();
     expect(defOf(scheduler, "reply-triage")?.nextRunAt).toBeUndefined();
@@ -2032,7 +2024,7 @@ describe("Scheduler — event schedules", () => {
   });
 
   it("does not arm the timer at zero delay, and the tick never runs it", async () => {
-    seedDefs(workDir, new Map([["reply-triage", eventAutomation()]]));
+    seedDefs(workDir, new Map([["reply-triage", eventTask()]]));
     const executor = createMockExecutor();
     const scheduler = new Scheduler(executor, { workDir });
     scheduler.start();
@@ -2042,7 +2034,7 @@ describe("Scheduler — event schedules", () => {
   });
 
   it("runFromEvent runs it anyway, and the run says what woke it", async () => {
-    seedDefs(workDir, new Map([["reply-triage", eventAutomation()]]));
+    seedDefs(workDir, new Map([["reply-triage", eventTask()]]));
     const executor = createMockExecutor();
     const scheduler = new Scheduler(executor, { workDir });
     scheduler.start();
@@ -2061,18 +2053,18 @@ describe("Scheduler — event schedules", () => {
   });
 
   it("reports why a run did not start rather than failing silently", async () => {
-    seedDefs(workDir, new Map([["reply-triage", eventAutomation({ enabled: false })]]));
+    seedDefs(workDir, new Map([["reply-triage", eventTask({ enabled: false })]]));
     const executor = createMockExecutor();
     const scheduler = new Scheduler(executor, { workDir });
     scheduler.start();
 
     const outcome = await scheduler.runFromEvent(WS, OWNER, "reply-triage", { preamble: "x" });
-    expect(outcome).toEqual({ skipped: "the automation is disabled" });
+    expect(outcome).toEqual({ skipped: "the task is disabled" });
     expect(executor).not.toHaveBeenCalled();
 
     const missing = await scheduler.runFromEvent(WS, OWNER, "nope", { preamble: "x" });
     expect(missing).toEqual({
-      skipped: "the automation is no longer in this workspace",
+      skipped: "the task is no longer in this workspace",
     });
     scheduler.stop();
   });
@@ -2081,7 +2073,7 @@ describe("Scheduler — event schedules", () => {
   // fire ceiling — which counts event runs off the run index — undercounts
   // exactly the runs a runaway loop produces.
   it("stamps the trigger on a run that threw", async () => {
-    seedDefs(workDir, new Map([["reply-triage", eventAutomation()]]));
+    seedDefs(workDir, new Map([["reply-triage", eventTask()]]));
     const scheduler = new Scheduler(createThrowingExecutor(new Error("boom")), { workDir });
     scheduler.start();
     const outcome = await scheduler.runFromEvent(WS, OWNER, "reply-triage", { preamble: "x" });
@@ -2101,14 +2093,14 @@ describe("Scheduler — degraded runs", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  /** One `nb_automation_runs_total` series. Read as a delta: the registry is process-global. */
+  /** One `nb_task_runs_total` series. Read as a delta: the registry is process-global. */
   async function runsCounted(status: string): Promise<number> {
-    const metric = await automationRunsTotal.get();
+    const metric = await taskRunsTotal.get();
     return metric.values.find((v) => v.labels.status === status)?.value ?? 0;
   }
 
-  async function runOnce(auto: Automation, executor: Executor): Promise<Automation> {
-    const defs = new Map<string, Automation>();
+  async function runOnce(auto: Task, executor: Executor): Promise<Task> {
+    const defs = new Map<string, Task>();
     defs.set(auto.id, auto);
     seedDefs(tmpDir, defs);
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
@@ -2119,11 +2111,11 @@ describe("Scheduler — degraded runs", () => {
   }
 
   it("records lastRunStatus degraded and clears the error streak", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       consecutiveErrors: 5,
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
-    const degraded: AutomationRun = {
+    const degraded: TaskRun = {
       ...makeSuccessRun(auto.id),
       status: "degraded",
       error: "1 tool call(s) failed and were not retried to success: outlook__send_mail ×1.",
@@ -2140,9 +2132,9 @@ describe("Scheduler — degraded runs", () => {
       failure: await runsCounted("failure"),
     };
 
-    const a = makeAutomation({ id: "a", nextRunAt: new Date(Date.now() - 1000).toISOString() });
+    const a = makeTask({ id: "a", nextRunAt: new Date(Date.now() - 1000).toISOString() });
     await runOnce(a, createMockExecutor({ ...makeSuccessRun("a"), status: "degraded" }));
-    const b = makeAutomation({ id: "b", nextRunAt: new Date(Date.now() - 1000).toISOString() });
+    const b = makeTask({ id: "b", nextRunAt: new Date(Date.now() - 1000).toISOString() });
     await runOnce(b, createThrowingExecutor(new Error("boom")));
 
     expect(await runsCounted("degraded")).toBe(before.degraded + 1);
@@ -2170,7 +2162,7 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
   const BAD_TZ = { type: "cron" as const, expression: "* * * * *", timezone: "Not/AZone" };
 
   it("never runs a stored row with a past nextRunAt, and clears it", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: BAD_TZ,
       nextRunAt: new Date(Date.now() - 60_000).toISOString(),
     });
@@ -2188,7 +2180,7 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
   });
 
   it("records the run and clears nextRunAt when the next run fails to compute after it", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "cron", expression: "* * * * *" },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
@@ -2201,7 +2193,7 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
     // The stored row's timezone stops resolving while the timer still holds
     // a due run.
     const stored = loadDefs(tmpDir).get(auto.id)!;
-    saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
+    saveTask(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
     defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
 
     for (let tick = 0; tick < 5; tick++) await scheduler.onTimer();
@@ -2213,7 +2205,7 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
   });
 
   it("clears nextRunAt on a skipped run whose next run fails to compute", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       schedule: { type: "cron", expression: "* * * * *" },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
@@ -2228,7 +2220,7 @@ describe("Scheduler — cron schedule whose next run cannot be computed", () => 
     // While the first run is still active, the timezone stops resolving and
     // the timer still holds a due run, so the next tick skips it.
     const stored = loadDefs(tmpDir).get(auto.id)!;
-    saveAutomation(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
+    saveTask(tmpDir, WS, OWNER, { ...stored, schedule: BAD_TZ });
     defOf(scheduler, auto.id)!.nextRunAt = new Date(Date.now() - 1000).toISOString();
     await scheduler.onTimer();
 
@@ -2267,9 +2259,9 @@ describe("Scheduler — run queue", () => {
     const pending: Array<{ id: string; resolve: () => void }> = [];
     const started: string[] = [];
     const executor: Executor = mock(
-      async (auto: Automation, _signal: AbortSignal, trigger: AutomationRunTrigger) => {
+      async (auto: Task, _signal: AbortSignal, trigger: TaskRunTrigger) => {
         started.push(auto.id);
-        return new Promise<{ run: AutomationRun; result: null }>((resolve) => {
+        return new Promise<{ run: TaskRun; result: null }>((resolve) => {
           pending.push({
             id: auto.id,
             resolve: () => resolve(execOk({ ...makeSuccessRun(auto.id), trigger })),
@@ -2287,13 +2279,11 @@ describe("Scheduler — run queue", () => {
     };
   }
 
-  /** Disabled automations (so the timer never fires them), one per id. */
-  function seedIdle(ids: string[], overrides: Partial<Automation> = {}): void {
+  /** Disabled tasks (so the timer never fires them), one per id. */
+  function seedIdle(ids: string[], overrides: Partial<Task> = {}): void {
     seedDefs(
       tmpDir,
-      new Map(
-        ids.map((id) => [id, makeAutomation({ id, name: id, enabled: false, ...overrides })]),
-      ),
+      new Map(ids.map((id) => [id, makeTask({ id, name: id, enabled: false, ...overrides })])),
     );
   }
 
@@ -2348,15 +2338,15 @@ describe("Scheduler — run queue", () => {
     if (third?.state !== "queued") throw new Error("expected queued");
     const run = await third.run;
     expect(run.status).toBe("success");
-    expect(run.automationId).toBe("c");
+    expect(run.taskId).toBe("c");
     expect(readRuns(tmpDir, WS, OWNER, "c").map((r) => r.status)).toEqual(["success"]);
     scheduler.stop();
   });
 
-  it("takes its slot count and queue limit from the automations config", async () => {
+  it("takes its slot count and queue limit from the tasks config", async () => {
     seedIdle(["a", "b", "c", "d", "e"]);
     const { executor, started, releaseAll } = createSlotExecutor();
-    const { maxConcurrentRuns, maxQueuedRuns } = resolveAutomationsConfig({
+    const { maxConcurrentRuns, maxQueuedRuns } = resolveTasksConfig({
       maxConcurrentRuns: 3,
       maxQueuedRuns: 1,
     });
@@ -2426,7 +2416,7 @@ describe("Scheduler — run queue", () => {
     scheduler.stop();
   });
 
-  it("refuses a Run now for an automation that is already queued", async () => {
+  it("refuses a Run now for a task that is already queued", async () => {
     seedIdle(["a", "b"]);
     const { executor, releaseAll } = createSlotExecutor();
     const scheduler = new Scheduler(executor, {
@@ -2452,7 +2442,7 @@ describe("Scheduler — run queue", () => {
 
   it("a refused Run now leaves the schedule alone", async () => {
     const nextRunAt = new Date(Date.now() + 3_600_000).toISOString();
-    seedDefs(tmpDir, new Map([["a", makeAutomation({ id: "a", nextRunAt })]]));
+    seedDefs(tmpDir, new Map([["a", makeTask({ id: "a", nextRunAt })]]));
     const { executor, releaseAll } = createSlotExecutor();
     const scheduler = new Scheduler(executor, { workDir: tmpDir });
     scheduler.start();
@@ -2515,8 +2505,8 @@ describe("Scheduler — run queue", () => {
     seedDefs(
       tmpDir,
       new Map([
-        ["a", makeAutomation({ id: "a", enabled: false })],
-        ["ev", makeAutomation({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
+        ["a", makeTask({ id: "a", enabled: false })],
+        ["ev", makeTask({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
       ]),
     );
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();
@@ -2547,8 +2537,8 @@ describe("Scheduler — run queue", () => {
     seedDefs(
       tmpDir,
       new Map([
-        ["a", makeAutomation({ id: "a", enabled: false })],
-        ["ev", makeAutomation({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
+        ["a", makeTask({ id: "a", enabled: false })],
+        ["ev", makeTask({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
       ]),
     );
     const { executor, releaseAll } = createSlotExecutor();
@@ -2569,13 +2559,13 @@ describe("Scheduler — run queue", () => {
     scheduler.stop();
   });
 
-  /** An enabled event automation `ev`, plus idle automations that hold slots and queue places. */
+  /** An enabled event task `ev`, plus idle tasks that hold slots and queue places. */
   function seedEventAnd(idle: string[]): void {
     seedDefs(
       tmpDir,
-      new Map<string, Automation>([
-        ...idle.map((id): [string, Automation] => [id, makeAutomation({ id, enabled: false })]),
-        ["ev", makeAutomation({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
+      new Map<string, Task>([
+        ...idle.map((id): [string, Task] => [id, makeTask({ id, enabled: false })]),
+        ["ev", makeTask({ id: "ev", schedule: { type: "event", match: { source: "x" } } })],
       ]),
     );
   }
@@ -2668,10 +2658,10 @@ describe("Scheduler — run queue", () => {
     seedDefs(
       tmpDir,
       new Map([
-        ["a", makeAutomation({ id: "a", enabled: false })],
+        ["a", makeTask({ id: "a", enabled: false })],
         [
           "x",
-          makeAutomation({
+          makeTask({
             id: "x",
             enabled: false,
             tokenBudget: { maxInputTokens: 5000, period: "daily" },
@@ -2771,12 +2761,12 @@ describe("Scheduler — token budget applies to every run", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function runOf(id: string, inputTokens: number): AutomationRun {
+  function runOf(id: string, inputTokens: number): TaskRun {
     return { ...makeSuccessRun(id), inputTokens, outputTokens: 0 };
   }
 
-  it("accumulates a disabled automation's Run now spend", async () => {
-    const auto = makeAutomation({
+  it("accumulates a disabled task's Run now spend", async () => {
+    const auto = makeTask({
       enabled: false,
       tokenBudget: { maxInputTokens: 5000, period: "daily" },
       budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -2792,8 +2782,8 @@ describe("Scheduler — token budget applies to every run", () => {
     scheduler.stop();
   });
 
-  it("refuses Run now on a disabled automation whose budget is spent", async () => {
-    const auto = makeAutomation({
+  it("refuses Run now on a disabled task whose budget is spent", async () => {
+    const auto = makeTask({
       enabled: false,
       tokenBudget: { maxInputTokens: 5000, period: "daily" },
       budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -2814,7 +2804,7 @@ describe("Scheduler — token budget applies to every run", () => {
   });
 
   it("lets Run now through again once the window resets", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       enabled: false,
       cumulativeInputTokens: 9000,
       tokenBudget: { maxInputTokens: 5000, period: "daily" },
@@ -2831,7 +2821,7 @@ describe("Scheduler — token budget applies to every run", () => {
     defOf(scheduler, auto.id)!.budgetResetAt = new Date(Date.now() - 1000).toISOString();
     const stored = loadDefs(tmpDir).get(auto.id)!;
     stored.budgetResetAt = new Date(Date.now() - 1000).toISOString();
-    saveAutomation(tmpDir, WS, OWNER, stored);
+    saveTask(tmpDir, WS, OWNER, stored);
 
     expect((await scheduler.runNow(WS, OWNER, auto.id))?.status).toBe("success");
     const after = defOf(scheduler, auto.id)!;
@@ -2841,7 +2831,7 @@ describe("Scheduler — token budget applies to every run", () => {
   });
 
   it("a lifetime budget refuses until it is raised", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       enabled: false,
       cumulativeInputTokens: 9000,
       tokenBudget: { maxInputTokens: 5000 },
@@ -2859,7 +2849,7 @@ describe("Scheduler — token budget applies to every run", () => {
   it("names one token spend account per cap, holding what is left of the window", () => {
     const now = Date.now();
     const resetAt = new Date(now + 3_600_000).toISOString();
-    const auto = makeAutomation({
+    const auto = makeTask({
       cumulativeInputTokens: 3_000,
       cumulativeOutputTokens: 900,
       tokenBudget: { maxInputTokens: 5_000, maxOutputTokens: 1_000, period: "daily" },
@@ -2870,7 +2860,7 @@ describe("Scheduler — token budget applies to every run", () => {
       ["input_tokens", 2_000],
       ["output_tokens", 100],
     ]);
-    // Opaque to the door, distinct per automation and window.
+    // Opaque to the door, distinct per task and window.
     expect(accounts[0]!.id).toContain(auto.id);
     expect(accounts[0]!.id).toContain(resetAt);
     expect(accounts[0]!.id).not.toBe(accounts[1]!.id);
@@ -2884,11 +2874,11 @@ describe("Scheduler — token budget applies to every run", () => {
     expect(fresh.map((a) => a.remaining)).toEqual([5_000, 1_000]);
     expect(fresh[0]!.id).not.toBe(accounts[0]!.id);
     // No budget, no accounts.
-    expect(budgetSpendAccounts(makeAutomation(), now)).toEqual([]);
+    expect(budgetSpendAccounts(makeTask(), now)).toEqual([]);
   });
 
-  it("disables an enabled automation whose run the budget stopped mid-way, below the cap", async () => {
-    const auto = makeAutomation({
+  it("disables an enabled task whose run the budget stopped mid-way, below the cap", async () => {
+    const auto = makeTask({
       cumulativeInputTokens: 3_000,
       tokenBudget: { maxInputTokens: 5_000, period: "daily" },
       budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -2897,7 +2887,7 @@ describe("Scheduler — token budget applies to every run", () => {
     seedDefs(tmpDir, new Map([[auto.id, auto]]));
     // The door stopped the run before a call that would have passed the cap,
     // so the counters (3,000 + 1,500) stay under it.
-    const stopped: AutomationRun = {
+    const stopped: TaskRun = {
       ...runOf(auto.id, 1_500),
       status: "failure",
       stopReason: "spend_limit",
@@ -2915,15 +2905,15 @@ describe("Scheduler — token budget applies to every run", () => {
     scheduler.stop();
   });
 
-  it("a spend stop by an account that is not the budget's leaves the automation enabled", async () => {
-    const auto = makeAutomation({
+  it("a spend stop by an account that is not the budget's leaves the task enabled", async () => {
+    const auto = makeTask({
       cumulativeInputTokens: 3_000,
       tokenBudget: { maxInputTokens: 5_000, period: "daily" },
       budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
       nextRunAt: new Date(Date.now() - 1000).toISOString(),
     });
     seedDefs(tmpDir, new Map([[auto.id, auto]]));
-    const stopped: AutomationRun = {
+    const stopped: TaskRun = {
       ...runOf(auto.id, 1_500),
       status: "failure",
       stopReason: "spend_limit",
@@ -2944,7 +2934,7 @@ describe("Scheduler — token budget applies to every run", () => {
   it("enforces the budget before each model call, through the executor and the engine", async () => {
     // Each model call spends 1,000 input tokens and asks for a tool. With 2,500
     // left in the window, the door lets two calls through and stops the third.
-    const auto = makeAutomation({
+    const auto = makeTask({
       cumulativeInputTokens: 2_500,
       tokenBudget: { maxInputTokens: 5_000, period: "daily" },
       budgetResetAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -3021,7 +3011,7 @@ describe("Scheduler — token budget applies to every run", () => {
   });
 
   it("seeding an unset window starts it fresh instead of counting stale spend", async () => {
-    const auto = makeAutomation({
+    const auto = makeTask({
       cumulativeInputTokens: 90_000,
       tokenBudget: { maxInputTokens: 10_000, period: "daily" },
       nextRunAt: new Date(Date.now() - 1000).toISOString(),

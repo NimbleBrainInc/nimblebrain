@@ -22,7 +22,7 @@ import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 /**
  * Project one tool-supplied connector row onto a `ConnectorRef`. Only the URL and
- * an optional explicit `serverName` are accepted from tool input: every other
+ * the `serverName` it registers under are accepted from tool input: every other
  * field on a ref (transport, OAuth client, broker coordinates) is
  * operator-catalog territory, set by the install path, never by a caller.
  */
@@ -38,10 +38,11 @@ function toConnectorRef(b: Record<string, unknown>): ConnectorRef {
       `Connector url must be an http(s) URL (got ${url === "" ? "an empty value" : `"${url}"`}).`,
     );
   }
-  return {
-    url,
-    ...(typeof b.serverName === "string" && b.serverName ? { serverName: b.serverName } : {}),
-  };
+  const serverName = typeof b.serverName === "string" ? b.serverName.trim() : "";
+  if (serverName === "") {
+    throw new Error(`Connector "${url}" needs a serverName to register it under.`);
+  }
+  return { url, serverName };
 }
 
 /**
@@ -80,8 +81,8 @@ export interface ManageWorkspacesContext {
   userStore?: UserStore;
 }
 
-/** @deprecated Use ManageWorkspacesContext instead — members are now managed via manage_workspaces. */
-export type ManageMembersContext = ManageWorkspacesContext & { userStore: UserStore };
+/** The context a member action runs with: the store it validates users against is present. */
+type MemberActionContext = ManageWorkspacesContext & { userStore: UserStore };
 
 // ── Permission check ──────────────────────────────────────────────
 
@@ -140,10 +141,10 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
               url: { type: "string" },
               serverName: { type: "string" },
             },
-            required: ["url"],
+            required: ["url", "serverName"],
           },
           description:
-            "Connector references — the remote MCP endpoint URL, optionally with the server name to register it under (optional for create and update).",
+            "Connector references — the remote MCP endpoint URL and the server name to register it under (optional for create and update).",
         },
         userId: {
           type: "string",
@@ -257,23 +258,24 @@ async function dispatchMemberAction(
   if (!ctx.userStore) {
     return { content: textContent("Member management not available."), isError: true };
   }
+  const memberCtx: MemberActionContext = { ...ctx, userStore: ctx.userStore };
   const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
   if (!workspaceId) {
     return { content: textContent("workspaceId is required."), isError: true };
   }
-  if (!(await memberActionAllowed(ctx as ManageMembersContext, workspaceId, action))) {
+  if (!(await memberActionAllowed(memberCtx, workspaceId, action))) {
     return memberPermissionDenied();
   }
 
   switch (action) {
     case "add_member":
-      return handleAddMember(ctx as ManageMembersContext, workspaceId, input);
+      return handleAddMember(memberCtx, workspaceId, input);
     case "remove_member":
-      return handleRemoveMember(ctx as ManageMembersContext, workspaceId, input);
+      return handleRemoveMember(memberCtx, workspaceId, input);
     case "update_member":
-      return handleUpdateMember(ctx as ManageMembersContext, workspaceId, input);
+      return handleUpdateMember(memberCtx, workspaceId, input);
     case "list_members":
-      return handleListMembers(ctx as ManageMembersContext, workspaceId);
+      return handleListMembers(memberCtx, workspaceId);
     default:
       return { content: textContent(`Unknown action: ${action}`), isError: true };
   }
@@ -635,7 +637,7 @@ async function handlePurgeArchive(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// nb__manage_members tool
+// Member actions
 // ══════════════════════════════════════════════════════════════════
 
 /**
@@ -645,7 +647,7 @@ async function handlePurgeArchive(
  * workspace (`canManageWorkspaceMembers`).
  */
 async function memberActionAllowed(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
   action: string,
 ): Promise<boolean> {
@@ -661,7 +663,7 @@ async function memberActionAllowed(
  * is what shows who reached into a workspace after they leave its roster.
  */
 function logMemberChange(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   change: string,
   workspaceId: string,
   userId: string,
@@ -694,73 +696,6 @@ function mutationErrorResult(err: unknown, action: string): ToolResult {
   };
 }
 
-/** @deprecated Member management is now handled by manage_workspaces. Kept for test coverage of handler logic. */
-export function createManageMembersTool(ctx: ManageMembersContext): InProcessTool {
-  return {
-    name: "manage_members",
-    description:
-      "Add, remove, update, or list members in a workspace. Requires org admin or workspace admin membership.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["add", "remove", "update", "list"],
-          description: "Action to perform.",
-        },
-        workspaceId: {
-          type: "string",
-          description: "Workspace ID (required for all actions).",
-        },
-        userId: {
-          type: "string",
-          description: "User ID (required for add, remove, update).",
-        },
-        role: {
-          type: "string",
-          enum: ["admin", "member"],
-          description:
-            "Workspace role (optional for add — defaults to member; required for update).",
-        },
-      },
-      required: ["action", "workspaceId"],
-    },
-    handler: async (input): Promise<ToolResult> => {
-      const action = String(input.action);
-      const workspaceId = input.workspaceId ? String(input.workspaceId) : undefined;
-
-      if (!workspaceId) {
-        return {
-          content: textContent("workspaceId is required."),
-          isError: true,
-        };
-      }
-
-      if (
-        !(await memberActionAllowed(ctx, workspaceId, action === "list" ? "list_members" : action))
-      ) {
-        return memberPermissionDenied();
-      }
-
-      switch (action) {
-        case "add":
-          return handleAddMember(ctx, workspaceId, input);
-        case "remove":
-          return handleRemoveMember(ctx, workspaceId, input);
-        case "update":
-          return handleUpdateMember(ctx, workspaceId, input);
-        case "list":
-          return handleListMembers(ctx, workspaceId);
-        default:
-          return {
-            content: textContent(`Unknown action: ${action}`),
-            isError: true,
-          };
-      }
-    },
-  };
-}
-
 // ── Member action handlers ────────────────────────────────────────
 
 /**
@@ -770,7 +705,7 @@ export function createManageMembersTool(ctx: ManageMembersContext): InProcessToo
  * offered, so the caller learns only whether an active person in the org has it.
  */
 async function resolveNewMember(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   input: Record<string, unknown>,
 ): Promise<{ id: string } | { error: string }> {
   if (input.userId) {
@@ -786,7 +721,7 @@ async function resolveNewMember(
 }
 
 async function handleAddMember(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
@@ -840,7 +775,7 @@ async function activeAdminCount(members: WorkspaceMember[], userStore: UserStore
 
 /** Block acting on the workspace's last active admin; returns the error ToolResult, or null to proceed. */
 async function lastActiveAdminGuard(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   members: WorkspaceMember[],
   userId: string,
   message: string,
@@ -855,7 +790,7 @@ async function lastActiveAdminGuard(
 }
 
 async function handleRemoveMember(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
@@ -919,7 +854,7 @@ async function handleRemoveMember(
 }
 
 async function handleUpdateMember(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
   input: Record<string, unknown>,
 ): Promise<ToolResult> {
@@ -992,7 +927,7 @@ async function handleUpdateMember(
 }
 
 async function handleListMembers(
-  ctx: ManageMembersContext,
+  ctx: MemberActionContext,
   workspaceId: string,
 ): Promise<ToolResult> {
   const ws = await ctx.workspaceStore.get(workspaceId);

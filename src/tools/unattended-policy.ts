@@ -15,7 +15,7 @@
  *     builds.
  *
  * The set is one rule: **a surface that grows the principal's future
- * capability**. A new automation fires again later as them; a new skill loads
+ * capability**. A new task fires again later as them; a new skill loads
  * itself into their later sessions; a connector install adds tools and
  * credentials that were not reachable before. Reaching any of those is how an
  * unattended call would widen its own reach, which is the foothold the

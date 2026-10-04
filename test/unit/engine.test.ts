@@ -167,7 +167,7 @@ describe("AgentEngine", () => {
   it("lifts a failed tool result's structuredContent.reason onto errorReason", async () => {
     // The exact envelope McpSource.execute returns on mid-session auth loss
     // (a disconnected OAuth/Composio connector). The engine must surface that
-    // reason on the ToolCallRecord so downstream consumers (the automations
+    // reason on the ToolCallRecord so downstream consumers (the tasks
     // de-masker) can tell an unreachable connector from a generic tool error.
     let callCount = 0;
     const model = createMockModel(() => {
@@ -2718,7 +2718,7 @@ describe("AgentEngine", () => {
   it("merges the final-step hint into a trailing user message on a single-iteration run", async () => {
     // maxIterations: 1 → iteration 0 IS the final iteration, and the tail is the
     // initial user prompt (a user message). This is the only path that exercises
-    // the merge branch (`...last.content` spread); it ships in automations that
+    // the merge branch (`...last.content` spread); it ships in tasks that
     // cap iterations at 1.
     let capturedPrompt: Array<{ role: string; content: unknown }> = [];
     const model = createMockModel((opts) => {
@@ -4934,7 +4934,7 @@ describe("malformed tool call input", () => {
       // generic cancel). Drift here would silently collapse all
       // cancellations into the same status.
       const controller = new AbortController();
-      const customReason = new Error("Automation foo timed out after 600s");
+      const customReason = new Error("Task foo timed out after 600s");
       controller.abort(customReason);
 
       const engine = makeEngine();

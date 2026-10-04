@@ -39,28 +39,6 @@ import {
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 
 /**
- * Sentinel kept for callers that import the symbol. The original
- * fast-fail behavior is gone — interactive OAuth is now supported by
- * registering with the flow registry and awaiting via the
- * `onInteractiveAuthRequired` callback. Any code that still throws this
- * is a regression.
- *
- * @deprecated Interactive OAuth is supported. The provider now throws
- * the SDK's own `UnauthorizedError` after registering the flow, which
- * `McpSource.start()` catches and retries via `awaitPendingFlow`.
- */
-export class InteractiveOAuthNotSupportedError extends Error {
-  constructor(public readonly authorizationUrl: string) {
-    super(
-      `Interactive OAuth not yet supported in this build. The remote MCP server ` +
-        `requires browser authorization at:\n  ${authorizationUrl}\n` +
-        `Only headless flows (e.g. Reboot's Anonymous dev provider) are supported today.`,
-    );
-    this.name = "InteractiveOAuthNotSupportedError";
-  }
-}
-
-/**
  * Thrown by `redirectToAuthorization` when the authorization server demands an
  * INTERACTIVE (browser) round-trip but this start attempt is NOT user-initiated
  * — i.e. a boot source's auto-start or one of its `HealthMonitor` liveness
@@ -603,8 +581,10 @@ const NIMBLEBRAIN_LOGO_URI = "https://static.nimblebrain.ai/logos/nimblebrain/li
  * `?code=anonymous&state=...` embedded (see
  * `reboot/aio/auth/oauth_providers.py:278-281`). We detect the self-target
  * in `redirectToAuthorization` and resolve the pending flow in-process —
- * no HTTP round-trip, no browser. For all other interactive flows, we
- * throw `InteractiveOAuthNotSupportedError` and fail fast.
+ * no HTTP round-trip, no browser. For every other interactive flow, the
+ * provider registers the flow, reports the authorization URL through
+ * `onInteractiveAuthRequired`, and throws the SDK's `UnauthorizedError`, which
+ * `McpSource.start()` catches and retries via `awaitPendingFlow`.
  */
 export class WorkspaceOAuthProvider implements OAuthClientProvider {
   private readonly owner: OAuthOwnerContext;
@@ -1161,7 +1141,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     // Connector OAuth health — redacted (booleans + lifetime only, never token
     // values). A token response carrying no refresh_token means the connection
     // CANNOT refresh: it dies at access-token expiry and needs a full reconnect
-    // every time. That silently degrades scheduled automations (a daily run
+    // every time. That silently degrades scheduled tasks (a daily run
     // lands after the access token has expired → dead connector). The usual
     // cause is a vendor that gates offline access behind a non-standard param
     // (Dropbox's `token_access_type=offline`, Google's `access_type=offline`)

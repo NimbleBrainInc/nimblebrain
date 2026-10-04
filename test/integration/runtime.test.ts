@@ -63,7 +63,7 @@ describe("Runtime", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: testDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
     await provisionTestWorkspace(runtime);
 
@@ -89,7 +89,7 @@ describe("Runtime", () => {
     await expect(
       Runtime.start({
         identityProvider: devProvider,
-        model: { provider: "custom", adapter: createEchoModel() },
+        languageModel: createEchoModel(),
       }),
     ).rejects.toThrow(/workDir/);
   });
@@ -99,7 +99,7 @@ describe("Runtime", () => {
     mkdirSync(workDir, { recursive: true });
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
     await provisionTestWorkspace(runtime);
@@ -125,7 +125,7 @@ describe("Runtime", () => {
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: testDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
     await provisionTestWorkspace(runtime);
 
@@ -151,7 +151,7 @@ describe("Runtime", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
 
@@ -187,7 +187,7 @@ describe("Runtime", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
 
@@ -232,7 +232,7 @@ You are a friendly greeter. Always respond with enthusiasm!
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: testDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       skillDirs: [skillDir],
     });
     await provisionTestWorkspace(runtime);
@@ -285,7 +285,7 @@ I am Nira, your AI assistant. You work at Acme Corp.
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: testDir,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       skillDirs: [skillDir],
     });
     await provisionTestWorkspace(runtime);
@@ -314,7 +314,7 @@ I am Nira, your AI assistant. You work at Acme Corp.
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: isolatedWorkDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       skillDirs: [skillDir],
     });
     await provisionTestWorkspace(runtime);
@@ -365,7 +365,7 @@ Greet with enthusiasm!
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: testDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       events: [sink],
     });
     await provisionTestWorkspace(runtime);
@@ -386,7 +386,7 @@ Greet with enthusiasm!
     const runtime = await Runtime.start({
       identityProvider: devProvider,
       workDir: testDir,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
     });
 
     const tools = await runtime.availableTools();

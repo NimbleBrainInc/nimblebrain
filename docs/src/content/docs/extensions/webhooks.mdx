@@ -113,7 +113,9 @@ header is ignored.
 ## Rotation
 
 A workspace admin sees each URL, the connector and route it feeds, and when it
-was last rotated, under **Settings → Webhooks**. Rotating mints a new URL and
+was last rotated, under **Settings → Webhooks**. The URL's delivery id is masked
+on that page until the admin reveals it; copying it copies the whole URL either
+way. Rotating mints a new URL and
 calls your `register_tool` with it. The previous URL keeps working for 24 hours
 so in-flight redeliveries land. Your `register_tool` should therefore replace the
 URL it holds and re-register with the vendor, not assume it is called once.

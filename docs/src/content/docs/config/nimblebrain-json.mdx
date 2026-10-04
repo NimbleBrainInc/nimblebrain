@@ -102,8 +102,6 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `models` | `object` | — | Role-based model slots. See [models](#models). |
 | `modelPolicy` | `object` | — | Which models this organization permits. See [modelPolicy](#modelpolicy). |
 | `providers` | `object` | — | Per-provider API keys. See [providers](#providers). |
-| `model` | `object` | `{ "provider": "anthropic" }` | **Legacy** single-provider config. Use `providers` instead. |
-| `defaultModel` | `string` | — | **Deprecated.** Use `models.default` instead. |
 | `maxIterations` | `integer` | `25` | Max agentic iterations per request. Range: 1--50. |
 | `maxInputTokens` | `integer` | `500000` | Max input tokens in one model call's context. Older history is windowed or compacted to fit; it does not stop the run. |
 | `maxOutputTokens` | `integer` | the model's catalog output limit | Max output tokens per LLM call. Leave unset to use each model's own limit (`limits.output` in the synced catalog; 16,384 for a model the catalog lacks). A set value applies to every model, clamped to that model's limit, and thinking counts toward it, so a low cap can leave a reasoning model little room for its answer. |
@@ -117,16 +115,14 @@ A sibling `nimblebrain.overrides.json` next to the resolved config file is **dee
 | `features` | `object` | all `true` | Feature flags. See [Feature Flags](/config/features). |
 | `connectors` | `object` | — | Managed-connector provider settings (Composio). See [connectors](#connectors). |
 | `notifications` | `object` | — | Pacing for the notification outbox poll. See [notifications](#notifications). |
-| `automations` | `object` | — | Unattended (task) run slots, queue, and per-run ceilings. See [automations](#automations). |
+| `tasks` | `object` | — | Task run slots, queue, and per-run ceilings. See [tasks](#tasks). |
 | `files` | `object` | — | File upload limits. See [files](#files). |
 | `allowInsecureRemotes` | `boolean` | `false` | Allow HTTP (non-TLS) remote connector connections. Dev only. |
 | `telemetry` | `object` | `{ "enabled": true }` | Anonymous usage telemetry. See [telemetry](#telemetry). |
 | `workDir` | `string` | `"~/.nimblebrain"` | Working directory for runtime state (conversations, logs, workspaces). |
 
 <Aside type="note">
-  **Workspace-owned fields** — `skillDirs`, `home`, `preferences` — are stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A top-level `skills` array is a **legacy** field and is stripped too; skill directories belong in `workspace.json` as `skillDirs`. A workspace-shaped `connectors` **array** is rejected outright, because in this file that name is the [provider and gateway block](#connectors) and takes an object.
-
-  **Deprecated fields** — `identity` and `contextFile` are ignored with a warning. Use a skill with `type: "context"` instead.
+  **Workspace-owned fields** — `skillDirs`, `home`, `preferences` — are stripped if placed at the top level. They live in [`workspace.json`](/config/workspace-json). A workspace-shaped `connectors` **array** is rejected outright, because in this file that name is the [provider and gateway block](#connectors) and takes an object.
 </Aside>
 
 ## Reasoning depth
@@ -211,6 +207,8 @@ The `models` object declares two role-based slots. Each value is a `provider:mod
 | `default` | Chat, general requests, most tool-using turns |
 | `fast` | Conversation titles and both history folds — end-of-turn compaction and the mid-turn fold. Cheap/fast workloads, but still needs a large context window: see below |
 
+A slot left unset resolves to the built-in default model, `anthropic:claude-sonnet-4-6`. The slots are independent: an unset `fast` does not follow `default`.
+
 A workspace can override individual slots via `workspace.json → models`. When a per-request model specifies a slot name (e.g. `"model": "fast"`), it's resolved against these slots. `"alias:fast"` is the same reference written explicitly; both spellings resolve identically.
 
 A bare model string that is **neither** a slot name nor a model in the catalog is passed through to the provider unchanged, with `anthropic:` prepended — the deliberate fallback for pinned or bespoke ids served under their own name (for example through an OpenAI-compatible proxy). That means a typo here is not rejected at config load; it fails at the provider on the first call that uses the slot, reporting a model you did not configure.
@@ -282,7 +280,7 @@ list falls back to the configured default on their next turn.
 
 ## providers
 
-Per-provider API keys. Takes precedence over the legacy `model` object when both are present.
+Per-provider API keys. With no `providers` block, the runtime uses Anthropic, keyed from `ANTHROPIC_API_KEY`.
 
 ```json
 {
@@ -436,7 +434,7 @@ When `type: "redis"` is set without a `redis.url`, NimbleBrain refuses to fall b
 
 Run `platform.replicas: 1`. More than one replica is **not supported**: the runtime assumes it is the only process on a tenant's data, and no combination of settings makes a second replica safe today. With two replicas:
 
-- **Work runs twice.** Every pod's scheduler fires every due automation, and every pod polls every notification outbox, so runs, posts and deliveries happen once per pod.
+- **Work runs twice.** Every pod's scheduler fires every due task, and every pod polls every notification outbox, so runs, posts and deliveries happen once per pod.
 - **Writes are lost.** Workspace records and notification files are rewritten whole, with locks that hold within one process only.
 - **State goes stale between pods.** A connector installed or removed on one pod, a deactivated user, a changed model config, and live events (including an in-flight chat turn) stay on the pod that saw them.
 - **Sticky routing does not fix this.** Load-balancer cookie affinity pins a browser, not an MCP client or a webhook sender, and routing on `Mcp-Session-Id` cannot pin a session to the pod that created it.
@@ -626,15 +624,13 @@ the first few forever.
   [Observability](/deploy/observability/#background-loops).
 </Aside>
 
-## automations
+## tasks
 
 Guardrails on [task](/using/tasks) runs: how many the runtime holds in flight and waiting, across every workspace, and the most any one run may spend.
 
-The block keeps the name `automations`, but it configures every unattended (task) run.
-
 ```json
 {
-  "automations": {
+  "tasks": {
     "maxConcurrentRuns": 2,
     "maxQueuedRuns":     50,
     "maxRunIterations":  50,
@@ -652,7 +648,7 @@ The block keeps the name `automations`, but it configures every unattended (task
 | `maxRunInputTokens` | `integer` | none | Ceiling on one run's input tokens, summed over every model call. Unset, there is no ceiling. Range: 1,000--100,000,000. |
 | `maxRunDurationMs` | `integer` (ms) | `600000` | Ceiling on one run's wall-clock time. Range: 10,000--600,000. |
 
-The three per-run ceilings apply when a run starts, so they cover every stored automation however it was written. A cap an automation sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: an automation with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
+The three per-run ceilings apply when a run starts, so they cover every stored task however it was written. A cap a task sets above its ceiling is lowered to it; one it leaves unset takes the runtime default (the chat `maxIterations` for iterations, 120 seconds for duration) held to the ceiling. Input tokens have no runtime default: a task with no `maxInputTokens` runs under `maxRunInputTokens` when it is set, and with no input-token cap when it is not. The create and update tools report the caps that result.
 
 A scheduled run that finds every slot busy is deferred rather than queued: it keeps its next-run time and runs on the first scheduler tick with a free slot, so its place survives a restart. The queue is held in memory: runs still queued when the runtime stops are recorded as skipped.
 
@@ -690,31 +686,14 @@ NimbleBrain collects anonymized, aggregate usage data with no PII — no connect
 
 Disable with `NB_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1` env vars, or set `telemetry.enabled: false` as shown above.
 
-## Legacy `model` object
-
-The older single-provider `model` shape is still accepted for backward compatibility but deprecated. Prefer `providers` for mixing API keys and `models` for model selection.
-
-```json
-{
-  "model": { "provider": "anthropic", "apiKey": "sk-ant-..." },
-  "defaultModel": "claude-sonnet-4-6"
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `provider` | `"anthropic"` \| `"openai"` \| `"google"` | Default provider when `providers` isn't set. |
-| `apiKey` | `string` | Falls back to the provider's env var when omitted. |
-
 ## Validation
 
 NimbleBrain validates `nimblebrain.json` at startup against the [JSON Schema (draft-07)](https://schemas.nimblebrain.ai/v1/nimblebrain-config.schema.json) using AJV.
 
 - **Unknown keys** produce a warning on stderr and are ignored.
 - **Structural errors** (wrong types, missing required fields) throw an error and prevent startup.
-- **Workspace-owned and legacy keys** (`skillDirs`, `home`, `preferences`, and the legacy `skills`) warn as unknown keys and are stripped before the runtime config is built.
+- **Workspace-owned keys** (`skillDirs`, `home`, `preferences`) warn as unknown keys and are stripped before the runtime config is built.
 - The **override file** (`nimblebrain.overrides.json`) is validated structurally, but unknown-key warnings are suppressed for it. Every key `set_model_config` writes is in the published schema; the suppression is for version drift, since the file is preserved across deploys and can outlive the schema of whichever image reads it.
-- **Deprecated keys** (`identity`, `contextFile`) produce a warning pointing at context skills.
 
 ```
 [config] Unknown key "foo" in /home/user/.nimblebrain/nimblebrain.json (ignored)
@@ -733,7 +712,6 @@ CLI flags take precedence over values in the config file:
 |------|-----------|
 | `--config <path>` | Config file location |
 | `--workdir <dir>` | Default location of the config file and `workDir` fallback |
-| `--model <id>` | `defaultModel` field (legacy) |
 | `--port <n>` | `http.port` field |
 | `--debug` | Enables verbose debug event logging |
 

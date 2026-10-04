@@ -16,9 +16,9 @@ import { readJson } from "../helpers/http.ts";
  * app, silently attaching that middleware to sibling routes that never asked for
  * it. Workspace admission is per-route (`requireWorkspace` on the
  * `/v1/workspaces/:wsId/…` routes), and these pin the boundary end-to-end:
- *   - `POST /v1/workspaces/<non-member>/chat` → 404 `workspace_error`
+ *   - `POST /v1/workspaces/<non-member>/chat/start` → 404 `workspace_error`
  *     (enforced BY DESIGN at the chat door)
- *   - `POST /v1/chat` → router 404 `not_found`: a workspace-scoped request
+ *   - `POST /v1/chat/start` → router 404 `not_found`: a workspace-scoped request
  *     without a workspace in its path has no route, never a default workspace
  *   - `GET  /v1/events` → neither 403 nor 404 (identity-scoped: it authorizes by
  *     identity and filters fan-out by server-computed membership; a workspace
@@ -93,7 +93,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: () => new TokenAuthAdapter({ [ALICE_TOKEN]: ALICE }),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -164,7 +164,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
   });
 
   test("the chat door refuses a non-member workspace in the path (404 workspace_error)", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${foreignWs}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${foreignWs}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -182,7 +182,7 @@ describe("bootstrap ignores X-Workspace-Id", () => {
   });
 
   test("a chat request with no workspace in its path has no route — never a default workspace", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+    const res = await fetch(`${baseUrl}/v1/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

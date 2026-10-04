@@ -19,14 +19,6 @@
  *   - visibility-resume: when a backgrounded tab returns to foreground and the
  *     stream is stale, reconnect immediately instead of waiting for the next
  *     watchdog tick.
- *
- * This viewer assumes the RunBus (seq'd) path. The legacy `/v1/workspaces/:wsId/chat` and
- * `/v1/workspaces/:wsId/chat/stream` endpoints fan out to the same conversation subscribers via
- * `broadcastToConversation`, which is seq-less (no `id:` line) and not RunBus-
- * backed — those frames apply live but don't advance `lastSeq` and have no
- * replay/resume. The web shell doesn't use those endpoints; only an external
- * caller hitting them while a web tab watches the same conversation would mix
- * the two streams.
  */
 
 import { refreshSession } from "./client";

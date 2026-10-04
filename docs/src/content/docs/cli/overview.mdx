@@ -5,7 +5,7 @@ description: Entry points, global flags, and config resolution for running the N
 
 The NimbleBrain runtime launches with bun. There are two entry points: `bun run start` starts the production HTTP API server, and `bun run dev` runs the same server in development mode with file watching and web HMR.
 
-The runtime has no terminal client. You interact with a running instance through the web app it serves and the `/mcp` endpoint (for external MCP clients) -- not from the shell. Connectors, skills, credentials, and automations are managed from the web UI and the agent's tool actions, not from subcommands.
+The runtime has no terminal client. You interact with a running instance through the web app it serves and the `/mcp` endpoint (for external MCP clients) -- not from the shell. Connectors, skills, credentials, and tasks are managed from the web UI and the agent's tool actions, not from subcommands.
 
 ## Usage
 
@@ -30,7 +30,6 @@ The server and dev mode share most flags:
 |------|----------|-------------|
 | `--config <path>`, `-c` | serve, dev | Path to a `nimblebrain.json` config file |
 | `--port <number>` | serve, dev | HTTP server port (default: `27247`) |
-| `--model <name>` | serve | Override the default model (e.g., `claude-sonnet-4-6`) |
 | `--debug` | serve, dev | Verbose event logging to stderr |
 | `--no-web` | dev | Skip the web dev server (API only) |
 
@@ -59,8 +58,6 @@ If no config file exists at the resolved path, NimbleBrain auto-creates one with
   "version": "1"
 }
 ```
-
-CLI flags override values from the config file. For example, `--model claude-sonnet-4-6` overrides whatever `defaultModel` is set in your config.
 
 ## Exit codes
 

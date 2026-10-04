@@ -87,7 +87,7 @@ describe("the two config routes agree", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: () => new TokenAuthAdapter({ [TOKEN]: PICKY }),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       models: { default: "anthropic:claude-sonnet-5", fast: "anthropic:claude-sonnet-5" },
       providers: { anthropic: { apiKey: "k" } },
       logging: { disabled: true },

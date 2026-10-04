@@ -1,8 +1,6 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
-import type { ConfirmationGate } from "../config/privilege.ts";
 import type { CatalogListing } from "../connectors/catalog/types.ts";
-import type { ConnectorLifecycleManager } from "../connectors/runtime/lifecycle.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { EventSink, ToolPromotionControls, ToolResult, ToolSchema } from "../engine/types.ts";
 import { isModelVisible, NON_ADVANCING_META_KEY } from "../engine/types.ts";
@@ -25,7 +23,6 @@ import { rankToolSearchResults } from "./search-ranking.ts";
 import { createManageUsersTool, type ManageUsersContext } from "./user-tools.ts";
 import {
   createManageWorkspacesTool,
-  type ManageMembersContext,
   type ManageWorkspacesContext,
 } from "./workspace-mgmt-tools.ts";
 
@@ -38,6 +35,18 @@ export interface ToolEligibilityContext {
 /** Callback that returns the current loaded skills from the runtime. */
 export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
 
+/** What `createSystemTools` builds the `nb` source from. Each absent field drops the tools that need it. */
+export interface SystemToolsOptions {
+  getSkills?: GetSkillsFn;
+  eventSink?: EventSink;
+  features?: ResolvedFeatures;
+  runtime?: Runtime;
+  manageUsersCtx?: ManageUsersContext;
+  manageWorkspacesCtx?: ManageWorkspacesContext;
+  toolPromotionCtx?: ToolPromotionContext;
+  toolEligibilityCtx?: ToolEligibilityContext;
+}
+
 /**
  * Factory that creates the `nb` system source as an in-process MCP server.
  * Merges core platform tools (get_config, briefing, etc.) with system tools
@@ -49,44 +58,18 @@ export type GetSkillsFn = () => { context: Skill[]; matchable: Skill[] };
  */
 export async function createSystemTools(
   getRegistry: () => ToolRegistry,
-  _configPath?: string,
-  // Reserved slot — was the connector-management ConfirmationGate consumed by
-  // `nb__manage_app`. The tool was removed; keep the positional slot stable
-  // (the file's reserved-slot convention) so every call site's arity holds.
-  _gate?: ConfirmationGate,
-  // Reserved slot — unused. Keep the positional slot stable so call-site
-  // arity holds.
-  _lifecycle?: ConnectorLifecycleManager,
-  // Reserved slot — was the sub-agent spawn context for `nb__delegate`
-  // (removed: the kernel starts a run through one door). Keep the positional
-  // slot stable so every call site's arity holds.
-  _delegateCtx?: unknown,
-  // skillDir + reloadSkills were here for the legacy `nb__manage_skill`
-  // tool. Mutation now lives in the dedicated `nb__skills` source — keep
-  // these slots reserved (typed `unknown`) so call-site arity stays stable
-  // and runtime.ts doesn't need a coordinated edit. Prune both when the
-  // next signature shake-up lands.
-  _legacySkillDir?: string,
-  _legacyReloadSkills?: () => Promise<void>,
-  getSkills?: GetSkillsFn,
-  eventSink?: EventSink,
-  features?: ResolvedFeatures,
-  runtime?: Runtime,
-  // Reserved slot — was a home for a legacy connector-discovery
-  // path. Registry search now goes through ConnectorCatalog.servers()
-  // (Browse's own cached, scoped fetch). Keep the positional slot stable so
-  // every call site's arity holds.
-  _reservedRegistryHome?: string,
-  manageUsersCtx?: ManageUsersContext,
-  manageWorkspacesCtx?: ManageWorkspacesContext,
-  manageMembersCtx?: ManageMembersContext,
-  // Reserved slot — was the workspace-scoped connector-management context for
-  // `nb__manage_app` (removed). Kept (typed `unknown`) to hold the positional
-  // slot stable for every call site. Prune on the next signature shake-up.
-  _manageConnectorCtx?: unknown,
-  toolPromotionCtx?: ToolPromotionContext,
-  toolEligibilityCtx?: ToolEligibilityContext,
+  opts: SystemToolsOptions = {},
 ): Promise<McpSource> {
+  const {
+    getSkills,
+    eventSink,
+    features,
+    runtime,
+    manageUsersCtx,
+    manageWorkspacesCtx,
+    toolPromotionCtx,
+    toolEligibilityCtx,
+  } = opts;
   // Core tools (always available, not feature-gated)
   const coreToolDefs: InProcessTool[] = runtime ? createCoreToolDefs(runtime) : [];
   const manageToolsToolDefs: InProcessTool[] = createManageToolsToolDefs(toolPromotionCtx);
@@ -144,15 +127,7 @@ export async function createSystemTools(
   }
 
   if (manageWorkspacesCtx) {
-    // Merge member context into the workspace tool. The conversation
-    // context was removed in Stage 1's schema purge (share/unshare/
-    // participant actions are gone — `manage_workspaces` no longer
-    // needs a conversation store).
-    const mergedCtx = {
-      ...manageWorkspacesCtx,
-      ...(manageMembersCtx ? { userStore: manageMembersCtx.userStore } : {}),
-    };
-    systemToolDefs.push(createManageWorkspacesTool(mergedCtx));
+    systemToolDefs.push(createManageWorkspacesTool(manageWorkspacesCtx));
   }
 
   // Connectors tool. Single surface for all connectors — the install
@@ -606,8 +581,8 @@ function handleConfigStatus(runtime?: Runtime): ToolResult {
           "## This turn",
           `Running on: ${running}`,
           // True of every run, not just a chat: a conversation's model is
-          // pinned at create, a sub-agent's comes from its profile, and an
-          // automation's is resolved at start. In all three the model is
+          // pinned at create, a sub-agent's comes from its profile, and a
+          // task's is resolved at start. In all three the model is
           // settled before the turn begins and the config below cannot move it.
           "Fixed for this turn — changing the configuration below does not affect it.",
           "",

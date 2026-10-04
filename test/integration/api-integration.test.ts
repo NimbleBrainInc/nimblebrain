@@ -12,6 +12,7 @@ import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { engineEvent, runStartPayload } from "../helpers/engine-events.ts";
@@ -21,40 +22,6 @@ import { readConnected } from "../helpers/sse.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 import { resultText } from "../helpers/tool-result.ts";
-
-/** The chat route's body: the run's `ChatResult` plus its token totals at the top level. */
-
-// --- SSE parsing helper ---
-
-interface SSEEvent {
-  event: string;
-  data: string;
-}
-
-function parseSSE(text: string): SSEEvent[] {
-  const events: SSEEvent[] = [];
-  const blocks = text.split("\n\n").filter((b) => b.trim());
-
-  for (const block of blocks) {
-    const lines = block.split("\n");
-    let event = "";
-    let data = "";
-
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        event = line.slice(7);
-      } else if (line.startsWith("data: ")) {
-        data = line.slice(6);
-      }
-    }
-
-    if (event) {
-      events.push({ event, data });
-    }
-  }
-
-  return events;
-}
 
 // --- Auth helper ---
 
@@ -76,7 +43,7 @@ describe("integration: full flow with auth", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: testAuthAdapter(API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -96,7 +63,7 @@ describe("integration: full flow with auth", () => {
     rmSync(workDir, { recursive: true, force: true });
   });
 
-  it("full lifecycle: auth → chat → stream → history → health → shutdown", async () => {
+  it("full lifecycle: auth → chat → follow-up → health", async () => {
     // 1. Health is open without auth
     const healthRes = await fetch(`${baseUrl}/v1/health`);
     expect(healthRes.status).toBe(200);
@@ -104,7 +71,7 @@ describe("integration: full flow with auth", () => {
     expect(health.status).toBe("ok");
 
     // 2. Chat without auth is rejected
-    const noAuthRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const noAuthRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "should fail" }),
@@ -112,8 +79,7 @@ describe("integration: full flow with auth", () => {
     expect(noAuthRes.status).toBe(401);
 
     // 3. Chat with auth succeeds
-    const chatRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const chatRes = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: authHeaders(API_KEY),
       body: JSON.stringify({ message: "Hello integration" }),
     });
@@ -124,8 +90,7 @@ describe("integration: full flow with auth", () => {
     const convId = chatBody.conversationId;
 
     // 4. Second message in same conversation
-    const chat2Res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const chat2Res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: authHeaders(API_KEY),
       body: JSON.stringify({
         message: "Follow up message",
@@ -136,22 +101,6 @@ describe("integration: full flow with auth", () => {
     const chat2Body = await readJson<ChatResponse>(chat2Res);
     expect(chat2Body.response).toBe("Follow up message");
     expect(chat2Body.conversationId).toBe(convId);
-
-    // 5. Stream with auth succeeds
-    const streamRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
-      headers: authHeaders(API_KEY),
-      body: JSON.stringify({ message: "Stream integration" }),
-    });
-    expect(streamRes.status).toBe(200);
-    expect(streamRes.headers.get("Content-Type")).toBe("text/event-stream");
-
-    const sseText = await streamRes.text();
-    const events = parseSSE(sseText);
-    const doneEvent = events.find((e) => e.event === "done");
-    expect(doneEvent).toBeDefined();
-    const doneData = JSON.parse(doneEvent!.data);
-    expect(doneData.response).toBe("Stream integration");
   });
 });
 
@@ -166,7 +115,7 @@ describe("integration: concurrent authenticated load", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: testAuthAdapter(API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -191,8 +140,7 @@ describe("integration: concurrent authenticated load", () => {
 
     const results = await Promise.all(
       messages.map((message) =>
-        fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-          method: "POST",
+        postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
           headers: authHeaders(API_KEY),
           body: JSON.stringify({ message }),
         }).then((res) => readJson<ChatResponse>(res)),
@@ -214,8 +162,7 @@ describe("integration: concurrent authenticated load", () => {
   it("10 concurrent requests with mixed auth: valid succeed, invalid fail", async () => {
     const requests = Array.from({ length: 10 }, (_, i) => {
       const valid = i % 2 === 0;
-      return fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-        method: "POST",
+      return postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
         headers: valid ? authHeaders(API_KEY) : { "Content-Type": "application/json" },
         body: JSON.stringify({ message: `Mixed auth ${i}` }),
       });
@@ -248,7 +195,7 @@ describe("integration: windowing under load", () => {
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       maxInputTokens: 2000, // Low budget to trigger windowing
       workDir: windowTestDir,
@@ -268,8 +215,7 @@ describe("integration: windowing under load", () => {
 
   it("50+ messages in one conversation does not crash and returns valid responses", async () => {
     // Send first message and capture conversation ID
-    const firstRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const firstRes = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: "Start of a long conversation with padding text ".repeat(3),
@@ -281,8 +227,7 @@ describe("integration: windowing under load", () => {
 
     // Send 49 more messages in the same conversation sequentially
     for (let i = 1; i < 50; i++) {
-      const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-        method: "POST",
+      const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: `Message ${i} with some padding content to use tokens`,
@@ -300,8 +245,7 @@ describe("integration: windowing under load", () => {
 
   it("concurrent requests on a long conversation are rejected cleanly", async () => {
     // Create a conversation with some history
-    const firstRes = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const firstRes = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Seed message for concurrent windowing test" }),
     });
@@ -310,8 +254,7 @@ describe("integration: windowing under load", () => {
 
     // Add 10 messages sequentially to build up history
     for (let i = 0; i < 10; i++) {
-      await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-        method: "POST",
+      await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: `Building history message ${i} with extra padding text`,
@@ -324,8 +267,7 @@ describe("integration: windowing under load", () => {
     // the rest must fail with 409 run_in_progress rather than corrupting state.
     const concurrentResults = await Promise.all(
       Array.from({ length: 5 }, (_, i) =>
-        fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-          method: "POST",
+        postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             message: `Concurrent on long conv ${i}`,
@@ -364,7 +306,7 @@ describe("integration: auth boundary", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: testAuthAdapter(API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -390,37 +332,19 @@ describe("integration: auth boundary", () => {
     expect(healthRes.status).toBe(200);
 
     // Chat requires auth
-    const chatNoAuth = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const chatNoAuth = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "no auth" }),
     });
     expect(chatNoAuth.status).toBe(401);
 
-    // Stream requires auth
-    const streamNoAuth = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "no auth" }),
+    // Succeeds with valid auth
+    const chatAuth = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
+      headers: authHeaders(API_KEY),
+      body: JSON.stringify({ message: "authed chat" }),
     });
-    expect(streamNoAuth.status).toBe(401);
-
-    // All succeed with valid auth
-    const [chatAuth, streamAuth] = await Promise.all([
-      fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-        method: "POST",
-        headers: authHeaders(API_KEY),
-        body: JSON.stringify({ message: "authed chat" }),
-      }),
-      fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-        method: "POST",
-        headers: authHeaders(API_KEY),
-        body: JSON.stringify({ message: "authed stream" }),
-      }),
-    ]);
-
     expect(chatAuth.status).toBe(200);
-    expect(streamAuth.status).toBe(200);
   });
 });
 
@@ -439,7 +363,7 @@ describe("E2E: registered app -> tool call via API", () => {
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: testDir,
     });
@@ -518,7 +442,7 @@ describe("E2E: tool call via API", () => {
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: sseTestDir,
     });
@@ -584,7 +508,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: multiStepDir,
     });
@@ -609,8 +533,7 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
 
     let convId: string | undefined;
     for (const msg of messages) {
-      const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-        method: "POST",
+      const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: msg,
@@ -625,28 +548,13 @@ describe("E2E: multi-step conversation -> history -> conversations list consiste
     }
   });
 
-  it("streaming chat produces SSE text.delta and done events with valid schemas", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
+  it("a turn's done frame carries the response, conversation id, stop reason and tokens", async () => {
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Stream schema test" }),
     });
-
     expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toBe("text/event-stream");
-
-    const text = await res.text();
-    const events = parseSSE(text);
-
-    // Must have at least one text.delta and a done event
-    const deltas = events.filter((e) => e.event === "text.delta");
-    const done = events.find((e) => e.event === "done");
-
-    expect(deltas.length).toBeGreaterThanOrEqual(1);
-    expect(done).toBeDefined();
-
-    // Verify done event schema: must have response, conversationId, stopReason
-    const doneData = JSON.parse(done!.data);
+    const doneData = await readJson<ChatResponse>(res);
     expect(typeof doneData.response).toBe("string");
     expect(doneData.response).toBe("Stream schema test");
     expect(typeof doneData.conversationId).toBe("string");
@@ -666,7 +574,7 @@ describe("E2E: SSE event filtering — only routed events pass through", () => {
     const { SseEventManager } = await import("../../src/api/events.ts");
     const manager = new SseEventManager(60_000);
 
-    const stream = manager.addClient();
+    const stream = manager.addIdentityClient("usr_test", new Set(["ws_0076759dbbe19fcc"]));
     const reader = stream.getReader();
     await readConnected(reader);
 

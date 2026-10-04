@@ -1,22 +1,14 @@
 /**
- * Regression: a chat run must NOT be cancelled when the HTTP client that
- * started it disconnects mid-stream.
+ * A chat turn is NOT cancelled when the viewer watching it disconnects.
  *
- * The run is owned by the runtime, not by the request transport. A mobile
+ * The run is owned by the runtime, not by any HTTP connection. A mobile
  * client that locks its screen / backgrounds the tab / hits a network blip
- * tears down the SSE connection, but the engine loop must keep running,
- * persist its result, and stay available to a reconnecting
- * `/v1/conversations/:id/events` subscriber. This is the "leave and come
- * back and it loaded" contract.
- *
- * PR #251 threaded `request.signal` into `runtime.chat`, so a disconnect
- * aborted the run — it died with `run.error: "The connection was closed."`
- * and never produced a reply. This test pins the corrected behavior: after
- * the client disconnects, the conversation still ends in `run.done` with the
- * assistant's response persisted, and no `run.error` is written.
- *
- * On the regressed code this fails (no `run.done`; a connection-closed
- * `run.error` instead).
+ * tears down its `/v1/conversations/:id/events` stream, but the engine loop
+ * keeps running, persists its result, and stays available to a reconnecting
+ * subscriber. This is the "leave and come back and it loaded" contract: after
+ * the viewer disconnects, the conversation still ends in `run.done` with the
+ * assistant's response persisted, and no `run.error` is written. Only
+ * `/v1/conversations/:id/cancel` stops a turn.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -41,7 +33,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
   }
 }
 
-describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconnect", () => {
+describe("chat turn — run survives viewer disconnect", () => {
   let handle: ServerHandle | null = null;
   let runtime: Runtime | null = null;
 
@@ -62,11 +54,8 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
     });
     // The gated turn mirrors a real provider: its in-flight call resolves
     // when the gate opens, but rejects with an AbortError if the run's
-    // `abortSignal` fires first. That `abortSignal` is exactly what the
-    // engine forwards from `ChatRequest.signal` — so on the regressed code
-    // (which threads `request.signal`), a client disconnect aborts this
-    // call and the run errors. On the fixed code no signal is threaded,
-    // so `options.abortSignal` is undefined and the run completes.
+    // `abortSignal` fires first, so anything that aborted the run on a
+    // disconnect would fail it here.
     const gatedModel = createMockModel((options) => {
       const promptText = JSON.stringify(options.prompt ?? "");
       if (!promptText.includes(SENTINEL)) {
@@ -91,7 +80,7 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: gatedModel },
+      languageModel: gatedModel,
       logging: { disabled: true },
       workDir,
     });
@@ -107,13 +96,17 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
     });
     const convId = seed.conversationId;
 
-    // Start the streamed turn. The model gates, so the run is in-flight
-    // (and holds the conversation lock) while we yank the connection.
-    const ac = new AbortController();
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
+    // Start the turn. The model gates, so the run is in flight while the
+    // viewer connects and then drops.
+    const start = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: `${SENTINEL} please answer`, conversationId: convId }),
+    });
+    expect(start.status).toBe(200);
+
+    const ac = new AbortController();
+    const res = await fetch(`${baseUrl}/v1/conversations/${convId}/events`, {
       signal: ac.signal,
     });
 
@@ -128,25 +121,20 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
       buffer += decoder.decode(value, { stream: true });
     }
     expect(buffer).toContain("event: chat.start");
-    expect(runtime.isConversationActive(convId)).toBe(true);
+    expect(runtime.isTurnActive(convId)).toBe(true);
 
     // The mobile client drops: abort the request and tear down the reader.
-    // This fires the server stream's cancel(); on the regressed code it
-    // also aborted request.signal and killed the run.
     await reader.cancel().catch(() => {});
     ac.abort();
 
-    // Give the server a tick to observe the disconnect, then let the
-    // (now detached) run finish.
+    // Give the server a tick to observe the disconnect, then let the run finish.
     await new Promise((r) => setTimeout(r, 50));
     release();
 
-    // The run must settle by completing — releasing the conversation lock.
-    await waitFor(() => runtime?.isConversationActive(convId) === false);
-    expect(runtime.isConversationActive(convId)).toBe(false);
+    await waitFor(() => runtime?.isTurnActive(convId) === false);
+    expect(runtime.isTurnActive(convId)).toBe(false);
 
-    // Inspect the persisted event log — the same surface that showed
-    // `run.error: "The connection was closed."` in the production repro.
+    // Inspect the persisted event log.
     const store = (await runtime.resolveConversationStore(convId))!;
     const events = await store.readEvents(convId);
 
@@ -154,8 +142,8 @@ describe("POST /v1/workspaces/:wsId/chat/stream — run survives client disconne
     expect(runErrors).toEqual([]);
     expect(events.some((e) => e.type === "run.done")).toBe(true);
 
-    // And the assistant's answer — produced entirely after the client
-    // left — was persisted.
+    // And the assistant's answer, produced entirely after the viewer left,
+    // was persisted.
     const llmResponses = events.filter((e) => e.type === "llm.response");
     expect(JSON.stringify(llmResponses)).toContain(BACKGROUND_REPLY);
   });

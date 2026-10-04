@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun)](https://bun.sh)
 [![MCP](https://img.shields.io/badge/protocol-MCP-8A2BE2)](https://modelcontextprotocol.io)
 
-A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent automations. Install an MCP connector and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
+A self-hosted platform for [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) and agent tasks. Install an MCP connector and you get more than tools — you get an interactive UI in the sidebar with live agent-UI data sync, and the ability to run the agent on demand or on a cron schedule. Full [ext-apps](https://apps.extensions.modelcontextprotocol.io/api/) host support on top of an agentic loop with skill-driven prompt composition.
 
 Ships as container images on GHCR (`ghcr.io/nimblebraininc/nimblebrain`, `ghcr.io/nimblebraininc/nimblebrain-web`). Also exposes itself as an MCP server via Streamable HTTP so external MCP clients can consume the aggregated toolset.
 
@@ -103,8 +103,6 @@ A route that acts on a workspace names it in its path, `/v1/workspaces/:wsId/…
 |--------|------|------|-------------|
 | GET | /v1/health | No | Health check |
 | GET | /v1/bootstrap | Yes | Bootstrap workspace context (user, workspaces, shell config) |
-| POST | /v1/workspaces/:wsId/chat | Yes | Synchronous chat |
-| POST | /v1/workspaces/:wsId/chat/stream | Yes | SSE streaming chat |
 | POST | /v1/workspaces/:wsId/chat/start | Yes | Start a turn that runs to completion on the server |
 | POST | /v1/conversations/:id/cancel | Yes | Stop a conversation's in-flight turn |
 | GET | /v1/workspaces/:wsId/apps/:name/resources/:path | Yes | Fetch app UI resource |
@@ -132,7 +130,7 @@ Three port interfaces isolate concerns:
 |------|---------|----------------|
 | `ModelPort` | LLM provider | `AnthropicModelAdapter` (prompt caching), `EchoModelAdapter` (tests) |
 | `ToolRouter` | Tool discovery + execution | `ToolRegistry` (MCP sources + inline sources), `StaticToolRouter` (tests) |
-| `EventSink` | Observability | `StructuredLogSink`, `WorkspaceLogSink`, `SseEventManager`, `ConsoleEventSink`, `CallbackEventSink`, `DebugEventSink`, `NoopEventSink` |
+| `EventSink` | Observability | `StructuredLogSink`, `WorkspaceLogSink`, `SseEventManager`, `ConsoleEventSink`, `DebugEventSink`, `NoopEventSink` |
 
 ### System Tools
 
@@ -183,7 +181,7 @@ supply-chain review lives where a server is built and published, not in a proces
 that also holds tenant credentials. Every connector is aggregated into the same
 unified tool namespace by the `ToolRegistry`.
 
-No connectors are installed by default. Platform apps (conversations, files, usage, automations, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
+No connectors are installed by default. Platform apps (conversations, files, usage, tasks, and the rest) are built in as in-process MCP sources (see `src/platform/`). Install connectors from the connectors catalog. Tool visibility follows the tiered surfacing rules described under [Tiered Tool Surfacing](#tiered-tool-surfacing).
 
 ## Configuration
 
@@ -231,11 +229,9 @@ A fully specified example:
 }
 ```
 
-**Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. The older single-`model` / `defaultModel` shape is still accepted for backward compatibility but is deprecated.
+**Model slots.** `models` takes two named slots — `default` (every chat turn) and `fast` (titles, the home briefing, and both history folds). Each is a `provider:model-id` string. `providers` supplies per-provider API keys when you want to mix providers across slots. A slot left unset resolves to the built-in default model, `anthropic:claude-sonnet-4-6`.
 
 **Feature flags.** All default to `true`. Disable a flag to remove the capability entirely — the tool is unregistered, not visible to the LLM, and `POST /v1/workspaces/:wsId/tools/call` returns 403. See [Feature Flags](#feature-flags) for the full set.
-
-**Deprecated fields.** `identity` and `contextFile` are ignored with a warning — use a skill with `type: "context"` instead.
 
 ### `workspace.json` (per-workspace config)
 
@@ -271,7 +267,7 @@ bun run start    # serve: HTTP API server (production)
 bun run dev      # dev mode: API with file watching + web HMR
 ```
 
-`bun run start` is `bun run src/cli/index.ts serve`; that explicit form (with `--config`, `--port`) is exactly what the container runs. Everything else — connectors, skills, credentials, automations, telemetry — is managed from the web UI and the agent's tools, not the CLI.
+`bun run start` is `bun run src/cli/index.ts serve`; that explicit form (with `--config`, `--port`) is exactly what the container runs. Everything else — connectors, skills, credentials, tasks, telemetry — is managed from the web UI and the agent's tools, not the CLI.
 
 ### Flags
 
@@ -280,7 +276,6 @@ Pass flags after the command, e.g. `bun run start --port 8080` or `bun run dev -
 | Flag | Scope | Purpose |
 |------|-------|---------|
 | `--config <path>`, `-c` | serve, dev | Config file (default: `./nimblebrain.json`) |
-| `--model <id>` | serve | Override default model |
 | `--debug` | serve, dev | Enable debug event logging |
 | `--port <number>` | serve, dev | HTTP server port (default: 27247) |
 | `--no-web` | dev | Skip web dev server (API only) |
@@ -329,7 +324,7 @@ The working directory is set via `NB_WORK_DIR` (see Environment Variables).
 import { Runtime } from "nimblebrain";
 
 const runtime = await Runtime.start({
-  model: { provider: "anthropic" },
+  providers: { anthropic: {} },
   store: { type: "memory" },
 });
 
@@ -423,7 +418,6 @@ src/
 │   ├── structured-log-sink.ts   Per-conversation JSONL logs with cost
 │   ├── workspace-log-sink.ts    Workspace-level daily JSONL logs
 │   ├── console-events.ts        Stderr event logging
-│   ├── callback-events.ts       Callback-based events (in-process chat handler)
 │   ├── debug-events.ts          Verbose debug logging
 │   └── noop-events.ts           Silent event sink
 ├── files/                File context extraction
@@ -481,7 +475,7 @@ This section contains detailed internal architecture documentation for contribut
 
 ### Token Budget Behavior
 
-`maxInputTokens` bounds the context of one model call; the runtime windows or compacts history to fit it. A run-wide cap (an automation's **Max Input Tokens**) bounds the run: before each call the engine projects that call's input, and ends the run with `stopReason: "max_input_tokens"` if the projection would take the run past the cap. Every tool call from earlier steps has already run.
+`maxInputTokens` bounds the context of one model call; the runtime windows or compacts history to fit it. A run-wide cap (a task's **Max Input Tokens**) bounds the run: before each call the engine projects that call's input, and ends the run with `stopReason: "max_input_tokens"` if the projection would take the run past the cap. Every tool call from earlier steps has already run.
 
 ### Tiered Tool Surfacing
 
@@ -566,7 +560,7 @@ Connectors can be installed per-workspace (tracked via `ConnectorInstance.wsId`)
 
 **Workspace-level** (`GET /v1/events`): Events: `connector.installed`, `connector.uninstalled`, `connection.state_changed`, `server.notification`, `conversation.title`, `config.changed`, `skill.created`, `skill.updated`, `skill.deleted`, `bridge.tool.call`, `bridge.tool.done`, `notification.created`, `notification.delivered`, `notification.delivery_failed`, `heartbeat` (30s).
 
-**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → ownership of the conversation (no workspace). Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`. Sender excluded from own broadcast.
+**Per-conversation** (`GET /v1/conversations/:id/events`): For multi-participant chat. Security: `requireAuth` → ownership of the conversation (no workspace). Events: `user.message`, `text.delta`, `tool.start`, `tool.done`, `llm.done`, `done`, `heartbeat`.
 
 ### Web Client Internals
 
@@ -592,7 +586,7 @@ Placements with a `route` field get React Router routes in `App.tsx`. Routes fro
 ### Configuration Reference
 
 **Files:**
-- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load. `identity` and `contextFile` are deprecated with a warning.
+- `nimblebrain.json` — instance config. Validated at startup against `src/config/nimblebrain-config.schema.json` (JSON Schema draft-07, AJV). Unknown keys warn; structural errors throw. Workspace-owned fields (`skillDirs`, `preferences`, `home`) are stripped on load.
 - `<workDir>/workspaces/<wsId>/workspace.json` — per-workspace config. Owns `connectors`, `skillDirs`, and optional `models` overrides.
 - `<workDir>/instance.json` — the identity provider (`dev`, `oidc`, or `workos` adapter). Required: `serve` refuses to start without it.
 
@@ -713,7 +707,6 @@ These are non-negotiable patterns. Violating them causes production bugs:
 - **`WorkspaceLogSink`** — Workspace-level daily rolling JSONL logs. Only persists workspace events (connector lifecycle, data/config changes, skill/file operations).
 - **`ConsoleEventSink`** — Human-readable stderr for development.
 - **`DebugEventSink`** — Verbose JSON dumps (`--debug`).
-- **`CallbackEventSink`** — Bridges run events to the in-process chat handler (`POST /v1/workspaces/:wsId/chat`).
 - **`PostHogEventSink`** — Anonymous telemetry. No PII. Opt-out: `telemetry.enabled: false`, `NB_TELEMETRY_DISABLED=1`, or `DO_NOT_TRACK=1`.
 
 ## License

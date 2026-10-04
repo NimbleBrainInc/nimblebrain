@@ -185,10 +185,8 @@ export const __internal__ = {
     closeEventsClient();
     eventHandlers.clear();
     reconnectHandlers.clear();
-    // Other test files in the suite may have called
-    // `setAuthLifecycleHandler(null)` to neutralize the MCP bridge's
-    // handler — which also clears ours. Re-register idempotently so
-    // events-client tests can rely on the lifecycle hook firing.
+    // Re-register idempotently (the handler set dedupes) so events-client
+    // tests can rely on the lifecycle hook firing.
     addAuthLifecycleHandler(authLifecycleHandler);
   },
 };

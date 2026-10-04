@@ -5,7 +5,10 @@ import { ConversationIndex } from "../../../../../src/platform/conversations/ind
 import { readConversation } from "../../../../../src/platform/conversations/jsonl-reader.ts";
 import { handleFork } from "../../../../../src/platform/conversations/tools/fork.ts";
 
-const TMP_DIR = join(import.meta.dir, ".tmp-fork");
+/** The workspaces root the index walks. */
+const ROOT = join(import.meta.dir, ".tmp-fork");
+/** One owner partition of one workspace, where the fixtures live. */
+const TMP_DIR = join(ROOT, "ws_00859aff6f095b0e", "conversations", "usr_test");
 
 function writeTmpFile(name: string, lines: string[]): string {
   const path = join(TMP_DIR, name);
@@ -77,7 +80,7 @@ function writeSourceConversation(metaOverrides: Record<string, unknown> = {}): s
 
 async function buildIndex(): Promise<ConversationIndex> {
   const index = new ConversationIndex();
-  await index.build(TMP_DIR);
+  await index.build(ROOT);
   return index;
 }
 
@@ -86,7 +89,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(TMP_DIR, { recursive: true, force: true });
+  rmSync(ROOT, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -63,11 +63,10 @@ describe("GET /v1/workspaces/:wsId/shell", () => {
     expect(Array.isArray(body.placements)).toBe(true);
   });
 
-  it("response includes chatEndpoint and eventsEndpoint", async () => {
+  it("response includes eventsEndpoint", async () => {
     const res = await fetch(shellUrl());
     const body = await readJson<ShellResponse>(res);
 
-    expect(body.chatEndpoint).toBe(`/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`);
     expect(body.eventsEndpoint).toBe("/v1/events");
   });
 });
@@ -83,7 +82,7 @@ describe("GET /v1/workspaces/:wsId/shell auth", () => {
     mkdirSync(shellAuthDir, { recursive: true });
     authRuntime = await Runtime.start({
       identityProvider: testAuthAdapter(TEST_API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: shellAuthDir,
     });

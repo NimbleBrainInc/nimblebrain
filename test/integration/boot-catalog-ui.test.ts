@@ -90,7 +90,7 @@ describe("boot takes an installed connector's host UI from the catalog", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       allowInsecureRemotes: true,
       workDir,

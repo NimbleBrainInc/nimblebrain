@@ -8,8 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
-import type { LedgerSkill, SkillsLoadedContext } from "../hooks/chat-store";
-import type { ChatMessage } from "../hooks/useChat";
+import type { ChatMessage, LedgerSkill, SkillsLoadedContext } from "../hooks/chat-store";
 import { ledgerChanges } from "../lib/ledger-changes";
 
 function skill(name: string, loadedBy: LedgerSkill["loadedBy"]): LedgerSkill {

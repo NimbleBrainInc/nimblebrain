@@ -262,7 +262,7 @@ export const AdminToolCallPayload = Type.Object({
   caller: Type.Union(
     [
       Type.Literal("chat"),
-      Type.Literal("automation"),
+      Type.Literal("task"),
       Type.Literal("dispatch"),
       Type.Literal("app"),
       Type.Literal("mcp"),

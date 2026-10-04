@@ -2,7 +2,7 @@
  * A person's own apps announce their writes, and the host relays each
  * announcement to that person's event stream alone.
  *
- * `conversations`, `files` and `automations` belong to a person, not a
+ * `conversations`, `files` and `tasks` belong to a person, not a
  * workspace: one in-process server each, shared by every user and composed into
  * no workspace registry. This drives the whole path — a real write through the
  * door a user's app or agent uses, the source's server sending
@@ -108,7 +108,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });

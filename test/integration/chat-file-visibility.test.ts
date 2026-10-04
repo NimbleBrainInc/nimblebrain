@@ -20,6 +20,7 @@ import type {
   FilesListOutput,
 } from "../../src/platform/schemas/files.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { provisionTestWorkspace } from "../helpers/test-workspace.ts";
@@ -39,14 +40,14 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
   await provisionTestWorkspace(runtime);
   // Provision the dev user's own workspace + registry so the file-store
   // paths used by chat-multipart ingest exist before the first request hits
-  // `/v1/workspaces/<wsId>/chat/stream`.
+  // `/v1/workspaces/<wsId>/chat/start`.
   const devWs = await runtime.getWorkspaceStore().create("Dev's workspace", {
     members: [{ userId: DEV_IDENTITY.id, role: "admin" }],
   });
@@ -69,16 +70,12 @@ async function uploadChatFile(content: string, filename: string, mimeType: strin
   const file = new File([bytes], filename, { type: mimeType });
   form.append("files", file);
 
-  const res = await fetch(`${baseUrl}/v1/workspaces/${DEV_WS_ID}/chat/stream`, {
-    method: "POST",
-    body: form,
-  });
+  // The turn finishes before state is read.
+  const res = await postChatTurn(baseUrl, DEV_WS_ID, { body: form });
   if (res.status !== 200) {
     const errBody = await res.text();
-    throw new Error(`chat/stream returned ${res.status}: ${errBody}`);
+    throw new Error(`chat turn answered ${res.status}: ${errBody}`);
   }
-  // Drain the SSE body so the server finishes writing before we read state.
-  await res.text();
 }
 
 async function callFilesTool(
@@ -112,7 +109,7 @@ async function listFiles(): Promise<FileRecord[]> {
 }
 
 describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
-  it("file uploaded via /v1/workspaces/:wsId/chat/stream is listed by files__list with source=chat", async () => {
+  it("file uploaded via /v1/workspaces/:wsId/chat/start is listed by files__list with source=chat", async () => {
     await uploadChatFile("hello world", "notes-1.bin", "application/octet-stream");
 
     const files = await listFiles();
@@ -128,7 +125,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     // bug 4's scope (store unification, not conversation threading).
   });
 
-  it("file uploaded via /v1/workspaces/:wsId/chat/stream is readable by files__read", async () => {
+  it("file uploaded via /v1/workspaces/:wsId/chat/start is readable by files__read", async () => {
     const payload = "round trip";
     await uploadChatFile(payload, "roundtrip.bin", "application/octet-stream");
     const files = await listFiles();
@@ -161,7 +158,7 @@ describe("chat multipart upload ↔ files__* visibility (bug 4)", () => {
     expect(serialized).not.toContain(Buffer.from(payload).toString("base64"));
   });
 
-  it("file uploaded via /v1/workspaces/:wsId/chat/stream is served by GET /v1/files/:id", async () => {
+  it("file uploaded via /v1/workspaces/:wsId/chat/start is served by GET /v1/files/:id", async () => {
     await uploadChatFile("served bytes", "served.bin", "application/octet-stream");
     const files = await listFiles();
     const id = files.find((f) => f.filename === "served.bin")?.id;

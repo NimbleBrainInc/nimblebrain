@@ -10,7 +10,7 @@ import type { Connection, ConnectionState } from "./connection.ts";
  * Declaration of a UI placement in the shell layout.
  *
  * Sidebar slot convention:
- *   "sidebar" (priority < 10)  → ungrouped core nav (Conversations, Files, Automations)
+ *   "sidebar" (priority < 10)  → ungrouped core nav (Conversations, Files, Tasks)
  *   "sidebar" (priority >= 10) → grouped under "general"
  *   "sidebar.<group>"          → named group with label (e.g., "sidebar.apps" → "Apps")
  *   "sidebar.bottom"           → pinned to bottom zone
@@ -122,11 +122,9 @@ export type ConnectorRef = {
     url: string;
     /**
      * Canonical reverse-DNS server name from the source `ServerDetail.name`
-     * (e.g. `com.stripe/mcp`), slugified. When present, used as the
-     * lifecycle / route key directly. When absent (legacy installs),
-     * `serverNameFromRef` falls back to `deriveServerName(url)`.
+     * (e.g. `com.stripe/mcp`), slugified. The lifecycle / route key.
      */
-    serverName?: string;
+    serverName: string;
     transport?: RemoteTransportConfig;
     ui?: ConnectorUiMeta | null;
     /** Materialized connector-skill overlays bound to this connector. */

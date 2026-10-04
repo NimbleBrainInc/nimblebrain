@@ -160,7 +160,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `meta-${Date.now()}`);
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
 
@@ -171,13 +171,13 @@ describe("ChatRequest.metadata — conversation persistence", () => {
         identity: DEV_IDENTITY,
         message: "hello",
         workspaceId: TEST_WORKSPACE_ID,
-        metadata: { source: "automation", id: "test-123" },
+        metadata: { source: "task", id: "test-123" },
       });
 
       // Load the conversation and verify metadata is present
       const conv = await runtime.findConversation(result.conversationId);
       expect(conv).not.toBeNull();
-      expect(conv!.metadata).toEqual({ source: "automation", id: "test-123" });
+      expect(conv!.metadata).toEqual({ source: "task", id: "test-123" });
 
       // Verify it's actually in the JSONL file's first line under the workspace's
       // owner partition (dev owner `usr_default`, focused on TEST_WORKSPACE_ID).
@@ -188,7 +188,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
       expect(files.length).toBeGreaterThan(0);
       const content = readFileSync(join(convDir, files[0]!), "utf-8");
       const firstLine = JSON.parse(content.split("\n")[0]!);
-      expect(firstLine.metadata).toEqual({ source: "automation", id: "test-123" });
+      expect(firstLine.metadata).toEqual({ source: "task", id: "test-123" });
     } finally {
       await runtime.shutdown();
     }
@@ -198,7 +198,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `nometa-${Date.now()}`);
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
 
@@ -222,7 +222,7 @@ describe("ChatRequest.metadata — conversation persistence", () => {
     const workDir = join(testDir, `metakeep-${Date.now()}`);
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       workDir,
     });
 

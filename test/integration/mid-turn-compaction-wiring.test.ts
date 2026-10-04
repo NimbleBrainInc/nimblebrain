@@ -23,6 +23,7 @@ import { startServer } from "../../src/api/server.ts";
 import { workspaceConversationsDir } from "../../src/conversation/paths.ts";
 import type { ConversationEvent } from "../../src/conversation/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { readJson } from "../helpers/http.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -69,7 +70,7 @@ async function startRuntime(workDir: string, compaction: boolean) {
   mkdirSync(workDir, { recursive: true });
   const runtime = await Runtime.start({
     identityProvider: testAuthAdapter(API_KEY),
-    model: { provider: "custom", adapter: growingModel() },
+    languageModel: growingModel(),
     logging: { disabled: true },
     workDir,
     features: { compaction },
@@ -87,8 +88,7 @@ async function startRuntime(workDir: string, compaction: boolean) {
 
 /** One chat turn. The loop inside it is what this test is about. */
 async function sendTurn(baseUrl: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-    method: "POST",
+  const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${API_KEY}`,

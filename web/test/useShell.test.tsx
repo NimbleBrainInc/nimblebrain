@@ -10,7 +10,7 @@ import { realClient } from "./setup";
 
 const mockGetShell = mock(
   (_workspaceId?: string): Promise<ShellResponse> =>
-    Promise.resolve({ placements: [], chatEndpoint: "", eventsEndpoint: "" }),
+    Promise.resolve({ placements: [], eventsEndpoint: "" }),
 );
 
 // Spread the preload's real-module snapshot (see web/test/setup.ts) so this
@@ -33,7 +33,6 @@ function makeShell(
 ): ShellResponse {
   return {
     placements: placements.map((p) => ({ serverName: "app", resourceUri: "ui://app/panel", ...p })),
-    chatEndpoint: "/v1/chat",
     eventsEndpoint: "/v1/events",
   };
 }
@@ -45,7 +44,7 @@ function makeShell(
 describe("useShell", () => {
   beforeEach(() => {
     mockGetShell.mockReset();
-    mockGetShell.mockResolvedValue({ placements: [], chatEndpoint: "", eventsEndpoint: "" });
+    mockGetShell.mockResolvedValue({ placements: [], eventsEndpoint: "" });
   });
 
   /** Mount on `ws-1` and let its shell land. */

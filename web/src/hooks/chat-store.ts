@@ -44,8 +44,7 @@ export interface SkillsLoadedContext {
 
 // ===========================================================================
 // Public display types (shared across the chat UI). These live here — not in
-// useChat — because the slice store is the lowest layer that owns them and
-// `useChat` re-exports them for backward-compatible imports.
+// useChat — because the slice store is the lowest layer that owns them.
 // ===========================================================================
 
 export type StreamingState =

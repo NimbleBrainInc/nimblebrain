@@ -62,7 +62,7 @@ function settings(over: Record<string, unknown> = {}): Record<string, unknown> {
     ],
     routes: [],
     deliverableTools: ["slack__send_message"],
-    automations: [{ id: "auto_triage", name: "Triage" }],
+    tasks: [{ id: "auto_triage", name: "Triage" }],
     placeholders: ["title", "body", "subject", "link.resource"],
     routesExecuted: true,
     ...over,
@@ -197,8 +197,8 @@ describe("what the page tells an admin about routes", () => {
     const container = await mount();
     const notice = container.querySelector('[data-testid="routes-executed"]') as HTMLElement | null;
     expect(notice?.textContent).toContain("tool");
-    expect(notice?.textContent).toContain("automation");
-    // The precondition an operator has to know: naming an automation is not
+    expect(notice?.textContent).toContain("task");
+    // The precondition an operator has to know: naming a task is not
     // enough, it has to be one that runs on events.
     expect(notice?.textContent).toContain("runs on events");
     // The blanket "nothing dispatches" notice is gone: it would be false now,

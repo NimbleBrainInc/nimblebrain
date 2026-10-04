@@ -24,6 +24,7 @@ import { log } from "../../src/observability/log.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { startWorkspaceConnectors } from "../../src/runtime/workspace-runtime.ts";
 import type { ToolRegistry } from "../../src/tools/registry.ts";
+import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -106,7 +107,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       allowInsecureRemotes: true,
       workDir,
@@ -158,7 +159,7 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
     try {
       runtime = await Runtime.start({
         identityProvider: devProvider,
-        model: { provider: "custom", adapter: createEchoModel() },
+        languageModel: createEchoModel(),
         logging: { disabled: true },
         allowInsecureRemotes: true,
         workDir,
@@ -260,7 +261,11 @@ describe("startWorkspaceConnectors — unreachable URL connector at boot", () =>
         { url: "http://127.0.0.1:1/mcp", serverName: "still-down" },
         registry as ToolRegistry,
         new NoopEventSink(),
-        { allowInsecureRemotes: true, wsId: ws.id, workDir, keepRegisteredOnStartFailure: true },
+        {
+          allowInsecureRemotes: true,
+          workspaceContext: new WorkspaceContext({ wsId: ws.id, workDir }),
+          keepRegisteredOnStartFailure: true,
+        },
       ),
     ]);
 

@@ -5,8 +5,8 @@ import { Runtime } from "../../../src/runtime/runtime.ts";
 
 /**
  * The run doors wait for `start()` to finish assembling the workspace
- * registries. The automations scheduler is started inside `start()`, before the
- * workspace connectors, and fires an overdue automation at once; composed then,
+ * registries. The tasks scheduler is started inside `start()`, before the
+ * workspace connectors, and fires an overdue task at once; composed then,
  * the run saw a stand-in registry with no connectors and reported the
  * workspace's connectors as not installed.
  *

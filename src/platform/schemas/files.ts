@@ -51,9 +51,7 @@ export const FilesListInput = Type.Object({
   conversationId: Type.Optional(
     Type.String({ description: "Keep only files attached in or written by this conversation." }),
   ),
-  runId: Type.Optional(
-    Type.String({ description: "Keep only files written by this automation run." }),
-  ),
+  runId: Type.Optional(Type.String({ description: "Keep only files written by this task run." })),
   createdAfter: Type.Optional(
     Type.String({
       pattern: "^\\d{4}-\\d{2}-\\d{2}",

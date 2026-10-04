@@ -10,7 +10,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEV_IDENTITY, DevIdentityProvider } from "../../src/identity/providers/dev.ts";
-import type { Automation } from "../../src/platform/tasks/types.ts";
+import type { Task } from "../../src/platform/tasks/types.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -22,13 +22,13 @@ let runtime: Runtime;
 async function boot(): Promise<Runtime> {
   return Runtime.start({
     identityProvider: ({ workDir: dir, userStore }) => new DevIdentityProvider(dir, userStore),
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });
 }
 
-const LEGACY: Automation = {
+const LEGACY: Task = {
   id: "weekly-digest",
   name: "Weekly digest",
   prompt: "Summarize the week.",

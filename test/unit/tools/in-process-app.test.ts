@@ -2,7 +2,7 @@
  * `defineInProcessApp` contract tests.
  *
  * `defineInProcessApp` is the base layer every in-process platform source
- * (files, conversations, automations, home, settings, usage, nb) is built
+ * (files, conversations, tasks, home, settings, usage, nb) is built
  * on. These tests verify the guarantees the helper enforces for its
  * handlers, so the same class of bug can't recur in one source after
  * another:

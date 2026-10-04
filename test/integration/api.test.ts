@@ -2,11 +2,15 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ApiErrorBody, HealthResponse } from "../../src/api/schemas/responses.ts";
+import type {
+  ApiErrorBody,
+  ChatResponse,
+  HealthResponse,
+} from "../../src/api/schemas/responses.ts";
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
-import type { ChatResult } from "../../src/runtime/types.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { engineEvent, runStartPayload } from "../helpers/engine-events.ts";
@@ -14,9 +18,6 @@ import { readJson } from "../helpers/http.ts";
 import { readConnected } from "../helpers/sse.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
-
-/** The chat route's body: the run's `ChatResult` plus its token totals at the top level. */
-type ChatResponse = ChatResult & { inputTokens: number; outputTokens: number };
 
 let runtime: Runtime;
 let handle: ServerHandle;
@@ -27,7 +28,7 @@ beforeAll(async () => {
   mkdirSync(testDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: devProvider,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir: testDir,
   });
@@ -44,10 +45,9 @@ afterAll(async () => {
   rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("POST /v1/workspaces/:wsId/chat", () => {
-  it("returns valid ChatResult", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+describe("POST /v1/workspaces/:wsId/chat/start", () => {
+  it("runs a turn whose done frame is a valid ChatResponse", async () => {
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Hello there", workspaceId: TEST_WORKSPACE_ID }),
     });
@@ -59,10 +59,11 @@ describe("POST /v1/workspaces/:wsId/chat", () => {
     expect(body.stopReason).toBe("complete");
     expect(body.inputTokens).toBeGreaterThan(0);
     expect(body.outputTokens).toBeGreaterThan(0);
+    expect(Array.isArray(body.toolCalls)).toBe(true);
   });
 
   it("returns 400 for invalid JSON body", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "not json",
@@ -75,7 +76,7 @@ describe("POST /v1/workspaces/:wsId/chat", () => {
   });
 
   it("returns 400 when message is missing", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversationId: "abc", workspaceId: TEST_WORKSPACE_ID }),
@@ -86,101 +87,15 @@ describe("POST /v1/workspaces/:wsId/chat", () => {
     expect(body.error).toBe("bad_request");
     expect(body.message).toContain("message");
   });
-});
 
-describe("POST /v1/workspaces/:wsId/chat/stream", () => {
-  it("delivers SSE events ending with done", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Stream me", workspaceId: TEST_WORKSPACE_ID }),
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toBe("text/event-stream");
-
-    const text = await res.text();
-    const events = parseSSE(text);
-
-    // Must end with a done event
-    const lastEvent = events[events.length - 1];
-    expect(lastEvent?.event).toBe("done");
-
-    // done event should contain the full ChatResult
-    const doneData = JSON.parse(lastEvent!.data);
-    expect(doneData.response).toBe("Stream me");
-    expect(doneData.conversationId).toMatch(/^conv_/);
-    expect(doneData.stopReason).toBe("complete");
-  });
-
-  it("sends its response head before the run emits chat.start", async () => {
-    // Hold the run before it emits anything, as a slow tool listing does.
-    const chat = runtime.chat.bind(runtime);
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    runtime.chat = async (...args) => {
-      await gate;
-      return chat(...args);
-    };
-    try {
-      const res = await Promise.race([
-        fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: "Held", workspaceId: TEST_WORKSPACE_ID }),
-        }),
-        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 2000)),
-      ]);
-      if (res === "pending") throw new Error("chat/stream sent no response head within 2000ms");
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Content-Type")).toBe("text/event-stream");
-      const reader = res.body!.getReader();
-      await readConnected(reader);
-      release();
-      while (!(await reader.read()).done) {}
-    } finally {
-      release();
-      runtime.chat = chat;
-    }
-  });
-
-  it("includes text.delta events", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Delta test", workspaceId: TEST_WORKSPACE_ID }),
-    });
-
-    const text = await res.text();
-    const events = parseSSE(text);
-    const deltas = events.filter((e) => e.event === "text.delta");
-
-    // EchoModelAdapter emits one chunk with the full text
-    expect(deltas.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("done event includes usage object with all TurnUsage fields", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
+  it("the done frame includes a usage object with all TurnUsage fields", async () => {
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "Usage test", workspaceId: TEST_WORKSPACE_ID }),
     });
+    const doneData = await readJson<ChatResponse>(res);
 
-    const text = await res.text();
-    const events = parseSSE(text);
-    const doneEvent = events.find((e) => e.event === "done");
-    expect(doneEvent).toBeDefined();
-
-    const doneData = JSON.parse(doneEvent!.data);
-
-    // usage object must be present
-    expect(doneData.usage).toBeDefined();
     expect(typeof doneData.usage).toBe("object");
-
-    // All TurnUsage fields present
     expect(typeof doneData.usage.inputTokens).toBe("number");
     expect(typeof doneData.usage.outputTokens).toBe("number");
     expect(typeof doneData.usage.cacheReadTokens).toBe("number");
@@ -188,36 +103,8 @@ describe("POST /v1/workspaces/:wsId/chat/stream", () => {
     expect(typeof doneData.usage.model).toBe("string");
     expect(typeof doneData.usage.llmMs).toBe("number");
     expect(typeof doneData.usage.iterations).toBe("number");
-
-    // costUsd should be a valid number (not NaN)
     expect(Number.isFinite(doneData.usage.costUsd)).toBe(true);
-
-    // model should be a non-empty string
     expect(doneData.usage.model.length).toBeGreaterThan(0);
-  });
-
-  it("done event preserves existing fields alongside usage (backward compat)", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Compat test", workspaceId: TEST_WORKSPACE_ID }),
-    });
-
-    const text = await res.text();
-    const events = parseSSE(text);
-    const doneEvent = events.find((e) => e.event === "done");
-    const doneData = JSON.parse(doneEvent!.data);
-
-    // Existing fields still present
-    expect(doneData.response).toBe("Compat test");
-    expect(doneData.conversationId).toMatch(/^conv_/);
-    expect(doneData.stopReason).toBe("complete");
-    expect(typeof doneData.inputTokens).toBe("number");
-    expect(typeof doneData.outputTokens).toBe("number");
-    expect(Array.isArray(doneData.toolCalls)).toBe(true);
-
-    // usage is additional, not replacing
-    expect(doneData.usage).toBeDefined();
   });
 });
 
@@ -232,13 +119,12 @@ describe("GET /v1/health", () => {
 });
 
 describe("concurrent requests", () => {
-  it("10 concurrent POST /v1/workspaces/:wsId/chat produce 10 correct independent responses", async () => {
+  it("10 concurrent chat turns produce 10 correct independent responses", async () => {
     const messages = Array.from({ length: 10 }, (_, i) => `Message ${i}`);
 
     const results = await Promise.all(
       messages.map((message) =>
-        fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-          method: "POST",
+        postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message, workspaceId: TEST_WORKSPACE_ID }),
         }).then((res) => readJson<ChatResponse>(res)),
@@ -268,7 +154,7 @@ describe("unknown routes", () => {
   });
 
   it("workspace-scoped routes exist only under /v1/workspaces/:wsId", async () => {
-    const res = await fetch(`${baseUrl}/v1/chat`, {
+    const res = await fetch(`${baseUrl}/v1/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "unaddressed" }),
@@ -291,7 +177,7 @@ describe("Bearer token authentication", () => {
     mkdirSync(authDir, { recursive: true });
     authRuntime = await Runtime.start({
       identityProvider: testAuthAdapter(TEST_API_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: authDir,
     });
@@ -315,7 +201,7 @@ describe("Bearer token authentication", () => {
 
   it("accepts requests in dev mode (no auth adapter)", async () => {
     // The main server (dev mode) should accept all requests
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "no auth needed", workspaceId: TEST_WORKSPACE_ID }),
@@ -324,7 +210,7 @@ describe("Bearer token authentication", () => {
   });
 
   it("returns 200 with valid Bearer token", async () => {
-    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -336,7 +222,7 @@ describe("Bearer token authentication", () => {
   });
 
   it("returns 401 when Authorization header is missing", async () => {
-    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "no header", workspaceId: TEST_WORKSPACE_ID }),
@@ -347,7 +233,7 @@ describe("Bearer token authentication", () => {
   });
 
   it("returns 401 with wrong Bearer token", async () => {
-    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -361,7 +247,7 @@ describe("Bearer token authentication", () => {
   });
 
   it("returns 401 with malformed header (no Bearer prefix)", async () => {
-    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${authUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -466,7 +352,7 @@ describe("SSE Event Manager", () => {
     const { SseEventManager } = await import("../../src/api/events.ts");
     const manager = new SseEventManager(60_000); // Long heartbeat to avoid noise
 
-    const stream = manager.addClient();
+    const stream = manager.addIdentityClient("usr_test", new Set(["ws_0076759dbbe19fcc"]));
     const reader = stream.getReader();
     await readConnected(reader);
 
@@ -492,8 +378,8 @@ describe("SSE Event Manager", () => {
     const { SseEventManager } = await import("../../src/api/events.ts");
     const manager = new SseEventManager(60_000);
 
-    const stream1 = manager.addClient();
-    const stream2 = manager.addClient();
+    const stream1 = manager.addIdentityClient("usr_test", new Set(["ws_0076759dbbe19fcc"]));
+    const stream2 = manager.addIdentityClient("usr_test", new Set(["ws_0076759dbbe19fcc"]));
     const reader1 = stream1.getReader();
     const reader2 = stream2.getReader();
     await Promise.all([readConnected(reader1), readConnected(reader2)]);
@@ -525,7 +411,7 @@ describe("SSE Event Manager", () => {
     const { SseEventManager } = await import("../../src/api/events.ts");
     const manager = new SseEventManager(60_000);
 
-    const stream = manager.addClient();
+    const stream = manager.addIdentityClient("usr_test", new Set(["ws_0076759dbbe19fcc"]));
     const reader = stream.getReader();
 
     expect(manager.clientCount).toBe(1);
@@ -546,7 +432,7 @@ describe("SSE Event Manager", () => {
     const { SseEventManager } = await import("../../src/api/events.ts");
     const manager = new SseEventManager(60_000);
 
-    const stream = manager.addClient();
+    const stream = manager.addIdentityClient("usr_test", new Set(["ws_0076759dbbe19fcc"]));
     const reader = stream.getReader();
     await readConnected(reader);
 
@@ -593,7 +479,7 @@ describe("auth enforcement on new endpoints", () => {
     mkdirSync(authDir2, { recursive: true });
     authRuntime2 = await Runtime.start({
       identityProvider: testAuthAdapter(TEST_KEY),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir: authDir2,
     });
@@ -629,35 +515,3 @@ describe("auth enforcement on new endpoints", () => {
     expect(res.status).toBe(401);
   });
 });
-
-// --- SSE parsing helper ---
-
-interface SSEEvent {
-  event: string;
-  data: string;
-}
-
-function parseSSE(text: string): SSEEvent[] {
-  const events: SSEEvent[] = [];
-  const blocks = text.split("\n\n").filter((b) => b.trim());
-
-  for (const block of blocks) {
-    const lines = block.split("\n");
-    let event = "";
-    let data = "";
-
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        event = line.slice(7);
-      } else if (line.startsWith("data: ")) {
-        data = line.slice(6);
-      }
-    }
-
-    if (event) {
-      events.push({ event, data });
-    }
-  }
-
-  return events;
-}

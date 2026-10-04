@@ -1,5 +1,5 @@
 import { WarningIcon } from "../icons.tsx";
-import type { AutomationSummary } from "../types.ts";
+import type { TaskSummary } from "../types.ts";
 import { formatCost, statusDotClass } from "../utils.ts";
 
 /** Human label for the pause/resume toggle button given the in-progress action and enabled state. */
@@ -14,7 +14,7 @@ function toggleButtonLabel(
   return isAutoDisabled ? "Re-enable" : "Resume";
 }
 
-/** Small label shown after the name when an automation is paused, auto-disabled, or done. */
+/** Small label shown after the name when a task is paused, auto-disabled, or done. */
 function DisabledLabel({ isAutoDisabled, isDone }: { isAutoDisabled: boolean; isDone: boolean }) {
   if (isDone) {
     return (
@@ -37,14 +37,8 @@ function DisabledLabel({ isAutoDisabled, isDone }: { isAutoDisabled: boolean; is
 }
 
 /** Meta row: last/next run times, backoff error badge, and estimated daily cost. */
-function CardMeta({
-  automation,
-  hasBackoff,
-}: {
-  automation: AutomationSummary;
-  hasBackoff: boolean;
-}) {
-  const a = automation;
+function CardMeta({ task, hasBackoff }: { task: TaskSummary; hasBackoff: boolean }) {
+  const a = task;
   return (
     <div className="auto-card-meta">
       {a.lastRunAt && <span>Last: {a.lastRunAt}</span>}
@@ -119,8 +113,8 @@ function CardActions({
   );
 }
 
-export function AutomationCard({
-  automation,
+export function TaskCard({
+  task,
   actionInProgress,
   onClick,
   onRunNow,
@@ -128,7 +122,7 @@ export function AutomationCard({
   onDelete,
   onCancel,
 }: {
-  automation: AutomationSummary;
+  task: TaskSummary;
   actionInProgress?: string;
   onClick: () => void;
   onRunNow: () => void;
@@ -136,7 +130,7 @@ export function AutomationCard({
   onDelete: () => void;
   onCancel: () => void;
 }) {
-  const a = automation;
+  const a = task;
   const hasBackoff = a.enabled && (a.consecutiveErrors ?? 0) > 0;
   // A once schedule that has run (or missed its time) is done, not broken, so
   // it is not shown as auto-disabled.
@@ -182,7 +176,7 @@ export function AutomationCard({
               {a.disabledReason}
             </div>
           )}
-          <CardMeta automation={a} hasBackoff={hasBackoff} />
+          <CardMeta task={a} hasBackoff={hasBackoff} />
         </div>
         <CardActions
           actionInProgress={actionInProgress}

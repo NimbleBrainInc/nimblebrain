@@ -3,8 +3,8 @@
 //
 // Separate from OrgUsageTab because the pieces are about presenting a usage
 // report rather than about that page, and because the cards carry judgments
-// worth keeping in one place — what the cost figure omits, and that an
-// automation run is not a conversation.
+// worth keeping in one place — what the cost figure omits, and that a
+// task run is not a conversation.
 
 import { useId, useState } from "react";
 import type {
@@ -93,7 +93,7 @@ export const DIMENSION_OPTIONS: { value: UsageDimension; label: string }[] = [
 /** Labels for the `origin` keys the ledger records. */
 export const ORIGIN_LABELS: Record<string, string> = {
   chat: "Chat",
-  task: "Automation",
+  task: "Task",
   system: "System",
 };
 
@@ -193,10 +193,10 @@ export function StatCard({
 }
 
 /**
- * The four headline cards: total cost, chat cost, automation cost, and tokens.
+ * The four headline cards: total cost, chat cost, task cost, and tokens.
  *
- * Chat and automation are split because folding them is how automation spend
- * stayed invisible in the first place: an automation run is not someone
+ * Chat and task are split because folding them is how task spend
+ * stayed invisible in the first place: a task run is not someone
  * chatting. The total card qualifies itself on its front face when calls are
  * excluded for want of a price, since a large token count beside a small
  * dollar figure otherwise reads as cheap rather than as partly unknown.
@@ -259,10 +259,10 @@ export function UsageTotalsCards({
           details={originDetails(chat, "Conversations", conversations)}
         />
         <StatCard
-          title="Automation cost"
+          title="Task cost"
           value={formatUsd(task?.cost.total ?? 0)}
-          summary={`${formatNumber(runs)} automation ${runs === 1 ? "run" : "runs"}`}
-          details={originDetails(task, "Automation runs", runs)}
+          summary={`${formatNumber(runs)} task ${runs === 1 ? "run" : "runs"}`}
+          details={originDetails(task, "Task runs", runs)}
         />
         <StatCard
           title="Tokens"

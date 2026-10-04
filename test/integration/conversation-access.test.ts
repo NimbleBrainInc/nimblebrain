@@ -12,7 +12,7 @@
  *  - runtime.chat: same-owner resume succeeds; a foreign-owner or unknown id
  *    throws ConversationNotFoundError and creates nothing; missing
  *    request.identity throws when an identity provider is configured.
- *  - HTTP: the three chat routes answer each of those cases with the same 404.
+ *  - HTTP: `POST …/chat/start` answers each of those cases with the same 404.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -35,6 +35,7 @@ import { FIRST_PARTY_GRANT } from "../../src/identity/provider.ts";
 import type { User } from "../../src/identity/user.ts";
 import { ConversationNotFoundError } from "../../src/runtime/errors.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
@@ -119,7 +120,7 @@ describe("runtime.chat — single-owner ownership check", () => {
     mkdirSync(workDir, { recursive: true });
     runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -227,7 +228,7 @@ describe("runtime.chat — identity-provider gate", () => {
       },
     });
     runtime = await Runtime.start({
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -266,7 +267,7 @@ describe("runtime.chat — identity-provider gate", () => {
 describe("HTTP — a conversation that is not the caller's in the path's workspace", () => {
   const ALICE_TOKEN = "alice-token-1234567890";
   const BOB_TOKEN = "bob-token-0987654321";
-  const CHAT_ROUTES = ["/chat", "/chat/stream", "/chat/start"] as const;
+  const route = "/chat/start";
 
   let runtime: Runtime;
   let handle: ServerHandle;
@@ -287,7 +288,7 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
           [ALICE_TOKEN]: ALICE,
           [BOB_TOKEN]: BOB,
         }),
-      model: { provider: "custom", adapter: createEchoModel() },
+      languageModel: createEchoModel(),
       logging: { disabled: true },
       workDir,
     });
@@ -348,40 +349,37 @@ describe("HTTP — a conversation that is not the caller's in the path's workspa
     return { ...body, details: { ...body.details, conversationId: "<id>" } };
   }
 
-  for (const route of CHAT_ROUTES) {
-    test(`${route}: a conversation in another workspace is refused exactly like an unknown one`, async () => {
-      const unknownId = "conv_0000000000000001";
-      const inB = await send(route, ALICE_TOKEN, aliceConvInB);
-      const unknown = await send(route, ALICE_TOKEN, unknownId);
+  test(`${route}: a conversation in another workspace is refused exactly like an unknown one`, async () => {
+    const unknownId = "conv_0000000000000001";
+    const inB = await send(route, ALICE_TOKEN, aliceConvInB);
+    const unknown = await send(route, ALICE_TOKEN, unknownId);
 
-      expect(inB.status).toBe(404);
-      expect(inB.body.error).toBe("conversation_not_found");
-      expect(unknown.status).toBe(404);
-      expect(shape(inB.body, aliceConvInB)).toEqual(shape(unknown.body, unknownId));
+    expect(inB.status).toBe(404);
+    expect(inB.body.error).toBe("conversation_not_found");
+    expect(unknown.status).toBe(404);
+    expect(shape(inB.body, aliceConvInB)).toEqual(shape(unknown.body, unknownId));
 
-      // Nothing ran in B and nothing was born in A under either id.
-      expect(runtime.isTurnActive(aliceConvInB)).toBe(false);
-      const inBStore = await runtime.resolveConversationStore(aliceConvInB);
-      const conv = await inBStore!.load(aliceConvInB);
-      expect(await inBStore!.history(conv!)).toHaveLength(2);
-      expect(await runtime.findConversation(unknownId)).toBeNull();
-    });
+    // Nothing ran in B and nothing was born in A under either id.
+    expect(runtime.isTurnActive(aliceConvInB)).toBe(false);
+    const inBStore = await runtime.resolveConversationStore(aliceConvInB);
+    const conv = await inBStore!.load(aliceConvInB);
+    expect(await inBStore!.history(conv!)).toHaveLength(2);
+    expect(await runtime.findConversation(unknownId)).toBeNull();
+  });
 
-    test(`${route}: another owner's conversation is refused exactly like an unknown one`, async () => {
-      const unknownId = "conv_0000000000000002";
-      const foreign = await send(route, BOB_TOKEN, aliceConvInA);
-      const unknown = await send(route, BOB_TOKEN, unknownId);
+  test(`${route}: another owner's conversation is refused exactly like an unknown one`, async () => {
+    const unknownId = "conv_0000000000000002";
+    const foreign = await send(route, BOB_TOKEN, aliceConvInA);
+    const unknown = await send(route, BOB_TOKEN, unknownId);
 
-      expect(foreign.status).toBe(404);
-      expect(shape(foreign.body, aliceConvInA)).toEqual(shape(unknown.body, unknownId));
-      const loaded = await runtime.findConversation(aliceConvInA);
-      expect(loaded!.ownerId).toBe(ALICE.id);
-    });
-  }
+    expect(foreign.status).toBe(404);
+    expect(shape(foreign.body, aliceConvInA)).toEqual(shape(unknown.body, unknownId));
+    const loaded = await runtime.findConversation(aliceConvInA);
+    expect(loaded!.ownerId).toBe(ALICE.id);
+  });
 
   test("the conversation resumes at its own workspace's path", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${wsB}/chat`, {
-      method: "POST",
+    const res = await postChatTurn(baseUrl, wsB, {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ALICE_TOKEN}` },
       body: JSON.stringify({ message: "back in B", conversationId: aliceConvInB }),
     });

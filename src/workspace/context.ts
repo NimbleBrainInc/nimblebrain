@@ -221,14 +221,14 @@ const WORKSPACES_SEGMENT = "workspaces";
  * Derived from the path rather than from an argument, which is what lets every
  * workspace-scoped writer adopt the guard without threading a `wsId` it does
  * not already hold. The same trick `parseConversationPath` and
- * `parseAutomationPath` use, for the same reason: the path is the binding.
+ * `parseTaskPath` use, for the same reason: the path is the binding.
  *
  * **A `workspaces` segment only counts with a well-formed workspace id after
  * it**, and the scan looks for that PAIR rather than trusting one candidate
  * index. Trusting one is how this leaked: testing the segment after the *last*
- * `workspaces` read a path whose final segment is `workspaces` — the id of an
- * automation named "Workspaces", and `automationRunsDir` ends in
- * `runs/<automationId>` — as "not a workspace tree", and fell through to the
+ * `workspaces` read a path whose final segment is `workspaces` — the id of a
+ * task named "Workspaces", and `taskRunsDir` ends in
+ * `runs/<taskId>` — as "not a workspace tree", and fell through to the
  * unguarded mkdir this exists to prevent.
  *
  * Requiring the pair also settles first-match versus last: the outermost root

@@ -378,6 +378,27 @@ describe("nb__manage_workspaces", () => {
       }
     });
 
+    test("refuses a connector row with no serverName, on create and update", async () => {
+      const created = parseResult(await tool.handler({ action: "create", name: "Unnamed" })) as {
+        workspace: { id: string };
+      };
+      const row = { url: "https://echo.example.com/mcp" };
+
+      const onCreate = await tool.handler({ action: "create", name: "Other", connectors: [row] });
+      expect(onCreate.isError).toBe(true);
+      expect(resultText(onCreate)).toContain("needs a serverName");
+
+      for (const bad of [row, { ...row, serverName: "  " }]) {
+        const onUpdate = await tool.handler({
+          action: "update",
+          workspaceId: created.workspace.id,
+          connectors: [bad],
+        });
+        expect(onUpdate.isError).toBe(true);
+        expect(resultText(onUpdate)).toContain("needs a serverName");
+      }
+    });
+
     test("an archive failure names the teardown that already ran, not a no-op", async () => {
       const created = parseResult(await tool.handler({ action: "create", name: "Stuck" })) as {
         workspace: { id: string };
@@ -678,8 +699,8 @@ describe("nb__manage_workspaces", () => {
             serverName: "mail",
             brokered: { provider: "composio", connectorId: "com.example/mail" },
           },
-          // Uncatalogued and unnamed: falls back to the derived server name.
-          { url: "https://other.example.com/mcp" },
+          // Uncatalogued: reported by its server name.
+          { url: "https://other.example.com/mcp", serverName: "other" },
         ],
       });
 
@@ -687,8 +708,7 @@ describe("nb__manage_workspaces", () => {
         workspaces: Array<{ connectors: Array<Record<string, unknown>> }>;
       };
       const connectors = parsed.workspaces[0].connectors;
-      expect(connectors.map((c) => c.name)).toEqual(["Echo", "Mail", connectors[2].serverName]);
-      expect(connectors[2].serverName).toBeTruthy();
+      expect(connectors.map((c) => c.name)).toEqual(["Echo", "Mail", "other"]);
       expect(connectors.map((c) => c.iconUrl)).toEqual([
         "https://static.example.com/echo.svg",
         undefined,

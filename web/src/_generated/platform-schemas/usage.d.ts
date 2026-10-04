@@ -89,7 +89,7 @@ export interface UsageReportOutput {
         llmMs: number;
         /** Distinct chat conversations. Task runs are counted by `runs`. */
         conversations: number;
-        /** Distinct task runs — automations, which have no conversation to count. */
+        /** Distinct task runs — tasks, which have no conversation to count. */
         runs?: number;
         /**
          * Calls no price could be found for. Present only when non-zero.

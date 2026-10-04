@@ -134,7 +134,7 @@ function createProvider() {
 }
 
 function makeRequest(token: string): Request {
-  return new Request("http://localhost:27247/v1/workspaces/ws_00079598e311c160/chat", {
+  return new Request("http://localhost:27247/v1/workspaces/ws_00079598e311c160/chat/start", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });

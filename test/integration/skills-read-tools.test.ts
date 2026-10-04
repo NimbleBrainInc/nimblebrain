@@ -99,7 +99,7 @@ describe("skills read tools — end-to-end", () => {
 
     const runtime = await Runtime.start({
       identityProvider: devProvider,
-      model: { provider: "custom", adapter: model },
+      languageModel: model,
       workDir,
       logging: { disabled: true },
       telemetry: { enabled: false },

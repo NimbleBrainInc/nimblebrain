@@ -1,5 +1,5 @@
 /**
- * Metadata passthrough tests for the POST /v1/workspaces/:wsId/chat endpoint.
+ * Metadata passthrough tests for a chat turn (`POST /v1/workspaces/:wsId/chat/start`).
  *
  * Verifies that:
  * - metadata is stored in the conversation and accessible after chat
@@ -17,6 +17,7 @@ import type { ApiErrorBody, ChatResponse } from "../../src/api/schemas/responses
 import type { ServerHandle } from "../../src/api/server.ts";
 import { startServer } from "../../src/api/server.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { postChatTurn } from "../helpers/chat-turn.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
 import { TEST_IDENTITY, testAuthAdapter } from "../helpers/test-auth-adapter.ts";
@@ -25,11 +26,6 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 // ---------------------------------------------------------------------------
 // Setup: Runtime + HTTP server with echo model
 // ---------------------------------------------------------------------------
-
-/**
- * What `POST /v1/workspaces/:wsId/chat` sends: the run's result with its token
- * counts lifted to the top level, and `usage` replaced by its wire form.
- */
 
 const API_KEY = "chat-metadata-test-key-1234";
 let runtime: Runtime;
@@ -41,7 +37,7 @@ beforeAll(async () => {
   mkdirSync(workDir, { recursive: true });
   runtime = await Runtime.start({
     identityProvider: testAuthAdapter(API_KEY),
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
     workDir,
   });
@@ -72,14 +68,13 @@ function authHeaders(): Record<string, string> {
 // Metadata passthrough
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/workspaces/:wsId/chat — metadata passthrough", () => {
+describe("POST /v1/workspaces/:wsId/chat/start — metadata passthrough", () => {
   test("metadata stored in conversation and returned", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: authHeaders(),
       body: JSON.stringify({
         message: "Hello with metadata",
-        metadata: { source: "test", automationId: "auto-123" },
+        metadata: { source: "test", taskId: "auto-123" },
       }),
     });
 
@@ -88,8 +83,7 @@ describe("POST /v1/workspaces/:wsId/chat — metadata passthrough", () => {
     expect(body.conversationId).toBeDefined();
 
     // The conversation should exist and we can continue it
-    const followUp = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const followUp = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: authHeaders(),
       body: JSON.stringify({
         message: "Follow up",
@@ -104,7 +98,7 @@ describe("POST /v1/workspaces/:wsId/chat — metadata passthrough", () => {
   });
 
   test("invalid metadata (array) returns 400", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({
@@ -122,7 +116,7 @@ describe("POST /v1/workspaces/:wsId/chat — metadata passthrough", () => {
   });
 
   test("invalid metadata (string) returns 400", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({
@@ -139,13 +133,12 @@ describe("POST /v1/workspaces/:wsId/chat — metadata passthrough", () => {
 // AllowedTools filtering
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/workspaces/:wsId/chat — allowedTools filtering", () => {
+describe("POST /v1/workspaces/:wsId/chat/start — allowedTools filtering", () => {
   test("allowedTools restricts available tools", async () => {
     // Use echo model that just echoes — won't actually call tools, but
     // the surfacing logic still filters. We verify via a successful chat
     // that doesn't error out with allowedTools set.
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: authHeaders(),
       body: JSON.stringify({
         message: "Use only echo tools",
@@ -160,7 +153,7 @@ describe("POST /v1/workspaces/:wsId/chat — allowedTools filtering", () => {
   });
 
   test("invalid allowedTools (not array) returns 400", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({
@@ -176,7 +169,7 @@ describe("POST /v1/workspaces/:wsId/chat — allowedTools filtering", () => {
   });
 
   test("invalid allowedTools (array of non-strings) returns 400", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
+    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/start`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({
@@ -193,10 +186,9 @@ describe("POST /v1/workspaces/:wsId/chat — allowedTools filtering", () => {
 // Regression: no metadata/allowedTools works identically
 // ---------------------------------------------------------------------------
 
-describe("POST /v1/workspaces/:wsId/chat — regression (no metadata, no allowedTools)", () => {
+describe("POST /v1/workspaces/:wsId/chat/start — regression (no metadata, no allowedTools)", () => {
   test("chat without metadata or allowedTools works unchanged", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const res = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: authHeaders(),
       body: JSON.stringify({
         message: "Just a normal message",
@@ -215,8 +207,7 @@ describe("POST /v1/workspaces/:wsId/chat — regression (no metadata, no allowed
 
   test("chat with conversationId only works unchanged", async () => {
     // First message
-    const res1 = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const res1 = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: authHeaders(),
       body: JSON.stringify({
         message: "First message",
@@ -226,8 +217,7 @@ describe("POST /v1/workspaces/:wsId/chat — regression (no metadata, no allowed
     const convId = body1.conversationId;
 
     // Second message in same conversation
-    const res2 = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat`, {
-      method: "POST",
+    const res2 = await postChatTurn(baseUrl, TEST_WORKSPACE_ID, {
       headers: authHeaders(),
       body: JSON.stringify({
         message: "Second message",
@@ -239,22 +229,5 @@ describe("POST /v1/workspaces/:wsId/chat — regression (no metadata, no allowed
     const body2 = await readJson<ChatResponse>(res2);
     expect(body2.conversationId).toBe(convId);
     expect(body2.response).toBeDefined();
-  });
-
-  test("streaming chat without metadata works unchanged", async () => {
-    const res = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/chat/stream`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({
-        message: "Stream without metadata",
-      }),
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/event-stream");
-
-    const text = await res.text();
-    // Should contain at least a done event
-    expect(text).toContain("event: done");
   });
 });

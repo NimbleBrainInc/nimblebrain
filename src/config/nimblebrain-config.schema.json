@@ -15,23 +15,6 @@
       "description": "Config file version. Current: \"1\".",
       "enum": ["1"]
     },
-    "model": {
-      "description": "Model provider configuration.",
-      "type": "object",
-      "required": ["provider"],
-      "properties": {
-        "provider": {
-          "type": "string",
-          "enum": ["anthropic", "openai", "google"],
-          "description": "Model provider."
-        },
-        "apiKey": {
-          "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/credentialRef" }],
-          "description": "Anthropic API key. Falls back to ANTHROPIC_API_KEY env var. May instead be a credential reference — { \"ref\": \"credential\", \"key\": \"<key>\" } — resolved from the instance scope of the credential store at startup, so the value never sits in this file. See /config/secrets/."
-        }
-      },
-      "additionalProperties": false
-    },
     "providers": {
       "description": "Configured model providers.",
       "type": "object",
@@ -152,10 +135,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "defaultModel": {
-      "description": "Default model ID (e.g., \"claude-sonnet-4-5-20250929\"). Deprecated — use models.default instead.",
-      "type": "string"
     },
     "maxIterations": {
       "description": "Max agentic iterations per request. Capped at 50. Default: 25.",
@@ -480,15 +459,15 @@
       },
       "additionalProperties": false
     },
-    "automations": {
-      "description": "Guardrails for unattended (task) runs: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each automation's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
+    "tasks": {
+      "description": "Guardrails for unattended (task) runs: how many runs the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound each task's own caps, and the runtime defaults for caps it leaves unset, at execution time.",
       "type": "object",
       "properties": {
         "maxConcurrentRuns": {
           "type": "integer",
           "minimum": 1,
           "maximum": 100,
-          "description": "Unattended runs in flight at once, across every workspace: scheduled, Run now, and event automation runs, and any other run started without a person in the loop. Chat turns do not take a slot. Default: 2.",
+          "description": "Unattended runs in flight at once, across every workspace: scheduled, Run now, and event task runs, and any other run started without a person in the loop. Chat turns do not take a slot. Default: 2.",
           "default": 2
         },
         "maxQueuedRuns": {
@@ -502,20 +481,20 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 50,
-          "description": "Ceiling on one run's agentic iterations. An automation's own maxIterations above it is lowered to it. Default: 50.",
+          "description": "Ceiling on one run's agentic iterations. A task's own maxIterations above it is lowered to it. Default: 50.",
           "default": 50
         },
         "maxRunInputTokens": {
           "type": "integer",
           "minimum": 1000,
           "maximum": 100000000,
-          "description": "Ceiling on one run's input tokens, summed over every model call. An automation's own maxInputTokens above it is lowered to it, and one that sets none runs under it. Unset (the default): no ceiling, so an automation's input tokens are capped only by its own maxInputTokens."
+          "description": "Ceiling on one run's input tokens, summed over every model call. A task's own maxInputTokens above it is lowered to it, and one that sets none runs under it. Unset (the default): no ceiling, so a task's input tokens are capped only by its own maxInputTokens."
         },
         "maxRunDurationMs": {
           "type": "integer",
           "minimum": 10000,
           "maximum": 600000,
-          "description": "Ceiling on one run's wall-clock time, in milliseconds. An automation's own maxRunDurationMs above it is lowered to it. Default: 600000 (10 min).",
+          "description": "Ceiling on one run's wall-clock time, in milliseconds. A task's own maxRunDurationMs above it is lowered to it. Default: 600000 (10 min).",
           "default": 600000
         }
       },
@@ -553,12 +532,13 @@
     "connectorRef": {
       "description": "One entry in a workspace's `connectors[]` — a remote MCP server, addressed by URL. Workspace records live at `<workDir>/workspaces/<wsId>/workspace.json`, not in this file.",
       "type": "object",
-      "required": ["url"],
+      "required": ["url", "serverName"],
       "properties": {
         "url": { "type": "string", "description": "Remote MCP server URL." },
         "serverName": {
           "type": "string",
-          "description": "Server name to register the connector under."
+          "minLength": 1,
+          "description": "Server name to register the connector under: the slugified canonical server name, and the connector's lifecycle and route key."
         },
         "transport": {
           "type": "object",

@@ -6,6 +6,7 @@ import {
   reconcileConnectorSkills,
 } from "../../../src/connectors/runtime/connector-skill-reconcile.ts";
 import type {
+  BrokeredRef,
   ConnectorRef,
   ConnectorSkillLockEntry,
 } from "../../../src/connectors/runtime/types.ts";
@@ -21,14 +22,14 @@ function connector(fields: {
   serverName: string;
   skillsLock?: ConnectorSkillLockEntry[];
   composio?: { connectorId: string };
-  smithery?: { connectorId: string; connectionId: string; namespace: string; baseUrl: string };
+  brokered?: BrokeredRef;
 }): ConnectorRef {
   return {
     url: fields.url ?? "https://example.test/mcp",
     serverName: fields.serverName,
     ...(fields.skillsLock ? { skillsLock: fields.skillsLock } : {}),
     ...(fields.composio ? { composio: fields.composio } : {}),
-    ...(fields.smithery ? { smithery: fields.smithery } : {}),
+    ...(fields.brokered ? { brokered: fields.brokered } : {}),
   };
 }
 
@@ -167,11 +168,14 @@ describe("reconcileConnectorSkills", () => {
     const smithery = connector({
       url: "https://api.smithery.ai/connect/ns/nb-abc/mcp",
       serverName: "ai-bassethound-mcp",
-      smithery: {
+      brokered: {
+        provider: "smithery",
         connectorId: "ai.bassethound/mcp",
-        connectionId: "nb-abc",
-        namespace: "ns",
-        baseUrl: "https://api.smithery.ai",
+        providerRef: {
+          connectionId: "nb-abc",
+          namespace: "ns",
+          baseUrl: "https://api.smithery.ai",
+        },
       },
     });
     const { deps, cap } = buildDeps(

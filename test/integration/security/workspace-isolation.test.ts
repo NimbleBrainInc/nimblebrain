@@ -42,7 +42,7 @@ beforeAll(async () => {
   runtime = await Runtime.start({
     identityProvider: () => new TestAuthAdapter(TEST_KEY),
     workDir,
-    model: { provider: "custom", adapter: createEchoModel() },
+    languageModel: createEchoModel(),
     logging: { disabled: true },
   });
 
@@ -75,7 +75,7 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 
 /** POST a chat message to the workspace addressed by `wsSegment` (already URL-encoded). */
 function chatAt(wsSegment: string): Promise<Response> {
-  return fetch(`${baseUrl}/v1/workspaces/${wsSegment}/chat`, {
+  return fetch(`${baseUrl}/v1/workspaces/${wsSegment}/chat/start`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ message: "test" }),
@@ -183,8 +183,8 @@ describe("V5: SSE events scoped by workspace", () => {
   it("broadcast with wsId only reaches matching clients", async () => {
     const manager = new SseEventManager(60_000);
 
-    const streamA = manager.addClient("ws_00164434d8dd7ffb");
-    const streamB = manager.addClient("ws_002038aa71ea4b8a");
+    const streamA = manager.addIdentityClient("usr_a", new Set(["ws_00164434d8dd7ffb"]));
+    const streamB = manager.addIdentityClient("usr_b", new Set(["ws_002038aa71ea4b8a"]));
     const readerA = streamA.getReader();
     const readerB = streamB.getReader();
     await Promise.all([readConnected(readerA), readConnected(readerB)]);
@@ -218,8 +218,8 @@ describe("V5: SSE events scoped by workspace", () => {
   it("broadcast without wsId reaches all clients", async () => {
     const manager = new SseEventManager(60_000);
 
-    const streamA = manager.addClient("ws_00164434d8dd7ffb");
-    const streamB = manager.addClient("ws_002038aa71ea4b8a");
+    const streamA = manager.addIdentityClient("usr_a", new Set(["ws_00164434d8dd7ffb"]));
+    const streamB = manager.addIdentityClient("usr_b", new Set(["ws_002038aa71ea4b8a"]));
     const readerA = streamA.getReader();
     const readerB = streamB.getReader();
     await Promise.all([readConnected(readerA), readConnected(readerB)]);
@@ -235,31 +235,6 @@ describe("V5: SSE events scoped by workspace", () => {
 
       readerA.cancel();
       readerB.cancel();
-      manager.stop();
-    });
-  });
-
-  it("client without workspace receives all events", async () => {
-    const manager = new SseEventManager(60_000);
-
-    const streamNoWs = manager.addClient(); // no workspace
-    const streamWs = manager.addClient("ws_00164434d8dd7ffb");
-    const readerNoWs = streamNoWs.getReader();
-    const readerWs = streamWs.getReader();
-    await Promise.all([readConnected(readerNoWs), readConnected(readerWs)]);
-
-    // Broadcast to workspace alpha
-    manager.broadcast("config.changed", { key: "model" }, "ws_00164434d8dd7ffb");
-
-    // Both should get it — the no-workspace client gets everything
-    return Promise.all([readerNoWs.read(), readerWs.read()]).then(([rNoWs, rWs]) => {
-      const textNoWs = new TextDecoder().decode(rNoWs.value);
-      const textWs = new TextDecoder().decode(rWs.value);
-      expect(textNoWs).toContain("config.changed");
-      expect(textWs).toContain("config.changed");
-
-      readerNoWs.cancel();
-      readerWs.cancel();
       manager.stop();
     });
   });

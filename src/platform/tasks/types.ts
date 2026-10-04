@@ -1,40 +1,39 @@
 /**
- * Type definitions for the automations domain.
- * Matches SPEC_ADDENDUM_AUTOMATIONS.md §5.1–5.3.
+ * Type definitions for the tasks domain.
  */
 
 import type { NotificationRouteMatch } from "../schemas/notifications.ts";
 
 // ---------------------------------------------------------------------------
-// §5.1 — Automation Definition
+// Task Definition
 // ---------------------------------------------------------------------------
 
-/** Who created this automation. */
-export type AutomationSource = "user" | "agent";
+/** Who created this task. */
+export type TaskSource = "user" | "agent";
 
-/** How a once schedule's one occurrence ended, and when (see {@link Automation.onceDone}). */
+/** How a once schedule's one occurrence ended, and when (see {@link Task.onceDone}). */
 export interface OnceDone {
   /** ISO time the occurrence was settled: the run's start, or when it was judged missed. */
   at: string;
   outcome: "ran" | "missed";
 }
 
-/** Whether an automation is a kept definition or a one-off (see {@link Automation.kind}). */
-export type AutomationKind = "saved" | "oneoff";
+/** Whether a task is a kept definition or a one-off (see {@link Task.kind}). */
+export type TaskKind = "saved" | "oneoff";
 
-/** An automation's kind, reading an absent one as `saved`. */
-export function kindOf(automation: Pick<Automation, "kind">): AutomationKind {
-  return automation.kind ?? "saved";
+/** A task's kind, reading an absent one as `saved`. */
+export function kindOf(task: Pick<Task, "kind">): TaskKind {
+  return task.kind ?? "saved";
 }
 
-export interface Automation {
+export interface Task {
   /** Unique identifier. Kebab-case, derived from name. */
   id: string;
 
   /** Human-readable name. */
   name: string;
 
-  /** What this automation does. */
+  /** What this task does. */
   description?: string;
 
   /** The message that opens each run. */
@@ -51,20 +50,20 @@ export interface Automation {
    * once with no trigger, kept with its run history but left out of the
    * default list. Absent reads as `saved`.
    */
-  kind?: AutomationKind;
+  kind?: TaskKind;
 
   /**
    * Set when a once schedule's occurrence is over: it fired (`ran`, whatever
-   * the run's outcome) or was too late to fire (`missed`). The automation is
+   * the run's outcome) or was too late to fire (`missed`). The task is
    * then inert until a new `at` re-arms it, which clears this. Absent on every
-   * other automation, and on a once still to come.
+   * other task, and on a once still to come.
    */
   onceDone?: OnceDone;
 
   /** Force a specific skill match (bypass trigger/keyword matching). */
   skill?: string;
 
-  /** Tool allowlist (glob patterns) for this automation's runs. Empty or absent: every tool. */
+  /** Tool allowlist (glob patterns) for this task's runs. Empty or absent: every tool. */
   allowedTools?: string[];
 
   /**
@@ -77,13 +76,13 @@ export interface Automation {
    * JSON Schema the deliverable must match. Set: the run is told to answer with
    * JSON matching it, and the executor parses and validates the final output,
    * keeping the parsed value as the deliverable's `structured` and recording
-   * whether it matched (`AutomationRun.outputSchemaValid`).
+   * whether it matched (`TaskRun.outputSchemaValid`).
    */
   outputSchema?: Record<string, unknown>;
 
   /**
    * Max agentic iterations per run. Default: the runtime's chat default (25).
-   * Held at execution to the operator's `automations.maxRunIterations` (at
+   * Held at execution to the operator's `tasks.maxRunIterations` (at
    * most 50); see `effectiveRunLimits`.
    */
   maxIterations?: number;
@@ -92,7 +91,7 @@ export interface Automation {
    * Input tokens one run may spend, summed over every model call. Before each
    * call the engine ends the run with stopReason `max_input_tokens` if that
    * call's projected input would pass it (see `EngineConfig.maxRunInputTokens`).
-   * Held at execution to the operator's `automations.maxRunInputTokens` when
+   * Held at execution to the operator's `tasks.maxRunInputTokens` when
    * one is configured, which also applies when this is unset. Unset with no
    * ceiling configured: no per-run cap.
    */
@@ -100,24 +99,24 @@ export interface Automation {
 
   /**
    * Max execution time in ms for a single run. Default: 120_000 (2 minutes).
-   * Held at execution to the operator's `automations.maxRunDurationMs`.
+   * Held at execution to the operator's `tasks.maxRunDurationMs`.
    */
   maxRunDurationMs?: number;
 
-  /** Model override for this automation. Null = workspace default. */
+  /** Model override for this task. Null = workspace default. */
   model?: string | null;
 
-  /** Whether this automation is active. */
+  /** Whether this task is active. */
   enabled: boolean;
 
-  /** User ID of the automation owner. Set at creation time. Used for scheduled runs. */
+  /** User ID of the task owner. Set at creation time. Used for scheduled runs. */
   ownerId?: string;
 
-  /** Workspace this automation belongs to. Set at creation time. Used for scheduled runs. */
+  /** Workspace this task belongs to. Set at creation time. Used for scheduled runs. */
   workspaceId?: string;
 
-  /** Who created this automation. */
-  source: AutomationSource;
+  /** Who created this task. */
+  source: TaskSource;
 
   /** ISO timestamp. */
   createdAt: string;
@@ -145,7 +144,7 @@ export interface Automation {
   /** ISO timestamp when auto-disabled. */
   disabledAt?: string;
 
-  /** Reason the automation was auto-disabled. */
+  /** Reason the task was auto-disabled. */
   disabledReason?: string;
 
   /** Cumulative input tokens consumed across all runs. */
@@ -175,7 +174,7 @@ export interface TokenBudget {
 }
 
 // ---------------------------------------------------------------------------
-// §5.2 — Schedule Specification
+// Schedule Specification
 // ---------------------------------------------------------------------------
 
 /**
@@ -194,7 +193,7 @@ export const MAX_EVENT_DEBOUNCE_MS = 900_000;
 /**
  * Default ceiling on how often an event schedule may fire, per hour.
  *
- * The run limits an automation already carries bound how much ONE run costs;
+ * The run limits a task already carries bound how much ONE run costs;
  * none of them bounds how many runs there are, because a run that succeeds
  * every time never trips consecutive-error auto-disable. A self-feeding loop —
  * a run approves something, the connector emits the fact, the route fires the
@@ -205,7 +204,7 @@ export const DEFAULT_EVENT_MAX_FIRES_PER_HOUR = 12;
 /** Highest fire ceiling an event schedule may ask for. */
 export const MAX_EVENT_MAX_FIRES_PER_HOUR = 60;
 
-/** What `disabledReason` says when the fire ceiling turned an automation off. */
+/** What `disabledReason` says when the fire ceiling turned a task off. */
 export const EVENT_FIRE_CEILING_REASON = "event_fire_ceiling";
 
 /**
@@ -225,18 +224,18 @@ export const ONCE_RAN_REASON = "Ran once at ";
 export const ONCE_MISSED_REASON = "Missed its one time at ";
 
 /**
- * When an automation runs.
+ * When a task runs.
  *
  * Four kinds, discriminated by `type`, with each kind's own fields optional on
  * the shared shape — the arrangement `cron` and `interval` already had.
  *
  * `cron`, `interval`, and `once` are positions in time and the scheduler's
  * timer arms itself to them. A `once` fires at `at` and then leaves the
- * automation inert (disabled, no next run) until a new `at` re-arms it. `event`
+ * task inert (disabled, no next run) until a new `at` re-arms it. `event`
  * is not a position in time: it has no next run, the timer never arms for
  * it, and it fires when a notification the workspace routed to it arrives.
- * Reaching an automation that way is an operator's decision twice over — an
- * admin writes the route that names it, and the automation's own `match` says
+ * Reaching a task that way is an operator's decision twice over — an
+ * admin writes the route that names it, and the task's own `match` says
  * which of the routed items it wants — so neither half alone opens the path.
  */
 export interface ScheduleSpec {
@@ -258,11 +257,11 @@ export interface ScheduleSpec {
   intervalMs?: number;
 
   /**
-   * Which notifications this automation wants. Required when type is "event".
+   * Which notifications this task wants. Required when type is "event".
    *
    * The same match expression a delivery route carries, imported rather than
    * restated so one grammar governs both ends: a route decides that a path from
-   * the inbox to this automation exists at all, and this decides which of the
+   * the inbox to this task exists at all, and this decides which of the
    * items arriving down it are worth a run.
    */
   match?: NotificationRouteMatch;
@@ -274,9 +273,9 @@ export interface ScheduleSpec {
   debounceMs?: number;
 
   /**
-   * Most runs this automation may fire from events in any rolling hour.
+   * Most runs this task may fire from events in any rolling hour.
    * Default {@link DEFAULT_EVENT_MAX_FIRES_PER_HOUR}. Exceeding it disables the
-   * automation, through the same fields consecutive-error auto-disable uses.
+   * task, through the same fields consecutive-error auto-disable uses.
    */
   maxFiresPerHour?: number;
 }
@@ -292,24 +291,22 @@ export function isOnceSchedule(schedule: ScheduleSpec | undefined): boolean {
 }
 
 /**
- * Whether a once automation has fired (`ran`) or missed its time (`missed`)
- * and is inert until re-armed, or null when it is not a once automation or is
- * still to come. Read from {@link Automation.onceDone}.
+ * Whether a once task has fired (`ran`) or missed its time (`missed`)
+ * and is inert until re-armed, or null when it is not a once task or is
+ * still to come. Read from {@link Task.onceDone}.
  */
-export function onceRetirement(
-  automation: Pick<Automation, "schedule" | "onceDone">,
-): "ran" | "missed" | null {
-  if (!isOnceSchedule(automation.schedule)) return null;
-  return automation.onceDone?.outcome ?? null;
+export function onceRetirement(task: Pick<Task, "schedule" | "onceDone">): "ran" | "missed" | null {
+  if (!isOnceSchedule(task.schedule)) return null;
+  return task.onceDone?.outcome ?? null;
 }
 
 // ---------------------------------------------------------------------------
-// §5.3 — Automation Run
+// Task Run
 // ---------------------------------------------------------------------------
 
-export interface AutomationRun {
+export interface TaskRun {
   id: string;
-  automationId: string;
+  taskId: string;
   startedAt: string;
   completedAt?: string;
   /**
@@ -348,8 +345,8 @@ export interface AutomationRun {
    */
   trigger?: "scheduled" | "manual" | "event";
   /** Final agent response, truncated for the run list. The full deliverable,
-   *  activity log, and output-file refs live in the run's `AutomationRunResult`
-   *  sidecar (see {@link AutomationRunResult}). */
+   *  activity log, and output-file refs live in the run's `TaskRunResult`
+   *  sidecar (see {@link TaskRunResult}). */
   resultPreview?: string;
   /**
    * Engine-level stop reason. Mirrors `StopReason` from `src/engine/types.ts`
@@ -372,8 +369,8 @@ export interface AutomationRun {
   /** The idempotency key the run was requested with; a repeat returns this run. */
   idempotencyKey?: string;
   /**
-   * Whether the deliverable matched the automation's `outputSchema`. Absent
-   * when the automation has none, or the run produced no deliverable.
+   * Whether the deliverable matched the task's `outputSchema`. Absent
+   * when the task has none, or the run produced no deliverable.
    */
   outputSchemaValid?: boolean;
   /** Why the deliverable did not match the `outputSchema`, when it did not. */
@@ -388,14 +385,14 @@ export interface AutomationRun {
  */
 export interface RunTicket {
   runId: string;
-  automationId: string;
+  taskId: string;
   /** When the run was asked for. */
   requestedAt: string;
-  run: AutomationRun;
+  run: TaskRun;
 }
 
 // ---------------------------------------------------------------------------
-// §5.3a — Automation Run Result (the deliverable)
+// Task Run Result (the deliverable)
 // ---------------------------------------------------------------------------
 
 /** One tool call from a run's activity log. */
@@ -415,16 +412,16 @@ export interface RunFileRef {
 }
 
 /**
- * The full result of an automation run — what the run *produced*, persisted
- * once per run as a sidecar to the lightweight {@link AutomationRun} summary.
- * An automation run is no longer a conversation: instead of a chat trace, it
+ * The full result of a task run — what the run *produced*, persisted
+ * once per run as a sidecar to the lightweight {@link TaskRun} summary.
+ * A task run is no longer a conversation: instead of a chat trace, it
  * leaves a deliverable (the final output), the activity log of what it did,
  * and references to any files it wrote (in the workspace file store).
  */
-export interface AutomationRunResult {
-  /** Matches the owning {@link AutomationRun.id}. */
+export interface TaskRunResult {
+  /** Matches the owning {@link TaskRun.id}. */
   runId: string;
-  automationId: string;
+  taskId: string;
   completedAt: string;
   /** The agent's final deliverable, in full (untruncated). */
   output: string;
@@ -433,23 +430,23 @@ export interface AutomationRunResult {
   /** Files the run wrote, as refs into `workspaces/<wsId>/files/<ownerId>/`. */
   outputFiles: RunFileRef[];
   usage: { inputTokens: number; outputTokens: number; iterations: number };
-  stopReason?: AutomationRun["stopReason"];
+  stopReason?: TaskRun["stopReason"];
   /**
-   * The deliverable parsed as JSON, when the automation has an `outputSchema`
+   * The deliverable parsed as JSON, when the task has an `outputSchema`
    * and the output parsed. Kept whether or not it matched; the run record says
-   * whether it did (`AutomationRun.outputSchemaValid`).
+   * whether it did (`TaskRun.outputSchemaValid`).
    */
   structured?: unknown;
 }
 
 // ---------------------------------------------------------------------------
-// Persistence — automations.json structure
+// Persistence — tasks.json structure
 // ---------------------------------------------------------------------------
 
-export interface AutomationsFile {
+export interface TasksFile {
   version: number;
   updatedAtMs: number;
-  automations: Automation[];
+  tasks: Task[];
 }
 
 // ---------------------------------------------------------------------------
@@ -457,8 +454,8 @@ export interface AutomationsFile {
 // ---------------------------------------------------------------------------
 
 /** Input for tasks__create. Omits computed/state fields. */
-export type CreateAutomationInput = Omit<
-  Automation,
+export type CreateTaskInput = Omit<
+  Task,
   | "id"
   | "ownerId"
   | "workspaceId"
@@ -477,9 +474,9 @@ export type CreateAutomationInput = Omit<
 >;
 
 /** Input for tasks__update. Partial of user-editable fields. */
-export type UpdateAutomationInput = Partial<
+export type UpdateTaskInput = Partial<
   Pick<
-    Automation,
+    Task,
     | "description"
     | "prompt"
     | "schedule"
