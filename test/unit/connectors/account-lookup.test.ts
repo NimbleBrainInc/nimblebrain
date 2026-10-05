@@ -6,7 +6,11 @@ import {
   AccountLookups,
   accountLabelFrom,
 } from "../../../src/connectors/runtime/account-lookups.ts";
-import type { ToolResult } from "../../../src/engine/types.ts";
+import { ConnectorLifecycleManager } from "../../../src/connectors/runtime/lifecycle.ts";
+import type { EngineEvent, EventSink, ToolResult } from "../../../src/engine/types.ts";
+import type { ConnectorOwner } from "../../../src/identity/connector-owner.ts";
+import { McpSource } from "../../../src/tools/mcp-source.ts";
+import { ToolRegistry } from "../../../src/tools/registry.ts";
 import type { ToolSource } from "../../../src/tools/types.ts";
 
 /**
@@ -203,5 +207,91 @@ describe("AccountLookups", () => {
       throw new Error("connection reset");
     });
     expect(await new AccountLookups().ask(zoom, lookup)).toBeNull();
+  });
+});
+
+describe("ConnectorLifecycleManager.lookUpAccount", () => {
+  const WS = "ws_0076759dbbe19fcc";
+  const USER = "usr_alice";
+  const lookup = { tool: "ZOOM_GET_USER", arguments: { userId: "me" }, field: "data.email" };
+
+  class CapturingSink implements EventSink {
+    events: EngineEvent[] = [];
+    emit(event: EngineEvent): void {
+      this.events.push(event);
+    }
+  }
+
+  /**
+   * A real `McpSource` whose `execute` is counted instead of dispatched. Cold
+   * as constructed (`isAlive()` is false); `live` gives it a client and a
+   * transport, which is all `isAlive()` reads.
+   */
+  function mcpSource(name: string, opts: { live: boolean }): McpSource & { calls: () => number } {
+    const source = new McpSource(
+      name,
+      { type: "remote", url: new URL("http://localhost:0/mcp") },
+      {
+        emit: () => {},
+      },
+    );
+    let calls = 0;
+    source.execute = async () => {
+      calls += 1;
+      return text({ data: { email: "alice@zoom.example" } });
+    };
+    if (opts.live) {
+      // Private connection state; the test stands in for a completed `start()`.
+      const internals = source as unknown as { client: unknown; transport: unknown };
+      internals.client = {};
+      internals.transport = {};
+    }
+    return Object.assign(source, { calls: () => calls });
+  }
+
+  /** The lifecycle with one workspace registry and one user registry, each holding `source`. */
+  function lifecycleHolding(source: McpSource): ConnectorLifecycleManager {
+    const lifecycle = new ConnectorLifecycleManager(new CapturingSink());
+    const workspace = new ToolRegistry();
+    workspace.addSource(source);
+    lifecycle.bindWorkspaceRegistries(() => new Map([[WS, workspace]]));
+    const user = new ToolRegistry();
+    user.addSource(source);
+    // Private map; a personal connector reaches it only through a start that hits the network.
+    (lifecycle as unknown as { registriesByUser: Map<string, ToolRegistry> }).registriesByUser.set(
+      USER,
+      user,
+    );
+    return lifecycle;
+  }
+
+  const owners: ConnectorOwner[] = [
+    { type: "workspace", wsId: WS },
+    { type: "user", userId: USER },
+  ];
+
+  test("a cold source is neither asked nor started: a listing must not start a connector", async () => {
+    const zoom = mcpSource("zoom", { live: false });
+    const lifecycle = lifecycleHolding(zoom);
+    for (const owner of owners) {
+      expect(await lifecycle.lookUpAccount(owner, "zoom", lookup)).toBeNull();
+    }
+    expect(zoom.calls()).toBe(0);
+  });
+
+  test("a live source is asked through its owner's registry", async () => {
+    const zoom = mcpSource("zoom", { live: true });
+    const lifecycle = lifecycleHolding(zoom);
+    for (const owner of owners) {
+      expect(await lifecycle.lookUpAccount(owner, "zoom", lookup)).toBe("alice@zoom.example");
+    }
+    expect(zoom.calls()).toBe(2);
+  });
+
+  test("a connector with no source in this process is not asked", async () => {
+    const lifecycle = lifecycleHolding(mcpSource("zoom", { live: true }));
+    for (const owner of owners) {
+      expect(await lifecycle.lookUpAccount(owner, "slack", lookup)).toBeNull();
+    }
   });
 });
