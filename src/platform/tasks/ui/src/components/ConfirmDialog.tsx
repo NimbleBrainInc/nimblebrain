@@ -1,3 +1,5 @@
+import { Modal } from "./Modal.tsx";
+
 export function ConfirmDialog({
   name,
   onConfirm,
@@ -8,25 +10,19 @@ export function ConfirmDialog({
   onCancel: () => void;
 }) {
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: modal overlay dismiss on click
-    // biome-ignore lint/a11y/noStaticElementInteractions: modal overlay dismiss on click
-    <div className="confirm-overlay" onClick={onCancel}>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation container */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation container */}
-      <div className="confirm-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="confirm-title">Delete task?</div>
-        <div className="confirm-desc">
-          This will permanently remove <strong>{name}</strong>. Run history will be preserved.
-        </div>
-        <div className="confirm-actions">
-          <button type="button" className="btn" onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="button" className="btn btn-danger" onClick={onConfirm}>
-            Delete
-          </button>
-        </div>
+    <Modal title="Delete task?" onClose={onCancel}>
+      <div className="confirm-desc">
+        This permanently removes <strong>{name}</strong> and stops its trigger. Its run history
+        stays in Activity.
       </div>
-    </div>
+      <div className="confirm-actions">
+        <button type="button" className="btn" onClick={onCancel}>
+          Keep it
+        </button>
+        <button type="button" className="btn btn-danger" onClick={onConfirm}>
+          Delete
+        </button>
+      </div>
+    </Modal>
   );
 }

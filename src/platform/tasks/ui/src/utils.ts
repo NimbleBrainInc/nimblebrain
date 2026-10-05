@@ -84,3 +84,57 @@ export function formatCost(usd: number | null | undefined): string {
   if (usd < 0.01) return "<$0.01";
   return `$${usd.toFixed(2)}`;
 }
+
+/** An error's message, or `fallback` for a thrown non-Error. */
+export function errorText(err: unknown, fallback = "Something went wrong"): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
+/**
+ * A tool error's message with the `{"error": …}` JSON envelope the tasks
+ * source wraps it in taken off, so a person reads the sentence, not the JSON.
+ */
+export function toolErrorText(err: unknown, fallback?: string): string {
+  const text = errorText(err, fallback);
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown };
+    if (parsed && typeof parsed.error === "string") return parsed.error;
+  } catch {
+    // not JSON: already a sentence
+  }
+  return text;
+}
+
+/** A pass rate as a whole percent, or an em dash when nothing was assessed. */
+export function formatPercent(rate: number | null | undefined): string {
+  return rate == null ? "—" : `${Math.round(rate * 100)}%`;
+}
+
+/** USD with cents, "$0.00" for zero (unlike `formatCost`, which is blank for none). */
+export function formatUsd(usd: number | null | undefined): string {
+  if (usd == null || usd === 0) return "$0.00";
+  return formatCost(usd);
+}
+
+/**
+ * An instant as a reader scans a schedule: "Today 3:00 PM", "Tomorrow 7:20 AM",
+ * a weekday within the week, else a date.
+ */
+export function formatWhen(iso: string, now: number = Date.now()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const startOf = (t: number) => {
+    const x = new Date(t);
+    x.setHours(0, 0, 0, 0);
+    return x.getTime();
+  };
+  const days = Math.round((startOf(d.getTime()) - startOf(now)) / 86_400_000);
+  if (days === 0) return `Today ${time}`;
+  if (days === 1) return `Tomorrow ${time}`;
+  if (days === -1) return `Yesterday ${time}`;
+  if (days > 1 && days < 7) {
+    return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+  }
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
+}

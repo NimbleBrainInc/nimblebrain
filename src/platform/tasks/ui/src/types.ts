@@ -54,6 +54,41 @@ export interface TaskDetail {
   estimatedCostPerRun?: number;
   estimatedCostPerDay?: number;
   estimatedCostPerMonth?: number;
+  maxRunDurationMs?: number;
+  kind?: "saved" | "oneoff";
+  onceDone?: { at: string; outcome: "ran" | "missed" };
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  criteria?: TaskCriterion[];
+  confidenceThreshold?: number;
+  judge?: TaskJudgeSpec;
+  onPoorResult?: OnPoorResult;
+}
+
+/** What a `fail` assessment does. */
+export type OnPoorResult = "record" | "notify" | "retry_once";
+
+/** One acceptance criterion (mirror of the runtime's TaskCriterion). */
+export interface TaskCriterion {
+  id: string;
+  rule: string;
+  type: "boolean" | "score" | "choice";
+  levels?: string[];
+  options?: string[];
+  pass?: boolean | number | string | string[];
+}
+
+/** Which judge answers a task's criteria (mirror of TaskJudgeSpec). */
+export interface TaskJudgeSpec {
+  server?: string;
+  id?: string;
+  options?: Record<string, unknown>;
+}
+
+/** A warning a write returns about a task it saved anyway (mirror of TaskWarning). */
+export interface TaskWarning {
+  code: string;
+  message: string;
 }
 
 /** One criterion as judged (mirror of the runtime's CriterionResult). */
@@ -73,10 +108,22 @@ export interface RunAssessment {
   schema?: { valid: boolean; errors?: string[] };
   criteria?: CriterionResult[];
   judge?: { server: string; id: string; version?: string; calibrated: boolean };
+  /** What the judge call cost. */
+  usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
   stateTruncated?: boolean;
   assessedAt: string;
   human?: { verdict: "pass" | "fail"; note?: string; by: string; via: string; at: string };
 }
+
+/** How a run ended (mirror of the runtime's TaskRunExecution). */
+export type RunExecution =
+  | "queued"
+  | "running"
+  | "skipped"
+  | "completed"
+  | "incomplete"
+  | "failed"
+  | "cancelled";
 
 /** The one label a run reads as, derived by the runtime. */
 export type RunLabel =
@@ -93,6 +140,17 @@ export interface TaskRun {
   id: string;
   taskId: string;
   status: string;
+  /** How the run ended, derived by the runtime on read. */
+  execution?: RunExecution;
+  /** What started it; absent on a run that never started. */
+  trigger?: "scheduled" | "manual" | "event";
+  /** The JSON input the run was given. */
+  input?: unknown;
+  batchIndex?: number;
+  outputSchemaValid?: boolean;
+  outputSchemaErrors?: string[];
+  unrecoveredToolFailures?: string[];
+  spendAccountId?: string;
   /** Derived by the runtime on read; absent on records from older servers. */
   label?: RunLabel;
   assessment?: RunAssessment;
@@ -153,6 +211,11 @@ export interface TaskRunResult {
     | "content_filter"
     | "error"
     | "other";
+  /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
+  structured?: unknown;
+  execution?: RunExecution;
+  label?: RunLabel;
+  assessment?: RunAssessment;
 }
 
 /** How many of a batch's items are in each state (mirror of the runtime's BatchCounts). */
@@ -176,6 +239,7 @@ export interface TaskBatch {
   items: number;
   concurrency: number;
   budgetUsd?: number;
+  stopWhen?: { minPassRate: number; afterItems: number };
   state: "running" | "paused" | "completed" | "cancelled";
   pause?: { reason: string; message: string; at: string };
   counts: BatchCounts;
@@ -199,4 +263,64 @@ export interface BatchItemResult {
   costUsd?: number;
   error?: string;
   output?: Record<string, string | number | boolean | null>;
+}
+
+/** A run running or waiting for a slot (mirror of TaskUpcomingRun). */
+export interface UpcomingRun {
+  taskId: string;
+  taskName?: string;
+  runId?: string;
+  state: "running" | "queued";
+  /** Queued only: 1 is next. */
+  position?: number;
+  startedAt?: string;
+  queuedAt?: string;
+  trigger?: "scheduled" | "manual" | "event";
+  batchId?: string;
+  batchIndex?: number;
+}
+
+/** One scheduled fire (mirror of TaskUpcomingFire). */
+export interface UpcomingFire {
+  taskId: string;
+  taskName: string;
+  at: string;
+  schedule: string;
+  scheduleType: "cron" | "interval" | "once";
+}
+
+/** A task that fires on events (mirror of TaskUpcomingEventTask). */
+export interface UpcomingEventTask {
+  taskId: string;
+  taskName: string;
+  schedule: string;
+  enabled: boolean;
+  maxFiresPerHour: number;
+  firesLastHour: number;
+}
+
+/** `tasks__upcoming` (mirror of TasksUpcomingOutput). */
+export interface UpcomingData {
+  running: UpcomingRun[];
+  queued: UpcomingRun[];
+  scheduled: UpcomingFire[];
+  events: UpcomingEventTask[];
+}
+
+/** One task's figures over a window (mirror of TaskRunStats). */
+export interface TaskStats {
+  taskId: string;
+  runs: number;
+  pass: number;
+  fail: number;
+  uncertain: number;
+  passRate: number | null;
+  costUsd: number;
+  lastRun?: { id: string; startedAt: string; label: RunLabel };
+}
+
+/** `tasks__judges` (mirror of TasksJudgesOutput). */
+export interface JudgesData {
+  servers: string[];
+  warning?: TaskWarning;
 }
