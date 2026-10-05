@@ -603,6 +603,22 @@ describe("WorkspaceNav — pinned apps", () => {
     expect(routes()).toEqual(["crm", "outbound"]);
   });
 
+  test("collapsed, pinned apps still lead and there is no toggle", async () => {
+    localStorage.setItem("nb:pinned-apps:ws_003eba8844413cd9", JSON.stringify(["outbound"]));
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      placements: [
+        appPlacement("crm", { priority: 10 }),
+        appPlacement("outbound", { priority: 30 }),
+      ],
+      collapsed: true,
+    });
+    expect(routes()).toEqual(["outbound", "crm"]);
+    expect(buttons(mounted.container, "sidebar-workspace-app-pin")).toHaveLength(0);
+  });
+
   test("a stored value that is not a list of names is ignored", async () => {
     localStorage.setItem("nb:pinned-apps:ws_003eba8844413cd9", '{"outbound":true}');
     mounted = await mount({
