@@ -677,6 +677,26 @@ describe("GET /v1/mcp-auth/callback — outcome logging (#1244)", () => {
     });
   });
 
+  test("a refusal from the flow's session logs the flow id and whether it ended a flow", async () => {
+    const state = "refused-state-abcdef";
+    const refusal = `http://localhost/v1/mcp-auth/callback?error=access_denied&state=${state}`;
+    const headers = { cookie: `nb_oauth_state=${sha256Hex(state)}` };
+    registerFlow(state, WS_OWNER, "granola").catch(() => {});
+
+    await app.request(refusal, { headers });
+    expect(loggedFields()).toMatchObject({
+      outcome: "provider_error",
+      providerError: "access_denied",
+      flow: state.slice(0, 8),
+      flowEnded: true,
+    });
+
+    // The same refusal again finds no flow left to end.
+    warn.mockClear();
+    await app.request(refusal, { headers });
+    expect(loggedFields()).toMatchObject({ outcome: "provider_error", flowEnded: false });
+  });
+
   test("a hostile error param cannot write an unbounded log field", async () => {
     const huge = "x".repeat(5000);
     await app.request(`http://localhost/v1/mcp-auth/callback?error=${huge}&state=y`);
