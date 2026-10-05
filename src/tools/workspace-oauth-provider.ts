@@ -770,9 +770,8 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
       this.addClientAuthentication = this.fleetTokenAuth;
     }
 
-    // Owner id and server name both compose into a credential-store key, and
-    // the server name additionally into the legacy dir the records object
-    // migrates from. Callers pre-validate (`validateServerName` /
+    // Owner id and server name both compose into a credential-store key.
+    // Callers pre-validate (`validateServerName` /
     // `slugifyServerName`), but these are the security-critical components —
     // verify in depth, at the boundary.
     assertSafeOwnerId(opts.serverName);

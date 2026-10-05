@@ -278,11 +278,9 @@ describe("the binding survives operations on the conversation", () => {
       identity: USER,
     });
 
-    // On the event format a rename appends a `metadata.title` event and leaves
-    // line 1 alone, so this passes today by construction. It is a forward
-    // guard: the pin lives on line 1, and the legacy path (`appendLegacyFormat`)
-    // does rewrite that line, so a rename that ever moves to rewriting must not
-    // drop the field.
+    // A rename appends a `metadata.title` event and leaves line 1 alone, so this
+    // passes by construction. It is a forward guard: the pin lives on line 1,
+    // so a rename that ever moves to rewriting that line must not drop the field.
     const store = await runtime.resolveConversationStore(conv.conversationId);
     await store!.update(conv.conversationId, { title: "renamed" });
 

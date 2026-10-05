@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { reconstructMessages } from "../../../../../src/conversation/event-reconstructor.ts";
+import type { ConversationEvent } from "../../../../../src/conversation/types.ts";
 import { ConversationIndex } from "../../../../../src/platform/conversations/index-cache.ts";
 import { readConversation } from "../../../../../src/platform/conversations/jsonl-reader.ts";
 import { handleFork } from "../../../../../src/platform/conversations/tools/fork.ts";
@@ -139,6 +141,16 @@ describe("handleFork", () => {
     expect(newConv!.messageCount).toBe(5);
     expect(newConv!.meta.totalInputTokens).toBe(300);
     expect(newConv!.meta.totalOutputTokens).toBe(180);
+
+    // The runtime replays a forked conversation through `reconstructMessages`
+    // when someone continues it, so the fork must read the same there.
+    const events = readFileSync(newFilePath, "utf-8")
+      .split("\n")
+      .slice(1)
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as ConversationEvent);
+    const replayed = reconstructMessages(events, { ignoreCompaction: true });
+    expect(replayed.map((m) => m.role)).toEqual(newConv!.messages.map((m) => m.role));
   });
 
   test("fork inherits the source's model binding", async () => {
