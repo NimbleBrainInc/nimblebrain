@@ -18,6 +18,8 @@ export interface TaskSummary {
   disabledAt?: string | null;
   disabledReason?: string | null;
   estimatedCostPerDay?: number;
+  /** Present when the task's runs take input. */
+  inputSchema?: Record<string, unknown>;
 }
 
 export interface TaskDetail {
@@ -287,6 +289,20 @@ export interface UpcomingFire {
   at: string;
   schedule: string;
   scheduleType: "cron" | "interval" | "once";
+  /** Past the window: the task's next fire, shown so a rare schedule is not missing. */
+  beyondWindow?: boolean;
+}
+
+/** A schedule that fires too often to list each fire (mirror of TaskUpcomingFrequent). */
+export interface UpcomingFrequent {
+  taskId: string;
+  taskName: string;
+  schedule: string;
+  scheduleType: "cron" | "interval";
+  count: number;
+  countCapped?: boolean;
+  first: string;
+  last: string;
 }
 
 /** A task that fires on events (mirror of TaskUpcomingEventTask). */
@@ -303,7 +319,10 @@ export interface UpcomingEventTask {
 export interface UpcomingData {
   running: UpcomingRun[];
   queued: UpcomingRun[];
+  days: number;
+  windowEnd: string;
   scheduled: UpcomingFire[];
+  frequent: UpcomingFrequent[];
   events: UpcomingEventTask[];
 }
 

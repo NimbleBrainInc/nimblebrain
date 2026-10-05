@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   type ActivityFilters,
   type ActivityRow,
@@ -39,6 +39,18 @@ const RANGES: Array<{ value: ActivityFilters["range"]; text: string }> = [
   { value: "all", text: "All time" },
 ];
 
+/**
+ * The newest page merged into the loaded runs: a run in both takes the
+ * newest copy, new runs go on top, and older loaded pages stay.
+ */
+export function mergeNewest(loaded: TaskRun[], newest: TaskRun[]): TaskRun[] {
+  const fresh = new Map(newest.map((r) => [r.id, r]));
+  const kept = loaded.filter((r) => !fresh.has(r.id));
+  return [...newest, ...kept].sort((a, b) =>
+    a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : 0,
+  );
+}
+
 /** The short reason a run that did not succeed reads as, for its row. */
 export function rowNote(run: TaskRun): string {
   if (run.error) return run.error.split("\n")[0]?.slice(0, 120) ?? "";
@@ -52,7 +64,8 @@ function FilterBar({
   onChange,
 }: {
   filters: ActivityFilters;
-  tasks: TaskSummary[];
+  /** Null: no task filter. */
+  tasks: TaskSummary[] | null;
   onChange: (f: ActivityFilters) => void;
 }) {
   const id = useId();
@@ -76,21 +89,23 @@ function FilterBar({
           ))}
         </select>
       </label>
-      <label htmlFor={`${id}-task`}>
-        <span className="filter-name">Task</span>
-        <select
-          id={`${id}-task`}
-          value={filters.taskId}
-          onChange={(e) => onChange({ ...filters, taskId: e.target.value })}
-        >
-          <option value="all">All</option>
-          {tasks.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      {tasks && (
+        <label htmlFor={`${id}-task`}>
+          <span className="filter-name">Task</span>
+          <select
+            id={`${id}-task`}
+            value={filters.taskId}
+            onChange={(e) => onChange({ ...filters, taskId: e.target.value })}
+          >
+            <option value="all">All</option>
+            {tasks.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label htmlFor={`${id}-by`}>
         <span className="filter-name">Started by</span>
         <select
@@ -232,6 +247,7 @@ export function ActivityBody({
   error,
   filters,
   tasks,
+  fixedTask,
   hasMore,
   onFilters,
   onMore,
@@ -243,6 +259,8 @@ export function ActivityBody({
   error: string | null;
   filters: ActivityFilters;
   tasks: TaskSummary[];
+  /** One task's runs: no task filter or task column. */
+  fixedTask?: boolean;
   hasMore: boolean;
   onFilters: (f: ActivityFilters) => void;
   onMore: () => void;
@@ -251,10 +269,12 @@ export function ActivityBody({
 }) {
   const names = new Map(tasks.map((t) => [t.id, t.name]));
   const filtered =
-    filters !== DEFAULT_FILTERS && JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS);
+    filters.label !== "all" ||
+    filters.startedBy !== "all" ||
+    (!fixedTask && (filters.taskId !== "all" || filters.range !== DEFAULT_FILTERS.range));
   return (
     <div className="view-pad">
-      <FilterBar filters={filters} tasks={tasks} onChange={onFilters} />
+      <FilterBar filters={filters} tasks={fixedTask ? null : tasks} onChange={onFilters} />
       {error && (
         <div className="error-banner" role="alert">
           {error}
@@ -310,18 +330,23 @@ export function ActivityBody({
 /** The Activity view: pages runs back through the archive with the filters the server applies. */
 export function ActivityView({
   tasks,
+  taskId,
   refreshKey,
   onOpenRun,
   onOpenBatch,
 }: {
   tasks: TaskSummary[];
+  /** One task's runs only: the task filter is fixed and hidden. */
+  taskId?: string;
   refreshKey: number;
   onOpenRun: (run: TaskRun) => void;
   onOpenBatch: (batch: TaskBatch) => void;
 }) {
   const runsTool = useTool<string>("runs");
   const batchesTool = useTool<string>("batches");
-  const [filters, setFilters] = useState<ActivityFilters>(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState<ActivityFilters>(() =>
+    taskId ? { ...DEFAULT_FILTERS, taskId, range: "all" } : DEFAULT_FILTERS,
+  );
   const [runs, setRuns] = useState<TaskRun[]>([]);
   const [batches, setBatches] = useState<TaskBatch[]>([]);
   const [nextBefore, setNextBefore] = useState<string | undefined>(undefined);
@@ -351,9 +376,16 @@ export function ActivityView({
     };
   }
 
+  // A data change re-reads the newest page and merges it into what is loaded,
+  // so older pages stay; a filter change starts over.
+  const filtersKey = JSON.stringify(filters);
+  const lastFilters = useRef<string | null>(null);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable; reload on filters or data change
   useEffect(() => {
     let cancelled = false;
+    const reset = lastFilters.current !== filtersKey;
+    lastFilters.current = filtersKey;
     setLoading(true);
     setError(null);
     Promise.all([
@@ -366,8 +398,12 @@ export function ActivityView({
     ])
       .then(([first, b]) => {
         if (cancelled) return;
-        setRuns(first.runs);
-        setNextBefore(first.nextBefore);
+        if (reset) {
+          setRuns(first.runs);
+          setNextBefore(first.nextBefore);
+        } else {
+          setRuns((prev) => mergeNewest(prev, first.runs));
+        }
         setBatches(b);
       })
       .catch((err) => {
@@ -379,7 +415,7 @@ export function ActivityView({
     return () => {
       cancelled = true;
     };
-  }, [filters, refreshKey]);
+  }, [filtersKey, refreshKey]);
 
   async function more() {
     if (!nextBefore) return;
@@ -412,6 +448,7 @@ export function ActivityView({
       error={error}
       filters={filters}
       tasks={tasks}
+      fixedTask={!!taskId}
       hasMore={!!nextBefore && !batchesOnly}
       onFilters={setFilters}
       onMore={() => void more()}

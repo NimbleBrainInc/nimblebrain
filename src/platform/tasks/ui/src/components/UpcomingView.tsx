@@ -25,12 +25,39 @@ export function queueLine(run: UpcomingRun, batches: Map<string, TaskBatch>): st
   return run.trigger ? `${name} · ${TRIGGER_TEXT[run.trigger] ?? run.trigger}` : name;
 }
 
+export type WindowDays = 7 | 30;
+
+/** A frequent schedule's row text: "every 5 min · 2,016 runs in the next 7 days". */
+export function frequentLine(
+  f: { schedule: string; count: number; countCapped?: boolean },
+  days: number,
+): string {
+  const count = `${f.count.toLocaleString()}${f.countCapped ? "+" : ""}`;
+  return `${f.schedule} · ${count} runs in the next ${days} days`;
+}
+
+/** Choose the window: the next 7 or 30 days. */
+function WindowToggle({ days, onDays }: { days: WindowDays; onDays: (d: WindowDays) => void }) {
+  return (
+    <div className="segmented small" role="radiogroup" aria-label="Show the next">
+      {([7, 30] as const).map((d) => (
+        <label key={d} className={`seg${days === d ? " on" : ""}`}>
+          <input type="radio" name="up-window" checked={days === d} onChange={() => onDays(d)} />
+          {d} days
+        </label>
+      ))}
+    </div>
+  );
+}
+
 /** What runs next: the queue, then scheduled fires in time order, then event-fired tasks. */
 export function UpcomingBody({
   data,
   loading,
   error,
   batches,
+  days,
+  onDays,
   onOpenRun,
   onOpenTask,
 }: {
@@ -38,6 +65,8 @@ export function UpcomingBody({
   loading: boolean;
   error: string | null;
   batches: Map<string, TaskBatch>;
+  days: WindowDays;
+  onDays: (d: WindowDays) => void;
   onOpenRun: (run: UpcomingRun) => void;
   onOpenTask: (taskName: string) => void;
 }) {
@@ -57,9 +86,13 @@ export function UpcomingBody({
       </div>
     );
   }
-  const { running, queued, scheduled, events } = data;
+  const { running, queued, scheduled, frequent, events } = data;
   const nothing =
-    running.length === 0 && queued.length === 0 && scheduled.length === 0 && events.length === 0;
+    running.length === 0 &&
+    queued.length === 0 &&
+    scheduled.length === 0 &&
+    frequent.length === 0 &&
+    events.length === 0;
   return (
     <div className="view-pad upcoming">
       {error && <div className="error-banner">{error}</div>}
@@ -75,9 +108,9 @@ export function UpcomingBody({
 
       {(running.length > 0 || queued.length > 0) && (
         <section aria-labelledby="up-queue">
-          <h2 className="view-h" id="up-queue">
+          <h2 className="section-heading" id="up-queue">
             Queue{" "}
-            <span className="view-h-count">
+            <span className="muted">
               {running.length} running · {queued.length} waiting
             </span>
           </h2>
@@ -116,34 +149,67 @@ export function UpcomingBody({
         </section>
       )}
 
-      {scheduled.length > 0 && (
+      {!nothing && (
         <section aria-labelledby="up-sched">
-          <h2 className="view-h" id="up-sched">
-            Scheduled
-          </h2>
-          <ul className="up-list">
-            {scheduled.map((f) => (
-              <li key={`${f.taskId}-${f.at}`} className="up-row">
-                <time className="up-when" dateTime={f.at}>
-                  {formatWhen(f.at)}
-                </time>
-                <button
-                  type="button"
-                  className="task-link up-what"
-                  onClick={() => onOpenTask(f.taskName)}
+          <div className="section-row">
+            <h2 className="section-heading" id="up-sched">
+              Scheduled
+            </h2>
+            <WindowToggle days={days} onDays={onDays} />
+          </div>
+          {scheduled.length === 0 && frequent.length === 0 && (
+            <p className="muted">No scheduled runs.</p>
+          )}
+          {frequent.length > 0 && (
+            <ul className="up-list">
+              {frequent.map((f) => (
+                <li key={`f-${f.taskId}`} className="up-row">
+                  <time className="up-when" dateTime={f.first}>
+                    {formatWhen(f.first)}
+                  </time>
+                  <button
+                    type="button"
+                    className="task-link up-what"
+                    onClick={() => onOpenTask(f.taskName)}
+                  >
+                    {f.taskName}
+                  </button>
+                  <span className="up-meta">{frequentLine(f, data.days)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {scheduled.length > 0 && (
+            <ul className="up-list">
+              {scheduled.map((f) => (
+                <li
+                  key={`${f.taskId}-${f.at}`}
+                  className={`up-row${f.beyondWindow ? " beyond" : ""}`}
                 >
-                  {f.taskName}
-                </button>
-                <span className="up-meta">{f.schedule}</span>
-              </li>
-            ))}
-          </ul>
+                  <time className="up-when" dateTime={f.at}>
+                    {formatWhen(f.at)}
+                  </time>
+                  <button
+                    type="button"
+                    className="task-link up-what"
+                    onClick={() => onOpenTask(f.taskName)}
+                  >
+                    {f.taskName}
+                  </button>
+                  <span className="up-meta">
+                    {f.schedule}
+                    {f.beyondWindow ? ` · after the next ${data.days} days` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
 
       {events.length > 0 && (
         <section aria-labelledby="up-events">
-          <h2 className="view-h" id="up-events">
+          <h2 className="section-heading" id="up-events">
             On events
           </h2>
           <ul className="up-list">
@@ -187,12 +253,13 @@ export function UpcomingView({
   const [batches, setBatches] = useState<Map<string, TaskBatch>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState<WindowDays>(7);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await upcomingTool.call({ limit: 30 });
+      const res = await upcomingTool.call({ days });
       const next = asDict(res.data) as unknown as UpcomingData;
       setData(next);
       setError(null);
@@ -206,7 +273,7 @@ export function UpcomingView({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [days]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the signal
   useEffect(() => {
@@ -221,6 +288,8 @@ export function UpcomingView({
       loading={loading}
       error={error}
       batches={batches}
+      days={days}
+      onDays={setDays}
       onOpenRun={onOpenRun}
       onOpenTask={onOpenTask}
     />
