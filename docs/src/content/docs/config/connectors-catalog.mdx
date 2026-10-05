@@ -265,7 +265,7 @@ The param is added to the authorize request only, so existing connections do **n
 A connected connector shows the account it is signed in as ("Connected as alice@example.com"), so nobody has to guess which of their accounts an agent is acting on. The account comes from whoever knows it:
 
 1. **The authorization server**, for an OIDC server. The runtime asks for `openid` and `email` and reads the id_token or the userinfo endpoint at sign-in. Nothing to configure, unless you pin `requiredScopes`: a pin is the whole request, so include `openid` and `email` in it.
-2. **The broker**, for `auth: composio`. Composio records an account name on some connections and the runtime reads it when the connection lands. Whether it does depends on the toolkit and on the scopes its auth config grants, which are set in Composio, not here.
+2. **The broker**, for `auth: composio`. The runtime reads the account name Composio records for some toolkits, or else the email in the id_token the vendor issued, when the connection lands. For a Google toolkit that means granting `openid` and `https://www.googleapis.com/auth/userinfo.email` on its auth config in Composio, not here.
 3. **The service itself**, for everything else: a server that is not OIDC, or a brokered connection with no account recorded. Declare the tool that answers for the signed-in user:
 
 ```yaml
