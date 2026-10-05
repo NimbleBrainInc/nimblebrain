@@ -41,7 +41,8 @@ interface ShellLayoutProps {
  *      switches to another.
  *   3. That workspace's views (`WorkspaceNav`) — the whole nav body. There is
  *      no global core-nav row, because those views are workspace-scoped.
- *   4. Foot: help (`HelpMenu`), then the account (`UserMenu`) — who you are.
+ *   4. Help (`HelpMenu`), pinned under the views as the nav's last row.
+ *   5. Account (`UserMenu`) — who you are, at the foot, below a divider.
  */
 // Chat panel transition timings — kept in lockstep with `ChatChrome` so
 // the main content's marginRight slides in sync with the panel itself.
@@ -226,13 +227,14 @@ function SidebarBody({
         <WorkspaceNav collapsed={collapsed} />
       </div>
 
+      <HelpMenu collapsed={collapsed} />
+
       {tray}
 
       {/* New-build-available prompt — renders nothing until detected. */}
       <ReleaseUpdateBanner collapsed={collapsed} />
 
       <div className="shrink-0 border-t border-sidebar-border py-2">
-        <HelpMenu collapsed={collapsed} />
         <UserMenu collapsed={collapsed} onLogout={onLogout} />
       </div>
     </TooltipProvider>

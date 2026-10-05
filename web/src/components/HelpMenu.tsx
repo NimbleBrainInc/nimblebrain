@@ -1,11 +1,12 @@
 // ---------------------------------------------------------------------------
 // HelpMenu — the sidebar's way to the documentation and the keyboard
-// shortcuts, just above the account menu at its foot.
+// shortcuts.
 //
-// The foot holds what is the same on every page; help is, so it sits there and
-// not in the top bar, whose controls belong to the workspace. On the icon rail
-// it is an icon with a tooltip and opens to the right; expanded, it is a
-// labelled row and opens upward over the nav.
+// It is the nav's last row, pinned below the scrolling views and above the
+// divider that sets off the account: help is the same on every page, so it
+// sits in the sidebar and not in the top bar, whose controls belong to the
+// workspace. On the icon rail it is an icon with a tooltip and opens to the
+// right; expanded, it is a labelled row and opens upward over the nav.
 // ---------------------------------------------------------------------------
 
 import { Menu } from "@base-ui/react/menu";
@@ -22,26 +23,25 @@ const itemClass =
 export const HelpMenu = memo(function HelpMenu({ collapsed }: { collapsed: boolean }) {
   const [showShortcuts, setShowShortcuts] = useState(false);
 
+  // Sized and aligned like a nav row (`WorkspaceNav`'s rowClass), so it reads
+  // as the nav's last item rather than part of the account below.
   const trigger = (
     <Menu.Trigger
       aria-label="Help"
       data-testid="help-menu-trigger"
       className={cn(
-        "flex w-full items-center rounded-sm text-sm transition-all duration-150",
-        "hover:bg-sidebar-foreground/5 data-[popup-open]:bg-sidebar-foreground/5",
-        collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-1.5",
+        "flex items-center rounded-sm text-sm transition-colors",
+        "hover:bg-sidebar-foreground/5 hover:text-foreground data-[popup-open]:bg-sidebar-foreground/5",
+        collapsed ? "size-9 justify-center" : "min-h-8 w-full gap-2.5 px-2",
       )}
     >
-      {/* Centered in the avatar's width below, so the two icons line up. */}
-      <span className="flex size-7 shrink-0 items-center justify-center">
-        <CircleHelp aria-hidden="true" className="size-4" />
-      </span>
-      {!collapsed && <span className="flex-1 text-left">Help</span>}
+      <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
+      {!collapsed && <span className="flex-1 truncate text-left">Help</span>}
     </Menu.Trigger>
   );
 
   return (
-    <div className="mx-2 shrink-0">
+    <div className={cn("shrink-0 pb-2", collapsed ? "flex justify-center px-3" : "px-2")}>
       <Menu.Root>
         {collapsed ? (
           <Tooltip label="Help" side="right">
