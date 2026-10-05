@@ -78,7 +78,7 @@ export function GlobalHomePage() {
 }
 
 // The pin toggle is a sibling of the tile's link, laid over its right edge (an
-// interactive control cannot nest in a link). Same store as the sidebar's pin.
+// interactive control cannot nest in a link).
 function WorkspaceTile({
   workspace,
   pinned,

@@ -1,5 +1,5 @@
 /**
- * The Settings → Model form's fields and the `set_model_config` patch each one
+ * The Organization → Models form's fields and the `set_model_config` patch each one
  * sends, as pure data logic.
  *
  * Deliberately free of React and of the API client so the exact object the

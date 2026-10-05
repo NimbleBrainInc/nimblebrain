@@ -81,6 +81,13 @@ two-pane master/detail collapses into nested unreadable scroll regions the momen
 the chat is docked. Reference: `pages/ContextInspectorPage.tsx`, one scrolling
 column with each layer's body expanding in place.
 
+## Settings pages
+
+Every settings page renders in `SettingsShell`, which sets the one content width
+(`max-w-4xl`, left-aligned beside the nav). A page or template sets no width of
+its own, so moving between tabs never moves the content. A page's header title is
+its tab's label in the settings nav.
+
 ## Tooltips
 
 Every icon-only control gets a `Tooltip` (`components/ui/tooltip.tsx`); a

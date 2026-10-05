@@ -1,3 +1,4 @@
+import { PROFILE_TABS } from "../lib/settings-tabs";
 import { type SettingsNavItem, SettingsShell } from "./settings/SettingsShell";
 
 // ── Profile shell — `/profile/*` ─────────────────────────────────────
@@ -7,11 +8,12 @@ import { type SettingsNavItem, SettingsShell } from "./settings/SettingsShell";
 // any authenticated identity sees them. Future identity-level config
 // (custom instructions, model preferences) slots in alongside Skills.
 
-const PROFILE_ITEMS: SettingsNavItem[] = [
-  { id: "profile-general", label: "General", to: "/profile/general", minRole: "none" },
-  { id: "profile-connectors", label: "Connectors", to: "/profile/connectors", minRole: "none" },
-  { id: "profile-skills", label: "Skills", to: "/profile/skills", minRole: "none" },
-];
+const PROFILE_ITEMS: SettingsNavItem[] = PROFILE_TABS.map((tab) => ({
+  id: `profile-${tab.segment}`,
+  label: tab.label,
+  to: `/profile/${tab.segment}`,
+  minRole: tab.minRole,
+}));
 
 export function ProfilePage() {
   return <SettingsShell title="Profile" items={PROFILE_ITEMS} />;

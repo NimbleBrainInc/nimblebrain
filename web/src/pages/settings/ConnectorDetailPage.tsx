@@ -73,11 +73,11 @@ export function ConnectorDetailPage() {
   }, [refresh]);
 
   if (loading) {
-    return <div className="max-w-3xl mx-auto text-sm text-muted-foreground">Loading…</div>;
+    return <div className="text-sm text-muted-foreground">Loading…</div>;
   }
   if (orphanNotice) {
     return (
-      <div className="max-w-3xl mx-auto space-y-3">
+      <div className="space-y-3">
         <Link to={backPath} className="block w-fit text-xs text-muted-foreground hover:underline">
           ← All connectors
         </Link>
@@ -95,7 +95,7 @@ export function ConnectorDetailPage() {
   }
   if (!installed) {
     return (
-      <div className="max-w-3xl mx-auto space-y-3">
+      <div className="space-y-3">
         <Link to={backPath} className="block w-fit text-xs text-muted-foreground hover:underline">
           ← All connectors
         </Link>
@@ -105,7 +105,7 @@ export function ConnectorDetailPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
+    <div className="space-y-8">
       {/* A block, not inline: the column's spacing is a margin on each child, which
           an inline element ignores. */}
       <Link to={backPath} className="block w-fit text-xs text-muted-foreground hover:underline">

@@ -4,9 +4,9 @@ import { isIdentityApp } from "./identity-apps";
 /**
  * Max apps shown inline under the focused workspace in the sidebar
  * before the "View all N apps" overflow link takes over, counted in apps
- * (see `appsByConnector`), not in the views an app places. Pinning /
- * recency are future work; for now this is a simple priority-ordered
- * top-N.
+ * (see `appsByConnector`), not in the views an app places. The cap applies
+ * after `orderApps` lifts the viewer's pinned apps to the top, so a pinned app
+ * is always shown.
  */
 export const MAX_INLINE_APPS = 10;
 
@@ -58,6 +58,21 @@ export function appsByConnector(placements: PlacementEntry[]): WorkspaceApp[] {
     else apps.set(placement.serverName, { serverName: placement.serverName, views: [placement] });
   }
   return [...apps.values()];
+}
+
+/**
+ * The viewer's pinned apps first, in the order they were pinned, then the rest
+ * in the order given. `pinned` holds `serverName`s (`lib/pinned-apps.ts`); a
+ * name with no app here is ignored.
+ */
+export function orderApps(apps: WorkspaceApp[], pinned: readonly string[]): WorkspaceApp[] {
+  if (pinned.length === 0) return apps;
+  const rank = (app: WorkspaceApp) => {
+    const i = pinned.indexOf(app.serverName);
+    return i === -1 ? pinned.length : i;
+  };
+  // Array.prototype.sort is stable, so unpinned apps keep their order.
+  return [...apps].sort((a, b) => rank(a) - rank(b));
 }
 
 /**

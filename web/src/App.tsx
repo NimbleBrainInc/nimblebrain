@@ -10,6 +10,7 @@ import {
   tryBootstrap,
 } from "./api/client";
 import { closeEventsClient } from "./api/events-client";
+import { AppFrameSkeleton } from "./components/AppFrameSkeleton";
 import { AppWithChat } from "./components/AppWithChat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Login } from "./components/Login";
@@ -44,6 +45,12 @@ import { bootstrapWorkspacesToInfo } from "./lib/bootstrap";
 import { identityAppSegment, isIdentityApp } from "./lib/identity-apps";
 import { type AppRouteState, isOpenAppCall, resolveAppRouteIn } from "./lib/open-app";
 import { routablePlacements } from "./lib/routable-placements";
+import {
+  landingTab,
+  ORG_SETTINGS_TABS,
+  PROFILE_TABS,
+  WORKSPACE_SETTINGS_TABS,
+} from "./lib/settings-tabs";
 import { connectorSettingsPath } from "./lib/workspace-apps";
 import { recoverFromWorkspaceError } from "./lib/workspace-recovery";
 import { toSlug } from "./lib/workspace-slug";
@@ -431,7 +438,10 @@ function AuthenticatedAppContent({
               <Route path="notifications" element={<NotificationsPage />} />
               {/* Workspace settings — General/Members/Connectors/Skills/MCP/Notifications/Webhooks. */}
               <Route path="settings" element={<WorkspaceSettingsPage />}>
-                <Route index element={<Navigate to="general" replace />} />
+                <Route
+                  index
+                  element={<Navigate to={landingTab(WORKSPACE_SETTINGS_TABS)} replace />}
+                />
                 <Route path="general" element={<WorkspaceGeneralTab />} />
                 <Route path="members" element={<WorkspaceMembersTab />} />
                 <Route path="connectors" element={<WorkspaceConnectorsTab />} />
@@ -463,7 +473,10 @@ function AuthenticatedAppContent({
                 config (custom instructions, model prefs) slots in
                 alongside the Skills tab. */}
             <Route path="/profile" element={<ProfilePage />}>
-              <Route index element={<Navigate to="/profile/general" replace />} />
+              <Route
+                index
+                element={<Navigate to={`/profile/${landingTab(PROFILE_TABS)}`} replace />}
+              />
               <Route path="general" element={<ProfileTab />} />
               <Route path="connectors" element={<ProfileConnectorsTab />} />
               <Route path="skills" element={<ProfileSkillsTab />} />
@@ -474,7 +487,10 @@ function AuthenticatedAppContent({
                 model config, the full workspace/user roster), so
                 it lives outside any workspace URL. About is role-exempt. */}
             <Route path="/org" element={<OrgSettingsPage />}>
-              <Route index element={<Navigate to="/org/workspaces" replace />} />
+              <Route
+                index
+                element={<Navigate to={`/org/${landingTab(ORG_SETTINGS_TABS)}`} replace />}
+              />
               <Route
                 path="model"
                 element={
@@ -712,13 +728,7 @@ export function App() {
     };
   }, [initFromBootstrap]);
 
-  if (checking) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-background text-muted-foreground text-sm">
-        Loading...
-      </div>
-    );
-  }
+  if (checking) return <AppFrameSkeleton />;
 
   if (!authenticated || !bootstrap) {
     return <Login onLogin={initFromBootstrap} />;

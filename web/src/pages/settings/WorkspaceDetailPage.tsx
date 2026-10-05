@@ -252,7 +252,7 @@ export function WorkspaceDetailPage() {
 
   if (loading) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="space-y-6">
         <SettingsPageHeader title="Workspace" back={back} />
         <p className="text-sm text-muted-foreground">Loading workspace...</p>
       </div>
@@ -261,7 +261,7 @@ export function WorkspaceDetailPage() {
 
   if (notFound) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="space-y-6">
         <SettingsPageHeader title="Workspace not found" back={back} />
         <p className="text-sm text-destructive">
           This workspace doesn't exist or has been deleted.
@@ -272,7 +272,7 @@ export function WorkspaceDetailPage() {
 
   if (error && !workspace) {
     return (
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="space-y-6">
         <SettingsPageHeader title="Workspace" back={back} />
         <InlineError message={error} />
         <div className="flex justify-center pt-2">
@@ -292,7 +292,7 @@ export function WorkspaceDetailPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <SettingsPageHeader
         title={workspace?.name ?? "Workspace"}
         description={`Created ${formatDate(workspace?.createdAt)}`}

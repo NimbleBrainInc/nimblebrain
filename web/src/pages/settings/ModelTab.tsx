@@ -111,7 +111,7 @@ const readConfig = async () =>
   parseToolResult<ModelConfig>(await callToolWithoutWorkspace("nb", "get_config"));
 
 /**
- * Settings → Model. Each field saves as it changes (`useAutosaveForm`): a
+ * Organization → Models. Each field saves as it changes (`useAutosaveForm`): a
  * select on choice, a number on blur or Enter.
  *
  * Every field applies to every conversation in the org the moment it saves,
@@ -202,14 +202,14 @@ export function ModelTab() {
 
   return (
     <SettingsFormPage
-      title="Model"
+      title="Models"
       description="Default model assignments and runtime limits. Applies organization-wide."
       loading={loading}
       loadingMessage="Loading model configuration..."
       loadError={loadError}
     >
       <div className="min-w-0 space-y-6">
-        <Section title="Models" flush>
+        <Section flush>
           <div className="space-y-4">
             <AutosaveField
               id="defaultModel"
