@@ -216,29 +216,10 @@ export function SchedulePicker({
     emit(m, minutes, time, dow, cronExpr);
   }
 
-  const radioStyle = {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 8,
-    padding: "8px 0",
-    fontSize: 13,
-    cursor: "pointer",
-  } as const;
-
-  const inputStyle = {
-    padding: "4px 8px",
-    border: "1px solid var(--color-border-primary)",
-    borderRadius: 4,
-    fontSize: 13,
-    background: "var(--color-background-secondary)",
-    color: "var(--color-text-primary)",
-  } as const;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    <div className="sched-picker">
       {/* Every N minutes */}
-      <label style={radioStyle}>
+      <label className="sched-option">
         <input
           type="radio"
           name="schedule-mode"
@@ -256,13 +237,13 @@ export function SchedulePicker({
             if (mode === "interval") emit("interval", v, time, dow, cronExpr);
           }}
           onFocus={() => handleMode("interval")}
-          style={{ ...inputStyle, width: 56 }}
+          className="sched-input" style={{ width: 56 }}
         />
         <span>minutes</span>
       </label>
 
       {/* Daily at time */}
-      <label style={radioStyle}>
+      <label className="sched-option">
         <input
           type="radio"
           name="schedule-mode"
@@ -278,12 +259,12 @@ export function SchedulePicker({
             if (mode === "daily") emit("daily", minutes, e.target.value, dow, cronExpr);
           }}
           onFocus={() => handleMode("daily")}
-          style={{ ...inputStyle, width: 100 }}
+          className="sched-input" style={{ width: 100 }}
         />
       </label>
 
       {/* Weekly on day at time */}
-      <label style={radioStyle}>
+      <label className="sched-option">
         <input
           type="radio"
           name="schedule-mode"
@@ -298,7 +279,7 @@ export function SchedulePicker({
             if (mode === "weekly") emit("weekly", minutes, time, e.target.value, cronExpr);
           }}
           onFocus={() => handleMode("weekly")}
-          style={{ ...inputStyle, width: "auto" }}
+          className="sched-input" style={{ width: "auto" }}
         >
           {DAYS.map((d) => (
             <option key={d.value} value={d.value}>
@@ -315,12 +296,12 @@ export function SchedulePicker({
             if (mode === "weekly") emit("weekly", minutes, e.target.value, dow, cronExpr);
           }}
           onFocus={() => handleMode("weekly")}
-          style={{ ...inputStyle, width: 100 }}
+          className="sched-input" style={{ width: 100 }}
         />
       </label>
 
       {/* Custom cron */}
-      <label style={radioStyle}>
+      <label className="sched-option">
         <input
           type="radio"
           name="schedule-mode"
@@ -337,12 +318,12 @@ export function SchedulePicker({
           }}
           onFocus={() => handleMode("cron")}
           placeholder="0 8 * * *"
-          style={{ ...inputStyle, width: 120 }}
+          className="sched-input" style={{ width: 120 }}
         />
       </label>
 
       {/* Once at a date and time, then it stops */}
-      <label style={radioStyle}>
+      <label className="sched-option">
         <input
           type="radio"
           name="schedule-mode"
@@ -358,12 +339,12 @@ export function SchedulePicker({
             if (mode === "once") emit("once", minutes, time, dow, cronExpr, e.target.value);
           }}
           onFocus={() => handleMode("once")}
-          style={{ ...inputStyle, width: 190 }}
+          className="sched-input" style={{ width: 190 }}
         />
       </label>
 
       {/* No schedule */}
-      <label style={radioStyle}>
+      <label className="sched-option">
         <input
           type="radio"
           name="schedule-mode"
@@ -371,7 +352,7 @@ export function SchedulePicker({
           onChange={() => handleMode("manual")}
         />
         <span>Manual only</span>
-        <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+        <span className="muted">
           runs only when you run it
         </span>
       </label>
