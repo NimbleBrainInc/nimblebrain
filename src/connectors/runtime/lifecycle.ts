@@ -1185,8 +1185,9 @@ export class ConnectorLifecycleManager {
       .catch((err) => {
         // The source was stopped while its sign-in was open (a disconnect, an
         // uninstall). Whoever stopped it records what the connection is now; a
-        // `dead` written here would land over that. The auth URL was captured
-        // before the flow existed, so the caller's promise is already settled.
+        // `dead` written here would land over that. The provider registers the
+        // flow and captures the auth URL in one synchronous step, so the
+        // caller's promise is already settled.
         if (err instanceof OAuthFlowAbandonedError) {
           log.info(
             `[lifecycle] startAuth: ${serverName} sign-in abandoned for ${principalId} in ${wsId}`,
