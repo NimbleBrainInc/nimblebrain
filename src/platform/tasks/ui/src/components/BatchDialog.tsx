@@ -69,7 +69,7 @@ function ItemsField({
       </label>
       <textarea
         id={id}
-        className="inline-edit-textarea"
+        className="inline-edit-textarea code"
         rows={8}
         value={text}
         spellCheck={false}

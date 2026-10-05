@@ -64,6 +64,7 @@ const ACTIONS = {
   onRunNow: noop,
   onRunList: noop,
   onEdit: noop,
+  onDuplicate: noop,
   onToggle: noop,
   onDelete: noop,
   onOpenRun: noop,
@@ -116,17 +117,17 @@ describe("Saved", () => {
       ]),
     });
     expect(html).toContain("Daily at 7:20 AM");
-    expect(html).toContain("Paused");
+    expect(html).toContain(">Off<");
     expect(html).toContain("Poor result");
     expect(html).toContain("75%");
     expect(html).toContain("$1.20");
-    expect(html).toContain("Run now");
+    expect(html).toContain('aria-label="Actions for Digest"');
   });
   test("a task with no runs yet reads so, and no stats reads a dash", () => {
     const html = body({ tasks: [{ ...TASK, enabled: true }], stats: new Map() });
     expect(html).toContain("No runs yet");
     expect(html).toContain("—");
-    expect(html).not.toContain("Paused");
+    expect(html).not.toContain(">Off<");
   });
 });
 
@@ -153,6 +154,19 @@ describe("Upcoming", () => {
         trigger: "manual",
       },
     ],
+    days: 7,
+    windowEnd: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    frequent: [
+      {
+        taskId: "poll",
+        taskName: "Poll",
+        schedule: "Every 5 minutes",
+        scheduleType: "interval",
+        count: 2016,
+        first: new Date(Date.now() + 60_000).toISOString(),
+        last: new Date(Date.now() + 6 * 86_400_000).toISOString(),
+      },
+    ],
     scheduled: [
       {
         taskId: "digest",
@@ -160,6 +174,14 @@ describe("Upcoming", () => {
         at: new Date(Date.now() + 3_600_000).toISOString(),
         schedule: "Daily",
         scheduleType: "cron",
+      },
+      {
+        taskId: "rare",
+        taskName: "Rare",
+        at: new Date(Date.now() + 20 * 86_400_000).toISOString(),
+        schedule: "Every 21 days",
+        scheduleType: "interval",
+        beyondWindow: true,
       },
     ],
     events: [
@@ -180,6 +202,8 @@ describe("Upcoming", () => {
         loading: false,
         error: null,
         batches: new Map(),
+        days: 7 as const,
+        onDays: noop,
         onOpenRun: noop,
         onOpenTask: noop,
         ...p,
@@ -189,9 +213,19 @@ describe("Upcoming", () => {
   test("loading, error, and empty", () => {
     expect(body({ loading: true })).toContain('aria-busy="true"');
     expect(body({ error: "down" })).toContain("down");
-    expect(body({ data: { running: [], queued: [], scheduled: [], events: [] } })).toContain(
-      "Nothing is lined up",
-    );
+    expect(
+      body({
+        data: {
+          running: [],
+          queued: [],
+          days: 7,
+          windowEnd: "",
+          scheduled: [],
+          frequent: [],
+          events: [],
+        },
+      }),
+    ).toContain("Nothing is lined up");
   });
   test("loaded: the queue with batch items, scheduled fires, and event tasks", () => {
     const html = body({
@@ -203,6 +237,10 @@ describe("Upcoming", () => {
     expect(html).toContain("Waiting · 1");
     expect(html).toContain("Digest · run now");
     expect(html).toContain("Scheduled");
+    expect(html).toContain("Every 5 minutes · 2,016 runs in the next 7 days");
+    expect(html).toContain("Every 21 days · after the next 7 days");
+    expect(html).toContain("7 days");
+    expect(html).toContain("30 days");
     expect(html).toContain("at most 12/hr");
     expect(html).toContain("2 in the last hour");
   });

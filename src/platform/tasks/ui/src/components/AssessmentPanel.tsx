@@ -33,7 +33,7 @@ function CriterionLine({ c, def }: { c: CriterionResult; def?: TaskCriterion }) 
         <div className="criterion-meta">
           <span>Answer: {answerText(c.answer, def)}</span>
           <span>Confidence {Math.round(c.confidence * 100)}%</span>
-          {def && <span className="muted-text">{c.id}</span>}
+          {def && <span className="muted">{c.id}</span>}
         </div>
         {c.rationale && <div className="criterion-why">{c.rationale}</div>}
       </div>
@@ -111,7 +111,7 @@ function VerdictForm({
 /** The schema check's line. */
 function SchemaLine({ schema }: { schema: NonNullable<RunAssessment["schema"]> }) {
   return (
-    <p className={schema.valid ? "muted-text" : "assess-reason"}>
+    <p className={schema.valid ? "muted" : "assess-reason"}>
       Output schema:{" "}
       {schema.valid ? "matches" : `does not match: ${(schema.errors ?? []).join("; ")}`}
     </p>
@@ -126,7 +126,7 @@ function AssessmentDetail({ a, criteria }: { a: RunAssessment; criteria?: TaskCr
     <>
       {a.reason && (
         <p className="assess-reason">
-          {a.reason.message} <span className="muted-text">({a.reason.code})</span>
+          {a.reason.message} <span className="muted">({a.reason.code})</span>
         </p>
       )}
       {a.schema && <SchemaLine schema={a.schema} />}
@@ -137,7 +137,7 @@ function AssessmentDetail({ a, criteria }: { a: RunAssessment; criteria?: TaskCr
           ))}
         </ul>
       )}
-      {judged && <p className="muted-text">{judged}</p>}
+      {judged && <p className="muted">{judged}</p>}
       {a.human && (
         <p className="human-verdict">
           {a.human.verdict === "pass" ? "Accepted" : "Rejected"} by a person
@@ -174,15 +174,15 @@ export function AssessmentPanel({
 }) {
   const headId = useId();
   return (
-    <section className="result-section" aria-labelledby={headId}>
-      <h3 className="result-h" id={headId}>
+    <section className="section" aria-labelledby={headId}>
+      <h3 className="section-heading" id={headId}>
         Assessment
         {a && <span className={`verdict verdict-${a.verdict}`}>{VERDICT_TEXT[a.verdict]}</span>}
       </h3>
       {a ? (
         <AssessmentDetail a={a} criteria={criteria} />
       ) : (
-        <p className="muted-text">
+        <p className="muted">
           Not assessed yet. A run is assessed after it ends when its task has criteria or an output
           schema.
         </p>

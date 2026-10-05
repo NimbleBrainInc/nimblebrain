@@ -1,21 +1,23 @@
-import { hostSupports } from "@nimblebrain/synapse";
-import { useApp, useDataSync } from "@nimblebrain/synapse/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useDataSync, useTrail } from "@nimblebrain/synapse/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PlusIcon } from "../icons.tsx";
-import type { TaskRun, TaskSummary, TaskWarning } from "../types.ts";
+import type { TaskSummary, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, toolErrorText } from "../utils.ts";
 import { ActivityView } from "./ActivityView.tsx";
 import { BatchDialog } from "./BatchDialog.tsx";
 import { BatchScreen } from "./BatchPane.tsx";
+import { HostTrailContext, Tabs } from "./Chrome.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { ResultScreen } from "./ResultView.tsx";
 import { RunDialog, type RunStarted, runStartedOf } from "./RunDialog.tsx";
 import { type SavedActions, SavedView } from "./SavedView.tsx";
-import { TaskDetailView } from "./TaskDetailView.tsx";
 import { TaskEditor } from "./TaskEditor.tsx";
-import type { Template } from "./templates.ts";
+import { TaskPage, type TaskPageActions } from "./TaskPage.tsx";
+import { type Screen, trailFor, VIEWS, type View } from "./trail.ts";
 import { UpcomingView } from "./UpcomingView.tsx";
+
+export type { View } from "./trail.ts";
 
 /**
  * Read every task by following `nextCursor` to the end.
@@ -49,67 +51,19 @@ async function fetchAllTasks(
   return { items: [...byId.values()], exhausted: false };
 }
 
-export type View = "saved" | "upcoming" | "activity";
-
-const VIEWS: Array<{ id: View; text: string }> = [
-  { id: "saved", text: "Saved" },
-  { id: "upcoming", text: "Upcoming" },
-  { id: "activity", text: "Activity" },
-];
-
-/** A screen over the views: one run's result, a batch, the editor, or a task's details. */
-type Screen =
-  | { kind: "result"; runId: string; taskId?: string; run?: TaskRun }
-  | { kind: "batch"; batchId: string }
-  | { kind: "editor"; taskName?: string; template?: Template | null }
-  | { kind: "detail"; taskName: string };
-
-/** The view switcher: a tab list, arrow keys move between tabs. */
+/** The view switcher. */
 export function ViewTabs({ view, onChange }: { view: View; onChange: (v: View) => void }) {
-  const refs = useRef<Array<HTMLButtonElement | null>>([]);
-  return (
-    <div className="view-tabs" role="tablist" aria-label="Tasks views">
-      {VIEWS.map((v, i) => (
-        <button
-          key={v.id}
-          ref={(el) => {
-            refs.current[i] = el;
-          }}
-          type="button"
-          role="tab"
-          id={`tab-${v.id}`}
-          aria-selected={view === v.id}
-          aria-controls="view-panel"
-          tabIndex={view === v.id ? 0 : -1}
-          className={`view-tab${view === v.id ? " on" : ""}`}
-          onClick={() => onChange(v.id)}
-          onKeyDown={(e) => {
-            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-            e.preventDefault();
-            const next = (i + (e.key === "ArrowRight" ? 1 : VIEWS.length - 1)) % VIEWS.length;
-            onChange(VIEWS[next]!.id);
-            refs.current[next]?.focus();
-          }}
-        >
-          {v.text}
-        </button>
-      ))}
-    </div>
-  );
+  return <Tabs tabs={VIEWS} value={view} onChange={onChange} label="Tasks views" idPrefix="view" />;
 }
 
+/** A task the panel acts on: its id and name, and its input schema when the list has it. */
+type TaskRef = { id: string; name: string; inputSchema?: Record<string, unknown> };
+
 export function TasksUI() {
-  const app = useApp();
-  // The host draws this view's title in its own chrome when it declares
-  // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
-  // twice. A host without it (any other MCP Apps host) gets the view's title.
-  const hostShowsTitle = hostSupports(app, "location");
   const listTool = useTool<string>("list");
-  const statusTool = useTool<string>("status");
   const runTool = useTool<string>("run");
   const updateTool = useTool<string>("update");
   const deleteTool = useTool<string>("delete");
-  const cancelTool = useTool<string>("cancel");
 
   const [view, setView] = useState<View>("saved");
   const [stack, setStack] = useState<Screen[]>([]);
@@ -119,9 +73,9 @@ export function TasksUI() {
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [busy, setBusy] = useState<Record<string, string>>({});
-  const [runDialog, setRunDialog] = useState<string | null>(null);
+  const [runDialog, setRunDialog] = useState<TaskRef | null>(null);
   const [batchDialog, setBatchDialog] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<TaskSummary | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<TaskRef | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: listTool.call is stable
   const loadTasks = useCallback(async () => {
@@ -156,9 +110,25 @@ export function TasksUI() {
   // Re-read when the server announces a change (the agent, a schedule, another tab).
   useDataSync(() => refresh());
 
+  const nameOf = useCallback((taskId: string) => tasks.find((t) => t.id === taskId)?.name, [tasks]);
+  const trail = useMemo(() => trailFor(view, stack, nameOf), [view, stack, nameOf]);
+  const hostShowsTrail = useTrail(
+    trail.map(({ id, label }) => ({ id, label })),
+    (id) => {
+      const step = trail.find((s) => s.id === id);
+      if (!step) return;
+      if (step.view) setView(step.view);
+      setStack(step.stack);
+    },
+  );
+
   const top = stack[stack.length - 1];
   const push = (s: Screen) => setStack((prev) => [...prev, s]);
-  const pop = () => setStack((prev) => prev.slice(0, -1));
+  const pop = () => {
+    setNotice(null);
+    setStack((prev) => prev.slice(0, -1));
+  };
+
   function mark(id: string, what: string | null) {
     setBusy((prev) => {
       const next = { ...prev };
@@ -178,24 +148,20 @@ export function TasksUI() {
   }
 
   /** Run now: straight away, or through the input dialog when the task takes input. */
-  async function runNow(task: { id: string; name: string }, input?: unknown) {
+  async function runNow(task: TaskRef, input?: unknown) {
+    const schema = task.inputSchema ?? tasks.find((t) => t.id === task.id)?.inputSchema;
+    if (input === undefined && schema) {
+      setRunDialog({ ...task, inputSchema: schema });
+      return;
+    }
     mark(task.id, "running");
     setNotice(null);
     try {
-      if (input === undefined) {
-        // A task whose runs take input asks for it first.
-        const detail = await statusTool.call({ name: task.name, limit: 1 });
-        const def = asDict(detail.data).task as { inputSchema?: unknown } | undefined;
-        if (def?.inputSchema) {
-          setRunDialog(task.name);
-          return;
-        }
-      }
-      const status = await runTool.call({
-        name: task.name,
+      const res = await runTool.call({
+        taskId: task.id,
         ...(input !== undefined ? { input } : {}),
       });
-      const started = runStartedOf(asDict(status.data));
+      const started = runStartedOf(asDict(res.data));
       if (started) openStarted(started);
     } catch (err) {
       setNotice(toolErrorText(err, "The run did not start."));
@@ -205,24 +171,25 @@ export function TasksUI() {
     }
   }
 
-  async function toggle(task: TaskSummary) {
-    mark(task.id, task.enabled ? "pausing" : "resuming");
+  async function setEnabled(task: TaskRef, enabled: boolean) {
+    mark(task.id, enabled ? "resuming" : "pausing");
     try {
-      await updateTool.call({ name: task.name, manifest: { enabled: !task.enabled } });
+      await updateTool.call({ name: task.id, manifest: { enabled } });
     } catch (err) {
       setNotice(toolErrorText(err));
+      throw err;
     } finally {
       mark(task.id, null);
       refresh();
     }
   }
 
-  async function remove(task: TaskSummary) {
+  async function remove(task: TaskRef) {
     setConfirmDelete(null);
     mark(task.id, "deleting");
     try {
-      await deleteTool.call({ name: task.name });
-      setStack((prev) => prev.filter((s) => !(s.kind === "detail" && s.taskName === task.name)));
+      await deleteTool.call({ name: task.id });
+      setStack((prev) => prev.filter((s) => !(s.kind === "task" && s.taskName === task.name)));
     } catch (err) {
       setNotice(toolErrorText(err));
     } finally {
@@ -232,21 +199,35 @@ export function TasksUI() {
   }
 
   const savedActions: SavedActions = {
-    onOpen: (t) => push({ kind: "detail", taskName: t.name }),
+    onOpen: (t) => push({ kind: "task", taskName: t.name }),
     onRunNow: (t) => void runNow(t),
     onRunList: (t) => setBatchDialog(t.name),
     onEdit: (t) => push({ kind: "editor", taskName: t.name }),
-    onToggle: (t) => void toggle(t),
+    onDuplicate: (t) => push({ kind: "editor", copyOf: t.name }),
+    onToggle: (t) => void setEnabled(t, !t.enabled).catch(() => {}),
     onDelete: (t) => setConfirmDelete(t),
     onOpenRun: (t, runId) => push({ kind: "result", runId, taskId: t.id }),
     onCreate: (template) => push({ kind: "editor", template: template ?? null }),
+  };
+
+  const taskActions: TaskPageActions = {
+    onRunNow: (d) => void runNow({ id: d.id, name: d.name, inputSchema: d.inputSchema }),
+    onRunList: (d) => setBatchDialog(d.name),
+    onEdit: (d) => push({ kind: "editor", taskName: d.name }),
+    onDuplicate: (d) => push({ kind: "editor", copyOf: d.name }),
+    onDelete: (d) => setConfirmDelete({ id: d.id, name: d.name }),
+    onSetEnabled: (d, enabled) => setEnabled(d, enabled),
+    onOpenRun: (run) => push({ kind: "result", runId: run.id, taskId: run.taskId, run }),
+    onOpenBatch: (batch) => push({ kind: "batch", batchId: batch.id, batch }),
   };
 
   const dialogs = (
     <>
       {runDialog && (
         <RunDialog
-          taskName={runDialog}
+          taskId={runDialog.id}
+          taskName={runDialog.name}
+          inputSchema={runDialog.inputSchema}
           onClose={() => setRunDialog(null)}
           onStarted={(started) => {
             setRunDialog(null);
@@ -261,7 +242,7 @@ export function TasksUI() {
           onClose={() => setBatchDialog(null)}
           onCreated={(batch) => {
             setBatchDialog(null);
-            push({ kind: "batch", batchId: batch.id });
+            push({ kind: "batch", batchId: batch.id, batch });
             refresh();
           }}
         />
@@ -273,146 +254,91 @@ export function TasksUI() {
           onCancel={() => setConfirmDelete(null)}
         />
       )}
+      {notice && (
+        <div className="toast" role="status">
+          {notice}{" "}
+          <button type="button" className="link-btn" onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
     </>
   );
 
   if (top) {
     return (
-      <>
-        {notice && top.kind !== "editor" && (
-          <div className="toast" role="status">
-            {notice}
-          </div>
-        )}
+      <HostTrailContext.Provider value={hostShowsTrail}>
         <ScreenRoute
           screen={top}
           tasks={tasks}
           busy={busy}
           refreshKey={refreshKey}
-          nav={{
-            push,
-            back: () => {
-              setNotice(null);
-              pop();
-            },
-            replaceTop: (s) => setStack((prev) => [...prev.slice(0, -1), ...(s ? [s] : [])]),
-          }}
-          actions={{
-            runNow: (task, input) => void runNow(task, input),
-            askRun: (name) => setRunDialog(name),
-            toggle: (task) => void toggle(task),
-            askDelete: (task) => setConfirmDelete(task),
-            cancel: (name) => void cancelTool.call({ name }).finally(refresh),
-            update: async (args) => {
-              try {
-                await updateTool.call(args);
-              } finally {
-                refresh();
-              }
-            },
-            saved: (warnings) => {
-              setNotice(warnings.length > 0 ? warnings.map((w) => w.message).join(" ") : null);
-              refresh();
-            },
+          taskActions={taskActions}
+          onBack={pop}
+          onPush={push}
+          onReplaceTop={(s) => setStack((prev) => [...prev.slice(0, -1), ...(s ? [s] : [])])}
+          onRerun={(task, input) => void runNow(task, input)}
+          onSaved={(warnings) => {
+            setNotice(warnings.length > 0 ? warnings.map((w) => w.message).join(" ") : null);
+            refresh();
           }}
         />
         {dialogs}
-      </>
+      </HostTrailContext.Provider>
     );
   }
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="header-top">
-          <div>
-            {!hostShowsTitle && <h1 className="header-title">Tasks</h1>}
-            <div className="header-lede">Work the agent does on its own, and how it went</div>
-          </div>
-          <button type="button" className="create-btn" onClick={() => push({ kind: "editor" })}>
-            <PlusIcon />
-            New task
-          </button>
-        </div>
-        <ViewTabs view={view} onChange={setView} />
-      </header>
-      {notice && (
-        <div className="view-pad">
-          <div className="note-banner" role="status">
-            {notice}{" "}
-            <button type="button" className="link-btn" onClick={() => setNotice(null)}>
-              Dismiss
+    <HostTrailContext.Provider value={hostShowsTrail}>
+      <div className="app">
+        <header className="header">
+          {!hostShowsTrail && <h1 className="page-title">Tasks</h1>}
+          <div className="header-row">
+            <ViewTabs view={view} onChange={setView} />
+            <button type="button" className="create-btn" onClick={() => push({ kind: "editor" })}>
+              <PlusIcon />
+              New task
             </button>
           </div>
-        </div>
-      )}
-      <main
-        className="content view-panel"
-        id="view-panel"
-        role="tabpanel"
-        aria-labelledby={`tab-${view}`}
-      >
-        {view === "saved" && (
-          <SavedView
-            tasks={tasks}
-            loading={loading}
-            error={error}
-            busy={busy}
-            refreshKey={refreshKey}
-            actions={savedActions}
-          />
-        )}
-        {view === "upcoming" && (
-          <UpcomingView
-            refreshKey={refreshKey}
-            onOpenRun={(r) => r.runId && push({ kind: "result", runId: r.runId, taskId: r.taskId })}
-            onOpenTask={(name) => push({ kind: "detail", taskName: name })}
-          />
-        )}
-        {view === "activity" && (
-          <ActivityView
-            tasks={tasks}
-            refreshKey={refreshKey}
-            onOpenRun={(run) => push({ kind: "result", runId: run.id, taskId: run.taskId, run })}
-            onOpenBatch={(batch) => push({ kind: "batch", batchId: batch.id })}
-          />
-        )}
-      </main>
-      {dialogs}
-    </div>
+        </header>
+        <main
+          className="content"
+          id="view-panel"
+          role="tabpanel"
+          aria-labelledby={`view-tab-${view}`}
+        >
+          {view === "saved" && (
+            <SavedView
+              tasks={tasks}
+              loading={loading}
+              error={error}
+              busy={busy}
+              refreshKey={refreshKey}
+              actions={savedActions}
+            />
+          )}
+          {view === "upcoming" && (
+            <UpcomingView
+              refreshKey={refreshKey}
+              onOpenRun={(r) =>
+                r.runId && push({ kind: "result", runId: r.runId, taskId: r.taskId })
+              }
+              onOpenTask={(name) => push({ kind: "task", taskName: name })}
+            />
+          )}
+          {view === "activity" && (
+            <ActivityView
+              tasks={tasks}
+              refreshKey={refreshKey}
+              onOpenRun={(run) => push({ kind: "result", runId: run.id, taskId: run.taskId, run })}
+              onOpenBatch={(batch) => push({ kind: "batch", batchId: batch.id, batch })}
+            />
+          )}
+        </main>
+        {dialogs}
+      </div>
+    </HostTrailContext.Provider>
   );
-}
-
-interface ScreenNav {
-  push: (s: Screen) => void;
-  back: () => void;
-  /** Replace the top screen, or drop it with null. */
-  replaceTop: (s: Screen | null) => void;
-}
-
-interface ScreenActions {
-  runNow: (task: { id: string; name: string }, input?: unknown) => void;
-  askRun: (taskName: string) => void;
-  toggle: (task: TaskSummary) => void;
-  askDelete: (task: TaskSummary) => void;
-  cancel: (taskName: string) => void;
-  update: (args: Record<string, unknown>) => Promise<void>;
-  saved: (warnings: TaskWarning[]) => void;
-}
-
-/** The detail view saves one flat field; the update tool takes `{ name, manifest?, body? }`. */
-export function updateArgsOf(
-  name: string,
-  fields: Record<string, unknown>,
-): Record<string, unknown> {
-  const args: Record<string, unknown> = { name };
-  const manifest: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(fields)) {
-    if (k === "prompt") args.body = v;
-    else if (k !== "name") manifest[k] = v;
-  }
-  if (Object.keys(manifest).length > 0) args.manifest = manifest;
-  return args;
 }
 
 /** The screen on top of the stack. */
@@ -421,18 +347,26 @@ function ScreenRoute({
   tasks,
   busy,
   refreshKey,
-  nav,
-  actions,
+  taskActions,
+  onBack,
+  onPush,
+  onReplaceTop,
+  onRerun,
+  onSaved,
 }: {
   screen: Screen;
   tasks: TaskSummary[];
   busy: Record<string, string>;
   refreshKey: number;
-  nav: ScreenNav;
-  actions: ScreenActions;
+  taskActions: TaskPageActions;
+  onBack: () => void;
+  onPush: (s: Screen) => void;
+  onReplaceTop: (s: Screen | null) => void;
+  onRerun: (task: TaskRef, input: unknown) => void;
+  onSaved: (warnings: TaskWarning[]) => void;
 }) {
   const nameOf = (taskId: string) => tasks.find((t) => t.id === taskId)?.name;
-  const openRun = (runId: string, taskId?: string) => nav.push({ kind: "result", runId, taskId });
+  const openRun = (runId: string, taskId?: string) => onPush({ kind: "result", runId, taskId });
   switch (screen.kind) {
     case "result":
       return (
@@ -442,10 +376,10 @@ function ScreenRoute({
           taskId={screen.taskId}
           taskName={screen.taskId ? nameOf(screen.taskId) : undefined}
           initialRun={screen.run}
-          onBack={nav.back}
-          onRerun={(task, input) => actions.runNow(task, input)}
+          onBack={onBack}
+          onRerun={onRerun}
           onOpenRun={openRun}
-          onOpenBatch={(batchId) => nav.push({ kind: "batch", batchId })}
+          onOpenBatch={(batchId) => onPush({ kind: "batch", batchId })}
         />
       );
     case "batch":
@@ -455,38 +389,35 @@ function ScreenRoute({
           batchId={screen.batchId}
           taskName={nameOf}
           refreshKey={refreshKey}
-          onBack={nav.back}
+          onBack={onBack}
           onOpenRun={openRun}
         />
       );
     case "editor":
       return (
         <TaskEditor
-          key={screen.taskName ?? "new"}
+          key={screen.taskName ?? screen.copyOf ?? "new"}
           taskName={screen.taskName}
+          copyOf={screen.copyOf}
           template={screen.template}
-          onCancel={nav.back}
+          onCancel={onBack}
           onSaved={(name, warnings) => {
-            actions.saved(warnings);
-            // A new task opens on its details; an edit returns where it came from.
-            nav.replaceTop(screen.taskName ? null : { kind: "detail", taskName: name });
+            onSaved(warnings);
+            // A new task opens on its page; an edit returns where it came from.
+            onReplaceTop(screen.taskName ? null : { kind: "task", taskName: name });
           }}
         />
       );
-    case "detail": {
+    case "task": {
       const summary = tasks.find((t) => t.name === screen.taskName);
       return (
-        <TaskDetailView
+        <TaskPage
           key={screen.taskName}
           taskName={screen.taskName}
-          onBack={nav.back}
-          actionInProgress={summary ? busy[summary.id] : undefined}
-          onRunNow={() => actions.askRun(screen.taskName)}
-          onToggle={() => summary && actions.toggle(summary)}
-          onDelete={() => summary && actions.askDelete(summary)}
-          onCancel={() => actions.cancel(screen.taskName)}
-          onEdit={() => nav.push({ kind: "editor", taskName: screen.taskName })}
-          onUpdate={(name, fields) => actions.update(updateArgsOf(name, fields))}
+          refreshKey={refreshKey}
+          busy={summary ? busy[summary.id] : undefined}
+          actions={taskActions}
+          onBack={onBack}
         />
       );
     }

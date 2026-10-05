@@ -5,6 +5,7 @@ import { asDict, formatPercent, formatUsd, relativeTime, toolErrorText } from ".
 import { RowMenu } from "./RowMenu.tsx";
 import { RunBadge } from "./RunBadge.tsx";
 import { SkeletonRows } from "./Skeleton.tsx";
+import { taskMenuItems } from "./TaskPage.tsx";
 import { TEMPLATES, type Template } from "./templates.ts";
 
 export interface SavedActions {
@@ -12,11 +13,19 @@ export interface SavedActions {
   onRunNow: (task: TaskSummary) => void;
   onRunList: (task: TaskSummary) => void;
   onEdit: (task: TaskSummary) => void;
+  onDuplicate: (task: TaskSummary) => void;
   onToggle: (task: TaskSummary) => void;
   onDelete: (task: TaskSummary) => void;
   onOpenRun: (task: TaskSummary, runId: string) => void;
   onCreate: (template?: Template) => void;
 }
+
+const BUSY_TEXT: Record<string, string> = {
+  running: "Starting…",
+  pausing: "Turning off…",
+  resuming: "Turning on…",
+  deleting: "Deleting…",
+};
 
 /** Whether a task has a trigger that Pause and Resume act on. */
 export function hasTrigger(task: TaskSummary): boolean {
@@ -27,7 +36,7 @@ export function hasTrigger(task: TaskSummary): boolean {
 export function triggerState(task: TaskSummary): string | null {
   if (task.onceDone) return null;
   if (!hasTrigger(task) || task.enabled) return null;
-  return task.disabledReason ? "Turned off" : "Paused";
+  return task.disabledReason ? "Turned off" : "Off";
 }
 
 /** Every saved task: trigger, last run, pass rate, 30-day cost, and its actions. */
@@ -145,19 +154,16 @@ function SavedRow({
 }) {
   const state = triggerState(task);
   const last = stats?.lastRun;
-  const menu = [
-    { label: "Run on a list…", onSelect: () => actions.onRunList(task) },
-    { label: "Edit", onSelect: () => actions.onEdit(task) },
-    ...(hasTrigger(task)
-      ? [
-          {
-            label: task.enabled ? "Pause trigger" : "Resume trigger",
-            onSelect: () => actions.onToggle(task),
-          },
-        ]
-      : []),
-    { label: "Delete…", onSelect: () => actions.onDelete(task), danger: true },
-  ];
+  const menu = taskMenuItems({
+    runNow: () => actions.onRunNow(task),
+    runList: () => actions.onRunList(task),
+    edit: () => actions.onEdit(task),
+    duplicate: () => actions.onDuplicate(task),
+    remove: () => actions.onDelete(task),
+    toggle: hasTrigger(task)
+      ? { enabled: task.enabled, onToggle: () => actions.onToggle(task) }
+      : undefined,
+  });
   return (
     <tr>
       <td data-label="Task">
@@ -204,15 +210,8 @@ function SavedRow({
         {statsLoading ? <span className="skel skel-inline" /> : formatUsd(stats?.costUsd)}
       </td>
       <td className="row-actions">
-        <button
-          type="button"
-          className="btn"
-          disabled={!!busy}
-          onClick={() => actions.onRunNow(task)}
-        >
-          {busy === "running" ? "Starting…" : "Run now"}
-        </button>
-        <RowMenu label={`More actions for ${task.name}`} items={menu} />
+        {busy && <span className="muted">{BUSY_TEXT[busy] ?? "Working…"}</span>}
+        <RowMenu label={`Actions for ${task.name}`} items={menu} />
       </td>
     </tr>
   );

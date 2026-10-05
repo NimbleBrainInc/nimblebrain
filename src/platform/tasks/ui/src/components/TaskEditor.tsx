@@ -13,6 +13,7 @@ import { builderProblem, fieldsFromSchema, schemaFromFields } from "../lib/schem
 import type { JudgesData, TaskDetail, TaskRun, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, toolErrorText } from "../utils.ts";
+import { ScreenHead } from "./Chrome.tsx";
 import { CriteriaEditor } from "./CriteriaEditor.tsx";
 import { InputEditor, type InputState } from "./InputEditor.tsx";
 import { InputFieldsBuilder } from "./InputFieldsBuilder.tsx";
@@ -37,11 +38,11 @@ function Section({
 }) {
   const id = useId();
   return (
-    <section className="editor-section" aria-labelledby={id}>
-      <h2 className="editor-h" id={id}>
+    <section className="section editor-section" aria-labelledby={id}>
+      <h2 className="section-heading" id={id}>
         {title}
       </h2>
-      {hint && <p className="hint editor-hint">{hint}</p>}
+      {hint && <p className="hint">{hint}</p>}
       {children}
     </section>
   );
@@ -116,7 +117,7 @@ function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: bo
           onChange={(e) => set({ prompt: e.target.value })}
         />
       </div>
-      <h3 className="editor-h3">Input for each run</h3>
+      <h3 className="sub-heading">Input for each run</h3>
       {d.inputMode === "builder" ? (
         <>
           <InputFieldsBuilder
@@ -134,7 +135,7 @@ function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: bo
           </label>
           <textarea
             id={`${id}-ischema`}
-            className="inline-edit-textarea"
+            className="inline-edit-textarea code"
             rows={6}
             spellCheck={false}
             value={d.inputJson}
@@ -246,7 +247,7 @@ function WhatGoodLooksLike({
         </label>
         <textarea
           id={`${id}-oschema`}
-          className="inline-edit-textarea"
+          className="inline-edit-textarea code"
           rows={5}
           spellCheck={false}
           value={d.outputJson}
@@ -751,18 +752,6 @@ function TestRunSection({
   );
 }
 
-/** The editor's header: back, and what is being edited. */
-function EditorHead({ title, onBack }: { title: string; onBack: () => void }) {
-  return (
-    <header className="screen-head">
-      <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
-        ←
-      </button>
-      <h1 className="screen-title">{title}</h1>
-    </header>
-  );
-}
-
 /** The editor while the stored task loads, or why it could not. */
 function EditorLoading({
   title,
@@ -775,7 +764,7 @@ function EditorLoading({
 }) {
   return (
     <div className="app">
-      <EditorHead title={title} onBack={onBack} />
+      <ScreenHead title={title} onBack={onBack} />
       <div className="content">
         {error ? (
           <div className="error-banner" role="alert">
@@ -840,6 +829,7 @@ function EditorForm({
   detail,
   judges,
   template,
+  copy,
   title,
   onSaved,
   onCancel,
@@ -849,13 +839,15 @@ function EditorForm({
   detail: TaskDetail | null;
   judges: JudgesData | null;
   template?: Template | null;
+  /** A draft to start a new task from (Duplicate). */
+  copy?: EditorDraft | null;
   title: string;
   onSaved: (name: string, warnings: TaskWarning[]) => void;
   onCancel: () => void;
 }) {
   const createTool = useTool<string>("create");
   const updateTool = useTool<string>("update");
-  const [draft, setDraft] = useState<EditorDraft>(() => original ?? initialDraft(template));
+  const [draft, setDraft] = useState<EditorDraft>(() => original ?? copy ?? initialDraft(template));
   const [problems, setProblems] = useState<string[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -888,7 +880,7 @@ function EditorForm({
 
   return (
     <div className="app">
-      <EditorHead title={title} onBack={onCancel} />
+      <ScreenHead title={title} onBack={onCancel} />
       <div className="content editor">
         {detail?.kind === "oneoff" && (
           <div className="note-banner">This is a one-off task made by an inline run.</div>
@@ -917,26 +909,33 @@ function EditorForm({
  */
 export function TaskEditor({
   taskName,
+  copyOf,
   template,
   onSaved,
   onCancel,
 }: {
   /** The task to edit; absent to create one. */
   taskName?: string;
+  /** A task to start a new one from. */
+  copyOf?: string;
   template?: Template | null;
   onSaved: (name: string, warnings: TaskWarning[]) => void;
   onCancel: () => void;
 }) {
-  const { detail, loadError, judges } = useEditorData(taskName);
-  const original = useMemo(() => (detail ? draftFromDetail(detail) : null), [detail]);
+  const source = taskName ?? copyOf;
+  const { detail, loadError, judges } = useEditorData(source);
+  const loaded = useMemo(() => (detail ? draftFromDetail(detail) : null), [detail]);
+  const original = taskName ? loaded : null;
+  const copy = copyOf && loaded ? { ...loaded, name: `${loaded.name} (copy)` } : null;
   const title = taskName ? `Edit ${taskName}` : "New task";
-  if (taskName && !detail) {
+  if (source && !detail) {
     return <EditorLoading title={title} error={loadError} onBack={onCancel} />;
   }
   return (
     <EditorForm
       original={original}
-      detail={detail}
+      copy={copy}
+      detail={taskName ? detail : null}
       judges={judges}
       template={template}
       title={title}

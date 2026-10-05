@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { BackArrowIcon } from "../icons.tsx";
 import { renderMarkdown } from "../markdown.ts";
 import type { BatchItemResult, TaskBatch, TaskRunResult } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatCost, relativeTime } from "../utils.ts";
+import { ScreenHead } from "./Chrome.tsx";
 import { RunBadge } from "./RunBadge.tsx";
 
 /** Rows per page of results. */
@@ -173,39 +173,32 @@ function BatchHead({
 }) {
   const budget = batch.budgetUsd !== undefined ? ` of ${formatCost(batch.budgetUsd)}` : "";
   return (
-    <div className="reader-head">
-      {onBack && (
-        <button type="button" className="reader-back" onClick={onBack} aria-label="Back to list">
-          <BackArrowIcon />
-        </button>
-      )}
-      <div className="reader-head-meta">
-        <div className="reader-head-title">
-          <span className="reader-head-name">Batch {batch.id.slice(6, 10)}</span>
-          <span className="reader-head-sep">·</span>
+    <ScreenHead
+      title={`Batch ${batch.id.slice(6, 10)}`}
+      onBack={onBack ?? (() => {})}
+      sub={
+        <>
           <span>{taskName ?? batch.taskId}</span>
-          <span className="reader-head-sep">·</span>
-          <span className="reader-head-status">{STATE_LABEL[batch.state]}</span>
-        </div>
-        <div className="reader-head-sub">
-          {batch.done}/{batch.items} done · {formatCost(batch.costUsd) || "$0.00"}
-          {budget} · started {relativeTime(batch.createdAt)}
-        </div>
-      </div>
-      <div className="reader-actions">
-        {controlsFor(batch).map((action) => (
-          <button
-            key={action}
-            type="button"
-            className={CONTROL_LABEL[action].className}
-            disabled={busy}
-            onClick={() => onControl(action)}
-          >
-            {CONTROL_LABEL[action].text}
-          </button>
-        ))}
-      </div>
-    </div>
+          <span>{STATE_LABEL[batch.state]}</span>
+          <span>
+            {batch.done}/{batch.items} done · {formatCost(batch.costUsd) || "$0.00"}
+            {budget}
+          </span>
+          <span>started {relativeTime(batch.createdAt)}</span>
+        </>
+      }
+      actions={controlsFor(batch).map((action) => (
+        <button
+          key={action}
+          type="button"
+          className={CONTROL_LABEL[action].className}
+          disabled={busy}
+          onClick={() => onControl(action)}
+        >
+          {CONTROL_LABEL[action].text}
+        </button>
+      ))}
+    />
   );
 }
 
@@ -429,12 +422,7 @@ export function BatchScreen({
   if (!batch) {
     return (
       <div className="app">
-        <header className="screen-head">
-          <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
-            ←
-          </button>
-          <h1 className="screen-title">Batch</h1>
-        </header>
+        <ScreenHead title="Batch" onBack={onBack} />
         <div className="content">
           {error ? (
             <div className="error-banner" role="alert">

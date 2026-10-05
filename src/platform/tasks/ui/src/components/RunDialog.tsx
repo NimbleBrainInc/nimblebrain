@@ -29,17 +29,24 @@ export function runStartedOf(data: Record<string, unknown>): RunStarted | null {
  * form or JSON. A task without one runs straight from its row instead.
  */
 export function RunDialog({
+  taskId,
   taskName,
+  inputSchema,
   onClose,
   onStarted,
 }: {
+  taskId: string;
   taskName: string;
+  /** The task's input schema when the caller has it; read from the task otherwise. */
+  inputSchema?: Record<string, unknown>;
   onClose: () => void;
   onStarted: (started: RunStarted) => void;
 }) {
   const statusTool = useTool<string>("status");
   const runTool = useTool<string>("run");
-  const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [schema, setSchema] = useState<Record<string, unknown> | null | undefined>(
+    inputSchema ?? undefined,
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [input, setInput] = useState<InputState>({ ok: true, input: undefined });
   const [busy, setBusy] = useState(false);
@@ -47,11 +54,14 @@ export function RunDialog({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: statusTool.call is stable
   useEffect(() => {
+    if (inputSchema) return;
     statusTool
-      .call({ name: taskName, limit: 1 })
-      .then((res) => setDetail((asDict(res.data).task as TaskDetail) ?? null))
+      .call({ name: taskId, limit: 1 })
+      .then((res) =>
+        setSchema((asDict(res.data).task as TaskDetail | undefined)?.inputSchema ?? null),
+      )
       .catch((err) => setLoadError(toolErrorText(err)));
-  }, [taskName]);
+  }, [taskId]);
 
   async function run() {
     if (!input.ok) return;
@@ -59,7 +69,7 @@ export function RunDialog({
     setError(null);
     try {
       const res = await runTool.call({
-        name: taskName,
+        taskId,
         ...(input.input !== undefined ? { input: input.input } : {}),
       });
       const started = runStartedOf(asDict(res.data));
@@ -75,8 +85,8 @@ export function RunDialog({
   return (
     <Modal title={`Run ${taskName}`} onClose={onClose} wide>
       {loadError && <div className="error-banner">{loadError}</div>}
-      {!detail && !loadError && <div className="skel skel-row" />}
-      {detail && <InputEditor schema={detail.inputSchema} onChange={setInput} />}
+      {schema === undefined && !loadError && <div className="skel skel-row" />}
+      {schema !== undefined && <InputEditor schema={schema ?? undefined} onChange={setInput} />}
       {error && <div className="error-banner">{error}</div>}
       <div className="confirm-actions">
         {!input.ok && <span className="field-error">{input.error}</span>}
@@ -86,7 +96,7 @@ export function RunDialog({
         <button
           type="button"
           className="btn btn-accent"
-          disabled={!detail || !input.ok || busy}
+          disabled={schema === undefined || !input.ok || busy}
           onClick={run}
         >
           {busy ? "Starting…" : "Run now"}

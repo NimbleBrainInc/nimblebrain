@@ -128,7 +128,7 @@ function JsonInput({
       </label>
       <textarea
         id={id}
-        className="inline-edit-textarea"
+        className="inline-edit-textarea code"
         rows={6}
         value={text}
         onChange={(e) => onText(e.target.value)}

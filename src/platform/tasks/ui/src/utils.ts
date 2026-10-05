@@ -53,26 +53,6 @@ export function formatDuration(startedAt?: string, completedAt?: string): string
   return `${mins}m ${secs % 60}s`;
 }
 
-export function statusDotClass(
-  status: string | null | undefined,
-  enabled: boolean,
-  consecutiveErrors?: number,
-): string {
-  if (!enabled) return "dot-disabled";
-  if (consecutiveErrors && consecutiveErrors > 0) return "dot-backoff";
-  if (!status) return "dot-disabled";
-  const map: Record<string, string> = {
-    success: "dot-success",
-    degraded: "dot-degraded",
-    failure: "dot-failure",
-    timeout: "dot-timeout",
-    running: "dot-running",
-    skipped: "dot-skipped",
-    cancelled: "dot-disabled",
-  };
-  return map[status] || "dot-disabled";
-}
-
 export function formatTokens(n?: number): string {
   if (n === undefined || n === null) return "-";
   if (n < 1000) return String(n);

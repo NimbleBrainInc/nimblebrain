@@ -180,9 +180,11 @@ Pausing keeps the definition and its run history intact; the scheduler simply sk
 
 The **Tasks** panel opens on three views:
 
-- **Saved** — every saved task with its trigger, its last run's label, its pass rate and cost over the last 30 days, and Run now, Run on a list…, Edit, Pause or Resume trigger, and Delete. Run now asks for the input first when the task has an input schema, as a form for a flat schema and as JSON otherwise. Run on a list takes a JSON array, or CSV whose header row names the input fields.
+- **Saved** — every saved task with its trigger, its last run's label, its pass rate and cost over the last 30 days, and a menu with Run now, Run on a list…, Edit, Duplicate, turning the trigger on or off, and Delete. Run now asks for the input first when the task has an input schema, as a form for a flat schema and as JSON otherwise. Run on a list takes a JSON array, or CSV whose header row names the input fields.
 - **Upcoming** — your runs holding or waiting for a run slot (with their queue position and batch item), then the scheduled runs over the next 7 or 30 days in time order (a frequent schedule as one row with its count, a rare one by its next run), then the tasks that run on events with their hourly ceiling.
 - **Activity** — every run from every source, newest first, back through the whole history, filtered by outcome, task, what started it, and date. A batch is one row you can expand.
+
+Opening a task shows its page: a status line (trigger, next run, last run), an **Enabled** switch for a task with a schedule or event trigger (it gates only the trigger; Run now works either way), **Run now**, and a menu, over three tabs: **Overview** (pass rate, cost, next run, the last runs, and runs needing your review), **Runs** (its history and batches), and **Definition** (the prompt, schemas, criteria and judge, trigger, and limits, read-only; edit them in the editor).
 
 Opening a run shows its result: the deliverable first (structured output as values and tables), then its assessment with Accept, Reject, a note, and Re-judge, then how it ran, its tool calls, input, and cost. The editor covers what the task does, its input fields, its criteria, output schema and judge, when it runs, its limits, and a test run of the draft before you save it; accepting or rejecting the test run with a note adds that note as a draft criterion.
 

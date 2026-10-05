@@ -14,6 +14,7 @@ import type {
 import { useTool } from "../useTool.ts";
 import { asDict, formatDuration, formatTokens, formatUsd, toolErrorText } from "../utils.ts";
 import { AssessmentPanel } from "./AssessmentPanel.tsx";
+import { ScreenHead } from "./Chrome.tsx";
 import { RunBadge } from "./RunBadge.tsx";
 import { StructuredValue } from "./StructuredView.tsx";
 
@@ -56,7 +57,7 @@ export function Deliverable({
   const output = result?.output ?? run?.resultPreview ?? "";
   const files = result?.outputFiles ?? [];
   return (
-    <section className="result-section result-deliverable" aria-label="Result">
+    <section className="section deliverable" aria-label="Result">
       {result?.structured !== undefined ? (
         <StructuredValue value={result.structured} />
       ) : output ? (
@@ -66,14 +67,14 @@ export function Deliverable({
           dangerouslySetInnerHTML={{ __html: renderMarkdown(output) }}
         />
       ) : (
-        <p className="muted-text">No deliverable for this run.</p>
+        <p className="muted">No deliverable for this run.</p>
       )}
       {!result && run?.resultPreview && (
-        <p className="muted-text">Showing the preview; the full result could not be read.</p>
+        <p className="muted">Showing the preview; the full result could not be read.</p>
       )}
       {files.length > 0 && (
         <div className="result-files">
-          <h4 className="result-h4">Files</h4>
+          <h4 className="sub-heading">Files</h4>
           <ul>
             {files.map((f) => (
               <li key={f.id}>
@@ -99,8 +100,8 @@ export function ExecutionPanel({ run, result }: { run?: TaskRun; result: TaskRun
   const stop = run?.stopReason ?? result?.stopReason;
   if (!execution && !stop && !run?.error) return null;
   return (
-    <section className="result-section" aria-label="How it ran">
-      <h3 className="result-h">How it ran</h3>
+    <section className="section" aria-label="How it ran">
+      <h3 className="section-heading">How it ran</h3>
       <p>
         {execution ? (EXECUTION_TEXT[execution] ?? execution) : "Ended"}
         {stop && stop !== "complete" ? `: it ${STOP_TEXT[stop] ?? stop}` : ""}
@@ -121,8 +122,8 @@ export function ExecutionPanel({ run, result }: { run?: TaskRun; result: TaskRun
 export function ToolCallList({ log }: { log: RunToolCall[] }) {
   if (log.length === 0) return null;
   return (
-    <details className="result-section result-details">
-      <summary className="result-h">
+    <details className="section details">
+      <summary className="section-heading">
         Activity: {log.length} tool {log.length === 1 ? "call" : "calls"}
       </summary>
       <ul className="tool-calls">
@@ -136,9 +137,9 @@ export function ToolCallList({ log }: { log: RunToolCall[] }) {
                 <span className="tool-ms">{tc.ms} ms</span>
               </summary>
               <div className="tool-io">
-                <div className="result-h4">Input</div>
+                <div className="sub-heading">Input</div>
                 <pre>{JSON.stringify(tc.input, null, 2)}</pre>
-                <div className="result-h4">Output</div>
+                <div className="sub-heading">Output</div>
                 <pre>{tc.output}</pre>
               </div>
             </details>
@@ -156,8 +157,8 @@ export function CostPanel({ run, result }: { run?: TaskRun; result: TaskRunResul
   const outTok = run?.outputTokens ?? result?.usage.outputTokens;
   const steps = run?.iterations ?? result?.usage.iterations;
   return (
-    <details className="result-section result-details">
-      <summary className="result-h">
+    <details className="section details">
+      <summary className="section-heading">
         Cost: {formatUsd((run?.costUsd ?? 0) + (judgeCost ?? 0))}
       </summary>
       <dl className="sv-dl">
@@ -190,9 +191,9 @@ export function CostPanel({ run, result }: { run?: TaskRun; result: TaskRunResul
 export function InputPanel({ input }: { input: unknown }) {
   if (input === undefined) return null;
   return (
-    <details className="result-section result-details">
-      <summary className="result-h">Input</summary>
-      <pre className="json-block">{JSON.stringify(input, null, 2)}</pre>
+    <details className="section details">
+      <summary className="section-heading">Input</summary>
+      <pre className="code-block">{JSON.stringify(input, null, 2)}</pre>
     </details>
   );
 }
@@ -374,7 +375,7 @@ function RelatedLinks({
   const batchId = onOpenBatch ? run?.batchId : undefined;
   if (!retryOf && !batchId) return null;
   return (
-    <section className="result-section result-links" aria-label="Related">
+    <section className="section result-links" aria-label="Related">
       {retryOf && (
         <button type="button" className="link-btn" onClick={() => onOpenRun?.(retryOf)}>
           Open the run this retried
@@ -476,6 +477,37 @@ export function useOpenFile(): (file: RunFileRef) => void {
   return (file) => hostAction(app, "openApp", { name: "files", target: `files://${file.id}` });
 }
 
+/** The result screen's status line: label, who started it, when, how long, what it cost. */
+function ResultSub({
+  run,
+  label,
+  taskGone,
+}: {
+  run?: TaskRun;
+  label?: TaskRun["label"];
+  taskGone: boolean;
+}) {
+  return (
+    <>
+      <RunBadge label={label} />
+      {taskGone && <span className="tag">task deleted</span>}
+      {run && <span>{STARTED_BY_TEXT[startedByOf(run)]}</span>}
+      {run && (
+        <span>
+          {new Date(run.startedAt).toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+        </span>
+      )}
+      {run?.completedAt && <span>{formatDuration(run.startedAt, run.completedAt)}</span>}
+      {run?.costUsd !== undefined && <span>{formatUsd(run.costUsd)}</span>}
+    </>
+  );
+}
+
 /**
  * The run result screen: the deliverable first, then whether it is good,
  * then how it was made.
@@ -527,62 +559,43 @@ export function ResultScreen({
 
   return (
     <div className="app">
-      <header className="screen-head">
-        <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
-          ←
-        </button>
-        <div className="screen-head-meta">
-          <h1 className="screen-title">
-            {shownName ?? taskId ?? "Run"}
-            <RunBadge label={label} />
-            {state.taskGone && <span className="reader-head-tag">task deleted</span>}
-          </h1>
-          {run && (
-            <div className="screen-sub">
-              <span>{STARTED_BY_TEXT[startedByOf(run)]}</span>
-              <span>
-                {new Date(run.startedAt).toLocaleString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
-              {run.completedAt && <span>{formatDuration(run.startedAt, run.completedAt)}</span>}
-              {run.costUsd !== undefined && <span>{formatUsd(run.costUsd)}</span>}
-              <span className="mono">{runId}</span>
-            </div>
-          )}
+      <ScreenHead
+        title={shownName ?? taskId ?? "Run"}
+        onBack={onBack}
+        sub={<ResultSub run={run} label={label} taskGone={!!state.taskGone} />}
+        actions={
+          <>
+            {output && (
+              <button type="button" className="btn" onClick={copy}>
+                {copied ? "Copied" : "Copy result"}
+              </button>
+            )}
+            {shownName && rerunId && !state.taskGone && onRerun && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => onRerun({ id: rerunId, name: shownName }, run?.input)}
+              >
+                Re-run
+              </button>
+            )}
+          </>
+        }
+      />
+      <div className="content">
+        <div className="view-pad result-content">
+          <ResultBody
+            state={state}
+            canAct={!!name && !state.taskGone}
+            assessBusy={assess.busy}
+            assessError={assess.error}
+            onVerdict={(v, note) => void assess.verdict(v, note)}
+            onRejudge={() => void assess.rejudge()}
+            onOpenFile={openFile}
+            onOpenRun={(id) => onOpenRun(id, taskId)}
+            onOpenBatch={onOpenBatch}
+          />
         </div>
-        <div className="screen-actions">
-          {output && (
-            <button type="button" className="btn" onClick={copy}>
-              {copied ? "Copied" : "Copy result"}
-            </button>
-          )}
-          {shownName && rerunId && !state.taskGone && onRerun && (
-            <button
-              type="button"
-              className="btn btn-accent"
-              onClick={() => onRerun({ id: rerunId, name: shownName }, run?.input)}
-            >
-              Re-run
-            </button>
-          )}
-        </div>
-      </header>
-      <div className="content result-content">
-        <ResultBody
-          state={state}
-          canAct={!!name && !state.taskGone}
-          assessBusy={assess.busy}
-          assessError={assess.error}
-          onVerdict={(v, note) => void assess.verdict(v, note)}
-          onRejudge={() => void assess.rejudge()}
-          onOpenFile={openFile}
-          onOpenRun={(id) => onOpenRun(id, taskId)}
-          onOpenBatch={onOpenBatch}
-        />
       </div>
     </div>
   );
