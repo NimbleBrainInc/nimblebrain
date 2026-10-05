@@ -14,6 +14,7 @@
 // Pure: a pathname and the shell's placements in, a string out.
 // ---------------------------------------------------------------------------
 
+import { roleAtLeast } from "../hooks/useScopedRole";
 import type { PlacementEntry } from "../types";
 import { identityAppSegment, isIdentityApp } from "./identity-apps";
 import {
@@ -41,12 +42,20 @@ function locate(
   area: string,
   root: string,
   tabs: readonly SettingsTab[],
-  segment: string | undefined,
+  parts: string[],
+  depth: number,
 ): SettingsLocation {
-  const tab = tabs.find((t) => t.segment === segment);
+  const tab = tabs.find((t) => t.segment === parts[depth]);
   // An unknown or missing tab names the area alone, with nothing to go back to.
   if (!tab) return { crumbs: [], title: area };
-  // The crumb goes where the area's root lands: its first tab.
+  // The crumb goes where the area's root lands: its first tab. None on that tab
+  // itself, where it would lead to the page already open, and none where the
+  // landing tab needs a higher role than this one (About under Organization):
+  // its guard would send the reader somewhere else entirely.
+  const onLanding = tab.segment === landingTab(tabs) && parts.length === depth + 1;
+  if (onLanding || !roleAtLeast(tab.minRole, tabs[0].minRole)) {
+    return { crumbs: [], title: tab.label };
+  }
   return { crumbs: [{ label: area, to: `${root}/${landingTab(tabs)}` }], title: tab.label };
 }
 
@@ -58,13 +67,13 @@ function locate(
 export function settingsLocation(pathname: string): SettingsLocation | null {
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] === "w" && parts[2] === "settings") {
-    return locate("Settings", `/w/${parts[1]}/settings`, WORKSPACE_SETTINGS_TABS, parts[3]);
+    return locate("Settings", `/w/${parts[1]}/settings`, WORKSPACE_SETTINGS_TABS, parts, 3);
   }
   if (parts[0] === "org") {
-    return locate("Organization", "/org", [...ORG_SETTINGS_TABS, ORG_ABOUT_TAB], parts[1]);
+    return locate("Organization", "/org", [...ORG_SETTINGS_TABS, ORG_ABOUT_TAB], parts, 1);
   }
   if (parts[0] === "profile") {
-    return locate("Profile", "/profile", PROFILE_TABS, parts[1]);
+    return locate("Profile", "/profile", PROFILE_TABS, parts, 1);
   }
   return null;
 }

@@ -59,6 +59,17 @@ describe("pageTitle", () => {
       crumbs: [{ label: "Profile", to: "/profile/general" }],
       title: "Skills",
     });
+    // The landing tab has no crumb back to itself; a page below it does.
+    expect(settingsLocation("/w/000f7ed6658f9d30/settings/general")).toEqual({
+      crumbs: [],
+      title: "General",
+    });
+    expect(settingsLocation("/org/workspaces")?.crumbs).toEqual([]);
+    expect(settingsLocation("/org/workspaces/acme-corp")?.crumbs).toEqual([
+      { label: "Organization", to: "/org/workspaces" },
+    ]);
+    // About is open to anyone; its area lands on an admin-only tab, so no crumb.
+    expect(settingsLocation("/org/about")).toEqual({ crumbs: [], title: "About" });
     // An unknown tab names the area, with nothing to go back to.
     expect(settingsLocation("/w/000f7ed6658f9d30/settings/gone")).toEqual({
       crumbs: [],
@@ -85,7 +96,7 @@ describe("the organization's tabs", () => {
       "Workspaces",
       "Users",
       "Skills",
-      "Model",
+      "Models",
       "Usage",
       "Archives",
     ]);

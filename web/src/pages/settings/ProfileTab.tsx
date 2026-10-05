@@ -146,7 +146,7 @@ export function ProfileTab() {
 
   return (
     <SettingsFormPage
-      title="Profile"
+      title="General"
       description="Identity and personal preferences. Workspace ID and shared settings live under This Workspace → General."
       loading={loading}
       loadingMessage="Loading profile..."
