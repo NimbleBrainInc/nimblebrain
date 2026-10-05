@@ -34,12 +34,19 @@ export function hasTrigger(task: Pick<TaskSummary, "scheduleType" | "onceDone">)
 export function healthOf(task: TaskSummary, stats?: TaskStats, live?: UpcomingRun): TaskHealth {
   const last = stats?.lastRun;
   const quiet = { needsYou: false, paused: false };
-  if (live?.state === "running") return { word: "Running", tone: "active", runId: live.runId, ...quiet };
+  if (live?.state === "running")
+    return { word: "Running", tone: "active", runId: live.runId, ...quiet };
   if (live?.state === "queued") {
     return { word: "Waiting to start", tone: "muted", runId: live.runId, ...quiet };
   }
   if (hasTrigger(task) && !task.enabled && task.disabledReason) {
-    return { word: "Turned off", tone: "danger", reason: task.disabledReason, needsYou: true, paused: false };
+    return {
+      word: "Turned off",
+      tone: "danger",
+      reason: task.disabledReason,
+      needsYou: true,
+      paused: false,
+    };
   }
   const streak = task.consecutiveErrors ?? 0;
   if (streak > 1) {
@@ -53,7 +60,14 @@ export function healthOf(task: TaskSummary, stats?: TaskStats, live?: UpcomingRu
     };
   }
   if (last?.label === "Failed") {
-    return { word: "Failed", tone: "danger", reason: "The last run failed.", runId: last.id, needsYou: true, paused: false };
+    return {
+      word: "Failed",
+      tone: "danger",
+      reason: "The last run failed.",
+      runId: last.id,
+      needsYou: true,
+      paused: false,
+    };
   }
   if (last?.label === "Poor result") {
     return {
@@ -75,15 +89,26 @@ export function healthOf(task: TaskSummary, stats?: TaskStats, live?: UpcomingRu
       paused: false,
     };
   }
-  if (hasTrigger(task) && !task.enabled) return { word: "Paused", tone: "muted", needsYou: false, paused: true };
+  if (hasTrigger(task) && !task.enabled)
+    return { word: "Paused", tone: "muted", needsYou: false, paused: true };
   if (task.onceDone) {
-    return { word: task.onceDone.outcome === "missed" ? "Missed its time" : "Done", tone: "muted", ...quiet };
+    return {
+      word: task.onceDone.outcome === "missed" ? "Missed its time" : "Done",
+      tone: "muted",
+      ...quiet,
+    };
   }
   if (!last) return { word: "No runs yet", tone: "muted", ...quiet };
   return { word: "On track", tone: "success", ...quiet };
 }
 
-const URGENCY: Record<HealthTone, number> = { danger: 0, warning: 1, active: 2, success: 3, muted: 4 };
+const URGENCY: Record<HealthTone, number> = {
+  danger: 0,
+  warning: 1,
+  active: 2,
+  success: 3,
+  muted: 4,
+};
 
 /** Tasks that need a person, most urgent first, then by name. */
 export function byUrgency<T extends { name: string; health: TaskHealth }>(rows: T[]): T[] {

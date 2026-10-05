@@ -721,7 +721,7 @@ function TestRunSection({
     <div ref={ref}>
       <Section
         title="Test run"
-        hint="Runs the draft once as it stands, before you save, and shows the result here. It is kept in Activity as a one-off."
+        hint="Runs the draft once as it stands, before you save, and shows the result here. It is kept with every run as a one-off."
       >
         <InputEditor key={JSON.stringify(schema ?? null)} schema={schema} onChange={setInput} />
         <button type="button" className="btn" disabled={testing || !input.ok} onClick={run}>

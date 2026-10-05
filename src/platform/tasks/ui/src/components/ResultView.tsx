@@ -3,13 +3,7 @@ import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
 import { renderMarkdown } from "../markdown.ts";
-import type {
-  RunFileRef,
-  TaskCriterion,
-  TaskDetail,
-  TaskRun,
-  TaskRunResult,
-} from "../types.ts";
+import type { RunFileRef, TaskCriterion, TaskDetail, TaskRun, TaskRunResult } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatDuration, formatTokens, formatUsd, toolErrorText } from "../utils.ts";
 import { AssessmentPanel } from "./AssessmentPanel.tsx";

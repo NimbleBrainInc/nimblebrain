@@ -216,6 +216,89 @@ function NoTasks({ onCreate }: { onCreate: (template?: Template) => void }) {
   );
 }
 
+/** The home with no tasks to list: loading, a read error, or none yet. */
+function HomeEmpty({
+  loading,
+  error,
+  onCreate,
+}: {
+  loading: boolean;
+  error: string | null;
+  onCreate: (template?: Template) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="view-pad" aria-busy="true">
+        <SkeletonRows count={4} />
+      </div>
+    );
+  }
+  return (
+    <div className="view-pad">
+      {error ? (
+        <div className="error-banner" role="alert">
+          {error}
+        </div>
+      ) : (
+        <NoTasks onCreate={onCreate} />
+      )}
+    </div>
+  );
+}
+
+/** Tasks listed quietly: the rest under a heading, paused ones folded. */
+function TaskLists({
+  rest,
+  paused,
+  needsYou,
+  stats,
+  onOpen,
+}: {
+  rest: HomeRow[];
+  paused: HomeRow[];
+  needsYou: number;
+  stats: Map<string, TaskStats> | null;
+  onOpen: (r: HomeRow) => () => void;
+}) {
+  return (
+    <>
+      {rest.length > 0 && (
+        <section className="home-section" aria-labelledby="home-all">
+          <h2 className="section-heading" id="home-all">
+            {needsYou > 0 ? "Everything else" : "Your tasks"}
+          </h2>
+          <ul className="home-rows">
+            {rest.map((r) => (
+              <TaskRowItem
+                key={r.task.id}
+                row={r}
+                stats={stats?.get(r.task.id)}
+                onOpen={onOpen(r)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {paused.length > 0 && (
+        <details className="home-section details">
+          <summary className="section-heading">Paused ({paused.length})</summary>
+          <ul className="home-rows">
+            {paused.map((r) => (
+              <TaskRowItem
+                key={r.task.id}
+                row={r}
+                stats={stats?.get(r.task.id)}
+                onOpen={onOpen(r)}
+              />
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
+  );
+}
+
 /**
  * The panel's home: what needs you first, then what is running and coming
  * up, then every other task. Paused tasks and the full history sit one
@@ -239,28 +322,8 @@ export function HomeBody({
   readError: string | null;
   actions: HomeActions;
 }) {
-  if (loading && tasks.length === 0) {
-    return (
-      <div className="view-pad" aria-busy="true">
-        <SkeletonRows count={4} />
-      </div>
-    );
-  }
-  if (error && tasks.length === 0) {
-    return (
-      <div className="view-pad">
-        <div className="error-banner" role="alert">
-          {error}
-        </div>
-      </div>
-    );
-  }
   if (tasks.length === 0) {
-    return (
-      <div className="view-pad">
-        <NoTasks onCreate={actions.onCreate} />
-      </div>
-    );
+    return <HomeEmpty loading={loading} error={error} onCreate={actions.onCreate} />;
   }
 
   const rows = homeRows(tasks, stats, upcoming);
@@ -274,7 +337,9 @@ export function HomeBody({
   return (
     <div className="view-pad home">
       {error && <div className="error-banner">{error}</div>}
-      {readError && <div className="note-banner">Some of what's below may be missing: {readError}</div>}
+      {readError && (
+        <div className="note-banner">Some of what's below may be missing: {readError}</div>
+      )}
 
       <div className="home-head">
         <div>
@@ -308,29 +373,13 @@ export function HomeBody({
 
       {fires.length > 0 && <ComingUp fires={fires} rows={rows} actions={actions} />}
 
-      {rest.length > 0 && (
-        <section className="home-section" aria-labelledby="home-all">
-          <h2 className="section-heading" id="home-all">
-            {needsYou.length > 0 ? "Everything else" : "Your tasks"}
-          </h2>
-          <ul className="home-rows">
-            {rest.map((r) => (
-              <TaskRowItem key={r.task.id} row={r} stats={stats?.get(r.task.id)} onOpen={open(r)} />
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {paused.length > 0 && (
-        <details className="home-section details">
-          <summary className="section-heading">Paused ({paused.length})</summary>
-          <ul className="home-rows">
-            {paused.map((r) => (
-              <TaskRowItem key={r.task.id} row={r} stats={stats?.get(r.task.id)} onOpen={open(r)} />
-            ))}
-          </ul>
-        </details>
-      )}
+      <TaskLists
+        rest={rest}
+        paused={paused}
+        needsYou={needsYou.length}
+        stats={stats}
+        onOpen={open}
+      />
 
       <div className="home-foot">
         <button type="button" className="link-btn" onClick={actions.onSeeActivity}>

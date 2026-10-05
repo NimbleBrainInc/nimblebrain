@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useRef } from "react";
+import { createContext, type ReactNode, useContext } from "react";
 
 /**
  * Whether the host draws the title and breadcrumb from the trail this app
@@ -37,53 +37,5 @@ export function ScreenHead({
       </div>
       {actions && <div className="screen-actions">{actions}</div>}
     </header>
-  );
-}
-
-/** A tab list: arrow keys move between tabs, the selected one is the only tab stop. */
-export function Tabs<T extends string>({
-  tabs,
-  value,
-  onChange,
-  label,
-  idPrefix,
-}: {
-  tabs: Array<{ id: T; text: string }>;
-  value: T;
-  onChange: (v: T) => void;
-  label: string;
-  idPrefix: string;
-}) {
-  const refs = useRef<Array<HTMLButtonElement | null>>([]);
-  return (
-    <div className="view-tabs" role="tablist" aria-label={label}>
-      {tabs.map((t, i) => (
-        <button
-          key={t.id}
-          ref={(el) => {
-            refs.current[i] = el;
-          }}
-          type="button"
-          role="tab"
-          id={`${idPrefix}-tab-${t.id}`}
-          aria-selected={value === t.id}
-          aria-controls={`${idPrefix}-panel`}
-          tabIndex={value === t.id ? 0 : -1}
-          className={`view-tab${value === t.id ? " on" : ""}`}
-          onClick={() => onChange(t.id)}
-          onKeyDown={(e) => {
-            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-            e.preventDefault();
-            const next = (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
-            const tab = tabs[next];
-            if (!tab) return;
-            onChange(tab.id);
-            refs.current[next]?.focus();
-          }}
-        >
-          {t.text}
-        </button>
-      ))}
-    </div>
   );
 }

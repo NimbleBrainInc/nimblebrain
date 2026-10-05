@@ -160,7 +160,15 @@ function judgeText(d: TaskDetail): string {
 }
 
 /** A closed section: its heading, a short hint of what is inside, and the body on open. */
-function Disclosure({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+function Disclosure({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <details className="disclosure">
       <summary>
@@ -173,86 +181,107 @@ function Disclosure({ title, hint, children }: { title: string; hint?: string; c
 }
 
 /** How the task is set up, read-only and closed by default; editing is in the editor. */
-export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit: () => void }) {
+function DoesSection({ d }: { d: TaskDetail }) {
+  return (
+    <Disclosure title="What it does" hint={d.scheduleHuman}>
+      {d.skill && (
+        <p>
+          Carries out the skill <code>{d.skill}</code>.
+        </p>
+      )}
+      {d.prompt && <p className="prose">{d.prompt}</p>}
+      {!d.prompt && !d.skill && <p className="muted">No prompt.</p>}
+      {d.inputSchema && (
+        <>
+          <h3 className="sub-heading">Input</h3>
+          <JsonBlock value={d.inputSchema} />
+        </>
+      )}
+    </Disclosure>
+  );
+}
+
+function goodHint(d: TaskDetail): string {
+  const n = d.criteria?.length ?? 0;
+  if (n > 0) return `${n} ${n === 1 ? "rule" : "rules"}`;
+  return d.outputSchema ? "An output schema" : "Not checked";
+}
+
+function GoodSection({ d }: { d: TaskDetail }) {
   const criteria = d.criteria ?? [];
   return (
+    <Disclosure title="What good looks like" hint={goodHint(d)}>
+      {criteria.length === 0 && !d.outputSchema && (
+        <p className="muted">No criteria or output schema: runs are not assessed.</p>
+      )}
+      {criteria.length > 0 && (
+        <ol className="criteria-read">
+          {criteria.map((c) => (
+            <li key={c.id}>
+              {c.rule} <span className="muted">({passText(c)})</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <dl className="def-list">
+        {criteria.length > 0 && <Row label="Judge">{judgeText(d)}</Row>}
+        {d.confidenceThreshold !== undefined && (
+          <Row label="Confidence needed">{d.confidenceThreshold}</Row>
+        )}
+        <Row label="On a poor result">{POOR_TEXT[d.onPoorResult ?? "notify"]}</Row>
+      </dl>
+      {d.outputSchema && (
+        <>
+          <h3 className="sub-heading">Output schema</h3>
+          <JsonBlock value={d.outputSchema} />
+        </>
+      )}
+    </Disclosure>
+  );
+}
+
+function LimitsSection({ d }: { d: TaskDetail }) {
+  return (
+    <Disclosure title="Limits and tools" hint={d.model || "Workspace default model"}>
+      <dl className="def-list">
+        <Row label="Runs">{d.scheduleHuman}</Row>
+        <Row label="Per run">{limitsText(d)}</Row>
+        <Row label="Token budget">{budgetText(d.tokenBudget)}</Row>
+        <Row label="Model">{d.model || "Workspace default"}</Row>
+        <Row label="Tools">
+          {d.allowedTools?.length ? <code>{d.allowedTools.join(", ")}</code> : "All tools"}
+        </Row>
+      </dl>
+    </Disclosure>
+  );
+}
+
+function DetailsSection({ d }: { d: TaskDetail }) {
+  return (
+    <Disclosure title="Details">
+      <dl className="def-list">
+        <Row label="Tokens used">
+          {formatTokens(d.cumulativeInputTokens)} in · {formatTokens(d.cumulativeOutputTokens)} out
+        </Row>
+        <Row label="Made by">{d.source === "agent" ? "The agent" : "A person"}</Row>
+        <Row label="Created">{new Date(d.createdAt).toLocaleString()}</Row>
+        <Row label="Updated">{new Date(d.updatedAt).toLocaleString()}</Row>
+        <Row label="Id">
+          <code>{d.id}</code>
+        </Row>
+      </dl>
+    </Disclosure>
+  );
+}
+
+/** The task's setup, read-only, each part behind a closed disclosure. */
+export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit: () => void }) {
+  return (
     <div className="setup">
-      <Disclosure title="What it does" hint={d.scheduleHuman}>
-        {d.skill && (
-          <p>
-            Carries out the skill <code>{d.skill}</code>.
-          </p>
-        )}
-        {d.prompt && <p className="prose">{d.prompt}</p>}
-        {!d.prompt && !d.skill && <p className="muted">No prompt.</p>}
-        {d.inputSchema && (
-          <>
-            <h3 className="sub-heading">Input</h3>
-            <JsonBlock value={d.inputSchema} />
-          </>
-        )}
-      </Disclosure>
-      <Disclosure
-        title="What good looks like"
-        hint={
-          criteria.length > 0
-            ? `${criteria.length} ${criteria.length === 1 ? "rule" : "rules"}`
-            : d.outputSchema
-              ? "An output schema"
-              : "Not checked"
-        }
-      >
-        {criteria.length === 0 && !d.outputSchema && (
-          <p className="muted">No criteria or output schema: runs are not assessed.</p>
-        )}
-        {criteria.length > 0 && (
-          <ol className="criteria-read">
-            {criteria.map((c) => (
-              <li key={c.id}>
-                {c.rule} <span className="muted">({passText(c)})</span>
-              </li>
-            ))}
-          </ol>
-        )}
-        <dl className="def-list">
-          {criteria.length > 0 && <Row label="Judge">{judgeText(d)}</Row>}
-          {d.confidenceThreshold !== undefined && (
-            <Row label="Confidence needed">{d.confidenceThreshold}</Row>
-          )}
-          <Row label="On a poor result">{POOR_TEXT[d.onPoorResult ?? "notify"]}</Row>
-        </dl>
-        {d.outputSchema && (
-          <>
-            <h3 className="sub-heading">Output schema</h3>
-            <JsonBlock value={d.outputSchema} />
-          </>
-        )}
-      </Disclosure>
-      <Disclosure title="Limits and tools" hint={d.model || "Workspace default model"}>
-        <dl className="def-list">
-          <Row label="Runs">{d.scheduleHuman}</Row>
-          <Row label="Per run">{limitsText(d)}</Row>
-          <Row label="Token budget">{budgetText(d.tokenBudget)}</Row>
-          <Row label="Model">{d.model || "Workspace default"}</Row>
-          <Row label="Tools">
-            {d.allowedTools?.length ? <code>{d.allowedTools.join(", ")}</code> : "All tools"}
-          </Row>
-        </dl>
-      </Disclosure>
-      <Disclosure title="Details">
-        <dl className="def-list">
-          <Row label="Tokens used">
-            {formatTokens(d.cumulativeInputTokens)} in · {formatTokens(d.cumulativeOutputTokens)}{" "}
-            out
-          </Row>
-          <Row label="Made by">{d.source === "agent" ? "The agent" : "A person"}</Row>
-          <Row label="Created">{new Date(d.createdAt).toLocaleString()}</Row>
-          <Row label="Updated">{new Date(d.updatedAt).toLocaleString()}</Row>
-          <Row label="Id">
-            <code>{d.id}</code>
-          </Row>
-        </dl>
-      </Disclosure>
+      <DoesSection d={d} />
+      <GoodSection d={d} />
+      <LimitsSection d={d} />
+      <DetailsSection d={d} />
       <div className="setup-edit">
         <button type="button" className="btn" onClick={onEdit}>
           Edit task
@@ -391,7 +420,11 @@ export function SheetBody({
           <StatusIcon tone={health.tone} />
           <span>{health.reason}</span>
           {reasonRun && reasonRun.id !== latest?.id && (
-            <button type="button" className="btn btn-sm" onClick={() => actions.onOpenRun(reasonRun)}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => actions.onOpenRun(reasonRun)}
+            >
               Open the run
             </button>
           )}

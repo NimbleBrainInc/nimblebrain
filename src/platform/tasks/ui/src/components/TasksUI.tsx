@@ -8,9 +8,9 @@ import { BatchDialog } from "./BatchDialog.tsx";
 import { BatchScreen } from "./BatchPane.tsx";
 import { HostTrailContext, ScreenHead } from "./Chrome.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
+import { type HomeActions, HomeView } from "./HomeView.tsx";
 import { ResultScreen } from "./ResultView.tsx";
 import { RunDialog, type RunStarted, runStartedOf } from "./RunDialog.tsx";
-import { type HomeActions, HomeView } from "./HomeView.tsx";
 import { TaskEditor } from "./TaskEditor.tsx";
 import { type TaskPageActions, TaskSheet } from "./TaskSheet.tsx";
 import { type Screen, trailFor } from "./trail.ts";
@@ -385,13 +385,18 @@ function ScreenRoute({
     case "activity":
       return (
         <div className="app">
-          <ScreenHead title={screen.taskName ? `${screen.taskName} runs` : "Every run"} onBack={onBack} />
+          <ScreenHead
+            title={screen.taskName ? `${screen.taskName} runs` : "Every run"}
+            onBack={onBack}
+          />
           <main className="content">
             <ActivityView
               tasks={tasks}
               taskId={screen.taskId}
               refreshKey={refreshKey}
-              onOpenRun={(run) => onPush({ kind: "result", runId: run.id, taskId: run.taskId, run })}
+              onOpenRun={(run) =>
+                onPush({ kind: "result", runId: run.id, taskId: run.taskId, run })
+              }
               onOpenBatch={(batch) => onPush({ kind: "batch", batchId: batch.id, batch })}
             />
           </main>
