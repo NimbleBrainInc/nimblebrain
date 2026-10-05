@@ -75,12 +75,12 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
     expect(isUserCredentialJoin(call!)).toBe(true);
   });
 
-  test("does NOT match the sanctioned `users/<id>/credentials/mcp-oauth/...` carve-out", () => {
+  test("matches `users/<id>/credentials/mcp-oauth/...` in a join", () => {
     const src = parse(
       `const p = join(workDir, "users", userId, "credentials", "mcp-oauth", serverName);`,
     );
     const call = findFirst(src, ts.isCallExpression);
-    expect(isUserCredentialJoin(call!)).toBe(false);
+    expect(isUserCredentialJoin(call!)).toBe(true);
   });
 
   // A brokered provider's home has no carve-out and must not get one:
@@ -95,7 +95,7 @@ describe("check-credential-paths — isUserCredentialJoin", () => {
     expect(isUserCredentialJoin(call!)).toBe(true);
   });
 
-  test("still matches a non-carve-out child of `users/<id>/credentials/`", () => {
+  test("matches any other child of `users/<id>/credentials/`", () => {
     const src = parse(`const p = join(workDir, "users", userId, "credentials", "secrets", "x");`);
     const call = findFirst(src, ts.isCallExpression);
     expect(isUserCredentialJoin(call!)).toBe(true);
@@ -122,12 +122,12 @@ describe("check-credential-paths — isUserCredentialTemplate", () => {
     expect(isUserCredentialTemplate(node!)).toBe(false);
   });
 
-  test("does NOT match the sanctioned `users/<id>/credentials/mcp-oauth/...` carve-out", () => {
+  test("matches `users/<id>/credentials/mcp-oauth/...` in a template", () => {
     const src = parse(
       "const p = `${workDir}/users/${userId}/credentials/mcp-oauth/${server}.json`;",
     );
     const node = findFirst(src, ts.isTemplateExpression);
-    expect(isUserCredentialTemplate(node!)).toBe(false);
+    expect(isUserCredentialTemplate(node!)).toBe(true);
   });
 });
 
@@ -138,10 +138,10 @@ describe("check-credential-paths — isUserCredentialStringLiteral", () => {
     expect(isUserCredentialStringLiteral(node!)).toBe(true);
   });
 
-  test("does NOT match the sanctioned `users/<id>/credentials/mcp-oauth/...` carve-out", () => {
+  test("matches `users/<id>/credentials/mcp-oauth/...` in a string literal", () => {
     const src = parse(`const p = "/work/users/user_abc/credentials/mcp-oauth/notion/tokens.json";`);
     const node = findFirst(src, ts.isStringLiteral);
-    expect(isUserCredentialStringLiteral(node!)).toBe(false);
+    expect(isUserCredentialStringLiteral(node!)).toBe(true);
   });
 
   test("DOES match a hand-built brokered credential path literal", () => {

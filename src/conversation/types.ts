@@ -130,7 +130,7 @@ export interface ConversationStore {
   history(conversation: Conversation, limit?: number): Promise<StoredMessage[]>;
   /**
    * Append a raw conversation event to the stream. Event-sourced stores only —
-   * absent on message-based stores (legacy JSONL, in-memory), so callers must
+   * absent on the in-memory store, so callers must
    * feature-detect. Used for events the engine-event sink doesn't produce, e.g.
    * `history.compacted` written by the compaction path.
    */
@@ -231,7 +231,7 @@ export interface Conversation {
   visibility?: "private" | "shared";
   /** Arbitrary caller-provided metadata. Stored in JSONL first line, never validated. */
   metadata?: Record<string, unknown>;
-  /** File format discriminator. "events" for event-sourced files. Absent for legacy message format. */
+  /** File format marker the event-sourced store writes on line 1. */
   format?: "events";
 }
 

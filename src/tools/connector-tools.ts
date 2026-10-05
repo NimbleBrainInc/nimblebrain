@@ -862,7 +862,7 @@ async function readConnectorIdentity(
       const provider = ctx.runtime.getManagedConnectorRegistry().get(brokered.provider);
       return (await provider?.identity?.({ owner, brokered, workDir })) ?? null;
     }
-    const claims = await new McpOAuthRecords({ owner, serverName, workDir }).read<{
+    const claims = await new McpOAuthRecords({ owner, serverName }).read<{
       email?: unknown;
       name?: unknown;
     }>("identity", {
@@ -3095,7 +3095,7 @@ async function hasPersistedConnection(
 ): Promise<boolean> {
   const workDir = ctx.runtime.getWorkDir();
   const brokered = brokeredRef(ref);
-  if (!brokered) return hasMcpOAuthTokens(workDir, owner, serverName);
+  if (!brokered) return hasMcpOAuthTokens(owner, serverName);
   const provider = ctx.runtime.getManagedConnectorRegistry().get(brokered.provider);
   return provider?.hasConnection?.({ owner, brokered, workDir }) ?? false;
 }

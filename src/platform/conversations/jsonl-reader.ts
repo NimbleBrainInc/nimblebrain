@@ -284,26 +284,6 @@ function accumulateEventMetrics(
   }
 }
 
-/**
- * Legacy message-format line: read assistant metadata.usage. Mirrors the
- * runtime's index-cache so both surfaces report the same totals for a file.
- */
-function accumulateLegacyMetrics(line: string, acc: DerivedMetrics): void {
-  try {
-    const msg = JSON.parse(line) as {
-      role?: string;
-      metadata?: { usage?: { inputTokens?: number; outputTokens?: number }; model?: string };
-    };
-    if (msg.role === "assistant" && msg.metadata?.usage && msg.metadata.model) {
-      acc.totalInputTokens += msg.metadata.usage.inputTokens ?? 0;
-      acc.totalOutputTokens += msg.metadata.usage.outputTokens ?? 0;
-      acc.lastModel = msg.metadata.model;
-    }
-  } catch {
-    // Skip malformed lines.
-  }
-}
-
 function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
   const acc: DerivedMetrics = {
     totalInputTokens: 0,
@@ -314,11 +294,7 @@ function deriveMetricsFromLines(lines: string[]): DerivedMetrics {
 
   for (const line of lines) {
     const evt = parseEventLine(line);
-    if (evt) {
-      accumulateEventMetrics(evt, acc);
-      continue;
-    }
-    accumulateLegacyMetrics(line, acc);
+    if (evt) accumulateEventMetrics(evt, acc);
   }
 
   return acc;
@@ -354,26 +330,6 @@ function deriveTitleFromEvents(meta: ConversationMeta, eventLines: string[]): vo
       // skip malformed
     }
   }
-}
-
-/**
- * Cheap heuristic: is this line an event (not a stored message)?
- *
- * Event lines have `"ts":"…"` and one of a fixed set of `"type":"…"` strings.
- * Using the type prefix alone is too loose — `"type":"text"` appears inside
- * DisplayMessage blocks too, which tripped this before.
- */
-export function looksLikeEventLine(line: string): boolean {
-  if (!line.includes('"ts":"')) return false;
-  return (
-    line.includes('"type":"user.message"') ||
-    line.includes('"type":"run.start"') ||
-    line.includes('"type":"run.done"') ||
-    line.includes('"type":"llm.response"') ||
-    line.includes('"type":"tool.start"') ||
-    line.includes('"type":"tool.done"') ||
-    line.includes('"type":"metadata.')
-  );
 }
 
 function parseEventLine(line: string): (KnownEvent & { ts: string; type: string }) | null {
@@ -844,138 +800,6 @@ function parseToolInput(input: unknown): Record<string, unknown> {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy (non-event) message-line format → DisplayMessage
-// ---------------------------------------------------------------------------
-
-/**
- * Legacy (pre-event) JSONL files stored one JSON-serialized message per line.
- * This path also handles files written by `fork`, which writes DisplayMessage
- * shape directly. Accepts both shapes:
- *
- *   - Old StoredMessage: tool calls and usage live under `metadata.*`.
- *   - New DisplayMessage: `blocks`, `toolCalls`, `usage` are top-level.
- *
- * Detection is structural — top-level fields override `metadata` when present.
- */
-function parseLegacyMessages(lines: string[]): {
-  messages: DisplayMessage[];
-  messageCount: number;
-  preview: string;
-} {
-  const messages: DisplayMessage[] = [];
-  let preview = "";
-
-  for (const line of lines) {
-    try {
-      const raw = JSON.parse(line) as Record<string, unknown>;
-      const msg = legacyLineToDisplay(raw);
-      if (!msg) continue;
-      messages.push(msg);
-      if (!preview && msg.role === "user" && msg.content) preview = msg.content;
-    } catch {
-      // skip malformed
-    }
-  }
-
-  return { messages, messageCount: messages.length, preview };
-}
-
-/**
- * Prefer the message's top-level DisplayMessage blocks; otherwise synthesize
- * them from `content` plus any hydrated tool calls.
- */
-function resolveLegacyBlocks(
-  raw: Record<string, unknown>,
-  content: string,
-  hydratedTools: DisplayToolCall[],
-): DisplayBlock[] {
-  const topBlocks = raw.blocks as DisplayBlock[] | undefined;
-  if (topBlocks && topBlocks.length > 0) return topBlocks;
-  return buildLegacyBlocks(content, hydratedTools.length > 0 ? hydratedTools : undefined);
-}
-
-function legacyLineToDisplay(raw: Record<string, unknown>): DisplayMessage | null {
-  const role = raw.role;
-  if (role !== "user" && role !== "assistant") return null;
-  const timestamp = typeof raw.timestamp === "string" ? raw.timestamp : "";
-  if (!timestamp) return null;
-  const content = typeof raw.content === "string" ? raw.content : "";
-
-  const metadata = (raw.metadata ?? {}) as Record<string, unknown>;
-  const rawToolCalls = (raw.toolCalls ?? metadata.toolCalls) as
-    | Array<Record<string, unknown>>
-    | undefined;
-  const hydratedTools = rawToolCalls?.map(hydrateLegacyToolCall) ?? [];
-
-  const blocks = resolveLegacyBlocks(raw, content, hydratedTools);
-  const usage = (raw.usage as DisplayUsage | undefined) ?? buildLegacyUsageFromMetadata(metadata);
-
-  return {
-    role,
-    content,
-    blocks,
-    timestamp,
-    ...(typeof raw.userId === "string" ? { userId: raw.userId } : {}),
-    ...(hydratedTools.length > 0 ? { toolCalls: hydratedTools } : {}),
-    ...(usage ? { usage } : {}),
-  };
-}
-
-/**
- * Legacy stored tool calls lack `status`, `result`, and `appName`. Derive them
- * on read so every DisplayToolCall the reader emits has the full shape,
- * regardless of file age or writer.
- */
-function hydrateLegacyToolCall(raw: Record<string, unknown>): DisplayToolCall {
-  const name = typeof raw.name === "string" ? raw.name : "";
-  const ok = typeof raw.ok === "boolean" ? raw.ok : true;
-  const output = typeof raw.output === "string" ? raw.output : "";
-  const result = (raw.result as DisplayToolResult | undefined) ?? wrapOutputAsResult(output, !ok);
-  const app = extractAppName(name);
-  return {
-    id: typeof raw.id === "string" ? raw.id : "",
-    name,
-    ...(app ? { appName: app } : {}),
-    status: ok ? "done" : "error",
-    ok,
-    ms: typeof raw.ms === "number" ? raw.ms : 0,
-    input: (raw.input ?? {}) as Record<string, unknown>,
-    result,
-    ...(typeof raw.resourceUri === "string" ? { resourceUri: raw.resourceUri } : {}),
-    ...(Array.isArray(raw.resourceLinks)
-      ? { resourceLinks: raw.resourceLinks as DisplayResourceLink[] }
-      : {}),
-  };
-}
-
-function buildLegacyBlocks(content: string, tools: DisplayToolCall[] | undefined): DisplayBlock[] {
-  const out: DisplayBlock[] = [];
-  if (content) out.push({ type: "text", text: content });
-  if (tools && tools.length > 0) out.push({ type: "tool", toolCalls: tools });
-  return out;
-}
-
-function buildLegacyUsageFromMetadata(metadata: Record<string, unknown>): DisplayUsage | undefined {
-  const usage = metadata.usage as UsageShape | undefined;
-  if (!usage) return undefined;
-  return {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    ...(typeof usage.cacheReadTokens === "number"
-      ? { cacheReadTokens: usage.cacheReadTokens }
-      : {}),
-    ...(typeof usage.cacheWriteTokens === "number"
-      ? { cacheWriteTokens: usage.cacheWriteTokens }
-      : {}),
-    ...(typeof usage.reasoningTokens === "number"
-      ? { reasoningTokens: usage.reasoningTokens }
-      : {}),
-    model: typeof metadata.model === "string" ? metadata.model : "unknown",
-    llmMs: typeof metadata.llmMs === "number" ? metadata.llmMs : 0,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1039,11 +863,7 @@ export async function readConversation(
   if (!meta) return null;
 
   const dataLines = lines.slice(1);
-  const isEventFormat = raw.format === "events" || dataLines.some(looksLikeEventLine);
-
-  const { messages, messageCount, preview } = isEventFormat
-    ? reconstructFromEvents(dataLines)
-    : parseLegacyMessages(dataLines);
+  const { messages, messageCount, preview } = reconstructFromEvents(dataLines);
 
   applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));
   deriveTitleFromEvents(meta, dataLines);
@@ -1056,10 +876,9 @@ export async function readConversation(
 /**
  * How many messages the header should report, without reconstructing any.
  *
- * A legacy file stores one message per line, so its lines are its count. An
- * event-sourced file does not: one turn is a `run.start`, an `llm.response`,
- * any number of `tool.*` pairs and a `run.done`, so counting lines counts
- * events and reports a 1-turn conversation as 5.
+ * Lines are not messages: one turn is a `run.start`, an `llm.response`, any
+ * number of `tool.*` pairs and a `run.done`, so counting lines counts events
+ * and reports a 1-turn conversation as 5.
  *
  * The number has to agree with {@link readConversation}, because the two
  * describe the same file to the same user — `conversations__list` says how
@@ -1070,13 +889,7 @@ export async function readConversation(
  *
  * One pass, two sets, no message building — this stays the fast path.
  */
-function countHeaderMessages(dataLines: string[], isEventFormat: boolean): number {
-  return isEventFormat
-    ? countEventMessages(dataLines)
-    : dataLines.filter((line) => parseJsonLine(line) !== null).length;
-}
-
-function countEventMessages(dataLines: string[]): number {
+function countHeaderMessages(dataLines: string[]): number {
   let userMessages = 0;
   const runStarts: string[] = [];
   const runsWithResponse = new Set<string>();
@@ -1093,7 +906,7 @@ function countEventMessages(dataLines: string[]): number {
 }
 
 /**
- * The conversation's preview: the first user line's text, in either format.
+ * The conversation's preview: the first user message's text.
  *
  * The scan stops at that line rather than reading on — nothing after it can
  * change the answer. An empty user message is not an answer, so the search
@@ -1106,9 +919,6 @@ function findPreview(dataLines: string[]): string {
     if (parsed.type === "user.message" && Array.isArray(parsed.content)) {
       const text = extractText(parsed.content as ContentPart[]);
       if (text) return text;
-    }
-    if (parsed.role === "user" && typeof parsed.content === "string" && parsed.content) {
-      return parsed.content;
     }
   }
   return "";
@@ -1147,14 +957,10 @@ export async function readConversationHeader(
   if (!meta) return null;
 
   const dataLines = lines.slice(1);
-  // Same predicate as `readConversation`, so the two never disagree about which
-  // parser a file wants. Agreeing on the parser is not the same as agreeing on
-  // the count — that is what `countHeaderMessages` is for, and what the header/
-  // full-reader parity tests pin.
-  const isEventFormat = raw.format === "events" || dataLines.some(looksLikeEventLine);
-
+  // `countHeaderMessages` must agree with `readConversation`'s count; the
+  // header/full-reader parity tests pin it.
   const preview = findPreview(dataLines);
-  const messageCount = countHeaderMessages(dataLines, isEventFormat);
+  const messageCount = countHeaderMessages(dataLines);
 
   deriveTitleFromEvents(meta, dataLines);
   applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));

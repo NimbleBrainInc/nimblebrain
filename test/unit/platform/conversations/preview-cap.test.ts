@@ -22,6 +22,7 @@ import { createConversationsSource } from "../../../../src/platform/conversation
 import { runWithRequestContext } from "../../../../src/runtime/request-context.ts";
 import type { Runtime } from "../../../../src/runtime/runtime.ts";
 import type { McpSource } from "../../../../src/tools/mcp-source.ts";
+import { conversationEventLines } from "../../../helpers/conversation-events.ts";
 
 const OWNER_ID = "usr_test";
 const WS_ID = "ws_005e2c642b8af5fe";
@@ -50,8 +51,10 @@ function writeConv(id: string, firstMessage: string): void {
   };
   const lines = [
     JSON.stringify(meta),
-    JSON.stringify({ role: "user", content: firstMessage, timestamp: "2026-01-01T00:01:00.000Z" }),
-    JSON.stringify({ role: "assistant", content: "ack", timestamp: "2026-01-01T00:02:00.000Z" }),
+    ...conversationEventLines([
+      { role: "user", content: firstMessage, timestamp: "2026-01-01T00:01:00.000Z" },
+      { role: "assistant", content: "ack", timestamp: "2026-01-01T00:02:00.000Z" },
+    ]),
   ];
   writeFileSync(join(dir, `${id}.jsonl`), `${lines.join("\n")}\n`);
 }

@@ -35,12 +35,10 @@ export function capPreview(text: string): string {
 }
 
 /**
- * The preview text of a user message's content: its first text part, or the
- * content itself when it is a string (lines written before content was stored
- * as parts). `""` when there is no text.
+ * The preview text of a user message's content: its first text part. `""`
+ * when there is no text.
  */
 export function previewTextOf(content: unknown): string {
-  if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   for (const part of content) {
     if (part && typeof part === "object" && "type" in part && part.type === "text") {

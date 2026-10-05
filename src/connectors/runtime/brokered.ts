@@ -10,8 +10,7 @@
  * rules keep it that way:
  *
  *   1. **One accessor.** Nothing reads `ref.brokered` directly; every consumer
- *      calls {@link brokeredRef}, which is also where the legacy Composio
- *      block is mapped forward.
+ *      calls {@link brokeredRef}.
  *   2. **One directory rule.** A provider's per-connector local state lives at
  *      `credentials/<provider>/<connectorId>/`, under the owner's credential
  *      root — {@link brokeredConnectorDir} is the single site that builds it.
@@ -27,18 +26,6 @@ import { WorkspaceContext } from "../../workspace/context.ts";
 import type { BrokeredRef, ConnectorRef } from "./types.ts";
 
 /**
- * The Composio ref block written before brokered installs shared one shape.
- *
- * READ-SIDE SHIM. Refs persisted by an older runtime carry `composio` instead
- * of `brokered`; {@link brokeredRef} maps them forward so an existing install
- * survives a restart with no config edit. Nothing writes it any more. Delete
- * this — and the branch in `brokeredRef` — once no persisted ref carries it.
- */
-interface LegacyBrokeredRefBlocks {
-  composio?: { connectorId: string };
-}
-
-/**
  * The brokered coordinates on a connector ref, or `undefined` for a
  * runtime-native one (plain OAuth — those resolve their catalog entry by URL
  * and detect a lapsed credential through the transport's `UnauthorizedError`
@@ -51,15 +38,7 @@ interface LegacyBrokeredRefBlocks {
  * the previous shape grew a hand-mirrored vendor list in a dozen files.
  */
 export function brokeredRef(ref: ConnectorRef | undefined): BrokeredRef | undefined {
-  if (!ref) return undefined;
-  if (ref.brokered) return ref.brokered;
-
-  // Legacy shim — see `LegacyBrokeredRefBlocks`.
-  const legacy = ref as ConnectorRef & LegacyBrokeredRefBlocks;
-  if (legacy.composio) {
-    return { provider: "composio", connectorId: legacy.composio.connectorId };
-  }
-  return undefined;
+  return ref?.brokered;
 }
 
 /**

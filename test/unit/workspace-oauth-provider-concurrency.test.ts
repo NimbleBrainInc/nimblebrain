@@ -38,14 +38,10 @@ import { seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
 const CALLBACK = "http://localhost:27247/v1/mcp-auth/callback";
 
-function makeProvider(
-  workDir: string,
-  onInteractiveAuthRequired?: (url: string) => void,
-): WorkspaceOAuthProvider {
+function makeProvider(onInteractiveAuthRequired?: (url: string) => void): WorkspaceOAuthProvider {
   const provider = new WorkspaceOAuthProvider({
     owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
     serverName: "test-srv",
-    workDir,
     callbackUrl: CALLBACK,
     ...(onInteractiveAuthRequired ? { onInteractiveAuthRequired } : {}),
   });
@@ -89,7 +85,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
   });
 
   it("state() returns the same value across concurrent callers", () => {
-    const p = makeProvider(workDir);
+    const p = makeProvider();
     // `state()` is synchronous; concurrent invocations within one tick all
     // observe the FIRST call's pendingFlow and return its currentState.
     const states = [p.state(), p.state(), p.state(), p.state()];
@@ -97,7 +93,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
   });
 
   it("saveCodeVerifier — first writer wins; subsequent concurrent writes no-op", async () => {
-    const p = makeProvider(workDir);
+    const p = makeProvider();
     p.state(); // create pendingFlow
     // Three concurrent saves with different verifiers — only the first
     // should land; the rest are no-ops so the verifier paired with the
@@ -111,7 +107,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
   });
 
   it("saveClientInformation — first writer wins; subsequent DCRs do not overwrite", async () => {
-    const p = makeProvider(workDir);
+    const p = makeProvider();
     const a: OAuthClientInformationFull = { client_id: "client-A", redirect_uris: [CALLBACK] };
     const b: OAuthClientInformationFull = { client_id: "client-B", redirect_uris: [CALLBACK] };
     const c: OAuthClientInformationFull = { client_id: "client-C", redirect_uris: [CALLBACK] };
@@ -120,7 +116,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
       p.saveClientInformation(b),
       p.saveClientInformation(c),
     ]);
-    const fresh = makeProvider(workDir);
+    const fresh = makeProvider();
     expect((await fresh.clientInformation())?.client_id).toBe("client-A");
   });
 
@@ -134,7 +130,6 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "test-srv",
-      workDir,
       callbackUrl: CALLBACK,
       abortSignal: controller.signal,
     });
@@ -154,7 +149,6 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "test-srv",
-      workDir,
       callbackUrl: CALLBACK,
       abortSignal: controller.signal,
     });
@@ -167,7 +161,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
   });
 
   it("clientInformation() — concurrent callers awaiting a fresh DCR all get the first save's value", async () => {
-    const p = makeProvider(workDir);
+    const p = makeProvider();
     // First caller sees the DCR slot empty, returns undefined (SDK would
     // do DCR), and claims the in-flight slot. Subsequent callers find the
     // slot held and await its result.
@@ -183,7 +177,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
 
   it("redirectToAuthorization — only the chain whose PKCE matches the disk verifier captures the URL", async () => {
     const captured: string[] = [];
-    const p = makeProvider(workDir, (url) => captured.push(url));
+    const p = makeProvider((url) => captured.push(url));
     const state = p.state();
     // Simulate two SDK auth() chains: each generates its own verifier
     // and an authorize URL whose code_challenge is SHA256(its verifier).
@@ -217,7 +211,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
 
   it("end-to-end: N concurrent chains converge to one coherent (state, verifier, client_id, URL) tuple", async () => {
     const captured: string[] = [];
-    const p = makeProvider(workDir, (url) => captured.push(url));
+    const p = makeProvider((url) => captured.push(url));
 
     // Simulate 3 concurrent SDK auth() chains, each doing the full sequence
     // (DCR + state + saveCodeVerifier + redirectToAuthorization). All in
@@ -261,7 +255,7 @@ describe("WorkspaceOAuthProvider — concurrent auth() coalesce", () => {
     // makes the vendor accept the exchange (code was issued for THIS client).
     // Read through a fresh provider so the assertion goes through persistence,
     // not this one's in-memory cache.
-    const stored = await makeProvider(workDir).clientInformation();
+    const stored = await makeProvider().clientInformation();
     expect(capturedUrl.searchParams.get("client_id")).toBe(stored?.client_id);
   });
 });

@@ -58,7 +58,6 @@ function makeProvider(): WorkspaceOAuthProvider {
   return new WorkspaceOAuthProvider({
     owner: { type: "workspace", wsId: WS_ID },
     serverName: SERVER,
-    workDir,
     callbackUrl: CURRENT_CALLBACK,
   });
 }
@@ -164,7 +163,6 @@ describe("WorkspaceOAuthProvider.redirectToAuthorization — background gate", (
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: WS_ID },
       serverName: SERVER,
-      workDir,
       callbackUrl: CURRENT_CALLBACK,
       onAuthLost: () => {
         authLostFired = true;

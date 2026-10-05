@@ -39,33 +39,3 @@ describe("brokeredRef", () => {
     expect(brokeredRef(undefined)).toBeUndefined();
   });
 });
-
-// ── Read-side shim ──────────────────────────────────────────────────
-//
-// Refs persisted with the Composio block are mapped forward on read, so an
-// existing install survives a restart with no config edit and nothing rewrites
-// what is on disk. Delete these with the shim.
-
-describe("brokeredRef — legacy composio block", () => {
-  it("maps a legacy composio block forward", () => {
-    const legacy = {
-      url: "https://backend.composio.dev/v3/mcp/session-xyz",
-      serverName: "com-google-gmail",
-      composio: { connectorId: "com.google/gmail" },
-    } as unknown as ConnectorRef;
-    expect(brokeredRef(legacy)).toEqual({
-      provider: "composio",
-      connectorId: "com.google/gmail",
-    });
-  });
-
-  it("prefers a written brokered block over a stale legacy one", () => {
-    const both = {
-      url: "https://broker.test/mcp",
-      serverName: "x",
-      brokered: { provider: "smithery", connectorId: "new.id/mcp" },
-      composio: { connectorId: "old.id/mcp" },
-    } as unknown as ConnectorRef;
-    expect(brokeredRef(both)?.connectorId).toBe("new.id/mcp");
-  });
-});

@@ -195,51 +195,6 @@ describe("EventSourcedConversationStore", () => {
     expect(messages[1].role).toBe("assistant");
   });
 
-  it("history() reads legacy format files", async () => {
-    // Create a legacy-format file manually
-    const id = "conv_1e9ac4e5000000a2";
-    const meta = {
-      id,
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-      title: "Legacy",
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCostUsd: 0,
-      lastModel: null,
-      ownerId: "user_test",
-    };
-    const userMsg: StoredMessage = {
-      role: "user",
-      content: [{ type: "text", text: "old message" }],
-      timestamp: "2026-01-01T00:00:00Z",
-    };
-    const assistantMsg: StoredMessage = {
-      role: "assistant",
-      content: [{ type: "text", text: "old response" }],
-      timestamp: "2026-01-01T00:00:01Z",
-    };
-
-    const path = join(dirs.dir, `${id}.jsonl`);
-    writeFileSync(
-      path,
-      [JSON.stringify(meta), JSON.stringify(userMsg), JSON.stringify(assistantMsg)]
-        .map((l) => `${l}\n`)
-        .join(""),
-    );
-
-    const conv = await store.load(id);
-    expect(conv).not.toBeNull();
-
-    const messages = await store.history(conv!);
-    expect(messages.length).toBe(2);
-    expect(messages[0].role).toBe("user");
-    expect((messages[0].content as Array<{ type: string; text: string }>)[0].text).toBe(
-      "old message",
-    );
-    expect(messages[1].role).toBe("assistant");
-  });
-
   it("skips non-conversation events", async () => {
     const conv = await store.create({ ownerId: "user_test" });
     store.setActiveConversation(conv.id);

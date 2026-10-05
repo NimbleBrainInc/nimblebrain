@@ -274,15 +274,16 @@ describe("manage_connectors — personal-connector grants", () => {
     h = await buildHarness({ personalConnectors: ["granola", "notion"] });
     const owner = { type: "user", userId: ALICE.id } as const;
     for (const serverName of ["granola", "notion"]) {
-      await new McpOAuthRecords({ owner, serverName, workDir: h.workDir }).write("tokens", {
+      await new McpOAuthRecords({ owner, serverName }).write("tokens", {
         access_token: "at",
         token_type: "Bearer",
       });
     }
-    await new McpOAuthRecords({ owner, serverName: "granola", workDir: h.workDir }).write(
-      "identity",
-      { sub: "vendor-subject", email: "alice@vendor.example", name: "Alice V" },
-    );
+    await new McpOAuthRecords({ owner, serverName: "granola" }).write("identity", {
+      sub: "vendor-subject",
+      email: "alice@vendor.example",
+      name: "Alice V",
+    });
     const res = await h.tool.handler({ action: "list_personal_connectors" });
     const connectors = sc(res).connectors ?? [];
     const granola = connectors.find((c) => c.serverName === "granola");

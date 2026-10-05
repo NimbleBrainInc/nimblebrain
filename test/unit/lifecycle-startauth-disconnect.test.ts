@@ -241,13 +241,13 @@ describe("ConnectorLifecycleManager.disconnect — symmetric teardown", () => {
       "_workspace",
       "reauth_required",
     );
-    await new McpOAuthRecords({ owner, serverName: "granola", workDir }).write("auth_lost", {
+    await new McpOAuthRecords({ owner, serverName: "granola" }).write("auth_lost", {
       at: "2026-01-01T00:00:00.000Z",
     });
 
     await lifecycle.disconnect("granola", "ws_0076759dbbe19fcc", "_workspace", { workDir });
 
-    expect(await hasMcpOAuthAuthLost(workDir, owner, "granola")).toBe(false);
+    expect(await hasMcpOAuthAuthLost(owner, "granola")).toBe(false);
   });
 
   test("test_disconnect_urlConnector_logsOutcomeAndTransition", async () => {

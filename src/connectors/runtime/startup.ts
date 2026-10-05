@@ -1,4 +1,3 @@
-import { composioTransportConfig } from "../../connectors/providers/composio/transport-credential.ts";
 import type { EventSink } from "../../engine/types.ts";
 import type { HostResourcesRateLimit, HostResourcesResolver } from "../../host-resources/index.ts";
 import { resolveUserDisplayName } from "../../identity/user.ts";
@@ -200,7 +199,6 @@ async function buildUserOAuthProvider(
     owner: { type: "user", userId: identityOwner.userId },
     ...(ownerDisplayName ? { ownerDisplayName } : {}),
     serverName,
-    workDir,
     callbackUrl: mcpAuthCallbackUrl(),
     allowInsecureRemotes: opts?.allowInsecureRemotes === true,
     headlessAuthProbe: ref.headlessAuthProbe === true,
@@ -294,7 +292,6 @@ export async function buildUrlOAuthProvider(
     owner: { type: "workspace", wsId },
     ...(ownerDisplayName ? { ownerDisplayName } : {}),
     serverName,
-    workDir,
     workspaceContext: wsContext,
     callbackUrl,
     allowInsecureRemotes: opts?.allowInsecureRemotes === true,
@@ -365,12 +362,11 @@ async function finalizeUrlSourceStart(
 /**
  * The transport config and SSRF posture a persisted ref resolves to.
  *
- * The two decisions travel together deliberately. They were separate reads once,
- * and drifted: the URL gate saw the raw ref while the transport saw the mapped
- * one, so a single ref got two trust verdicts. Deriving both here makes that
- * class of bug unrepresentable, and gives the pair one testable surface.
+ * The two decisions travel together deliberately: the URL gate and the
+ * transport must judge the same config, so a single ref gets one trust verdict,
+ * and the pair has one testable surface.
  *
- *   - **transport** — legacy Composio refs map forward to provider auth.
+ *   - **transport** — the ref's persisted transport config, as written.
  *   - **fleetInternal** — the in-cluster plain-HTTP exception, granted only to
  *     the `minted` fleet rail. Provider auth alone does not earn it: a brokered
  *     connector names a provider too, but its URL comes from a vendor response.
@@ -379,7 +375,7 @@ export function resolveRefTransport(ref: ConnectorRef): {
   transportConfig: RemoteTransportConfig | undefined;
   fleetInternal: boolean;
 } {
-  const transportConfig = composioTransportConfig(ref.transport);
+  const transportConfig = ref.transport;
   return { transportConfig, fleetInternal: isMintedFleetSource(transportConfig) };
 }
 

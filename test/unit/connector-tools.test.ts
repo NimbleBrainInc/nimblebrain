@@ -1200,7 +1200,6 @@ describe("manage_connectors.get_installed", () => {
     const records = new McpOAuthRecords({
       owner,
       serverName: STUB_SERVER_NAME,
-      workDir: h.workDir,
     });
     await records.write("tokens", { access_token: "at", token_type: "Bearer" });
     await records.write("identity", { sub: "vendor-subject", email: "ops@acme-corp.example" });

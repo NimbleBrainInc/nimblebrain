@@ -19,7 +19,6 @@ import { StaticToolRouter } from "../../src/adapters/static-router.ts";
 import { validateConnectorUrl } from "../../src/connectors/runtime/url-validator.ts";
 import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 // NB-001: Conversation ID path traversal
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 
 // NB-003: Engine input validation
@@ -76,7 +75,7 @@ describe("Security Hardening Regression Tests", () => {
 
     it("rejects URL-encoded traversal (%2e%2e%2f)", async () => {
       const dir = freshTmpDir("conv-url-enc");
-      const store = new JsonlConversationStore(dir);
+      const store = new EventSourcedConversationStore({ dir });
       await expect(store.load("%2e%2e%2fetc%2fpasswd")).rejects.toThrow(/Invalid conversation ID/);
     });
 
@@ -88,7 +87,7 @@ describe("Security Hardening Regression Tests", () => {
 
     it("rejects traversal embedded after valid prefix (conv_../../../)", async () => {
       const dir = freshTmpDir("conv-embedded");
-      const store = new JsonlConversationStore(dir);
+      const store = new EventSourcedConversationStore({ dir });
       await expect(store.load("conv_../../../etc")).rejects.toThrow(/Invalid conversation ID/);
     });
   });

@@ -111,7 +111,6 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
     return new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "fleet-srv",
-      workDir,
       callbackUrl: "http://localhost:27247/v1/mcp-auth/callback",
       ...(fleetAuthorizerIssuer ? { fleetAuthorizerIssuer } : {}),
     });
@@ -179,9 +178,7 @@ describe("WorkspaceOAuthProvider.addClientAuthentication", () => {
 // covered incidentally by the OAuth integration tests; gating removed that, so
 // it must be covered explicitly here.)
 describe("fleet hook — SDK client-auth parity (step 1)", () => {
-  let workDir: string;
   beforeEach(() => {
-    workDir = mkdtempSync(join(tmpdir(), "nb-fleet-clientauth-"));
     setEnv(undefined, undefined); // step 1 only; no tenant assertion
   });
 
@@ -189,7 +186,6 @@ describe("fleet hook — SDK client-auth parity (step 1)", () => {
     const provider = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
       serverName: "fleet-srv",
-      workDir,
       callbackUrl: "http://localhost:27247/v1/mcp-auth/callback",
       fleetAuthorizerIssuer: FLEET_ISSUER,
       staticClient,

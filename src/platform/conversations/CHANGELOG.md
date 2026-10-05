@@ -8,6 +8,9 @@
   workspace-owned layout, so `ConversationFileRef.wsId`,
   `ConversationChange.wsId` and `IndexEntry.workspaceId` are always a
   workspace id, never `null`.
+- **The message-per-line reader.** Conversation files are read as event logs
+  only; `looksLikeEventLine` is gone. `fork` writes the new conversation as
+  events, and `update` always appends a `metadata.title` event.
 
 ### Changed
 

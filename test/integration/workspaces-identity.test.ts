@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { authenticateRequest } from "../../src/api/auth-middleware.ts";
 import { isAddressedWorkspaceMember } from "../../src/api/workspace-address.ts";
-import { JsonlConversationStore } from "../../src/conversation/jsonl-store.ts";
+import { EventSourcedConversationStore } from "../../src/conversation/event-sourced-store.ts";
 import type { ConversationAccessContext } from "../../src/conversation/types.ts";
 import { saveInstanceConfig } from "../../src/identity/instance.ts";
 import type { CreateUserResult, IdentityProvider } from "../../src/identity/provider.ts";
@@ -61,7 +61,7 @@ describe("UC-W1: Private work with shared tools", () => {
 
     // Mat creates a private conversation in Engineering
     const convDir = join(workDir, "workspaces", eng.id, "conversations");
-    const store = new JsonlConversationStore(convDir);
+    const store = new EventSourcedConversationStore({ dir: convDir });
 
     const matConv = await store.create({
       workspaceId: eng.id,
@@ -113,7 +113,7 @@ describe("UC-W2: Single-owner conversation (Stage 1)", () => {
     await wsStore.addMember(eng.id, kai.id, "member");
 
     const convDir = join(workDir, "workspaces", eng.id, "conversations");
-    const store = new JsonlConversationStore(convDir);
+    const store = new EventSourcedConversationStore({ dir: convDir });
 
     const conv = await store.create({ workspaceId: eng.id, ownerId: mat.id });
 
