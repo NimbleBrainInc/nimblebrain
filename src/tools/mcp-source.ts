@@ -1594,6 +1594,9 @@ export class McpSource implements ToolSource {
     // Distinct durable marker for "deliberately stopped" (vs the failed-start
     // `stopping` that `cleanupOnStartFailure` also sets). Cleared by `start()`.
     this.stopped = true;
+    // A `start()` parked on an interactive OAuth flow settles now instead of at
+    // the flow's TTL, and a callback that arrives later finds no flow to finish.
+    if (this.mode.type === "remote") this.mode.authProvider?.abandonPendingFlow();
     // Abort any in-flight streams so their drainers unblock and the handle
     // map can be cleared without leaking outstanding `awaitToolTaskResult`
     // callers. Each drainer will reject its terminalDeferred, which is

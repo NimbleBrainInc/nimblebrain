@@ -16,6 +16,7 @@ import { log } from "../../../src/observability/log.ts";
 import {
   _clearAll,
   DEFAULT_FLOW_TTL_MS,
+  OAuthFlowRefusedError,
   register as registerFlow,
   resolveWithCode,
 } from "../../../src/tools/oauth-flow-registry.ts";
@@ -497,12 +498,6 @@ describe("GET /v1/mcp-auth/callback — invalid_scope falls back to the connecto
     expect(res.headers.get("location")).toBe(fallbackUrl);
     expect(used).toBe(1);
 
-    // The server refuses the fallback too: no second retry.
-    const again = await app.request(refused, { headers: { cookie } });
-    expect(again.status).toBe(400);
-    expect(await again.text()).toContain("invalid_scope");
-    expect(used).toBe(1);
-
     expect(resolveWithCode(state, "auth-code-1")).toBe(true);
     await expect(flow).resolves.toBe("auth-code-1");
   });
@@ -521,6 +516,84 @@ describe("GET /v1/mcp-auth/callback — invalid_scope falls back to the connecto
     );
     expect(res.status).toBe(400);
     expect(used).toBe(0);
+  });
+});
+
+describe("GET /v1/mcp-auth/callback — a refusal ends the flow (#1433)", () => {
+  // A flow left pending after the server refused it holds its connector's
+  // start for the whole TTL: the connection reads as connecting and a second
+  // Connect on a personal connector answers 409 until the timer fires.
+  let app: Hono<AppEnv>;
+  const state = "refused-state-abcdef";
+  const cookie = `nb_oauth_state=${sha256Hex(state)}`;
+  const denied = `http://localhost/v1/mcp-auth/callback?error=access_denied&state=${state}`;
+
+  beforeEach(() => {
+    app = makeApp(makeStubLifecycle());
+  });
+
+  afterEach(() => {
+    _clearAll();
+  });
+
+  test("a refusal from the session that began the flow rejects it at once", async () => {
+    const flow = registerFlow(state, WS_OWNER, "granola");
+    flow.catch(() => {});
+
+    const res = await app.request(denied, { headers: { cookie } });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("access_denied");
+    const err = await flow.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(OAuthFlowRefusedError);
+    // The flow is gone: a late code for it resolves nothing.
+    expect(resolveWithCode(state, "late-code")).toBe(false);
+  });
+
+  test("a refusal without the session's state cookie leaves the flow pending", async () => {
+    const flow = registerFlow(state, WS_OWNER, "granola");
+    flow.catch(() => {});
+
+    const noCookie = await app.request(denied);
+    const wrongCookie = await app.request(denied, {
+      headers: { cookie: `nb_oauth_state=${sha256Hex("another-state")}` },
+    });
+
+    expect(noCookie.status).toBe(400);
+    expect(wrongCookie.status).toBe(400);
+    expect(resolveWithCode(state, "auth-code-1")).toBe(true);
+    await expect(flow).resolves.toBe("auth-code-1");
+  });
+
+  test("a refusal that names no flow still answers 400", async () => {
+    const unknown = await app.request(denied, { headers: { cookie } });
+    const stateless = await app.request(
+      "http://localhost/v1/mcp-auth/callback?error=access_denied",
+    );
+
+    expect(unknown.status).toBe(400);
+    expect(stateless.status).toBe(400);
+  });
+
+  test("invalid_scope ends the flow once no fallback is left", async () => {
+    let used = 0;
+    const flow = registerFlow(state, WS_OWNER, "granola", DEFAULT_FLOW_TTL_MS, {
+      url: `https://vendor.test/authorize?state=${state}&scope=mcp`,
+      onUse: () => used++,
+    });
+    flow.catch(() => {});
+    const refused = `http://localhost/v1/mcp-auth/callback?error=invalid_scope&state=${state}`;
+
+    // The first refusal takes the fallback and keeps the flow.
+    expect((await app.request(refused, { headers: { cookie } })).status).toBe(302);
+    // The server refuses the fallback too: nothing is left to try.
+    expect((await app.request(refused, { headers: { cookie } })).status).toBe(400);
+
+    expect(used).toBe(1);
+    await expect(flow).rejects.toBeInstanceOf(OAuthFlowRefusedError);
   });
 });
 
