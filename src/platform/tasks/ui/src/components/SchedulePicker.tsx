@@ -237,7 +237,8 @@ export function SchedulePicker({
             if (mode === "interval") emit("interval", v, time, dow, cronExpr);
           }}
           onFocus={() => handleMode("interval")}
-          className="sched-input" style={{ width: 56 }}
+          className="sched-input"
+          style={{ width: 56 }}
         />
         <span>minutes</span>
       </label>
@@ -259,7 +260,8 @@ export function SchedulePicker({
             if (mode === "daily") emit("daily", minutes, e.target.value, dow, cronExpr);
           }}
           onFocus={() => handleMode("daily")}
-          className="sched-input" style={{ width: 100 }}
+          className="sched-input"
+          style={{ width: 100 }}
         />
       </label>
 
@@ -279,7 +281,8 @@ export function SchedulePicker({
             if (mode === "weekly") emit("weekly", minutes, time, e.target.value, cronExpr);
           }}
           onFocus={() => handleMode("weekly")}
-          className="sched-input" style={{ width: "auto" }}
+          className="sched-input"
+          style={{ width: "auto" }}
         >
           {DAYS.map((d) => (
             <option key={d.value} value={d.value}>
@@ -296,7 +299,8 @@ export function SchedulePicker({
             if (mode === "weekly") emit("weekly", minutes, e.target.value, dow, cronExpr);
           }}
           onFocus={() => handleMode("weekly")}
-          className="sched-input" style={{ width: 100 }}
+          className="sched-input"
+          style={{ width: 100 }}
         />
       </label>
 
@@ -318,7 +322,8 @@ export function SchedulePicker({
           }}
           onFocus={() => handleMode("cron")}
           placeholder="0 8 * * *"
-          className="sched-input" style={{ width: 120 }}
+          className="sched-input"
+          style={{ width: 120 }}
         />
       </label>
 
@@ -339,7 +344,8 @@ export function SchedulePicker({
             if (mode === "once") emit("once", minutes, time, dow, cronExpr, e.target.value);
           }}
           onFocus={() => handleMode("once")}
-          className="sched-input" style={{ width: 190 }}
+          className="sched-input"
+          style={{ width: 190 }}
         />
       </label>
 
@@ -352,9 +358,7 @@ export function SchedulePicker({
           onChange={() => handleMode("manual")}
         />
         <span>Manual only</span>
-        <span className="muted">
-          runs only when you run it
-        </span>
+        <span className="muted">runs only when you run it</span>
       </label>
     </div>
   );

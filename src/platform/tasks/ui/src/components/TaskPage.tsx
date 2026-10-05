@@ -37,6 +37,9 @@ export function statusLine(d: TaskDetail, last?: TaskRun): string {
     parts.push(`next ${when.charAt(0).toLowerCase()}${when.slice(1)}`);
   }
   if (last?.label) parts.push(`last run ${last.label} ${relativeTime(last.startedAt)}`);
+  if (d.consecutiveErrors > 0) {
+    parts.push(`${d.consecutiveErrors} failed in a row, retrying with backoff`);
+  }
   return parts.join(" · ");
 }
 

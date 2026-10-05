@@ -535,6 +535,8 @@ export function ResultScreen({
   const name = taskName ?? taskId;
   const state = useRunResult(runId, name, taskId ?? initialRun?.taskId, initialRun);
   const assess = useAssess(runId, name, state.setRun);
+  const cancelTool = useTool<string>("cancel");
+  const [cancelling, setCancelling] = useState(false);
   const openFile = useOpenFile();
   const [copied, setCopied] = useState(false);
   const run = state.run;
@@ -565,6 +567,22 @@ export function ResultScreen({
         sub={<ResultSub run={run} label={label} taskGone={!!state.taskGone} />}
         actions={
           <>
+            {state.status === "open" && name && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={cancelling}
+                onClick={() => {
+                  setCancelling(true);
+                  void cancelTool.call({ name }).finally(() => {
+                    setCancelling(false);
+                    state.reload();
+                  });
+                }}
+              >
+                {cancelling ? "Cancelling…" : "Cancel run"}
+              </button>
+            )}
             {output && (
               <button type="button" className="btn" onClick={copy}>
                 {copied ? "Copied" : "Copy result"}
