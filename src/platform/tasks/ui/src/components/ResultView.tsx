@@ -3,6 +3,7 @@ import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
 import { assessmentReasonText, inputSummary, runName, runTime } from "../lib/plain.ts";
+import { effectiveVerdict } from "../lib/verdict.ts";
 import { renderMarkdown } from "../markdown.ts";
 import type { RunFileRef, TaskCriterion, TaskDetail, TaskRun, TaskRunResult } from "../types.ts";
 import { useTool } from "../useTool.ts";
@@ -10,7 +11,7 @@ import { asDict, formatDuration, formatTokens, formatUsd, toolErrorText } from "
 import { AssessmentPanel } from "./AssessmentPanel.tsx";
 import { PageHeader } from "./Chrome.tsx";
 import { RowMenu } from "./RowMenu.tsx";
-import { type LabelTone, RunBadge, StatusBadge } from "./RunBadge.tsx";
+import { RunBadge, StatusBadge } from "./RunBadge.tsx";
 import { Elapsed, RunSteps } from "./RunSteps.tsx";
 import { Section, Sections, SummaryStrip, type Tile } from "./Section.tsx";
 import { asJson, ResultPreview } from "./StructuredView.tsx";
@@ -171,18 +172,11 @@ function CostDetail({ run, result }: { run?: TaskRun; result: TaskRunResult | nu
   );
 }
 
-const VERDICT_WORD: Record<string, { word: string; tone: LabelTone }> = {
-  pass: { word: "Passed", tone: "success" },
-  fail: { word: "Failed", tone: "danger" },
-  uncertain: { word: "Uncertain", tone: "warning" },
-  not_assessed: { word: "Not assessed", tone: "muted" },
-};
-
 /** The run's report card: outcome, verdict, input, how long it took, what it cost. */
 export function RunSummary({ run, result }: { run?: TaskRun; result: TaskRunResult | null }) {
   const outcome = outcomeText(run, result);
   const assessment = run?.assessment ?? result?.assessment;
-  const verdict = VERDICT_WORD[assessment?.verdict ?? ""];
+  const verdict = effectiveVerdict(assessment);
   const judgeCost = assessment?.usage?.costUsd;
   const total = (run?.costUsd ?? 0) + (judgeCost ?? 0);
   const input = inputSummary(run?.input);
@@ -205,9 +199,11 @@ export function RunSummary({ run, result }: { run?: TaskRun; result: TaskRunResu
       ) : (
         "Not assessed yet"
       ),
-      sub: assessment?.reason
-        ? firstSentence(assessmentReasonText(assessment.reason.code))
-        : undefined,
+      sub:
+        verdict?.judge ??
+        (assessment?.reason
+          ? firstSentence(assessmentReasonText(assessment.reason.code))
+          : undefined),
     },
     {
       id: "input",
@@ -533,12 +529,10 @@ export function useOpenFile(): (file: RunFileRef) => void {
 
 /** The result screen's status line: label, who started it, when, how long, what it cost. */
 function ResultSub({
-  run,
   label,
   taskName,
   taskGone,
 }: {
-  run?: TaskRun;
   label?: TaskRun["label"];
   taskName?: string;
   taskGone: boolean;
@@ -548,9 +542,6 @@ function ResultSub({
       <RunBadge label={label} />
       {taskName && <span>{taskName}</span>}
       {taskGone && <span className="tag">task deleted</span>}
-      {run && <span>{STARTED_BY_TEXT[startedByOf(run)]}</span>}
-      {run?.completedAt && <span>{formatDuration(run.startedAt, run.completedAt)}</span>}
-      {run?.costUsd !== undefined && <span>{formatUsd(run.costUsd)}</span>}
     </>
   );
 }
@@ -620,12 +611,7 @@ export function ResultScreen({
         title={runName(run?.startedAt)}
         onBack={onBack}
         status={
-          <ResultSub
-            run={run}
-            label={label}
-            taskName={shownName ?? taskId}
-            taskGone={!!state.taskGone}
-          />
+          <ResultSub label={label} taskName={shownName ?? taskId} taskGone={!!state.taskGone} />
         }
         actions={
           <>

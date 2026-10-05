@@ -278,9 +278,18 @@ function DetailsSection({ d }: { d: TaskDetail }) {
 }
 
 /** The task's setup, read-only, each part behind a closed disclosure. */
-export function SetupSections({ d }: { d: TaskDetail }) {
+export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit?: () => void }) {
   return (
-    <Section title="Setup" aside={<span className="muted">Edit from the ⋯ menu</span>}>
+    <Section
+      title="Setup"
+      aside={
+        onEdit && (
+          <button type="button" className="btn btn-sm" onClick={onEdit}>
+            Edit
+          </button>
+        )
+      }
+    >
       <div className="setup">
         <DoesSection d={d} />
         <GoodSection d={d} />
@@ -455,12 +464,19 @@ function nextRunText(d: TaskDetail): string {
 function statsTiles(stats: TaskStats | null): Tile[] {
   if (!stats) {
     return [
+      { id: "runs", label: "Runs, 30 days", value: "…" },
       { id: "pass", label: "Pass rate, 30 days", value: "…" },
       { id: "cost", label: "Cost, 30 days", value: "…" },
     ];
   }
   const decided = stats.pass + stats.fail;
   return [
+    {
+      id: "runs",
+      label: "Runs, 30 days",
+      value: String(stats.runs),
+      sub: `${stats.pass} passed · ${stats.fail} failed · ${stats.uncertain} to review`,
+    },
     {
       id: "pass",
       label: "Pass rate, 30 days",
@@ -471,30 +487,22 @@ function statsTiles(stats: TaskStats | null): Tile[] {
       id: "cost",
       label: "Cost, 30 days",
       value: formatUsd(stats.costUsd),
-      sub: `${stats.runs} ${stats.runs === 1 ? "run" : "runs"}`,
+      sub: stats.runs > 0 ? `${formatUsd(stats.costUsd / stats.runs)} a run` : undefined,
     },
   ];
 }
 
-/** The task's report card: health, pass rate, cost, next run, last run. */
+/** The task's report card: runs, pass rate, cost, next run, last run. */
 export function TaskSummaryStrip({
   detail,
-  health,
   stats,
   last,
 }: {
   detail: TaskDetail;
-  health: TaskHealth;
   stats: TaskStats | null;
   last?: TaskRun;
 }) {
   const tiles: Tile[] = [
-    {
-      id: "health",
-      label: "Health",
-      value: <StatusBadge tone={health.tone} label={health.word} />,
-      sub: detail.consecutiveErrors > 0 ? `${detail.consecutiveErrors} failed in a row` : undefined,
-    },
     ...statsTiles(stats),
     {
       id: "next",
@@ -550,7 +558,7 @@ export function TaskPageBody({
           )}
         </div>
       )}
-      <TaskSummaryStrip detail={detail} health={health} stats={stats} last={latest} />
+      <TaskSummaryStrip detail={detail} stats={stats} last={latest} />
       <LatestRun run={latest} result={latestResult} onOpenRun={actions.onOpenRun} />
       <RecentRuns
         runs={runs}
@@ -559,7 +567,7 @@ export function TaskPageBody({
         onOpenRun={actions.onOpenRun}
         onSeeAll={() => actions.onSeeRuns(detail)}
       />
-      <SetupSections d={detail} />
+      <SetupSections d={detail} onEdit={() => actions.onEdit(detail)} />
     </Sections>
   );
 }

@@ -454,6 +454,35 @@ describe("Result", () => {
     expect(html).toContain("Open the run this retried");
   });
 
+  test("a person's verdict shows in the tile and the assessment header alike", () => {
+    const html = render(
+      createElement(result.ResultBody, {
+        ...props,
+        state: {
+          status: "ready",
+          run: {
+            ...RUN,
+            label: "Poor result",
+            assessment: {
+              verdict: "uncertain",
+              assessedAt: "x",
+              human: { verdict: "fail", by: "u", via: "ui", at: "x" },
+            },
+          },
+          result: RESULT,
+        },
+      }),
+    );
+    expect(html).toMatch(
+      /Verdict<\/span><span class="tile-value"><span class="status-badge tone-danger">.*Rejected by you/,
+    );
+    expect(html).toContain("The judge said uncertain");
+    expect(html).toMatch(
+      /Assessment<\/h2><div class="card-aside"><span class="status-badge tone-danger">.*Rejected by you/,
+    );
+    expect(html).not.toContain(">Uncertain<");
+  });
+
   test("an uncertain assessment shows its reason; a deleted task offers no verdict", () => {
     const html = render(
       createElement(result.ResultBody, {

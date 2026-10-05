@@ -1,22 +1,9 @@
 import { useId, useState } from "react";
 import { assessmentReasonText } from "../lib/plain.ts";
+import { effectiveVerdict } from "../lib/verdict.ts";
 import type { CriterionResult, RunAssessment, TaskCriterion } from "../types.ts";
-import { type LabelTone, StatusBadge } from "./RunBadge.tsx";
+import { StatusBadge } from "./RunBadge.tsx";
 import { Section } from "./Section.tsx";
-
-const VERDICT_TEXT: Record<RunAssessment["verdict"], string> = {
-  pass: "Passed",
-  fail: "Failed",
-  uncertain: "Uncertain",
-  not_assessed: "Not assessed",
-};
-
-const VERDICT_TONE: Record<RunAssessment["verdict"], LabelTone> = {
-  pass: "success",
-  fail: "danger",
-  uncertain: "warning",
-  not_assessed: "muted",
-};
 
 /** How a criterion's answer reads for its type: yes/no, the level, or the option. */
 export function answerText(answer: boolean | number | string, criterion?: TaskCriterion): string {
@@ -160,12 +147,13 @@ export function AssessmentPanel({
   onRejudge: () => void;
 }) {
   const judged = a ? judgeLine(a) : null;
+  const verdict = effectiveVerdict(a);
   return (
     <Section
       title="Assessment"
       aside={
         <>
-          {a && <StatusBadge tone={VERDICT_TONE[a.verdict]} label={VERDICT_TEXT[a.verdict]} />}
+          {verdict && <StatusBadge tone={verdict.tone} label={verdict.word} />}
           {canAct && (
             <button type="button" className="btn btn-sm" disabled={busy} onClick={onRejudge}>
               Re-judge
@@ -193,8 +181,8 @@ export function AssessmentPanel({
       {judged && <p className="muted">{judged}</p>}
       {a?.human && (
         <p className="human-verdict">
-          {a.human.verdict === "pass" ? "Accepted" : "Rejected"} by a person
-          {a.human.note ? `: “${a.human.note}”` : ""}
+          {verdict?.judge}
+          {a.human.note ? `. Your note: “${a.human.note}”` : "."}
         </p>
       )}
       {canAct && <VerdictForm busy={busy} error={error} onVerdict={onVerdict} />}
