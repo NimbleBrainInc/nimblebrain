@@ -1,6 +1,6 @@
 {
   "name": "nimblebrain-docs",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.2",
   "description": "Documentation site for NimbleBrain — the self-hosted platform for MCP Apps and agent tasks",
   "type": "module",
   "version": "0.0.1",

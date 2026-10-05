@@ -283,7 +283,7 @@ describe("structured logger (JSON mode)", () => {
       );
     } finally {
       process.stderr.write = orig;
-      process.env.NB_LOG_FORMAT = undefined;
+      delete process.env.NB_LOG_FORMAT;
     }
     const rec = JSON.parse(lines.join("").trim());
     expect(rec.level).toBe("info");
@@ -327,7 +327,7 @@ describe("structured logger (JSON mode)", () => {
       });
     } finally {
       process.stderr.write = orig;
-      process.env.NB_LOG_FORMAT = undefined;
+      delete process.env.NB_LOG_FORMAT;
     }
     const rec = JSON.parse(lines.join("").trim());
     expect(rec.token).toBe("[redacted]");
@@ -367,8 +367,8 @@ describe("structured logger (JSON mode)", () => {
       log.error("should.keep.too");
     } finally {
       process.stderr.write = orig;
-      process.env.NB_LOG_LEVEL = undefined;
-      process.env.NB_LOG_FORMAT = undefined;
+      delete process.env.NB_LOG_LEVEL;
+      delete process.env.NB_LOG_FORMAT;
     }
     const out = lines.join("");
     expect(out).not.toContain("should.drop");
