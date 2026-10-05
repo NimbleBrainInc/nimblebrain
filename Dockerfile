@@ -15,7 +15,7 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # newest. BUN_VERSION must equal ci.yml's (test/unit/build-pins.test.ts checks it);
 # Renovate bumps every copy together.
 # renovate: datasource=github-releases depName=oven-sh/bun extractVersion=^bun-v(?<version>.+)$
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.2
 # renovate: datasource=node-version depName=node
 ARG NODE_VERSION=24.21.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
