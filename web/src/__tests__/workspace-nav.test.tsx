@@ -535,6 +535,89 @@ describe("WorkspaceNav — app quick-list", () => {
   });
 });
 
+describe("WorkspaceNav — pinned apps", () => {
+  const routes = () =>
+    byTestId(mounted!.container, "sidebar-workspace-app").map((a) =>
+      a.getAttribute("data-app-route"),
+    );
+  const pin = (serverName: string) =>
+    click(
+      buttons(mounted!.container, "sidebar-workspace-app-pin").find(
+        (b) => b.getAttribute("data-app-route") === serverName,
+      ),
+    );
+
+  test("pinning moves an app to the top, in pin order, and unpinning puts it back", async () => {
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      placements: [
+        appPlacement("crm", { priority: 10 }),
+        appPlacement("tasks", { priority: 20 }),
+        appPlacement("outbound", { priority: 30 }),
+      ],
+    });
+    expect(routes()).toEqual(["crm", "tasks", "outbound"]);
+
+    await pin("outbound");
+    await pin("tasks");
+    expect(routes()).toEqual(["outbound", "tasks", "crm"]);
+    const pressed = buttons(mounted.container, "sidebar-workspace-app-pin").map((b) =>
+      b.getAttribute("aria-pressed"),
+    );
+    expect(pressed).toEqual(["true", "true", "false"]);
+
+    await pin("outbound");
+    expect(routes()).toEqual(["tasks", "crm", "outbound"]);
+  });
+
+  test("a pinned app past the inline cap is shown", async () => {
+    localStorage.setItem("nb:pinned-apps:ws_003eba8844413cd9", JSON.stringify(["last"]));
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      placements: [
+        ...Array.from({ length: MAX_INLINE_APPS }, (_, i) =>
+          appPlacement(`app-${i}`, { priority: (i + 1) * 10 }),
+        ),
+        appPlacement("last", { priority: 999 }),
+      ],
+    });
+    expect(routes()[0]).toBe("last");
+    expect(routes()).toHaveLength(MAX_INLINE_APPS);
+  });
+
+  test("pins belong to one workspace", async () => {
+    localStorage.setItem("nb:pinned-apps:ws_000f7ed6658f9d30", JSON.stringify(["outbound"]));
+    mounted = await mount({
+      workspaces: [HELIX, ACME],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      placements: [
+        appPlacement("crm", { priority: 10 }),
+        appPlacement("outbound", { priority: 30 }),
+      ],
+    });
+    expect(routes()).toEqual(["crm", "outbound"]);
+  });
+
+  test("a stored value that is not a list of names is ignored", async () => {
+    localStorage.setItem("nb:pinned-apps:ws_003eba8844413cd9", '{"outbound":true}');
+    mounted = await mount({
+      workspaces: [HELIX],
+      activeId: "ws_003eba8844413cd9",
+      initialPath: "/w/003eba8844413cd9/",
+      placements: [
+        appPlacement("crm", { priority: 10 }),
+        appPlacement("outbound", { priority: 30 }),
+      ],
+    });
+    expect(routes()).toEqual(["crm", "outbound"]);
+  });
+});
+
 describe("WorkspaceNav — add a connector", () => {
   test("the APPS header carries a + to the connector catalog", async () => {
     mounted = await mount({

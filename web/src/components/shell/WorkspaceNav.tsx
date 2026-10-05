@@ -6,7 +6,8 @@
 // another workspace's is to switch to it (WorkspaceSwitcher, above this).
 //
 // Order: Overview, the identity views (Conversations / Tasks / Files),
-// then APPS (People, Tasks, … — capped with a View-all overflow). Each routes
+// then APPS (People, Tasks, … — the viewer's pinned apps first, capped with a
+// View-all overflow). Each routes
 // into `/w/<slug>/…`. An app that places several views is one entry; while it
 // is open its views list beneath it. The inbox is not here: it is the top
 // bar's bell (InboxToggle).
@@ -24,7 +25,7 @@
 // named by a tooltip, with the "+" last.
 // ---------------------------------------------------------------------------
 
-import { ArrowRight, LayoutGrid, Plus } from "lucide-react";
+import { ArrowRight, LayoutGrid, Pin, Plus } from "lucide-react";
 import { useMemo } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import type { InstalledConnector } from "../../api/client";
@@ -34,10 +35,12 @@ import { useWorkspaceContext, type WorkspaceInfo } from "../../context/Workspace
 import { useCanWriteActiveWorkspace } from "../../hooks/useScopedRole";
 import { resolveIcon } from "../../lib/icons";
 import { identityAppRoute, isIdentityApp } from "../../lib/identity-apps";
+import { usePinnedApps } from "../../lib/pinned-apps";
 import { cn } from "../../lib/utils";
 import {
   appsByConnector,
   MAX_INLINE_APPS,
+  orderApps,
   type WorkspaceApp,
   workspaceApps,
 } from "../../lib/workspace-apps";
@@ -83,9 +86,13 @@ function WorkspaceViews({
   // so without the gate a switch would briefly paint the previous workspace's
   // apps (mirrors the overview grid's readiness check).
   const ready = shell != null && shell.shellWorkspaceId === workspace.id;
+  const { pinned, toggle: togglePin } = usePinnedApps(workspace.id);
   const apps = useMemo(
-    () => (ready && shell ? appsByConnector(workspaceApps(shell.forSlot("sidebar"))) : []),
-    [ready, shell],
+    () =>
+      ready && shell
+        ? orderApps(appsByConnector(workspaceApps(shell.forSlot("sidebar"))), pinned)
+        : [],
+    [ready, shell, pinned],
   );
   const shownApps = collapsed ? apps : apps.slice(0, MAX_INLINE_APPS);
   const hasAppOverflow = apps.length > shownApps.length;
@@ -151,6 +158,8 @@ function WorkspaceViews({
           name={nameFor(app.serverName)}
           iconUrl={iconFor(app.serverName)}
           collapsed={collapsed}
+          pinned={pinned.includes(app.serverName)}
+          onTogglePin={() => togglePin(app.serverName)}
         />
       ))}
       {hasAppOverflow && (
@@ -320,6 +329,8 @@ function AppEntry({
   name,
   iconUrl,
   collapsed,
+  pinned,
+  onTogglePin,
 }: {
   app: WorkspaceApp;
   slug: string;
@@ -327,6 +338,8 @@ function AppEntry({
   name?: string;
   iconUrl?: string;
   collapsed: boolean;
+  pinned: boolean;
+  onTogglePin: () => void;
 }) {
   const { pathname } = useLocation();
   const [first] = app.views;
@@ -341,6 +354,8 @@ function AppEntry({
         iconUrl={iconUrl}
         serverName={app.serverName}
         collapsed={collapsed}
+        pinned={pinned}
+        onTogglePin={onTogglePin}
       />
     );
   }
@@ -354,6 +369,8 @@ function AppEntry({
         serverName={app.serverName}
         collapsed={collapsed}
         open={open}
+        pinned={pinned}
+        onTogglePin={onTogglePin}
       />
       {open && !collapsed && (
         <div className="flex flex-col gap-px" data-testid="sidebar-workspace-app-views">
@@ -379,6 +396,9 @@ function AppEntry({
 // `startsWith` would mis-light `crm` when viewing a sibling `crm-archive`).
 // `open` is set by an app whose views list beneath it: the row then reads as
 // open rather than current, because the current page is one of its views.
+// Expanded, the pin toggle is a sibling of the link, laid over its right edge
+// (an interactive control cannot nest in a link), as on the home grid's tiles.
+// The rail has no room for it; pinned apps still lead there.
 function AppLink({
   to,
   label,
@@ -386,6 +406,8 @@ function AppLink({
   iconUrl,
   collapsed,
   open,
+  pinned,
+  onTogglePin,
 }: {
   to: string;
   label: string;
@@ -393,6 +415,8 @@ function AppLink({
   iconUrl?: string;
   collapsed: boolean;
   open?: boolean;
+  pinned: boolean;
+  onTogglePin: () => void;
 }) {
   const exact = useLocation().pathname === to;
   // Collapsed, the views are not listed, so the app's icon is what marks the page.
@@ -405,17 +429,43 @@ function AppLink({
       data-app-route={serverName}
       data-is-active={isActive ? "true" : "false"}
       aria-current={isActive ? "page" : undefined}
-      className={cn(rowClass(isActive, collapsed), open && "font-medium text-foreground")}
+      className={cn(
+        rowClass(isActive, collapsed),
+        !collapsed && "pr-7",
+        open && "font-medium text-foreground",
+      )}
     >
       <ConnectorIcon name={label} iconUrl={iconUrl} className="size-4 rounded-xs text-3xs" />
       {!collapsed && <span className="flex-1 truncate">{label}</span>}
     </Link>
   );
-  return collapsed ? (
-    <Tooltip label={label} side="right">
+  if (collapsed) {
+    return (
+      <Tooltip label={label} side="right">
+        {link}
+      </Tooltip>
+    );
+  }
+  return (
+    <div className="group/app relative">
       {link}
-    </Tooltip>
-  ) : (
-    link
+      <button
+        type="button"
+        onClick={onTogglePin}
+        aria-label={pinned ? `Unpin ${label}` : `Pin ${label} to the top`}
+        aria-pressed={pinned}
+        title={pinned ? "Unpin" : "Pin to top"}
+        data-testid="sidebar-workspace-app-pin"
+        data-app-route={serverName}
+        className={cn(
+          "absolute top-1/2 right-1 -translate-y-1/2 rounded-xs p-1 transition-opacity",
+          "hover:bg-sidebar-foreground/10 hover:text-foreground",
+          "focus-visible:opacity-100 group-hover/app:opacity-100 [@media(pointer:coarse)]:opacity-100",
+          pinned ? "opacity-60" : "opacity-0",
+        )}
+      >
+        <Pin className={cn("size-3", pinned && "fill-current")} aria-hidden="true" />
+      </button>
+    </div>
   );
 }

@@ -15,6 +15,7 @@ import {
   connectorSettingsPath,
   iconMapFromInstalled,
   MAX_INLINE_APPS,
+  orderApps,
   workspaceApps,
 } from "../lib/workspace-apps";
 import type { PlacementEntry } from "../types";
@@ -131,5 +132,39 @@ describe("appsByConnector", () => {
 
   test("no placements, no apps", () => {
     expect(appsByConnector([])).toEqual([]);
+  });
+});
+
+describe("orderApps", () => {
+  const apps = appsByConnector(
+    workspaceApps([
+      p({ serverName: "crm", slot: "sidebar.apps", priority: 10 }),
+      p({ serverName: "tasks", slot: "sidebar.apps", priority: 20 }),
+      p({ serverName: "outbound", slot: "sidebar.apps", priority: 30 }),
+      p({ serverName: "people", slot: "sidebar.apps", priority: 40 }),
+    ]),
+  );
+  const names = (list: typeof apps) => list.map((a) => a.serverName);
+
+  test("pinned apps lead in pin order; the rest keep their order", () => {
+    expect(names(orderApps(apps, ["people", "outbound"]))).toEqual([
+      "people",
+      "outbound",
+      "crm",
+      "tasks",
+    ]);
+  });
+
+  test("a pin naming no app here is ignored", () => {
+    expect(names(orderApps(apps, ["gone", "tasks"]))).toEqual([
+      "tasks",
+      "crm",
+      "outbound",
+      "people",
+    ]);
+  });
+
+  test("no pins, order unchanged", () => {
+    expect(names(orderApps(apps, []))).toEqual(["crm", "tasks", "outbound", "people"]);
   });
 });
