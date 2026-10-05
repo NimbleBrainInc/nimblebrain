@@ -395,7 +395,10 @@ export const TasksCreateInput = Type.Object(
     body: Type.String({
       description:
         "The prompt that opens every run, whatever starts it: its schedule, an event, or " +
-        "someone running it.",
+        "someone running it. Describe the job, not tool names: a name such as " +
+        "`gmail__send_email` changes with how its connector is installed (`my_` for a personal " +
+        "one), and a run that cannot find a named tool ends quietly. List the tools in " +
+        "`manifest.allowedTools`, where a missing one fails the run.",
     }),
   },
   { required: ["manifest", "body"] },

@@ -169,6 +169,12 @@ space-separated string, e.g. `policy_search__find`). This is distinct from
 missing, tell the user to install the providing app from the Apps section of
 settings.
 
+In the skill's body, describe the capability ("search the CRM for the contact"),
+not a tool's name. A name like `github__search_issues` changes with how the
+connector is installed (a personal connection carries `my_`) and with the
+connector, so a body that names one stops working without saying so. Names
+belong in `allowed-tools` and `tool-affinity`, as `<connector>__*` globs.
+
 ## What skills cannot do
 
 - Change runtime config (maxIterations, model) — that's `nimblebrain.json`.

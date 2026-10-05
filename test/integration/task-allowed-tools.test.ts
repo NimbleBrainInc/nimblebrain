@@ -10,11 +10,17 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
+import { DeclaredToolsUnavailableError } from "../../src/runtime/errors.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import type { McpSource } from "../../src/tools/mcp-source.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
+import {
+  type FakeConnectorServer,
+  startFakeConnectorServer,
+} from "../helpers/fake-connector-server.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { recordingModel } from "../helpers/recording-model.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
@@ -200,5 +206,79 @@ describe("an unattended run's allowedTools and the nb__ tools", () => {
 
     expect(await systemPromptOf(["files__*", "nb__use_skill"])).toContain(catalogInstruction);
     expect(await systemPromptOf(["files__*"])).not.toContain(catalogInstruction);
+  });
+});
+
+/**
+ * A tool the list declares that nothing the run can reach matches is a run
+ * that cannot do its job. Left to run, it never tries the tool and ends
+ * `complete`, so it is refused before its first model call instead. Reachable
+ * here is the router's set, which holds the owner's granted `my_` connectors.
+ */
+describe("an unattended run whose declared tools are unavailable", () => {
+  const declDir = join(tmpdir(), `nimblebrain-task-declared-tools-${Date.now()}`);
+  let declRuntime: Runtime;
+  let personal: FakeConnectorServer;
+  const recorded = recordingModel(createEchoModel({ responses: [{ text: "done" }] }));
+
+  const run = (allowedTools: string[]) =>
+    declRuntime.executeTask({
+      identity: DEV_IDENTITY,
+      workspaceId: TEST_WORKSPACE_ID,
+      prompt: "suppress the new crm contacts",
+      trigger: "schedule",
+      allowedTools,
+    });
+
+  beforeAll(async () => {
+    mkdirSync(declDir, { recursive: true });
+    declRuntime = await Runtime.start({
+      identityProvider: devProvider,
+      languageModel: recorded.model,
+      logging: { disabled: true },
+      workDir: declDir,
+      telemetry: { enabled: false },
+      allowInsecureRemotes: true,
+    });
+    await provisionTestWorkspace(declRuntime);
+    personal = startFakeConnectorServer(["list_notes"]);
+    await new IdentityConnectorStore({ workDir: declDir }).add(DEV_IDENTITY.id, {
+      url: personal.url,
+      serverName: "granola",
+      ui: null,
+    });
+    await declRuntime
+      .getPermissionStore()
+      .grantConnector(DEV_IDENTITY.id, "granola", TEST_WORKSPACE_ID);
+  });
+
+  afterAll(async () => {
+    await declRuntime.shutdown();
+    personal.close();
+    if (existsSync(declDir)) rmSync(declDir, { recursive: true });
+  });
+
+  it("refuses the run before any model call, naming the missing tools", async () => {
+    recorded.calls.length = 0;
+    const err = await run(["crm__*", "files__*", "mail__send"]).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(DeclaredToolsUnavailableError);
+    expect((err as DeclaredToolsUnavailableError).code).toBe("declared_tools_unavailable");
+    expect((err as DeclaredToolsUnavailableError).tools).toEqual(["crm__*", "mail__send"]);
+    expect(recorded.calls).toHaveLength(0);
+  });
+
+  it("runs when every declared tool is reachable, a granted personal connector included", async () => {
+    recorded.calls.length = 0;
+    await run(["files__*", "my_granola__*", "nb__search"]);
+
+    expect(recorded.calls).toHaveLength(1);
+  });
+
+  it("checks nothing for a run with no list", async () => {
+    recorded.calls.length = 0;
+    await run([]);
+
+    expect(recorded.calls).toHaveLength(1);
   });
 });

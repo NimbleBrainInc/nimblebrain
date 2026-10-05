@@ -971,6 +971,32 @@ describe("Scheduler — backoff", () => {
     expect(updated.enabled).toBe(true);
   });
 
+  it("records a run refused for unavailable declared tools as a failure", async () => {
+    // Unlike a revoked membership, a missing connector is the task's own
+    // problem to surface: it counts toward the streak, so a connector that
+    // stays gone backs the task off and disables it.
+    const auto = makeTask({
+      consecutiveErrors: 3,
+      nextRunAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const defs = new Map<string, Task>();
+    defs.set(auto.id, auto);
+    seedDefs(tmpDir, defs);
+
+    const refused = Object.assign(
+      new Error("Declared tool unavailable: crm__search. The run did not start."),
+      { code: "declared_tools_unavailable" },
+    );
+    const scheduler = new Scheduler(createThrowingExecutor(refused), { workDir: tmpDir });
+    scheduler.start();
+    const run = await scheduler.runNow(WS, OWNER, auto.id);
+    scheduler.stop();
+
+    expect(run?.status).toBe("failure");
+    expect(run?.error).toContain("crm__search");
+    expect(defOf(scheduler, auto.id)!.consecutiveErrors).toBe(4);
+  });
+
   it("after 1 failure, next run delayed by 30s", async () => {
     const auto = makeTask({
       nextRunAt: new Date(Date.now() - 1000).toISOString(),

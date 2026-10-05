@@ -327,10 +327,26 @@ describe("dispatch doors", () => {
           identity: DEV_IDENTITY,
           workspaceId: wsId,
           trigger: "schedule",
-          allowedTools: [name],
         });
         const call = result.toolCalls.find((c) => c.name === name);
         expect(call?.ok ?? false).toBe(false);
+        expect(ran(wsId)).toEqual([]);
+      });
+
+      // A run cannot reach a host-only handler, so one that declares it in
+      // `allowedTools` is refused before it starts.
+      it(`refuses ${role}'s unattended run that declares ${h}`, async () => {
+        resetCalls();
+        const err = await runtime
+          .executeTask({
+            prompt: "run it",
+            identity: DEV_IDENTITY,
+            workspaceId: wsId,
+            trigger: "schedule",
+            allowedTools: [name],
+          })
+          .catch((e: unknown) => e);
+        expect((err as { code?: string }).code).toBe("declared_tools_unavailable");
         expect(ran(wsId)).toEqual([]);
       });
 
