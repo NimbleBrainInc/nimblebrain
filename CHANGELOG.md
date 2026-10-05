@@ -243,6 +243,7 @@
 
 ### Fixed
 
+- **A brokered Google connection shows its account.** When the broker records no display name, the account comes from the id_token the vendor issued, so a Google toolkit whose auth config grants `openid` and `userinfo.email` reads "Connected as …" like Gmail does ([#1612](https://github.com/NimbleBrainInc/nimblebrain/issues/1612)).
 - **A declined or refused sign-in frees the connector at once.** The OAuth callback ends the pending flow when the server answers with an error, and so does disconnecting or removing the connector mid-sign-in, so Connect no longer answers "already in progress" until the flow's 15-minute timeout ([#1433](https://github.com/NimbleBrainInc/nimblebrain/issues/1433)).
 - **Config startup lines log at their real level.** An applied override is `info`, and an ignored override key, an unknown key or a deprecated key is `warn`, so a clean boot no longer logs `error` lines that alerting counts ([#1545](https://github.com/NimbleBrainInc/nimblebrain/issues/1545)).
 - **Deleting from the Files app works again.** The app confirmed with `window.confirm`, which the app sandbox blocks without showing anything, so every delete was silently cancelled. It now confirms in the app.
