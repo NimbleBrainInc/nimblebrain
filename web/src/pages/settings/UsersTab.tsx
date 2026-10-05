@@ -209,12 +209,15 @@ export function UsersTab() {
     setCreating(true);
     setCreateError(null);
     try {
-      await callToolWithoutWorkspace("nb", "manage_users", {
+      // A refusal comes back as a result, not a throw; parseToolResult throws on
+      // it, so each handler below reports it instead of carrying on as if done.
+      const res = await callToolWithoutWorkspace("nb", "manage_users", {
         action: "create",
         email: createEmail.trim(),
         displayName: createName.trim(),
         orgRole: createRole,
       });
+      parseToolResult(res);
       setCreateEmail("");
       setCreateName("");
       setCreateRole("member");
@@ -235,7 +238,9 @@ export function UsersTab() {
       if (!confirmed) return;
       setBusyId(userId);
       try {
-        await callToolWithoutWorkspace("nb", "manage_users", { action: "delete", userId });
+        parseToolResult(
+          await callToolWithoutWorkspace("nb", "manage_users", { action: "delete", userId }),
+        );
         await fetchUsers();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to deactivate user");
@@ -250,7 +255,9 @@ export function UsersTab() {
     async (userId: string) => {
       setBusyId(userId);
       try {
-        await callToolWithoutWorkspace("nb", "manage_users", { action: "restore", userId });
+        parseToolResult(
+          await callToolWithoutWorkspace("nb", "manage_users", { action: "restore", userId }),
+        );
         await fetchUsers();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to restore user");
