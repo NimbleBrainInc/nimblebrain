@@ -4,7 +4,9 @@
 //
 // One list per area, read by both the area's side nav (`SettingsShell`) and the
 // top bar's breadcrumb (`lib/page-title`), so a tab is named the same in both
-// places by construction.
+// places by construction. The FIRST tab is the area's landing page: the area's
+// root redirects there (`App.tsx`) and the breadcrumb links there, so reordering
+// a list moves its default with it.
 // ---------------------------------------------------------------------------
 
 import type { ScopedRole } from "../hooks/useScopedRole";
@@ -32,13 +34,16 @@ export const WORKSPACE_SETTINGS_TABS: readonly SettingsTab[] = [
   { segment: "webhooks", label: "Webhooks", minRole: "ws_admin" },
 ];
 
+// Ordered by what an org admin comes to do: who and where (workspaces, users),
+// then what the assistant can do (skills, model), then oversight (usage), then
+// cleanup after a workspace is deleted (archives).
 export const ORG_SETTINGS_TABS: readonly SettingsTab[] = [
-  { segment: "model", label: "Model", minRole: "org_admin" },
   { segment: "workspaces", label: "Workspaces", minRole: "org_admin" },
-  { segment: "archives", label: "Archives", minRole: "org_admin" },
   { segment: "users", label: "Users", minRole: "org_admin" },
   { segment: "skills", label: "Skills", minRole: "org_admin" },
+  { segment: "model", label: "Model", minRole: "org_admin" },
   { segment: "usage", label: "Usage", minRole: "org_admin" },
+  { segment: "archives", label: "Archives", minRole: "org_admin" },
 ];
 
 /** Pinned to the org nav's footer and role-exempt: any signed-in user may read it. */
@@ -49,3 +54,8 @@ export const PROFILE_TABS: readonly SettingsTab[] = [
   { segment: "connectors", label: "Connectors", minRole: "none" },
   { segment: "skills", label: "Skills", minRole: "none" },
 ];
+
+/** An area's landing tab: the first in its list. */
+export function landingTab(tabs: readonly SettingsTab[]): string {
+  return tabs[0].segment;
+}

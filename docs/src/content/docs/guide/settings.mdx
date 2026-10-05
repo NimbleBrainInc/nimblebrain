@@ -88,6 +88,18 @@ The workspace's MCP URL, `<origin>/mcp/<workspaceId>`, with a copy button. Add i
 
 Visible only to organization admins and owners. Hidden from regular members. These settings live under `/org/*`, outside any workspace URL.
 
+### Workspaces (`/org/workspaces`)
+
+The org-wide workspace roster: create and delete workspaces, and see each one's connectors and metadata. An organization admin can also manage any workspace's members from here, without joining it.
+
+Deleting a workspace asks first. It disappears for everyone in it and its connectors are disconnected, which can't be undone; its conversations and files are kept under **Archives** until an admin purges them.
+
+To edit a workspace's instructions, switch into it via the navigator and use **This Workspace → General** — and note that editing requires admin membership of that workspace.
+
+### Users (`/org/users`)
+
+Manage user accounts at the organization level — change someone's org role or remove a user.
+
 ### Model (`/org/model`)
 
 Choose which AI models the agent uses across **every** workspace. Each field saves as you change it: a dropdown when you pick, a number when you leave the field or press Enter (Escape undoes the edit). A save that applies takes effect at once and shows a notice with **Undo**; one the server refuses stays on the field with the reason, **Retry** and **Revert**.
@@ -111,24 +123,6 @@ Reasoning is billed as output tokens, and the agent's reasoning shows up in chat
   Model configuration is platform-wide. Changes affect every workspace and every user immediately. Restrict to org admins/owners.
 </Aside>
 
-### Workspaces (`/org/workspaces`)
-
-The org-wide workspace roster: create and delete workspaces, and see each one's connectors and metadata. An organization admin can also manage any workspace's members from here, without joining it.
-
-Deleting a workspace asks first. It disappears for everyone in it and its connectors are disconnected, which can't be undone; its conversations and files are kept under **Archives** until an admin purges them.
-
-To edit a workspace's instructions, switch into it via the navigator and use **This Workspace → General** — and note that editing requires admin membership of that workspace.
-
-### Archives (`/org/archives`)
-
-Deleting a workspace archives its data rather than destroying it. This tab lists every archive: the workspace's name and ID, the size on disk, and when it was archived. An archive whose workspace record is missing or unreadable is still listed, with its name and ID shown as unknown.
-
-**Purge** permanently removes one archive from disk. It asks first, stating the size, and cannot be undone. Nothing is purged automatically — archives stay until an admin purges them, so check this tab when disk space runs low.
-
-### Users (`/org/users`)
-
-Manage user accounts at the organization level — change someone's org role or remove a user.
-
 ### Usage (`/org/usage`)
 
 Organization-wide usage analytics. All dates are UTC.
@@ -140,6 +134,12 @@ Organization-wide usage analytics. All dates are UTC.
 <Aside type="note">
   Usage is reported at the **organization** level, on this page. Filter or group by workspace to see one workspace's spend; there is no per-workspace usage tab.
 </Aside>
+
+### Archives (`/org/archives`)
+
+Deleting a workspace archives its data rather than destroying it. This tab lists every archive: the workspace's name and ID, the size on disk, and when it was archived. An archive whose workspace record is missing or unreadable is still listed, with its name and ID shown as unknown.
+
+**Purge** permanently removes one archive from disk. It asks first, stating the size, and cannot be undone. Nothing is purged automatically — archives stay until an admin purges them, so check this tab when disk space runs low.
 
 ## Custom-instruction layers
 

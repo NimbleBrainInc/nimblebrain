@@ -8,6 +8,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { pageTitle, settingsLocation } from "../src/lib/page-title";
+import { landingTab, ORG_SETTINGS_TABS } from "../src/lib/settings-tabs";
 import type { PlacementEntry } from "../src/types";
 
 const placement = (over: Partial<PlacementEntry>): PlacementEntry => ({
@@ -75,5 +76,23 @@ describe("pageTitle", () => {
   test("an unknown route names nothing", () => {
     expect(pageTitle("/w/000f7ed6658f9d30/app/gone", PLACEMENTS)).toBe("");
     expect(pageTitle("/elsewhere", PLACEMENTS)).toBe("");
+  });
+});
+
+describe("the organization's tabs", () => {
+  test("run from what an admin comes to do to cleanup", () => {
+    expect(ORG_SETTINGS_TABS.map((t) => t.label)).toEqual([
+      "Workspaces",
+      "Users",
+      "Skills",
+      "Model",
+      "Usage",
+      "Archives",
+    ]);
+  });
+
+  test("land on, and crumb back to, the first tab in the list", () => {
+    expect(landingTab(ORG_SETTINGS_TABS)).toBe("workspaces");
+    expect(settingsLocation("/org/archives")?.crumbs[0]?.to).toBe("/org/workspaces");
   });
 });

@@ -17,6 +17,7 @@
 import type { PlacementEntry } from "../types";
 import { identityAppSegment, isIdentityApp } from "./identity-apps";
 import {
+  landingTab,
   ORG_ABOUT_TAB,
   ORG_SETTINGS_TABS,
   PROFILE_TABS,
@@ -39,14 +40,14 @@ export interface SettingsLocation {
 function locate(
   area: string,
   root: string,
-  home: string,
   tabs: readonly SettingsTab[],
   segment: string | undefined,
 ): SettingsLocation {
   const tab = tabs.find((t) => t.segment === segment);
   // An unknown or missing tab names the area alone, with nothing to go back to.
   if (!tab) return { crumbs: [], title: area };
-  return { crumbs: [{ label: area, to: `${root}/${home}` }], title: tab.label };
+  // The crumb goes where the area's root lands: its first tab.
+  return { crumbs: [{ label: area, to: `${root}/${landingTab(tabs)}` }], title: tab.label };
 }
 
 /**
@@ -57,25 +58,13 @@ function locate(
 export function settingsLocation(pathname: string): SettingsLocation | null {
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] === "w" && parts[2] === "settings") {
-    return locate(
-      "Settings",
-      `/w/${parts[1]}/settings`,
-      "general",
-      WORKSPACE_SETTINGS_TABS,
-      parts[3],
-    );
+    return locate("Settings", `/w/${parts[1]}/settings`, WORKSPACE_SETTINGS_TABS, parts[3]);
   }
   if (parts[0] === "org") {
-    return locate(
-      "Organization",
-      "/org",
-      "workspaces",
-      [...ORG_SETTINGS_TABS, ORG_ABOUT_TAB],
-      parts[1],
-    );
+    return locate("Organization", "/org", [...ORG_SETTINGS_TABS, ORG_ABOUT_TAB], parts[1]);
   }
   if (parts[0] === "profile") {
-    return locate("Profile", "/profile", "general", PROFILE_TABS, parts[1]);
+    return locate("Profile", "/profile", PROFILE_TABS, parts[1]);
   }
   return null;
 }
