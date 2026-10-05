@@ -34,12 +34,15 @@ export function BatchPane({
   taskName,
   onChanged,
   onBack,
+  onOpenRun,
 }: {
   batch: TaskBatch;
   taskName?: string;
   /** Reload the panel after a control changed the batch. */
   onChanged: () => void;
   onBack?: () => void;
+  /** Open an item's run on the result screen. */
+  onOpenRun?: (runId: string) => void;
 }) {
   const batchTool = useTool<string>("batch");
   const controlTool = useTool<string>("batch_control");
@@ -113,7 +116,7 @@ export function BatchPane({
           Failing items only
         </label>
 
-        <BatchResultsTable rows={rows} columns={columns} />
+        <BatchResultsTable rows={rows} columns={columns} onOpenRun={onOpenRun} />
         {nextCursor !== undefined && (
           <button
             type="button"
@@ -207,7 +210,7 @@ function BatchHead({
 }
 
 /** The progress bar and the counts under it. */
-function BatchProgress({ batch }: { batch: TaskBatch }) {
+export function BatchProgress({ batch }: { batch: TaskBatch }) {
   const { counts } = batch;
   const pct = batch.items > 0 ? Math.round((batch.done / batch.items) * 100) : 0;
   const stoppedEarly = counts.skipped + counts.cancelled;
@@ -247,7 +250,15 @@ function BatchProgress({ batch }: { batch: TaskBatch }) {
 }
 
 /** The results table: index, output fields, verdict badge, cost, and the run's output on demand. */
-function BatchResultsTable({ rows, columns }: { rows: BatchItemResult[]; columns: string[] }) {
+function BatchResultsTable({
+  rows,
+  columns,
+  onOpenRun,
+}: {
+  rows: BatchItemResult[];
+  columns: string[];
+  onOpenRun?: (runId: string) => void;
+}) {
   const [openRun, setOpenRun] = useState<string | null>(null);
   if (rows.length === 0) return <div className="rail-empty">No items to show.</div>;
   return (
@@ -272,6 +283,7 @@ function BatchResultsTable({ rows, columns }: { rows: BatchItemResult[]; columns
             columns={columns}
             open={openRun === row.runId}
             onToggle={() => setOpenRun(openRun === row.runId ? null : (row.runId ?? null))}
+            onOpenRun={onOpenRun}
           />
         ))}
       </tbody>
@@ -284,11 +296,13 @@ function BatchRow({
   columns,
   open,
   onToggle,
+  onOpenRun,
 }: {
   row: BatchItemResult;
   columns: string[];
   open: boolean;
   onToggle: () => void;
+  onOpenRun?: (runId: string) => void;
 }) {
   return (
     <>
@@ -308,9 +322,25 @@ function BatchRow({
         <td>{row.costUsd !== undefined ? formatCost(row.costUsd) : ""}</td>
         <td>
           {row.runId && row.state === "done" ? (
-            <button type="button" className="batch-run-link" onClick={onToggle}>
-              {open ? "Hide" : "Open"}
-            </button>
+            <span className="batch-run-links">
+              <button
+                type="button"
+                className="batch-run-link"
+                aria-expanded={open}
+                onClick={onToggle}
+              >
+                {open ? "Hide" : "Preview"}
+              </button>
+              {onOpenRun && (
+                <button
+                  type="button"
+                  className="batch-run-link"
+                  onClick={() => row.runId && onOpenRun(row.runId)}
+                >
+                  Result
+                </button>
+              )}
+            </span>
           ) : null}
         </td>
       </tr>
@@ -357,6 +387,77 @@ function BatchRunOutput({ runId, error }: { runId: string; error?: string }) {
           dangerouslySetInnerHTML={{ __html: renderMarkdown(output) }}
         />
       )}
+    </div>
+  );
+}
+
+/** A batch on its own screen, read by id and re-read after a control or a data change. */
+export function BatchScreen({
+  batchId,
+  taskName,
+  refreshKey,
+  onBack,
+  onOpenRun,
+}: {
+  batchId: string;
+  taskName?: (taskId: string) => string | undefined;
+  refreshKey: number;
+  onBack: () => void;
+  onOpenRun: (runId: string, taskId: string) => void;
+}) {
+  const batchTool = useTool<string>("batch");
+  const [batch, setBatch] = useState<TaskBatch | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: batchTool.call is stable; refreshKey and tick are signals
+  useEffect(() => {
+    let cancelled = false;
+    batchTool
+      .call({ batchId })
+      .then((res) => {
+        if (!cancelled) setBatch((asDict(res.data).batch as TaskBatch) ?? null);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [batchId, refreshKey, tick]);
+
+  if (!batch) {
+    return (
+      <div className="app">
+        <header className="screen-head">
+          <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
+            ←
+          </button>
+          <h1 className="screen-title">Batch</h1>
+        </header>
+        <div className="content">
+          {error ? (
+            <div className="error-banner" role="alert">
+              {error}
+            </div>
+          ) : (
+            <div className="loading-list" aria-busy="true">
+              <div className="skel skel-card" />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="app batch-screen">
+      <BatchPane
+        batch={batch}
+        taskName={taskName?.(batch.taskId)}
+        onChanged={() => setTick((t) => t + 1)}
+        onBack={onBack}
+        onOpenRun={(runId) => onOpenRun(runId, batch.taskId)}
+      />
     </div>
   );
 }
