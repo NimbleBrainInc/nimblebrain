@@ -12,18 +12,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskRun, TaskSummary, UpcomingData } from "../types.ts";
 
 type Mod<T> = T extends Promise<infer U> ? U : never;
-let saved: Mod<ReturnType<typeof importSaved>>;
+let home: Mod<ReturnType<typeof importHome>>;
 let upcoming: Mod<ReturnType<typeof importUpcoming>>;
 let activity: Mod<ReturnType<typeof importActivity>>;
 let result: Mod<ReturnType<typeof importResult>>;
 let input: Mod<ReturnType<typeof importInput>>;
-let tasksUi: Mod<ReturnType<typeof importTasksUi>>;
-const importSaved = () => import("./SavedView.tsx");
+const importHome = () => import("./HomeView.tsx");
 const importUpcoming = () => import("./UpcomingView.tsx");
 const importActivity = () => import("./ActivityView.tsx");
 const importResult = () => import("./ResultView.tsx");
 const importInput = () => import("./InputEditor.tsx");
-const importTasksUi = () => import("./TasksUI.tsx");
 
 beforeAll(async () => {
   const { window } = new JSDOM("", { url: "http://localhost" });
@@ -33,13 +31,12 @@ beforeAll(async () => {
   g.document = window.document;
   g.HTMLElement = window.HTMLElement;
   g.Node = window.Node;
-  [saved, upcoming, activity, result, input, tasksUi] = await Promise.all([
-    importSaved(),
+  [home, upcoming, activity, result, input] = await Promise.all([
+    importHome(),
     importUpcoming(),
     importActivity(),
     importResult(),
     importInput(),
-    importTasksUi(),
   ]);
 });
 
@@ -49,7 +46,7 @@ const noop = () => {};
 const TASK: TaskSummary = {
   id: "digest",
   name: "Digest",
-  schedule: "Daily at 7:20 AM",
+  schedule: "Weekdays at 7:20 AM",
   scheduleType: "cron",
   enabled: false,
   source: "user",
@@ -60,74 +57,108 @@ const TASK: TaskSummary = {
 };
 
 const ACTIONS = {
-  onOpen: noop,
-  onRunNow: noop,
-  onRunList: noop,
-  onEdit: noop,
-  onDuplicate: noop,
-  onToggle: noop,
-  onDelete: noop,
+  onOpenTask: noop,
   onOpenRun: noop,
   onCreate: noop,
+  onSeeUpcoming: noop,
+  onSeeActivity: noop,
 };
 
-describe("Saved", () => {
-  const body = (p: Partial<Parameters<typeof saved.SavedBody>[0]>) =>
+const STATS = (label: "Succeeded" | "Poor result" | "Needs review") =>
+  new Map([
+    [
+      "digest",
+      {
+        taskId: "digest",
+        runs: 4,
+        pass: 3,
+        fail: 1,
+        uncertain: 0,
+        passRate: 0.75,
+        costUsd: 1.2,
+        lastRun: { id: "run_1", startedAt: new Date().toISOString(), label },
+      },
+    ],
+  ]);
+
+describe("Home", () => {
+  const body = (p: Partial<Parameters<typeof home.HomeBody>[0]>) =>
     render(
-      createElement(saved.SavedBody, {
+      createElement(home.HomeBody, {
         tasks: [],
         loading: false,
         error: null,
         stats: new Map(),
-        statsError: null,
-        busy: {},
+        upcoming: null,
+        readError: null,
         actions: ACTIONS,
         ...p,
       }),
     );
+  const live = { ...TASK, enabled: true };
 
   test("loading shows skeletons", () => {
     expect(body({ loading: true })).toContain('aria-busy="true"');
   });
   test("empty offers templates", () => {
     const html = body({});
-    expect(html).toContain("No saved tasks");
+    expect(html).toContain("No tasks yet");
     expect(html).toContain("Weekly Summary");
   });
   test("an error with nothing loaded says so", () => {
     expect(body({ error: "boom" })).toContain('role="alert"');
   });
-  test("a loaded row shows trigger, paused state, last run label, pass rate and cost", () => {
+  test("a poor result leads, as a card with its reason and a link to the run", () => {
+    const html = body({ tasks: [live], stats: STATS("Poor result") });
+    expect(html).toContain("1 task needs you");
+    expect(html).toContain("attn-card tone-danger");
+    expect(html).toContain("The last run didn&#x27;t meet its rules.");
+    expect(html).toContain("Open the run");
+  });
+  test("a task on track sits in the list with its schedule", () => {
+    const html = body({ tasks: [live], stats: STATS("Succeeded") });
+    expect(html).toContain("Everything is on track");
+    expect(html).toContain("home-row tone-success");
+    expect(html).toContain("Weekdays at 7:20 AM");
+    expect(html).not.toContain("attn-card");
+  });
+  test("a paused task is folded under Paused", () => {
+    const html = body({ tasks: [TASK], stats: STATS("Succeeded") });
+    expect(html).toContain("Paused (1)");
+  });
+  test("a run in flight shows with Watch, and coming fires show in the strip", () => {
     const html = body({
-      tasks: [TASK],
-      stats: new Map([
-        [
-          "digest",
+      tasks: [live],
+      stats: STATS("Succeeded"),
+      upcoming: {
+        running: [
           {
             taskId: "digest",
-            runs: 4,
-            pass: 3,
-            fail: 1,
-            uncertain: 0,
-            passRate: 0.75,
-            costUsd: 1.2,
-            lastRun: { id: "run_1", startedAt: new Date().toISOString(), label: "Poor result" },
+            runId: "run_9",
+            state: "running",
+            startedAt: new Date().toISOString(),
           },
         ],
-      ]),
+        queued: [],
+        days: 7,
+        windowEnd: "",
+        scheduled: [
+          {
+            taskId: "digest",
+            taskName: "Digest",
+            at: new Date(Date.now() + 3_600_000).toISOString(),
+            schedule: "Weekdays at 7:20 AM",
+            scheduleType: "cron",
+          },
+        ],
+        frequent: [],
+        events: [],
+      },
     });
-    expect(html).toContain("Daily at 7:20 AM");
-    expect(html).toContain(">Off<");
-    expect(html).toContain("Poor result");
-    expect(html).toContain("75%");
-    expect(html).toContain("$1.20");
-    expect(html).toContain('aria-label="Actions for Digest"');
-  });
-  test("a task with no runs yet reads so, and no stats reads a dash", () => {
-    const html = body({ tasks: [{ ...TASK, enabled: true }], stats: new Map() });
-    expect(html).toContain("No runs yet");
-    expect(html).toContain("—");
-    expect(html).not.toContain(">Off<");
+    expect(html).toContain("is running");
+    expect(html).toContain(">Watch<");
+    expect(html).toContain("Coming up");
+    expect(html).toContain("See everything coming up");
   });
 });
 
@@ -382,7 +413,9 @@ describe("Result", () => {
 
   test("loading, open, and error", () => {
     expect(body({ status: "loading", result: null })).toContain('aria-busy="true"');
-    expect(body({ status: "open", result: null })).toContain("Running…");
+    expect(body({ status: "open", result: null })).toContain(
+      "Its steps and result appear here when it ends.",
+    );
     expect(body({ status: "error", result: null, error: "Run not found" })).toContain(
       "Run not found",
     );
@@ -410,7 +443,8 @@ describe("Result", () => {
     expect(html).toContain("Judged by judge · default 1.0");
     expect(html).toContain("Accept");
     expect(html).toContain("Re-judge");
-    expect(html).toContain("1 tool call");
+    expect(html).toContain("1 step");
+    expect(html).toContain('Fetch<span class="muted"> in web</span>');
     expect(html).toContain("Cost: $0.43");
     expect(html).toContain("Open the run this retried");
   });
@@ -475,14 +509,5 @@ describe("InputEditor", () => {
     expect(input.parseJsonInput("")).toEqual({ ok: true, input: undefined });
     expect(input.parseJsonInput('{"a":1}')).toEqual({ ok: true, input: { a: 1 } });
     expect(input.parseJsonInput("{").ok).toBe(false);
-  });
-});
-
-describe("ViewTabs", () => {
-  test("is a tab list with the current view selected", () => {
-    const html = render(createElement(tasksUi.ViewTabs, { view: "upcoming", onChange: noop }));
-    expect(html).toContain('role="tablist"');
-    expect(html).toMatch(/aria-selected="true"[^>]*>Upcoming/);
-    expect(html).toContain("Activity");
   });
 });

@@ -178,15 +178,13 @@ Pausing keeps the definition and its run history intact; the scheduler simply sk
 
 ## The Tasks panel
 
-The **Tasks** panel opens on three views:
+The **Tasks** panel opens on your tasks, most urgent first. A line at the top says how many need you. Each task that does (its trigger was turned off, its runs keep failing, or its last run failed, fell short of its rules, or needs checking) is a card with the reason and a link to the run. Runs going or waiting for a slot follow, each with **Watch**; then the next few scheduled runs; then every other task with its schedule and when it runs next. Tasks whose trigger you turned off are folded under **Paused**. Colour and an icon carry each task's state.
 
-- **Saved** — every saved task with its trigger, its last run's label, its pass rate and cost over the last 30 days, and a menu with Run now, Run on a list…, Edit, Duplicate, turning the trigger on or off, and Delete. Run now asks for the input first when the task has an input schema, as a form for a flat schema and as JSON otherwise. Run on a list takes a JSON array, or CSV whose header row names the input fields.
-- **Upcoming** — your runs holding or waiting for a run slot (with their queue position and batch item), then the scheduled runs over the next 7 or 30 days in time order (a frequent schedule as one row with its count, a rare one by its next run), then the tasks that run on events with their hourly ceiling.
-- **Activity** — every run from every source, newest first, back through the whole history, filtered by outcome, task, what started it, and date. A batch is one row you can expand.
+From there, **See everything coming up** lists your runs in the queue, the scheduled runs over the next 7 or 30 days (a frequent schedule as one row with its count, a rare one by its next run), and the tasks that run on events with their hourly ceiling. **See every run** lists every run from every source, newest first, back through the whole history, filtered by outcome, task, what started it, and date; a batch is one row you can expand.
 
-Opening a task shows its page: a status line (trigger, next run, last run), an **Enabled** switch for a task with a schedule or event trigger (it gates only the trigger; Run now works either way), **Run now**, and a menu, over three tabs: **Overview** (pass rate, cost, next run, the last runs, and runs needing your review), **Runs** (its history and batches), and **Definition** (the prompt, schemas, criteria and judge, trigger, and limits, read-only; edit them in the editor).
+Opening a task slides it in as a sheet over the list, which stays where it was. The sheet shows the task's state, a status line (trigger, next run, last run), **Run now** (or **Watch** while it runs), an **Enabled** switch for a task with a schedule or event trigger (it gates only the trigger; Run now works either way), and a menu with Run on a list…, Edit, Duplicate, and Delete. Below are what needs doing, the latest result, the recent runs with the pass rate and 30-day cost, and the setup (prompt, input, rules and judge, limits) folded away until you open it. Run now asks for the input first when the task has an input schema. Run on a list takes a JSON array, or CSV whose header row names the input fields.
 
-Opening a run shows its result: the deliverable first (structured output as values and tables), then its assessment with Accept, Reject, a note, and Re-judge, then how it ran, its tool calls, input, and cost. The editor covers what the task does, its input fields, its criteria, output schema and judge, when it runs, its limits, and a test run of the draft before you save it; accepting or rejecting the test run with a note adds that note as a draft criterion.
+Opening a run shows its result: the deliverable first (structured output as values and tables), then its assessment with Accept, Reject, a note, and Re-judge, then how it ran, its steps (each tool call in plain words with how long it took, its input and output behind Show details), input, and cost. The editor covers what the task does, its input fields, its criteria, output schema and judge, when it runs, its limits, and a test run of the draft before you save it; accepting or rejecting the test run with a note adds that note as a draft criterion.
 
 ## Running from an MCP client
 
@@ -327,7 +325,7 @@ A batch that pauses on its own (budget or stop rule) writes a notification to th
 | `cancel` | Stops the batch for good: queued runs are taken out of the queue and runs in flight are stopped, all recorded `cancelled`, and items not yet started are cancelled. |
 | `rerun_failed` | Runs every item whose run failed, was skipped or cancelled, or was judged `fail` again, each as a new run. The item keeps its earlier run ids (`previousRunIds`) and adds the new run's cost to its own. |
 
-In the Tasks panel, each batch is one row in Activity with its progress, counts, cost, and state, and its item runs are not listed separately. Open one for its results table, with the output's fields as columns, each item's verdict and cost, and its run's output; filter it to failing items, and pause, resume, cancel, or re-run failed items from its header.
+In the Tasks panel, each batch is one row in the list of every run, with its progress, counts, cost, and state, and its item runs are not listed separately. Open one for its results table, with the output's fields as columns, each item's verdict and cost, and its run's output; filter it to failing items, and pause, resume, cancel, or re-run failed items from its header.
 
 ### If the runtime restarts
 

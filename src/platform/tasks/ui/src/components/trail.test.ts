@@ -30,7 +30,10 @@ describe("trailFor", () => {
   });
 
   test("a run opened from the list names its task as the parent", () => {
-    const trail = trailFor([{ kind: "result", runId: "run_abcdef123456", taskId: "digest" }], nameOf);
+    const trail = trailFor(
+      [{ kind: "result", runId: "run_abcdef123456", taskId: "digest" }],
+      nameOf,
+    );
     expect(trail.map((s) => s.label)).toEqual(["Tasks", "Digest", "Run abcdef"]);
     expect(trail[1]?.stack).toEqual([{ kind: "task", taskName: "Digest" }]);
   });
