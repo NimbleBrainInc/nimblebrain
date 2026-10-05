@@ -168,7 +168,7 @@ describe("formatSchedule", () => {
         expression: "0 8 * * *",
         timezone: "Pacific/Honolulu",
       }),
-    ).toBe("Daily at 8:00 AM HST");
+    ).toBe("Every day at 8:00 AM HST");
   });
 
   test("weekly cron (Monday)", () => {
@@ -183,6 +183,38 @@ describe("formatSchedule", () => {
 
   test("every N minutes cron", () => {
     expect(formatSchedule({ type: "cron", expression: "*/30 * * * *" })).toBe("Every 30 minutes");
+  });
+
+  test.each([
+    ["0 7 * * 1-5", "Weekdays at 7:00 AM HST"],
+    ["0 7 * * MON-FRI", "Weekdays at 7:00 AM HST"],
+    ["30 10 * * 0,6", "Weekends at 10:30 AM HST"],
+    ["0 9 * * 1,4", "Mondays and Thursdays at 9:00 AM HST"],
+    ["0 9 * * 1,3,5", "Mondays, Wednesdays and Fridays at 9:00 AM HST"],
+    ["0 9 * * 0-6", "Every day at 9:00 AM HST"],
+    ["15 18 * * 7", "Sundays at 6:15 PM HST"],
+    ["0 8 1 * *", "Monthly on the 1st at 8:00 AM HST"],
+    ["0 8 22 * *", "Monthly on the 22nd at 8:00 AM HST"],
+    ["*/5 * * * *", "Every 5 minutes"],
+    ["* * * * *", "Every minute"],
+    ["0 * * * *", "Every hour"],
+    ["15 * * * *", "Every hour at :15"],
+    ["0 */3 * * *", "Every 3 hours"],
+  ])("cron %s reads %s", (expression, words) => {
+    expect(formatSchedule({ type: "cron", expression, timezone: "Pacific/Honolulu" })).toBe(words);
+  });
+
+  test.each([
+    "0 12,17 * * 1-5",
+    "0 9-17 * * *",
+    "0 8 * 6 *",
+    "0 8 1 * 1",
+    "0 8 * * 5-1",
+    "0 0 0 8 * * *",
+  ])("cron %s it cannot put in words reads as itself", (expression) => {
+    expect(formatSchedule({ type: "cron", expression, timezone: "Pacific/Honolulu" })).toBe(
+      expression,
+    );
   });
 
   test("single minute interval", () => {

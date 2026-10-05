@@ -175,49 +175,105 @@ function formatIntervalSchedule(intervalMs: number): string {
 function formatCronExpression(expr: string, timezone?: string): string {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return expr;
-
-  const [minute, hour, _dayOfMonth, _month, dayOfWeek] = parts;
-  const tz = timezone ?? DEFAULT_TIMEZONE;
-  const tzAbbr = formatTimezoneAbbr(tz);
-
-  // "0 8 * * *" → "Daily at 8:00 AM HST"
-  if (
-    _dayOfMonth === "*" &&
-    _month === "*" &&
-    dayOfWeek === "*" &&
-    hour !== "*" &&
-    minute !== "*"
-  ) {
-    const timeStr = formatTime(Number(hour), Number(minute));
-    return `Daily at ${timeStr} ${tzAbbr}`;
+  const [minute = "", hour = "", dayOfMonth = "", month = "", dayOfWeek = ""] = parts;
+  if (month !== "*") return expr;
+  const repeating = repeatingCron(minute, hour, dayOfMonth, dayOfWeek);
+  if (repeating) return repeating;
+  if (!isCronNumber(minute, 59) || !isCronNumber(hour, 23)) return expr;
+  const at = `at ${formatTime(Number(hour), Number(minute))} ${formatTimezoneAbbr(timezone ?? DEFAULT_TIMEZONE)}`;
+  if (dayOfMonth !== "*") {
+    return dayOfWeek === "*" && isCronNumber(dayOfMonth, 31)
+      ? `Monthly on the ${ordinal(Number(dayOfMonth))} ${at}`
+      : expr;
   }
+  const days = cronDaysInWords(dayOfWeek);
+  return days ? `${days} ${at}` : expr;
+}
 
-  // "0 9 * * 1" → "Mondays at 9:00 AM HST"
-  if (
-    _dayOfMonth === "*" &&
-    _month === "*" &&
-    dayOfWeek !== "*" &&
-    hour !== "*" &&
-    minute !== "*"
-  ) {
-    const dayName = cronDayName(dayOfWeek!);
-    const timeStr = formatTime(Number(hour), Number(minute));
-    return `${dayName} at ${timeStr} ${tzAbbr}`;
+/** A field holding one number from 0 to `max`. */
+function isCronNumber(field: string, max: number): boolean {
+  return /^\d{1,2}$/.test(field) && Number(field) <= max;
+}
+
+/** "Every 5 minutes", "Every hour", "Every 3 hours", "Every hour at :15"; null for any other shape. */
+function repeatingCron(
+  minute: string,
+  hour: string,
+  dayOfMonth: string,
+  dayOfWeek: string,
+): string | null {
+  if (dayOfMonth !== "*" || dayOfWeek !== "*") return null;
+  return hour === "*" ? everyMinutes(minute) : everyHours(minute, hour);
+}
+
+/** A repeating schedule within each hour: "Every minute", "Every 5 minutes", "Every hour at :15". */
+function everyMinutes(minute: string): string | null {
+  if (minute === "*") return "Every minute";
+  if (/^\*\/\d+$/.test(minute)) {
+    const n = Number(minute.slice(2));
+    return `Every ${n} minute${n === 1 ? "" : "s"}`;
   }
+  if (!isCronNumber(minute, 59)) return null;
+  return Number(minute) === 0 ? "Every hour" : `Every hour at :${minute.padStart(2, "0")}`;
+}
 
-  // "*/30 * * * *" → "Every 30 minutes"
-  if (
-    minute?.startsWith("*/") &&
-    hour === "*" &&
-    _dayOfMonth === "*" &&
-    _month === "*" &&
-    dayOfWeek === "*"
-  ) {
-    const interval = Number(minute.slice(2));
-    return `Every ${interval} minute${interval === 1 ? "" : "s"}`;
+/** A schedule every few hours on the hour: "Every 3 hours". */
+function everyHours(minute: string, hour: string): string | null {
+  if (!/^\*\/\d+$/.test(hour) || !isCronNumber(minute, 59) || Number(minute) !== 0) return null;
+  const n = Number(hour.slice(2));
+  return n === 1 ? "Every hour" : `Every ${n} hours`;
+}
+
+const CRON_DAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+const CRON_DAY_ABBR = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
+/** A day-of-week field's day, 0 (Sunday) to 6, from a number or a three-letter name; null otherwise. */
+function cronDay(field: string): number | null {
+  if (/^[0-7]$/.test(field)) return Number(field) % 7;
+  const i = CRON_DAY_ABBR.indexOf(field.toUpperCase());
+  return i >= 0 ? i : null;
+}
+
+/** The days a day-of-week field names, sorted, or null when it is not a plain list or range. */
+function cronDaySet(field: string): number[] | null {
+  const days = new Set<number>();
+  for (const part of field.split(",")) {
+    const [from, to] = part.split("-");
+    const a = cronDay(from ?? "");
+    const b = to === undefined ? a : cronDay(to);
+    if (a === null || b === null || b < a) return null;
+    for (let d = a; d <= b; d++) days.add(d);
   }
+  return [...days].sort((x, y) => x - y);
+}
 
-  return expr;
+/** "Every day", "Weekdays", "Weekends", "Mondays", "Mondays and Thursdays"; null when unreadable. */
+function cronDaysInWords(field: string): string | null {
+  if (field === "*") return "Every day";
+  const days = cronDaySet(field);
+  if (!days || days.length === 0) return null;
+  const key = days.join(",");
+  if (key === "1,2,3,4,5") return "Weekdays";
+  if (key === "0,6") return "Weekends";
+  if (days.length === 7) return "Every day";
+  const names = days.map((d) => `${CRON_DAY_NAMES[d]}s`);
+  return names.length === 1
+    ? (names[0] as string)
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
 }
 
 function formatTime(hour: number, minute: number): string {
@@ -235,20 +291,6 @@ function formatTimezoneAbbr(tz: string): string {
   if (tz === "America/Los_Angeles") return "PST";
   if (tz === "UTC" || tz === "Etc/UTC") return "UTC";
   return tz;
-}
-
-function cronDayName(dayOfWeek: string): string {
-  const days: Record<string, string> = {
-    "0": "Sundays",
-    "1": "Mondays",
-    "2": "Tuesdays",
-    "3": "Wednesdays",
-    "4": "Thursdays",
-    "5": "Fridays",
-    "6": "Saturdays",
-    "7": "Sundays",
-  };
-  return days[dayOfWeek] ?? `Day ${dayOfWeek}`;
 }
 
 /** Format an ISO timestamp as a relative time string. */

@@ -880,7 +880,7 @@ export interface TaskSummary {
   id: string;
   name: string;
   description?: string;
-  /** Human-readable trigger, e.g. "Daily at 8:00 AM HST", "Once at …", "Manual only". */
+  /** Human-readable trigger, e.g. "Weekdays at 8:00 AM HST", "Once at …", "Manual only". */
   schedule: string;
   /** The schedule's type, or `none` when nothing fires it unattended. */
   scheduleType: "cron" | "interval" | "event" | "once" | "none";
