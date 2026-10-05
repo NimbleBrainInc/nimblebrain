@@ -21,7 +21,17 @@
   - --stack: between items inside a section (8px)
   - --inline: between an icon and its label, and between inline items (6px)
   Layout is fluid: no page or section caps its width. Only long prose
-  paragraphs are held to a readable measure (.prose, .out-md: 72ch).
+  paragraphs are held to a readable measure (.prose, .out-md: 72ch; a long
+  value in structured output: 76ch).
+
+  Sections: every page is a header (.page-header) and a column of cards
+  (.sections, --section-gap apart). A card (.card, the Section component) is
+  the full content width, with one border, radius, padding (--card-pad) and
+  background, a header row (.card-head: title left, its actions or a one-line
+  summary right) and a body. Controls, tables and lists inside a card fill
+  its width. A report card (.summary-strip, the SummaryStrip component) is a
+  row of equal tiles that wraps on a narrow page; a tile with more to say
+  opens one panel under the strip.
 
   Buttons have two sizes: .btn in page headers and forms, .btn-sm in rows.
 
@@ -86,9 +96,9 @@ code { font-family: var(--font-mono); font-size: var(--font-text-xs-size); }
   height: 100%; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
   container-type: inline-size; container-name: panel;
   --page-x: 20px; --page-top: 16px; --head-gap: 16px; --section-gap: 28px;
-  --row-y: 10px; --stack: 8px; --inline: 6px;
+  --row-y: 10px; --stack: 8px; --inline: 6px; --card-pad: 16px;
 }
-@container panel (max-width: 560px) { .app > * { --page-x: 14px; --section-gap: 24px; } }
+@container panel (max-width: 560px) { .app > * { --page-x: 14px; --section-gap: 16px; --card-pad: 12px; } }
 .content { flex: 1; overflow-y: auto; min-height: 0; }
 .view-pad, .page-body { padding: 0 var(--page-x) 32px; }
 .section { margin-bottom: var(--section-gap); }
@@ -310,7 +320,6 @@ fieldset.filter-bar { border: none; min-width: 0; }
 
 /* ---------- Result ---------- */
 .result-content { padding-top: 0; }
-.deliverable { padding-bottom: 20px; border-bottom: 1px solid var(--color-border-primary); }
 .result-files ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .result-links { display: flex; gap: 16px; flex-wrap: wrap; }
 .result-open { display: flex; align-items: center; gap: 8px; color: var(--color-text-secondary); padding: 24px 0; }
@@ -330,7 +339,7 @@ fieldset.filter-bar { border: none; min-width: 0; }
 .criterion-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--font-text-xs-size); color: var(--color-text-secondary); margin-top: 2px; }
 .criterion-why { color: var(--color-text-secondary); margin-top: 3px; border-left: 2px solid var(--color-border-primary); padding-left: 8px; }
 .human-verdict { margin: 8px 0; }
-.verdict-form { margin-top: 12px; max-width: 560px; }
+.verdict-form { margin-top: var(--card-pad); }
 .verdict-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .tool-calls { list-style: none; margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
 .tool-call > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 3px 0; }
@@ -381,7 +390,6 @@ fieldset.filter-bar { border: none; min-width: 0; }
 
 /* ---------- Batches ---------- */
 .reader { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.reader-body { flex: 1; overflow-y: auto; padding: 16px 20px 24px; border-top: 1px solid var(--color-border-primary); }
 .reader-error-body { color: var(--nb-color-danger); background: color-mix(in srgb, var(--nb-color-danger) 8%, transparent); border: 1px solid color-mix(in srgb, var(--nb-color-danger) 25%, transparent); border-radius: var(--border-radius-sm); padding: 10px 12px; font-family: var(--font-mono); font-size: var(--font-text-xs-size); white-space: pre-wrap; word-break: break-word; }
 .batch-screen .reader { height: 100%; }
 .batch-progress { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--color-text-secondary) 15%, transparent); overflow: hidden; }
@@ -391,7 +399,7 @@ fieldset.filter-bar { border: none; min-width: 0; }
 .batch-count-fail { color: var(--nb-color-danger); }
 .batch-count-uncertain { color: var(--nb-color-warning); }
 .batch-note { color: var(--color-text-secondary); margin-bottom: 10px; }
-.batch-filter { display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); margin: 6px 0 10px; }
+.batch-filter { display: flex; align-items: center; gap: var(--inline); color: var(--color-text-secondary); font-size: var(--font-text-xs-size); }
 .batch-table { width: 100%; border-collapse: collapse; }
 .batch-table th { text-align: left; font-size: var(--font-text-xs-size); font-weight: var(--font-weight-medium); color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border-primary); padding: 4px 6px; }
 .batch-table td { border-bottom: 1px solid var(--color-border-secondary); padding: 5px 6px; vertical-align: top; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
@@ -490,8 +498,7 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 .status-badge .status-icon { width: 14px; height: 14px; }
 
 /* ---------- Home ---------- */
-.home-section { margin: var(--section-gap) 0 0; }
-.home-foot { margin-top: var(--section-gap); }
+.home-foot { display: flex; }
 .attn-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .attn-card {
   display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--border-radius-md);
@@ -504,7 +511,7 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 .attn-name { background: none; border: none; padding: 0; text-align: left; cursor: pointer; font-weight: var(--font-weight-medium); }
 .attn-name:hover { color: var(--color-text-accent); }
 .attn-why { color: var(--color-text-secondary); }
-.live-list { list-style: none; display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.live-list { list-style: none; display: flex; flex-direction: column; gap: var(--stack); }
 .live-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--border-radius-md); background: var(--color-background-secondary); }
 .live-text { flex: 1; min-width: 0; }
 .coming-strip { list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--stack); }
@@ -539,7 +546,6 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 .task-title-row { display: flex; align-items: center; gap: 12px; }
 .task-title-row .page-title { overflow-wrap: anywhere; }
 .task-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
-.task-section { margin-bottom: var(--section-gap); }
 .task-runs { list-style: none; display: flex; flex-direction: column; }
 .task-run {
   width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center;
@@ -560,9 +566,10 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 .raw .code-block { margin-top: var(--stack); }
 .task-runs + .link-btn, .home-rows + .link-btn { margin-top: var(--stack); }
 .editor-problems { padding: 0 var(--page-x); flex-shrink: 0; }
-.setup { border-top: 1px solid var(--color-border-primary); }
-.disclosure { border-bottom: 1px solid var(--color-border-primary); }
+.disclosure { border-top: 1px solid var(--color-border-secondary); }
+.disclosure:first-child { border-top: none; }
 .disclosure > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: var(--row-y) 0; }
+.setup .disclosure:first-child > summary { padding-top: 0; }
 .disclosure-title { font-weight: var(--font-weight-medium); }
 .disclosure-hint { font-size: var(--font-text-xs-size); color: var(--color-text-secondary); }
 .disclosure-body { padding: 0 0 14px; }
@@ -582,6 +589,47 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 .step-time { font-size: var(--font-text-xs-size); color: var(--color-text-secondary); flex-shrink: 0; }
 .step-bar { display: block; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--color-text-secondary) 12%, transparent); overflow: hidden; }
 .step-bar > span { display: block; height: 100%; background: color-mix(in srgb, var(--tone) 60%, transparent); }
+
+/* ---------- Sections (cards) and the report card ---------- */
+.sections { display: flex; flex-direction: column; gap: var(--section-gap); }
+.sections > .callout, .sections > .error-banner, .sections > .note-banner, .sections > ul { margin: 0; }
+.card {
+  border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-lg);
+  background: var(--color-background-primary); padding: var(--card-pad); min-width: 0;
+}
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.card-head .section-heading { margin-bottom: 0; }
+.card-aside { display: flex; align-items: center; gap: var(--stack); flex-wrap: wrap; justify-content: flex-end; }
+.card-body > :last-child { margin-bottom: 0; }
+.card-body .field:last-child { margin-bottom: 0; }
+.summary { display: flex; flex-direction: column; gap: var(--stack); }
+.summary-strip { list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--stack); }
+.tile-cell { display: flex; min-width: 0; }
+.tile {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; text-align: left;
+  border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-lg);
+  background: var(--color-background-primary); padding: 12px 14px; position: relative;
+}
+button.tile { cursor: pointer; }
+button.tile:hover, button.tile.on { border-color: var(--color-text-accent); }
+.tile-label { font-size: var(--font-text-xs-size); line-height: var(--font-text-xs-line-height); color: var(--color-text-secondary); }
+.tile-value { font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+.tile-sub { font-size: var(--font-text-xs-size); line-height: var(--font-text-xs-line-height); color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.tile-more {
+  position: absolute; top: 14px; right: 12px; width: 6px; height: 6px;
+  border-right: 1.5px solid var(--color-text-secondary); border-bottom: 1.5px solid var(--color-text-secondary);
+  transform: rotate(45deg); transition: transform 0.15s;
+}
+button.tile.on .tile-more { transform: rotate(-135deg); top: 17px; }
+.tile-detail { border: 1px solid var(--color-border-primary); border-radius: var(--border-radius-lg); padding: var(--card-pad); }
+@container panel (max-width: 900px) { .summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container panel (max-width: 560px) { .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th { text-align: left; font-size: var(--font-text-xs-size); font-weight: var(--font-weight-medium); color: var(--color-text-secondary); padding: 0 12px 6px 0; border-bottom: 1px solid var(--color-border-primary); }
+.data-table td { padding: var(--row-y) 12px var(--row-y) 0; border-bottom: 1px solid var(--color-border-secondary); vertical-align: top; }
+.data-table tr:last-child td { border-bottom: none; }
+.card-body li:last-child > .task-run, .card-body li:last-child > .home-row, .card .up-row:last-child, .card .act-row:last-child { border-bottom: none; }
+.data-table td:last-child, .data-table th:last-child { padding-right: 0; }
 
 /* Honour a reduced-motion preference for the looping animations. Last in the
    file so it wins over the rules it overrides (equal specificity); the dot

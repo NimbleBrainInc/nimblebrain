@@ -271,14 +271,13 @@ describe("mergeNewest", () => {
 });
 
 describe("ResultPreview", () => {
-  const preview = (p: { structured?: unknown; text?: string }) =>
+  const preview = (p: { structured?: unknown; text?: string; raw?: boolean }) =>
     renderToStaticMarkup(createElement(structured.ResultPreview, p));
-  test("structured output reads as values, the JSON behind Show raw", () => {
+  test("structured output reads as values, or as its JSON when raw", () => {
     const html = preview({ structured: { grade: "B" } });
     expect(html).toContain("<dt>grade</dt>");
-    expect(html).toMatch(
-      /<details class="raw"><summary>Show raw<\/summary><pre class="code-block">/,
-    );
+    expect(html).not.toContain("code-block");
+    expect(preview({ structured: { grade: "B" }, raw: true })).toMatch(/^<pre class="code-block">/);
   });
   test("text that is JSON, fenced or not, reads as values too", () => {
     expect(preview({ text: '```json\n{"grade": "B"}\n```' })).toContain("<dt>grade</dt>");

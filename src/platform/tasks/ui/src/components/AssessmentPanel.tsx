@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { assessmentReasonText } from "../lib/plain.ts";
 import type { CriterionResult, RunAssessment, TaskCriterion } from "../types.ts";
 import { type LabelTone, StatusBadge } from "./RunBadge.tsx";
+import { Section } from "./Section.tsx";
 
 const VERDICT_TEXT: Record<RunAssessment["verdict"], string> = {
   pass: "Passed",
@@ -26,27 +27,49 @@ export function answerText(answer: boolean | number | string, criterion?: TaskCr
   return String(answer);
 }
 
-/** One judged criterion: its rule, the answer, pass or fail, confidence, and why. */
-function CriterionLine({ c, def }: { c: CriterionResult; def?: TaskCriterion }) {
+/** The judged criteria as rows: rule, answer, confidence, pass or fail, and why. */
+function CriteriaTable({
+  results,
+  criteria,
+}: {
+  results: CriterionResult[];
+  criteria?: TaskCriterion[];
+}) {
+  const byId = new Map((criteria ?? []).map((c) => [c.id, c]));
   return (
-    <li className="criterion-result">
-      <span
-        className={`mark ${c.passed ? "pass" : "fail"}`}
-        role="img"
-        aria-label={c.passed ? "Pass" : "Fail"}
-      >
-        {c.passed ? "✓" : "✗"}
-      </span>
-      <div className="criterion-body">
-        <div className="criterion-rule">{def?.rule ?? c.id}</div>
-        <div className="criterion-meta">
-          <span>Answer: {answerText(c.answer, def)}</span>
-          <span>Confidence {Math.round(c.confidence * 100)}%</span>
-          {def && <span className="muted">{c.id}</span>}
-        </div>
-        {c.rationale && <div className="criterion-why">{c.rationale}</div>}
-      </div>
-    </li>
+    <table className="data-table criteria-table">
+      <thead>
+        <tr>
+          <th scope="col">Rule</th>
+          <th scope="col">Answer</th>
+          <th scope="col" className="num">
+            Confidence
+          </th>
+          <th scope="col">Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {results.map((c) => {
+          const def = byId.get(c.id);
+          return (
+            <tr key={c.id}>
+              <td>
+                {def?.rule ?? c.id}
+                {c.rationale && <div className="cell-sub">{c.rationale}</div>}
+              </td>
+              <td>{answerText(c.answer, def)}</td>
+              <td className="num">{Math.round(c.confidence * 100)}%</td>
+              <td>
+                <StatusBadge
+                  tone={c.passed ? "success" : "danger"}
+                  label={c.passed ? "Pass" : "Fail"}
+                />
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -55,21 +78,19 @@ function judgeLine(a: RunAssessment): string | null {
   if (!a.judge) return null;
   const version = a.judge.version ? ` ${a.judge.version}` : "";
   const calibrated = a.judge.calibrated ? "" : " (uncalibrated)";
-  const truncated = a.stateTruncated ? " · the judge saw a shortened deliverable" : "";
+  const truncated = a.stateTruncated ? " · the judge saw a shortened result" : "";
   return `Judged by ${a.judge.server} · ${a.judge.id}${version}${calibrated}${truncated}`;
 }
 
-/** Accept or Reject with a note, and Re-judge. */
+/** Accept or Reject with a note, the full width of the section. */
 function VerdictForm({
   busy,
   error,
   onVerdict,
-  onRejudge,
 }: {
   busy: boolean;
   error: string | null;
   onVerdict: (verdict: "pass" | "fail", note: string) => void;
-  onRejudge: () => void;
 }) {
   const noteId = useId();
   const [note, setNote] = useState("");
@@ -104,9 +125,6 @@ function VerdictForm({
         >
           Reject
         </button>
-        <button type="button" className="btn" disabled={busy} onClick={onRejudge}>
-          Re-judge
-        </button>
         {error && (
           <span className="field-error" role="alert">
             {error}
@@ -117,46 +135,10 @@ function VerdictForm({
   );
 }
 
-/** The schema check's line. */
-function SchemaLine({ schema }: { schema: NonNullable<RunAssessment["schema"]> }) {
-  return (
-    <p className={schema.valid ? "muted" : "assess-reason"}>
-      Output schema:{" "}
-      {schema.valid ? "matches" : `does not match: ${(schema.errors ?? []).join("; ")}`}
-    </p>
-  );
-}
-
-/** What was judged: the reason, the schema check, each criterion, the judge, a person's verdict. */
-function AssessmentDetail({ a, criteria }: { a: RunAssessment; criteria?: TaskCriterion[] }) {
-  const byId = new Map((criteria ?? []).map((c) => [c.id, c]));
-  const judged = judgeLine(a);
-  return (
-    <>
-      {a.reason && <p className="assess-reason">{assessmentReasonText(a.reason.code)}</p>}
-      {a.schema && <SchemaLine schema={a.schema} />}
-      {a.criteria && a.criteria.length > 0 && (
-        <ul className="criteria-results">
-          {a.criteria.map((c) => (
-            <CriterionLine key={c.id} c={c} def={byId.get(c.id)} />
-          ))}
-        </ul>
-      )}
-      {judged && <p className="muted">{judged}</p>}
-      {a.human && (
-        <p className="human-verdict">
-          {a.human.verdict === "pass" ? "Accepted" : "Rejected"} by a person
-          {a.human.note ? `: “${a.human.note}”` : ""}
-        </p>
-      )}
-    </>
-  );
-}
-
 /**
- * Whether the run's deliverable is good: each criterion with its rule, the
- * judge's answer, pass or fail, confidence and rationale; the schema check;
- * why it is uncertain or not assessed; and a person's verdict with a note.
+ * Whether the run's result is good, as a section: the verdict in its header
+ * with Re-judge, the reason in plain words with the next step, each criterion
+ * as a row, a person's verdict, and Accept or Reject with a note.
  */
 export function AssessmentPanel({
   assessment: a,
@@ -177,24 +159,45 @@ export function AssessmentPanel({
   onVerdict: (verdict: "pass" | "fail", note: string) => void;
   onRejudge: () => void;
 }) {
-  const headId = useId();
+  const judged = a ? judgeLine(a) : null;
   return (
-    <section className="section" aria-labelledby={headId}>
-      <h3 className="section-heading" id={headId}>
-        Assessment
-        {a && <StatusBadge tone={VERDICT_TONE[a.verdict]} label={VERDICT_TEXT[a.verdict]} />}
-      </h3>
-      {a ? (
-        <AssessmentDetail a={a} criteria={criteria} />
-      ) : (
+    <Section
+      title="Assessment"
+      aside={
+        <>
+          {a && <StatusBadge tone={VERDICT_TONE[a.verdict]} label={VERDICT_TEXT[a.verdict]} />}
+          {canAct && (
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={onRejudge}>
+              Re-judge
+            </button>
+          )}
+        </>
+      }
+    >
+      {!a && (
         <p className="muted">
           Not assessed yet. A run is assessed after it ends when its task has criteria or an output
           schema.
         </p>
       )}
-      {canAct && (
-        <VerdictForm busy={busy} error={error} onVerdict={onVerdict} onRejudge={onRejudge} />
+      {a?.reason && <p className="assess-reason">{assessmentReasonText(a.reason.code)}</p>}
+      {a?.schema && (
+        <p className="muted">
+          Output schema:{" "}
+          {a.schema.valid ? "matches" : `does not match: ${(a.schema.errors ?? []).join("; ")}`}
+        </p>
       )}
-    </section>
+      {a?.criteria && a.criteria.length > 0 && (
+        <CriteriaTable results={a.criteria} criteria={criteria} />
+      )}
+      {judged && <p className="muted">{judged}</p>}
+      {a?.human && (
+        <p className="human-verdict">
+          {a.human.verdict === "pass" ? "Accepted" : "Rejected"} by a person
+          {a.human.note ? `: “${a.human.note}”` : ""}
+        </p>
+      )}
+      {canAct && <VerdictForm busy={busy} error={error} onVerdict={onVerdict} />}
+    </Section>
   );
 }

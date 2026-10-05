@@ -18,7 +18,8 @@ import { PageHeader } from "./Chrome.tsx";
 import { isOpenRun } from "./ResultView.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { RunBadge, StatusBadge } from "./RunBadge.tsx";
-import { asJson, ResultPreview } from "./StructuredView.tsx";
+import { Section, Sections, SummaryStrip, type Tile } from "./Section.tsx";
+import { asJson, ResultPreview, readsStructured } from "./StructuredView.tsx";
 
 /** Runs listed on the page; the rest are behind "See all runs". */
 const RECENT_RUNS = 6;
@@ -279,59 +280,14 @@ function DetailsSection({ d }: { d: TaskDetail }) {
 /** The task's setup, read-only, each part behind a closed disclosure. */
 export function SetupSections({ d }: { d: TaskDetail }) {
   return (
-    <div className="setup">
-      <DoesSection d={d} />
-      <GoodSection d={d} />
-      <LimitsSection d={d} />
-      <DetailsSection d={d} />
-    </div>
-  );
-}
-
-/** The newest run: still going, or its result's opening lines and a way into it. */
-function LatestRun({
-  run,
-  result,
-  onOpenRun,
-}: {
-  run?: TaskRun;
-  /** The latest run's full result: undefined while it loads, null when unreadable. */
-  result: TaskRunResult | null | undefined;
-  onOpenRun: (run: TaskRun) => void;
-}) {
-  if (!run) {
-    return (
-      <section className="task-section" aria-label="Latest result">
-        <h2 className="section-heading">Latest result</h2>
-        <p className="muted">No runs yet. Run it now to see what it makes.</p>
-      </section>
-    );
-  }
-  if (isOpenRun(run)) {
-    return (
-      <section className="task-section latest-open" aria-label="Running now">
-        <StatusBadge
-          tone="active"
-          label={run.status === "queued" ? "Waiting for a run slot" : "Running now"}
-        />
-        <span className="muted">started {relativeTime(run.startedAt)}</span>
-      </section>
-    );
-  }
-  return (
-    <section className="task-section" aria-label="Latest result">
-      <div className="section-row">
-        <h2 className="section-heading">Latest result</h2>
-        <span className="section-meta">
-          <RunBadge label={run.label} />
-          <span className="muted">{relativeTime(run.startedAt)}</span>
-        </span>
+    <Section title="Setup" aside={<span className="muted">Edit from the ⋯ menu</span>}>
+      <div className="setup">
+        <DoesSection d={d} />
+        <GoodSection d={d} />
+        <LimitsSection d={d} />
+        <DetailsSection d={d} />
       </div>
-      <LatestBody run={run} result={result} />
-      <button type="button" className="btn btn-sm section-action" onClick={() => onOpenRun(run)}>
-        Open the run
-      </button>
-    </section>
+    </Section>
   );
 }
 
@@ -340,13 +296,21 @@ function LatestRun({
  * values, text as prose); the run's preview only when the result cannot be
  * read and the preview is not cut-off JSON.
  */
-function LatestBody({ run, result }: { run: TaskRun; result: TaskRunResult | null | undefined }) {
+function LatestBody({
+  run,
+  result,
+  raw,
+}: {
+  run: TaskRun;
+  result: TaskRunResult | null | undefined;
+  raw: boolean;
+}) {
   if (result === undefined && run.resultPreview) {
     return <div className="skel skel-card" aria-busy="true" />;
   }
   const text = result?.output ?? run.resultPreview;
   if (result?.structured !== undefined || (result && text)) {
-    return <ResultPreview structured={result?.structured} text={text} />;
+    return <ResultPreview structured={result?.structured} text={text} raw={raw} />;
   }
   if (text && typeof asJson(text) !== "object" && !/^\s*(```|[[{])/.test(text)) {
     return <ResultPreview text={text} />;
@@ -358,66 +322,194 @@ function LatestBody({ run, result }: { run: TaskRun; result: TaskRunResult | nul
   );
 }
 
-/** The last few runs, each opening its result; the full history is a link away. */
+/** The latest result as a section: its label and time, Show raw and Open the run in the header. */
+function LatestRun({
+  run,
+  result,
+  onOpenRun,
+}: {
+  run?: TaskRun;
+  /** The latest run's full result: undefined while it loads, null when unreadable. */
+  result: TaskRunResult | null | undefined;
+  onOpenRun: (run: TaskRun) => void;
+}) {
+  const [raw, setRaw] = useState(false);
+  if (!run) {
+    return (
+      <Section title="Latest result">
+        <p className="muted">No runs yet. Run it now to see what it makes.</p>
+      </Section>
+    );
+  }
+  if (isOpenRun(run)) {
+    return (
+      <Section
+        title="Latest result"
+        aside={
+          <button type="button" className="btn btn-sm" onClick={() => onOpenRun(run)}>
+            Watch
+          </button>
+        }
+      >
+        <p className="latest-open">
+          <StatusBadge
+            tone="active"
+            label={run.status === "queued" ? "Waiting for a run slot" : "Running now"}
+          />
+          <span className="muted">started {relativeTime(run.startedAt)}</span>
+        </p>
+      </Section>
+    );
+  }
+  const structured = !!result && readsStructured(result.structured, result.output);
+  return (
+    <Section
+      title="Latest result"
+      aside={
+        <>
+          <RunBadge label={run.label} />
+          <span className="muted">{runTime(run.startedAt)}</span>
+          {structured && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              aria-pressed={raw}
+              onClick={() => setRaw(!raw)}
+            >
+              {raw ? "Show values" : "Show raw"}
+            </button>
+          )}
+          <button type="button" className="btn btn-sm" onClick={() => onOpenRun(run)}>
+            Open the run
+          </button>
+        </>
+      }
+    >
+      <LatestBody run={run} result={result} raw={raw} />
+    </Section>
+  );
+}
+
+/** The last few runs as a section, each opening its result; the full history is a link away. */
 function RecentRuns({
   runs,
   runsError,
-  stats,
   inputSchema,
   onOpenRun,
   onSeeAll,
 }: {
   runs: TaskRun[] | null;
   runsError: string | null;
-  stats: TaskStats | null;
   /** The task's input schema, to name each run by its input. */
   inputSchema?: Record<string, unknown>;
   onOpenRun: (run: TaskRun) => void;
   onSeeAll: () => void;
 }) {
   return (
-    <section className="task-section" aria-labelledby="task-runs">
-      <div className="section-row">
-        <h2 className="section-heading" id="task-runs">
-          Recent runs
-        </h2>
-        {stats && stats.runs > 0 && (
-          <span className="muted">
-            {stats.passRate !== null ? `${formatPercent(stats.passRate)} passed · ` : ""}
-            {formatUsd(stats.costUsd)} in 30 days
-          </span>
-        )}
-      </div>
+    <Section
+      title="Recent runs"
+      aside={
+        runs && runs.length > 0 ? (
+          <button type="button" className="btn btn-sm" onClick={onSeeAll}>
+            See all runs
+          </button>
+        ) : undefined
+      }
+    >
       {runsError && <div className="error-banner">{runsError}</div>}
       {!runs && !runsError && <div className="skel skel-row" aria-busy="true" />}
       {runs && runs.length === 0 && <p className="muted">No runs yet.</p>}
       {runs && runs.length > 0 && (
         <ul className="task-runs">
-          {runs.slice(0, RECENT_RUNS).map((r) => (
-            <li key={r.id}>
-              <button type="button" className="task-run" onClick={() => onOpenRun(r)}>
-                <span className="task-run-what">
-                  {r.label ? <RunBadge label={r.label} /> : <span>{r.status}</span>}
-                  {inputSummary(r.input, inputSchema) && (
-                    <span className="task-run-input">{inputSummary(r.input, inputSchema)}</span>
-                  )}
-                </span>
-                <span className="muted">{runTime(r.startedAt)}</span>
-                <span className="muted num">
-                  {r.completedAt ? formatDuration(r.startedAt, r.completedAt) : ""}
-                </span>
-              </button>
-            </li>
-          ))}
+          {runs.slice(0, RECENT_RUNS).map((r) => {
+            const input = inputSummary(r.input, inputSchema);
+            return (
+              <li key={r.id}>
+                <button type="button" className="task-run" onClick={() => onOpenRun(r)}>
+                  <span className="task-run-what">
+                    {r.label ? <RunBadge label={r.label} /> : <span>{r.status}</span>}
+                    {input && <span className="task-run-input">{input}</span>}
+                  </span>
+                  <span className="muted">{runTime(r.startedAt)}</span>
+                  <span className="muted num">
+                    {r.completedAt ? formatDuration(r.startedAt, r.completedAt) : ""}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
-      {runs && runs.length > 0 && (
-        <button type="button" className="link-btn" onClick={onSeeAll}>
-          See all runs
-        </button>
-      )}
-    </section>
+    </Section>
   );
+}
+
+/** When the task runs next, in a word or two. */
+function nextRunText(d: TaskDetail): string {
+  if (!hasLiveTrigger(d)) return "Manual only";
+  if (!d.enabled) return "Off";
+  return d.nextRunAt ? formatWhen(d.nextRunAt) : "Not scheduled";
+}
+
+/** The 30-day tiles: pass rate and cost. */
+function statsTiles(stats: TaskStats | null): Tile[] {
+  if (!stats) {
+    return [
+      { id: "pass", label: "Pass rate, 30 days", value: "…" },
+      { id: "cost", label: "Cost, 30 days", value: "…" },
+    ];
+  }
+  const decided = stats.pass + stats.fail;
+  return [
+    {
+      id: "pass",
+      label: "Pass rate, 30 days",
+      value: formatPercent(stats.passRate),
+      sub: decided > 0 ? `${stats.pass} of ${decided} judged` : "Nothing judged yet",
+    },
+    {
+      id: "cost",
+      label: "Cost, 30 days",
+      value: formatUsd(stats.costUsd),
+      sub: `${stats.runs} ${stats.runs === 1 ? "run" : "runs"}`,
+    },
+  ];
+}
+
+/** The task's report card: health, pass rate, cost, next run, last run. */
+export function TaskSummaryStrip({
+  detail,
+  health,
+  stats,
+  last,
+}: {
+  detail: TaskDetail;
+  health: TaskHealth;
+  stats: TaskStats | null;
+  last?: TaskRun;
+}) {
+  const tiles: Tile[] = [
+    {
+      id: "health",
+      label: "Health",
+      value: <StatusBadge tone={health.tone} label={health.word} />,
+      sub: detail.consecutiveErrors > 0 ? `${detail.consecutiveErrors} failed in a row` : undefined,
+    },
+    ...statsTiles(stats),
+    {
+      id: "next",
+      label: "Next run",
+      value: nextRunText(detail),
+      sub: hasLiveTrigger(detail) ? detail.scheduleHuman : undefined,
+    },
+    {
+      id: "last",
+      label: "Last run",
+      value: last ? runTime(last.startedAt) : "Never",
+      sub: last?.label,
+    },
+  ];
+  return <SummaryStrip tiles={tiles} label="Task summary" />;
 }
 
 /** What the page shows below its head, from what was read. */
@@ -442,7 +534,7 @@ export function TaskPageBody({
   const latest = runs?.[0];
   const reasonRun = health.runId ? runs?.find((r) => r.id === health.runId) : undefined;
   return (
-    <>
+    <Sections>
       {health.needsYou && (
         <div className={`callout tone-${health.tone}`} role="status">
           <StatusIcon tone={health.tone} />
@@ -458,17 +550,17 @@ export function TaskPageBody({
           )}
         </div>
       )}
+      <TaskSummaryStrip detail={detail} health={health} stats={stats} last={latest} />
       <LatestRun run={latest} result={latestResult} onOpenRun={actions.onOpenRun} />
       <RecentRuns
         runs={runs}
         runsError={runsError}
-        stats={stats}
         inputSchema={detail.inputSchema}
         onOpenRun={actions.onOpenRun}
         onSeeAll={() => actions.onSeeRuns(detail)}
       />
       <SetupSections d={detail} />
-    </>
+    </Sections>
   );
 }
 

@@ -17,6 +17,7 @@ import { useTool } from "../useTool.ts";
 import { asDict, formatDuration, formatUsd, relativeTime, toolErrorText } from "../utils.ts";
 import { BatchProgress } from "./BatchPane.tsx";
 import { RunBadge } from "./RunBadge.tsx";
+import { Section } from "./Section.tsx";
 import { SkeletonRows } from "./Skeleton.tsx";
 
 const PAGE = 50;
@@ -243,46 +244,28 @@ function BatchRowItem({
   );
 }
 
-/** Every run from every source, newest first, with batches as one row each. */
-export function ActivityBody({
+/** The list of runs and batches, or why it is empty. */
+function ActivityRows({
   rows,
   loading,
   error,
-  filters,
-  tasks,
-  fixedTask,
+  filtered,
   hasMore,
-  onFilters,
-  onMore,
+  names,
   onOpenRun,
   onOpenBatch,
 }: {
   rows: ActivityRow[];
   loading: boolean;
   error: string | null;
-  filters: ActivityFilters;
-  tasks: TaskSummary[];
-  /** One task's runs: no task filter or task column. */
-  fixedTask?: boolean;
+  filtered: boolean;
   hasMore: boolean;
-  onFilters: (f: ActivityFilters) => void;
-  onMore: () => void;
+  names: Map<string, string>;
   onOpenRun: (run: TaskRun) => void;
   onOpenBatch: (batch: TaskBatch) => void;
 }) {
-  const names = new Map(tasks.map((t) => [t.id, t.name]));
-  const filtered =
-    filters.label !== "all" ||
-    filters.startedBy !== "all" ||
-    (!fixedTask && (filters.taskId !== "all" || filters.range !== DEFAULT_FILTERS.range));
   return (
-    <div className="view-pad">
-      <FilterBar filters={filters} tasks={fixedTask ? null : tasks} onChange={onFilters} />
-      {error && (
-        <div className="error-banner" role="alert">
-          {error}
-        </div>
-      )}
+    <>
       {rows.length === 0 && loading && (
         <div aria-busy="true">
           <SkeletonRows count={5} />
@@ -321,11 +304,76 @@ export function ActivityBody({
           )}
         </ul>
       )}
-      {hasMore && (
-        <button type="button" className="btn load-more" disabled={loading} onClick={onMore}>
-          {loading ? "Loading…" : "Load older runs"}
-        </button>
-      )}
+    </>
+  );
+}
+
+/** Every run from every source, newest first, with batches as one row each. */
+export function ActivityBody({
+  rows,
+  loading,
+  error,
+  filters,
+  tasks,
+  fixedTask,
+  hasMore,
+  onFilters,
+  onMore,
+  onOpenRun,
+  onOpenBatch,
+}: {
+  rows: ActivityRow[];
+  loading: boolean;
+  error: string | null;
+  filters: ActivityFilters;
+  tasks: TaskSummary[];
+  /** One task's runs: no task filter or task column. */
+  fixedTask?: boolean;
+  hasMore: boolean;
+  onFilters: (f: ActivityFilters) => void;
+  onMore: () => void;
+  onOpenRun: (run: TaskRun) => void;
+  onOpenBatch: (batch: TaskBatch) => void;
+}) {
+  const names = new Map(tasks.map((t) => [t.id, t.name]));
+  const filtered =
+    filters.label !== "all" ||
+    filters.startedBy !== "all" ||
+    (!fixedTask && (filters.taskId !== "all" || filters.range !== DEFAULT_FILTERS.range));
+  return (
+    <div className="view-pad">
+      <Section
+        title="Runs"
+        aside={
+          rows.length > 0 ? (
+            <span className="muted">
+              {rows.length} shown{hasMore ? ", more to load" : ""}
+            </span>
+          ) : undefined
+        }
+      >
+        <FilterBar filters={filters} tasks={fixedTask ? null : tasks} onChange={onFilters} />
+        {error && (
+          <div className="error-banner" role="alert">
+            {error}
+          </div>
+        )}
+        <ActivityRows
+          rows={rows}
+          loading={loading}
+          error={error}
+          filtered={filtered}
+          hasMore={hasMore}
+          names={names}
+          onOpenRun={onOpenRun}
+          onOpenBatch={onOpenBatch}
+        />
+        {hasMore && (
+          <button type="button" className="btn load-more" disabled={loading} onClick={onMore}>
+            {loading ? "Loading…" : "Load older runs"}
+          </button>
+        )}
+      </Section>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { action as hostAction } from "@nimblebrain/synapse";
 import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
-import { runTime } from "../lib/plain.ts";
+import { assessmentReasonText, inputSummary, runName, runTime } from "../lib/plain.ts";
 import { renderMarkdown } from "../markdown.ts";
 import type { RunFileRef, TaskCriterion, TaskDetail, TaskRun, TaskRunResult } from "../types.ts";
 import { useTool } from "../useTool.ts";
@@ -10,8 +10,9 @@ import { asDict, formatDuration, formatTokens, formatUsd, toolErrorText } from "
 import { AssessmentPanel } from "./AssessmentPanel.tsx";
 import { PageHeader } from "./Chrome.tsx";
 import { RowMenu } from "./RowMenu.tsx";
-import { RunBadge } from "./RunBadge.tsx";
+import { type LabelTone, RunBadge, StatusBadge } from "./RunBadge.tsx";
 import { Elapsed, RunSteps } from "./RunSteps.tsx";
+import { Section, Sections, SummaryStrip, type Tile } from "./Section.tsx";
 import { asJson, ResultPreview } from "./StructuredView.tsx";
 
 const EXECUTION_TEXT: Record<string, string> = {
@@ -40,6 +41,11 @@ export function isOpenRun(run?: Pick<TaskRun, "status" | "label">): boolean {
   return run?.status === "running" || run?.status === "queued" || run?.label === "Running";
 }
 
+/** Whether a deliverable reads as structured values (an output schema's value, or JSON text). */
+function isStructured(result: TaskRunResult | null, output: string): boolean {
+  return result?.structured !== undefined || typeof asJson(output) === "object";
+}
+
 /** The deliverable: structured output as values or tables, else the text as markdown; files linked. */
 export function Deliverable({
   result,
@@ -50,12 +56,28 @@ export function Deliverable({
   run?: TaskRun;
   onOpenFile?: (file: RunFileRef) => void;
 }) {
+  const [raw, setRaw] = useState(false);
   const output = result?.output ?? run?.resultPreview ?? "";
   const files = result?.outputFiles ?? [];
+  const structured = isStructured(result, output);
   return (
-    <section className="section deliverable" aria-label="Result">
-      {result?.structured !== undefined || typeof asJson(output) === "object" ? (
-        <ResultPreview structured={result?.structured} text={output} />
+    <Section
+      title="Result"
+      aside={
+        structured && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            aria-pressed={raw}
+            onClick={() => setRaw(!raw)}
+          >
+            {raw ? "Show values" : "Show raw"}
+          </button>
+        )
+      }
+    >
+      {structured ? (
+        <ResultPreview structured={result?.structured} text={output} raw={raw} />
       ) : output ? (
         <div
           className="out-md"
@@ -70,7 +92,7 @@ export function Deliverable({
       )}
       {files.length > 0 && (
         <div className="result-files">
-          <h4 className="sub-heading">Files</h4>
+          <h3 className="sub-heading">Files</h3>
           <ul>
             {files.map((f) => (
               <li key={f.id}>
@@ -86,80 +108,137 @@ export function Deliverable({
           </ul>
         </div>
       )}
-    </section>
+    </Section>
   );
 }
 
-/** How the run ended: execution, stop reason, error, tools that failed for good. */
-export function ExecutionPanel({ run, result }: { run?: TaskRun; result: TaskRunResult | null }) {
+/** How the run ended in a phrase: "Completed", "Stopped before finishing: it hit its step limit". */
+export function outcomeText(
+  run?: TaskRun,
+  result?: TaskRunResult | null,
+): { value: string; sub?: string } {
   const execution = run?.execution ?? result?.execution;
   const stop = run?.stopReason ?? result?.stopReason;
-  if (!execution && !stop && !run?.error) return null;
+  const value = execution ? (EXECUTION_TEXT[execution] ?? execution) : "Ended";
+  if (stop && stop !== "complete") return { value, sub: `It ${STOP_TEXT[stop] ?? stop}.` };
+  if (run?.unrecoveredToolFailures?.length) return { value, sub: "Some tool calls failed." };
+  return { value, sub: run?.error ? run.error.split("\n")[0] : undefined };
+}
+
+/** The outcome's detail: the error, the budget that stopped it, tools that failed for good. */
+function OutcomeDetail({ run }: { run?: TaskRun }) {
   return (
-    <section className="section" aria-label="How it ran">
-      <h3 className="section-heading">How it ran</h3>
-      <p>
-        {execution ? (EXECUTION_TEXT[execution] ?? execution) : "Ended"}
-        {stop && stop !== "complete" ? `: it ${STOP_TEXT[stop] ?? stop}` : ""}
-        {run?.spendAccountId?.startsWith("task-batch:") ? " (the batch budget)" : ""}
-        {run?.spendAccountId?.startsWith("task-budget:") ? " (the task's token budget)" : ""}.
-      </p>
+    <>
+      {run?.spendAccountId?.startsWith("task-batch:") && <p>The batch's budget stopped it.</p>}
+      {run?.spendAccountId?.startsWith("task-budget:") && (
+        <p>The task's token budget stopped it.</p>
+      )}
       {run?.error && <pre className="reader-error-body">{run.error}</pre>}
       {run?.unrecoveredToolFailures && run.unrecoveredToolFailures.length > 0 && (
-        <p className="assess-reason">
-          Tools that failed with no later success: {run.unrecoveredToolFailures.join(", ")}
-        </p>
+        <p>Tools that failed with no later success: {run.unrecoveredToolFailures.join(", ")}</p>
       )}
-    </section>
+    </>
   );
 }
 
 /** What the run cost: the run's model calls, the judge, and the tokens. */
-export function CostPanel({ run, result }: { run?: TaskRun; result: TaskRunResult | null }) {
+function CostDetail({ run, result }: { run?: TaskRun; result: TaskRunResult | null }) {
   const judgeCost = (run?.assessment ?? result?.assessment)?.usage?.costUsd;
-  const inTok = run?.inputTokens ?? result?.usage.inputTokens;
-  const outTok = run?.outputTokens ?? result?.usage.outputTokens;
-  const steps = run?.iterations ?? result?.usage.iterations;
   return (
-    <details className="section details">
-      <summary className="section-heading">
-        Cost: {formatUsd((run?.costUsd ?? 0) + (judgeCost ?? 0))}
-      </summary>
-      <dl className="sv-dl">
+    <dl className="sv-dl">
+      <div className="sv-pair">
+        <dt>Run</dt>
+        <dd>{run?.costUsd !== undefined ? formatUsd(run.costUsd) : "Not recorded"}</dd>
+      </div>
+      {judgeCost !== undefined && (
         <div className="sv-pair">
-          <dt>Run</dt>
-          <dd>{run?.costUsd !== undefined ? formatUsd(run.costUsd) : "Not recorded"}</dd>
+          <dt>Judge</dt>
+          <dd>{formatUsd(judgeCost)}</dd>
         </div>
-        {judgeCost !== undefined && (
-          <div className="sv-pair">
-            <dt>Judge</dt>
-            <dd>{formatUsd(judgeCost)}</dd>
-          </div>
-        )}
-        <div className="sv-pair">
-          <dt>Tokens</dt>
-          <dd>
-            {formatTokens(inTok)} in · {formatTokens(outTok)} out
-          </dd>
-        </div>
-        <div className="sv-pair">
-          <dt>Steps</dt>
-          <dd>{steps ?? "—"}</dd>
-        </div>
-      </dl>
-    </details>
+      )}
+      <div className="sv-pair">
+        <dt>Tokens</dt>
+        <dd>
+          {formatTokens(run?.inputTokens ?? result?.usage.inputTokens)} in ·{" "}
+          {formatTokens(run?.outputTokens ?? result?.usage.outputTokens)} out
+        </dd>
+      </div>
+      <div className="sv-pair">
+        <dt>Steps</dt>
+        <dd>{run?.iterations ?? result?.usage.iterations ?? "—"}</dd>
+      </div>
+    </dl>
   );
 }
 
-/** The input the run was given, as JSON. */
-export function InputPanel({ input }: { input: unknown }) {
-  if (input === undefined) return null;
-  return (
-    <details className="section details">
-      <summary className="section-heading">Input</summary>
-      <pre className="code-block">{JSON.stringify(input, null, 2)}</pre>
-    </details>
-  );
+const VERDICT_WORD: Record<string, { word: string; tone: LabelTone }> = {
+  pass: { word: "Passed", tone: "success" },
+  fail: { word: "Failed", tone: "danger" },
+  uncertain: { word: "Uncertain", tone: "warning" },
+  not_assessed: { word: "Not assessed", tone: "muted" },
+};
+
+/** The run's report card: outcome, verdict, input, how long it took, what it cost. */
+export function RunSummary({ run, result }: { run?: TaskRun; result: TaskRunResult | null }) {
+  const outcome = outcomeText(run, result);
+  const assessment = run?.assessment ?? result?.assessment;
+  const verdict = VERDICT_WORD[assessment?.verdict ?? ""];
+  const judgeCost = assessment?.usage?.costUsd;
+  const total = (run?.costUsd ?? 0) + (judgeCost ?? 0);
+  const input = inputSummary(run?.input);
+  const tiles: Tile[] = [
+    {
+      id: "outcome",
+      label: "Outcome",
+      value: outcome.value,
+      sub: outcome.sub,
+      detail:
+        run?.error || run?.unrecoveredToolFailures?.length || run?.spendAccountId ? (
+          <OutcomeDetail run={run} />
+        ) : undefined,
+    },
+    {
+      id: "verdict",
+      label: "Verdict",
+      value: verdict ? (
+        <StatusBadge tone={verdict.tone} label={verdict.word} />
+      ) : (
+        "Not assessed yet"
+      ),
+      sub: assessment?.reason
+        ? firstSentence(assessmentReasonText(assessment.reason.code))
+        : undefined,
+    },
+    {
+      id: "input",
+      label: "Input",
+      value: input ?? (run?.input === undefined ? "No input" : "See input"),
+      detail:
+        run?.input !== undefined ? (
+          <pre className="code-block">{JSON.stringify(run.input, null, 2)}</pre>
+        ) : undefined,
+    },
+    {
+      id: "took",
+      label: "Took",
+      value: run?.completedAt ? formatDuration(run.startedAt, run.completedAt) : "—",
+      sub: run ? `${STARTED_BY_TEXT[startedByOf(run)]} · ${runTime(run.startedAt)}` : undefined,
+    },
+    {
+      id: "cost",
+      label: "Cost",
+      value: formatUsd(total),
+      sub:
+        judgeCost !== undefined ? `Includes ${formatUsd(judgeCost)} for the judge` : "Model calls",
+      detail: <CostDetail run={run} result={result} />,
+    },
+  ];
+  return <SummaryStrip tiles={tiles} label="Run summary" />;
+}
+
+function firstSentence(text: string): string {
+  const end = text.indexOf(". ");
+  return end > 0 ? text.slice(0, end + 1) : text;
 }
 
 /** What a run result screen holds once loaded. */
@@ -369,8 +448,8 @@ function RelatedLinks({
 }
 
 /**
- * The parts below the deliverable, in reading order: whether it is good,
- * how it ran, the tool calls, the input, the cost, and links to related runs.
+ * The run's page below its header: the report card, then the result, whether
+ * it is good, and the steps it took, each a section; links to related runs last.
  */
 export function ResultBody({
   state,
@@ -399,7 +478,8 @@ export function ResultBody({
   const assessment = run?.assessment ?? result?.assessment;
   const canJudge = canAct && run?.execution !== "skipped" && !!(result || run?.resultPreview);
   return (
-    <>
+    <Sections>
+      <RunSummary run={run} result={result} />
       <Deliverable result={result} run={run} onOpenFile={onOpenFile} />
       <AssessmentPanel
         assessment={assessment}
@@ -410,12 +490,9 @@ export function ResultBody({
         onVerdict={onVerdict}
         onRejudge={onRejudge}
       />
-      <ExecutionPanel run={run} result={result} />
       <RunSteps log={result?.activityLog ?? []} />
-      <InputPanel input={run?.input} />
-      <CostPanel run={run} result={result} />
       <RelatedLinks run={run} onOpenRun={onOpenRun} onOpenBatch={onOpenBatch} />
-    </>
+    </Sections>
   );
 }
 
@@ -491,6 +568,7 @@ export function ResultScreen({
   onRerun,
   onOpenRun,
   onOpenBatch,
+  onRunLoaded,
 }: {
   runId: string;
   taskId?: string;
@@ -501,9 +579,16 @@ export function ResultScreen({
   onRerun?: (task: { id: string; name: string }, input: unknown) => void;
   onOpenRun: (runId: string, taskId?: string) => void;
   onOpenBatch: (batchId: string) => void;
+  /** Told the run's record once read, so the crumb can name the run as the heading does. */
+  onRunLoaded?: (run: TaskRun) => void;
 }) {
   const name = taskName ?? taskId;
   const state = useRunResult(runId, name, taskId ?? initialRun?.taskId, initialRun);
+  const loadedStart = state.run?.startedAt;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: report once per run start, not per callback identity
+  useEffect(() => {
+    if (state.run && !initialRun) onRunLoaded?.(state.run);
+  }, [loadedStart]);
   const assess = useAssess(runId, name, state.setRun);
   const cancelTool = useTool<string>("cancel");
   const [cancelling, setCancelling] = useState(false);
@@ -532,7 +617,7 @@ export function ResultScreen({
   return (
     <div className="app">
       <PageHeader
-        title={run ? `Run ${runTime(run.startedAt)}` : "Run"}
+        title={runName(run?.startedAt)}
         onBack={onBack}
         status={
           <ResultSub

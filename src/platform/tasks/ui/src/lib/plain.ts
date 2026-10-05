@@ -52,6 +52,11 @@ export function runTime(iso: string, now: number = Date.now()): string {
   return d.toLocaleString(undefined, { month: "short", day: "numeric", ...TIME });
 }
 
+/** A run's name, the same in its crumb, its page heading, and its rows: "Run Yesterday 4:08 PM". */
+export function runName(startedAt: string | undefined, now: number = Date.now()): string {
+  return startedAt ? `Run ${runTime(startedAt, now)}` : "Run";
+}
+
 const MAX_SUMMARY = 48;
 
 /**

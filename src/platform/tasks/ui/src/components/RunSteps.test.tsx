@@ -40,7 +40,7 @@ describe("RunSteps", () => {
     const html = renderToStaticMarkup(createElement(RunSteps, { log: [call(0), call(1, false)] }));
     expect(html).toContain("Find contact");
     expect(html).toContain(" in crm");
-    expect(html).toContain("2 steps, 1 failed");
+    expect(html).toContain("2 tool calls, 1 failed");
     expect(html).toContain("step tone-danger");
     expect(html).toContain('<details class="step-details"><summary>Show details</summary>');
     expect(html).not.toMatch(/<details[^>]* open/);

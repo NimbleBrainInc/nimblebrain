@@ -5,6 +5,7 @@ import type { TaskStats, TaskSummary, UpcomingData, UpcomingFire, UpcomingRun } 
 import { useTool } from "../useTool.ts";
 import { asDict, formatWhen, relativeTime, toolErrorText } from "../utils.ts";
 import { PageHeader } from "./Chrome.tsx";
+import { Section, Sections } from "./Section.tsx";
 import { SkeletonRows } from "./Skeleton.tsx";
 import { TEMPLATES, type Template } from "./templates.ts";
 
@@ -130,15 +131,14 @@ function ComingUp({
 }) {
   const byId = new Map(rows.map((r) => [r.task.id, r]));
   return (
-    <section className="home-section" aria-labelledby="home-coming">
-      <div className="section-row">
-        <h2 className="section-heading" id="home-coming">
-          Coming up
-        </h2>
-        <button type="button" className="link-btn" onClick={actions.onSeeUpcoming}>
+    <Section
+      title="Coming up"
+      aside={
+        <button type="button" className="btn btn-sm" onClick={actions.onSeeUpcoming}>
           See everything coming up
         </button>
-      </div>
+      }
+    >
       <ul className="coming-strip">
         {fires.map((f) => {
           const row = byId.get(f.taskId);
@@ -162,7 +162,7 @@ function ComingUp({
           );
         })}
       </ul>
-    </section>
+    </Section>
   );
 }
 
@@ -264,10 +264,7 @@ function TaskLists({
   return (
     <>
       {rest.length > 0 && (
-        <section className="home-section" aria-labelledby="home-all">
-          <h2 className="section-heading" id="home-all">
-            {needsYou > 0 ? "Everything else" : "Your tasks"}
-          </h2>
+        <Section title={needsYou > 0 ? "Everything else" : "Your tasks"}>
           <ul className="home-rows">
             {rest.map((r) => (
               <TaskRowItem
@@ -278,12 +275,11 @@ function TaskLists({
               />
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
       {paused.length > 0 && (
-        <details className="home-section details">
-          <summary className="section-heading">Paused ({paused.length})</summary>
+        <Section title="Paused" aside={<span className="muted">{paused.length}</span>}>
           <ul className="home-rows">
             {paused.map((r) => (
               <TaskRowItem
@@ -294,7 +290,7 @@ function TaskLists({
               />
             ))}
           </ul>
-        </details>
+        </Section>
       )}
     </>
   );
@@ -360,42 +356,44 @@ export function HomeBody({
       />
       <main className="content">
         <div className="view-pad home">
-          {error && <div className="error-banner">{error}</div>}
-          {readError && (
-            <div className="note-banner">Some of what's below may be missing: {readError}</div>
-          )}
+          <Sections>
+            {error && <div className="error-banner">{error}</div>}
+            {readError && (
+              <div className="note-banner">Some of what's below may be missing: {readError}</div>
+            )}
 
-          {needsYou.length > 0 && (
-            <ul className="attn-list" aria-label="Needs you">
-              {needsYou.map((r) => (
-                <AttentionCard key={r.task.id} row={r} actions={actions} />
-              ))}
-            </ul>
-          )}
+            {needsYou.length > 0 && (
+              <ul className="attn-list" aria-label="Needs you">
+                {needsYou.map((r) => (
+                  <AttentionCard key={r.task.id} row={r} actions={actions} />
+                ))}
+              </ul>
+            )}
 
-          {live.length > 0 && (
-            <ul className="live-list" aria-label="Running now">
-              {live.map((r) => (
-                <LiveRow key={r.task.id} row={r} actions={actions} />
-              ))}
-            </ul>
-          )}
+            {live.length > 0 && (
+              <ul className="live-list" aria-label="Running now">
+                {live.map((r) => (
+                  <LiveRow key={r.task.id} row={r} actions={actions} />
+                ))}
+              </ul>
+            )}
 
-          {fires.length > 0 && <ComingUp fires={fires} rows={rows} actions={actions} />}
+            {fires.length > 0 && <ComingUp fires={fires} rows={rows} actions={actions} />}
 
-          <TaskLists
-            rest={rest}
-            paused={paused}
-            needsYou={needsYou.length}
-            stats={stats}
-            onOpen={open}
-          />
+            <TaskLists
+              rest={rest}
+              paused={paused}
+              needsYou={needsYou.length}
+              stats={stats}
+              onOpen={open}
+            />
 
-          <div className="home-foot">
-            <button type="button" className="link-btn" onClick={actions.onSeeActivity}>
-              See every run
-            </button>
-          </div>
+            <div className="home-foot">
+              <button type="button" className="btn" onClick={actions.onSeeActivity}>
+                See every run
+              </button>
+            </div>
+          </Sections>
         </div>
       </main>
     </>

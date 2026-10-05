@@ -4,7 +4,7 @@
  * so following one is a lookup, not a second copy of the navigation rules.
  */
 
-import { runTime } from "../lib/plain.ts";
+import { runName } from "../lib/plain.ts";
 import type { TaskBatch, TaskRun } from "../types.ts";
 import type { Template } from "./templates.ts";
 
@@ -28,9 +28,7 @@ export interface TrailStep {
 export const TRAIL_ROOT_ID = "ui://tasks/panel";
 
 function runLabel(s: Extract<Screen, { kind: "result" }>): string {
-  return s.run
-    ? `Run ${runTime(s.run.startedAt)}`
-    : `Run ${s.runId.replace(/^run_/, "").slice(0, 6)}`;
+  return runName(s.run?.startedAt);
 }
 
 /** The crumb one page adds. */

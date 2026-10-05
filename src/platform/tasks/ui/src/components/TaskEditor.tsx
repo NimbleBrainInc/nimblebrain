@@ -20,13 +20,14 @@ import { InputFieldsBuilder } from "./InputFieldsBuilder.tsx";
 import { ResultBody, useAssess, useOpenFile, useRunResult } from "./ResultView.tsx";
 import { type RunStarted, runStartedOf } from "./RunDialog.tsx";
 import { SchedulePicker } from "./SchedulePicker.tsx";
+import { Section as Card, Sections } from "./Section.tsx";
 import type { Template } from "./templates.ts";
 
 export { parseToolList } from "../lib/editorDraft.ts";
 
 type Patch = (patch: Partial<EditorDraft>) => void;
 
-/** One editor section, labelled by its heading. */
+/** One editor group: a section card, with its hint first. */
 function Section({
   title,
   hint,
@@ -36,15 +37,11 @@ function Section({
   hint?: string;
   children: React.ReactNode;
 }) {
-  const id = useId();
   return (
-    <section className="section editor-section" aria-labelledby={id}>
-      <h2 className="section-heading" id={id}>
-        {title}
-      </h2>
-      {hint && <p className="hint">{hint}</p>}
+    <Card title={title}>
+      {hint && <p className="hint card-hint">{hint}</p>}
       {children}
-    </section>
+    </Card>
   );
 }
 
@@ -887,11 +884,13 @@ function EditorForm({
         {detail?.kind === "oneoff" && (
           <div className="note-banner">This is a one-off task made by an inline run.</div>
         )}
-        <WhatToDo d={draft} set={set} editing={editing} />
-        <WhatGoodLooksLike d={draft} set={set} judges={judges} />
-        <When d={draft} set={set} />
-        <Limits d={draft} set={set} />
-        <TestRunSection draft={draft} set={set} onProblems={setProblems} />
+        <Sections>
+          <WhatToDo d={draft} set={set} editing={editing} />
+          <WhatGoodLooksLike d={draft} set={set} judges={judges} />
+          <When d={draft} set={set} />
+          <Limits d={draft} set={set} />
+          <TestRunSection draft={draft} set={set} onProblems={setProblems} />
+        </Sections>
       </div>
     </div>
   );

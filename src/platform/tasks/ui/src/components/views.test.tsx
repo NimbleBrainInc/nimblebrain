@@ -124,7 +124,7 @@ describe("Home", () => {
   });
   test("a paused task is folded under Paused", () => {
     const html = body({ tasks: [TASK], stats: STATS("Succeeded") });
-    expect(html).toContain("Paused (1)");
+    expect(html).toMatch(/Paused<\/h2><div class="card-aside"><span class="muted">1</);
   });
   test("a run in flight shows with Watch, and coming fires show in the strip", () => {
     const html = body({
@@ -436,16 +436,21 @@ describe("Result", () => {
     expect(html).toContain('<th scope="col">role</th>');
     expect(html).toContain("acme-research.md");
     expect(html).toContain("Every claim cites a source");
-    expect(html).toContain("Answer: No");
-    expect(html).toContain("Answer: high");
-    expect(html).toContain("Confidence 91%");
+    expect(html).toMatch(/Every claim cites a source.*<td>No<\/td><td class="num">91%/);
+    expect(html).toContain("<td>high</td>");
     expect(html).toContain("No fetched source");
     expect(html).toContain("Judged by judge · default 1.0");
     expect(html).toContain("Accept");
     expect(html).toContain("Re-judge");
-    expect(html).toContain("1 step");
+    expect(html).toContain("1 tool call");
     expect(html).toContain('Fetch<span class="muted"> in web</span>');
-    expect(html).toContain("Cost: $0.43");
+    // The report card: outcome, verdict, input, time, and cost (run plus judge).
+    expect(html).toMatch(/Outcome<\/span><span class="tile-value">Completed/);
+    expect(html).toMatch(/Input<\/span><span class="tile-value">Acme/);
+    expect(html).toMatch(/Cost<\/span><span class="tile-value">\$0\.43/);
+    expect(html).toContain("Includes $0.02 for the judge");
+    expect(html).toContain("Show raw");
+    expect(html).not.toContain("How it ran");
     expect(html).toContain("Open the run this retried");
   });
 

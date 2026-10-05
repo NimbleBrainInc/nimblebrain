@@ -3,6 +3,8 @@
  * and picking a crumb pops back to that page.
  */
 import { describe, expect, test } from "bun:test";
+import { runName } from "../lib/plain.ts";
+import type { TaskRun } from "../types.ts";
 import { type Screen, TRAIL_ROOT_ID, trailFor, withRun } from "./trail.ts";
 
 const labels = (stack: Screen[]) => trailFor(stack).map((s) => s.label);
@@ -24,7 +26,7 @@ describe("trailFor", () => {
       "All runs",
     ]);
     expect(labels([TASK, { kind: "result", runId: "run_abcdef123456", taskId: "digest" }])).toEqual(
-      ["Tasks", "Digest", "Run abcdef"],
+      ["Tasks", "Digest", "Run"],
     );
     expect(labels([TASK, { kind: "editor", taskName: "Digest" }])).toEqual([
       "Tasks",
@@ -77,5 +79,21 @@ describe("withRun", () => {
   });
   test("a run of a task the list does not know opens alone", () => {
     expect(withRun([], run("r1"), undefined)).toEqual([run("r1")]);
+  });
+});
+
+describe("a run's name", () => {
+  test("the crumb and the page heading use the same name, never the run id", () => {
+    const run = {
+      id: "run_470d01aa",
+      taskId: "digest",
+      status: "success",
+      startedAt: new Date(Date.now() - 86_400_000).toISOString(),
+    } as TaskRun;
+    const crumb = trailFor([TASK, { kind: "result", runId: run.id, taskId: "digest", run }])[2]
+      ?.label;
+    expect(crumb).toBe(runName(run.startedAt));
+    expect(crumb).toMatch(/^Run Yesterday /);
+    expect(crumb).not.toContain("470d01");
   });
 });

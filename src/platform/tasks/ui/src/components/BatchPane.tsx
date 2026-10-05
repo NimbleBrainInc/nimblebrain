@@ -5,6 +5,7 @@ import { useTool } from "../useTool.ts";
 import { asDict, formatCost, relativeTime } from "../utils.ts";
 import { PageHeader } from "./Chrome.tsx";
 import { RunBadge } from "./RunBadge.tsx";
+import { Section, Sections } from "./Section.tsx";
 
 /** Rows per page of results. */
 const PAGE = 50;
@@ -102,35 +103,42 @@ export function BatchPane({
         onControl={control}
         onBack={onBack}
       />
-      <div className="reader-body">
-        <BatchProgress batch={batch} />
-        {batch.pause && <div className="batch-note">{batch.pause.message}</div>}
-        {error && <div className="error-banner">{error}</div>}
-
-        <label className="batch-filter">
-          <input
-            type="checkbox"
-            checked={failingOnly}
-            onChange={(e) => setFailingOnly(e.target.checked)}
-          />
-          Failing items only
-        </label>
-
-        <BatchResultsTable rows={rows} columns={columns} onOpenRun={onOpenRun} />
-        {nextCursor !== undefined && (
-          <button
-            type="button"
-            className="btn"
-            style={{ marginTop: 10 }}
-            onClick={() =>
-              loadPage(nextCursor).catch((err) =>
-                setError(err instanceof Error ? err.message : String(err)),
-              )
+      <div className="content page-body">
+        <Sections>
+          <Section title="Progress">
+            <BatchProgress batch={batch} />
+            {batch.pause && <div className="batch-note">{batch.pause.message}</div>}
+          </Section>
+          {error && <div className="error-banner">{error}</div>}
+          <Section
+            title="Items"
+            aside={
+              <label className="batch-filter">
+                <input
+                  type="checkbox"
+                  checked={failingOnly}
+                  onChange={(e) => setFailingOnly(e.target.checked)}
+                />
+                Failing items only
+              </label>
             }
           >
-            Load more
-          </button>
-        )}
+            <BatchResultsTable rows={rows} columns={columns} onOpenRun={onOpenRun} />
+            {nextCursor !== undefined && (
+              <button
+                type="button"
+                className="btn load-more"
+                onClick={() =>
+                  loadPage(nextCursor).catch((err) =>
+                    setError(err instanceof Error ? err.message : String(err)),
+                  )
+                }
+              >
+                Load more
+              </button>
+            )}
+          </Section>
+        </Sections>
       </div>
     </div>
   );

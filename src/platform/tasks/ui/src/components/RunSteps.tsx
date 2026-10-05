@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
 import type { RunToolCall } from "../types.ts";
+import { Section } from "./Section.tsx";
 
 /** Steps shown before "Show all": enough to read the run's shape without a wall of rows. */
 const FIRST_STEPS = 8;
@@ -38,16 +39,15 @@ export function RunSteps({ log }: { log: RunToolCall[] }) {
   const failed = log.filter((tc) => !tc.ok).length;
   const shown = all ? log : log.slice(0, FIRST_STEPS);
   return (
-    <section className="section" aria-labelledby="run-steps">
-      <div className="section-row">
-        <h3 className="section-heading" id="run-steps">
-          Steps
-        </h3>
+    <Section
+      title="Steps"
+      aside={
         <span className="muted">
-          {log.length} {log.length === 1 ? "step" : "steps"}
+          {log.length} tool {log.length === 1 ? "call" : "calls"}
           {failed > 0 ? `, ${failed} failed` : ""}
         </span>
-      </div>
+      }
+    >
       <ol className="steps">
         {shown.map((tc) => {
           const { action, source } = stepTitle(tc.name);
@@ -91,7 +91,7 @@ export function RunSteps({ log }: { log: RunToolCall[] }) {
           {all ? "Show fewer" : `Show all ${log.length} steps`}
         </button>
       )}
-    </section>
+    </Section>
   );
 }
 

@@ -127,21 +127,34 @@ export function asJson(text: string): unknown {
 
 /**
  * A deliverable as a person reads it: structured output (or text that is
- * JSON) as labelled values and tables, with the raw JSON behind "Show raw";
- * anything else as wrapped prose. Nothing scrolls sideways.
+ * JSON) as labelled values and tables, or, with `raw`, as its JSON; anything
+ * else as wrapped prose. Nothing scrolls sideways. The section that holds it
+ * offers the raw toggle in its header.
  */
-export function ResultPreview({ structured, text }: { structured?: unknown; text?: string }) {
+export function ResultPreview({
+  structured,
+  text,
+  raw = false,
+}: {
+  structured?: unknown;
+  text?: string;
+  raw?: boolean;
+}) {
   const value = structured !== undefined ? structured : text ? asJson(text) : undefined;
   if (value !== null && typeof value === "object") {
-    return (
+    return raw ? (
+      <pre className="code-block">{JSON.stringify(value, null, 2)}</pre>
+    ) : (
       <div className="result-preview">
         <StructuredValue value={value} />
-        <details className="raw">
-          <summary>Show raw</summary>
-          <pre className="code-block">{JSON.stringify(value, null, 2)}</pre>
-        </details>
       </div>
     );
   }
   return text ? <p className="prose result-preview">{unfence(text)}</p> : null;
+}
+
+/** Whether a deliverable reads as structured values. */
+export function readsStructured(structured: unknown, text?: string): boolean {
+  const value = structured !== undefined ? structured : text ? asJson(text) : undefined;
+  return value !== null && typeof value === "object";
 }

@@ -276,6 +276,13 @@ export function TasksUI() {
           refreshKey={refreshKey}
           onBack={pop}
           onPush={push}
+          onRunLoaded={(runId, run) =>
+            setStack((prev) =>
+              prev.map((s) =>
+                s.kind === "result" && s.runId === runId && !s.run ? { ...s, run } : s,
+              ),
+            )
+          }
           onOpenRun={openRun}
           onReplaceTop={(s) => setStack((prev) => [...prev.slice(0, -1), ...(s ? [s] : [])])}
           onRerun={(task, input) => void runNow(task, input)}
@@ -307,6 +314,7 @@ function ScreenRoute({
   refreshKey,
   onBack,
   onPush,
+  onRunLoaded,
   onOpenRun,
   onReplaceTop,
   onRerun,
@@ -317,6 +325,7 @@ function ScreenRoute({
   refreshKey: number;
   onBack: () => void;
   onPush: (s: Screen) => void;
+  onRunLoaded: (runId: string, run: TaskRun) => void;
   onOpenRun: (runId: string, taskId?: string, run?: TaskRun) => void;
   onReplaceTop: (s: Screen | null) => void;
   onRerun: (task: TaskRef, input: unknown) => void;
@@ -337,6 +346,7 @@ function ScreenRoute({
           onRerun={onRerun}
           onOpenRun={openRun}
           onOpenBatch={(batchId) => onPush({ kind: "batch", batchId })}
+          onRunLoaded={(run) => onRunLoaded(screen.runId, run)}
         />
       );
     case "batch":

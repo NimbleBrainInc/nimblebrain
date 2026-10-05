@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { TaskBatch, UpcomingData, UpcomingRun } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatWhen, relativeTime, toolErrorText } from "../utils.ts";
+import { Section, Sections } from "./Section.tsx";
 import { SkeletonRows } from "./Skeleton.tsx";
 
 /** How often the view re-reads while it is open: the queue moves without a data change. */
@@ -95,144 +96,138 @@ export function UpcomingBody({
     events.length === 0;
   return (
     <div className="view-pad upcoming">
-      {error && <div className="error-banner">{error}</div>}
-      {nothing && (
-        <div className="empty-block">
-          <h2 className="empty-state-title">Nothing is lined up</h2>
-          <p className="empty-state-desc">
-            No run is going or waiting, and no task has a schedule or an event trigger. Give a task
-            a schedule in its editor, or run one now from Saved.
-          </p>
-        </div>
-      )}
-
-      {(running.length > 0 || queued.length > 0) && (
-        <section aria-labelledby="up-queue">
-          <h2 className="section-heading" id="up-queue">
-            Queue{" "}
-            <span className="muted">
-              {running.length} running · {queued.length} waiting
-            </span>
-          </h2>
-          <ul className="up-list">
-            {running.map((r) => (
-              <li key={`r-${r.runId ?? r.taskId}`} className="up-row">
-                <span className="up-when">
-                  <span className="dot dot-running" /> Running
-                </span>
-                <span className="up-what">{queueLine(r, batches)}</span>
-                <span className="up-meta">
-                  {r.startedAt ? `started ${relativeTime(r.startedAt)}` : ""}
-                </span>
-                {r.runId && (
-                  <button type="button" className="link-btn" onClick={() => onOpenRun(r)}>
-                    Open
-                  </button>
-                )}
-              </li>
-            ))}
-            {queued.map((r) => (
-              <li key={`q-${r.runId ?? r.taskId}-${r.position}`} className="up-row">
-                <span className="up-when">Waiting · {r.position ?? "?"}</span>
-                <span className="up-what">{queueLine(r, batches)}</span>
-                <span className="up-meta">
-                  {r.queuedAt ? `asked ${relativeTime(r.queuedAt)}` : ""}
-                </span>
-                {r.runId && (
-                  <button type="button" className="link-btn" onClick={() => onOpenRun(r)}>
-                    Open
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {!nothing && (
-        <section aria-labelledby="up-sched">
-          <div className="section-row">
-            <h2 className="section-heading" id="up-sched">
-              Scheduled
-            </h2>
-            <WindowToggle days={days} onDays={onDays} />
+      <Sections>
+        {error && <div className="error-banner">{error}</div>}
+        {nothing && (
+          <div className="empty-block">
+            <h2 className="empty-state-title">Nothing is lined up</h2>
+            <p className="empty-state-desc">
+              No run is going or waiting, and no task has a schedule or an event trigger. Give a
+              task a schedule in its editor, or run one now from Saved.
+            </p>
           </div>
-          {scheduled.length === 0 && frequent.length === 0 && (
-            <p className="muted">No scheduled runs.</p>
-          )}
-          {frequent.length > 0 && (
+        )}
+
+        {(running.length > 0 || queued.length > 0) && (
+          <Section
+            title="In the queue"
+            aside={
+              <span className="muted">
+                {running.length} running · {queued.length} waiting
+              </span>
+            }
+          >
             <ul className="up-list">
-              {frequent.map((f) => (
-                <li key={`f-${f.taskId}`} className="up-row">
-                  <time className="up-when" dateTime={f.first}>
-                    {formatWhen(f.first)}
-                  </time>
-                  <button
-                    type="button"
-                    className="task-link up-what"
-                    onClick={() => onOpenTask(f.taskName)}
-                  >
-                    {f.taskName}
-                  </button>
-                  <span className="up-meta">{frequentLine(f, data.days)}</span>
+              {running.map((r) => (
+                <li key={`r-${r.runId ?? r.taskId}`} className="up-row">
+                  <span className="up-when">
+                    <span className="dot dot-running" /> Running
+                  </span>
+                  <span className="up-what">{queueLine(r, batches)}</span>
+                  <span className="up-meta">
+                    {r.startedAt ? `started ${relativeTime(r.startedAt)}` : ""}
+                  </span>
+                  {r.runId && (
+                    <button type="button" className="link-btn" onClick={() => onOpenRun(r)}>
+                      Open
+                    </button>
+                  )}
+                </li>
+              ))}
+              {queued.map((r) => (
+                <li key={`q-${r.runId ?? r.taskId}-${r.position}`} className="up-row">
+                  <span className="up-when">Waiting · {r.position ?? "?"}</span>
+                  <span className="up-what">{queueLine(r, batches)}</span>
+                  <span className="up-meta">
+                    {r.queuedAt ? `asked ${relativeTime(r.queuedAt)}` : ""}
+                  </span>
+                  {r.runId && (
+                    <button type="button" className="link-btn" onClick={() => onOpenRun(r)}>
+                      Open
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
-          )}
-          {scheduled.length > 0 && (
+          </Section>
+        )}
+
+        {!nothing && (
+          <Section title="Scheduled" aside={<WindowToggle days={days} onDays={onDays} />}>
+            {scheduled.length === 0 && frequent.length === 0 && (
+              <p className="muted">No scheduled runs.</p>
+            )}
+            {frequent.length > 0 && (
+              <ul className="up-list">
+                {frequent.map((f) => (
+                  <li key={`f-${f.taskId}`} className="up-row">
+                    <time className="up-when" dateTime={f.first}>
+                      {formatWhen(f.first)}
+                    </time>
+                    <button
+                      type="button"
+                      className="task-link up-what"
+                      onClick={() => onOpenTask(f.taskName)}
+                    >
+                      {f.taskName}
+                    </button>
+                    <span className="up-meta">{frequentLine(f, data.days)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {scheduled.length > 0 && (
+              <ul className="up-list">
+                {scheduled.map((f) => (
+                  <li
+                    key={`${f.taskId}-${f.at}`}
+                    className={`up-row${f.beyondWindow ? " beyond" : ""}`}
+                  >
+                    <time className="up-when" dateTime={f.at}>
+                      {formatWhen(f.at)}
+                    </time>
+                    <button
+                      type="button"
+                      className="task-link up-what"
+                      onClick={() => onOpenTask(f.taskName)}
+                    >
+                      {f.taskName}
+                    </button>
+                    <span className="up-meta">
+                      {f.schedule}
+                      {f.beyondWindow ? ` · after the next ${data.days} days` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+        )}
+
+        {events.length > 0 && (
+          <Section title="On events">
             <ul className="up-list">
-              {scheduled.map((f) => (
-                <li
-                  key={`${f.taskId}-${f.at}`}
-                  className={`up-row${f.beyondWindow ? " beyond" : ""}`}
-                >
-                  <time className="up-when" dateTime={f.at}>
-                    {formatWhen(f.at)}
-                  </time>
+              {events.map((e) => (
+                <li key={e.taskId} className="up-row">
                   <button
                     type="button"
-                    className="task-link up-what"
-                    onClick={() => onOpenTask(f.taskName)}
+                    className="task-link up-when"
+                    onClick={() => onOpenTask(e.taskName)}
                   >
-                    {f.taskName}
+                    {e.taskName}
                   </button>
+                  <span className="up-what">
+                    {e.schedule} (at most {e.maxFiresPerHour}/hr)
+                  </span>
                   <span className="up-meta">
-                    {f.schedule}
-                    {f.beyondWindow ? ` · after the next ${data.days} days` : ""}
+                    {e.enabled ? `${e.firesLastHour} in the last hour` : "Paused"}
                   </span>
                 </li>
               ))}
             </ul>
-          )}
-        </section>
-      )}
-
-      {events.length > 0 && (
-        <section aria-labelledby="up-events">
-          <h2 className="section-heading" id="up-events">
-            On events
-          </h2>
-          <ul className="up-list">
-            {events.map((e) => (
-              <li key={e.taskId} className="up-row">
-                <button
-                  type="button"
-                  className="task-link up-when"
-                  onClick={() => onOpenTask(e.taskName)}
-                >
-                  {e.taskName}
-                </button>
-                <span className="up-what">
-                  {e.schedule} (at most {e.maxFiresPerHour}/hr)
-                </span>
-                <span className="up-meta">
-                  {e.enabled ? `${e.firesLastHour} in the last hour` : "Paused"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+          </Section>
+        )}
+      </Sections>
     </div>
   );
 }
