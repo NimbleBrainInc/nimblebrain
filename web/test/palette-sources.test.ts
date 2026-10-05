@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from "bun:test";
+import { DOCS_URL } from "../src/lib/docs";
 import { appsSource } from "../src/components/palette/sources/apps";
 import { actionsSource } from "../src/components/palette/sources/actions";
 import { workspacesSource } from "../src/components/palette/sources/workspaces";
@@ -29,9 +30,14 @@ const baseCtx: CommandSourceContext = {
 
 function recordRunContext(): {
   ctx: CommandRunContext;
-  calls: { navigate: string[]; setActiveWorkspace: string[]; closed: number };
+  calls: { navigate: string[]; setActiveWorkspace: string[]; external: string[]; closed: number };
 } {
-  const calls = { navigate: [] as string[], setActiveWorkspace: [] as string[], closed: 0 };
+  const calls = {
+    navigate: [] as string[],
+    setActiveWorkspace: [] as string[],
+    external: [] as string[],
+    closed: 0,
+  };
   const ctx: CommandRunContext = {
     navigate: (to) => calls.navigate.push(to),
     setActiveWorkspace: (w) => calls.setActiveWorkspace.push(w.id),
@@ -39,7 +45,7 @@ function recordRunContext(): {
     toggleSidebar: () => {},
     toggleTheme: () => {},
     openKeyboardShortcuts: () => {},
-    openExternal: () => {},
+    openExternal: (url) => calls.external.push(url),
     logout: () => {},
     closePalette: () => {
       calls.closed += 1;
@@ -170,5 +176,14 @@ describe("actionsSource", () => {
     const { ctx: run, calls } = recordRunContext();
     item!.run(run);
     expect(calls.navigate).toEqual(["/w/003eba8844413cd9/settings"]);
+  });
+
+  test("documentation run opens the docs site and closes the palette", () => {
+    const item = actionsSource.getItems("docs", baseCtx).find((i) => i.id === "action:documentation");
+    expect(item).toBeDefined();
+    const { ctx: run, calls } = recordRunContext();
+    item!.run(run);
+    expect(calls.external).toEqual([DOCS_URL]);
+    expect(calls.closed).toBe(1);
   });
 });
