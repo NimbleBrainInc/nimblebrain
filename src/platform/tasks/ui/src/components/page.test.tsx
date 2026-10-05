@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskDetail, TaskRun } from "../types.ts";
 
 type Mod<T> = T extends Promise<infer U> ? U : never;
-const importPage = () => import("./TaskSheet.tsx");
+const importPage = () => import("./TaskPage.tsx");
 const importActivity = () => import("./ActivityView.tsx");
 const importChrome = () => import("./Chrome.tsx");
 const importMenu = () => import("./RowMenu.tsx");
@@ -102,7 +102,7 @@ const STATS = {
   costUsd: 1.2,
 };
 
-describe("SheetBody", () => {
+describe("TaskPageBody", () => {
   test("a run needing review: the callout, the latest result, recent runs, setup", () => {
     const review = {
       ...run("r2", "Needs review", new Date().toISOString()),
@@ -114,7 +114,7 @@ describe("SheetBody", () => {
       },
     };
     const runs = [review, run("r1", "Succeeded", new Date(Date.now() - 86_400_000).toISOString())];
-    const health = page.sheetHealth(
+    const health = page.taskHealth(
       undefined,
       DETAIL,
       { ...STATS, lastRun: { id: "r2", startedAt: review.startedAt, label: "Needs review" } },
@@ -122,7 +122,7 @@ describe("SheetBody", () => {
     );
     expect(health.word).toBe("Needs review");
     const html = renderToStaticMarkup(
-      createElement(page.SheetBody, {
+      createElement(page.TaskPageBody, {
         detail: DETAIL,
         health,
         stats: STATS,
@@ -135,15 +135,15 @@ describe("SheetBody", () => {
     expect(html).toContain("The last run needs you to check it.");
     expect(html).toContain("Latest result");
     expect(html).toContain("Three prospects found.");
-    expect(html.match(/class="sheet-run /g)).toHaveLength(2);
+    expect(html.match(/class="task-run /g)).toHaveLength(2);
     expect(html).toContain("75%");
     expect(html).toContain("What it does");
   });
 
   test("no runs yet, and a run in flight reads Running", () => {
-    const quiet = page.sheetHealth(undefined, DETAIL, null, []);
+    const quiet = page.taskHealth(undefined, DETAIL, null, []);
     const html = renderToStaticMarkup(
-      createElement(page.SheetBody, {
+      createElement(page.TaskPageBody, {
         detail: DETAIL,
         health: quiet,
         stats: null,
@@ -155,7 +155,7 @@ describe("SheetBody", () => {
     expect(html).toContain("No runs yet");
     expect(html).not.toContain("callout");
     const open = { ...run("r3", "Running", new Date().toISOString()), status: "running" };
-    expect(page.sheetHealth(undefined, DETAIL, null, [open]).word).toBe("Running");
+    expect(page.taskHealth(undefined, DETAIL, null, [open]).word).toBe("Running");
   });
 });
 

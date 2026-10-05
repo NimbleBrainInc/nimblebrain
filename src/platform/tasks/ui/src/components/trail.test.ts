@@ -1,66 +1,81 @@
-/** The breadcrumb the panel sends the host, and where each step leads back to. */
+/**
+ * The breadcrumb the panel sends the host maps one to one to its page stack,
+ * and picking a crumb pops back to that page.
+ */
 import { describe, expect, test } from "bun:test";
-import { type Screen, TRAIL_ROOT_ID, trailFor } from "./trail.ts";
+import { type Screen, TRAIL_ROOT_ID, trailFor, withRun } from "./trail.ts";
 
-const nameOf = (id: string) => ({ digest: "Digest" })[id];
-const labels = (stack: Screen[]) => trailFor(stack, nameOf).map((s) => s.label);
+const labels = (stack: Screen[]) => trailFor(stack).map((s) => s.label);
+const TASK: Screen = { kind: "task", taskName: "Digest" };
 
 describe("trailFor", () => {
   test("the home list is the root alone", () => {
     expect(labels([])).toEqual(["Tasks"]);
-    expect(trailFor([], nameOf)[0]?.id).toBe(TRAIL_ROOT_ID);
+    expect(trailFor([])[0]?.id).toBe(TRAIL_ROOT_ID);
   });
 
-  test("a task: Tasks › task", () => {
-    expect(labels([{ kind: "task", taskName: "Digest" }])).toEqual(["Tasks", "Digest"]);
-  });
-
-  test("what's coming up and every run", () => {
+  test("one crumb per page", () => {
+    expect(labels([TASK])).toEqual(["Tasks", "Digest"]);
     expect(labels([{ kind: "upcoming" }])).toEqual(["Tasks", "Coming up"]);
     expect(labels([{ kind: "activity" }])).toEqual(["Tasks", "Every run"]);
-  });
-
-  test("a task's runs name the task, once", () => {
-    expect(
-      labels([
-        { kind: "task", taskName: "Digest" },
-        { kind: "activity", taskId: "digest", taskName: "Digest" },
-      ]),
-    ).toEqual(["Tasks", "Digest", "Runs"]);
-  });
-
-  test("a run opened from the list names its task as the parent", () => {
-    const trail = trailFor(
-      [{ kind: "result", runId: "run_abcdef123456", taskId: "digest" }],
-      nameOf,
+    expect(labels([TASK, { kind: "activity", taskId: "digest", taskName: "Digest" }])).toEqual([
+      "Tasks",
+      "Digest",
+      "All runs",
+    ]);
+    expect(labels([TASK, { kind: "result", runId: "run_abcdef123456", taskId: "digest" }])).toEqual(
+      ["Tasks", "Digest", "Run abcdef"],
     );
-    expect(trail.map((s) => s.label)).toEqual(["Tasks", "Digest", "Run abcdef"]);
-    expect(trail[1]?.stack).toEqual([{ kind: "task", taskName: "Digest" }]);
-  });
-
-  test("a run opened from its task does not repeat the task", () => {
-    expect(
-      labels([
-        { kind: "task", taskName: "Digest" },
-        { kind: "result", runId: "run_abcdef123456", taskId: "digest" },
-      ]),
-    ).toEqual(["Tasks", "Digest", "Run abcdef"]);
-  });
-
-  test("the editor: task › Edit, or New task", () => {
-    expect(labels([{ kind: "editor", taskName: "Digest" }])).toEqual(["Tasks", "Digest", "Edit"]);
+    expect(labels([TASK, { kind: "editor", taskName: "Digest" }])).toEqual([
+      "Tasks",
+      "Digest",
+      "Edit",
+    ]);
     expect(labels([{ kind: "editor" }])).toEqual(["Tasks", "New task"]);
-    expect(labels([{ kind: "editor", copyOf: "Digest" }])).toEqual(["Tasks", "New task"]);
   });
 
-  test("each step leads back to the stack under it", () => {
-    const stack: Screen[] = [
-      { kind: "task", taskName: "Digest" },
-      { kind: "result", runId: "run_1", taskId: "digest" },
-    ];
-    const trail = trailFor(stack, nameOf);
+  test("each crumb leads to the stack up to its page: the task crumb to the task page", () => {
+    const stack: Screen[] = [TASK, { kind: "result", runId: "run_1", taskId: "digest" }];
+    const trail = trailFor(stack);
     expect(trail[0]?.stack).toEqual([]);
-    expect(trail[1]?.stack).toEqual([stack[0]]);
+    expect(trail[1]?.stack).toEqual([TASK]);
     expect(trail[2]?.stack).toEqual(stack);
+  });
+
+  test("the same page twice is two crumbs with their own ids", () => {
+    const ids = trailFor([TASK, { kind: "activity" }, TASK]).map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("withRun", () => {
+  const run = (runId: string): Extract<Screen, { kind: "result" }> => ({
+    kind: "result",
+    runId,
+    taskId: "digest",
+  });
+
+  test("from the home list, the run opens under its task's page", () => {
+    expect(withRun([], run("r1"), "Digest")).toEqual([TASK, run("r1")]);
+  });
+  test("from the task's page, the run goes on top", () => {
+    expect(withRun([TASK], run("r1"), "Digest")).toEqual([TASK, run("r1")]);
+  });
+  test("from the task's runs, the task is not added again", () => {
+    const runs: Screen = { kind: "activity", taskId: "digest", taskName: "Digest" };
+    expect(withRun([TASK, runs], run("r1"), "Digest")).toEqual([TASK, runs, run("r1")]);
+  });
+  test("from every run, the task's page comes between", () => {
+    expect(withRun([{ kind: "activity" }], run("r1"), "Digest")).toEqual([
+      { kind: "activity" },
+      TASK,
+      run("r1"),
+    ]);
+  });
+  test("a run on top gives way to the next one (a re-run, a retried run)", () => {
+    expect(withRun([TASK, run("r1")], run("r2"), "Digest")).toEqual([TASK, run("r2")]);
+  });
+  test("a run of a task the list does not know opens alone", () => {
+    expect(withRun([], run("r1"), undefined)).toEqual([run("r1")]);
   });
 });

@@ -1,6 +1,6 @@
 import { useDataSync, useTrail } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { TaskSummary, TaskWarning } from "../types.ts";
+import type { TaskRun, TaskSummary, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, toolErrorText } from "../utils.ts";
 import { ActivityView } from "./ActivityView.tsx";
@@ -12,8 +12,8 @@ import { type HomeActions, HomeView } from "./HomeView.tsx";
 import { ResultScreen } from "./ResultView.tsx";
 import { RunDialog, type RunStarted, runStartedOf } from "./RunDialog.tsx";
 import { TaskEditor } from "./TaskEditor.tsx";
-import { type TaskPageActions, TaskSheet } from "./TaskSheet.tsx";
-import { type Screen, trailFor } from "./trail.ts";
+import { TaskPage, type TaskPageActions } from "./TaskPage.tsx";
+import { type Screen, trailFor, withRun } from "./trail.ts";
 import { UpcomingView } from "./UpcomingView.tsx";
 
 /**
@@ -102,7 +102,7 @@ export function TasksUI() {
   useDataSync(() => refresh());
 
   const nameOf = useCallback((taskId: string) => tasks.find((t) => t.id === taskId)?.name, [tasks]);
-  const trail = useMemo(() => trailFor(stack, nameOf), [stack, nameOf]);
+  const trail = useMemo(() => trailFor(stack), [stack]);
   const hostShowsTrail = useTrail(
     trail.map(({ id, label }) => ({ id, label })),
     (id) => {
@@ -117,6 +117,11 @@ export function TasksUI() {
     setNotice(null);
     setStack((prev) => prev.slice(0, -1));
   };
+  /** Open a run under its task's page, so its crumb leads to the task. */
+  const openRun = (runId: string, taskId?: string, run?: TaskRun) =>
+    setStack((prev) =>
+      withRun(prev, { kind: "result", runId, taskId, run }, taskId ? nameOf(taskId) : undefined),
+    );
 
   function mark(id: string, what: string | null) {
     setBusy((prev) => {
@@ -129,10 +134,10 @@ export function TasksUI() {
 
   function openStarted(started: RunStarted) {
     if (started.kind === "finished") {
-      push({ kind: "result", runId: started.run.id, taskId: started.run.taskId, run: started.run });
+      openRun(started.run.id, started.run.taskId, started.run);
     } else {
       setNotice(started.note);
-      push({ kind: "result", runId: started.runId, taskId: started.taskId });
+      openRun(started.runId, started.taskId);
     }
   }
 
@@ -189,7 +194,7 @@ export function TasksUI() {
 
   const homeActions: HomeActions = {
     onOpenTask: (t) => push({ kind: "task", taskName: t.name }),
-    onOpenRun: (taskId, runId) => push({ kind: "result", runId, taskId }),
+    onOpenRun: (taskId, runId) => openRun(runId, taskId),
     onCreate: (template) => push({ kind: "editor", template: template ?? null }),
     onSeeUpcoming: () => push({ kind: "upcoming" }),
     onSeeActivity: () => push({ kind: "activity" }),
@@ -202,7 +207,7 @@ export function TasksUI() {
     onDuplicate: (d) => push({ kind: "editor", copyOf: d.name }),
     onDelete: (d) => setConfirmDelete({ id: d.id, name: d.name }),
     onSetEnabled: (d, enabled) => setEnabled(d, enabled),
-    onOpenRun: (run) => push({ kind: "result", runId: run.id, taskId: run.taskId, run }),
+    onOpenRun: (run) => openRun(run.id, run.taskId, run),
     onSeeRuns: (d) => push({ kind: "activity", taskId: d.id, taskName: d.name }),
   };
 
@@ -250,21 +255,28 @@ export function TasksUI() {
     </>
   );
 
-  // A task opens as a sheet over the screen it was opened from; that screen
-  // stays mounted under it, so closing the sheet returns to it as it was.
-  const sheet = top?.kind === "task" ? top : null;
-  const under = [...(sheet ? stack.slice(0, -1) : stack)].reverse().find((s) => s.kind !== "task");
-  const sheetSummary = sheet ? tasks.find((t) => t.name === sheet.taskName) : undefined;
+  const taskSummary = top?.kind === "task" ? tasks.find((t) => t.name === top.taskName) : undefined;
 
   return (
     <HostTrailContext.Provider value={hostShowsTrail}>
-      {under ? (
+      {top?.kind === "task" ? (
+        <TaskPage
+          key={top.taskName}
+          taskName={top.taskName}
+          summary={taskSummary}
+          refreshKey={refreshKey}
+          busy={taskSummary ? busy[taskSummary.id] : undefined}
+          actions={taskActions}
+          onBack={pop}
+        />
+      ) : top ? (
         <ScreenRoute
-          screen={under}
+          screen={top}
           tasks={tasks}
           refreshKey={refreshKey}
           onBack={pop}
           onPush={push}
+          onOpenRun={openRun}
           onReplaceTop={(s) => setStack((prev) => [...prev.slice(0, -1), ...(s ? [s] : [])])}
           onRerun={(task, input) => void runNow(task, input)}
           onSaved={(warnings) => {
@@ -290,17 +302,6 @@ export function TasksUI() {
           </main>
         </div>
       )}
-      {sheet && (
-        <TaskSheet
-          key={sheet.taskName}
-          taskName={sheet.taskName}
-          summary={sheetSummary}
-          refreshKey={refreshKey}
-          busy={sheetSummary ? busy[sheetSummary.id] : undefined}
-          actions={taskActions}
-          onClose={pop}
-        />
-      )}
       {dialogs}
     </HostTrailContext.Provider>
   );
@@ -313,6 +314,7 @@ function ScreenRoute({
   refreshKey,
   onBack,
   onPush,
+  onOpenRun,
   onReplaceTop,
   onRerun,
   onSaved,
@@ -322,12 +324,13 @@ function ScreenRoute({
   refreshKey: number;
   onBack: () => void;
   onPush: (s: Screen) => void;
+  onOpenRun: (runId: string, taskId?: string, run?: TaskRun) => void;
   onReplaceTop: (s: Screen | null) => void;
   onRerun: (task: TaskRef, input: unknown) => void;
   onSaved: (warnings: TaskWarning[]) => void;
 }) {
   const nameOf = (taskId: string) => tasks.find((t) => t.id === taskId)?.name;
-  const openRun = (runId: string, taskId?: string) => onPush({ kind: "result", runId, taskId });
+  const openRun = onOpenRun;
   switch (screen.kind) {
     case "result":
       return (
@@ -394,16 +397,14 @@ function ScreenRoute({
               tasks={tasks}
               taskId={screen.taskId}
               refreshKey={refreshKey}
-              onOpenRun={(run) =>
-                onPush({ kind: "result", runId: run.id, taskId: run.taskId, run })
-              }
+              onOpenRun={(run) => onOpenRun(run.id, run.taskId, run)}
               onOpenBatch={(batch) => onPush({ kind: "batch", batchId: batch.id, batch })}
             />
           </main>
         </div>
       );
     case "task":
-      // Drawn as a sheet by the caller, never as a screen.
+      // Drawn by the caller, which holds the task actions.
       return null;
   }
 }

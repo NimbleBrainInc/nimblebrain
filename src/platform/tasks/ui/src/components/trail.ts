@@ -7,7 +7,7 @@ import type { TaskBatch, TaskRun } from "../types.ts";
 import { formatWhen } from "../utils.ts";
 import type { Template } from "./templates.ts";
 
-/** A screen over the home list. A task opens as a sheet over the screen under it. */
+/** A page over the home list. The stack is the trail: one page, one crumb. */
 export type Screen =
   | { kind: "task"; taskName: string }
   | { kind: "upcoming" }
@@ -32,58 +32,58 @@ function runLabel(s: Extract<Screen, { kind: "result" }>): string {
     : `Run ${s.runId.replace(/^run_/, "").slice(0, 6)}`;
 }
 
-function taskStep(name: string): TrailStep {
-  return { id: `task/${name}`, label: name, stack: [{ kind: "task", taskName: name }] };
-}
-
-/** The steps one screen adds, given the screens under it. */
-function stepsFor(
-  screen: Screen,
-  below: Screen[],
-  nameOf: (taskId: string) => string | undefined,
-): TrailStep[] {
-  const stack = [...below, screen];
-  const prev = below[below.length - 1];
-  const parent = (name: string | undefined) =>
-    name && !(prev?.kind === "task" && prev.taskName === name) ? [taskStep(name)] : [];
+/** The crumb one page adds. */
+function stepFor(screen: Screen, stack: Screen[]): TrailStep {
   switch (screen.kind) {
     case "task":
-      return [{ ...taskStep(screen.taskName), stack }];
+      return { id: `task/${screen.taskName}`, label: screen.taskName, stack };
     case "upcoming":
-      return [{ id: "upcoming", label: "Coming up", stack }];
+      return { id: "upcoming", label: "Coming up", stack };
     case "activity":
       return screen.taskName
-        ? [...parent(screen.taskName), { id: `runs/${screen.taskName}`, label: "Runs", stack }]
-        : [{ id: "activity", label: "Every run", stack }];
+        ? { id: `runs/${screen.taskName}`, label: "All runs", stack }
+        : { id: "activity", label: "Every run", stack };
     case "result":
-      return [
-        ...parent(screen.taskId ? nameOf(screen.taskId) : undefined),
-        { id: `run/${screen.runId}`, label: runLabel(screen), stack },
-      ];
+      return { id: `run/${screen.runId}`, label: runLabel(screen), stack };
     case "batch":
-      return [
-        ...parent(screen.batch ? nameOf(screen.batch.taskId) : undefined),
-        { id: `batch/${screen.batchId}`, label: `Batch ${screen.batchId.slice(6, 10)}`, stack },
-      ];
+      return {
+        id: `batch/${screen.batchId}`,
+        label: `Batch ${screen.batchId.slice(6, 10)}`,
+        stack,
+      };
     case "editor":
       return screen.taskName
-        ? [...parent(screen.taskName), { id: `edit/${screen.taskName}`, label: "Edit", stack }]
-        : [{ id: "new", label: "New task", stack }];
+        ? { id: `edit/${screen.taskName}`, label: "Edit", stack }
+        : { id: "new", label: "New task", stack };
   }
 }
 
-/** The whole trail for the screens open over the home list. */
-export function trailFor(
+/**
+ * The stack after opening a run: a run already on top gives way to it (a
+ * re-run, or a run it links to), and a run of a known task sits under that
+ * task's page (added when the stack holds none), so a crumb leads to the task
+ * wherever the run was opened.
+ */
+export function withRun(
   stack: Screen[],
-  nameOf: (taskId: string) => string | undefined,
-): TrailStep[] {
+  run: Extract<Screen, { kind: "result" }>,
+  taskName: string | undefined,
+): Screen[] {
+  const base = stack[stack.length - 1]?.kind === "result" ? stack.slice(0, -1) : stack;
+  const hasTask = base.some((s) => s.kind === "task" && s.taskName === taskName);
+  const parent = taskName && !hasTask ? [{ kind: "task" as const, taskName }] : [];
+  return [...base, ...parent, run];
+}
+
+/** The whole trail for the screens open over the home list. */
+export function trailFor(stack: Screen[]): TrailStep[] {
   const root: TrailStep = { id: TRAIL_ROOT_ID, label: "Tasks", stack: [] };
-  const steps: TrailStep[] = [root];
-  stack.forEach((screen, i) => {
-    steps.push(...stepsFor(screen, stack.slice(0, i), nameOf));
-  });
-  // A step repeated (a task reached twice) keeps its latest place.
-  return steps.filter(
-    (s, i) => steps.findIndex((t) => t.id === s.id) === i || i === steps.length - 1,
-  );
+  // Ids are made unique by position, so the same page twice is two crumbs.
+  return [
+    root,
+    ...stack.map((screen, i) => {
+      const step = stepFor(screen, stack.slice(0, i + 1));
+      return { ...step, id: `${i}:${step.id}` };
+    }),
+  ];
 }

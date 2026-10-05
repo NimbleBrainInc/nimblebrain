@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useContext, useEffect, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
 import { healthOf, type TaskHealth } from "../lib/attention.ts";
 import { renderMarkdown } from "../markdown.ts";
@@ -14,11 +14,12 @@ import {
   relativeTime,
   toolErrorText,
 } from "../utils.ts";
+import { HostTrailContext } from "./Chrome.tsx";
 import { isOpenRun } from "./ResultView.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { labelTone } from "./RunBadge.tsx";
 
-/** Runs listed in the sheet; the rest are behind "See all runs". */
+/** Runs listed on the page; the rest are behind "See all runs". */
 const RECENT_RUNS = 6;
 
 /** Whether a task has a trigger that `enabled` gates: a schedule or an event that can still fire. */
@@ -295,7 +296,7 @@ export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit: () => void
 function LatestRun({ run, onOpenRun }: { run?: TaskRun; onOpenRun: (run: TaskRun) => void }) {
   if (!run) {
     return (
-      <section className="sheet-section" aria-label="Latest result">
+      <section className="task-section" aria-label="Latest result">
         <h3 className="section-heading">Latest result</h3>
         <p className="muted">No runs yet. Run it now to see what it makes.</p>
       </section>
@@ -303,7 +304,7 @@ function LatestRun({ run, onOpenRun }: { run?: TaskRun; onOpenRun: (run: TaskRun
   }
   if (isOpenRun(run)) {
     return (
-      <section className="sheet-section tone-active latest-open" aria-label="Running now">
+      <section className="task-section tone-active latest-open" aria-label="Running now">
         <StatusIcon tone="active" />
         <span>
           {run.status === "queued" ? "Waiting for a run slot" : "Running now"}
@@ -313,7 +314,7 @@ function LatestRun({ run, onOpenRun }: { run?: TaskRun; onOpenRun: (run: TaskRun
     );
   }
   return (
-    <section className="sheet-section" aria-label="Latest result">
+    <section className="task-section" aria-label="Latest result">
       <div className="section-row">
         <h3 className="section-heading">Latest result</h3>
         <span className={`tone-${labelTone(run.label ?? "")} latest-label`}>
@@ -352,9 +353,9 @@ function RecentRuns({
   onSeeAll: () => void;
 }) {
   return (
-    <section className="sheet-section" aria-labelledby="sheet-runs">
+    <section className="task-section" aria-labelledby="task-runs">
       <div className="section-row">
-        <h3 className="section-heading" id="sheet-runs">
+        <h3 className="section-heading" id="task-runs">
           Recent runs
         </h3>
         {stats && stats.runs > 0 && (
@@ -367,16 +368,16 @@ function RecentRuns({
       {!runs && !runsError && <div className="skel skel-row" aria-busy="true" />}
       {runs && runs.length === 0 && <p className="muted">No runs yet.</p>}
       {runs && runs.length > 0 && (
-        <ul className="sheet-runs">
+        <ul className="task-runs">
           {runs.slice(0, RECENT_RUNS).map((r) => (
             <li key={r.id}>
               <button
                 type="button"
-                className={`sheet-run tone-${labelTone(r.label ?? "")}`}
+                className={`task-run tone-${labelTone(r.label ?? "")}`}
                 onClick={() => onOpenRun(r)}
               >
                 <StatusIcon tone={labelTone(r.label ?? "")} />
-                <span className="sheet-run-label">{r.label ?? r.status}</span>
+                <span className="task-run-label">{r.label ?? r.status}</span>
                 <span className="muted">{formatWhen(r.startedAt)}</span>
                 <span className="muted num">
                   {r.completedAt ? formatDuration(r.startedAt, r.completedAt) : ""}
@@ -395,8 +396,8 @@ function RecentRuns({
   );
 }
 
-/** What the sheet shows below its head, from what was read. */
-export function SheetBody({
+/** What the page shows below its head, from what was read. */
+export function TaskPageBody({
   detail,
   health,
   stats,
@@ -465,8 +466,8 @@ async function readRecent(
   };
 }
 
-/** The sheet's health: the list's rules, with a run in flight read from the task's own runs. */
-export function sheetHealth(
+/** The page's health: the list's rules, with a run in flight read from the task's own runs. */
+export function taskHealth(
   summary: TaskSummary | undefined,
   detail: TaskDetail,
   stats: TaskStats | null,
@@ -501,17 +502,16 @@ export function sheetHealth(
 }
 
 /**
- * A task, in a sheet over the list it was opened from: what needs doing, its
- * latest result and recent runs, then its setup behind disclosures. The list
- * stays in place behind it, so closing returns exactly where you were.
+ * A task's page: what needs doing, its latest result and recent runs, then
+ * its setup behind disclosures.
  */
-export function TaskSheet({
+export function TaskPage({
   taskName,
   summary,
   refreshKey,
   busy,
   actions,
-  onClose,
+  onBack,
 }: {
   taskName: string;
   /** The task's row from the list, when it has one. */
@@ -519,8 +519,9 @@ export function TaskSheet({
   refreshKey: number;
   busy?: string;
   actions: TaskPageActions;
-  onClose: () => void;
+  onBack: () => void;
 }) {
+  const hostShowsTrail = useContext(HostTrailContext);
   const statusTool = useTool<string>("status");
   const statsTool = useTool<string>("stats");
   const runsTool = useTool<string>("runs");
@@ -530,7 +531,6 @@ export function TaskSheet({
   const [runs, setRuns] = useState<TaskRun[] | null>(null);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
-  const closeRef = useRef<HTMLButtonElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable; refreshKey is the signal
   useEffect(() => {
@@ -557,11 +557,7 @@ export function TaskSheet({
     };
   }, [taskName, refreshKey]);
 
-  useEffect(() => {
-    closeRef.current?.focus();
-  }, []);
-
-  // A run in flight changes the sheet when it ends; poll until it does.
+  // A run in flight changes the page when it ends; poll until it does.
   const live = runs?.[0] && isOpenRun(runs[0]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable
   useEffect(() => {
@@ -576,14 +572,6 @@ export function TaskSheet({
     return () => clearInterval(timer);
   }, [live, detail]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !e.defaultPrevented) onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   const d = detail;
   async function setEnabled(v: boolean) {
     if (!d) return;
@@ -595,106 +583,91 @@ export function TaskSheet({
       setToggling(false);
     }
   }
-  const health = d ? sheetHealth(summary, d, stats, runs) : null;
+  const health = d ? taskHealth(summary, d, stats, runs) : null;
   const latest = runs?.[0];
 
   return (
-    <div className="sheet-layer">
-      <button
-        type="button"
-        className="sheet-scrim"
-        tabIndex={-1}
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <aside className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
-        <header className="sheet-head">
-          <div className="sheet-title-row">
-            <h2 className="page-title" id="sheet-title">
-              {d?.name ?? taskName}
-            </h2>
-            <button
-              ref={closeRef}
-              type="button"
-              className="icon-btn"
-              aria-label="Close"
-              onClick={onClose}
-            >
-              ×
+    <div className="app">
+      <header className="task-head">
+        {!hostShowsTrail && (
+          <div className="task-title-row">
+            <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
+              ←
             </button>
+            <h1 className="page-title">{d?.name ?? taskName}</h1>
           </div>
-          {d && health && (
-            <>
-              <div className="screen-sub">
-                <span className={`health-pill tone-${health.tone}`}>
-                  <StatusIcon tone={health.tone} />
-                  {health.word}
-                </span>
-                <span>{statusLine(d, latest)}</span>
-              </div>
-              <div className="sheet-actions">
-                {latest && isOpenRun(latest) ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => actions.onOpenRun(latest)}
-                  >
-                    Watch
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={!!busy}
-                    onClick={() => actions.onRunNow(d)}
-                  >
-                    {busy === "running" ? "Starting…" : "Run now"}
-                  </button>
-                )}
-                {hasLiveTrigger(d) && (
-                  <EnabledSwitch
-                    enabled={d.enabled}
-                    busy={toggling}
-                    onChange={(v) => void setEnabled(v)}
-                  />
-                )}
-                <RowMenu
-                  label={`More actions for ${d.name}`}
-                  items={taskMenuItems({
-                    runList: () => actions.onRunList(d),
-                    edit: () => actions.onEdit(d),
-                    duplicate: () => actions.onDuplicate(d),
-                    remove: () => actions.onDelete(d),
-                  })}
+        )}
+        {d && health && (
+          <>
+            <div className="screen-sub">
+              <span className={`health-pill tone-${health.tone}`}>
+                <StatusIcon tone={health.tone} />
+                {health.word}
+              </span>
+              <span>{statusLine(d, latest)}</span>
+            </div>
+            <div className="task-actions">
+              {latest && isOpenRun(latest) ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => actions.onOpenRun(latest)}
+                >
+                  Watch
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!!busy}
+                  onClick={() => actions.onRunNow(d)}
+                >
+                  {busy === "running" ? "Starting…" : "Run now"}
+                </button>
+              )}
+              {hasLiveTrigger(d) && (
+                <EnabledSwitch
+                  enabled={d.enabled}
+                  busy={toggling}
+                  onChange={(v) => void setEnabled(v)}
                 />
-              </div>
-            </>
-          )}
-        </header>
-        <div className="sheet-body">
-          {error && (
-            <div className="error-banner" role="alert">
-              {error}
+              )}
+              <RowMenu
+                label={`More actions for ${d.name}`}
+                items={taskMenuItems({
+                  runList: () => actions.onRunList(d),
+                  edit: () => actions.onEdit(d),
+                  duplicate: () => actions.onDuplicate(d),
+                  remove: () => actions.onDelete(d),
+                })}
+              />
             </div>
-          )}
-          {!d && !error && (
-            <div className="loading-list" aria-busy="true">
-              <div className="skel skel-row" />
-              <div className="skel skel-card" />
-            </div>
-          )}
-          {d && health && (
-            <SheetBody
-              detail={d}
-              health={health}
-              stats={stats}
-              runs={runs}
-              runsError={runsError}
-              actions={actions}
-            />
-          )}
-        </div>
-      </aside>
+          </>
+        )}
+      </header>
+      <main className="content task-body">
+        {error && (
+          <div className="error-banner" role="alert">
+            {error}
+          </div>
+        )}
+        {!d && !error && (
+          <div className="loading-list" aria-busy="true">
+            <div className="skel skel-row" />
+            <div className="skel skel-card" />
+          </div>
+        )}
+        {d && health && (
+          <TaskPageBody
+            detail={d}
+            health={health}
+            stats={stats}
+            runs={runs}
+            runsError={runsError}
+            actions={actions}
+          />
+        )}
+      </main>
     </div>
   );
 }

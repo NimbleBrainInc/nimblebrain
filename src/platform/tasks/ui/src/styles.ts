@@ -506,27 +506,21 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
   .attn-card { flex-wrap: wrap; }
 }
 
-/* ---------- Task sheet ---------- */
-.sheet-layer { position: fixed; inset: 0; z-index: 40; }
-.sheet-scrim { position: absolute; inset: 0; border: none; background: color-mix(in srgb, var(--color-text-primary) 22%, transparent); cursor: default; }
-.sheet {
-  position: absolute; top: 0; right: 0; bottom: 0; width: min(560px, 100%);
-  display: flex; flex-direction: column; background: var(--color-background-primary);
-  border-left: 1px solid var(--color-border-primary); box-shadow: var(--shadow-lg);
-}
-.sheet-head { padding: 16px 20px 12px; border-bottom: 1px solid var(--color-border-primary); flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
-.sheet-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.sheet-title-row .page-title { overflow-wrap: anywhere; }
-.sheet-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
-.sheet-body { flex: 1; overflow-y: auto; padding: 16px 20px 24px; }
-.sheet-section { margin-bottom: 24px; }
-.sheet-runs { list-style: none; display: flex; flex-direction: column; }
-.sheet-run {
+/* ---------- Task page ---------- */
+.task-head { padding: 14px 20px 12px; border-bottom: 1px solid var(--color-border-primary); flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; background: var(--color-background-primary); }
+.task-title-row { display: flex; align-items: center; gap: 12px; }
+.task-title-row .page-title { overflow-wrap: anywhere; }
+.task-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.task-body { padding: 16px 20px 24px; }
+.task-body > * { max-width: 760px; }
+.task-section { margin-bottom: 24px; }
+.task-runs { list-style: none; display: flex; flex-direction: column; }
+.task-run {
   width: 100%; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
   padding: 8px 4px; border: none; border-bottom: 1px solid var(--color-border-secondary); background: none; text-align: left; cursor: pointer;
 }
-.sheet-run:hover { background: color-mix(in srgb, var(--color-border-primary) 22%, transparent); }
-.sheet-run-label { color: var(--tone); font-weight: var(--font-weight-medium); }
+.task-run:hover { background: color-mix(in srgb, var(--color-border-primary) 22%, transparent); }
+.task-run-label { color: var(--tone); font-weight: var(--font-weight-medium); }
 .latest-label { color: var(--tone); font-size: var(--font-text-xs-size); font-weight: var(--font-weight-medium); }
 .latest-open { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--border-radius-md); background: color-mix(in srgb, var(--tone) 8%, transparent); }
 .latest-preview { max-height: 14em; overflow: hidden; margin-bottom: 10px; mask-image: linear-gradient(to bottom, black 70%, transparent); }
@@ -538,7 +532,7 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 .disclosure-hint { font-size: var(--font-text-xs-size); color: var(--color-text-secondary); }
 .disclosure-body { padding: 0 0 14px; }
 @container panel (max-width: 560px) {
-  .sheet-head, .sheet-body { padding-left: 14px; padding-right: 14px; }
+  .task-head, .task-body { padding-left: 14px; padding-right: 14px; }
 }
 
 /* ---------- Run steps ---------- */
