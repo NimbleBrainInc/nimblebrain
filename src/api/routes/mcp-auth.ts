@@ -197,11 +197,8 @@ export function mcpAuthRoutes(ctx: AppContext) {
     }
     const { code, wireState } = params;
 
-    const state = recoverInnerState(c, wireState);
+    const state = sessionFlow(c, wireState);
     if (isCallbackFailure(state)) return refuse(state);
-
-    const mismatch = verifyStateCookie(c, state);
-    if (mismatch) return refuse(mismatch, { flow: flowId(state) });
 
     // Recover the flow's owner *before* resolving (which deletes the registry
     // entry), so we can land the user back on the right page — a workspace
