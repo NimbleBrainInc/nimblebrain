@@ -176,6 +176,16 @@ Browse and manage tasks from the **Tasks** panel in the sidebar, or ask the agen
 Pausing keeps the definition and its run history intact; the scheduler simply skips it. Resume re-enables it on its existing schedule. To remove a task entirely, ask the agent to delete it (run history is preserved even then).
 </Aside>
 
+## The Tasks panel
+
+The **Tasks** panel opens on three views:
+
+- **Saved** — every saved task with its trigger, its last run's label, its pass rate and cost over the last 30 days, and Run now, Run on a list…, Edit, Pause or Resume trigger, and Delete. Run now asks for the input first when the task has an input schema, as a form for a flat schema and as JSON otherwise. Run on a list takes a JSON array, or CSV whose header row names the input fields.
+- **Upcoming** — your runs holding or waiting for a run slot (with their queue position and batch item), then the next scheduled runs in time order, then the tasks that run on events with their hourly ceiling.
+- **Activity** — every run from every source, newest first, back through the whole history, filtered by outcome, task, what started it, and date. A batch is one row you can expand.
+
+Opening a run shows its result: the deliverable first (structured output as values and tables), then its assessment with Accept, Reject, a note, and Re-judge, then how it ran, its tool calls, input, and cost. The editor covers what the task does, its input fields, its criteria, output schema and judge, when it runs, its limits, and a test run of the draft before you save it; accepting or rejecting the test run with a note adds that note as a draft criterion.
+
 ## Running from an MCP client
 
 A remote agent connected to `/mcp/<workspace-id>` runs a task with `tasks__run`. Every call answers with the run's id (`runId`), and `tasks__run_result` with that `runId` alone reads the run's full result once it has ended.
@@ -315,7 +325,7 @@ A batch that pauses on its own (budget or stop rule) writes a notification to th
 | `cancel` | Stops the batch for good: queued runs are taken out of the queue and runs in flight are stopped, all recorded `cancelled`, and items not yet started are cancelled. |
 | `rerun_failed` | Runs every item whose run failed, was skipped or cancelled, or was judged `fail` again, each as a new run. The item keeps its earlier run ids (`previousRunIds`) and adds the new run's cost to its own. |
 
-In the Tasks panel, batches are listed in their own section with their progress, counts, cost, and state, and their item runs are left out of Recent Runs. Open one for its results table, with the output's fields as columns, each item's verdict and cost, and its run's output; filter it to failing items, and pause, resume, cancel, or re-run failed items from its header.
+In the Tasks panel, each batch is one row in Activity with its progress, counts, cost, and state, and its item runs are not listed separately. Open one for its results table, with the output's fields as columns, each item's verdict and cost, and its run's output; filter it to failing items, and pause, resume, cancel, or re-run failed items from its header.
 
 ### If the runtime restarts
 

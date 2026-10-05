@@ -400,8 +400,9 @@ export function ActivityView({
 
   const since = sinceOf(filters.range);
   // Batches older than the loaded runs wait until paging reaches them.
-  const floor = nextBefore ? runs[runs.length - 1]?.startedAt : since;
-  const shownRuns = filters.startedBy === "batch" ? [] : filterRuns(runs, filters);
+  const batchesOnly = filters.startedBy === "batch";
+  const floor = nextBefore && !batchesOnly ? runs[runs.length - 1]?.startedAt : since;
+  const shownRuns = batchesOnly ? [] : filterRuns(runs, filters);
   const rows = mergeRows(shownRuns, showsBatches(filters) ? batches : [], floor);
 
   return (
@@ -411,7 +412,7 @@ export function ActivityView({
       error={error}
       filters={filters}
       tasks={tasks}
-      hasMore={!!nextBefore && filters.startedBy !== "batch"}
+      hasMore={!!nextBefore && !batchesOnly}
       onFilters={setFilters}
       onMore={() => void more()}
       onOpenRun={onOpenRun}
