@@ -1210,6 +1210,16 @@ export class ConnectorLifecycleManager {
         this.recordConnectionStateChange(serverName, wsId, principalId, "dead", {
           lastError: userFacingStartError(err, msg),
         });
+        // A sign-in that ended without a code leaves nothing a restart can
+        // use: only a person can sign in, and Reconnect builds a fresh source
+        // for that. This source's provider holds its one flow for life, so a
+        // restart would wait on the settled flow and fail the same way on
+        // every HealthMonitor sweep. Stopped, the source is terminal for the
+        // monitor and for on-demand reconnects (`isStopped`), and stays
+        // registered so a tool call still gets a structured answer.
+        if (err instanceof OAuthFlowExpiredError || err instanceof OAuthFlowRefusedError) {
+          void source.stop().catch(() => {});
+        }
         // `authUrlPromise` already resolved on the interactive path, so a
         // reject there is a no-op; only the headless / pre-auth failure path
         // (no captured URL) still needs the caller's promise rejected.
