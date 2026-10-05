@@ -41,7 +41,9 @@ export const ORG_SETTINGS_TABS: readonly SettingsTab[] = [
   { segment: "workspaces", label: "Workspaces", minRole: "org_admin" },
   { segment: "users", label: "Users", minRole: "org_admin" },
   { segment: "skills", label: "Skills", minRole: "org_admin" },
-  { segment: "model", label: "Model", minRole: "org_admin" },
+  // "Models", plural: the page sets two (default and fast) and the limits and
+  // thinking they run under. The segment stays `model` so existing links work.
+  { segment: "model", label: "Models", minRole: "org_admin" },
   { segment: "usage", label: "Usage", minRole: "org_admin" },
   { segment: "archives", label: "Archives", minRole: "org_admin" },
 ];
