@@ -27,7 +27,11 @@ import {
   McpOAuthRecords,
 } from "../../tools/mcp-oauth-records.ts";
 import { McpSource } from "../../tools/mcp-source.ts";
-import { OAuthFlowExpiredError } from "../../tools/oauth-flow-registry.ts";
+import {
+  OAuthFlowAbandonedError,
+  OAuthFlowExpiredError,
+  OAuthFlowRefusedError,
+} from "../../tools/oauth-flow-registry.ts";
 import { SharedSourceRef, ToolRegistry } from "../../tools/registry.ts";
 import type { ToolSource } from "../../tools/types.ts";
 import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts";
@@ -73,7 +77,9 @@ import type {
  * operator. (#1245)
  */
 export function userFacingStartError(err: unknown, raw: string): string {
-  if (err instanceof OAuthFlowExpiredError) return err.userMessage;
+  if (err instanceof OAuthFlowExpiredError || err instanceof OAuthFlowRefusedError) {
+    return err.userMessage;
+  }
   return raw;
 }
 
@@ -1175,6 +1181,17 @@ export class ConnectorLifecycleManager {
         }
       })
       .catch((err) => {
+        // The source was stopped while its sign-in was open (a disconnect, an
+        // uninstall). Whoever stopped it records what the connection is now; a
+        // `dead` written here would land over that. The provider registers the
+        // flow and captures the auth URL in one synchronous step, so the
+        // caller's promise is already settled.
+        if (err instanceof OAuthFlowAbandonedError) {
+          log.info(
+            `[lifecycle] startAuth: ${serverName} sign-in abandoned for ${principalId} in ${wsId}`,
+          );
+          return;
+        }
         // An error with an empty `.message` falls back to its `.name`, so the
         // surfaced diagnostic is never blank, which is nearly as useless as
         // swallowing it. (The SDK's `OAuthError` carries the OAuth error code,
@@ -1867,9 +1884,17 @@ export class ConnectorLifecycleManager {
         })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message || err.name : String(err);
-          log.warn(
-            `[lifecycle] startIdentityAuth: ${serverName} start failed for ${userId}: ${msg}`,
-          );
+          // A sign-in abandoned by a stop (the connector was removed while it
+          // was open) is not a failed start.
+          if (err instanceof OAuthFlowAbandonedError) {
+            log.info(
+              `[lifecycle] startIdentityAuth: ${serverName} sign-in abandoned for ${userId}`,
+            );
+          } else {
+            log.warn(
+              `[lifecycle] startIdentityAuth: ${serverName} start failed for ${userId}: ${msg}`,
+            );
+          }
           void registry.removeSource(serverName).catch(() => {}); // ours to remove
           rejectAuthUrl(err instanceof Error ? err : new Error(msg));
         })
