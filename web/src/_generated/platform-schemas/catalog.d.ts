@@ -267,7 +267,7 @@ export declare const PlatformToolCatalog: {
         };
         readonly run: {
             readonly input: import("@sinclair/typebox").TObject<{
-                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<unknown>>;
                 idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 prompt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;

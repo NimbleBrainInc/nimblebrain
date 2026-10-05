@@ -836,7 +836,7 @@ describe("handleRun", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Immediate", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ name: "Immediate" }, ctx);
+    const result = await handleRun({ taskId: "Immediate" }, ctx);
 
     // Narrow the discriminated union explicitly. `as { run }` is the
     // anti-pattern that masked the dispatched-envelope branch — see
@@ -855,7 +855,7 @@ describe("handleRun", () => {
       ctx,
     );
 
-    const result = await handleRun({ name: "Paused" }, ctx);
+    const result = await handleRun({ taskId: "Paused" }, ctx);
 
     if (!("run" in result)) {
       throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
@@ -869,7 +869,7 @@ describe("handleRun", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Live", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ name: "Live" }, ctx);
+    const result = await handleRun({ taskId: "Live" }, ctx);
 
     if (!("run" in result)) {
       throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
@@ -893,7 +893,7 @@ describe("handleRun", () => {
     });
     handleCreate(createArgs("Trips", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ name: "Trips" }, ctx);
+    const result = await handleRun({ taskId: "Trips" }, ctx);
 
     if (!("run" in result)) {
       throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
@@ -917,7 +917,7 @@ describe("handleRun", () => {
     );
 
     try {
-      const result = await handleRun({ name: "Slow paused" }, slowCtx);
+      const result = await handleRun({ taskId: "Slow paused" }, slowCtx);
       if (!("status" in result)) {
         throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
       }
@@ -931,7 +931,7 @@ describe("handleRun", () => {
 
   test("throws for nonexistent task", async () => {
     const ctx = makeCtx();
-    await expect(handleRun({ name: "Nope" }, ctx)).rejects.toThrow("Task not found");
+    await expect(handleRun({ taskId: "Nope" }, ctx)).rejects.toThrow("Task not found");
   });
 
   test("returns 'dispatched' envelope when run outlasts the sync-wait window", async () => {
@@ -959,7 +959,7 @@ describe("handleRun", () => {
     );
 
     try {
-      const result = await handleRun({ name: "Slow" }, slowCtx);
+      const result = await handleRun({ taskId: "Slow" }, slowCtx);
 
       // Narrow to the "dispatched" branch of the union — if the
       // handler ever stops emitting this branch (regression to a
@@ -995,7 +995,7 @@ describe("handleRun", () => {
     handleCreate(createArgs("Waits", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
     try {
-      const result = await handleRun({ name: "Waits" }, ctx);
+      const result = await handleRun({ taskId: "Waits" }, ctx);
       if (!("status" in result) || result.status !== "queued") {
         throw new Error(`expected queued envelope, got ${JSON.stringify(result)}`);
       }
@@ -1018,7 +1018,7 @@ describe("handleRun", () => {
     const ctx = makeCtx({ runNow: () => ({ state: "refused", run: skipped }) });
     handleCreate(createArgs("Refused", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ name: "Refused" }, ctx);
+    const result = await handleRun({ taskId: "Refused" }, ctx);
     if (!("run" in result)) throw new Error(`expected run shape, got ${JSON.stringify(result)}`);
     expect(result.run.status).toBe("skipped");
     expect(result.message).toContain("did not run");
@@ -1602,7 +1602,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
     });
     handleCreate(createArgs("Typed", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    await handleRun({ name: "Typed", input: { n: 1 }, idempotencyKey: "k-1" }, ctx);
+    await handleRun({ taskId: "Typed", input: { n: 1 }, idempotencyKey: "k-1" }, ctx);
 
     const requested = seen[0]?.requested as {
       runId: string;
@@ -1630,11 +1630,11 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
   test("refuses both a name and an inline definition", async () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Saved", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-    await expect(handleRun({ name: "Saved", prompt: "other" }, ctx)).rejects.toThrow("not both");
+    await expect(handleRun({ taskId: "Saved", prompt: "other" }, ctx)).rejects.toThrow("not both");
   });
 
   test("refuses a call with neither a name nor a prompt or skill", async () => {
-    await expect(handleRun({ input: { a: 1 } }, makeCtx())).rejects.toThrow("needs `name`");
+    await expect(handleRun({ input: { a: 1 } }, makeCtx())).rejects.toThrow("needs `taskId`");
   });
 
   test("refuses an inline outputSchema that is not a JSON Schema", async () => {
@@ -1646,7 +1646,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
   test("refuses an input over the size limit", async () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Big", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-    await expect(handleRun({ name: "Big", input: "x".repeat(70 * 1024) }, ctx)).rejects.toThrow(
+    await expect(handleRun({ taskId: "Big", input: "x".repeat(70 * 1024) }, ctx)).rejects.toThrow(
       "at most",
     );
   });
@@ -1664,7 +1664,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
       ),
       ctx,
     );
-    await expect(handleRun({ name: "Needs input" }, ctx)).rejects.toThrow("none was given");
+    await expect(handleRun({ taskId: "Needs input" }, ctx)).rejects.toThrow("none was given");
   });
 
   test("a repeated idempotency key returns the earlier run without asking for another", async () => {
@@ -1687,7 +1687,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
     });
     handleCreate(createArgs("Keyed", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ name: "Keyed", idempotencyKey: "k" }, ctx);
+    const result = await handleRun({ taskId: "Keyed", idempotencyKey: "k" }, ctx);
     if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
     expect(result.run.id).toBe(existing.id);
     expect(result.message).toContain("idempotencyKey");

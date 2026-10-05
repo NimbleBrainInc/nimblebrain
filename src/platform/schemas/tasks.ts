@@ -498,11 +498,13 @@ export const TasksRunsInput = Type.Object({
 export type TasksRunsInput = Static<typeof TasksRunsInput>;
 
 export const TasksUpcomingInput = Type.Object({
-  limit: Type.Optional(
+  days: Type.Optional(
     Type.Integer({
       minimum: 1,
-      maximum: 100,
-      description: "Most scheduled fires to return, soonest first. Default 20.",
+      maximum: 30,
+      description:
+        "How many days ahead to list scheduled fires. Default 7, max 30. Every enabled timed " +
+        "task's next fire is listed even when it falls past the window.",
     }),
   ),
 });
@@ -524,12 +526,12 @@ export const TasksJudgesInput = Type.Object({});
 export type TasksJudgesInput = Static<typeof TasksJudgesInput>;
 
 export const TasksRunInput = Type.Object({
-  name: Type.Optional(
+  taskId: Type.Optional(
     Type.String({
       description:
-        "Name of a saved task to run. Omit it and give `prompt` (or `skill`) instead to " +
-        "run an inline one-off: a `oneoff` task with no schedule is created, owned by " +
-        "you in this workspace, run once, and kept with its run.",
+        "The saved task to run (its id, as tasks__list returns it). Omit it and give " +
+        "`prompt` (or `skill`) instead to run an inline one-off: a `oneoff` task with no " +
+        "schedule is created, owned by you in this workspace, run once, and kept with its run.",
     }),
   ),
   input: Type.Optional(
@@ -894,6 +896,8 @@ export interface TaskSummary {
   disabledAt: string | null;
   disabledReason: string | null;
   estimatedCostPerDay: number;
+  /** The task's input schema, when it has one: a caller can ask for the input before it runs. */
+  inputSchema?: Record<string, unknown>;
 }
 
 export interface TasksListOutput {
@@ -1509,6 +1513,25 @@ export interface TaskUpcomingFire {
   /** Human-readable schedule. */
   schedule: string;
   scheduleType: "cron" | "interval" | "once";
+  /** Past the window: the task's next fire, shown so a rare schedule is not missing. */
+  beyondWindow?: boolean;
+}
+
+/**
+ * A schedule that fires more often than the panel lists one by one: one row
+ * with how many times it fires in the window, and its first and last fire.
+ */
+export interface TaskUpcomingFrequent {
+  taskId: string;
+  taskName: string;
+  schedule: string;
+  scheduleType: "cron" | "interval";
+  /** Fires within the window. */
+  count: number;
+  /** True when counting stopped at the cap, so `count` is a floor. */
+  countCapped?: boolean;
+  first: string;
+  last: string;
 }
 
 /** A task an event fires, with its fire ceiling and how much of it the last hour used. */
@@ -1524,8 +1547,14 @@ export interface TaskUpcomingEventTask {
 export interface TasksUpcomingOutput {
   running: TaskUpcomingRun[];
   queued: TaskUpcomingRun[];
-  /** Soonest first, at most `limit`. */
+  /** The window's length in days. */
+  days: number;
+  /** Where the window ends. */
+  windowEnd: string;
+  /** Fires within the window, soonest first, then each task's next fire past it. */
   scheduled: TaskUpcomingFire[];
+  /** Schedules firing more than the listing threshold in the window, one row each, by first fire. */
+  frequent: TaskUpcomingFrequent[];
   events: TaskUpcomingEventTask[];
 }
 

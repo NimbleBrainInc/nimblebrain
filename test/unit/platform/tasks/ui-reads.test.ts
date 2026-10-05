@@ -8,16 +8,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type {
-  TasksJudgesOutput,
-  TasksRunsOutput,
-  TasksStatsOutput,
-  TasksUpcomingOutput,
+import { Value } from "@sinclair/typebox/value";
+import {
+  type TasksJudgesOutput,
+  type TasksListOutput,
+  type TasksRunsOutput,
+  type TasksStatsOutput,
+  TasksUpcomingInput,
+  type TasksUpcomingOutput,
 } from "../../../../src/platform/schemas/tasks.ts";
 import { taskRunSegmentPath } from "../../../../src/platform/tasks/paths.ts";
 import type { QueueViewEntry } from "../../../../src/platform/tasks/scheduler.ts";
 import {
   handleJudges,
+  handleList,
   handleRuns,
   handleStats,
   handleUpcoming,
@@ -160,53 +164,128 @@ describe("tasks__upcoming", () => {
     });
   });
 
-  test("lists coming fires soonest first, cut to the limit, skipping paused, retired and one-off tasks", () => {
-    const base = Date.parse("2030-01-01T00:00:00.000Z");
+  test("lists fires within the window soonest first, skipping paused, retired and one-off tasks", () => {
+    const base = Math.floor(Date.now() / 60_000) * 60_000;
+    const iso = (ms: number) => new Date(ms).toISOString();
     seed(
       makeTask({
-        id: "every-hour",
-        name: "Hourly",
-        schedule: { type: "interval", intervalMs: 3_600_000 },
-        nextRunAt: new Date(base + 30 * 60_000).toISOString(),
-      }),
-      makeTask({
-        id: "daily",
-        name: "Daily",
-        schedule: { type: "cron", expression: "0 9 * * *", timezone: "UTC" },
-        nextRunAt: new Date(base + 9 * 3_600_000).toISOString(),
+        id: "every-6h",
+        name: "Six-hourly",
+        schedule: { type: "interval", intervalMs: 6 * 3_600_000 },
+        nextRunAt: iso(base + 30 * 60_000),
       }),
       makeTask({
         id: "once",
         name: "Once",
-        schedule: { type: "once", at: new Date(base + 60_000).toISOString() },
-        nextRunAt: new Date(base + 60_000).toISOString(),
+        schedule: { type: "once", at: iso(base + 60_000) },
+        nextRunAt: iso(base + 60_000),
       }),
       makeTask({
         id: "paused",
         name: "Paused",
         enabled: false,
-        schedule: { type: "interval", intervalMs: 60_000 },
-        nextRunAt: new Date(base).toISOString(),
+        schedule: { type: "interval", intervalMs: 6 * 3_600_000 },
+        nextRunAt: iso(base),
       }),
       makeTask({
         id: "retired",
         name: "Retired",
-        schedule: { type: "once", at: new Date(base).toISOString() },
-        nextRunAt: new Date(base).toISOString(),
-        onceDone: { at: new Date(base).toISOString(), outcome: "ran" },
+        schedule: { type: "once", at: iso(base) },
+        nextRunAt: iso(base),
+        onceDone: { at: iso(base), outcome: "ran" },
+      }),
+      makeTask({
+        id: "adhoc",
+        name: "Adhoc",
+        kind: "oneoff",
+        schedule: { type: "interval", intervalMs: 6 * 3_600_000 },
+        nextRunAt: iso(base),
       }),
     );
-    const out = handleUpcoming({ limit: 4 }, makeCtx());
+    const out = handleUpcoming({ days: 1 }, makeCtx());
+    expect(out.days).toBe(1);
+    // 30 min, then every 6 h up to the window's end at 24 h: 4 fires.
     expect(out.scheduled.map((f) => [f.taskId, f.at])).toEqual([
-      ["once", "2030-01-01T00:01:00.000Z"],
-      ["every-hour", "2030-01-01T00:30:00.000Z"],
-      ["every-hour", "2030-01-01T01:30:00.000Z"],
-      ["every-hour", "2030-01-01T02:30:00.000Z"],
+      ["once", iso(base + 60_000)],
+      ["every-6h", iso(base + 30 * 60_000)],
+      ["every-6h", iso(base + 6.5 * 3_600_000)],
+      ["every-6h", iso(base + 12.5 * 3_600_000)],
+      ["every-6h", iso(base + 18.5 * 3_600_000)],
     ]);
-    const all = handleUpcoming({ limit: 100 }, makeCtx());
-    const daily = all.scheduled.filter((f) => f.taskId === "daily").map((f) => f.at);
-    expect(daily.slice(0, 2)).toEqual(["2030-01-01T09:00:00.000Z", "2030-01-02T09:00:00.000Z"]);
-    expect(all.scheduled.some((f) => f.taskId === "paused" || f.taskId === "retired")).toBe(false);
+    expect(out.frequent).toEqual([]);
+    // A week holds 28 six-hourly fires: past the threshold, one frequent row.
+    const week = handleUpcoming({}, makeCtx());
+    expect(week.days).toBe(7);
+    expect(week.scheduled.map((f) => f.taskId)).toEqual(["once"]);
+    expect(week.frequent).toEqual([
+      {
+        taskId: "every-6h",
+        taskName: "Six-hourly",
+        schedule: week.frequent[0]?.schedule ?? "",
+        scheduleType: "interval",
+        count: 28,
+        first: iso(base + 30 * 60_000),
+        last: iso(base + 30 * 60_000 + 27 * 6 * 3_600_000),
+      },
+    ]);
+  });
+
+  test("a schedule whose next fire is past the window still shows, marked beyond it", () => {
+    const next = new Date(Date.now() + 21 * 24 * 3_600_000).toISOString();
+    seed(
+      makeTask({
+        id: "rare",
+        name: "Rare",
+        schedule: { type: "interval", intervalMs: 21 * 24 * 3_600_000 },
+        nextRunAt: next,
+      }),
+    );
+    const out = handleUpcoming({ days: 7 }, makeCtx());
+    expect(out.scheduled).toEqual([
+      {
+        taskId: "rare",
+        taskName: "Rare",
+        at: next,
+        schedule: out.scheduled[0]?.schedule ?? "",
+        scheduleType: "interval",
+        beyondWindow: true,
+      },
+    ]);
+  });
+
+  test("high-frequency interval and cron schedules collapse to one counted row", () => {
+    const base = Math.ceil(Date.now() / 3_600_000) * 3_600_000;
+    seed(
+      makeTask({
+        id: "five-min",
+        name: "Five-minutely",
+        schedule: { type: "interval", intervalMs: 5 * 60_000 },
+        nextRunAt: new Date(base).toISOString(),
+      }),
+      makeTask({
+        id: "cron-15",
+        name: "Quarter-hourly",
+        schedule: { type: "cron", expression: "*/15 * * * *", timezone: "UTC" },
+        nextRunAt: new Date(base).toISOString(),
+      }),
+    );
+    const out = handleUpcoming({ days: 1 }, makeCtx());
+    expect(out.scheduled).toEqual([]);
+    const byId = new Map(out.frequent.map((f) => [f.taskId, f]));
+    const end = Date.parse(out.windowEnd);
+    expect(byId.get("five-min")?.count).toBe(Math.floor((end - base) / 300_000) + 1);
+    expect(byId.get("cron-15")?.count).toBe(Math.floor((end - base) / 900_000) + 1);
+    expect(byId.get("cron-15")?.scheduleType).toBe("cron");
+    expect(byId.get("cron-15")?.countCapped).toBeUndefined();
+    expect(byId.get("five-min")?.first).toBe(new Date(base).toISOString());
+  });
+
+  test("days is bounded by the schema", () => {
+    const check = (days: unknown) => Value.Check(TasksUpcomingInput, { days });
+    expect(check(7)).toBe(true);
+    expect(check(30)).toBe(true);
+    expect(check(0)).toBe(false);
+    expect(check(31)).toBe(false);
   });
 
   test("lists event tasks with their ceiling and the last hour's fires", () => {
@@ -379,5 +458,16 @@ describe("tasks__runs across every task", () => {
     const page = handleRuns({ limit: 1 }, makeCtx());
     expect(page.runs.map((r) => r.id).sort()).toEqual(["run_x", "run_y"]);
     expect(page.nextBefore).toBe(t);
+  });
+});
+
+describe("tasks__list", () => {
+  test("carries a task's input schema, and none for a task without one", () => {
+    const schema = { type: "object", properties: { company: { type: "string" } } };
+    seed(makeTask({ id: "typed", name: "Typed", inputSchema: schema }), makeTask({ id: "plain" }));
+    const out: TasksListOutput = handleList({}, makeCtx());
+    const byId = new Map(out.tasks.map((t) => [t.id, t]));
+    expect(byId.get("typed")?.inputSchema).toEqual(schema);
+    expect("inputSchema" in (byId.get("plain") ?? {})).toBe(false);
   });
 });

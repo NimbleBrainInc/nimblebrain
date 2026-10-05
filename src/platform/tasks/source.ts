@@ -598,7 +598,7 @@ export async function createTasksSource(
           return handleRun(input, ctx).then((out) =>
             // An inline one-off is saved by the call, so it is warned about
             // like a create; a saved task was warned about when it was written.
-            input.name === undefined
+            input.taskId === undefined
               ? withJudgeWarnings(out, ctx.definitions().get(runOutputTaskId(out)), "run")
               : out,
           );

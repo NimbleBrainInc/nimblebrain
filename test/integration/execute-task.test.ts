@@ -514,7 +514,7 @@ describe("runtime.executeTask", () => {
         input: { manifest: { name: "evil", schedule: validSchedule }, body: "x" },
       },
       { tool: "tasks__delete", input: { name: "target" } },
-      { tool: "tasks__run", input: { name: "target" } },
+      { tool: "tasks__run", input: { taskId: "target" } },
     ];
     for (const { tool, input } of forbiddenCalls) {
       runtime = await bootRuntime({

@@ -181,7 +181,7 @@ Pausing keeps the definition and its run history intact; the scheduler simply sk
 The **Tasks** panel opens on three views:
 
 - **Saved** — every saved task with its trigger, its last run's label, its pass rate and cost over the last 30 days, and Run now, Run on a list…, Edit, Pause or Resume trigger, and Delete. Run now asks for the input first when the task has an input schema, as a form for a flat schema and as JSON otherwise. Run on a list takes a JSON array, or CSV whose header row names the input fields.
-- **Upcoming** — your runs holding or waiting for a run slot (with their queue position and batch item), then the next scheduled runs in time order, then the tasks that run on events with their hourly ceiling.
+- **Upcoming** — your runs holding or waiting for a run slot (with their queue position and batch item), then the scheduled runs over the next 7 or 30 days in time order (a frequent schedule as one row with its count, a rare one by its next run), then the tasks that run on events with their hourly ceiling.
 - **Activity** — every run from every source, newest first, back through the whole history, filtered by outcome, task, what started it, and date. A batch is one row you can expand.
 
 Opening a run shows its result: the deliverable first (structured output as values and tables), then its assessment with Accept, Reject, a note, and Re-judge, then how it ran, its tool calls, input, and cost. The editor covers what the task does, its input fields, its criteria, output schema and judge, when it runs, its limits, and a test run of the draft before you save it; accepting or rejecting the test run with a note adds that note as a draft criterion.
@@ -192,7 +192,7 @@ A remote agent connected to `/mcp/<workspace-id>` runs a task with `tasks__run`.
 
 <Steps>
 
-1. **A saved task or an inline one-off.** Pass `name` to run a saved task. Or leave `name` out and pass the definition inline: `prompt` (or `skill`), and optionally `inputSchema`, `outputSchema`, `criteria`, `confidenceThreshold`, `judge`, `onPoorResult` (see [Judging results](#judging-results)), `allowedTools`, `limits` (`maxIterations`, `maxInputTokens`, `maxRunDurationMs`), and `budget` (a token budget). An inline call creates a one-off task with no schedule, owned by you in that workspace, runs it once, and keeps it with its run. Nothing deletes it.
+1. **A saved task or an inline one-off.** Pass `taskId` (the task's id, as `tasks__list` returns it) to run a saved task. Or leave `taskId` out and pass the definition inline: `prompt` (or `skill`), and optionally `inputSchema`, `outputSchema`, `criteria`, `confidenceThreshold`, `judge`, `onPoorResult` (see [Judging results](#judging-results)), `allowedTools`, `limits` (`maxIterations`, `maxInputTokens`, `maxRunDurationMs`), and `budget` (a token budget). An inline call creates a one-off task with no schedule, owned by you in that workspace, runs it once, and keeps it with its run. Nothing deletes it.
 
 2. **Input.** `input` is any JSON value, at most 64 KiB serialized. When the task has an `inputSchema`, an input that does not match it, or a missing one, is refused before the run starts, with the reasons. The input is kept on the run record and given to the run as data, inside a block the model is told never to follow as instructions.
 
@@ -223,7 +223,7 @@ Every run is recorded with its status, start and completion times, iteration cou
 
 Run history, including each run's full result, is kept indefinitely. The most recent 1,000 runs of each task are read by default; older ones, with their results, are kept in monthly archives and read a page at a time: `tasks__runs` returns a `nextBefore` timestamp when older runs exist, and passing it back as `before` returns the next page, for one task (`taskId`) or every task. Across every task, a first page read without `before` sees only the most recent runs, so start with a `before` just ahead of now to page through everything.
 
-Three more reads summarize your tasks: `tasks__upcoming` lists the runs holding or waiting for a run slot (with their place in the queue), the coming fires of timed schedules, and the tasks events fire with each one's hourly ceiling; `tasks__stats` gives each task's runs, verdicts, pass rate, and cost since a time (30 days by default); and `tasks__judges` lists the judge servers connected in the workspace. A task's own runs may call them.
+Three more reads summarize your tasks: `tasks__upcoming` lists the runs holding or waiting for a run slot (with their place in the queue), the fires of timed schedules over the next `days` (7 by default, up to 30; a schedule firing more than 24 times in that window is one row with its count, and a task whose next fire is past the window still shows it), and the tasks events fire with each one's hourly ceiling; `tasks__stats` gives each task's runs, verdicts, pass rate, and cost since a time (30 days by default); and `tasks__judges` lists the judge servers connected in the workspace. A task's own runs may call them.
 
 A run's status comes from what its tool calls did, not from what its final answer says:
 

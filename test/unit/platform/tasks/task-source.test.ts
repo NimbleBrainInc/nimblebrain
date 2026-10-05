@@ -222,7 +222,7 @@ describe("tasks__run as a task", () => {
     const { scheduler, source } = harness({ executor });
     seed("digest");
 
-    const task = await startTask(source, { name: "digest" });
+    const task = await startTask(source, { taskId: "digest" });
 
     expect(task.status).toBe("working");
     expect(task.ttl).toBeNull();
@@ -242,7 +242,7 @@ describe("tasks__run as a task", () => {
     const { executor, held } = heldExecutor();
     const { scheduler, source } = harness({ executor });
     seed("digest");
-    const task = await startTask(source, { name: "digest", input: { topic: "news" } });
+    const task = await startTask(source, { taskId: "digest", input: { topic: "news" } });
 
     held[0]?.finish("the digest");
     const result = await source.awaitToolTaskResult(task.taskId, { ownerContext: OWNED });
@@ -267,9 +267,9 @@ describe("tasks__run as a task", () => {
     const { executor, held } = heldExecutor();
     const { scheduler, source } = harness({ executor });
     seed("digest");
-    await startTask(source, { name: "digest" });
+    await startTask(source, { taskId: "digest" });
 
-    const second = await startTask(source, { name: "digest" });
+    const second = await startTask(source, { taskId: "digest" });
     expect(second.status).toBe("failed");
     expect(second.statusMessage).toContain("Already running");
     await expect(
@@ -288,8 +288,8 @@ describe("tasks__run as a task", () => {
     seed("first");
     seed("second");
 
-    const running = await startTask(source, { name: "first" });
-    const queued = await startTask(source, { name: "second" });
+    const running = await startTask(source, { taskId: "first" });
+    const queued = await startTask(source, { taskId: "second" });
     expect(readRunTicket(workDir, WS, OWNER, queued.taskId)?.run.status).toBe("queued");
 
     const cancelledQueued = await source.cancelTask(queued.taskId, { ownerContext: OWNED });
@@ -311,7 +311,7 @@ describe("tasks__run as a task", () => {
     const { executor, held } = heldExecutor();
     const { scheduler, source } = harness({ executor });
     seed("digest");
-    const task = await startTask(source, { name: "digest" });
+    const task = await startTask(source, { taskId: "digest" });
 
     const strangers: TaskOwnerContext[] = [
       { ...OWNED, identityId: STRANGER },
@@ -341,7 +341,7 @@ describe("tasks__run as a task", () => {
     const first = heldExecutor();
     const before = harness({ executor: first.executor });
     seed("digest");
-    const task = await startTask(before.source, { name: "digest" });
+    const task = await startTask(before.source, { taskId: "digest" });
     first.held[0]?.finish("kept");
     await flush();
     before.scheduler.stop();
@@ -386,15 +386,15 @@ describe("tasks__run as a task", () => {
     const { scheduler, source } = harness({ executor });
     seed("digest");
 
-    const first = await startTask(source, { name: "digest", idempotencyKey: "item-42" });
-    const again = await startTask(source, { name: "digest", idempotencyKey: "item-42" });
+    const first = await startTask(source, { taskId: "digest", idempotencyKey: "item-42" });
+    const again = await startTask(source, { taskId: "digest", idempotencyKey: "item-42" });
     expect(again.taskId).toBe(first.taskId);
     expect(held).toHaveLength(1);
     expect(readRunTicket(workDir, WS, OWNER, first.taskId)?.run.idempotencyKey).toBe("item-42");
 
     held[0]?.finish("done");
     await flush();
-    const afterEnd = await startTask(source, { name: "digest", idempotencyKey: "item-42" });
+    const afterEnd = await startTask(source, { taskId: "digest", idempotencyKey: "item-42" });
     expect(afterEnd.taskId).toBe(first.taskId);
     expect(afterEnd.status).toBe("completed");
     scheduler.stop();
@@ -442,7 +442,7 @@ describe("tasks__run as a task", () => {
 
     const refused = await source.startToolAsTask(
       "run",
-      { name: "typed", input: { link: "x" } },
+      { taskId: "typed", input: { link: "x" } },
       { ownerContext: OWNED },
     );
     expect("result" in refused && refused.result.isError).toBe(true);
@@ -450,7 +450,7 @@ describe("tasks__run as a task", () => {
     expect(held).toHaveLength(0);
     expect(readRuns(workDir, WS, OWNER, "typed")).toHaveLength(0);
 
-    const ok = await startTask(source, { name: "typed", input: { url: "https://example.com" } });
+    const ok = await startTask(source, { taskId: "typed", input: { url: "https://example.com" } });
     expect(ok.status).toBe("working");
     held[0]?.finish("done");
     await flush();
@@ -461,22 +461,22 @@ describe("tasks__run as a task", () => {
     const { executor, held } = heldExecutor();
     const { scheduler, source } = harness({ executor });
     seed("digest");
-    await startTask(source, { name: "digest" });
+    await startTask(source, { taskId: "digest" });
 
     // Already running: refused, and the key is not claimed.
-    const refused = await startTask(source, { name: "digest", idempotencyKey: "retry-me" });
+    const refused = await startTask(source, { taskId: "digest", idempotencyKey: "retry-me" });
     expect(refused.status).toBe("failed");
     expect(readIdempotencyKey(workDir, WS, OWNER, "digest", "retry-me")).toBeNull();
 
     held[0]?.finish("first");
     await flush();
-    const retried = await startTask(source, { name: "digest", idempotencyKey: "retry-me" });
+    const retried = await startTask(source, { taskId: "digest", idempotencyKey: "retry-me" });
     expect(retried.taskId).not.toBe(refused.taskId);
     expect(retried.status).toBe("working");
     expect(held).toHaveLength(2);
 
     // Admitted, so the key now names this run.
-    const repeat = await startTask(source, { name: "digest", idempotencyKey: "retry-me" });
+    const repeat = await startTask(source, { taskId: "digest", idempotencyKey: "retry-me" });
     expect(repeat.taskId).toBe(retried.taskId);
     expect(held).toHaveLength(2);
 
@@ -537,7 +537,7 @@ describe("tasks__run as a task", () => {
     setUnattended(true);
     const refused = await source.startToolAsTask(
       "run",
-      { name: "digest" },
+      { taskId: "digest" },
       { ownerContext: OWNED },
     );
     expect("result" in refused && refused.result.isError).toBe(true);

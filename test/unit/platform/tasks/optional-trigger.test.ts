@@ -568,7 +568,7 @@ describe("a task with no schedule", () => {
       runNow: (id) => scheduler.requestRunNow(WS, OWNER, id),
     });
 
-    const result = await handleRun({ name: "By Hand" }, ctx);
+    const result = await handleRun({ taskId: "By Hand" }, ctx);
     scheduler.stop();
 
     if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);

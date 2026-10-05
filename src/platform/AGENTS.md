@@ -259,7 +259,7 @@ export async function handleRun(
 
 // a consumer module imports the same contract type
 import type { TasksRunOutput } from "../../platform/schemas/tasks.ts";
-const data = (await callTool(runtime, "tasks__run", { name })) as TasksRunOutput;
+const data = (await callTool(runtime, "tasks__run", { taskId })) as TasksRunOutput;
 if ("status" in data && data.status === "dispatched") { ... } else if ("run" in data) { ... }
 ```
 
@@ -267,7 +267,7 @@ DO NOT:
 
 ```ts
 // Inline cast — re-declares the shape, drifts the first time the handler changes.
-const data = (await callTool(runtime, "tasks__run", { name })) as {
+const data = (await callTool(runtime, "tasks__run", { taskId })) as {
   run: { id: string; status: string; /* ... */ };
 };
 const r = data.run;  // crashes on dispatched envelope
@@ -338,14 +338,14 @@ For discriminated unions, tests MUST narrow before dereferencing:
 ```ts
 // Good — narrowing makes the dispatched branch a compile error if you
 // forget to handle it.
-const result = await handleRun({ name: "Foo" }, ctx);
+const result = await handleRun({ taskId: "foo" }, ctx);
 if (!("run" in result)) throw new Error(`expected sync shape, got ${JSON.stringify(result)}`);
 expect(result.run.toolCalls).toBe(3);
 
 // Bad — `as { run }` narrows without runtime evidence; future regressions
 // (handler returns dispatched envelope under load) pass with undefined
 // dereferences.
-const result = (await handleRun({ name: "Foo" }, ctx)) as { run: TaskRun };
+const result = (await handleRun({ taskId: "foo" }, ctx)) as { run: TaskRun };
 expect(result.run.toolCalls).toBe(3);
 ```
 

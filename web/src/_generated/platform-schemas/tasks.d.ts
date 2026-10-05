@@ -151,7 +151,7 @@ export declare const TasksRunsInput: import("@sinclair/typebox").TObject<{
 }>;
 export type TasksRunsInput = Static<typeof TasksRunsInput>;
 export declare const TasksUpcomingInput: import("@sinclair/typebox").TObject<{
-    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+    days: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;
 export type TasksUpcomingInput = Static<typeof TasksUpcomingInput>;
 export declare const TasksStatsInput: import("@sinclair/typebox").TObject<{
@@ -162,7 +162,7 @@ export type TasksStatsInput = Static<typeof TasksStatsInput>;
 export declare const TasksJudgesInput: import("@sinclair/typebox").TObject<{}>;
 export type TasksJudgesInput = Static<typeof TasksJudgesInput>;
 export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
-    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<unknown>>;
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     prompt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
@@ -310,6 +310,8 @@ export interface TaskSummary {
     disabledAt: string | null;
     disabledReason: string | null;
     estimatedCostPerDay: number;
+    /** The task's input schema, when it has one: a caller can ask for the input before it runs. */
+    inputSchema?: Record<string, unknown>;
 }
 export interface TasksListOutput {
     tasks: TaskSummary[];
@@ -868,6 +870,24 @@ export interface TaskUpcomingFire {
     /** Human-readable schedule. */
     schedule: string;
     scheduleType: "cron" | "interval" | "once";
+    /** Past the window: the task's next fire, shown so a rare schedule is not missing. */
+    beyondWindow?: boolean;
+}
+/**
+ * A schedule that fires more often than the panel lists one by one: one row
+ * with how many times it fires in the window, and its first and last fire.
+ */
+export interface TaskUpcomingFrequent {
+    taskId: string;
+    taskName: string;
+    schedule: string;
+    scheduleType: "cron" | "interval";
+    /** Fires within the window. */
+    count: number;
+    /** True when counting stopped at the cap, so `count` is a floor. */
+    countCapped?: boolean;
+    first: string;
+    last: string;
 }
 /** A task an event fires, with its fire ceiling and how much of it the last hour used. */
 export interface TaskUpcomingEventTask {
@@ -881,8 +901,14 @@ export interface TaskUpcomingEventTask {
 export interface TasksUpcomingOutput {
     running: TaskUpcomingRun[];
     queued: TaskUpcomingRun[];
-    /** Soonest first, at most `limit`. */
+    /** The window's length in days. */
+    days: number;
+    /** Where the window ends. */
+    windowEnd: string;
+    /** Fires within the window, soonest first, then each task's next fire past it. */
     scheduled: TaskUpcomingFire[];
+    /** Schedules firing more than the listing threshold in the window, one row each, by first fire. */
+    frequent: TaskUpcomingFrequent[];
     events: TaskUpcomingEventTask[];
 }
 /** One task's runs since a time (`tasks__stats`). */

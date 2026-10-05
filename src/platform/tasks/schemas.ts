@@ -98,7 +98,7 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: "run",
     description:
-      "Run a task now, bypassing schedule and backoff: a saved one by `name`, or an " +
+      "Run a task now, bypassing schedule and backoff: a saved one by `taskId`, or an " +
       "inline one-off from `prompt` (or `skill`) plus optional schemas, criteria, tools, " +
       "limits, and budget, which creates a `oneoff` task with no schedule and runs it once. `input` " +
       "is JSON for the run, checked against the task's inputSchema and given to the run " +
@@ -163,8 +163,11 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     description:
       "What runs next among your tasks in this workspace: runs holding a run slot now, runs " +
       "waiting for one (with their place in the queue, and batch item when they are one), the " +
-      "coming fires of timed schedules soonest first, and the tasks events fire (with each " +
-      "one's hourly fire ceiling and how much of it the last hour used).",
+      "fires of timed schedules within the next `days` (default 7) soonest first, each " +
+      "enabled timed task's next fire even when it is past the window (`beyondWindow`), a " +
+      "schedule that fires more than 24 times in the window as one `frequent` row with its " +
+      "count, and the tasks events fire (with each one's hourly fire ceiling and how much of " +
+      "it the last hour used).",
     inputSchema: TasksUpcomingInput,
   },
   {

@@ -185,7 +185,7 @@ describe("task e2e: create -> run -> verify", () => {
     expect(createResult.created).toBe(true);
     expect(createResult.task.id).toBe("daily-summary");
 
-    const run = expectSyncRun(await handleRun({ name: "Daily Summary" }, ctx));
+    const run = expectSyncRun(await handleRun({ taskId: "Daily Summary" }, ctx));
     expect(run.status).toBe("success");
     expect(run.taskId).toBe("daily-summary");
 
@@ -224,7 +224,7 @@ describe("task e2e: create -> run -> verify", () => {
       ctx,
     );
 
-    await handleRun({ name: "Weekly Report" }, ctx);
+    await handleRun({ taskId: "Weekly Report" }, ctx);
 
     expect(executorCalls.length).toBe(1);
     const received = executorCalls[0]!.task;
@@ -261,7 +261,7 @@ describe("task e2e: create -> run -> verify", () => {
     defs.get("scoped-task")!.allowedTools = ["files__*", "reports__generate", "analytics__*"];
     ctx.save(defs);
 
-    await handleRun({ name: "Scoped Task" }, ctx);
+    await handleRun({ taskId: "Scoped Task" }, ctx);
 
     expect(executorCalls.length).toBe(1);
     const received = executorCalls[0]!.task;
@@ -302,7 +302,7 @@ describe("task e2e: run records metrics", () => {
       ctx,
     );
 
-    const run = expectSyncRun(await handleRun({ name: "Multi Tool Job" }, ctx));
+    const run = expectSyncRun(await handleRun({ taskId: "Multi Tool Job" }, ctx));
 
     expect(run.toolCalls).toBe(7);
     expect(run.iterations).toBe(4);
@@ -330,7 +330,7 @@ describe("task e2e: run records metrics", () => {
     expect(beforeStatus.task.runCount).toBe(0);
     expect(beforeStatus.task.lastRunStatus).toBeUndefined();
 
-    await handleRun({ name: "Status Check" }, ctx);
+    await handleRun({ taskId: "Status Check" }, ctx);
 
     // After run: scheduler.updateAfterRun updates the definition on disk.
     const updated = loadDefs().get("status-check")!;

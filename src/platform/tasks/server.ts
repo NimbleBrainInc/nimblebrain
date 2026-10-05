@@ -34,6 +34,7 @@ import type {
   TasksUpdateOutput,
   TaskUpcomingEventTask,
   TaskUpcomingFire,
+  TaskUpcomingFrequent,
   TaskUpcomingRun,
   TaskWarning,
 } from "../schemas/tasks.ts";
@@ -849,6 +850,7 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Tas
     disabledAt: a.disabledAt ?? null,
     disabledReason: a.disabledReason ?? null,
     estimatedCostPerDay: estimateCost(a, ctx.defaultModel).perDayUsd,
+    ...(a.inputSchema ? { inputSchema: a.inputSchema } : {}),
   }));
 
   const hasMore = remaining > 0;
@@ -959,7 +961,11 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Tas
 // Views: what runs next, run statistics, judges
 // ---------------------------------------------------------------------------
 
-const DEFAULT_UPCOMING_LIMIT = 20;
+const DEFAULT_UPCOMING_DAYS = 7;
+/** More fires than this in the window and a schedule is one `frequent` row, not one row per fire. */
+const FREQUENT_THRESHOLD = 24;
+/** Most cron fires counted in a window; past it the count is reported as capped. */
+const FIRE_COUNT_CAP = 50_000;
 const HOUR_MS = 3_600_000;
 const STATS_DEFAULT_DAYS = 30;
 /** A `before` later than any run, so a page read walks the archive months. */
@@ -976,27 +982,23 @@ export function handleUpcoming(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): TasksUpcomingOutput {
-  const limit = (args.limit as number | undefined) ?? DEFAULT_UPCOMING_LIMIT;
+  const days = (args.days as number | undefined) ?? DEFAULT_UPCOMING_DAYS;
+  const now = Date.now();
+  const windowEnd = now + days * 24 * HOUR_MS;
   const defs = ctx.definitions();
   const runs = (ctx.queueView?.() ?? []).map((entry) => upcomingRunOf(entry, defs, ctx));
   const queued = runs.filter((r) => r.state === "queued");
   queued.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 
   const saved = [...defs.values()].filter((t) => kindOf(t) === "saved" && t.schedule);
-  const scheduled = saved
-    .filter((t) => t.enabled && !isEventSchedule(t.schedule))
-    .flatMap((task) =>
-      nextFires(task, limit, ctx.defaultTimezone).map(
-        (at): TaskUpcomingFire => ({
-          taskId: task.id,
-          taskName: task.name,
-          at,
-          schedule: formatSchedule(task.schedule, task),
-          scheduleType: task.schedule?.type as TaskUpcomingFire["scheduleType"],
-        }),
-      ),
-    );
+  const scheduled: TaskUpcomingFire[] = [];
+  const frequent: TaskUpcomingFrequent[] = [];
+  for (const task of saved) {
+    if (!task.enabled || isEventSchedule(task.schedule)) continue;
+    addWindowFires(task, windowEnd, ctx.defaultTimezone, scheduled, frequent);
+  }
   scheduled.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  frequent.sort((a, b) => new Date(a.first).getTime() - new Date(b.first).getTime());
   const events = saved
     .filter((t) => isEventSchedule(t.schedule))
     .map((task) => eventTaskOf(task, ctx));
@@ -1005,8 +1007,130 @@ export function handleUpcoming(
   return {
     running: runs.filter((r) => r.state === "running"),
     queued,
-    scheduled: scheduled.slice(0, limit),
+    days,
+    windowEnd: new Date(windowEnd).toISOString(),
+    scheduled,
+    frequent,
     events,
+  };
+}
+
+/**
+ * Add a timed task's fires within the window: each one, or one `frequent`
+ * row once it fires more than `FREQUENT_THRESHOLD` times, or its next fire
+ * marked `beyondWindow` when none falls inside.
+ */
+function addWindowFires(
+  task: Task,
+  windowEnd: number,
+  defaultTimezone: string,
+  scheduled: TaskUpcomingFire[],
+  frequent: TaskUpcomingFrequent[],
+): void {
+  const fires = windowFires(task, windowEnd, defaultTimezone);
+  if (!fires) return;
+  const base = {
+    taskId: task.id,
+    taskName: task.name,
+    schedule: formatSchedule(task.schedule, task),
+  };
+  const type = task.schedule?.type as TaskUpcomingFire["scheduleType"];
+  if (fires.count === 0) {
+    scheduled.push({ ...base, scheduleType: type, at: fires.first, beyondWindow: true });
+  } else if (fires.count > FREQUENT_THRESHOLD && type !== "once") {
+    frequent.push({
+      ...base,
+      scheduleType: type,
+      count: fires.count,
+      ...(fires.capped ? { countCapped: true } : {}),
+      first: fires.first,
+      last: fires.last,
+    });
+  } else {
+    for (const at of fires.listed) scheduled.push({ ...base, scheduleType: type, at });
+  }
+}
+
+/** A timed task's fires within a window, counted; `count` 0 means its next fire is past it. */
+interface WindowFires {
+  first: string;
+  last: string;
+  count: number;
+  capped: boolean;
+  /** The fires, while there are at most `FREQUENT_THRESHOLD` of them. */
+  listed: string[];
+}
+
+/**
+ * Count a timed task's fires from its stored `nextRunAt` (it carries any
+ * backoff) to `windowEnd`. Null when it has no next fire (no `nextRunAt`, or a
+ * retired once). An interval is counted arithmetically; a cron is stepped up
+ * to `FIRE_COUNT_CAP`.
+ */
+function windowFires(task: Task, windowEnd: number, defaultTimezone: string): WindowFires | null {
+  const schedule = task.schedule;
+  const first = new Date(task.nextRunAt ?? Number.NaN);
+  if (!schedule || Number.isNaN(first.getTime())) return null;
+  if (schedule.type === "once" && onceRetirement(task)) return null;
+  const firstIso = first.toISOString();
+  if (first.getTime() > windowEnd) {
+    return { first: firstIso, last: firstIso, count: 0, capped: false, listed: [] };
+  }
+  if (schedule.type === "interval" && schedule.intervalMs) {
+    const step = schedule.intervalMs;
+    const count = Math.floor((windowEnd - first.getTime()) / step) + 1;
+    const listed =
+      count <= FREQUENT_THRESHOLD
+        ? Array.from({ length: count }, (_, k) =>
+            new Date(first.getTime() + k * step).toISOString(),
+          )
+        : [];
+    const last = new Date(first.getTime() + (count - 1) * step).toISOString();
+    return { first: firstIso, last, count, capped: false, listed };
+  }
+  if (schedule.type === "cron" && schedule.expression) {
+    return cronWindowFires(
+      schedule.expression,
+      schedule.timezone ?? defaultTimezone,
+      first,
+      windowEnd,
+    );
+  }
+  return { first: firstIso, last: firstIso, count: 1, capped: false, listed: [firstIso] };
+}
+
+/** A cron's fires from `first` to `windowEnd`, stepped and counted up to the cap. */
+function cronWindowFires(
+  expression: string,
+  timezone: string,
+  first: Date,
+  windowEnd: number,
+): WindowFires {
+  const firstIso = first.toISOString();
+  const listed = [firstIso];
+  let count = 1;
+  let last = first;
+  let cron: Cron;
+  try {
+    cron = new Cron(expression, { timezone });
+  } catch {
+    // A cron that does not parse has no further fires to count.
+    return { first: firstIso, last: firstIso, count, capped: false, listed };
+  }
+  let next = cron.nextRun(first);
+  while (next && next.getTime() <= windowEnd && count < FIRE_COUNT_CAP) {
+    count++;
+    last = next;
+    if (listed.length < FREQUENT_THRESHOLD) listed.push(next.toISOString());
+    next = cron.nextRun(next);
+  }
+  const capped = count >= FIRE_COUNT_CAP && !!next && next.getTime() <= windowEnd;
+  return {
+    first: firstIso,
+    last: last.toISOString(),
+    count,
+    capped,
+    listed: count <= FREQUENT_THRESHOLD ? listed : [],
   };
 }
 
@@ -1045,47 +1169,6 @@ function eventTaskOf(task: Task, ctx: ToolContext): TaskUpcomingEventTask {
     maxFiresPerHour: task.schedule?.maxFiresPerHour ?? DEFAULT_EVENT_MAX_FIRES_PER_HOUR,
     firesLastHour: ctx.readRuns(task.id, { since }).filter(countsAsEventFire).length,
   };
-}
-
-/**
- * A timed task's next `count` fires: its stored `nextRunAt` first (it carries
- * any backoff), then what its schedule gives after that. A once fires once,
- * and not at all once retired.
- */
-function nextFires(task: Task, count: number, defaultTimezone: string): string[] {
-  const schedule = task.schedule;
-  const first = new Date(task.nextRunAt ?? Number.NaN);
-  if (!schedule || Number.isNaN(first.getTime())) return [];
-  if (schedule.type === "once") return onceRetirement(task) ? [] : [first.toISOString()];
-  return [first, ...laterFires(schedule, first, count - 1, defaultTimezone)].map((d) =>
-    d.toISOString(),
-  );
-}
-
-/** The `count` fires of a recurring schedule after `first`. */
-function laterFires(
-  schedule: ScheduleSpec,
-  first: Date,
-  count: number,
-  defaultTimezone: string,
-): Date[] {
-  const { intervalMs, expression } = schedule;
-  if (schedule.type === "interval" && intervalMs) {
-    return Array.from(
-      { length: count },
-      (_, k) => new Date(first.getTime() + (k + 1) * intervalMs),
-    );
-  }
-  if (schedule.type !== "cron" || !expression) return [];
-  try {
-    return new Cron(expression, { timezone: schedule.timezone ?? defaultTimezone }).nextRuns(
-      count,
-      first,
-    );
-  } catch {
-    // A cron that does not parse has no further fires to show.
-    return [];
-  }
 }
 
 /**
@@ -1236,7 +1319,7 @@ export const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
 /**
  * An inline one-off's definition: `tasks__run` with these instead of
- * `name` creates a `oneoff` task with no schedule and runs it once.
+ * `taskId` creates a `oneoff` task with no schedule and runs it once.
  */
 export interface InlineDefinition {
   prompt?: string;
@@ -1269,7 +1352,7 @@ export const INLINE_FIELDS = [
 
 /** `tasks__run`'s arguments, already shape-checked by the tool's input schema. */
 interface RunArgs extends InlineDefinition {
-  name?: string;
+  taskId?: string;
   input?: unknown;
   idempotencyKey?: string;
 }
@@ -1369,7 +1452,7 @@ export function ensureOneoff(
   ctx: ToolContext,
   checkInput: (id: string, inputSchema: Record<string, unknown> | undefined) => void,
   idSeed: string | undefined,
-  missing = "tasks__run needs `name` (a task to run)",
+  missing = "tasks__run needs `taskId` (a task to run)",
 ): Task {
   if (!args.prompt && !args.skill) {
     throw new Error(`${missing} or an inline definition with \`prompt\` or \`skill\`.`);
@@ -1466,7 +1549,7 @@ function checkRunInput(
 
 /**
  * Resolve what `tasks__run` runs and ask for the run: a saved
- * task by `name`, or an inline definition run as a one-off. The input
+ * task by `taskId`, or an inline definition run as a one-off. The input
  * is checked first, and an idempotency key already used on the task
  * returns that run instead of asking for another. Shared by the inline call
  * and the task-augmented one, so the two cannot disagree on what a call
@@ -1475,9 +1558,9 @@ function checkRunInput(
 export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): PreparedRun {
   const args = rawArgs as RunArgs;
   const inline = INLINE_FIELDS.filter((field) => args[field] !== undefined);
-  if (args.name && inline.length > 0) {
+  if (args.taskId && inline.length > 0) {
     throw new Error(
-      `Give either \`name\` (a task to run) or an inline definition, not both ` +
+      `Give either \`taskId\` (a task to run) or an inline definition, not both ` +
         `(also given: ${inline.join(", ")}).`,
     );
   }
@@ -1490,9 +1573,9 @@ export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): 
   ctx.reloadScheduler();
 
   let task: Task;
-  if (args.name) {
-    const found = findByName(ctx.definitions(), args.name);
-    if (!found) throw new Error(`Task not found: "${args.name}"`);
+  if (args.taskId) {
+    const found = findByName(ctx.definitions(), args.taskId);
+    if (!found) throw new Error(`Task not found: "${args.taskId}"`);
     task = found;
     checkRunInput(task.name, task.inputSchema, args.input);
   } else {
