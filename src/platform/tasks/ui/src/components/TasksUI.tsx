@@ -1,17 +1,21 @@
 import { hostSupports } from "@nimblebrain/synapse";
 import { useApp, useDataSync } from "@nimblebrain/synapse/react";
-import { useCallback, useEffect, useState } from "react";
-import { ClockIcon, PlusIcon } from "../icons.tsx";
-import type { TaskBatch, TaskRun, TaskSummary } from "../types.ts";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { PlusIcon } from "../icons.tsx";
+import type { TaskRun, TaskSummary, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
-import { asDict, formatCost } from "../utils.ts";
-import { BatchPane } from "./BatchPane.tsx";
+import { asDict, toolErrorText } from "../utils.ts";
+import { ActivityView } from "./ActivityView.tsx";
+import { BatchDialog } from "./BatchDialog.tsx";
+import { BatchScreen } from "./BatchPane.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
-import { CreateTaskForm, TEMPLATES } from "./CreateTaskForm.tsx";
-import { RailRunItem, RailTaskItem } from "./RailItem.tsx";
-import { ReaderPane } from "./ReaderPane.tsx";
-import { SkeletonCards, SkeletonRows } from "./Skeleton.tsx";
+import { ResultScreen } from "./ResultView.tsx";
+import { RunDialog, type RunStarted, runStartedOf } from "./RunDialog.tsx";
+import { type SavedActions, SavedView } from "./SavedView.tsx";
 import { TaskDetailView } from "./TaskDetailView.tsx";
+import { TaskEditor } from "./TaskEditor.tsx";
+import type { Template } from "./templates.ts";
+import { UpcomingView } from "./UpcomingView.tsx";
 
 /**
  * Read every task by following `nextCursor` to the end.
@@ -20,7 +24,7 @@ import { TaskDetailView } from "./TaskDetailView.tsx";
  * re-serves the first page when a cursor names a record that no longer exists
  * (deleted between fetches). That is the right server behaviour — repeat work
  * rather than skip it — but a walk that pushes unconditionally would duplicate
- * rows, inflate the count badge that reads off them, and collide React keys.
+ * rows and collide React keys.
  *
  * `exhausted` is false when the walk stopped on the page budget with a cursor
  * still in hand, so the caller can say so instead of rendering a short list.
@@ -45,569 +49,446 @@ async function fetchAllTasks(
   return { items: [...byId.values()], exhausted: false };
 }
 
+export type View = "saved" | "upcoming" | "activity";
+
+const VIEWS: Array<{ id: View; text: string }> = [
+  { id: "saved", text: "Saved" },
+  { id: "upcoming", text: "Upcoming" },
+  { id: "activity", text: "Activity" },
+];
+
+/** A screen over the views: one run's result, a batch, the editor, or a task's details. */
+type Screen =
+  | { kind: "result"; runId: string; taskId?: string; run?: TaskRun }
+  | { kind: "batch"; batchId: string }
+  | { kind: "editor"; taskName?: string; template?: Template | null }
+  | { kind: "detail"; taskName: string };
+
+/** The view switcher: a tab list, arrow keys move between tabs. */
+export function ViewTabs({ view, onChange }: { view: View; onChange: (v: View) => void }) {
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  return (
+    <div className="view-tabs" role="tablist" aria-label="Tasks views">
+      {VIEWS.map((v, i) => (
+        <button
+          key={v.id}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          type="button"
+          role="tab"
+          id={`tab-${v.id}`}
+          aria-selected={view === v.id}
+          aria-controls="view-panel"
+          tabIndex={view === v.id ? 0 : -1}
+          className={`view-tab${view === v.id ? " on" : ""}`}
+          onClick={() => onChange(v.id)}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+            e.preventDefault();
+            const next = (i + (e.key === "ArrowRight" ? 1 : VIEWS.length - 1)) % VIEWS.length;
+            onChange(VIEWS[next]!.id);
+            refs.current[next]?.focus();
+          }}
+        >
+          {v.text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function TasksUI() {
   const app = useApp();
   // The host draws this view's title in its own chrome when it declares
   // `ai.nimblebrain/location`, so the view leaves its own out rather than say it
   // twice. A host without it (any other MCP Apps host) gets the view's title.
   const hostShowsTitle = hostSupports(app, "location");
-  // Tool hooks
   const listTool = useTool<string>("list");
-  const runsTool = useTool<string>("runs");
-  const runNowTool = useTool<string>("run");
+  const statusTool = useTool<string>("status");
+  const runTool = useTool<string>("run");
   const updateTool = useTool<string>("update");
   const deleteTool = useTool<string>("delete");
   const cancelTool = useTool<string>("cancel");
-  const batchesTool = useTool<string>("batches");
 
-  // Data state
+  const [view, setView] = useState<View>("saved");
+  const [stack, setStack] = useState<Screen[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
-  const [runs, setRuns] = useState<TaskRun[]>([]);
-  const [batches, setBatches] = useState<TaskBatch[]>([]);
-  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [runsLoading, setRunsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [busy, setBusy] = useState<Record<string, string>>({});
+  const [runDialog, setRunDialog] = useState<string | null>(null);
+  const [batchDialog, setBatchDialog] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<TaskSummary | null>(null);
 
-  // UI state
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [actionInProgress, setActionInProgress] = useState<Record<string, string>>({});
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  // `userOpenedReader` only flips on explicit run click / back. On desktop
-  // both panes render regardless (no media query applies), so this only
-  // matters at <720px where the rail and reader stack and one is hidden.
-  // Without this, the auto-select of the most recent run would push the
-  // user straight into the reader on first load and hide the lists.
-  const [userOpenedReader, setUserOpenedReader] = useState(false);
-  const [selectedTask, setSelectedTask] = useState<string | null>(null);
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [createTemplate, setCreateTemplate] = useState<(typeof TEMPLATES)[0] | null>(null);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: listTool.call is stable, adding it would cause infinite re-renders
+  // biome-ignore lint/correctness/useExhaustiveDependencies: listTool.call is stable
   const loadTasks = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
       // The list tool caps a page to protect a model's context window; this
       // panel is a browser consumer with no such limit, so it reads to the end.
       const { items, exhausted } = await fetchAllTasks(listTool.call);
+      items.sort((a, b) => a.name.localeCompare(b.name));
       setTasks(items);
-      // Rendering a short list under a count badge that agrees with it is the
-      // failure this panel's paging exists to avoid — so say so instead.
-      if (!exhausted) {
-        setError(
-          `Showing the first ${items.length} tasks; more exist than this panel loads in one pass.`,
-        );
-      }
+      setError(
+        exhausted
+          ? null
+          : `Showing the first ${items.length} tasks; more exist than this panel loads in one pass.`,
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load tasks");
+      setError(toolErrorText(err, "The tasks could not be read."));
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runsTool.call and batchesTool.call are stable, adding them would cause infinite re-renders
-  const loadRuns = useCallback(async () => {
-    setRunsLoading(true);
-    try {
-      // A batch shows as one row of its own, not as one row per item.
-      const [result, batchResult] = await Promise.all([
-        runsTool.call({ limit: 20, excludeBatchRuns: true }),
-        batchesTool.call({ limit: 10 }),
-      ]);
-      setRuns((asDict(result.data).runs as TaskRun[]) || []);
-      setBatches((asDict(batchResult.data).batches as TaskBatch[]) || []);
-    } catch {
-      // silent
-    } finally {
-      setRunsLoading(false);
-    }
-  }, []);
+  const refresh = useCallback(() => {
+    void loadTasks();
+    setRefreshKey((k) => k + 1);
+  }, [loadTasks]);
 
-  const loadAll = useCallback(() => {
-    loadTasks();
-    loadRuns();
-  }, [loadTasks, loadRuns]);
-
-  // Initial load
   useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+    void loadTasks();
+  }, [loadTasks]);
 
-  // Auto-refresh when agent mutates data
-  useDataSync(() => {
-    loadAll();
-  });
+  // Re-read when the server announces a change (the agent, a schedule, another tab).
+  useDataSync(() => refresh());
 
-  // Auto-select the most recent run when one isn't selected (first load,
-  // or after the previously selected run was pruned from the 20-deep window).
-  useEffect(() => {
-    if (runs.length === 0) {
-      if (selectedRunId) setSelectedRunId(null);
-      return;
-    }
-    if (!selectedRunId || !runs.some((r) => r.id === selectedRunId)) {
-      setSelectedRunId(runs[0].id);
-    }
-  }, [runs, selectedRunId]);
+  const top = stack[stack.length - 1];
+  const push = (s: Screen) => setStack((prev) => [...prev, s]);
+  const pop = () => setStack((prev) => prev.slice(0, -1));
+  function mark(id: string, what: string | null) {
+    setBusy((prev) => {
+      const next = { ...prev };
+      if (what) next[id] = what;
+      else delete next[id];
+      return next;
+    });
+  }
 
-  // Actions
-  async function handleRunNow(name: string) {
-    setActionInProgress((prev) => ({ ...prev, [name]: "running" }));
-    try {
-      await runNowTool.call({ name });
-    } catch {
-      // silent
-    } finally {
-      setActionInProgress((prev) => {
-        const next = { ...prev };
-        delete next[name];
-        return next;
-      });
-      loadAll();
+  function openStarted(started: RunStarted) {
+    if (started.kind === "finished") {
+      push({ kind: "result", runId: started.run.id, taskId: started.run.taskId, run: started.run });
+    } else {
+      setNotice(started.note);
+      push({ kind: "result", runId: started.runId, taskId: started.taskId });
     }
   }
 
-  async function handleToggle(name: string, currentlyEnabled: boolean) {
-    const action = currentlyEnabled ? "pausing" : "resuming";
-    setActionInProgress((prev) => ({ ...prev, [name]: action }));
+  /** Run now: straight away, or through the input dialog when the task takes input. */
+  async function runNow(task: { id: string; name: string }, input?: unknown) {
+    mark(task.id, "running");
+    setNotice(null);
     try {
-      await updateTool.call({ name, manifest: { enabled: !currentlyEnabled } });
-    } catch {
-      // silent
-    } finally {
-      setActionInProgress((prev) => {
-        const next = { ...prev };
-        delete next[name];
-        return next;
-      });
-      loadAll();
-    }
-  }
-
-  async function handleCancel(name: string) {
-    setActionInProgress((prev) => ({ ...prev, [name]: "cancelling" }));
-    try {
-      await cancelTool.call({ name });
-    } catch {
-      // silent
-    } finally {
-      setActionInProgress((prev) => {
-        const next = { ...prev };
-        delete next[name];
-        return next;
-      });
-      loadAll();
-    }
-  }
-
-  async function handleUpdate(name: string, fields: Record<string, unknown>) {
-    // Server's update tool expects { name, manifest?, body? }. The detail
-    // view's saveField() passes a flat { [field]: value } — split it: the
-    // prompt goes into `body`, everything else into `manifest`.
-    const args: Record<string, unknown> = { name };
-    const manifest: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(fields)) {
-      if (k === "prompt") {
-        args.body = v;
-      } else if (k !== "name") {
-        manifest[k] = v;
+      if (input === undefined) {
+        // A task whose runs take input asks for it first.
+        const detail = await statusTool.call({ name: task.name, limit: 1 });
+        const def = asDict(detail.data).task as { inputSchema?: unknown } | undefined;
+        if (def?.inputSchema) {
+          setRunDialog(task.name);
+          return;
+        }
       }
-    }
-    if (Object.keys(manifest).length > 0) args.manifest = manifest;
-    // Refresh the list either way, but let the error propagate so the caller
-    // (e.g. the detail view's saveField) can surface it. Swallowing it here
-    // made a rejected update — like an out-of-range maxIterations — look like
-    // a silent no-op: the field just snapped back to its old value.
-    try {
-      await updateTool.call(args);
-    } finally {
-      loadAll();
-    }
-  }
-
-  function handleDelete(name: string) {
-    setConfirmDelete(name);
-  }
-
-  async function confirmDeleteYes() {
-    const name = confirmDelete;
-    setConfirmDelete(null);
-    if (!name) return;
-
-    setActionInProgress((prev) => ({ ...prev, [name]: "deleting" }));
-    try {
-      await deleteTool.call({ name });
-    } catch {
-      // silent
-    } finally {
-      setActionInProgress((prev) => {
-        const next = { ...prev };
-        delete next[name];
-        return next;
+      const status = await runTool.call({
+        name: task.name,
+        ...(input !== undefined ? { input } : {}),
       });
-      if (selectedTask === name) setSelectedTask(null);
-      loadAll();
+      const started = runStartedOf(asDict(status.data));
+      if (started) openStarted(started);
+    } catch (err) {
+      setNotice(toolErrorText(err, "The run did not start."));
+    } finally {
+      mark(task.id, null);
+      refresh();
     }
   }
 
-  function handleCreate() {
-    setShowCreateForm(true);
+  async function toggle(task: TaskSummary) {
+    mark(task.id, task.enabled ? "pausing" : "resuming");
+    try {
+      await updateTool.call({ name: task.name, manifest: { enabled: !task.enabled } });
+    } catch (err) {
+      setNotice(toolErrorText(err));
+    } finally {
+      mark(task.id, null);
+      refresh();
+    }
   }
 
-  function pickTemplate(t: (typeof TEMPLATES)[0]) {
-    setCreateTemplate(t);
-    setShowCreateForm(true);
+  async function remove(task: TaskSummary) {
+    setConfirmDelete(null);
+    mark(task.id, "deleting");
+    try {
+      await deleteTool.call({ name: task.name });
+      setStack((prev) => prev.filter((s) => !(s.kind === "detail" && s.taskName === task.name)));
+    } catch (err) {
+      setNotice(toolErrorText(err));
+    } finally {
+      mark(task.id, null);
+      refresh();
+    }
   }
 
-  // Create form (full-panel)
-  if (showCreateForm) {
-    return (
-      <CreateTaskForm
-        onCreated={(name) => {
-          setShowCreateForm(false);
-          setCreateTemplate(null);
-          setSelectedTask(name);
-          loadAll();
-        }}
-        onCancel={() => {
-          setShowCreateForm(false);
-          setCreateTemplate(null);
-        }}
-        initialTemplate={createTemplate}
-      />
-    );
-  }
+  const savedActions: SavedActions = {
+    onOpen: (t) => push({ kind: "detail", taskName: t.name }),
+    onRunNow: (t) => void runNow(t),
+    onRunList: (t) => setBatchDialog(t.name),
+    onEdit: (t) => push({ kind: "editor", taskName: t.name }),
+    onToggle: (t) => void toggle(t),
+    onDelete: (t) => setConfirmDelete(t),
+    onOpenRun: (t, runId) => push({ kind: "result", runId, taskId: t.id }),
+    onCreate: (template) => push({ kind: "editor", template: template ?? null }),
+  };
 
-  // Task config view (full-panel)
-  if (selectedTask) {
-    const summary = tasks.find((a) => a.name === selectedTask);
+  const dialogs = (
+    <>
+      {runDialog && (
+        <RunDialog
+          taskName={runDialog}
+          onClose={() => setRunDialog(null)}
+          onStarted={(started) => {
+            setRunDialog(null);
+            openStarted(started);
+            refresh();
+          }}
+        />
+      )}
+      {batchDialog && (
+        <BatchDialog
+          taskName={batchDialog}
+          onClose={() => setBatchDialog(null)}
+          onCreated={(batch) => {
+            setBatchDialog(null);
+            push({ kind: "batch", batchId: batch.id });
+            refresh();
+          }}
+        />
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          name={confirmDelete.name}
+          onConfirm={() => void remove(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+    </>
+  );
+
+  if (top) {
     return (
       <>
-        <TaskDetailView
-          taskName={selectedTask}
-          onBack={() => setSelectedTask(null)}
-          actionInProgress={actionInProgress[selectedTask]}
-          onRunNow={() => handleRunNow(selectedTask)}
-          onToggle={() => handleToggle(selectedTask, summary?.enabled ?? true)}
-          onDelete={() => handleDelete(selectedTask)}
-          onCancel={() => handleCancel(selectedTask)}
-          onUpdate={handleUpdate}
-        />
-        {confirmDelete && (
-          <ConfirmDialog
-            name={confirmDelete}
-            onConfirm={confirmDeleteYes}
-            onCancel={() => setConfirmDelete(null)}
-          />
+        {notice && top.kind !== "editor" && (
+          <div className="toast" role="status">
+            {notice}
+          </div>
         )}
+        <ScreenRoute
+          screen={top}
+          tasks={tasks}
+          busy={busy}
+          refreshKey={refreshKey}
+          nav={{
+            push,
+            back: () => {
+              setNotice(null);
+              pop();
+            },
+            replaceTop: (s) => setStack((prev) => [...prev.slice(0, -1), ...(s ? [s] : [])]),
+          }}
+          actions={{
+            runNow: (task, input) => void runNow(task, input),
+            askRun: (name) => setRunDialog(name),
+            toggle: (task) => void toggle(task),
+            askDelete: (task) => setConfirmDelete(task),
+            cancel: (name) => void cancelTool.call({ name }).finally(refresh),
+            update: async (args) => {
+              try {
+                await updateTool.call(args);
+              } finally {
+                refresh();
+              }
+            },
+            saved: (warnings) => {
+              setNotice(warnings.length > 0 ? warnings.map((w) => w.message).join(" ") : null);
+              refresh();
+            },
+          }}
+        />
+        {dialogs}
       </>
     );
   }
 
-  // Two-pane reader (default)
-  const selectedRun = runs.find((r) => r.id === selectedRunId) || null;
-  const selectedBatch = batches.find((b) => b.id === selectedBatchId) || null;
-  const selectedRunTask = selectedRun ? tasks.find((a) => a.id === selectedRun.taskId) : undefined;
-  // Mobile pane visibility is driven by explicit navigation, not selection.
-  // See the comment on `userOpenedReader` above.
-  const paneShow: "rail" | "reader" = userOpenedReader ? "reader" : "rail";
-  const taskNameById = new Map(tasks.map((a) => [a.id, a.name]));
-
   return (
     <div className="app">
-      <div className="header">
+      <header className="header">
         <div className="header-top">
           <div>
-            {!hostShowsTitle && <div className="header-title">Tasks</div>}
-            <div className="header-lede">Scheduled tasks that run on autopilot</div>
+            {!hostShowsTitle && <h1 className="header-title">Tasks</h1>}
+            <div className="header-lede">Work the agent does on its own, and how it went</div>
           </div>
-          <button type="button" className="create-btn" onClick={handleCreate}>
+          <button type="button" className="create-btn" onClick={() => push({ kind: "editor" })}>
             <PlusIcon />
-            Create
+            New task
           </button>
         </div>
-      </div>
-
-      <ErrorBanner error={error} />
-
-      <div className="two-pane" data-show={paneShow}>
-        <aside className="rail">
-          <RailSection label="Tasks" count={tasks.length} />
-          <TasksList
-            loading={loading}
+        <ViewTabs view={view} onChange={setView} />
+      </header>
+      {notice && (
+        <div className="view-pad">
+          <div className="note-banner" role="status">
+            {notice}{" "}
+            <button type="button" className="link-btn" onClick={() => setNotice(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+      <main
+        className="content view-panel"
+        id="view-panel"
+        role="tabpanel"
+        aria-labelledby={`tab-${view}`}
+      >
+        {view === "saved" && (
+          <SavedView
             tasks={tasks}
-            selectedTask={selectedTask}
-            onSelectTask={(name) => setSelectedTask(name)}
-            onPickTemplate={pickTemplate}
-          />
-
-          {batches.length > 0 && (
-            <>
-              <RailSection label="Batches" count={batches.length} />
-              {batches.map((b) => (
-                <RailBatchItem
-                  key={b.id}
-                  batch={b}
-                  taskName={taskNameById.get(b.taskId)}
-                  active={selectedBatchId === b.id}
-                  onClick={() => {
-                    setSelectedBatchId(b.id);
-                    setUserOpenedReader(true);
-                  }}
-                />
-              ))}
-            </>
-          )}
-
-          <RailSection label="Recent Runs" count={runs.length} />
-          <RunsList
-            runs={runs}
-            runsLoading={runsLoading}
-            selectedRunId={selectedRunId}
-            taskNameById={taskNameById}
-            onSelectRun={(id) => {
-              setSelectedRunId(id);
-              setSelectedBatchId(null);
-              setUserOpenedReader(true);
-            }}
-          />
-        </aside>
-
-        {selectedBatch ? (
-          <BatchPane
-            batch={selectedBatch}
-            taskName={taskNameById.get(selectedBatch.taskId)}
-            onChanged={loadAll}
-            onBack={() => setUserOpenedReader(false)}
-          />
-        ) : (
-          <ReaderArea
-            runs={runs}
-            runsLoading={runsLoading}
             loading={loading}
-            tasks={tasks}
-            selectedRun={selectedRun}
-            selectedRunTask={selectedRunTask}
-            onRerun={handleRunNow}
-            onOpenConfig={(name) => setSelectedTask(name)}
-            onBack={() => setUserOpenedReader(false)}
+            error={error}
+            busy={busy}
+            refreshKey={refreshKey}
+            actions={savedActions}
           />
         )}
-      </div>
+        {view === "upcoming" && (
+          <UpcomingView
+            refreshKey={refreshKey}
+            onOpenRun={(r) => r.runId && push({ kind: "result", runId: r.runId, taskId: r.taskId })}
+            onOpenTask={(name) => push({ kind: "detail", taskName: name })}
+          />
+        )}
+        {view === "activity" && (
+          <ActivityView
+            tasks={tasks}
+            refreshKey={refreshKey}
+            onOpenRun={(run) => push({ kind: "result", runId: run.id, taskId: run.taskId, run })}
+            onOpenBatch={(batch) => push({ kind: "batch", batchId: batch.id })}
+          />
+        )}
+      </main>
+      {dialogs}
+    </div>
+  );
+}
 
-      {confirmDelete && (
-        <ConfirmDialog
-          name={confirmDelete}
-          onConfirm={confirmDeleteYes}
-          onCancel={() => setConfirmDelete(null)}
+interface ScreenNav {
+  push: (s: Screen) => void;
+  back: () => void;
+  /** Replace the top screen, or drop it with null. */
+  replaceTop: (s: Screen | null) => void;
+}
+
+interface ScreenActions {
+  runNow: (task: { id: string; name: string }, input?: unknown) => void;
+  askRun: (taskName: string) => void;
+  toggle: (task: TaskSummary) => void;
+  askDelete: (task: TaskSummary) => void;
+  cancel: (taskName: string) => void;
+  update: (args: Record<string, unknown>) => Promise<void>;
+  saved: (warnings: TaskWarning[]) => void;
+}
+
+/** The detail view saves one flat field; the update tool takes `{ name, manifest?, body? }`. */
+export function updateArgsOf(
+  name: string,
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  const args: Record<string, unknown> = { name };
+  const manifest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (k === "prompt") args.body = v;
+    else if (k !== "name") manifest[k] = v;
+  }
+  if (Object.keys(manifest).length > 0) args.manifest = manifest;
+  return args;
+}
+
+/** The screen on top of the stack. */
+function ScreenRoute({
+  screen,
+  tasks,
+  busy,
+  refreshKey,
+  nav,
+  actions,
+}: {
+  screen: Screen;
+  tasks: TaskSummary[];
+  busy: Record<string, string>;
+  refreshKey: number;
+  nav: ScreenNav;
+  actions: ScreenActions;
+}) {
+  const nameOf = (taskId: string) => tasks.find((t) => t.id === taskId)?.name;
+  const openRun = (runId: string, taskId?: string) => nav.push({ kind: "result", runId, taskId });
+  switch (screen.kind) {
+    case "result":
+      return (
+        <ResultScreen
+          key={screen.runId}
+          runId={screen.runId}
+          taskId={screen.taskId}
+          taskName={screen.taskId ? nameOf(screen.taskId) : undefined}
+          initialRun={screen.run}
+          onBack={nav.back}
+          onRerun={(task, input) => actions.runNow(task, input)}
+          onOpenRun={openRun}
+          onOpenBatch={(batchId) => nav.push({ kind: "batch", batchId })}
         />
-      )}
-    </div>
-  );
-}
-
-/** Padded error banner shown above the two-pane layout; renders nothing when there is no error. */
-function ErrorBanner({ error }: { error: string | null }) {
-  if (!error) return null;
-  return (
-    <div style={{ padding: "0 20px" }}>
-      <div className="error-banner">{error}</div>
-    </div>
-  );
-}
-
-/** Rail section header with an optional right-aligned count badge (hidden when count is zero). */
-function RailSection({ label, count }: { label: string; count: number }) {
-  return (
-    <div className="rail-section">
-      <span>{label}</span>
-      {count > 0 && (
-        <span
-          style={{
-            fontSize: 11,
-            color: "var(--color-text-secondary)",
-            textTransform: "none",
-            letterSpacing: 0,
-            fontWeight: 400,
+      );
+    case "batch":
+      return (
+        <BatchScreen
+          key={screen.batchId}
+          batchId={screen.batchId}
+          taskName={nameOf}
+          refreshKey={refreshKey}
+          onBack={nav.back}
+          onOpenRun={openRun}
+        />
+      );
+    case "editor":
+      return (
+        <TaskEditor
+          key={screen.taskName ?? "new"}
+          taskName={screen.taskName}
+          template={screen.template}
+          onCancel={nav.back}
+          onSaved={(name, warnings) => {
+            actions.saved(warnings);
+            // A new task opens on its details; an edit returns where it came from.
+            nav.replaceTop(screen.taskName ? null : { kind: "detail", taskName: name });
           }}
-        >
-          {count}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/** Rail body for tasks — skeletons while loading, a template picker when empty, else the list. */
-function TasksList({
-  loading,
-  tasks,
-  selectedTask,
-  onSelectTask,
-  onPickTemplate,
-}: {
-  loading: boolean;
-  tasks: TaskSummary[];
-  selectedTask: string | null;
-  onSelectTask: (name: string) => void;
-  onPickTemplate: (t: (typeof TEMPLATES)[0]) => void;
-}) {
-  if (loading) {
-    return (
-      <div style={{ padding: "4px 16px" }}>
-        <SkeletonCards count={2} />
-      </div>
-    );
-  }
-  if (tasks.length === 0) {
-    return (
-      <div className="rail-empty">
-        No tasks yet. Start from a template:
-        <div className="template-grid" style={{ marginTop: 8 }}>
-          {TEMPLATES.map((t) => (
-            <button
-              type="button"
-              key={t.id}
-              className={`template-card${t.id === "custom" ? " dashed" : ""}`}
-              onClick={() => onPickTemplate(t)}
-            >
-              <span className="template-card-name">{t.name}</span>
-              <span className="template-card-desc">{t.description}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <>
-      {tasks.map((a) => (
-        <RailTaskItem
-          key={a.id}
-          task={a}
-          active={selectedTask === a.name}
-          onClick={() => onSelectTask(a.name)}
         />
-      ))}
-    </>
-  );
-}
-
-/** One batch in the rail: progress, verdict counts, cost, and state. Click → open its results. */
-function RailBatchItem({
-  batch,
-  taskName,
-  active,
-  onClick,
-}: {
-  batch: TaskBatch;
-  taskName?: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  const { counts } = batch;
-  return (
-    <button type="button" className={`rail-run-item${active ? " active" : ""}`} onClick={onClick}>
-      <div className="rail-run-top">
-        <span className="rail-run-name">
-          ▸ Batch {batch.id.slice(6, 10)} · {taskName ?? batch.taskId}
-        </span>
-        <span className="rail-run-time">{batch.state}</span>
-      </div>
-      <div className="rail-run-snippet">
-        {batch.done}/{batch.items} · ✓ {counts.pass} ✗ {counts.fail} ? {counts.uncertain}
-        {counts.failed > 0 ? ` ⚠ ${counts.failed}` : ""} · {formatCost(batch.costUsd) || "$0.00"}
-      </div>
-    </button>
-  );
-}
-
-/** Rail body for recent runs — skeletons on first load, an empty note, else the run list. */
-function RunsList({
-  runs,
-  runsLoading,
-  selectedRunId,
-  taskNameById,
-  onSelectRun,
-}: {
-  runs: TaskRun[];
-  runsLoading: boolean;
-  selectedRunId: string | null;
-  taskNameById: Map<string, string>;
-  onSelectRun: (id: string) => void;
-}) {
-  if (runsLoading && runs.length === 0) {
-    return (
-      <div style={{ padding: "4px 16px" }}>
-        <SkeletonRows count={3} />
-      </div>
-    );
-  }
-  if (runs.length === 0) {
-    return <div className="rail-empty">No runs yet.</div>;
-  }
-  return (
-    <>
-      {runs.map((run) => (
-        <RailRunItem
-          key={run.id}
-          run={run}
-          taskName={taskNameById.get(run.taskId)}
-          active={selectedRunId === run.id}
-          onClick={() => onSelectRun(run.id)}
+      );
+    case "detail": {
+      const summary = tasks.find((t) => t.name === screen.taskName);
+      return (
+        <TaskDetailView
+          key={screen.taskName}
+          taskName={screen.taskName}
+          onBack={nav.back}
+          actionInProgress={summary ? busy[summary.id] : undefined}
+          onRunNow={() => actions.askRun(screen.taskName)}
+          onToggle={() => summary && actions.toggle(summary)}
+          onDelete={() => summary && actions.askDelete(summary)}
+          onCancel={() => actions.cancel(screen.taskName)}
+          onEdit={() => nav.push({ kind: "editor", taskName: screen.taskName })}
+          onUpdate={(name, fields) => actions.update(updateArgsOf(name, fields))}
         />
-      ))}
-    </>
-  );
-}
-
-/** Right pane — a "no runs yet" placeholder until runs exist, otherwise the run reader. */
-function ReaderArea({
-  runs,
-  runsLoading,
-  loading,
-  tasks,
-  selectedRun,
-  selectedRunTask,
-  onRerun,
-  onOpenConfig,
-  onBack,
-}: {
-  runs: TaskRun[];
-  runsLoading: boolean;
-  loading: boolean;
-  tasks: TaskSummary[];
-  selectedRun: TaskRun | null;
-  selectedRunTask: TaskSummary | undefined;
-  onRerun: (name: string) => void;
-  onOpenConfig: (name: string) => void;
-  onBack: () => void;
-}) {
-  if (runs.length === 0 && !runsLoading && !loading) {
-    return (
-      <div className="reader">
-        <div className="reader-empty">
-          <ClockIcon />
-          <div className="reader-empty-title" style={{ marginTop: 12 }}>
-            No runs yet
-          </div>
-          <div className="reader-empty-desc">
-            {tasks.length === 0
-              ? "Create a task from a template in the left panel to get started."
-              : "Your tasks have not run yet. Pick one and Run now, or wait for the schedule."}
-          </div>
-        </div>
-      </div>
-    );
+      );
+    }
   }
-  return (
-    <ReaderPane
-      run={selectedRun}
-      task={selectedRunTask}
-      onRerun={onRerun}
-      onOpenConfig={onOpenConfig}
-      onBack={onBack}
-    />
-  );
 }

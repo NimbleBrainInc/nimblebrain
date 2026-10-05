@@ -5,7 +5,7 @@
  */
 
 import { expect, test } from "bun:test";
-import { TEMPLATES } from "./CreateTaskForm.tsx";
+import { TEMPLATES } from "./templates.ts";
 
 test("no template produces the workspace summary", () => {
   expect(TEMPLATES.map((t) => t.id)).not.toContain("daily-briefing");

@@ -21,16 +21,20 @@ export function TaskDetailView({
   taskName,
   onBack,
   actionInProgress,
-  onRunNow: _onRunNow,
+  onRunNow: askForInput,
   onToggle,
   onDelete,
   onCancel,
   onUpdate,
+  onEdit,
 }: {
   taskName: string;
   onBack: () => void;
   actionInProgress?: string;
+  /** Run now through the input dialog, for a task with an input schema. */
   onRunNow: () => void;
+  /** Open the full editor. */
+  onEdit: () => void;
   onToggle: () => void;
   onDelete: () => void;
   onCancel: () => void;
@@ -91,6 +95,11 @@ export function TaskDetailView({
   }
 
   async function handleRunNow() {
+    // A run's input is checked against the schema, so ask for it first.
+    if (detail?.inputSchema) {
+      askForInput();
+      return;
+    }
     setTestRunning(true);
     setTestResult(null);
     try {
@@ -130,6 +139,7 @@ export function TaskDetailView({
           onCancel={onCancel}
           onToggle={onToggle}
           onDelete={onDelete}
+          onEdit={onEdit}
         />
 
         <ManualRunResult result={testResult} onDismiss={() => setTestResult(null)} />
@@ -295,6 +305,7 @@ function DetailActions({
   onCancel,
   onToggle,
   onDelete,
+  onEdit,
 }: {
   d: TaskDetail;
   actionInProgress: string | undefined;
@@ -304,6 +315,7 @@ function DetailActions({
   onCancel: () => void;
   onToggle: () => void;
   onDelete: () => void;
+  onEdit: () => void;
 }) {
   return (
     <div className="detail-actions">
@@ -322,9 +334,14 @@ function DetailActions({
           {testRunning ? "Running…" : "Run Now"}
         </button>
       )}
-      <button type="button" className="btn" disabled={disabled} onClick={onToggle}>
-        {toggleButtonLabel(actionInProgress, d)}
+      <button type="button" className="btn" disabled={disabled} onClick={onEdit}>
+        Edit
       </button>
+      {d.schedule && !d.onceDone && (
+        <button type="button" className="btn" disabled={disabled} onClick={onToggle}>
+          {toggleButtonLabel(actionInProgress, d)}
+        </button>
+      )}
       <button type="button" className="btn btn-danger" disabled={disabled} onClick={onDelete}>
         Delete
       </button>
