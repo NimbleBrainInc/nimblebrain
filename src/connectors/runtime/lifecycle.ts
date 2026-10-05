@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { resolveConnectorSkillsConfig } from "../../config/connector-skills.ts";
+import type { AccountLookup } from "../../connectors/catalog/account-lookup.ts";
 import type { ManagedConnectorProvider } from "../../connectors/providers/managed-provider.ts";
 import {
   type ManagedConnectorRegistry,
@@ -38,6 +39,7 @@ import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts"
 import { validateAdditionalAuthorizationParams } from "../../util/oauth-params.ts";
 import { WorkspaceContext } from "../../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../../workspace/workspace-store.ts";
+import { AccountLookups } from "./account-lookups.ts";
 import { brokeredConnectorDir, brokeredRef } from "./brokered.ts";
 import {
   type Connection,
@@ -1390,6 +1392,30 @@ export class ConnectorLifecycleManager {
   }
 
   /**
+   * Ask a connection's connected service which account it is signed in as,
+   * through the tool its catalog entry declares (`AccountLookup`). Null when
+   * the connection has no live source in this process, or the tool names no
+   * account. Never throws.
+   *
+   * Asks only a source that is already connected and starts nothing: a
+   * connectors listing must not start a cold connector to label it. A
+   * personal connector that is authenticated but cold is labelled the first
+   * time it is listed after something has used it.
+   */
+  lookUpAccount(
+    owner: ConnectorOwner,
+    serverName: string,
+    lookup: AccountLookup,
+  ): Promise<string | null> {
+    const source =
+      owner.type === "workspace"
+        ? this.connectionSource(serverName, owner.wsId)
+        : this.registriesByUser.get(owner.userId)?.getSource(serverName);
+    if (!(source instanceof McpSource) || !source.isAlive()) return Promise.resolve(null);
+    return this.accountLookups.ask(source, lookup);
+  }
+
+  /**
    * The runtime's `wsId` → `ToolRegistry` map, **asked for on every read**.
    * Required so `startAuth` / `disconnect` / `connectionSource` can reach a
    * workspace's sources without callers having to thread the registry through
@@ -1443,6 +1469,9 @@ export class ConnectorLifecycleManager {
    * 409 at the route) rather than racing a rival `auth()` chain.
    */
   private readonly identityConnectorStarts = new Map<string, Promise<ToolSource | undefined>>();
+
+  /** Account lookups in flight and recently failed, per source. */
+  private readonly accountLookups = new AccountLookups();
 
   /**
    * Per-`${serverName}|${wsId}` timestamp (epoch ms) of the last

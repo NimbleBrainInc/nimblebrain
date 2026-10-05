@@ -284,6 +284,15 @@ export interface ManagedConnectorProvider {
    */
   identity?(opts: BrokeredStateOptions): Promise<ConnectedAccountIdentity | null>;
 
+  /**
+   * Store the account the kernel learned by asking the connected service
+   * itself (a catalog entry's `account` lookup), for a connection the broker
+   * recorded none for. Kept with the connection, so `identity` reads it back
+   * and a new sign-in replaces it. MUST NOT throw. Omit together with
+   * `identity`.
+   */
+  recordIdentity?(opts: BrokeredStateOptions, identity: ConnectedAccountIdentity): Promise<void>;
+
   /** A liveness probe for the connection revalidator, wired iff the provider supplies one. */
   probe?(directory: ConnectorCatalog): ConnectionHealthProbe;
 

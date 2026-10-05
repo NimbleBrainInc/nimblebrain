@@ -14,6 +14,7 @@ import type { ConnectorAuthKind } from "../../connectors/auth-kind.ts";
 import type { ConnectorUiMeta } from "../../connectors/runtime/types.ts";
 import type { HookDeclaration } from "../../hooks/types.ts";
 import type { NotificationsDeclaration } from "../../notifications/types.ts";
+import type { AccountLookup } from "./account-lookup.ts";
 import type {
   ComposioConnectorConfig,
   SecretHeaderRef,
@@ -112,6 +113,12 @@ export interface ConnectorCatalogEntry {
   docsUrl?: string;
   /** Offered for personal (identity-plane) connection — see `NimbleBrainConnectorMeta.personal`. */
   personal?: boolean;
+  /**
+   * The tool to ask for the signed-in account, from
+   * `_meta["ai.nimblebrain/connector"].account`. Absent for a connector whose
+   * sign-in names its account, or whose entry declares no lookup.
+   */
+  account?: AccountLookup;
   /**
    * Host UI integration (sidebar placement, etc.) declared by the server in
    * `ServerDetail._meta["ai.nimblebrain/host"]`. Server-authored, carried here
