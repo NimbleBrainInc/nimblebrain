@@ -433,7 +433,7 @@ fieldset.builder-row { border: none; min-width: 0; padding: 10px 0; border-botto
 .tone-warning { --tone: var(--nb-color-warning); }
 .tone-active { --tone: var(--nb-color-processing); }
 .tone-muted { --tone: var(--color-text-secondary); }
-.status-icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--tone, currentColor); }
+.status-icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--tone); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 1.2s linear infinite; transform-origin: center; }
 .btn-sm { min-height: 24px; padding: 2px 10px; }
