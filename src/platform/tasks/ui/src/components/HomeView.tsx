@@ -4,6 +4,7 @@ import { byUrgency, headline, healthOf, type TaskHealth } from "../lib/attention
 import type { TaskStats, TaskSummary, UpcomingData, UpcomingFire, UpcomingRun } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatWhen, relativeTime, toolErrorText } from "../utils.ts";
+import { PageHeader } from "./Chrome.tsx";
 import { SkeletonRows } from "./Skeleton.tsx";
 import { TEMPLATES, type Template } from "./templates.ts";
 
@@ -153,7 +154,7 @@ function ComingUp({
                   {formatWhen(f.at)}
                 </time>
                 <span className="coming-name">{f.taskName}</span>
-                <span className={atRisk ? "coming-risk" : "muted"}>
+                <span className={atRisk ? "coming-risk" : "coming-sched"} title={f.schedule}>
                   {atRisk ? "Its last run failed" : f.schedule}
                 </span>
               </button>
@@ -322,8 +323,20 @@ export function HomeBody({
   readError: string | null;
   actions: HomeActions;
 }) {
+  const newTask = (
+    <button type="button" className="btn btn-primary" onClick={() => actions.onCreate()}>
+      New task
+    </button>
+  );
   if (tasks.length === 0) {
-    return <HomeEmpty loading={loading} error={error} onCreate={actions.onCreate} />;
+    return (
+      <>
+        <PageHeader title="Tasks" actions={newTask} />
+        <main className="content">
+          <HomeEmpty loading={loading} error={error} onCreate={actions.onCreate} />
+        </main>
+      </>
+    );
   }
 
   const rows = homeRows(tasks, stats, upcoming);
@@ -335,58 +348,57 @@ export function HomeBody({
   const open = (r: HomeRow) => () => actions.onOpenTask(r.task);
 
   return (
-    <div className="view-pad home">
-      {error && <div className="error-banner">{error}</div>}
-      {readError && (
-        <div className="note-banner">Some of what's below may be missing: {readError}</div>
-      )}
-
-      <div className="home-head">
-        <div>
-          <h2 className="home-headline">{headline(needsYou.length, rows.length)}</h2>
-          {needsYou.length > 0 && rest.length > 0 && (
-            <p className="muted">
-              {rest.length} other {rest.length === 1 ? "task is" : "tasks are"} fine.
-            </p>
-          )}
-        </div>
-        <button type="button" className="btn btn-primary" onClick={() => actions.onCreate()}>
-          New task
-        </button>
-      </div>
-
-      {needsYou.length > 0 && (
-        <ul className="attn-list" aria-label="Needs you">
-          {needsYou.map((r) => (
-            <AttentionCard key={r.task.id} row={r} actions={actions} />
-          ))}
-        </ul>
-      )}
-
-      {live.length > 0 && (
-        <ul className="live-list" aria-label="Running now">
-          {live.map((r) => (
-            <LiveRow key={r.task.id} row={r} actions={actions} />
-          ))}
-        </ul>
-      )}
-
-      {fires.length > 0 && <ComingUp fires={fires} rows={rows} actions={actions} />}
-
-      <TaskLists
-        rest={rest}
-        paused={paused}
-        needsYou={needsYou.length}
-        stats={stats}
-        onOpen={open}
+    <>
+      <PageHeader
+        title={headline(needsYou.length, rows.length)}
+        status={
+          needsYou.length > 0 && rest.length > 0
+            ? `${rest.length} other ${rest.length === 1 ? "task is" : "tasks are"} fine.`
+            : undefined
+        }
+        actions={newTask}
       />
+      <main className="content">
+        <div className="view-pad home">
+          {error && <div className="error-banner">{error}</div>}
+          {readError && (
+            <div className="note-banner">Some of what's below may be missing: {readError}</div>
+          )}
 
-      <div className="home-foot">
-        <button type="button" className="link-btn" onClick={actions.onSeeActivity}>
-          See every run
-        </button>
-      </div>
-    </div>
+          {needsYou.length > 0 && (
+            <ul className="attn-list" aria-label="Needs you">
+              {needsYou.map((r) => (
+                <AttentionCard key={r.task.id} row={r} actions={actions} />
+              ))}
+            </ul>
+          )}
+
+          {live.length > 0 && (
+            <ul className="live-list" aria-label="Running now">
+              {live.map((r) => (
+                <LiveRow key={r.task.id} row={r} actions={actions} />
+              ))}
+            </ul>
+          )}
+
+          {fires.length > 0 && <ComingUp fires={fires} rows={rows} actions={actions} />}
+
+          <TaskLists
+            rest={rest}
+            paused={paused}
+            needsYou={needsYou.length}
+            stats={stats}
+            onOpen={open}
+          />
+
+          <div className="home-foot">
+            <button type="button" className="link-btn" onClick={actions.onSeeActivity}>
+              See every run
+            </button>
+          </div>
+        </div>
+      </main>
+    </>
   );
 }
 

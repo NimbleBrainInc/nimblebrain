@@ -104,3 +104,44 @@ export function StructuredValue({
   }
   return <Scalar value={value} />;
 }
+
+/** Text without a surrounding Markdown code fence (```json … ```), closed or cut off. */
+export function unfence(text: string): string {
+  return text
+    .trim()
+    .replace(/^```[a-z]*\s*\n?/i, "")
+    .replace(/\n?```$/, "")
+    .trim();
+}
+
+/** A JSON deliverable's text as a value, a fenced block included; undefined for anything else. */
+export function asJson(text: string): unknown {
+  const body = unfence(text);
+  if (!body.startsWith("{") && !body.startsWith("[")) return undefined;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A deliverable as a person reads it: structured output (or text that is
+ * JSON) as labelled values and tables, with the raw JSON behind "Show raw";
+ * anything else as wrapped prose. Nothing scrolls sideways.
+ */
+export function ResultPreview({ structured, text }: { structured?: unknown; text?: string }) {
+  const value = structured !== undefined ? structured : text ? asJson(text) : undefined;
+  if (value !== null && typeof value === "object") {
+    return (
+      <div className="result-preview">
+        <StructuredValue value={value} />
+        <details className="raw">
+          <summary>Show raw</summary>
+          <pre className="code-block">{JSON.stringify(value, null, 2)}</pre>
+        </details>
+      </div>
+    );
+  }
+  return text ? <p className="prose result-preview">{unfence(text)}</p> : null;
+}

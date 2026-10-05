@@ -13,7 +13,7 @@ import { builderProblem, fieldsFromSchema, schemaFromFields } from "../lib/schem
 import type { JudgesData, TaskDetail, TaskRun, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, toolErrorText } from "../utils.ts";
-import { ScreenHead } from "./Chrome.tsx";
+import { PageHeader } from "./Chrome.tsx";
 import { CriteriaEditor } from "./CriteriaEditor.tsx";
 import { InputEditor, type InputState } from "./InputEditor.tsx";
 import { InputFieldsBuilder } from "./InputFieldsBuilder.tsx";
@@ -764,7 +764,7 @@ function EditorLoading({
 }) {
   return (
     <div className="app">
-      <ScreenHead title={title} onBack={onBack} />
+      <PageHeader title={title} onBack={onBack} />
       <div className="content">
         {error ? (
           <div className="error-banner" role="alert">
@@ -781,45 +781,20 @@ function EditorLoading({
   );
 }
 
-/** The footer: what stops a save, the save's own error, and the buttons. */
-function EditorFoot({
-  problems,
-  error,
-  saving,
-  label,
-  onCancel,
-  onSave,
-}: {
-  problems: string[];
-  error: string | null;
-  saving: boolean;
-  label: string;
-  onCancel: () => void;
-  onSave: () => void;
-}) {
+/** What stops a save, and the save's own error, under the header. */
+function EditorProblems({ problems, error }: { problems: string[]; error: string | null }) {
+  if (problems.length === 0 && !error) return null;
   return (
-    <footer className="editor-foot">
+    <div className="editor-problems" role="alert">
       {problems.length > 0 && (
-        <ul className="problems" role="alert">
+        <ul className="problems">
           {problems.map((p) => (
             <li key={p}>{p}</li>
           ))}
         </ul>
       )}
-      {error && (
-        <div className="error-banner" role="alert">
-          {error}
-        </div>
-      )}
-      <div className="editor-foot-actions">
-        <button type="button" className="btn" onClick={onCancel}>
-          Cancel
-        </button>
-        <button type="button" className="btn btn-accent" disabled={saving} onClick={onSave}>
-          {saving ? "Saving…" : label}
-        </button>
-      </div>
-    </footer>
+      {error && <div className="error-banner">{error}</div>}
+    </div>
   );
 }
 
@@ -880,8 +855,22 @@ function EditorForm({
 
   return (
     <div className="app">
-      <ScreenHead title={title} onBack={onCancel} />
-      <div className="content editor">
+      <PageHeader
+        title={title}
+        onBack={onCancel}
+        actions={
+          <>
+            <button type="button" className="btn" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>
+              {saving ? "Saving…" : editing ? "Save changes" : "Create task"}
+            </button>
+          </>
+        }
+      />
+      <EditorProblems problems={problems} error={saveError} />
+      <div className="content page-body editor">
         {detail?.kind === "oneoff" && (
           <div className="note-banner">This is a one-off task made by an inline run.</div>
         )}
@@ -891,14 +880,6 @@ function EditorForm({
         <Limits d={draft} set={set} />
         <TestRunSection draft={draft} set={set} onProblems={setProblems} />
       </div>
-      <EditorFoot
-        problems={problems}
-        error={saveError}
-        saving={saving}
-        label={editing ? "Save changes" : "Create task"}
-        onCancel={onCancel}
-        onSave={save}
-      />
     </div>
   );
 }

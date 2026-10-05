@@ -7,10 +7,11 @@ import type { RunFileRef, TaskCriterion, TaskDetail, TaskRun, TaskRunResult } fr
 import { useTool } from "../useTool.ts";
 import { asDict, formatDuration, formatTokens, formatUsd, toolErrorText } from "../utils.ts";
 import { AssessmentPanel } from "./AssessmentPanel.tsx";
-import { ScreenHead } from "./Chrome.tsx";
+import { PageHeader } from "./Chrome.tsx";
+import { RowMenu } from "./RowMenu.tsx";
 import { RunBadge } from "./RunBadge.tsx";
 import { Elapsed, RunSteps } from "./RunSteps.tsx";
-import { StructuredValue } from "./StructuredView.tsx";
+import { asJson, ResultPreview } from "./StructuredView.tsx";
 
 const EXECUTION_TEXT: Record<string, string> = {
   queued: "Waiting for a run slot",
@@ -52,8 +53,8 @@ export function Deliverable({
   const files = result?.outputFiles ?? [];
   return (
     <section className="section deliverable" aria-label="Result">
-      {result?.structured !== undefined ? (
-        <StructuredValue value={result.structured} />
+      {result?.structured !== undefined || typeof asJson(output) === "object" ? (
+        <ResultPreview structured={result?.structured} text={output} />
       ) : output ? (
         <div
           className="out-md"
@@ -452,31 +453,34 @@ export function useOpenFile(): (file: RunFileRef) => void {
   return (file) => hostAction(app, "openApp", { name: "files", target: `files://${file.id}` });
 }
 
+/** When a run started, as its page's heading says it: "Oct 4, 4:08 PM". */
+function runDate(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 /** The result screen's status line: label, who started it, when, how long, what it cost. */
 function ResultSub({
   run,
   label,
+  taskName,
   taskGone,
 }: {
   run?: TaskRun;
   label?: TaskRun["label"];
+  taskName?: string;
   taskGone: boolean;
 }) {
   return (
     <>
       <RunBadge label={label} />
+      {taskName && <span>{taskName}</span>}
       {taskGone && <span className="tag">task deleted</span>}
       {run && <span>{STARTED_BY_TEXT[startedByOf(run)]}</span>}
-      {run && (
-        <span>
-          {new Date(run.startedAt).toLocaleString(undefined, {
-            month: "short",
-            day: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          })}
-        </span>
-      )}
       {run?.completedAt && <span>{formatDuration(run.startedAt, run.completedAt)}</span>}
       {run?.costUsd !== undefined && <span>{formatUsd(run.costUsd)}</span>}
     </>
@@ -536,10 +540,17 @@ export function ResultScreen({
 
   return (
     <div className="app">
-      <ScreenHead
-        title={shownName ?? taskId ?? "Run"}
+      <PageHeader
+        title={run ? `Run on ${runDate(run.startedAt)}` : "Run"}
         onBack={onBack}
-        sub={<ResultSub run={run} label={label} taskGone={!!state.taskGone} />}
+        status={
+          <ResultSub
+            run={run}
+            label={label}
+            taskName={shownName ?? taskId}
+            taskGone={!!state.taskGone}
+          />
+        }
         actions={
           <>
             {state.status === "open" && name && (
@@ -558,11 +569,6 @@ export function ResultScreen({
                 {cancelling ? "Cancelling…" : "Cancel run"}
               </button>
             )}
-            {output && (
-              <button type="button" className="btn" onClick={copy}>
-                {copied ? "Copied" : "Copy result"}
-              </button>
-            )}
             {shownName && rerunId && !state.taskGone && onRerun && (
               <button
                 type="button"
@@ -572,6 +578,18 @@ export function ResultScreen({
                 Re-run
               </button>
             )}
+            <RowMenu
+              label="More actions for this run"
+              items={[
+                ...(output
+                  ? [{ label: copied ? "Copied" : "Copy result", onSelect: () => void copy() }]
+                  : []),
+                {
+                  label: "Copy run id",
+                  onSelect: () => void navigator.clipboard?.writeText(runId),
+                },
+              ]}
+            />
           </>
         }
       />

@@ -3,7 +3,7 @@ import { renderMarkdown } from "../markdown.ts";
 import type { BatchItemResult, TaskBatch, TaskRunResult } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatCost, relativeTime } from "../utils.ts";
-import { ScreenHead } from "./Chrome.tsx";
+import { PageHeader } from "./Chrome.tsx";
 import { RunBadge } from "./RunBadge.tsx";
 
 /** Rows per page of results. */
@@ -173,10 +173,10 @@ function BatchHead({
 }) {
   const budget = batch.budgetUsd !== undefined ? ` of ${formatCost(batch.budgetUsd)}` : "";
   return (
-    <ScreenHead
+    <PageHeader
       title={`Batch ${batch.id.slice(6, 10)}`}
       onBack={onBack ?? (() => {})}
-      sub={
+      status={
         <>
           <span>{taskName ?? batch.taskId}</span>
           <span>{STATE_LABEL[batch.state]}</span>
@@ -422,7 +422,7 @@ export function BatchScreen({
   if (!batch) {
     return (
       <div className="app">
-        <ScreenHead title="Batch" onBack={onBack} />
+        <PageHeader title="Batch" onBack={onBack} />
         <div className="content">
           {error ? (
             <div className="error-banner" role="alert">

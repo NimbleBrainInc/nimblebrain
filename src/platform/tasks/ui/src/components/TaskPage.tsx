@@ -1,8 +1,7 @@
-import { type ReactNode, useContext, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
 import { healthOf, type TaskHealth } from "../lib/attention.ts";
-import { renderMarkdown } from "../markdown.ts";
-import type { TaskDetail, TaskRun, TaskStats, TaskSummary } from "../types.ts";
+import type { TaskDetail, TaskRun, TaskRunResult, TaskStats, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import {
   asDict,
@@ -14,10 +13,11 @@ import {
   relativeTime,
   toolErrorText,
 } from "../utils.ts";
-import { HostTrailContext } from "./Chrome.tsx";
+import { PageHeader } from "./Chrome.tsx";
 import { isOpenRun } from "./ResultView.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
-import { labelTone } from "./RunBadge.tsx";
+import { RunBadge, StatusBadge } from "./RunBadge.tsx";
+import { asJson, ResultPreview } from "./StructuredView.tsx";
 
 /** Runs listed on the page; the rest are behind "See all runs". */
 const RECENT_RUNS = 6;
@@ -293,48 +293,72 @@ export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit: () => void
 }
 
 /** The newest run: still going, or its result's opening lines and a way into it. */
-function LatestRun({ run, onOpenRun }: { run?: TaskRun; onOpenRun: (run: TaskRun) => void }) {
+function LatestRun({
+  run,
+  result,
+  onOpenRun,
+}: {
+  run?: TaskRun;
+  /** The latest run's full result: undefined while it loads, null when unreadable. */
+  result: TaskRunResult | null | undefined;
+  onOpenRun: (run: TaskRun) => void;
+}) {
   if (!run) {
     return (
       <section className="task-section" aria-label="Latest result">
-        <h3 className="section-heading">Latest result</h3>
+        <h2 className="section-heading">Latest result</h2>
         <p className="muted">No runs yet. Run it now to see what it makes.</p>
       </section>
     );
   }
   if (isOpenRun(run)) {
     return (
-      <section className="task-section tone-active latest-open" aria-label="Running now">
-        <StatusIcon tone="active" />
-        <span>
-          {run.status === "queued" ? "Waiting for a run slot" : "Running now"}
-          <span className="muted">, started {relativeTime(run.startedAt)}</span>
-        </span>
+      <section className="task-section latest-open" aria-label="Running now">
+        <StatusBadge
+          tone="active"
+          label={run.status === "queued" ? "Waiting for a run slot" : "Running now"}
+        />
+        <span className="muted">started {relativeTime(run.startedAt)}</span>
       </section>
     );
   }
   return (
     <section className="task-section" aria-label="Latest result">
       <div className="section-row">
-        <h3 className="section-heading">Latest result</h3>
-        <span className={`tone-${labelTone(run.label ?? "")} latest-label`}>
-          <StatusIcon tone={labelTone(run.label ?? "")} />
-          {run.label} · {relativeTime(run.startedAt)}
+        <h2 className="section-heading">Latest result</h2>
+        <span className="section-meta">
+          <RunBadge label={run.label} />
+          <span className="muted">{relativeTime(run.startedAt)}</span>
         </span>
       </div>
-      {run.resultPreview ? (
-        <div
-          className="out-md latest-preview"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify in renderMarkdown
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(run.resultPreview) }}
-        />
-      ) : (
-        <p className="muted">{run.error ?? "This run left no result."}</p>
-      )}
-      <button type="button" className="btn btn-sm" onClick={() => onOpenRun(run)}>
-        Open the result
+      <LatestBody run={run} result={result} />
+      <button type="button" className="btn btn-sm section-action" onClick={() => onOpenRun(run)}>
+        Open the run
       </button>
     </section>
+  );
+}
+
+/**
+ * The latest result's body: the full result once read (structured output as
+ * values, text as prose); the run's preview only when the result cannot be
+ * read and the preview is not cut-off JSON.
+ */
+function LatestBody({ run, result }: { run: TaskRun; result: TaskRunResult | null | undefined }) {
+  if (result === undefined && run.resultPreview) {
+    return <div className="skel skel-card" aria-busy="true" />;
+  }
+  const text = result?.output ?? run.resultPreview;
+  if (result?.structured !== undefined || (result && text)) {
+    return <ResultPreview structured={result?.structured} text={text} />;
+  }
+  if (text && typeof asJson(text) !== "object" && !/^\s*(```|[[{])/.test(text)) {
+    return <ResultPreview text={text} />;
+  }
+  return (
+    <p className="muted">
+      {run.error ?? (text ? "Open the run to read its result." : "This run left no result.")}
+    </p>
   );
 }
 
@@ -355,12 +379,13 @@ function RecentRuns({
   return (
     <section className="task-section" aria-labelledby="task-runs">
       <div className="section-row">
-        <h3 className="section-heading" id="task-runs">
+        <h2 className="section-heading" id="task-runs">
           Recent runs
-        </h3>
+        </h2>
         {stats && stats.runs > 0 && (
           <span className="muted">
-            {formatPercent(stats.passRate)} passed · {formatUsd(stats.costUsd)} in 30 days
+            {stats.passRate !== null ? `${formatPercent(stats.passRate)} passed · ` : ""}
+            {formatUsd(stats.costUsd)} in 30 days
           </span>
         )}
       </div>
@@ -371,13 +396,8 @@ function RecentRuns({
         <ul className="task-runs">
           {runs.slice(0, RECENT_RUNS).map((r) => (
             <li key={r.id}>
-              <button
-                type="button"
-                className={`task-run tone-${labelTone(r.label ?? "")}`}
-                onClick={() => onOpenRun(r)}
-              >
-                <StatusIcon tone={labelTone(r.label ?? "")} />
-                <span className="task-run-label">{r.label ?? r.status}</span>
+              <button type="button" className="task-run" onClick={() => onOpenRun(r)}>
+                {r.label ? <RunBadge label={r.label} /> : <span>{r.status}</span>}
                 <span className="muted">{formatWhen(r.startedAt)}</span>
                 <span className="muted num">
                   {r.completedAt ? formatDuration(r.startedAt, r.completedAt) : ""}
@@ -403,6 +423,7 @@ export function TaskPageBody({
   stats,
   runs,
   runsError,
+  latestResult,
   actions,
 }: {
   detail: TaskDetail;
@@ -410,6 +431,8 @@ export function TaskPageBody({
   stats: TaskStats | null;
   runs: TaskRun[] | null;
   runsError: string | null;
+  /** The latest run's full result: undefined while it loads, null when unreadable. */
+  latestResult?: TaskRunResult | null;
   actions: TaskPageActions;
 }) {
   const latest = runs?.[0];
@@ -431,7 +454,7 @@ export function TaskPageBody({
           )}
         </div>
       )}
-      <LatestRun run={latest} onOpenRun={actions.onOpenRun} />
+      <LatestRun run={latest} result={latestResult} onOpenRun={actions.onOpenRun} />
       <RecentRuns
         runs={runs}
         runsError={runsError}
@@ -501,6 +524,54 @@ export function taskHealth(
   return healthOf(task, stats ?? undefined, live);
 }
 
+/** The task page's actions: the Enabled switch for a task with a trigger, Run now or Watch, the menu. */
+function TaskActions({
+  d,
+  latest,
+  busy,
+  toggling,
+  actions,
+  onSetEnabled,
+}: {
+  d: TaskDetail;
+  latest?: TaskRun;
+  busy?: string;
+  toggling: boolean;
+  actions: TaskPageActions;
+  onSetEnabled: (v: boolean) => void;
+}) {
+  return (
+    <>
+      {hasLiveTrigger(d) && (
+        <EnabledSwitch enabled={d.enabled} busy={toggling} onChange={onSetEnabled} />
+      )}
+      {latest && isOpenRun(latest) ? (
+        <button type="button" className="btn btn-primary" onClick={() => actions.onOpenRun(latest)}>
+          Watch
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!!busy}
+          onClick={() => actions.onRunNow(d)}
+        >
+          {busy === "running" ? "Starting…" : "Run now"}
+        </button>
+      )}
+      <RowMenu
+        label={`More actions for ${d.name}`}
+        items={taskMenuItems({
+          runList: () => actions.onRunList(d),
+          edit: () => actions.onEdit(d),
+          duplicate: () => actions.onDuplicate(d),
+          remove: () => actions.onDelete(d),
+        })}
+      />
+    </>
+  );
+}
+
 /**
  * A task's page: what needs doing, its latest result and recent runs, then
  * its setup behind disclosures.
@@ -521,7 +592,9 @@ export function TaskPage({
   actions: TaskPageActions;
   onBack: () => void;
 }) {
-  const hostShowsTrail = useContext(HostTrailContext);
+  const resultTool = useTool<string>("run_result");
+  /** undefined while it loads; null when it could not be read. */
+  const [latestResult, setLatestResult] = useState<TaskRunResult | null | undefined>(undefined);
   const statusTool = useTool<string>("status");
   const statsTool = useTool<string>("stats");
   const runsTool = useTool<string>("runs");
@@ -557,6 +630,26 @@ export function TaskPage({
     };
   }, [taskName, refreshKey]);
 
+  // The latest run's full result, for its preview: structured output when it has one.
+  const latestId = runs?.[0] && !isOpenRun(runs[0]) ? runs[0].id : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resultTool.call is stable
+  useEffect(() => {
+    setLatestResult(undefined);
+    if (!latestId || !detail) return;
+    let cancelled = false;
+    resultTool
+      .call({ runId: latestId, name: detail.id })
+      .then((res) => {
+        if (!cancelled) setLatestResult(asDict(res.data) as unknown as TaskRunResult);
+      })
+      .catch(() => {
+        if (!cancelled) setLatestResult(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [latestId, detail?.id]);
+
   // A run in flight changes the page when it ends; poll until it does.
   const live = runs?.[0] && isOpenRun(runs[0]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable
@@ -588,64 +681,31 @@ export function TaskPage({
 
   return (
     <div className="app">
-      <header className="task-head">
-        {!hostShowsTrail && (
-          <div className="task-title-row">
-            <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
-              ←
-            </button>
-            <h1 className="page-title">{d?.name ?? taskName}</h1>
-          </div>
-        )}
-        {d && health && (
-          <>
-            <div className="screen-sub">
-              <span className={`health-pill tone-${health.tone}`}>
-                <StatusIcon tone={health.tone} />
-                {health.word}
-              </span>
+      <PageHeader
+        title={d?.name ?? taskName}
+        onBack={onBack}
+        status={
+          d && health ? (
+            <>
+              <StatusBadge tone={health.tone} label={health.word} />
               <span>{statusLine(d, latest)}</span>
-            </div>
-            <div className="task-actions">
-              {latest && isOpenRun(latest) ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => actions.onOpenRun(latest)}
-                >
-                  Watch
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={!!busy}
-                  onClick={() => actions.onRunNow(d)}
-                >
-                  {busy === "running" ? "Starting…" : "Run now"}
-                </button>
-              )}
-              {hasLiveTrigger(d) && (
-                <EnabledSwitch
-                  enabled={d.enabled}
-                  busy={toggling}
-                  onChange={(v) => void setEnabled(v)}
-                />
-              )}
-              <RowMenu
-                label={`More actions for ${d.name}`}
-                items={taskMenuItems({
-                  runList: () => actions.onRunList(d),
-                  edit: () => actions.onEdit(d),
-                  duplicate: () => actions.onDuplicate(d),
-                  remove: () => actions.onDelete(d),
-                })}
-              />
-            </div>
-          </>
-        )}
-      </header>
-      <main className="content task-body">
+            </>
+          ) : undefined
+        }
+        actions={
+          d ? (
+            <TaskActions
+              d={d}
+              latest={latest}
+              busy={busy}
+              toggling={toggling}
+              actions={actions}
+              onSetEnabled={(v) => void setEnabled(v)}
+            />
+          ) : undefined
+        }
+      />
+      <main className="content page-body">
         {error && (
           <div className="error-banner" role="alert">
             {error}
@@ -664,6 +724,7 @@ export function TaskPage({
             stats={stats}
             runs={runs}
             runsError={runsError}
+            latestResult={latestResult}
             actions={actions}
           />
         )}

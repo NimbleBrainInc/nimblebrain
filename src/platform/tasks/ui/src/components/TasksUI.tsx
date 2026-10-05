@@ -6,7 +6,7 @@ import { asDict, toolErrorText } from "../utils.ts";
 import { ActivityView } from "./ActivityView.tsx";
 import { BatchDialog } from "./BatchDialog.tsx";
 import { BatchScreen } from "./BatchPane.tsx";
-import { HostTrailContext, ScreenHead } from "./Chrome.tsx";
+import { HostTrailContext, PageHeader } from "./Chrome.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { type HomeActions, HomeView } from "./HomeView.tsx";
 import { ResultScreen } from "./ResultView.tsx";
@@ -286,20 +286,13 @@ export function TasksUI() {
         />
       ) : (
         <div className="app">
-          {!hostShowsTrail && (
-            <header className="header">
-              <h1 className="page-title">Tasks</h1>
-            </header>
-          )}
-          <main className="content">
-            <HomeView
-              tasks={tasks}
-              loading={loading}
-              error={error}
-              refreshKey={refreshKey}
-              actions={homeActions}
-            />
-          </main>
+          <HomeView
+            tasks={tasks}
+            loading={loading}
+            error={error}
+            refreshKey={refreshKey}
+            actions={homeActions}
+          />
         </div>
       )}
       {dialogs}
@@ -375,7 +368,7 @@ function ScreenRoute({
     case "upcoming":
       return (
         <div className="app">
-          <ScreenHead title="Coming up" onBack={onBack} />
+          <PageHeader title="Coming up" onBack={onBack} />
           <main className="content">
             <UpcomingView
               refreshKey={refreshKey}
@@ -388,7 +381,7 @@ function ScreenRoute({
     case "activity":
       return (
         <div className="app">
-          <ScreenHead
+          <PageHeader
             title={screen.taskName ? `${screen.taskName} runs` : "Every run"}
             onBack={onBack}
           />

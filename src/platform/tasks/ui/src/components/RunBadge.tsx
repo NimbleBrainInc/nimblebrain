@@ -1,3 +1,4 @@
+import { StatusIcon } from "../icons.tsx";
 import type { RunLabel } from "../types.ts";
 
 export type LabelTone = "success" | "danger" | "warning" | "muted" | "active";
@@ -19,8 +20,21 @@ export function labelTone(label: string): LabelTone {
   return (TONE as Record<string, LabelTone>)[label] ?? "muted";
 }
 
-/** The run's derived label as a small badge; nothing for a record that carries none. */
+/**
+ * A status as one badge everywhere: its icon and its word, side by side with
+ * a gap, in its tone. The same size in rows, on pages, and in headers.
+ */
+export function StatusBadge({ tone, label }: { tone: LabelTone; label: string }) {
+  return (
+    <span className={`status-badge tone-${tone}`}>
+      <StatusIcon tone={tone} />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+/** The run's derived label as a badge; nothing for a record that carries none. */
 export function RunBadge({ label }: { label?: RunLabel }) {
   if (!label) return null;
-  return <span className={`run-badge run-badge-${labelTone(label)}`}>{label}</span>;
+  return <StatusBadge tone={labelTone(label)} label={label} />;
 }

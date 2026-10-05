@@ -1,11 +1,19 @@
 import { useId, useState } from "react";
 import type { CriterionResult, RunAssessment, TaskCriterion } from "../types.ts";
+import { type LabelTone, StatusBadge } from "./RunBadge.tsx";
 
 const VERDICT_TEXT: Record<RunAssessment["verdict"], string> = {
   pass: "Passed",
   fail: "Failed",
   uncertain: "Uncertain",
   not_assessed: "Not assessed",
+};
+
+const VERDICT_TONE: Record<RunAssessment["verdict"], LabelTone> = {
+  pass: "success",
+  fail: "danger",
+  uncertain: "warning",
+  not_assessed: "muted",
 };
 
 /** How a criterion's answer reads for its type: yes/no, the level, or the option. */
@@ -177,7 +185,7 @@ export function AssessmentPanel({
     <section className="section" aria-labelledby={headId}>
       <h3 className="section-heading" id={headId}>
         Assessment
-        {a && <span className={`verdict verdict-${a.verdict}`}>{VERDICT_TEXT[a.verdict]}</span>}
+        {a && <StatusBadge tone={VERDICT_TONE[a.verdict]} label={VERDICT_TEXT[a.verdict]} />}
       </h3>
       {a ? (
         <AssessmentDetail a={a} criteria={criteria} />

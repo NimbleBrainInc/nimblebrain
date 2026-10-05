@@ -10,10 +10,12 @@ const importPage = () => import("./TaskPage.tsx");
 const importActivity = () => import("./ActivityView.tsx");
 const importChrome = () => import("./Chrome.tsx");
 const importMenu = () => import("./RowMenu.tsx");
+const importStructured = () => import("./StructuredView.tsx");
 let page: Mod<ReturnType<typeof importPage>>;
 let activity: Mod<ReturnType<typeof importActivity>>;
 let chrome: Mod<ReturnType<typeof importChrome>>;
 let menu: Mod<ReturnType<typeof importMenu>>;
+let structured: Mod<ReturnType<typeof importStructured>>;
 
 beforeAll(async () => {
   const { window } = new JSDOM("", { url: "http://localhost" });
@@ -23,11 +25,12 @@ beforeAll(async () => {
   g.document = window.document;
   g.HTMLElement = window.HTMLElement;
   g.Node = window.Node;
-  [page, activity, chrome, menu] = await Promise.all([
+  [page, activity, chrome, menu, structured] = await Promise.all([
     importPage(),
     importActivity(),
     importChrome(),
     importMenu(),
+    importStructured(),
   ]);
 });
 
@@ -128,14 +131,27 @@ describe("TaskPageBody", () => {
         stats: STATS,
         runs,
         runsError: null,
+        latestResult: {
+          runId: "r2",
+          taskId: "digest",
+          completedAt: "",
+          output: '{"grade":"B"}',
+          activityLog: [],
+          outputFiles: [],
+          usage: { inputTokens: 0, outputTokens: 0, iterations: 0 },
+          structured: { grade: "B", note: "Three prospects found." },
+        },
+
         actions: SHEET_ACTIONS,
       }),
     );
     expect(html).toContain("callout tone-warning");
     expect(html).toContain("The last run needs you to check it.");
     expect(html).toContain("Latest result");
+    expect(html).toContain("<dt>note</dt>");
     expect(html).toContain("Three prospects found.");
-    expect(html.match(/class="task-run /g)).toHaveLength(2);
+    expect(html).toContain("Show raw");
+    expect(html.match(/class="task-run"/g)).toHaveLength(2);
     expect(html).toContain("75%");
     expect(html).toContain("What it does");
   });
@@ -192,25 +208,27 @@ describe("taskMenuItems", () => {
   });
 });
 
-describe("ScreenHead", () => {
+describe("PageHeader", () => {
   const head = (hostShowsTrail: boolean) =>
     renderToStaticMarkup(
       createElement(
         chrome.HostTrailContext.Provider,
         { value: hostShowsTrail },
-        createElement(chrome.ScreenHead, { title: "Digest", onBack: () => {}, sub: "status" }),
+        createElement(chrome.PageHeader, {
+          title: "Digest",
+          onBack: () => {},
+          status: "status",
+          actions: "ACTIONS",
+        }),
       ),
     );
-  test("with the host's breadcrumb there is no back button and no title", () => {
+  test("heading and status on the left, actions on the right, in that order", () => {
     const html = head(true);
-    expect(html).not.toContain("Back");
-    expect(html).not.toContain("Digest");
-    expect(html).toContain("status");
+    expect(html).toMatch(/page-heading">Digest<.*page-status">status<.*page-actions">ACTIONS</);
   });
-  test("without it the screen keeps both", () => {
-    const html = head(false);
-    expect(html).toContain('aria-label="Back"');
-    expect(html).toContain("Digest");
+  test("a back control only where the host shows no breadcrumb", () => {
+    expect(head(true)).not.toContain('aria-label="Back"');
+    expect(head(false)).toContain('aria-label="Back"');
   });
 });
 
@@ -251,5 +269,24 @@ describe("mergeNewest", () => {
       ["b", "Succeeded"],
       ["a", "Failed"],
     ]);
+  });
+});
+
+describe("ResultPreview", () => {
+  const preview = (p: { structured?: unknown; text?: string }) =>
+    renderToStaticMarkup(createElement(structured.ResultPreview, p));
+  test("structured output reads as values, the JSON behind Show raw", () => {
+    const html = preview({ structured: { grade: "B" } });
+    expect(html).toContain("<dt>grade</dt>");
+    expect(html).toMatch(
+      /<details class="raw"><summary>Show raw<\/summary><pre class="code-block">/,
+    );
+  });
+  test("text that is JSON, fenced or not, reads as values too", () => {
+    expect(preview({ text: '```json\n{"grade": "B"}\n```' })).toContain("<dt>grade</dt>");
+    expect(preview({ text: '[{"a": 1}]' })).toContain('<th scope="col">a</th>');
+  });
+  test("plain text is wrapped prose", () => {
+    expect(preview({ text: "All good." })).toBe('<p class="prose result-preview">All good.</p>');
   });
 });

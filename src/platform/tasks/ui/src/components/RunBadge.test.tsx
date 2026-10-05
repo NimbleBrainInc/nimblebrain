@@ -24,9 +24,10 @@ describe("labelTone", () => {
 });
 
 describe("RunBadge", () => {
-  test("renders the label text in its tone", () => {
-    expect(renderToStaticMarkup(createElement(RunBadge, { label: "Needs review" }))).toBe(
-      '<span class="run-badge run-badge-warning">Needs review</span>',
+  test("renders the icon and the label text, apart, in its tone", () => {
+    const html = renderToStaticMarkup(createElement(RunBadge, { label: "Needs review" }));
+    expect(html).toMatch(
+      /^<span class="status-badge tone-warning"><svg[^>]*class="status-icon"[\s\S]*<\/svg><span>Needs review<\/span><\/span>$/,
     );
   });
   test("renders nothing without a label", () => {

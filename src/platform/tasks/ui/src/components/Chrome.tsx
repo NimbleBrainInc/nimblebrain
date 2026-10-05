@@ -1,41 +1,41 @@
 import { createContext, type ReactNode, useContext } from "react";
 
 /**
- * Whether the host draws the title and breadcrumb from the trail this app
- * sends (`ai.nimblebrain/location`). When it does, a screen shows no title or
- * back control of its own; on any other host it keeps them.
+ * Whether the host draws the breadcrumb from the trail this app sends
+ * (`ai.nimblebrain/location`). When it does, a page shows no back control of
+ * its own; on any other host it keeps one.
  */
 export const HostTrailContext = createContext(false);
 
 /**
- * A screen's head: its status line and actions, and, only where the host
- * shows no breadcrumb, a back control and the title.
+ * The one header every page uses: on the left its heading and a one-line
+ * status, on the right that page's actions, centred on the heading's row.
  */
-export function ScreenHead({
+export function PageHeader({
   title,
-  onBack,
-  sub,
+  status,
   actions,
+  onBack,
 }: {
   title: ReactNode;
-  onBack: () => void;
-  sub?: ReactNode;
+  status?: ReactNode;
   actions?: ReactNode;
+  /** Absent on the home, which has nothing to go back to. */
+  onBack?: () => void;
 }) {
   const hostShowsTrail = useContext(HostTrailContext);
-  if (hostShowsTrail && !sub && !actions) return null;
   return (
-    <header className="screen-head">
-      {!hostShowsTrail && (
+    <header className="page-header">
+      {onBack && !hostShowsTrail && (
         <button type="button" className="back-btn" onClick={onBack} aria-label="Back">
           ←
         </button>
       )}
-      <div className="screen-head-meta">
-        {!hostShowsTrail && <h1 className="page-title">{title}</h1>}
-        {sub && <div className="screen-sub">{sub}</div>}
+      <div className="page-header-text">
+        <h1 className="page-heading">{title}</h1>
+        {status && <div className="page-status">{status}</div>}
       </div>
-      {actions && <div className="screen-actions">{actions}</div>}
+      {actions && <div className="page-actions">{actions}</div>}
     </header>
   );
 }
