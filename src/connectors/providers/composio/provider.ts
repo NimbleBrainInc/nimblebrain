@@ -279,6 +279,33 @@ async function identity(opts: BrokeredStateOptions): Promise<ConnectedAccountIde
 }
 
 /**
+ * Keep a looked-up account on `connection.json`, where `identity` reads it. A
+ * connection that is gone, or already names an account, is left as it is.
+ */
+async function recordIdentity(
+  opts: BrokeredStateOptions,
+  account: ConnectedAccountIdentity,
+): Promise<void> {
+  const displayName = account.email ?? account.name;
+  if (!displayName) return;
+  try {
+    const { workDir, owner, brokered } = opts;
+    const connection = await readComposioConnection(workDir, owner, brokered.connectorId);
+    if (!connection || connection.displayName) return;
+    await saveComposioConnection(workDir, owner, brokered.connectorId, {
+      ...connection,
+      displayName,
+    });
+  } catch (err) {
+    log.warn(
+      `[composio] could not record the account for ${opts.brokered.connectorId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
+/**
  * Build the Composio `ManagedConnectorProvider`. Called only when Composio is
  * configured (`buildManagedConnectorRegistry`), so the broker credential is
  * present. Reads the monitor switch once here — the same "resolve config once at
@@ -319,6 +346,7 @@ export function createComposioProvider(): ManagedConnectorProvider {
     hasConnection,
 
     identity,
+    recordIdentity,
 
     ...(monitorEnabled ? { probe: (directory) => new ComposioConnectionProbe(directory) } : {}),
 
