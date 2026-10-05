@@ -7,17 +7,11 @@ import type { TaskBatch, TaskRun } from "../types.ts";
 import { formatWhen } from "../utils.ts";
 import type { Template } from "./templates.ts";
 
-export type View = "saved" | "upcoming" | "activity";
-
-export const VIEWS: Array<{ id: View; text: string }> = [
-  { id: "saved", text: "Saved" },
-  { id: "upcoming", text: "Upcoming" },
-  { id: "activity", text: "Activity" },
-];
-
-/** A screen over the views. */
+/** A screen over the home list. A task opens as a sheet over the screen under it. */
 export type Screen =
   | { kind: "task"; taskName: string }
+  | { kind: "upcoming" }
+  | { kind: "activity"; taskId?: string; taskName?: string }
   | { kind: "result"; runId: string; taskId?: string; run?: TaskRun }
   | { kind: "batch"; batchId: string; batch?: TaskBatch }
   | { kind: "editor"; taskName?: string; copyOf?: string; template?: Template | null };
@@ -27,8 +21,6 @@ export interface TrailStep {
   label: string;
   /** The stack this entry leads to. */
   stack: Screen[];
-  /** The view to show when it leads to the views. */
-  view?: View;
 }
 
 /** The trail's root: the panel's own placement, as the host knows it. */
@@ -56,12 +48,13 @@ function stepsFor(
     name && !(prev?.kind === "task" && prev.taskName === name) ? [taskStep(name)] : [];
   switch (screen.kind) {
     case "task":
-      return [
-        ...(below.length === 0
-          ? [{ id: "view/saved", label: "Saved", stack: [], view: "saved" as const }]
-          : []),
-        { ...taskStep(screen.taskName), stack },
-      ];
+      return [{ ...taskStep(screen.taskName), stack }];
+    case "upcoming":
+      return [{ id: "upcoming", label: "Coming up", stack }];
+    case "activity":
+      return screen.taskName
+        ? [...parent(screen.taskName), { id: `runs/${screen.taskName}`, label: "Runs", stack }]
+        : [{ id: "activity", label: "Every run", stack }];
     case "result":
       return [
         ...parent(screen.taskId ? nameOf(screen.taskId) : undefined),
@@ -79,17 +72,12 @@ function stepsFor(
   }
 }
 
-/** The whole trail for a view and the screens open over it. */
+/** The whole trail for the screens open over the home list. */
 export function trailFor(
-  view: View,
   stack: Screen[],
   nameOf: (taskId: string) => string | undefined,
 ): TrailStep[] {
-  const root: TrailStep = { id: TRAIL_ROOT_ID, label: "Tasks", stack: [], view: "saved" };
-  if (stack.length === 0) {
-    const label = VIEWS.find((v) => v.id === view)?.text ?? "Saved";
-    return [root, { id: `view/${view}`, label, stack: [], view }];
-  }
+  const root: TrailStep = { id: TRAIL_ROOT_ID, label: "Tasks", stack: [] };
   const steps: TrailStep[] = [root];
   stack.forEach((screen, i) => {
     steps.push(...stepsFor(screen, stack.slice(0, i), nameOf));

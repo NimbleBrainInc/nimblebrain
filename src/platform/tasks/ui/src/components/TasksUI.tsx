@@ -1,23 +1,20 @@
 import { useDataSync, useTrail } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PlusIcon } from "../icons.tsx";
 import type { TaskSummary, TaskWarning } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, toolErrorText } from "../utils.ts";
 import { ActivityView } from "./ActivityView.tsx";
 import { BatchDialog } from "./BatchDialog.tsx";
 import { BatchScreen } from "./BatchPane.tsx";
-import { HostTrailContext, Tabs } from "./Chrome.tsx";
+import { HostTrailContext, ScreenHead } from "./Chrome.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { ResultScreen } from "./ResultView.tsx";
 import { RunDialog, type RunStarted, runStartedOf } from "./RunDialog.tsx";
-import { type SavedActions, SavedView } from "./SavedView.tsx";
+import { type HomeActions, HomeView } from "./HomeView.tsx";
 import { TaskEditor } from "./TaskEditor.tsx";
-import { TaskPage, type TaskPageActions } from "./TaskPage.tsx";
-import { type Screen, trailFor, VIEWS, type View } from "./trail.ts";
+import { type TaskPageActions, TaskSheet } from "./TaskSheet.tsx";
+import { type Screen, trailFor } from "./trail.ts";
 import { UpcomingView } from "./UpcomingView.tsx";
-
-export type { View } from "./trail.ts";
 
 /**
  * Read every task by following `nextCursor` to the end.
@@ -51,11 +48,6 @@ async function fetchAllTasks(
   return { items: [...byId.values()], exhausted: false };
 }
 
-/** The view switcher. */
-export function ViewTabs({ view, onChange }: { view: View; onChange: (v: View) => void }) {
-  return <Tabs tabs={VIEWS} value={view} onChange={onChange} label="Tasks views" idPrefix="view" />;
-}
-
 /** A task the panel acts on: its id and name, and its input schema when the list has it. */
 type TaskRef = { id: string; name: string; inputSchema?: Record<string, unknown> };
 
@@ -65,7 +57,6 @@ export function TasksUI() {
   const updateTool = useTool<string>("update");
   const deleteTool = useTool<string>("delete");
 
-  const [view, setView] = useState<View>("saved");
   const [stack, setStack] = useState<Screen[]>([]);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,14 +102,12 @@ export function TasksUI() {
   useDataSync(() => refresh());
 
   const nameOf = useCallback((taskId: string) => tasks.find((t) => t.id === taskId)?.name, [tasks]);
-  const trail = useMemo(() => trailFor(view, stack, nameOf), [view, stack, nameOf]);
+  const trail = useMemo(() => trailFor(stack, nameOf), [stack, nameOf]);
   const hostShowsTrail = useTrail(
     trail.map(({ id, label }) => ({ id, label })),
     (id) => {
       const step = trail.find((s) => s.id === id);
-      if (!step) return;
-      if (step.view) setView(step.view);
-      setStack(step.stack);
+      if (step) setStack(step.stack);
     },
   );
 
@@ -198,16 +187,12 @@ export function TasksUI() {
     }
   }
 
-  const savedActions: SavedActions = {
-    onOpen: (t) => push({ kind: "task", taskName: t.name }),
-    onRunNow: (t) => void runNow(t),
-    onRunList: (t) => setBatchDialog(t.name),
-    onEdit: (t) => push({ kind: "editor", taskName: t.name }),
-    onDuplicate: (t) => push({ kind: "editor", copyOf: t.name }),
-    onToggle: (t) => void setEnabled(t, !t.enabled).catch(() => {}),
-    onDelete: (t) => setConfirmDelete(t),
-    onOpenRun: (t, runId) => push({ kind: "result", runId, taskId: t.id }),
+  const homeActions: HomeActions = {
+    onOpenTask: (t) => push({ kind: "task", taskName: t.name }),
+    onOpenRun: (taskId, runId) => push({ kind: "result", runId, taskId }),
     onCreate: (template) => push({ kind: "editor", template: template ?? null }),
+    onSeeUpcoming: () => push({ kind: "upcoming" }),
+    onSeeActivity: () => push({ kind: "activity" }),
   };
 
   const taskActions: TaskPageActions = {
@@ -218,7 +203,7 @@ export function TasksUI() {
     onDelete: (d) => setConfirmDelete({ id: d.id, name: d.name }),
     onSetEnabled: (d, enabled) => setEnabled(d, enabled),
     onOpenRun: (run) => push({ kind: "result", runId: run.id, taskId: run.taskId, run }),
-    onOpenBatch: (batch) => push({ kind: "batch", batchId: batch.id, batch }),
+    onSeeRuns: (d) => push({ kind: "activity", taskId: d.id, taskName: d.name }),
   };
 
   const dialogs = (
@@ -265,15 +250,19 @@ export function TasksUI() {
     </>
   );
 
-  if (top) {
-    return (
-      <HostTrailContext.Provider value={hostShowsTrail}>
+  // A task opens as a sheet over the screen it was opened from; that screen
+  // stays mounted under it, so closing the sheet returns to it as it was.
+  const sheet = top?.kind === "task" ? top : null;
+  const under = [...(sheet ? stack.slice(0, -1) : stack)].reverse().find((s) => s.kind !== "task");
+  const sheetSummary = sheet ? tasks.find((t) => t.name === sheet.taskName) : undefined;
+
+  return (
+    <HostTrailContext.Provider value={hostShowsTrail}>
+      {under ? (
         <ScreenRoute
-          screen={top}
+          screen={under}
           tasks={tasks}
-          busy={busy}
           refreshKey={refreshKey}
-          taskActions={taskActions}
           onBack={pop}
           onPush={push}
           onReplaceTop={(s) => setStack((prev) => [...prev.slice(0, -1), ...(s ? [s] : [])])}
@@ -283,60 +272,36 @@ export function TasksUI() {
             refresh();
           }}
         />
-        {dialogs}
-      </HostTrailContext.Provider>
-    );
-  }
-
-  return (
-    <HostTrailContext.Provider value={hostShowsTrail}>
-      <div className="app">
-        <header className="header">
-          {!hostShowsTrail && <h1 className="page-title">Tasks</h1>}
-          <div className="header-row">
-            <ViewTabs view={view} onChange={setView} />
-            <button type="button" className="create-btn" onClick={() => push({ kind: "editor" })}>
-              <PlusIcon />
-              New task
-            </button>
-          </div>
-        </header>
-        <main
-          className="content"
-          id="view-panel"
-          role="tabpanel"
-          aria-labelledby={`view-tab-${view}`}
-        >
-          {view === "saved" && (
-            <SavedView
+      ) : (
+        <div className="app">
+          {!hostShowsTrail && (
+            <header className="header">
+              <h1 className="page-title">Tasks</h1>
+            </header>
+          )}
+          <main className="content">
+            <HomeView
               tasks={tasks}
               loading={loading}
               error={error}
-              busy={busy}
               refreshKey={refreshKey}
-              actions={savedActions}
+              actions={homeActions}
             />
-          )}
-          {view === "upcoming" && (
-            <UpcomingView
-              refreshKey={refreshKey}
-              onOpenRun={(r) =>
-                r.runId && push({ kind: "result", runId: r.runId, taskId: r.taskId })
-              }
-              onOpenTask={(name) => push({ kind: "task", taskName: name })}
-            />
-          )}
-          {view === "activity" && (
-            <ActivityView
-              tasks={tasks}
-              refreshKey={refreshKey}
-              onOpenRun={(run) => push({ kind: "result", runId: run.id, taskId: run.taskId, run })}
-              onOpenBatch={(batch) => push({ kind: "batch", batchId: batch.id, batch })}
-            />
-          )}
-        </main>
-        {dialogs}
-      </div>
+          </main>
+        </div>
+      )}
+      {sheet && (
+        <TaskSheet
+          key={sheet.taskName}
+          taskName={sheet.taskName}
+          summary={sheetSummary}
+          refreshKey={refreshKey}
+          busy={sheetSummary ? busy[sheetSummary.id] : undefined}
+          actions={taskActions}
+          onClose={pop}
+        />
+      )}
+      {dialogs}
     </HostTrailContext.Provider>
   );
 }
@@ -345,9 +310,7 @@ export function TasksUI() {
 function ScreenRoute({
   screen,
   tasks,
-  busy,
   refreshKey,
-  taskActions,
   onBack,
   onPush,
   onReplaceTop,
@@ -356,9 +319,7 @@ function ScreenRoute({
 }: {
   screen: Screen;
   tasks: TaskSummary[];
-  busy: Record<string, string>;
   refreshKey: number;
-  taskActions: TaskPageActions;
   onBack: () => void;
   onPush: (s: Screen) => void;
   onReplaceTop: (s: Screen | null) => void;
@@ -408,18 +369,36 @@ function ScreenRoute({
           }}
         />
       );
-    case "task": {
-      const summary = tasks.find((t) => t.name === screen.taskName);
+    case "upcoming":
       return (
-        <TaskPage
-          key={screen.taskName}
-          taskName={screen.taskName}
-          refreshKey={refreshKey}
-          busy={summary ? busy[summary.id] : undefined}
-          actions={taskActions}
-          onBack={onBack}
-        />
+        <div className="app">
+          <ScreenHead title="Coming up" onBack={onBack} />
+          <main className="content">
+            <UpcomingView
+              refreshKey={refreshKey}
+              onOpenRun={(r) => r.runId && openRun(r.runId, r.taskId)}
+              onOpenTask={(name) => onPush({ kind: "task", taskName: name })}
+            />
+          </main>
+        </div>
       );
-    }
+    case "activity":
+      return (
+        <div className="app">
+          <ScreenHead title={screen.taskName ? `${screen.taskName} runs` : "Every run"} onBack={onBack} />
+          <main className="content">
+            <ActivityView
+              tasks={tasks}
+              taskId={screen.taskId}
+              refreshKey={refreshKey}
+              onOpenRun={(run) => onPush({ kind: "result", runId: run.id, taskId: run.taskId, run })}
+              onOpenBatch={(batch) => onPush({ kind: "batch", batchId: batch.id, batch })}
+            />
+          </main>
+        </div>
+      );
+    case "task":
+      // Drawn as a sheet by the caller, never as a screen.
+      return null;
   }
 }

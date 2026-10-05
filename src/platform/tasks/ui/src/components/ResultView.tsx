@@ -5,7 +5,6 @@ import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
 import { renderMarkdown } from "../markdown.ts";
 import type {
   RunFileRef,
-  RunToolCall,
   TaskCriterion,
   TaskDetail,
   TaskRun,
@@ -16,6 +15,7 @@ import { asDict, formatDuration, formatTokens, formatUsd, toolErrorText } from "
 import { AssessmentPanel } from "./AssessmentPanel.tsx";
 import { ScreenHead } from "./Chrome.tsx";
 import { RunBadge } from "./RunBadge.tsx";
+import { Elapsed, RunSteps } from "./RunSteps.tsx";
 import { StructuredValue } from "./StructuredView.tsx";
 
 const EXECUTION_TEXT: Record<string, string> = {
@@ -115,38 +115,6 @@ export function ExecutionPanel({ run, result }: { run?: TaskRun; result: TaskRun
         </p>
       )}
     </section>
-  );
-}
-
-/** Every tool call the run made, each expandable to its input and output. */
-export function ToolCallList({ log }: { log: RunToolCall[] }) {
-  if (log.length === 0) return null;
-  return (
-    <details className="section details">
-      <summary className="section-heading">
-        Activity: {log.length} tool {log.length === 1 ? "call" : "calls"}
-      </summary>
-      <ul className="tool-calls">
-        {log.map((tc) => (
-          <li key={tc.id}>
-            <details className="tool-call">
-              <summary>
-                <span className={`dot ${tc.ok ? "dot-success" : "dot-failure"}`} />
-                <span className="tool-name">{tc.name}</span>
-                {!tc.ok && <span className="tool-failed">failed</span>}
-                <span className="tool-ms">{tc.ms} ms</span>
-              </summary>
-              <div className="tool-io">
-                <div className="sub-heading">Input</div>
-                <pre>{JSON.stringify(tc.input, null, 2)}</pre>
-                <div className="sub-heading">Output</div>
-                <pre>{tc.output}</pre>
-              </div>
-            </details>
-          </li>
-        ))}
-      </ul>
-    </details>
   );
 }
 
@@ -353,8 +321,21 @@ function ResultStatus({ state }: { state: RunResultState }) {
     return (
       <div className="result-open" aria-live="polite">
         <span className="dot dot-running" />{" "}
-        {state.run?.status === "queued" ? "Waiting for a run slot…" : "Running…"} The result appears
-        here when it ends.
+        {state.run?.status === "queued" ? (
+          "Waiting for a run slot."
+        ) : (
+          <>
+            Running
+            {state.run?.startedAt && (
+              <>
+                {" "}
+                for <Elapsed since={state.run.startedAt} />
+              </>
+            )}
+            .
+          </>
+        )}{" "}
+        Its steps and result appear here when it ends.
       </div>
     );
   }
@@ -434,7 +415,7 @@ export function ResultBody({
         onRejudge={onRejudge}
       />
       <ExecutionPanel run={run} result={result} />
-      <ToolCallList log={result?.activityLog ?? []} />
+      <RunSteps log={result?.activityLog ?? []} />
       <InputPanel input={run?.input} />
       <CostPanel run={run} result={result} />
       <RelatedLinks run={run} onOpenRun={onOpenRun} onOpenBatch={onOpenBatch} />
