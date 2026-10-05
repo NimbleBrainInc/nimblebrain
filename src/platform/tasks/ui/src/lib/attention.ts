@@ -53,7 +53,7 @@ export function healthOf(task: TaskSummary, stats?: TaskStats, live?: UpcomingRu
     return {
       word: "Failing",
       tone: "danger",
-      reason: `The last ${streak} runs failed.`,
+      reason: `The last ${streak} runs failed. Open the latest to see why, then run it again.`,
       runId: last?.id,
       needsYou: true,
       paused: false,
@@ -63,7 +63,7 @@ export function healthOf(task: TaskSummary, stats?: TaskStats, live?: UpcomingRu
     return {
       word: "Failed",
       tone: "danger",
-      reason: "The last run failed.",
+      reason: "The last run failed. Open it to see why, then run it again.",
       runId: last.id,
       needsYou: true,
       paused: false,
@@ -73,7 +73,8 @@ export function healthOf(task: TaskSummary, stats?: TaskStats, live?: UpcomingRu
     return {
       word: "Poor result",
       tone: "danger",
-      reason: "The last run didn't meet its rules.",
+      reason:
+        "The latest result didn't meet its rules. Check it, then fix the task or run it again.",
       runId: last.id,
       needsYou: true,
       paused: false,
@@ -83,7 +84,7 @@ export function healthOf(task: TaskSummary, stats?: TaskStats, live?: UpcomingRu
     return {
       word: "Needs review",
       tone: "warning",
-      reason: "The last run needs you to check it.",
+      reason: "Check the latest result and accept or reject it.",
       runId: last.id,
       needsYou: true,
       paused: false,

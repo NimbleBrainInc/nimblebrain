@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
 import { healthOf, type TaskHealth } from "../lib/attention.ts";
+import { inputSummary, runTime } from "../lib/plain.ts";
 import type { TaskDetail, TaskRun, TaskRunResult, TaskStats, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import {
@@ -35,7 +36,7 @@ export function statusLine(d: TaskDetail, last?: TaskRun): string {
     const when = formatWhen(d.nextRunAt);
     parts.push(`next ${when.charAt(0).toLowerCase()}${when.slice(1)}`);
   }
-  if (last?.label) parts.push(`last run ${last.label} ${relativeTime(last.startedAt)}`);
+  if (last) parts.push(`last run ${relativeTime(last.startedAt)}`);
   if (d.consecutiveErrors > 0) {
     parts.push(`${d.consecutiveErrors} failed in a row, retrying with backoff`);
   }
@@ -276,18 +277,13 @@ function DetailsSection({ d }: { d: TaskDetail }) {
 }
 
 /** The task's setup, read-only, each part behind a closed disclosure. */
-export function SetupSections({ d, onEdit }: { d: TaskDetail; onEdit: () => void }) {
+export function SetupSections({ d }: { d: TaskDetail }) {
   return (
     <div className="setup">
       <DoesSection d={d} />
       <GoodSection d={d} />
       <LimitsSection d={d} />
       <DetailsSection d={d} />
-      <div className="setup-edit">
-        <button type="button" className="btn" onClick={onEdit}>
-          Edit task
-        </button>
-      </div>
     </div>
   );
 }
@@ -367,12 +363,15 @@ function RecentRuns({
   runs,
   runsError,
   stats,
+  inputSchema,
   onOpenRun,
   onSeeAll,
 }: {
   runs: TaskRun[] | null;
   runsError: string | null;
   stats: TaskStats | null;
+  /** The task's input schema, to name each run by its input. */
+  inputSchema?: Record<string, unknown>;
   onOpenRun: (run: TaskRun) => void;
   onSeeAll: () => void;
 }) {
@@ -397,8 +396,13 @@ function RecentRuns({
           {runs.slice(0, RECENT_RUNS).map((r) => (
             <li key={r.id}>
               <button type="button" className="task-run" onClick={() => onOpenRun(r)}>
-                {r.label ? <RunBadge label={r.label} /> : <span>{r.status}</span>}
-                <span className="muted">{formatWhen(r.startedAt)}</span>
+                <span className="task-run-what">
+                  {r.label ? <RunBadge label={r.label} /> : <span>{r.status}</span>}
+                  {inputSummary(r.input, inputSchema) && (
+                    <span className="task-run-input">{inputSummary(r.input, inputSchema)}</span>
+                  )}
+                </span>
+                <span className="muted">{runTime(r.startedAt)}</span>
                 <span className="muted num">
                   {r.completedAt ? formatDuration(r.startedAt, r.completedAt) : ""}
                 </span>
@@ -459,10 +463,11 @@ export function TaskPageBody({
         runs={runs}
         runsError={runsError}
         stats={stats}
+        inputSchema={detail.inputSchema}
         onOpenRun={actions.onOpenRun}
         onSeeAll={() => actions.onSeeRuns(detail)}
       />
-      <SetupSections d={detail} onEdit={() => actions.onEdit(detail)} />
+      <SetupSections d={detail} />
     </>
   );
 }

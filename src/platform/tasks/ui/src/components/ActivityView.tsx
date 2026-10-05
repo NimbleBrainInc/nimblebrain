@@ -11,6 +11,7 @@ import {
   sinceOf,
   startedByOf,
 } from "../lib/activity.ts";
+import { assessmentReasonText, inputSummary } from "../lib/plain.ts";
 import type { RunLabel, TaskBatch, TaskRun, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatDuration, formatUsd, relativeTime, toolErrorText } from "../utils.ts";
@@ -54,7 +55,7 @@ export function mergeNewest(loaded: TaskRun[], newest: TaskRun[]): TaskRun[] {
 /** The short reason a run that did not succeed reads as, for its row. */
 export function rowNote(run: TaskRun): string {
   if (run.error) return run.error.split("\n")[0]?.slice(0, 120) ?? "";
-  if (run.assessment?.reason) return run.assessment.reason.message.slice(0, 120);
+  if (run.assessment?.reason) return assessmentReasonText(run.assessment.reason.code);
   return "";
 }
 
@@ -158,6 +159,7 @@ function RunRowItem({
   onOpen: (run: TaskRun) => void;
 }) {
   const note = rowNote(run);
+  const input = inputSummary(run.input);
   return (
     <li className="act-row">
       <button type="button" className="act-main" onClick={() => onOpen(run)}>
@@ -166,6 +168,7 @@ function RunRowItem({
         </span>
         <span className="act-task">
           {taskName ?? run.taskId}
+          {input && <span className="act-input"> · {input}</span>}
           {note && <span className="cell-sub act-note">{note}</span>}
         </span>
         <span className="act-by">{STARTED_BY_TEXT[startedByOf(run)]}</span>

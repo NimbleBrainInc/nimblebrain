@@ -70,7 +70,7 @@ describe("statusLine", () => {
       DETAIL,
       run("r1", "Succeeded", new Date(Date.now() - 240_000).toISOString()),
     );
-    expect(line).toMatch(/^Weekdays at 7:00 AM · next tomorrow .* · last run Succeeded 4m ago$/);
+    expect(line).toMatch(/^Weekdays at 7:00 AM · next tomorrow .* · last run 4m ago$/);
   });
   test("a trigger turned off says so instead of a next run", () => {
     expect(page.statusLine({ ...DETAIL, enabled: false })).toBe("Weekdays at 7:00 AM · off");
@@ -146,7 +146,7 @@ describe("TaskPageBody", () => {
       }),
     );
     expect(html).toContain("callout tone-warning");
-    expect(html).toContain("The last run needs you to check it.");
+    expect(html).toContain("Check the latest result and accept or reject it.");
     expect(html).toContain("Latest result");
     expect(html).toContain("<dt>note</dt>");
     expect(html).toContain("Three prospects found.");
@@ -177,16 +177,14 @@ describe("TaskPageBody", () => {
 
 describe("SetupSections", () => {
   test("the prompt is prose, schemas are code, criteria and limits read plainly, all folded", () => {
-    const html = renderToStaticMarkup(
-      createElement(page.SetupSections, { d: DETAIL, onEdit: () => {} }),
-    );
+    const html = renderToStaticMarkup(createElement(page.SetupSections, { d: DETAIL }));
     expect(html).toContain('<p class="prose">Summarize the week&#x27;s activity.</p>');
     expect(html).toContain('<pre class="code-block">');
     expect(html).toContain("Cites a source");
     expect(html).toContain("passes when yes");
     expect(html).toContain("10 steps per run");
     expect(html).not.toMatch(/<details[^>]* open/);
-    expect(html).toContain(">Edit task<");
+    expect(html).not.toContain("Edit task");
   });
 });
 

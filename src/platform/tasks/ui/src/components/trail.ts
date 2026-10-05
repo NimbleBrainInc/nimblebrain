@@ -3,8 +3,9 @@
  * current screen last. Each entry carries the screen stack it leads back to,
  * so following one is a lookup, not a second copy of the navigation rules.
  */
+
+import { runTime } from "../lib/plain.ts";
 import type { TaskBatch, TaskRun } from "../types.ts";
-import { formatWhen } from "../utils.ts";
 import type { Template } from "./templates.ts";
 
 /** A page over the home list. The stack is the trail: one page, one crumb. */
@@ -28,7 +29,7 @@ export const TRAIL_ROOT_ID = "ui://tasks/panel";
 
 function runLabel(s: Extract<Screen, { kind: "result" }>): string {
   return s.run
-    ? `Run ${formatWhen(s.run.startedAt)}`
+    ? `Run ${runTime(s.run.startedAt)}`
     : `Run ${s.runId.replace(/^run_/, "").slice(0, 6)}`;
 }
 

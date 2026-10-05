@@ -31,7 +31,7 @@ export function InputFieldsBuilder({
               </label>
               <input
                 id={`${id}-n`}
-                className="inline-edit-input mono"
+                className="inline-edit-input"
                 value={r.name}
                 placeholder="company"
                 onChange={(e) => set(i, { name: e.target.value })}

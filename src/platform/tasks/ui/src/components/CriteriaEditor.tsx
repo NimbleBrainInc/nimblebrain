@@ -86,7 +86,7 @@ export function CriteriaEditor({
                   </label>
                   <input
                     id={`${id}-id`}
-                    className="inline-edit-input mono"
+                    className="inline-edit-input"
                     value={d.id}
                     onChange={(e) => set(i, { id: e.target.value })}
                   />

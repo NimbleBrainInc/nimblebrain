@@ -97,7 +97,7 @@ function WhatToDo({ d, set, editing }: { d: EditorDraft; set: Patch; editing: bo
           </label>
           <input
             id={`${id}-skill`}
-            className="inline-edit-input mono"
+            className="inline-edit-input"
             value={d.skill}
             placeholder="skill name"
             onChange={(e) => set({ skill: e.target.value })}
@@ -188,59 +188,6 @@ function WhatGoodLooksLike({
           {judges?.warning?.message}
         </div>
       )}
-      <div className="field-row">
-        <div className="field">
-          <label className="field-label" htmlFor={`${id}-judge`}>
-            Judge
-          </label>
-          <select
-            id={`${id}-judge`}
-            className="inline-edit-input"
-            value={named}
-            onChange={(e) => set({ judgeServer: e.target.value })}
-          >
-            <option value="">
-              {judges?.servers.length === 1
-                ? `The connected judge (${judges.servers[0]})`
-                : "The connected judge"}
-            </option>
-            {(judges?.servers ?? []).map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-            {named && !judges?.servers.includes(named) && <option value={named}>{named}</option>}
-          </select>
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor={`${id}-jid`}>
-            Judge id (optional)
-          </label>
-          <input
-            id={`${id}-jid`}
-            className="inline-edit-input mono"
-            value={d.judgeId}
-            placeholder="its default"
-            onChange={(e) => set({ judgeId: e.target.value })}
-          />
-        </div>
-        <div className="field">
-          <label className="field-label" htmlFor={`${id}-conf`}>
-            Confidence needed
-          </label>
-          <input
-            id={`${id}-conf`}
-            className="inline-edit-input"
-            type="number"
-            min={0}
-            max={1}
-            step={0.05}
-            value={d.confidence}
-            placeholder="0.7"
-            onChange={(e) => set({ confidence: e.target.value })}
-          />
-        </div>
-      </div>
       <div className="field">
         <label className="field-label" htmlFor={`${id}-oschema`}>
           Output schema (optional JSON Schema)
@@ -252,9 +199,75 @@ function WhatGoodLooksLike({
           spellCheck={false}
           value={d.outputJson}
           onChange={(e) => set({ outputJson: e.target.value })}
-          placeholder="The run answers with JSON matching it; the result shows as a table."
+          placeholder={'{ "type": "object", "properties": { "grade": { "type": "string" } } }'}
         />
+        <div className="hint">
+          The run answers with JSON matching it, and its result shows as values and tables.
+        </div>
       </div>
+      <details className="disclosure advanced">
+        <summary>
+          <span className="disclosure-title">Advanced</span>
+          <span className="disclosure-hint">Which judge, and how sure it must be</span>
+        </summary>
+        <div className="disclosure-body">
+          <div className="field-row">
+            <div className="field">
+              <label className="field-label" htmlFor={`${id}-judge`}>
+                Judge
+              </label>
+              <select
+                id={`${id}-judge`}
+                className="inline-edit-input"
+                value={named}
+                onChange={(e) => set({ judgeServer: e.target.value })}
+              >
+                <option value="">
+                  {judges?.servers.length === 1
+                    ? `The connected judge (${judges.servers[0]})`
+                    : "The connected judge"}
+                </option>
+                {(judges?.servers ?? []).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+                {named && !judges?.servers.includes(named) && (
+                  <option value={named}>{named}</option>
+                )}
+              </select>
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor={`${id}-jid`}>
+                Judge id (optional)
+              </label>
+              <input
+                id={`${id}-jid`}
+                className="inline-edit-input"
+                value={d.judgeId}
+                placeholder="its default"
+                onChange={(e) => set({ judgeId: e.target.value })}
+              />
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor={`${id}-conf`}>
+                Confidence needed
+              </label>
+              <input
+                id={`${id}-conf`}
+                className="inline-edit-input"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={d.confidence}
+                placeholder="0.7"
+                onChange={(e) => set({ confidence: e.target.value })}
+              />
+            </div>
+          </div>
+        </div>
+      </details>
     </Section>
   );
 }
@@ -314,7 +327,7 @@ function When({ d, set }: { d: EditorDraft; set: Patch }) {
               </label>
               <input
                 id={`${id}-src`}
-                className="inline-edit-input mono"
+                className="inline-edit-input"
                 value={d.event.source}
                 placeholder="any"
                 onChange={(e) => set({ event: { ...d.event, source: e.target.value } })}
@@ -326,7 +339,7 @@ function When({ d, set }: { d: EditorDraft; set: Patch }) {
               </label>
               <input
                 id={`${id}-ename`}
-                className="inline-edit-input mono"
+                className="inline-edit-input"
                 value={d.event.name}
                 placeholder="e.g. mail.*"
                 onChange={(e) => set({ event: { ...d.event, name: e.target.value } })}
@@ -411,7 +424,7 @@ function Limits({ d, set }: { d: EditorDraft; set: Patch }) {
         </label>
         <input
           id={`${id}-tools`}
-          className="inline-edit-input mono"
+          className="inline-edit-input"
           value={d.allowedTools}
           placeholder="All tools"
           onChange={(e) => set({ allowedTools: e.target.value })}
@@ -429,7 +442,7 @@ function Limits({ d, set }: { d: EditorDraft; set: Patch }) {
           </label>
           <input
             id={`${id}-model`}
-            className="inline-edit-input mono"
+            className="inline-edit-input"
             value={d.model}
             placeholder="workspace default"
             onChange={(e) => set({ model: e.target.value })}

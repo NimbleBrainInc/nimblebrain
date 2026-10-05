@@ -51,7 +51,11 @@ describe("healthOf, most urgent rule first", () => {
   });
   test("a failure streak, before the last run's label", () => {
     const h = healthOf({ ...TASK, consecutiveErrors: 3 }, stats("Needs review"));
-    expect(h).toMatchObject({ word: "Failing", reason: "The last 3 runs failed.", runId: "run_1" });
+    expect(h).toMatchObject({
+      word: "Failing",
+      reason: "The last 3 runs failed. Open the latest to see why, then run it again.",
+      runId: "run_1",
+    });
   });
   test("one failure is not a streak: the last run's label speaks", () => {
     expect(healthOf({ ...TASK, consecutiveErrors: 1 }, stats("Failed")).word).toBe("Failed");

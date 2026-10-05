@@ -112,7 +112,7 @@ describe("Home", () => {
     const html = body({ tasks: [live], stats: STATS("Poor result") });
     expect(html).toContain("1 task needs you");
     expect(html).toContain("attn-card tone-danger");
-    expect(html).toContain("The last run didn&#x27;t meet its rules.");
+    expect(html).toContain("The latest result didn&#x27;t meet its rules.");
     expect(html).toContain("Open the run");
   });
   test("a task on track sits in the list with its schedule", () => {
@@ -469,7 +469,10 @@ describe("Result", () => {
         },
       }),
     );
-    expect(html).toContain("no judge server is connected");
+    expect(html).toContain(
+      "No judge is connected, so these rules couldn&#x27;t be checked. Connect a judge in Connectors.",
+    );
+    expect(html).not.toContain("no_judge");
     expect(html).toContain("Uncertain");
     expect(html).not.toContain(">Accept<");
   });

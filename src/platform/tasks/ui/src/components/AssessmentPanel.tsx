@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { assessmentReasonText } from "../lib/plain.ts";
 import type { CriterionResult, RunAssessment, TaskCriterion } from "../types.ts";
 import { type LabelTone, StatusBadge } from "./RunBadge.tsx";
 
@@ -132,11 +133,7 @@ function AssessmentDetail({ a, criteria }: { a: RunAssessment; criteria?: TaskCr
   const judged = judgeLine(a);
   return (
     <>
-      {a.reason && (
-        <p className="assess-reason">
-          {a.reason.message} <span className="muted">({a.reason.code})</span>
-        </p>
-      )}
+      {a.reason && <p className="assess-reason">{assessmentReasonText(a.reason.code)}</p>}
       {a.schema && <SchemaLine schema={a.schema} />}
       {a.criteria && a.criteria.length > 0 && (
         <ul className="criteria-results">

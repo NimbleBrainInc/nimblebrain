@@ -2,6 +2,7 @@ import { action as hostAction } from "@nimblebrain/synapse";
 import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
+import { runTime } from "../lib/plain.ts";
 import { renderMarkdown } from "../markdown.ts";
 import type { RunFileRef, TaskCriterion, TaskDetail, TaskRun, TaskRunResult } from "../types.ts";
 import { useTool } from "../useTool.ts";
@@ -453,16 +454,6 @@ export function useOpenFile(): (file: RunFileRef) => void {
   return (file) => hostAction(app, "openApp", { name: "files", target: `files://${file.id}` });
 }
 
-/** When a run started, as its page's heading says it: "Oct 4, 4:08 PM". */
-function runDate(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 /** The result screen's status line: label, who started it, when, how long, what it cost. */
 function ResultSub({
   run,
@@ -541,7 +532,7 @@ export function ResultScreen({
   return (
     <div className="app">
       <PageHeader
-        title={run ? `Run on ${runDate(run.startedAt)}` : "Run"}
+        title={run ? `Run ${runTime(run.startedAt)}` : "Run"}
         onBack={onBack}
         status={
           <ResultSub
