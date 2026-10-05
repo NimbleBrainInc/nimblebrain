@@ -20,6 +20,8 @@ import { realClient } from "./setup";
 
 const calls: Array<Record<string, unknown>> = [];
 let refusal: string | null = null;
+// The server sends the last-owner refusal with `isError: false` and text only.
+let refusalIsError = true;
 
 mock.module("../src/api/client", () => ({
   ...realClient,
@@ -43,7 +45,7 @@ mock.module("../src/api/client", () => ({
         isError: false,
       };
     }
-    if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
+    if (refusal) return { content: [{ type: "text", text: refusal }], isError: refusalIsError };
     return { structuredContent: {}, isError: false };
   },
 }));
@@ -63,6 +65,7 @@ afterEach(async () => {
   unmount = null;
   calls.length = 0;
   refusal = null;
+  refusalIsError = true;
 });
 
 async function flush() {
@@ -138,6 +141,16 @@ describe("a refusal on the Users tab", () => {
 
     expect(calls.some((x) => x.action === "delete")).toBe(true);
     expect(c.textContent).toContain("The last owner can't be deactivated.");
+  });
+
+  test("a last-owner refusal sent without isError still shows its reason", async () => {
+    refusal = "Cannot delete the last owner. Promote another user to owner first.";
+    refusalIsError = false;
+    const c = await mount();
+    await click(c.querySelector("button[title='Deactivate Bo']"));
+
+    expect(calls.some((x) => x.action === "delete")).toBe(true);
+    expect(c.textContent).toContain("Cannot delete the last owner.");
   });
 
   test("a refused restore shows the server's reason", async () => {
