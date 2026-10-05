@@ -281,7 +281,7 @@ A connected connector shows the account it is signed in as ("Connected as alice@
           field: data.email          # dotted path into the tool's JSON answer
 ```
 
-The runtime calls that tool once, the first time the connected connector is listed with no account recorded, and keeps the answer with the connection until the next sign-in replaces it. It applies to OAuth connections only, and only to a connector installed from this entry (same URL, or the same brokered id).
+The runtime calls that tool once, the first time the connected connector is listed with no account recorded, and keeps the answer with the connection until the next sign-in replaces it. It asks only a connection that has signed in and is live in the runtime, and only a connector installed from this entry (same URL, or the same brokered id). The listing waits at most five seconds for the answer.
 
 - `tool` must be one the connection can call: for `auth: composio` it has to be in `composio.tools`, and its scope has to be in the grant.
 - `field` is a path through objects in the answer (`structuredContent`, or the first text block read as JSON). It must end at a short single-line string. Anything else shows no account, and the runtime logs `account lookup for <connector> named no account` with which half failed.

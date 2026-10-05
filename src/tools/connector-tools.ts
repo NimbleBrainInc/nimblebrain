@@ -910,8 +910,9 @@ async function storedConnectorIdentity(
  *
  * The answer is stored where the sign-in would have put it, so it is asked
  * once per sign-in: the next read finds it stored, and a new sign-in replaces
- * the record and with it the answer. That is also why this is for OAuth
- * connections only; nothing would ever replace the record of another kind.
+ * the record and with it the answer. That is also why only a connection that
+ * has signed in is asked: a source can be warm before its connection exists,
+ * and nothing would ever replace an answer stored for no sign-in.
  */
 async function lookUpConnectorIdentity(
   ctx: ManageConnectorsContext,
@@ -926,14 +927,16 @@ async function lookUpConnectorIdentity(
   const provider = brokered
     ? ctx.runtime.getManagedConnectorRegistry().get(brokered.provider)
     : undefined;
-  if (brokered ? !provider?.recordIdentity : !(await hasMcpOAuthTokens(owner, serverName))) {
-    return null;
-  }
+  if (brokered && !provider?.recordIdentity) return null;
+  if (!(await hasPersistedConnection(ctx, owner, ref, serverName))) return null;
 
   const label = await ctx.runtime
     .getLifecycle()
     .lookUpAccount(owner, serverName, binding.entry.account);
   if (label === null) return null;
+  // The sign-in may have gone while the service was answering (a disconnect,
+  // an uninstall); an answer stored then would outlive it.
+  if (!(await hasPersistedConnection(ctx, owner, ref, serverName))) return null;
   const identity: ConnectedAccountIdentity = { name: label };
   if (brokered) {
     await provider?.recordIdentity?.(

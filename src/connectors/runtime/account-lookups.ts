@@ -4,7 +4,7 @@ import type { ToolSource } from "../../tools/types.ts";
 import { type AccountLookup, isRecord } from "../catalog/account-lookup.ts";
 
 /** How long one account lookup may take before the listing goes on without it. */
-const ACCOUNT_LOOKUP_TIMEOUT_MS = 5_000;
+const DEFAULT_ACCOUNT_LOOKUP_TIMEOUT_MS = 5_000;
 
 /**
  * How long a connection is left alone after a lookup that named no account. A
@@ -27,6 +27,11 @@ const ACCOUNT_LOOKUP_RETRY_MS = 5 * 60_000;
 export class AccountLookups {
   private readonly inFlight = new WeakMap<ToolSource, Promise<string | null>>();
   private readonly failedAt = new WeakMap<ToolSource, number>();
+  private readonly timeoutMs: number;
+
+  constructor(opts: { timeoutMs?: number } = {}) {
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_ACCOUNT_LOOKUP_TIMEOUT_MS;
+  }
 
   /**
    * The account label `source` answers for `lookup`, or null. Never throws.
@@ -51,13 +56,30 @@ export class AccountLookups {
     return asking;
   }
 
+  /**
+   * One call of the declared tool, answered within `timeoutMs` whatever the
+   * source does: `execute` may recover a torn connection on its own schedule,
+   * which the signal does not cut short, so the listing races it rather than
+   * waits on it. Inline, never as a task: a label is not work to hand a
+   * server.
+   */
   private async callTool(source: ToolSource, lookup: AccountLookup): Promise<string | null> {
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), this.timeoutMs);
+    });
     try {
-      const result = await source.execute(
-        lookup.tool,
-        { ...lookup.arguments },
-        AbortSignal.timeout(ACCOUNT_LOOKUP_TIMEOUT_MS),
-      );
+      const result = await Promise.race([
+        source.execute(lookup.tool, { ...lookup.arguments }, signal, { inline: true }),
+        timedOut,
+      ]);
+      if (result === null) {
+        log.warn(
+          `[connectors] account lookup for ${source.name} timed out after ${this.timeoutMs}ms`,
+        );
+        return null;
+      }
       const label = accountLabelFrom(result, lookup.field);
       if (label === null) {
         // Says which half failed without logging the answer, which is the
@@ -68,6 +90,8 @@ export class AccountLookups {
               ? `tool "${lookup.tool}" returned an error`
               : `no label at "${lookup.field}" in the answer of "${lookup.tool}"`),
         );
+      } else {
+        log.debug("mcp", `[connectors] account lookup for ${source.name} named the account`);
       }
       return label;
     } catch (err) {
@@ -77,6 +101,8 @@ export class AccountLookups {
         }`,
       );
       return null;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 }
@@ -94,20 +120,23 @@ const ACCOUNT_LABEL_MAX_LENGTH = 254;
  */
 export function accountLabelFrom(result: ToolResult, field: string): string | null {
   if (result.isError) return null;
-  let value: unknown = result.structuredContent ?? firstJsonText(result);
+  const label = labelAt(result.structuredContent, field) ?? labelAt(firstJsonText(result), field);
+  if (label === null || label.length > ACCOUNT_LABEL_MAX_LENGTH) return null;
+  // One line of text: no control, format or line-separator characters.
+  if (/[\p{Cc}\p{Cf}\u2028\u2029]/u.test(label)) return null;
+  return label;
+}
+
+/** The non-empty string at `field` in `answer`, or null. */
+function labelAt(answer: unknown, field: string): string | null {
+  let value: unknown = answer;
   for (const key of field.split(".")) {
     if (!isRecord(value)) return null;
     value = value[key];
   }
   if (typeof value !== "string") return null;
   const label = value.trim();
-  if (label.length === 0 || label.length > ACCOUNT_LABEL_MAX_LENGTH) return null;
-  // No control characters: a label is one line of text.
-  for (let i = 0; i < label.length; i++) {
-    const code = label.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return null;
-  }
-  return label;
+  return label.length === 0 ? null : label;
 }
 
 function firstJsonText(result: ToolResult): unknown {

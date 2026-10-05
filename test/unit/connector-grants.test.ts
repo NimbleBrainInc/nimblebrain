@@ -409,6 +409,29 @@ describe("manage_connectors — personal-connector grants", () => {
       );
     });
 
+    test("a brokered connector is asked only once its connection exists, warm source or not", async () => {
+      let asks = 0;
+      h = await buildHarness({
+        composioConnectors: [ZOOM_ID],
+        catalog,
+        connectorRunning: true,
+        lookUpAccount: async () => {
+          asks++;
+          return "alice@zoom.example";
+        },
+      });
+      const serverName = slugifyServerName(ZOOM_ID);
+
+      // Installed and warm (a tools listing started it), but not signed in:
+      // there is no account to ask about, and nothing to remember a failure of.
+      expect((await listed(serverName))?.identity).toBeUndefined();
+      expect(asks).toBe(0);
+
+      await saveComposioConnection(h.workDir, owner, ZOOM_ID, connection);
+      expect((await listed(serverName))?.identity).toEqual({ name: "alice@zoom.example" });
+      expect(asks).toBe(1);
+    });
+
     test("an account the sign-in recorded is not asked for again", async () => {
       let asks = 0;
       h = await buildHarness({
