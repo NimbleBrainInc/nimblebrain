@@ -179,12 +179,8 @@ export function AssessmentPanel({
         <CriteriaTable results={a.criteria} criteria={criteria} />
       )}
       {judged && <p className="muted">{judged}</p>}
-      {a?.human && (
-        <p className="human-verdict">
-          {verdict?.judge}
-          {a.human.note ? `. Your note: “${a.human.note}”` : "."}
-        </p>
-      )}
+      {a?.human && !a.reason && <p className="human-verdict">{verdict?.judge}.</p>}
+      {a?.human?.note && <p className="human-verdict">Your note: “{a.human.note}”</p>}
       {canAct && <VerdictForm busy={busy} error={error} onVerdict={onVerdict} />}
     </Section>
   );

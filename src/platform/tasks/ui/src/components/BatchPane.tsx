@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { renderMarkdown } from "../markdown.ts";
 import type { BatchItemResult, TaskBatch, TaskRunResult } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatCost, relativeTime } from "../utils.ts";
 import { PageHeader } from "./Chrome.tsx";
 import { RunBadge } from "./RunBadge.tsx";
 import { Section, Sections } from "./Section.tsx";
+import { ResultPreview, readsStructured } from "./StructuredView.tsx";
 
 /** Rows per page of results. */
 const PAGE = 50;
@@ -308,7 +308,7 @@ function BatchRow({
   return (
     <>
       <tr>
-        <td>{row.index}</td>
+        <td>{row.index + 1}</td>
         {columns.length === 0 && <td className="batch-input">{row.inputSummary}</td>}
         {columns.map((c) => (
           <td key={c}>{row.output?.[c] === undefined ? "" : String(row.output[c])}</td>
@@ -347,8 +347,8 @@ function BatchRow({
       </tr>
       {open && row.runId && (
         <tr>
-          <td colSpan={columns.length + 5}>
-            <BatchRunOutput runId={row.runId} error={row.error} />
+          <td className="batch-expand" colSpan={columns.length + 5}>
+            <BatchRunOutput runId={row.runId} error={row.error} onOpenRun={onOpenRun} />
           </td>
         </tr>
       )}
@@ -356,18 +356,30 @@ function BatchRow({
   );
 }
 
-/** One item's run output, read by its run id. */
-function BatchRunOutput({ runId, error }: { runId: string; error?: string }) {
+/**
+ * One item's result, read by its run id: structured output as labelled
+ * values (Show raw for its JSON), text as wrapped prose, the full row wide.
+ */
+function BatchRunOutput({
+  runId,
+  error,
+  onOpenRun,
+}: {
+  runId: string;
+  error?: string;
+  onOpenRun?: (runId: string) => void;
+}) {
   const runResultTool = useTool<TaskRunResult>("run_result");
-  const [output, setOutput] = useState<string | null>(null);
+  const [result, setResult] = useState<TaskRunResult | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [raw, setRaw] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runResultTool.call is stable
   useEffect(() => {
     let cancelled = false;
     runResultTool
       .call({ runId })
       .then((res) => {
-        if (!cancelled) setOutput(((res.data as TaskRunResult) ?? null)?.output ?? "");
+        if (!cancelled) setResult(asDict(res.data) as unknown as TaskRunResult);
       })
       .catch((err) => {
         if (!cancelled) setFailed(err instanceof Error ? err.message : String(err));
@@ -376,18 +388,29 @@ function BatchRunOutput({ runId, error }: { runId: string; error?: string }) {
       cancelled = true;
     };
   }, [runId]);
+  const structured = !!result && readsStructured(result.structured, result.output);
   return (
     <div className="batch-run-output">
-      <div className="batch-run-id">{runId}</div>
-      {error && <pre className="batch-run-error">{error}</pre>}
-      {failed && !error && <div className="batch-pending">{failed}</div>}
-      {output && (
-        <div
-          className="out-md"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized via DOMPurify in renderMarkdown
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(output) }}
-        />
-      )}
+      {error && <pre className="reader-error-body">{error}</pre>}
+      {failed && !error && <p className="muted">{failed}</p>}
+      {result && <ResultPreview structured={result.structured} text={result.output} raw={raw} />}
+      <div className="batch-run-foot">
+        {structured && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            aria-pressed={raw}
+            onClick={() => setRaw(!raw)}
+          >
+            {raw ? "Show values" : "Show raw"}
+          </button>
+        )}
+        {onOpenRun && (
+          <button type="button" className="link-btn muted-link" onClick={() => onOpenRun(runId)}>
+            Open the run
+          </button>
+        )}
+      </div>
     </div>
   );
 }
