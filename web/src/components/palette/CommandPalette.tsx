@@ -88,6 +88,7 @@ export function CommandPalette({ onLogout }: { onLogout: () => void }) {
       toggleSidebar: sidebar.toggle,
       toggleTheme: theme.toggle,
       openKeyboardShortcuts: () => setShowShortcuts(true),
+      openExternal: (url) => window.open(url, "_blank", "noopener,noreferrer"),
       logout: onLogout,
       closePalette,
     }),

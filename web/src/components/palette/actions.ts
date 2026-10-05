@@ -13,6 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { roleAtLeast } from "../../hooks/useScopedRole";
+import { DOCS_URL } from "../../lib/docs";
 import type { CommandRunContext, CommandSourceContext } from "./types";
 
 export interface ActionDef {
@@ -85,6 +86,16 @@ export const ACTIONS: ActionDef[] = [
     icon: "Keyboard",
     run: (run) => {
       run.openKeyboardShortcuts();
+      run.closePalette();
+    },
+  },
+  {
+    id: "documentation",
+    title: "Open documentation",
+    keywords: ["docs", "documentation", "help", "guide", "manual"],
+    icon: "BookOpen",
+    run: (run) => {
+      run.openExternal(DOCS_URL);
       run.closePalette();
     },
   },

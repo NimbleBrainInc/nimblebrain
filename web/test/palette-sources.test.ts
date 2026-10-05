@@ -39,6 +39,7 @@ function recordRunContext(): {
     toggleSidebar: () => {},
     toggleTheme: () => {},
     openKeyboardShortcuts: () => {},
+    openExternal: () => {},
     logout: () => {},
     closePalette: () => {
       calls.closed += 1;
