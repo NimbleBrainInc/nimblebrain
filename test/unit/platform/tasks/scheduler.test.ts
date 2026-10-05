@@ -2313,6 +2313,52 @@ describe("Scheduler — run queue", () => {
     scheduler.stop();
   });
 
+  it("queueView reports one owner's running and queued runs, from its own admission keys", async () => {
+    seedIdle(["a", "b", "c"]);
+    seedDefs(
+      tmpDir,
+      new Map([["x", makeTask({ id: "x", name: "x", enabled: false, ownerId: "usr_other" })]]),
+      "usr_other",
+    );
+    const { executor, releaseAll } = createSlotExecutor();
+    const scheduler = new Scheduler(executor, {
+      workDir: tmpDir,
+      admission: createRunAdmission({ maxConcurrentRuns: 2 }),
+    });
+    scheduler.start();
+    const requested = { runId: "run_aaaaaaaaaaaa", requestedAt: new Date().toISOString() };
+    scheduler.requestRunNow(WS, OWNER, "a", requested);
+    scheduler.requestRunNow(WS, "usr_other", "x");
+    scheduler.requestRunNow(WS, "usr_other", "x"); // a duplicate: refused, not queued
+    scheduler.requestRunNow(WS, OWNER, "b");
+    scheduler.requestRunNow(WS, OWNER, "c", { ...requested, runId: "run_cccccccccccc" });
+    await tick();
+
+    const view = scheduler.queueView(WS, OWNER);
+    expect(view.find((e) => e.state === "running")).toMatchObject({
+      taskId: "a",
+      runId: "run_aaaaaaaaaaaa",
+      trigger: "manual",
+    });
+    expect(view.filter((e) => e.state === "running")).toHaveLength(1);
+    // Positions count this scheduler's whole queue, as tasks__run's do.
+    expect(view.filter((e) => e.state === "queued")).toEqual([
+      { taskId: "b", state: "queued", position: 1 },
+      { taskId: "c", state: "queued", position: 2, runId: "run_cccccccccccc" },
+    ]);
+    expect(scheduler.queueView(WS, "usr_other").map((e) => [e.taskId, e.state])).toEqual([
+      ["x", "running"],
+    ]);
+    expect(scheduler.queueView("ws_ffffffffffffffff", OWNER)).toEqual([]);
+
+    releaseAll();
+    await tick();
+    releaseAll();
+    await tick();
+    expect(scheduler.queueView(WS, OWNER)).toEqual([]);
+    scheduler.stop();
+  });
+
   it("starts the next queued run the moment a slot frees, without a timer tick", async () => {
     seedIdle(["a", "b", "c"]);
     const { executor, started, releaseOne, releaseAll } = createSlotExecutor();

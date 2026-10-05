@@ -483,8 +483,9 @@ export const TasksRunsInput = Type.Object({
     Type.String({
       description:
         "ISO timestamp — only runs started before this time. Pages back through the full run " +
-        "history, which is kept indefinitely: pass the previous response's `nextBefore`. " +
-        "Without it, only the most recent runs (up to 1000 per task) are read.",
+        "history, which is kept indefinitely: pass the previous response's `nextBefore`, with " +
+        "or without `taskId`. Without it, only the most recent runs (up to 1000 per task) are " +
+        "read, so pass a time just ahead of now to page every run back through the archives.",
     }),
   ),
   limit: Type.Optional(Type.Number({ description: "Max runs to return. Default: 20." })),
@@ -495,6 +496,32 @@ export const TasksRunsInput = Type.Object({
   ),
 });
 export type TasksRunsInput = Static<typeof TasksRunsInput>;
+
+export const TasksUpcomingInput = Type.Object({
+  limit: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 100,
+      description: "Most scheduled fires to return, soonest first. Default 20.",
+    }),
+  ),
+});
+export type TasksUpcomingInput = Static<typeof TasksUpcomingInput>;
+
+export const TasksStatsInput = Type.Object({
+  since: Type.Optional(
+    Type.String({
+      description: "ISO timestamp: count runs started on or after it. Default: 30 days ago.",
+    }),
+  ),
+  taskId: Type.Optional(
+    Type.String({ description: "Only this task (any kind). Default: every saved task." }),
+  ),
+});
+export type TasksStatsInput = Static<typeof TasksStatsInput>;
+
+export const TasksJudgesInput = Type.Object({});
+export type TasksJudgesInput = Static<typeof TasksJudgesInput>;
 
 export const TasksRunInput = Type.Object({
   name: Type.Optional(
@@ -1184,8 +1211,10 @@ export interface TasksRunsOutput {
   runs: TaskRunView[];
   total: number;
   /**
-   * Pass as `before` for the next older page of one task's history;
-   * absent when nothing older remains (or when runs span every task).
+   * Pass as `before` for the next older page, of one task's history or of
+   * every task's; absent when nothing older remains. A first page read without
+   * `before` reads only the hot indexes, so across every task it reports more
+   * only when the hot indexes hold more.
    */
   nextBefore?: string;
 }
@@ -1450,4 +1479,81 @@ export interface TasksBatchControlOutput {
 
 export interface TasksBatchesOutput {
   batches: TaskBatchView[];
+}
+
+// ── Views: what runs next, run statistics, judges ────────────────────────
+
+/** A run that holds a run slot or waits for one (`tasks__upcoming`). */
+export interface TaskUpcomingRun {
+  taskId: string;
+  /** Absent when the task's definition is gone. */
+  taskName?: string;
+  runId?: string;
+  state: "running" | "queued";
+  /** Queued only: 1 is next (the numbering of tasks__run's queued answer). */
+  position?: number;
+  /** Running only. */
+  startedAt?: string;
+  /** Queued only: when the run was asked for, when it has a ticket. */
+  queuedAt?: string;
+  trigger?: "scheduled" | "manual" | "event";
+  batchId?: string;
+  batchIndex?: number;
+}
+
+/** One coming fire of a timed schedule. */
+export interface TaskUpcomingFire {
+  taskId: string;
+  taskName: string;
+  at: string;
+  /** Human-readable schedule. */
+  schedule: string;
+  scheduleType: "cron" | "interval" | "once";
+}
+
+/** A task an event fires, with its fire ceiling and how much of it the last hour used. */
+export interface TaskUpcomingEventTask {
+  taskId: string;
+  taskName: string;
+  schedule: string;
+  enabled: boolean;
+  maxFiresPerHour: number;
+  firesLastHour: number;
+}
+
+export interface TasksUpcomingOutput {
+  running: TaskUpcomingRun[];
+  queued: TaskUpcomingRun[];
+  /** Soonest first, at most `limit`. */
+  scheduled: TaskUpcomingFire[];
+  events: TaskUpcomingEventTask[];
+}
+
+/** One task's runs since a time (`tasks__stats`). */
+export interface TaskRunStats {
+  taskId: string;
+  /** Run records started on or after `since`, batch runs included. */
+  runs: number;
+  /** Verdicts over those runs; a person's verdict replaces the judge's. */
+  pass: number;
+  fail: number;
+  uncertain: number;
+  /** pass / (pass + fail); null when both are 0. */
+  passRate: number | null;
+  /** What those runs cost, in USD (runs with no recorded cost count 0). */
+  costUsd: number;
+  /** The newest run, whenever it started. */
+  lastRun?: { id: string; startedAt: string; label: TaskRunLabel };
+}
+
+export interface TasksStatsOutput {
+  since: string;
+  tasks: TaskRunStats[];
+}
+
+/** The judge servers connected in the workspace (`tasks__judges`). */
+export interface TasksJudgesOutput {
+  servers: string[];
+  /** Why a task naming no judge server would not be judged: none connected, or several. */
+  warning?: TaskWarning;
 }

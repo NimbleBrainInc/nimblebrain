@@ -150,6 +150,17 @@ export declare const TasksRunsInput: import("@sinclair/typebox").TObject<{
     excludeBatchRuns: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type TasksRunsInput = Static<typeof TasksRunsInput>;
+export declare const TasksUpcomingInput: import("@sinclair/typebox").TObject<{
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+}>;
+export type TasksUpcomingInput = Static<typeof TasksUpcomingInput>;
+export declare const TasksStatsInput: import("@sinclair/typebox").TObject<{
+    since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+}>;
+export type TasksStatsInput = Static<typeof TasksStatsInput>;
+export declare const TasksJudgesInput: import("@sinclair/typebox").TObject<{}>;
+export type TasksJudgesInput = Static<typeof TasksJudgesInput>;
 export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
     name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<unknown>>;
@@ -577,8 +588,10 @@ export interface TasksRunsOutput {
     runs: TaskRunView[];
     total: number;
     /**
-     * Pass as `before` for the next older page of one task's history;
-     * absent when nothing older remains (or when runs span every task).
+     * Pass as `before` for the next older page, of one task's history or of
+     * every task's; absent when nothing older remains. A first page read without
+     * `before` reads only the hot indexes, so across every task it reports more
+     * only when the hot indexes hold more.
      */
     nextBefore?: string;
 }
@@ -829,4 +842,76 @@ export interface TasksBatchControlOutput {
 }
 export interface TasksBatchesOutput {
     batches: TaskBatchView[];
+}
+/** A run that holds a run slot or waits for one (`tasks__upcoming`). */
+export interface TaskUpcomingRun {
+    taskId: string;
+    /** Absent when the task's definition is gone. */
+    taskName?: string;
+    runId?: string;
+    state: "running" | "queued";
+    /** Queued only: 1 is next (the numbering of tasks__run's queued answer). */
+    position?: number;
+    /** Running only. */
+    startedAt?: string;
+    /** Queued only: when the run was asked for, when it has a ticket. */
+    queuedAt?: string;
+    trigger?: "scheduled" | "manual" | "event";
+    batchId?: string;
+    batchIndex?: number;
+}
+/** One coming fire of a timed schedule. */
+export interface TaskUpcomingFire {
+    taskId: string;
+    taskName: string;
+    at: string;
+    /** Human-readable schedule. */
+    schedule: string;
+    scheduleType: "cron" | "interval" | "once";
+}
+/** A task an event fires, with its fire ceiling and how much of it the last hour used. */
+export interface TaskUpcomingEventTask {
+    taskId: string;
+    taskName: string;
+    schedule: string;
+    enabled: boolean;
+    maxFiresPerHour: number;
+    firesLastHour: number;
+}
+export interface TasksUpcomingOutput {
+    running: TaskUpcomingRun[];
+    queued: TaskUpcomingRun[];
+    /** Soonest first, at most `limit`. */
+    scheduled: TaskUpcomingFire[];
+    events: TaskUpcomingEventTask[];
+}
+/** One task's runs since a time (`tasks__stats`). */
+export interface TaskRunStats {
+    taskId: string;
+    /** Run records started on or after `since`, batch runs included. */
+    runs: number;
+    /** Verdicts over those runs; a person's verdict replaces the judge's. */
+    pass: number;
+    fail: number;
+    uncertain: number;
+    /** pass / (pass + fail); null when both are 0. */
+    passRate: number | null;
+    /** What those runs cost, in USD (runs with no recorded cost count 0). */
+    costUsd: number;
+    /** The newest run, whenever it started. */
+    lastRun?: {
+        id: string;
+        startedAt: string;
+        label: TaskRunLabel;
+    };
+}
+export interface TasksStatsOutput {
+    since: string;
+    tasks: TaskRunStats[];
+}
+/** The judge servers connected in the workspace (`tasks__judges`). */
+export interface TasksJudgesOutput {
+    servers: string[];
+    /** Why a task naming no judge server would not be judged: none connected, or several. */
+    warning?: TaskWarning;
 }

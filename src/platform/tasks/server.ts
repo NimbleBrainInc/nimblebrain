@@ -17,20 +17,28 @@ import {
 import { MAX_ITERATIONS, TASKS_LIST_DEFAULT_LIMIT, TASKS_LIST_MAX_LIMIT } from "../../limits.ts";
 import type {
   TaskEffectiveLimits,
+  TaskRunStats,
   TaskSummary,
   TasksAssessOutput,
   TasksCancelOutput,
   TasksCreateOutput,
   TasksDeleteOutput,
+  TasksJudgesOutput,
   TasksListOutput,
   TasksRunOutput,
   TasksRunResultOutput,
   TasksRunsOutput,
+  TasksStatsOutput,
   TasksStatusOutput,
+  TasksUpcomingOutput,
   TasksUpdateOutput,
+  TaskUpcomingEventTask,
+  TaskUpcomingFire,
+  TaskUpcomingRun,
   TaskWarning,
 } from "../schemas/tasks.ts";
 import {
+  effectiveVerdict,
   executionOf,
   isAssessable,
   labelOf,
@@ -41,7 +49,14 @@ import type { BatchAction, BatchControlResult } from "./batch.ts";
 import { createTask, deleteTask, updateTask } from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
 import { assertJsonSchema, checkAgainstSchema } from "./json-schema.ts";
-import { isOpenRun, type RequestedRun, type RunNowTicket } from "./scheduler.ts";
+import { type JudgeSourceView, judgeServersOf } from "./judge.ts";
+import {
+  countsAsEventFire,
+  isOpenRun,
+  type QueueViewEntry,
+  type RequestedRun,
+  type RunNowTicket,
+} from "./scheduler.ts";
 import type { ReadRunsOptions, RunsPage } from "./store.ts";
 import {
   type Batch,
@@ -414,6 +429,10 @@ export interface ToolContext {
    * no batch driver is wired.
    */
   batches?: BatchPort;
+  /** This owner's runs in this workspace holding a run slot or waiting for one. */
+  queueView?: () => QueueViewEntry[];
+  /** The sources connected in this workspace, with their tool names (judge discovery). */
+  judgeSources?: () => Promise<JudgeSourceView[]>;
 }
 
 /** The batch driver, bound to the caller's workspace and owner. */
@@ -918,8 +937,223 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Tas
     };
   }
 
-  const runs = ctx.readAllRuns({ limit, status, since, before, ...excludeBatch });
-  return { runs: runs.map(toRunView), total: runs.length };
+  // Every task's runs: one more than the page, to know whether more remain,
+  // cut without splitting runs that share a start time (as `readRunsPage`).
+  const read = ctx.readAllRuns({ limit: limit + 1, status, since, before, ...excludeBatch });
+  if (read.length <= limit) return { runs: read.map(toRunView), total: read.length };
+  const startedMs = (r: TaskRun) => new Date(r.startedAt).getTime();
+  let cut = limit;
+  while (cut > 0 && cut < read.length && startedMs(read[cut]!) === startedMs(read[cut - 1]!)) {
+    cut++;
+  }
+  const runs = read.slice(0, cut);
+  const last = runs[runs.length - 1];
+  return {
+    runs: runs.map(toRunView),
+    total: runs.length,
+    ...(last ? { nextBefore: last.startedAt } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Views: what runs next, run statistics, judges
+// ---------------------------------------------------------------------------
+
+const DEFAULT_UPCOMING_LIMIT = 20;
+const HOUR_MS = 3_600_000;
+const STATS_DEFAULT_DAYS = 30;
+/** A `before` later than any run, so a page read walks the archive months. */
+const FAR_FUTURE = "9999-12-31T00:00:00.000Z";
+/** Runs read per archive page while counting a task's stats. */
+const STATS_PAGE = 5_000;
+
+/**
+ * `tasks__upcoming`: the caller's runs holding or waiting for a slot (from the
+ * scheduler's own admission keys), the coming fires of timed schedules, and
+ * the tasks events fire.
+ */
+export function handleUpcoming(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): TasksUpcomingOutput {
+  const limit = (args.limit as number | undefined) ?? DEFAULT_UPCOMING_LIMIT;
+  const defs = ctx.definitions();
+  const runs = (ctx.queueView?.() ?? []).map((entry) => upcomingRunOf(entry, defs, ctx));
+  const queued = runs.filter((r) => r.state === "queued");
+  queued.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+
+  const saved = [...defs.values()].filter((t) => kindOf(t) === "saved" && t.schedule);
+  const scheduled = saved
+    .filter((t) => t.enabled && !isEventSchedule(t.schedule))
+    .flatMap((task) =>
+      nextFires(task, limit, ctx.defaultTimezone).map(
+        (at): TaskUpcomingFire => ({
+          taskId: task.id,
+          taskName: task.name,
+          at,
+          schedule: formatSchedule(task.schedule, task),
+          scheduleType: task.schedule?.type as TaskUpcomingFire["scheduleType"],
+        }),
+      ),
+    );
+  scheduled.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  const events = saved
+    .filter((t) => isEventSchedule(t.schedule))
+    .map((task) => eventTaskOf(task, ctx));
+  events.sort((a, b) => a.taskName.localeCompare(b.taskName));
+
+  return {
+    running: runs.filter((r) => r.state === "running"),
+    queued,
+    scheduled: scheduled.slice(0, limit),
+    events,
+  };
+}
+
+/** One queue entry, with its task's name and what its ticket says. */
+function upcomingRunOf(
+  entry: QueueViewEntry,
+  defs: Map<string, Task>,
+  ctx: ToolContext,
+): TaskUpcomingRun {
+  const ticket = entry.runId ? ctx.readRunTicket?.(entry.runId) : null;
+  const taskName = defs.get(entry.taskId)?.name;
+  const trigger = entry.trigger ?? ticket?.run.trigger;
+  const queuedAt = entry.state === "queued" ? ticket?.requestedAt : undefined;
+  return {
+    taskId: entry.taskId,
+    ...(taskName ? { taskName } : {}),
+    ...(entry.runId ? { runId: entry.runId } : {}),
+    state: entry.state,
+    ...(entry.position !== undefined ? { position: entry.position } : {}),
+    ...(entry.startedAt ? { startedAt: entry.startedAt } : {}),
+    ...(queuedAt ? { queuedAt } : {}),
+    ...(trigger ? { trigger } : {}),
+    ...(ticket?.run.batchId ? { batchId: ticket.run.batchId } : {}),
+    ...(ticket?.run.batchIndex !== undefined ? { batchIndex: ticket.run.batchIndex } : {}),
+  };
+}
+
+/** An event-fired task, its fire ceiling, and the fires of the last hour. */
+function eventTaskOf(task: Task, ctx: ToolContext): TaskUpcomingEventTask {
+  const since = new Date(Date.now() - HOUR_MS).toISOString();
+  return {
+    taskId: task.id,
+    taskName: task.name,
+    schedule: formatSchedule(task.schedule, task),
+    enabled: task.enabled,
+    maxFiresPerHour: task.schedule?.maxFiresPerHour ?? DEFAULT_EVENT_MAX_FIRES_PER_HOUR,
+    firesLastHour: ctx.readRuns(task.id, { since }).filter(countsAsEventFire).length,
+  };
+}
+
+/**
+ * A timed task's next `count` fires: its stored `nextRunAt` first (it carries
+ * any backoff), then what its schedule gives after that. A once fires once,
+ * and not at all once retired.
+ */
+function nextFires(task: Task, count: number, defaultTimezone: string): string[] {
+  const schedule = task.schedule;
+  const first = new Date(task.nextRunAt ?? Number.NaN);
+  if (!schedule || Number.isNaN(first.getTime())) return [];
+  if (schedule.type === "once") return onceRetirement(task) ? [] : [first.toISOString()];
+  return [first, ...laterFires(schedule, first, count - 1, defaultTimezone)].map((d) =>
+    d.toISOString(),
+  );
+}
+
+/** The `count` fires of a recurring schedule after `first`. */
+function laterFires(
+  schedule: ScheduleSpec,
+  first: Date,
+  count: number,
+  defaultTimezone: string,
+): Date[] {
+  const { intervalMs, expression } = schedule;
+  if (schedule.type === "interval" && intervalMs) {
+    return Array.from(
+      { length: count },
+      (_, k) => new Date(first.getTime() + (k + 1) * intervalMs),
+    );
+  }
+  if (schedule.type !== "cron" || !expression) return [];
+  try {
+    return new Cron(expression, { timezone: schedule.timezone ?? defaultTimezone }).nextRuns(
+      count,
+      first,
+    );
+  } catch {
+    // A cron that does not parse has no further fires to show.
+    return [];
+  }
+}
+
+/**
+ * `tasks__stats`: per task, the runs started since a time, their verdicts,
+ * pass rate and cost, read back through the archive months, and the newest
+ * run's label.
+ */
+export function handleStats(args: Record<string, unknown>, ctx: ToolContext): TasksStatsOutput {
+  const sinceArg = args.since as string | undefined;
+  const taskId = args.taskId as string | undefined;
+  const since = sinceArg ?? new Date(Date.now() - STATS_DEFAULT_DAYS * 24 * HOUR_MS).toISOString();
+  if (Number.isNaN(new Date(since).getTime())) {
+    throw new Error(`Invalid since timestamp: "${since}"`);
+  }
+  const defs = ctx.definitions();
+  let tasks: Task[];
+  if (taskId !== undefined) {
+    const task = defs.get(taskId);
+    if (!task) throw new Error(`Task not found: "${taskId}"`);
+    tasks = [task];
+  } else {
+    tasks = [...defs.values()].filter((t) => kindOf(t) === "saved");
+  }
+  tasks.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { since, tasks: tasks.map((t) => statsOf(t.id, since, ctx)) };
+}
+
+/** One task's figures since `since`. */
+function statsOf(taskId: string, since: string, ctx: ToolContext): TaskRunStats {
+  const stats: TaskRunStats = {
+    taskId,
+    runs: 0,
+    pass: 0,
+    fail: 0,
+    uncertain: 0,
+    passRate: null,
+    costUsd: 0,
+  };
+  let before: string | undefined = FAR_FUTURE;
+  while (before) {
+    const page = ctx.readRunsPage(taskId, { since, before, limit: STATS_PAGE });
+    for (const run of page.runs) countRun(stats, run);
+    before = page.nextBefore;
+  }
+  const decided = stats.pass + stats.fail;
+  stats.passRate = decided > 0 ? stats.pass / decided : null;
+  const last = ctx.readRuns(taskId, { limit: 1 })[0];
+  if (last) stats.lastRun = { id: last.id, startedAt: last.startedAt, label: labelOf(last) };
+  return stats;
+}
+
+/** Add one run to a task's figures. */
+function countRun(stats: TaskRunStats, run: TaskRun): void {
+  stats.runs++;
+  stats.costUsd += run.costUsd ?? 0;
+  const verdict = effectiveVerdict(run.assessment);
+  if (verdict === "pass") stats.pass++;
+  else if (verdict === "fail") stats.fail++;
+  else if (verdict === "uncertain") stats.uncertain++;
+}
+
+/** `tasks__judges`: the judge servers connected in this workspace, and why a task naming none would not be judged. */
+export async function handleJudges(
+  _args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<TasksJudgesOutput> {
+  const sources = ctx.judgeSources ? await ctx.judgeSources() : [];
+  return judgeServersOf(sources);
 }
 
 /**

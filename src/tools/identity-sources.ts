@@ -102,6 +102,9 @@ export const TASK_RUN_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "tasks__run_result",
   "tasks__batch",
   "tasks__batches",
+  "tasks__upcoming",
+  "tasks__stats",
+  "tasks__judges",
   "tasks__cancel",
 ]);
 

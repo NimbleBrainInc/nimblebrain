@@ -112,6 +112,24 @@ export function findJudgeServer(
   };
 }
 
+/**
+ * The judge servers among a workspace's sources, and why a task naming none
+ * would not be judged (none connected, or several): the same
+ * `findJudgeServer` the pipeline uses, so the picker and the pipeline agree.
+ */
+export function judgeServersOf(sources: JudgeSourceView[]): {
+  servers: string[];
+  warning?: { code: JudgeMissing; message: string };
+} {
+  const servers = sources
+    .filter((s) => s.toolNames.includes(JUDGE_TOOL) && s.toolNames.includes(LIST_JUDGES_TOOL))
+    .map((s) => s.name);
+  const found = findJudgeServer(sources, undefined);
+  return "server" in found
+    ? { servers }
+    : { servers, warning: { code: found.code, message: found.reason } };
+}
+
 /** A warning a write returns about a task it saved. */
 export interface JudgeWarning {
   code: JudgeMissing;

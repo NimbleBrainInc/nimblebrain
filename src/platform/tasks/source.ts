@@ -30,11 +30,14 @@ import {
   handleCancel,
   handleCreate,
   handleDelete,
+  handleJudges,
   handleList,
   handleRun,
   handleRunResult,
   handleRuns,
+  handleStats,
   handleStatus,
+  handleUpcoming,
   handleUpdate,
   runOutputTaskId,
   type ToolContext,
@@ -480,6 +483,8 @@ export async function createTasksSource(
         list: () => listBatches(workDir, wsId, owner),
         maxConcurrentRuns: runtime.getRunAdmission().limits.maxConcurrentRuns,
       },
+      queueView: () => scheduler.queueView(wsId, owner),
+      judgeSources: () => judgePort.sources(wsId),
     };
   }
 
@@ -611,6 +616,12 @@ export async function createTasksSource(
           return handleBatchControl(input, ctx);
         case "batches":
           return handleBatches(input, ctx);
+        case "upcoming":
+          return handleUpcoming(input, ctx);
+        case "stats":
+          return handleStats(input, ctx);
+        case "judges":
+          return handleJudges(input, ctx);
         case "cancel":
           return handleCancel(input, ctx);
         case "assess":

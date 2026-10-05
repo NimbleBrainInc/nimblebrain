@@ -124,6 +124,19 @@ export interface RunInput {
   data?: unknown;
 }
 
+/** A run holding a slot or waiting for one, as `Scheduler.queueView` reports it. */
+export interface QueueViewEntry {
+  taskId: string;
+  runId?: string;
+  state: "running" | "queued";
+  /** Queued only: the place among this scheduler's queued runs, 1 next. */
+  position?: number;
+  /** Running only. */
+  startedAt?: string;
+  /** Running only: what started it. */
+  trigger?: TaskRunTrigger;
+}
+
 /**
  * A run asked for by id (`tasks__run`): the id it was given before it
  * was asked for, and what it was asked with. A requested run has a ticket from
@@ -861,6 +874,11 @@ export class Scheduler {
   private definitions: Map<string, Task> = new Map();
   /** In-flight runs' abort controllers, for cancel and stop. Slots are admission's. */
   private readonly activeRuns: Map<string, AbortController> = new Map();
+  /** When each in-flight run started and what started it, by the same key, for `queueView`. */
+  private readonly activeInfo: Map<
+    string,
+    { startedAt: string; trigger: TaskRunTrigger; runId?: string }
+  > = new Map();
   /**
    * Requested runs this process is carrying, by run id: queued or in flight,
    * with the task key and the promise of the run's record. A ticket that
@@ -1017,6 +1035,7 @@ export class Scheduler {
     for (const [id, controller] of this.activeRuns) {
       controller.abort();
       this.activeRuns.delete(id);
+      this.activeInfo.delete(id);
     }
   }
 
@@ -1609,6 +1628,46 @@ export class Scheduler {
   }
 
   /**
+   * One owner's runs in one workspace that hold a slot or wait for one, read
+   * from this scheduler's own admission keys (the door knows nothing of tasks).
+   * A key is `<ws>/<owner>/<taskId>`, or `<ws>/<owner>/<taskId>#<runId>` for a
+   * batch run. `position` numbers the queued runs as `tasks__run` does: the
+   * place among this scheduler's queued runs, 1 next.
+   */
+  queueView(wsId: string, ownerId: string): QueueViewEntry[] {
+    const prefix = `${wsId}/${ownerId}/`;
+    const parse = (key: string): { taskId: string; runId?: string } => {
+      const rest = key.slice(prefix.length);
+      const hash = rest.indexOf("#");
+      return hash >= 0
+        ? { taskId: rest.slice(0, hash), runId: rest.slice(hash + 1) }
+        : { taskId: rest };
+    };
+    const runIdByKey = new Map<string, string>();
+    for (const [runId, open] of this.openRuns) runIdByKey.set(open.key, runId);
+    const out: QueueViewEntry[] = [];
+    for (const [key, info] of this.activeInfo) {
+      if (!key.startsWith(prefix)) continue;
+      const { taskId, runId } = parse(key);
+      const id = runId ?? info.runId;
+      out.push({
+        taskId,
+        state: "running",
+        startedAt: info.startedAt,
+        trigger: info.trigger,
+        ...(id ? { runId: id } : {}),
+      });
+    }
+    this.getQueuedRunIds().forEach((key, index) => {
+      if (!key.startsWith(prefix)) return;
+      const { taskId, runId } = parse(key);
+      const id = runId ?? runIdByKey.get(key);
+      out.push({ taskId, state: "queued", position: index + 1, ...(id ? { runId: id } : {}) });
+    });
+    return out;
+  }
+
+  /**
    * Check if the scheduler is currently running.
    */
   isRunning(): boolean {
@@ -1781,6 +1840,7 @@ export class Scheduler {
     // to the millisecond — operators can't tell the failure modes apart
     // from the run record alone.
     const startedAt = new Date().toISOString();
+    this.activeInfo.set(key, { startedAt, trigger, runId: requested?.runId });
     // The once occurrence this run is, if any: an `at` edited while it runs is
     // a new occurrence, which the run must not retire.
     const firedOnceAt =
@@ -1802,6 +1862,7 @@ export class Scheduler {
       // Releasing it admits the next queued run. `executeTask` releases it as
       // the run ends; this covers an executor that never reached it.
       this.activeRuns.delete(key);
+      this.activeInfo.delete(key);
       lease.release();
     }
     // After the slot is free and the task is no longer running, so a retry
