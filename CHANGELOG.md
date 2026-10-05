@@ -243,6 +243,7 @@
 
 ### Fixed
 
+- **Connect on a personal connector resumes a sign-in that was left open.** Closing the provider's tab and clicking Connect again returns the same sign-in instead of "already in progress" until the 15-minute timeout, and a connector whose sign-in is still open no longer reads "Connected" ([#1611](https://github.com/NimbleBrainInc/nimblebrain/issues/1611)).
 - **A declined or refused sign-in frees the connector at once.** The OAuth callback ends the pending flow when the server answers with an error, and so does disconnecting or removing the connector mid-sign-in, so Connect no longer answers "already in progress" until the flow's 15-minute timeout ([#1433](https://github.com/NimbleBrainInc/nimblebrain/issues/1433)).
 - **Config startup lines log at their real level.** An applied override is `info`, and an ignored override key, an unknown key or a deprecated key is `warn`, so a clean boot no longer logs `error` lines that alerting counts ([#1545](https://github.com/NimbleBrainInc/nimblebrain/issues/1545)).
 - **Deleting from the Files app works again.** The app confirmed with `window.confirm`, which the app sandbox blocks without showing anything, so every delete was silently cancelled. It now confirms in the app.
