@@ -994,6 +994,7 @@ describe("Scheduler — backoff", () => {
 
     expect(run?.status).toBe("failure");
     expect(run?.error).toContain("crm__search");
+    expect(run?.transient).toBe(false);
     expect(defOf(scheduler, auto.id)!.consecutiveErrors).toBe(4);
   });
 
