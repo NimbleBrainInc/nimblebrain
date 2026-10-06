@@ -149,6 +149,7 @@
 
 ### Breaking
 
+- **With `NB_FLEET_AUTHORIZER_ISSUER` set, the runtime refuses to start without a valid `NB_TENANT_ID` and `NB_MCP_AUTHORIZER_TENANT_KEY`.** It no longer sends a fleet token request without a tenant assertion, which an authorizer that requires one refuses anyway. Provision the key before upgrading.
 - **`tasks__run` selects a saved task with `taskId` (as `tasks__run_batch` does); `name` is removed.**
 - **Only the `fl_<24 hex>` file id form is served.** A file stored under the older `fl_<base36>_<8 hex>` id returns 400. **Breaking**: a deployment holding files under the older form must upgrade to `v0.35.0` and re-key them, and every reference to them, with that release's tooling before taking a later release.
 - **`POST /v1/workspaces/:wsId/chat` and `POST /v1/workspaces/:wsId/chat/stream` are removed.** Start a turn with `POST /v1/workspaces/:wsId/chat/start`, which answers the conversation id, and read it from `GET /v1/conversations/:id/events`, which resumes by sequence and ends with the `done` frame the synchronous route returned. The shell response drops `chatEndpoint`, the `subscribed` frame drops `subscriberId`, and the `X-Origin-Subscriber-Id` header is no longer read.

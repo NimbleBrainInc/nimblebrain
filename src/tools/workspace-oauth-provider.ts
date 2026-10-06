@@ -227,8 +227,9 @@ export interface WorkspaceOAuthProviderOptions {
    * the token endpoint belongs to this issuer. It is NEVER attached to a vendor
    * authorization server (Granola, Google, …): a tenant key signature must not
    * leak to a third party. Leave unset for every provider except the one
-   * driving the fleet-token flow; the assertion also no-ops when the tenant key
-   * (`NB_MCP_AUTHORIZER_TENANT_KEY`) isn't provisioned (rollout phase 1).
+   * driving the fleet-token flow. The fleet authorizer refuses a token request
+   * without an assertion, so a missing tenant key (`NB_MCP_AUTHORIZER_TENANT_KEY`)
+   * fails the request here with that cause rather than sending it unasserted.
    */
   fleetAuthorizerIssuer?: string;
 }
@@ -1412,8 +1413,7 @@ export class WorkspaceOAuthProvider implements OAuthClientProvider {
     if (!verifier) return;
     const inner = createHash("sha256").update(verifier).digest("base64url");
 
-    const assertion = buildTenantAssertion({ inner });
-    if (assertion) params.set("tenant_assertion", assertion);
+    params.set("tenant_assertion", buildTenantAssertion({ inner }));
   };
 
   async redirectToAuthorization(url: URL): Promise<void> {

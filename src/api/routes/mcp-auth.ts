@@ -10,6 +10,7 @@ import {
   signEnvelope,
   verifyEnvelopeAsTenant,
 } from "../../oauth/envelope.ts";
+import { readFleetAuthorizer } from "../../oauth/fleet-assertion.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
 import {
@@ -63,6 +64,10 @@ export function mcpAuthRoutes(ctx: AppContext) {
   // hitting a generic 500. Idempotent: returns the cached value on
   // subsequent calls in the route handlers below.
   getBouncerMode();
+  // Same for the fleet authorizer: with its issuer set, a missing or malformed
+  // tenant key refuses startup, since the authorizer refuses every unasserted
+  // token request.
+  readFleetAuthorizer();
 
   const app = new Hono<AppEnv>();
 
