@@ -159,6 +159,15 @@ function buildWorkosAuth(auth: Record<string, unknown>): WorkosAuth {
     auth.organizationId,
     "instance.json: workos auth 'organizationId' must be a string",
   );
+  // The provider reads a falsy organizationId as "no organization scope", so a
+  // blank value would boot without the org gate. A config renderer that
+  // interpolates an unset variable produces exactly that, so refuse it here and
+  // keep "no organization" expressible only by omitting the field.
+  if (organizationId !== undefined && organizationId.trim() === "")
+    throw new Error(
+      "instance.json: workos auth 'organizationId' must not be empty " +
+        "(omit the field to run without an organization)",
+    );
   if (organizationId !== undefined) workos.organizationId = organizationId;
   const apiKey = optionalString(
     auth.apiKey,

@@ -252,6 +252,11 @@ export class WorkosIdentityProvider implements IdentityProvider {
     // matters because the chart emits redirectUri:"" when the secret is unset.
     // A derived value must match a redirect URI registered in the WorkOS dashboard.
     this.redirectUri = resolveWorkosRedirectUri(config.redirectUri);
+    // Every org gate below reads a falsy organizationId as "no organization
+    // scope", so a blank one must never get this far. instance.json loading
+    // rejects it; this covers a provider built from config that skipped it.
+    if (config.organizationId !== undefined && config.organizationId.trim() === "")
+      throw new Error("workos auth 'organizationId' must not be empty");
     this.organizationId = config.organizationId;
     this.authkitDomain = config.authkitDomain;
     this.adminRoleSlugs = normalizeAdminRoleSlugs(config.adminRoleSlugs);
