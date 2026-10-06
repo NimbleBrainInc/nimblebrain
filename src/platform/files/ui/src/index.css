@@ -44,7 +44,7 @@ body {
 }
 .upload-btn:hover:not(:disabled) {
   background: var(--color-text-accent);
-  color: var(--nb-color-accent-foreground);
+  color: var(--color-text-inverse);
 }
 .upload-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .upload-btn svg { width: 14px; height: 14px; }
@@ -209,7 +209,7 @@ body {
 .detail-error {
   margin: 0 20px 12px;
   font-size: 12px;
-  color: var(--nb-color-danger);
+  color: var(--color-text-danger);
 }
 .detail-actions {
   padding: 0 20px 20px;
@@ -229,24 +229,24 @@ body {
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--color-text-accent);
-  color: var(--nb-color-accent-foreground);
+  color: var(--color-text-inverse);
 }
 .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-primary svg { width: 14px; height: 14px; }
 .btn-danger {
   padding: 6px 16px;
-  border: 1px solid color-mix(in srgb, var(--nb-color-danger) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-danger) 40%, transparent);
   border-radius: 20px;
   background: transparent;
-  color: var(--nb-color-danger);
+  color: var(--color-text-danger);
   font-size: 12px; font-weight: 500;
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
 .btn-danger:hover:not(:disabled) {
-  background: var(--nb-color-danger);
-  color: var(--nb-color-danger-foreground);
+  background: var(--color-text-danger);
+  color: var(--color-text-inverse);
 }
 .btn-danger:disabled { opacity: 0.6; cursor: not-allowed; }
 
@@ -268,10 +268,10 @@ body {
 .skel-row { height: 36px; border-radius: var(--border-radius-sm); }
 .error-banner {
   padding: 10px 14px; margin: 0 0 12px;
-  background: color-mix(in srgb, var(--nb-color-danger) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--nb-color-danger) 25%, transparent);
+  background: color-mix(in srgb, var(--color-text-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-danger) 25%, transparent);
   border-radius: var(--border-radius-sm);
-  color: var(--nb-color-danger);
+  color: var(--color-text-danger);
   font-size: 13px;
 }
 
@@ -467,7 +467,7 @@ body {
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 4px; }
 .modal-spacer { flex: 1; }
 .modal-message { font-size: 14px; color: var(--color-text-secondary); line-height: 1.5; }
-.modal-error { font-size: 12px; color: var(--nb-color-danger); }
+.modal-error { font-size: 12px; color: var(--color-text-danger); }
 .text-input {
   width: 100%;
   padding: 8px 10px;

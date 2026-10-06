@@ -15,8 +15,8 @@
  * the SDK's inline write.
  *
  * `@nimblebrain/synapse` 0.13.0 applies a 19-key neutral default map inline
- * before layering the host's variables on top, which silently overrode four
- * brand tokens (`--color-text-accent`, `--nb-color-danger/success/warning`).
+ * before layering the host's variables on top, which silently overrode brand
+ * tokens such as `--color-text-accent`.
  * Tracked upstream as NimbleBrainInc/synapse#49 — the default layer belongs in
  * an `@layer` stylesheet, where it behaves like the fallback it is described as.
  *
