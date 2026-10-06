@@ -232,7 +232,7 @@ Tools come from two places: connectors and built-in system tools.
 
 ### System tools
 
-Every NimbleBrain instance has these `nb__*` tools available:
+Every NimbleBrain instance gives the agent these `nb__*` tools:
 
 | Tool | Description |
 |------|-------------|
@@ -240,9 +240,8 @@ Every NimbleBrain instance has these `nb__*` tools available:
 | `nb__status` | Platform status; `scope: "connectors"` for per-connector health, `scope: "skills"` for loaded skills, `scope: "config"` for model and limits |
 | `nb__read_resource` | Read an MCP resource by URI |
 | `nb__open_app` | Open an app on the user's screen, optionally at a view inside it (by its resource URI) |
-| `manage_connectors` | List the connector catalog, install/disconnect remote MCP connectors per workspace or per user |
-| `manage_workspaces` | Create and manage workspaces and their members |
-| `manage_users` | Manage users (when a managed identity adapter is configured) |
+
+Administration tools are app-only: `nb__manage_connectors` (install and disconnect connectors), `nb__manage_workspaces` (create workspaces and manage their members), and `nb__manage_users` are called by the settings pages and never appear in the agent's tool list. The agent can find a connector in the catalog with `nb__search`, but installing it and creating a workspace happen in the UI.
 
 App-platform capabilities are exposed through prefixed tool families: `conversations__*`, `files__*`, `tasks__*`, `skills__*`, `usage__report`, and `compose__effective_context`. (Workspace instructions are edited in the settings UI; the tool behind that UI is internal and not part of the agent's surface.)
 
@@ -278,15 +277,18 @@ The owner (`ownerId`) is the authorization principal — only they can read or r
 
 ### JSONL format
 
-Each conversation is a single `.jsonl` file:
+Each conversation is a single append-only `.jsonl` event log:
 
 ```
-{"id":"conv_abc123","createdAt":"2025-03-15T10:30:00Z"}
-{"role":"user","content":"What files are in my home directory?","ts":"..."}
-{"role":"assistant","content":"Let me check...","ts":"...","toolCalls":[...]}
+{"id":"conv_abc123","ownerId":"user_abc123","createdAt":"2025-03-15T10:30:00Z", ...}
+{"ts":"...","type":"user.message","content":[...]}
+{"ts":"...","type":"run.start","runId":"run_1","model":"anthropic:claude-sonnet-4-6"}
+{"ts":"...","type":"llm.response","runId":"run_1","content":[...],"usage":{...}}
+{"ts":"...","type":"tool.done","runId":"run_1", ...}
+{"ts":"...","type":"run.done","runId":"run_1","stopReason":"complete"}
 ```
 
-Line 1 is metadata (ID, creation timestamp). Lines 2+ are `StoredMessage` objects with role, content, timestamp, and optional tool call records.
+Line 1 is the conversation header (ID, owner, workspace, creation time). Every later line is one event. Messages, the title, and token usage are derived from the events when the conversation is read, which is what lets a run replay after a crash and lets history be compacted.
 
 ### Resuming conversations
 

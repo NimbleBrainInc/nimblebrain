@@ -102,7 +102,7 @@ Only workspace-level events are written to this log; conversation streaming even
 **`audit.auth_failure`** — Authentication failed for a request. Carries `ip`, `method`, and `path`.
 
 ```json
-{"ts":"2026-03-25T14:30:05.000Z","event":"audit.auth_failure","ip":"203.0.113.7","method":"POST","path":"/api/chat"}
+{"ts":"2026-03-25T14:30:05.000Z","event":"audit.auth_failure","ip":"203.0.113.7","method":"POST","path":"/v1/workspaces/ws_3f9a1c7e0b2d4856/chat/start"}
 ```
 
 **`audit.permission_denied`** — A user declined a tool's confirmation prompt. Carries the `tool`, the unprefixed `action`, and the `target` (or `null`).
