@@ -1043,7 +1043,8 @@ function createHandlers(
 
 /**
  * The 2025 leg: a session's SDK v2 `Server`, on the 2025 era its `initialize`
- * negotiated. It serves no task augmentation (ADR-0046): it declares no `tasks`
+ * negotiated. Its `instructions` are the platform apps' own
+ * (`Runtime.platformInstructions`), since a remote client loads no skills. It serves no task augmentation (ADR-0046): it declares no `tasks`
  * capability, and every `tools/call` runs to completion and answers a
  * `CallToolResult`. A `params.task` a client sends anyway is removed and logged
  * at the door (`withoutTaskParams`), as the 2025-11-25 spec has a receiver that
@@ -1054,9 +1055,10 @@ function createLegacyServer(
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
 ): Server {
+  const instructions = runtime?.platformInstructions();
   const server = new Server(
     { name: "nimblebrain", version: MCP_SERVER_VERSION },
-    { capabilities: { tools: {}, resources: {} } },
+    { capabilities: { tools: {}, resources: {} }, ...(instructions ? { instructions } : {}) },
   );
 
   const handlers = createHandlers(runtime, features, sessionCtx);
@@ -1087,6 +1089,7 @@ function createModernServer(
   features: ResolvedFeatures,
   sessionCtx: McpSessionContext,
 ): Server {
+  const instructions = runtime?.platformInstructions();
   const server = new Server(
     { name: "nimblebrain", version: MCP_SERVER_VERSION },
     {
@@ -1095,6 +1098,7 @@ function createModernServer(
         resources: {},
         ...(runtime ? { extensions: { [TASKS_EXTENSION_ID]: {} } } : {}),
       },
+      ...(instructions ? { instructions } : {}),
     },
   );
   const handlers = createHandlers(runtime, features, sessionCtx);

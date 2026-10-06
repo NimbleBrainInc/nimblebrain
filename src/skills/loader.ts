@@ -21,6 +21,12 @@ export function loadCoreSkills(): Skill[] {
   return loadSkillDir(CORE_DIR, "core").map(markVendored);
 }
 
+/** One core skill's body by its file name (`task-authoring`), or `""` when it is absent. */
+export function coreSkillBody(name: string): string {
+  const path = join(CORE_DIR, `${name}.md`);
+  return existsSync(path) ? (parseSkillFile(path)?.body.trim() ?? "") : "";
+}
+
 /**
  * Stamp `provenance.origin = "vendored"` on a platform-shipped skill (core /
  * builtin). This is the one durable marker that these skills are the platform's

@@ -6,6 +6,7 @@ import { log } from "../../observability/log.ts";
 import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import type { TaskRequest } from "../../runtime/types.ts";
+import { coreSkillBody } from "../../skills/loader.ts";
 import { isTaskForbiddenIdentityTool } from "../../tools/identity-sources.ts";
 import { defineInProcessApp, type InProcessTool } from "../../tools/in-process-app.ts";
 import type { McpSource } from "../../tools/mcp-source.ts";
@@ -632,6 +633,9 @@ export async function createTasksSource(
     {
       name: "tasks",
       version: "1.0.0",
+      // The task-authoring skill, which chat loads by tool affinity, is what a
+      // remote MCP client is told too: one guide, served both ways.
+      instructions: coreSkillBody("task-authoring"),
       tools,
       resources,
       placements: [

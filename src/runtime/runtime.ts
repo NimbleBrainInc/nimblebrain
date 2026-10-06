@@ -3557,6 +3557,20 @@ export class Runtime {
   }
 
   /**
+   * The platform apps' `initialize.instructions`: how to use their tools, for a
+   * remote MCP client, which reaches them through `/mcp` and loads no skills.
+   * Undefined when no app declares any.
+   */
+  platformInstructions(): string | undefined {
+    const parts: string[] = [];
+    for (const source of this._platformSources) {
+      const text = source instanceof McpSource ? source.getInstructions()?.trim() : undefined;
+      if (text) parts.push(text);
+    }
+    return parts.length > 0 ? parts.join("\n\n") : undefined;
+  }
+
+  /**
    * Resolve a kernel identity-scoped source by name. v1 set: `conversations`
    * (Files / Tasks join when their data moves to identity ownership).
    * Returns `undefined` for an unknown or non-identity source. No workspace:
