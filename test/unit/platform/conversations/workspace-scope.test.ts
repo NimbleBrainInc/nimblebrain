@@ -59,6 +59,7 @@ function writeConv(spec: ConvSpec): void {
   mkdirSync(dir, { recursive: true });
   const ts = spec.updatedAt ?? "2026-01-01T00:00:00.000Z";
   const meta: Record<string, unknown> = {
+    model: "anthropic:claude-sonnet-4-6",
     id: spec.id,
     createdAt: ts,
     updatedAt: ts,

@@ -103,7 +103,7 @@ export async function handleGet(
     // can show which model an open conversation runs on — a model-slot change
     // does not move it, so the configured default is not the answer. Absent on
     // records predating the binding, which resolve from current config.
-    ...(conversation.meta.model ? { model: conversation.meta.model } : {}),
+    model: conversation.meta.model,
     ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
     // The workspace the conversation is sealed to. Surfaced so a client that
     // holds an open conversation can tell which workspace it belongs to — the

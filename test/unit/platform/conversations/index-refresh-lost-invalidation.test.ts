@@ -23,6 +23,7 @@ let dir: string;
 
 function writeConv(id: string): void {
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

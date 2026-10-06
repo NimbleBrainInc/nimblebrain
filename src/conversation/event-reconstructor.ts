@@ -554,7 +554,7 @@ function baseResponseMetadata(llmResp: LlmResponseEvent, iterations: number) {
     model: llmResp.model,
     llmMs: llmResp.llmMs,
     iterations,
-    ...(llmResp.finishReason ? { finishReason: llmResp.finishReason } : {}),
+    finishReason: llmResp.finishReason,
   };
 }
 
@@ -572,7 +572,7 @@ function buildToolCallMeta(
     id: tc.toolCallId,
     name: tc.toolName,
     input: (toolInputs.get(tc.toolCallId) ?? parseToolInput(tc.input)) as Record<string, unknown>,
-    output: done.output ?? "",
+    output: done.output,
     ok: done.ok ?? true,
     ms: done.ms ?? 0,
   };
@@ -607,7 +607,7 @@ function buildToolResultMessage(
         toolName: tc.toolName,
         output: {
           type: "text",
-          value: done.modelOutput ?? boundToolResultForModel(done.output ?? ""),
+          value: done.modelOutput ?? boundToolResultForModel(done.output),
         },
       },
     ],
@@ -655,7 +655,7 @@ function buildPlaceholderMessage(
   const reasoningWithMeta = replayContent.filter(
     (c): c is LanguageModelV4ReasoningPart => c.type === "reasoning" && c.providerOptions != null,
   );
-  const hasAbnormalFinish = llmResp.finishReason != null && llmResp.finishReason !== "stop";
+  const hasAbnormalFinish = llmResp.finishReason !== "stop";
   const hasAnyReasoning = replayContent.some((c) => c.type === "reasoning");
   const shouldEmitPlaceholder = hasOrphanedToolCalls || hasAnyReasoning || hasAbnormalFinish;
 
@@ -663,7 +663,7 @@ function buildPlaceholderMessage(
 
   const placeholderText = hasOrphanedToolCalls
     ? ORPHANED_TOOL_CALLS_MARKER
-    : (TRUNCATION_MARKERS[llmResp.finishReason ?? "other"] ?? TRUNCATION_MARKERS.other!);
+    : (TRUNCATION_MARKERS[llmResp.finishReason] ?? TRUNCATION_MARKERS.other!);
   const reasoningRoundTrips = !hasOrphanedToolCalls && reasoningWithMeta.length > 0;
   // Inferred type: ReasoningPart[] | [{type:"text",text:string}]. Both are
   // assignable to the assistant variant's content union; an explicit
@@ -849,10 +849,7 @@ export function deriveUsageMetrics(events: readonly ConversationEvent[]): UsageM
   let lastModel: string | null = null;
 
   for (const event of events) {
-    // Pre-unification events stored token counts as flat fields and have
-    // no `usage` struct. We deliberately do not migrate them — they
-    // contribute zero to derived totals — but we must not crash on them.
-    if (event.type === "llm.response" && event.usage) {
+    if (event.type === "llm.response") {
       totalInputTokens += event.usage.inputTokens;
       totalOutputTokens += event.usage.outputTokens;
       lastModel = event.model;

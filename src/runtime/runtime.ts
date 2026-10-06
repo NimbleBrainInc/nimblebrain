@@ -1387,11 +1387,8 @@ export class Runtime {
     // configured slot: a conversation runs on one model for its life, so a
     // slot change retargets new conversations only. `makeCreateOpts` above
     // carries the pin, so a conversation created on this path is already bound
-    // and this reads back what it was born with. Absent only on legacy records
-    // predating the binding, which resolve from current config as before.
-    const resolvedModelString =
-      conversation.model ??
-      runWithRequestContext(turnCtx, () => this.resolveRequestModelString(request.model));
+    // and this reads back what it was born with.
+    const resolvedModelString = conversation.model;
 
     const handle = await this.startRun({
       trigger: "chat",
@@ -2537,13 +2534,10 @@ export class Runtime {
   private emitChatStart(
     requestSink: EventSink | undefined,
     conversationId: string,
-    model: string | undefined,
+    model: string,
   ): void {
     if (!requestSink) return;
-    requestSink.emit({
-      type: "chat.start",
-      data: { conversationId, ...(model ? { model } : {}) },
-    });
+    requestSink.emit({ type: "chat.start", data: { conversationId, model } });
   }
 
   /**

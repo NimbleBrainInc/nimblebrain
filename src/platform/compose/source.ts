@@ -54,7 +54,6 @@ import { getRequestContext } from "../../runtime/request-context.ts";
 import type { Runtime } from "../../runtime/runtime.ts";
 import { hashSkillBody } from "../../runtime/skills-loaded-payload.ts";
 import { collectActivatableSkills, toCatalogEntries } from "../../skills/catalog.ts";
-import { skillDisplayName } from "../../skills/display-name.ts";
 import { parseSkillContent } from "../../skills/loader.ts";
 import { partitionSkillsByRole, selectLayer3Skills } from "../../skills/select.ts";
 import type { InProcessTool } from "../../tools/in-process-app.ts";
@@ -523,33 +522,26 @@ function findLatestContextAssembled(
 
 /**
  * Project a recorded context source onto the wire shape (drops unknown extras).
- * A history row recorded before the field was renamed carries its message count
- * as `turns`; normalize it so readers only handle `messages`. `annotation` is
- * stamped from the same set `windowTokens` is summed over, so a renderer's row
- * layout and the total under it can't be derived from different rules.
+ * `annotation` is stamped from the same set `windowTokens` is summed over, so a
+ * renderer's row layout and the total under it can't be derived from different
+ * rules.
  */
 function toAssembledSource(s: ContextAssembledEvent["sources"][number]): AssembledContextSource {
-  const messages = typeof s.messages === "number" ? s.messages : s.turns;
   return {
     kind: s.kind,
     tokens: s.tokens,
     ...(typeof s.count === "number" ? { count: s.count } : {}),
-    ...(typeof messages === "number" ? { messages } : {}),
+    ...(typeof s.messages === "number" ? { messages: s.messages } : {}),
     ...(typeof s.compacted === "boolean" ? { compacted: s.compacted } : {}),
     ...(ANNOTATION_KINDS.has(s.kind) ? { annotation: true } : {}),
   };
 }
 
-/**
- * Project a recorded skill entry onto the wire shape. `name` is resolved here
- * rather than passed through, so every consumer of this tool — the web
- * surfaces and any agent reading `structuredContent` — gets a usable name even
- * for runs recorded before the field existed.
- */
+/** Project a recorded skill entry onto the wire shape. */
 function toAssembledSkill(s: SkillsLoadedEvent["skills"][number]): AssembledContextSkill {
   return {
     id: s.id,
-    name: skillDisplayName(s),
+    name: s.name,
     ...(s.connector ? { connector: s.connector } : {}),
     scope: s.scope,
     tokens: s.tokens,

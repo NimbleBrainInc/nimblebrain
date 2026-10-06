@@ -64,6 +64,7 @@ describe("UC-W1: Private work with shared tools", () => {
     const store = new EventSourcedConversationStore({ dir: convDir });
 
     const matConv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
       workspaceId: eng.id,
       ownerId: mat.id,
     });
@@ -115,7 +116,11 @@ describe("UC-W2: Single-owner conversation (Stage 1)", () => {
     const convDir = join(workDir, "workspaces", eng.id, "conversations");
     const store = new EventSourcedConversationStore({ dir: convDir });
 
-    const conv = await store.create({ workspaceId: eng.id, ownerId: mat.id });
+    const conv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
+      workspaceId: eng.id,
+      ownerId: mat.id,
+    });
 
     // Mat (owner) can load it.
     const matLoaded = await store.load(conv.id, { userId: mat.id });

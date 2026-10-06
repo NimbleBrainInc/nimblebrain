@@ -138,12 +138,16 @@ export class ConversationCorruptedError extends Error {
   readonly code = "conversation_corrupted";
   constructor(
     public readonly conversationId: string,
-    public readonly reason: "missing_owner",
+    public readonly reason: "missing_owner" | "missing_model",
   ) {
     super(
-      `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
-        `ownership invariant and has no ownerId. No migration stamps these — add an ownerId ` +
-        `to its line-1 metadata or remove the file.`,
+      reason === "missing_owner"
+        ? `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
+            `ownership invariant and has no ownerId. No migration stamps these — add an ownerId ` +
+            `to its line-1 metadata or remove the file.`
+        : `Conversation ${conversationId} is corrupted (${reason}): the file predates the ` +
+            `model binding and has no model. Add a provider-qualified model to its line-1 ` +
+            `metadata or remove the file.`,
     );
     this.name = "ConversationCorruptedError";
   }

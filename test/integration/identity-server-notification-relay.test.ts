@@ -222,9 +222,11 @@ describe("a person's own apps announce their writes to that person", () => {
   it("conversations: a conversation created in the conversation store reaches its owner's stream", async () => {
     const own = await openOwnStream();
     try {
-      await runtime
-        .workspaceConversationStore(TEST_WORKSPACE_ID, DEV_IDENTITY.id)
-        .create({ ownerId: DEV_IDENTITY.id, workspaceId: TEST_WORKSPACE_ID });
+      await runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_IDENTITY.id).create({
+        model: "anthropic:claude-sonnet-4-6",
+        ownerId: DEV_IDENTITY.id,
+        workspaceId: TEST_WORKSPACE_ID,
+      });
 
       await eventually(() => notificationsFor(own.frames, "conversations").length > 0);
       expect(notificationsFor(own.frames, "conversations")[0]).toEqual({
@@ -242,6 +244,7 @@ describe("a person's own apps announce their writes to that person", () => {
     // through this announcement, so a new chat's row picks up its title live.
     const store = runtime.workspaceConversationStore(TEST_WORKSPACE_ID, DEV_IDENTITY.id);
     const conversation = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
       ownerId: DEV_IDENTITY.id,
       workspaceId: TEST_WORKSPACE_ID,
     });

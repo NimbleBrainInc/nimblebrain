@@ -3,24 +3,22 @@
  * line and the "In context" popover so both label reasons, provenance, and
  * scope colors identically.
  *
- * The runtime records each skill's own name on the `skills.loaded` event and
- * both read paths resolve it, so a display surface renders `skill.name`
- * directly rather than picking a name out of the id — doing that is what
- * rendered every connector skill as `SKILL` (a connector skill's id is its
- * `skill://…/SKILL.md` entrypoint). `nameFromSkillId` below is the normalizer's
- * last-resort guard for a frame that arrives without one, NOT a display path.
+ * The runtime records each skill's own name on the `skills.loaded` event, so a
+ * display surface renders `skill.name` directly rather than picking a name out
+ * of the id — doing that is what rendered every connector skill as `SKILL` (a
+ * connector skill's id is its `skill://…/SKILL.md` entrypoint).
+ * `nameFromSkillId` below is for what carries no name: a stream frame that
+ * arrives without one, and a traced prompt layer, which records only its path.
  */
 
 import type { SkillScope } from "../_generated/platform-schemas/skills";
 
 /**
- * A name from a skill id, for a stream frame that arrived without one.
+ * A name from a skill id, for something that carries only the id.
  *
- * The normalizer in `chat-store` needs *some* string, and the id is a path
- * ending in `/SKILL.md` for every connector skill — printing it raw would put
- * the exact output this surface exists to eliminate back on screen. Mirrors
- * `src/skills/display-name.ts`; the copy exists because the browser can't
- * import from `src/`.
+ * The id is a path ending in `/SKILL.md` for every connector skill — printing
+ * it raw would put the exact output this surface exists to eliminate back on
+ * screen — so the entrypoint marker names its directory instead.
  */
 export function nameFromSkillId(id: string): string {
   const segments = id.split("/").filter(Boolean);

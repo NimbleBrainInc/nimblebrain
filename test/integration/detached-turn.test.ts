@@ -103,7 +103,7 @@ describe("detached turns (server-authoritative streaming)", () => {
     const ownerId = "usr_default";
     const created = await runtime
       .workspaceConversationStore(TEST_WORKSPACE_ID, ownerId)
-      .create({ ownerId, workspaceId: TEST_WORKSPACE_ID });
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId, workspaceId: TEST_WORKSPACE_ID });
     const activeAtAnnounce: boolean[] = [];
     const original = runtime.announceIdentitySourceChange.bind(runtime);
     const spy = spyOn(runtime, "announceIdentitySourceChange").mockImplementation(

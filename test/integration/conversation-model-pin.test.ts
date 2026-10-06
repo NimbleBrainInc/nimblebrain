@@ -308,66 +308,6 @@ describe("the binding survives operations on the conversation", () => {
   });
 });
 
-describe("conversations that predate the binding", () => {
-  test("an unpinned conversation resolves from current config", async () => {
-    // A genuine pre-feature record: created through the store with no model,
-    // so line 1 on disk has no `model` field. Deleting the field off a loaded
-    // object would prove nothing — `load()` re-reads the file every call.
-    const seed = await runtime.chat({
-      message: "seed",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-    const store = await runtime.resolveConversationStore(seed.conversationId);
-    const legacy = await store!.create({
-      ownerId: USER.id,
-      workspaceId: TEST_WORKSPACE_ID,
-    });
-    expect(legacy.model).toBeUndefined();
-
-    runtime.updateConfig({ models: { default: MODEL_B } });
-    await runtime.chat({
-      message: "resumed",
-      conversationId: legacy.id,
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-
-    // No pin to honor, so the turn follows current config — today's behavior,
-    // unchanged. The binding must not retroactively invent one.
-    expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
-    expect(await pinOf(legacy.id)).toBeUndefined();
-  });
-
-  test("an unpinned conversation follows the resumer's preference", async () => {
-    // Resolving from current config is the third place the model is chosen,
-    // and it has to see the caller the same way the create path does. With no
-    // pin to defer to, an untinted resolution runs the org default here.
-    const seed = await runtime.chat({
-      message: "seed",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: PICKY,
-    });
-    const store = await runtime.resolveConversationStore(seed.conversationId);
-    const legacy = await store!.create({
-      ownerId: PICKY.id,
-      workspaceId: TEST_WORKSPACE_ID,
-    });
-    expect(legacy.model).toBeUndefined();
-
-    runtime.updateConfig({ models: { default: MODEL_A } });
-    await runtime.chat({
-      message: "resumed",
-      conversationId: legacy.id,
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: PICKY,
-    });
-
-    expect(await modelsUsed(legacy.id)).toEqual([MODEL_B]);
-    expect(await pinOf(legacy.id)).toBeUndefined();
-  });
-});
-
 describe("the detached-turn path", () => {
   test("a conversation created by startTurn is bound like any other", async () => {
     // `/v1/workspaces/:wsId/chat/start` → `startTurn` is the web client's chat path, and it
@@ -421,45 +361,6 @@ describe("how a client learns the binding", () => {
     // default here would contradict the conversation on its first paint.
     expect(data?.model).toBe(MODEL_B);
     expect(data?.model).toBe(await pinOf(conversationId));
-  });
-
-  test("announces no model on a conversation that has no binding", async () => {
-    // The turn still resolves a model from current config — but that is not a
-    // binding, and announcing it would let the client assert one that nothing
-    // holds, then quietly go stale the next time a slot moved.
-    runtime.updateConfig({ models: { default: MODEL_A } });
-    const seed = await runtime.chat({
-      message: "seed",
-      workspaceId: TEST_WORKSPACE_ID,
-      identity: USER,
-    });
-    const store = await runtime.resolveConversationStore(seed.conversationId);
-    const legacy = await store!.create({
-      ownerId: USER.id,
-      workspaceId: TEST_WORKSPACE_ID,
-    });
-    expect(legacy.model).toBeUndefined();
-
-    const { sink, events } = recorder();
-    await runtime.chat(
-      {
-        message: "resumed",
-        conversationId: legacy.id,
-        workspaceId: TEST_WORKSPACE_ID,
-        identity: USER,
-      },
-      sink,
-    );
-
-    const data = events.find((e) => e.type === "chat.start")?.data as {
-      conversationId: string;
-      model?: string;
-    };
-    expect(data.conversationId).toBe(legacy.id);
-    expect(data.model).toBeUndefined();
-    // The turn did run on something; that something just is not a pin.
-    expect(await modelsUsed(legacy.id)).toEqual([MODEL_A]);
-    expect(await pinOf(legacy.id)).toBeUndefined();
   });
 
   test("a later turn announces the pin, not the current default", async () => {

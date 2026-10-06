@@ -38,6 +38,7 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
   const updatedAt = opts.updatedAt ?? createdAt;
 
   const meta = JSON.stringify({
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt,
     updatedAt,
