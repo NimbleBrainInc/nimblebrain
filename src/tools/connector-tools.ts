@@ -844,39 +844,109 @@ async function applyOperatorOAuth(
 }
 
 /**
- * The account an owner's connection is signed in as, or null. A brokered
- * connector asks its provider, which reads what it recorded at connect time; a
- * runtime-native OAuth connector reads the OIDC claims captured from the token
- * response. Display-only, so any failure reads as no identity.
+ * The account an owner's connection is signed in as, or null. Read from what
+ * the connection's sign-in recorded; a connection with nothing recorded is
+ * asked, once, through the tool its catalog entry declares
+ * (`lookUpConnectorIdentity`). Display-only, so any failure reads as no
+ * identity.
+ *
+ * `catalog` is the operator's entries the ref is bound against; a caller that
+ * already resolved the ref's entry passes just that one.
  */
 async function readConnectorIdentity(
   ctx: ManageConnectorsContext,
   owner: ConnectorOwner,
   ref: ConnectorRef,
   serverName: string,
+  catalog: readonly ConnectorCatalogEntry[],
 ): Promise<ConnectedAccountIdentity | null> {
-  const workDir = ctx.runtime.getWorkDir();
   try {
-    const brokered = brokeredRef(ref);
-    if (brokered) {
-      const provider = ctx.runtime.getManagedConnectorRegistry().get(brokered.provider);
-      return (await provider?.identity?.({ owner, brokered, workDir })) ?? null;
-    }
-    const claims = await new McpOAuthRecords({ owner, serverName }).read<{
-      email?: unknown;
-      name?: unknown;
-    }>("identity", {
-      caller: "connector-tools:identity",
-      purpose: `display the connected account for ${serverName}`,
-    });
-    if (!claims) return null;
-    const out: ConnectedAccountIdentity = {};
-    if (typeof claims.email === "string") out.email = claims.email;
-    if (typeof claims.name === "string") out.name = claims.name;
-    return out.email || out.name ? out : null;
+    return (
+      (await storedConnectorIdentity(ctx, owner, ref, serverName)) ??
+      (await lookUpConnectorIdentity(ctx, owner, ref, serverName, catalog))
+    );
   } catch {
     return null;
   }
+}
+
+/**
+ * What the sign-in recorded. A brokered connector asks its provider, which
+ * reads what it stored when the connection landed; a runtime-native OAuth
+ * connector reads the OIDC claims captured from the token response.
+ */
+async function storedConnectorIdentity(
+  ctx: ManageConnectorsContext,
+  owner: ConnectorOwner,
+  ref: ConnectorRef,
+  serverName: string,
+): Promise<ConnectedAccountIdentity | null> {
+  const brokered = brokeredRef(ref);
+  if (brokered) {
+    const provider = ctx.runtime.getManagedConnectorRegistry().get(brokered.provider);
+    const workDir = ctx.runtime.getWorkDir();
+    return (await provider?.identity?.({ owner, brokered, workDir })) ?? null;
+  }
+  const claims = await new McpOAuthRecords({ owner, serverName }).read<{
+    email?: unknown;
+    name?: unknown;
+  }>("identity", {
+    caller: "connector-tools:identity",
+    purpose: `display the connected account for ${serverName}`,
+  });
+  if (!claims) return null;
+  const out: ConnectedAccountIdentity = {};
+  if (typeof claims.email === "string") out.email = claims.email;
+  if (typeof claims.name === "string") out.name = claims.name;
+  return out.email || out.name ? out : null;
+}
+
+/**
+ * Ask the connected service which account it is signed in as, for a
+ * connection whose sign-in named none: an authorization server that is not
+ * OIDC, a broker that recorded no name. Only the service knows, and the tool
+ * that says so is declared on its catalog entry (`account`), so this applies
+ * to a ref bound to that entry and to nothing else.
+ *
+ * The answer is stored where the sign-in would have put it, so it is asked
+ * once per sign-in: the next read finds it stored, and a new sign-in replaces
+ * the record and with it the answer. That is also why only a connection that
+ * has signed in is asked: a source can be warm before its connection exists,
+ * and nothing would ever replace an answer stored for no sign-in.
+ */
+async function lookUpConnectorIdentity(
+  ctx: ManageConnectorsContext,
+  owner: ConnectorOwner,
+  ref: ConnectorRef,
+  serverName: string,
+  catalog: readonly ConnectorCatalogEntry[],
+): Promise<ConnectedAccountIdentity | null> {
+  const binding = bindCatalogEntry(ref, catalog);
+  if (binding.kind !== "bound" || !binding.entry.account) return null;
+  const brokered = brokeredRef(ref);
+  const provider = brokered
+    ? ctx.runtime.getManagedConnectorRegistry().get(brokered.provider)
+    : undefined;
+  if (brokered && !provider?.recordIdentity) return null;
+  if (!(await hasPersistedConnection(ctx, owner, ref, serverName))) return null;
+
+  const label = await ctx.runtime
+    .getLifecycle()
+    .lookUpAccount(owner, serverName, binding.entry.account);
+  if (label === null) return null;
+  // The sign-in may have gone while the service was answering (a disconnect,
+  // an uninstall); an answer stored then would outlive it.
+  if (!(await hasPersistedConnection(ctx, owner, ref, serverName))) return null;
+  const identity: ConnectedAccountIdentity = { name: label };
+  if (brokered) {
+    await provider?.recordIdentity?.(
+      { owner, brokered, workDir: ctx.runtime.getWorkDir() },
+      identity,
+    );
+  } else {
+    await new McpOAuthRecords({ owner, serverName }).write("identity", identity);
+  }
+  return identity;
 }
 
 /**
@@ -960,6 +1030,7 @@ async function buildInstalledEntry(
       { type: "workspace", wsId: deps.wsId },
       instance.ref,
       instance.serverName,
+      cat ? [cat] : [],
     );
     if (identity) entry.identity = identity;
   }
@@ -3161,7 +3232,7 @@ async function handleListPersonalConnectors(
       const authed = await hasPersistedConnection(ctx, owner, ref, serverName);
       // Credential teardown deletes the identity record with the tokens, so an
       // unconnected connector reads none (and a missing key writes no audit line).
-      const identity = await readConnectorIdentity(ctx, owner, ref, serverName);
+      const identity = await readConnectorIdentity(ctx, owner, ref, serverName, catalog);
       return {
         serverName,
         displayName: cat?.name ?? serverName,

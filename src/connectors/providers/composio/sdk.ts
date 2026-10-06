@@ -31,6 +31,7 @@
 import type { ConnectorOwner } from "../../../identity/connector-owner.ts";
 import { publicOrigin } from "../../../oauth/public-origin.ts";
 import { log } from "../../../observability/log.ts";
+import { parseIdTokenClaims } from "../../../tools/oauth-identity.ts";
 import { validateComposioConfig } from "./config.ts";
 
 /**
@@ -127,14 +128,26 @@ async function withTimeout<T>(
 }
 
 /**
- * The provider-side identity (e.g. the Gmail address) Composio records on an
- * ACTIVE connected account at `state.val.displayName`. The same `state.val`
- * carries the vendor's tokens, so this takes the one string and nothing else;
- * the account object never leaves the call site that fetched it.
+ * The provider-side identity (e.g. the Gmail address) of an ACTIVE connected
+ * account: `state.val.displayName`, which Composio records for some toolkits,
+ * or else the email in the `state.val.id_token` the vendor issued when the
+ * grant carried identity scopes (an OIDC vendor such as Google, where the
+ * auth config requests `openid` and `userinfo.email`). The token is read the
+ * way the runtime's own OAuth path reads one: unverified, and for display
+ * only. The same `state.val` carries the vendor's tokens, so this takes the
+ * one string and nothing else; the account object never leaves the call site
+ * that fetched it.
  */
 function accountDisplayName(account: unknown): string | undefined {
-  const val = (account as { state?: { val?: { displayName?: unknown } } } | null)?.state?.val;
-  const name = val?.displayName;
+  const val = (
+    account as { state?: { val?: { displayName?: unknown; id_token?: unknown } } } | null
+  )?.state?.val;
+  const name =
+    typeof val?.displayName === "string" && val.displayName.trim().length > 0
+      ? val.displayName
+      : typeof val?.id_token === "string"
+        ? parseIdTokenClaims(val.id_token)?.email
+        : undefined;
   if (typeof name !== "string") return undefined;
   const trimmed = name.trim();
   if (trimmed.length === 0 || trimmed.length > DISPLAY_NAME_MAX_LENGTH) return undefined;
