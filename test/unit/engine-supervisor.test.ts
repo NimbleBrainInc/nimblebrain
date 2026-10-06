@@ -359,7 +359,8 @@ describe("engine ↔ supervisor wiring", () => {
     expect(done).toHaveLength(5);
     // Turn 4: the probation directive, which does not call the tool disabled.
     expect(done[3]!.supervisorTripped).toBe(true);
-    expect(String(done[3]!.output)).toContain("ran, but its result shows no progress");
+    expect(String(done[3]!.output)).toContain("made no progress, so the tool was still withheld");
+    expect(String(done[3]!.output)).not.toContain(" ran");
     expect(String(done[3]!.output)).not.toContain("disabled");
     // Turn 5: the real result, untouched.
     expect(done[4]!.supervisorTripped).toBeUndefined();
