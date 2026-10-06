@@ -296,6 +296,59 @@ describe("supervisor — recovery from a trip", () => {
   });
 });
 
+describe("supervisor — refusing a repeat of the tripped call", () => {
+  it("refuses the exact call a success trip was made of, in any key order", () => {
+    const sup = createRunSupervisor();
+    for (const _ of [1, 2, 3]) sup.observe(call("save", { id: "a", n: 1 }), textResult("ok"));
+    expect(sup.snapshot().trippedTools).toEqual(["save"]);
+
+    const refusal = sup.repeatRefusal(call("save", { n: 1, id: "a" }));
+    expect(refusal).not.toBeNull();
+    expect(refusal?.isError).toBe(true);
+    const text = textOf(refusal as ToolResult);
+    expect(text).toContain("was not run");
+    expect(text).toContain("3 times in a row");
+    expect(text).toContain("A call with different input is not refused");
+  });
+
+  it("does not refuse a call with different input, which can still recover", () => {
+    const sup = createRunSupervisor();
+    for (const _ of [1, 2, 3]) sup.observe(call("save", { id: "a" }), textResult("ok"));
+    expect(sup.repeatRefusal(call("save", { id: "b" }))).toBeNull();
+    expect(sup.observe(call("save", { id: "b" }), textResult("ok: b")).type).toBe("pass");
+    expect(sup.snapshot().trippedTools).toEqual([]);
+    // Recovered, so nothing is refused, the original input included.
+    expect(sup.repeatRefusal(call("save", { id: "a" }))).toBeNull();
+  });
+
+  it("refuses nothing after an error trip, so a corrected call still runs", () => {
+    const sup = createRunSupervisor();
+    for (const _ of [1, 2, 3]) sup.observe(call("log", { kind: "x" }), textResult("bad", true));
+    expect(sup.snapshot().trippedTools).toEqual(["log"]);
+    expect(sup.repeatRefusal(call("log", { kind: "x" }))).toBeNull();
+    expect(sup.repeatRefusal(call("log", { kind: "y" }))).toBeNull();
+  });
+
+  it("refuses nothing after a non-advancing trip", () => {
+    const sup = createRunSupervisor();
+    const miss: ToolResult = {
+      content: [{ type: "text", text: "no matches" }],
+      isError: false,
+      _meta: { [NON_ADVANCING_META_KEY]: true },
+    };
+    for (const _ of [1, 2, 3]) sup.observe(call("search", { q: "x" }), miss);
+    expect(sup.snapshot().trippedTools).toEqual(["search"]);
+    expect(sup.repeatRefusal(call("search", { q: "x" }))).toBeNull();
+  });
+
+  it("refuses nothing for an untripped tool", () => {
+    const sup = createRunSupervisor();
+    sup.observe(call("save", { id: "a" }), textResult("ok"));
+    sup.observe(call("save", { id: "a" }), textResult("ok"));
+    expect(sup.repeatRefusal(call("save", { id: "a" }))).toBeNull();
+  });
+});
+
 describe("supervisor — counter reset on different fingerprint", () => {
   it("counter resets to 1 when fingerprint changes mid-run", () => {
     const sup = createRunSupervisor();

@@ -65,13 +65,19 @@ function recordingEcho(responses: EchoModelResponse[]) {
 const TOOL: ToolSchema = {
   name: "search",
   description: "search",
-  inputSchema: { type: "object", properties: {} },
+  inputSchema: { type: "object", properties: { page: { type: "number" } } },
 };
 
-/** `n` tool-calling responses, then a plain answer. */
+/**
+ * `n` tool-calling responses, then a plain answer. Each call asks for a
+ * different page, so the identical results read as progress and the loop
+ * supervisor stays out of a test about history growth.
+ */
 function toolThenAnswer(n: number): EchoModelResponse[] {
   const responses: EchoModelResponse[] = Array.from({ length: n }, (_, i) => ({
-    toolCalls: [{ toolCallId: `call-${i}`, toolName: "search", input: "{}" }],
+    toolCalls: [
+      { toolCallId: `call-${i}`, toolName: "search", input: JSON.stringify({ page: i }) },
+    ],
   }));
   return [...responses, { text: "done" }];
 }
@@ -197,7 +203,7 @@ describe("mid-turn compaction", () => {
     // Folding here would buy a smaller prompt for a summarizer call and a full
     // cache re-anchor, on a turn with too few iterations left to repay it.
     const { summarize, folded } = countingSummarizer();
-    const { prompts, windowDrops } = await runTurn(openingHistory(6, 600), toolThenAnswer(5), 400, {
+    const { prompts, windowDrops } = await runTurn(openingHistory(6, 600), toolThenAnswer(5), 500, {
       rewriteHistory: buildMidTurnCompaction({ budget: BUDGET, summarize }),
     });
 

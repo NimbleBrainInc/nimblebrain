@@ -884,6 +884,20 @@ function notAvailableToAgent(toolCall: LanguageModelV4ToolCall, call: ToolCall):
 }
 
 /**
+ * The refusal for a checked call that repeats the exact call its tool was
+ * tripped on, or null. Compared on the coerced input, which is what the
+ * supervisor observed when it tripped.
+ */
+function repeatOfTrip(
+  toolCall: LanguageModelV4ToolCall,
+  call: ToolCall,
+  ctx: ToolExecContext,
+): ToolExecResult | null {
+  const result = ctx.supervisor.repeatRefusal(call);
+  return result ? { toolCall, gatedCall: call, result, ms: 0 } : null;
+}
+
+/**
  * Reject an oversized tool result before it propagates through event emission,
  * hooks, or history accumulation — replacing it with an isError summary.
  * `maxToolResultSize` of 0 disables the guard; absent defaults to 1M chars.
@@ -2168,7 +2182,10 @@ export class AgentEngine {
    * input that is sent. An invalid call skips the gate and carries its error
    * result. Whatever the hook returns is checked the same way again: a hook
    * may rewrite the call, and the engine dispatches only what it checked.
-   * `refused` is a call that ends here, before tool.start.
+   * A valid call that repeats the exact call a tool was tripped on is refused
+   * here too, before the gate (see `RunSupervisor.repeatRefusal`); every other
+   * call to a tripped tool proceeds. `refused` is a call that ends here,
+   * before tool.start.
    */
   private async checkAndGate(
     toolCall: LanguageModelV4ToolCall,
@@ -2185,10 +2202,11 @@ export class AgentEngine {
     }
     const checked = coerceAndValidateToolInput(parsedInput, toolSchemaFor(ctx, offered.name));
     const validated: ToolCall = { ...offered, input: checked.input };
+    if (checked.errorResult) return { gatedCall: validated, result: checked.errorResult };
+    const repeat = repeatOfTrip(toolCall, validated, ctx);
+    if (repeat) return { refused: repeat };
     const beforeToolCall = ctx.config.hooks?.beforeToolCall;
-    if (checked.errorResult || !beforeToolCall) {
-      return { gatedCall: validated, result: checked.errorResult };
-    }
+    if (!beforeToolCall) return { gatedCall: validated };
 
     const hooked = await beforeToolCall(validated);
     if (hooked === null) {
@@ -2208,7 +2226,11 @@ export class AgentEngine {
       return { refused: notAvailableToAgent(toolCall, hooked) };
     }
     const rechecked = coerceAndValidateToolInput(hooked.input, toolSchemaFor(ctx, hooked.name));
-    return { gatedCall: { ...hooked, input: rechecked.input }, result: rechecked.errorResult };
+    const gatedCall: ToolCall = { ...hooked, input: rechecked.input };
+    if (rechecked.errorResult) return { gatedCall, result: rechecked.errorResult };
+    const hookedRepeat = repeatOfTrip(toolCall, gatedCall, ctx);
+    if (hookedRepeat) return { refused: hookedRepeat };
+    return { gatedCall };
   }
 
   /**
@@ -2313,9 +2335,9 @@ export class AgentEngine {
     // of the original tool result. While it stays tripped the tool is
     // withheld from `modelTools` on subsequent iterations (see
     // buildIterationTools), so the model is not offered it again. Withheld is
-    // not refused: checkAndGate does not consult the trip, so a call naming
-    // the tool still runs, and that call is how a trip clears (see the
-    // supervisor's file header).
+    // not refused: a call naming the tool still runs, and that call is how a
+    // trip clears (see the supervisor's file header). checkAndGate refuses
+    // only the exact call a success trip was made of.
     const verdict = ctx.supervisor.observe(gatedCall, hookedResult);
     const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 

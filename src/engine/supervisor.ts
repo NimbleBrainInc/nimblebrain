@@ -125,6 +125,17 @@ import {
  * Refusing at dispatch would make every trip permanent for the run, and the
  * trip evidence is often about the caller. Neither directive invites a retry
  * — see `synthReplacement`.
+ *
+ * One call is refused: the exact call a SUCCESS trip was made of. That trip
+ * means the same input returned the same success N times, so running that
+ * input again repeats its effect (a second write) without any chance of
+ * recovering, since recovery needs content the tool has already shown it
+ * will not return for that input. `repeatRefusal` answers for the engine's
+ * gate, comparing inputs with the same canonical encoding the fingerprint
+ * uses. An ERROR trip refuses nothing, because its fingerprint ignores input
+ * and a corrected call is how it recovers; a non-advancing trip refuses
+ * nothing either, since the tool itself reported the call changed nothing.
+ * Any other input to the tool still runs.
  */
 
 export interface SupervisorConfig {
@@ -171,6 +182,12 @@ export interface RunSupervisor {
   observe(call: ToolCall, result: ToolResult): SupervisorVerdict;
   /** Telemetry snapshot. */
   snapshot(): SupervisorSnapshot;
+  /**
+   * The result to return INSTEAD of running `call`, when `call` repeats the
+   * exact call its tool is tripped on (a SUCCESS trip, same canonical input);
+   * otherwise null and the call proceeds. Read-only: it records nothing.
+   */
+  repeatRefusal(call: ToolCall): ToolResult | null;
 }
 
 interface ToolState {
@@ -192,6 +209,10 @@ interface ToolState {
    *  the model a number its own history contradicts. Null whenever `tripped`
    *  is false. */
   trippedRepeats: number | null;
+  /** Canonical input of the call a SUCCESS trip was made of: the one call
+   *  `repeatRefusal` refuses. Null for an error or non-advancing trip, and
+   *  whenever `tripped` is false. */
+  trippedInput: string | null;
 }
 
 const DEFAULT_MAX_REPEATS = 3;
@@ -273,6 +294,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
         tripped: false,
         trippedContent: null,
         trippedRepeats: null,
+        trippedInput: null,
       };
       states.set(toolName, s);
     }
@@ -415,6 +437,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
         state.tripped = false;
         state.trippedContent = null;
         state.trippedRepeats = null;
+        state.trippedInput = null;
         state.consecutiveRepeats = 1;
         state.nonAdvancingCalls = 0;
         state.lastFingerprint = fingerprint(call, result);
@@ -459,6 +482,10 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     state.tripped = true;
     state.trippedContent = contentHash(result);
     state.trippedRepeats = repeats;
+    // An advancing success can only trip the identical-call streak (it clears
+    // the non-advancing budget), so this is the input every call in the streak
+    // carried.
+    state.trippedInput = isAdvancingSuccess(result) ? canonicalJson(call.input) : null;
     const originalText = extractTextForModel(result.content).trim();
     return {
       type: "synth",
@@ -466,6 +493,23 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       trippedTool: call.name,
       consecutiveRepeats: repeats,
     };
+  }
+
+  function repeatRefusal(call: ToolCall): ToolResult | null {
+    const state = states.get(call.name);
+    if (!state?.tripped || state.trippedInput === null) return null;
+    if (canonicalJson(call.input) !== state.trippedInput) return null;
+    // Same wording rules as the other directives: a record of this call,
+    // scoped to this tool. It states what is still allowed because that is
+    // what the refusal is narrow to, not as an invitation to call again.
+    const directive =
+      `[NB supervisor] This call to \`${call.name}\` was not run. The identical call (same tool, ` +
+      `same input) already ran and returned the same result ${state.trippedRepeats} times in a ` +
+      `row in this run, so running it again would only repeat it. A call with different input ` +
+      `is not refused.\n\n` +
+      `Other tools remain available. Consider an alternative approach or summarize current findings ` +
+      `if no path forward exists.`;
+    return { content: textContent(directive), isError: true };
   }
 
   /**
@@ -513,6 +557,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
 
   return {
     observe,
+    repeatRefusal,
     snapshot: () => ({
       trippedTools: [...states.entries()].filter(([, s]) => s.tripped).map(([name]) => name),
       callCounts: Object.fromEntries(
