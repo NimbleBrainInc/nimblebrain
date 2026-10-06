@@ -78,7 +78,7 @@ A run reads as one `label`:
 2. Write the `body` as the job, not as tool names: what to read, how to
    summarize, and where to deliver it. Nothing delivers a deliverable on its own,
    so a task that should post or send must say so and be allowed the tool.
-3. Set `allowedTools` to `<connector>__*` globs (`gmail__*`, `slack__*`). A run
+3. Set `allowedTools` to one `<connector>__*` glob per connector the job uses. A run
    whose listed tool is unreachable is refused, so a missing connector shows up
    as a failure instead of a quiet success. Omit it to allow every tool.
 4. Pick the schedule (see Schedules). Give `schedule.timezone` when the person
