@@ -459,4 +459,120 @@ describe("engine ↔ supervisor wiring", () => {
     expect(last.output).toBe("saved b");
     expect(last.supervisorTripped).toBeUndefined();
   });
+
+  // The trade the refusal takes: a tool whose answer for one input changes
+  // over time cannot recover through that input once it has tripped on it.
+  it("refuses the identical repeat even when the tool's answer would now differ", async () => {
+    const statusSchema: ToolSchema = {
+      name: "job_status",
+      description: "Reads a job's status.",
+      inputSchema: {
+        type: "object",
+        properties: { job: { type: "string" } },
+        required: ["job"],
+      },
+    };
+
+    let turn = 0;
+    let promptAfterRefusal = "";
+    const model = createMockModel((opts) => {
+      turn++;
+      if (turn === 5) promptAfterRefusal = JSON.stringify(opts.prompt[opts.prompt.length - 1]);
+      if (turn <= 4) {
+        return {
+          content: [
+            {
+              type: "tool-call" as const,
+              toolCallId: `call-${turn}`,
+              toolName: "job_status",
+              input: JSON.stringify({ job: "j1" }),
+            },
+          ],
+          inputTokens: 1,
+          outputTokens: 1,
+        };
+      }
+      return { content: [{ type: "text", text: "done" }], inputTokens: 1, outputTokens: 1 };
+    });
+
+    // "running" three times trips the tool; the fourth read would say "done".
+    let reads = 0;
+    const handler = (): ToolResult => {
+      reads++;
+      return { content: textContent(reads <= 3 ? "running" : "done"), isError: false };
+    };
+
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter([statusSchema], handler),
+      collect([]),
+    );
+    await engine.run(
+      config,
+      "system",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      [statusSchema],
+    );
+
+    // The fourth read never ran, so the "done" it would have returned is unseen.
+    expect(reads).toBe(3);
+    expect(promptAfterRefusal).toContain("was not run");
+    expect(promptAfterRefusal).not.toContain('"done"');
+  });
+
+  it("refuses a call a beforeToolCall hook rewrites into the tripped input", async () => {
+    const saveSchema: ToolSchema = {
+      name: "save",
+      description: "Saves a record.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+    };
+
+    let turn = 0;
+    const model = createMockModel(() => {
+      turn++;
+      // Turns 1-3 save "a" and trip the tool; turn 4 names "z" from context,
+      // which the hook rewrites back to "a".
+      if (turn <= 4) {
+        return {
+          content: [
+            {
+              type: "tool-call" as const,
+              toolCallId: `call-${turn}`,
+              toolName: "save",
+              input: JSON.stringify({ id: turn <= 3 ? "a" : "z" }),
+            },
+          ],
+          inputTokens: 1,
+          outputTokens: 1,
+        };
+      }
+      return { content: [{ type: "text", text: "done" }], inputTokens: 1, outputTokens: 1 };
+    });
+
+    const executed: ToolCall[] = [];
+    const handler = (call: ToolCall): ToolResult => {
+      executed.push(call);
+      return { content: textContent("ok"), isError: false };
+    };
+
+    const engine = new AgentEngine(model, new StaticToolRouter([saveSchema], handler), collect([]));
+    await engine.run(
+      {
+        ...config,
+        hooks: {
+          beforeToolCall: (call) =>
+            (call.input as { id?: string }).id === "z" ? { ...call, input: { id: "a" } } : call,
+        },
+      },
+      "system",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      [saveSchema],
+    );
+
+    expect(executed.map((c) => c.input)).toEqual([{ id: "a" }, { id: "a" }, { id: "a" }]);
+  });
 });

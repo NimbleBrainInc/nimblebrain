@@ -128,9 +128,13 @@ import {
  *
  * One call is refused: the exact call a SUCCESS trip was made of. That trip
  * means the same input returned the same success N times, so running that
- * input again repeats its effect (a second write) without any chance of
- * recovering, since recovery needs content the tool has already shown it
- * will not return for that input. `repeatRefusal` answers for the engine's
+ * input again repeats its effect, a second write for a tool that writes. The
+ * refusal costs recovery at that input: a tool whose answer for one input
+ * changes over time (a status check that read "running" N times and would
+ * now read "done") cannot recover through it, and stays tripped for the run
+ * unless a different input succeeds. That is the trade taken: a repeated
+ * write cannot be undone, and a check the supervisor had already judged a
+ * loop is the cheaper thing to lose. `repeatRefusal` answers for the engine's
  * gate, comparing inputs with the same canonical encoding the fingerprint
  * uses. An ERROR trip refuses nothing, because its fingerprint ignores input
  * and a corrected call is how it recovers; a non-advancing trip refuses
@@ -505,8 +509,8 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     const directive =
       `[NB supervisor] This call to \`${call.name}\` was not run. The identical call (same tool, ` +
       `same input) already ran and returned the same result ${state.trippedRepeats} times in a ` +
-      `row in this run, so running it again would only repeat it. A call with different input ` +
-      `is not refused.\n\n` +
+      `row in this run, so it is not run again in this run, even if its answer could have ` +
+      `changed since. A call with different input is not refused.\n\n` +
       `Other tools remain available. Consider an alternative approach or summarize current findings ` +
       `if no path forward exists.`;
     return { content: textContent(directive), isError: true };
