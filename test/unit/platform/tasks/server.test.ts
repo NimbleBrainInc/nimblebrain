@@ -5,13 +5,13 @@ import { effectiveRunLimits, resolveTasksConfig } from "../../../../src/config/t
 import type { RunNowTicket } from "../../../../src/platform/tasks/scheduler.ts";
 import {
   estimateRunsPerDay,
-  formatRelativeTime,
   formatSchedule,
   handleCancel,
   handleCreate,
   handleDelete,
   handleList,
   handleRun,
+  handleRunResult,
   handleRuns,
   handleStatus,
   handleUpdate,
@@ -72,10 +72,10 @@ function createArgs(
   return { manifest: { name, schedule, ...extra }, body: prompt };
 }
 
-/** Build the {name, manifest?, body?} shape for handleUpdate. */
-function updateArgs(name: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
+/** Build the {taskId, manifest?, body?} shape for handleUpdate. */
+function updateArgs(taskId: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
   const { body, ...manifest } = patch as { body?: string } & Record<string, unknown>;
-  const out: Record<string, unknown> = { name };
+  const out: Record<string, unknown> = { taskId };
   if (Object.keys(manifest).length > 0) out.manifest = manifest;
   if (body !== undefined) out.body = body;
   return out;
@@ -223,39 +223,6 @@ describe("formatSchedule", () => {
 });
 
 // ---------------------------------------------------------------------------
-// formatRelativeTime
-// ---------------------------------------------------------------------------
-
-describe("formatRelativeTime", () => {
-  const now = new Date("2025-06-15T12:00:00.000Z").getTime();
-
-  test("past hours", () => {
-    const twoHoursAgo = new Date(now - 2 * 3_600_000).toISOString();
-    expect(formatRelativeTime(twoHoursAgo, now)).toBe("2h ago");
-  });
-
-  test("future hours", () => {
-    const inTwentyTwoHours = new Date(now + 22 * 3_600_000).toISOString();
-    expect(formatRelativeTime(inTwentyTwoHours, now)).toBe("in 22h");
-  });
-
-  test("past days", () => {
-    const threeDaysAgo = new Date(now - 3 * 86_400_000).toISOString();
-    expect(formatRelativeTime(threeDaysAgo, now)).toBe("3d ago");
-  });
-
-  test("past minutes", () => {
-    const fiveMinAgo = new Date(now - 5 * 60_000).toISOString();
-    expect(formatRelativeTime(fiveMinAgo, now)).toBe("5m ago");
-  });
-
-  test("future minutes", () => {
-    const inTenMin = new Date(now + 10 * 60_000).toISOString();
-    expect(formatRelativeTime(inTenMin, now)).toBe("in 10m");
-  });
-});
-
-// ---------------------------------------------------------------------------
 // toKebabCase
 // ---------------------------------------------------------------------------
 
@@ -291,7 +258,6 @@ describe("handleCreate", () => {
       ctx,
     );
 
-    expect(result.created).toBe(true);
     expect(result.task.id).toBe("daily-report");
     expect(result.task.name).toBe("Daily Report");
     expect(result.task.enabled).toBe(true);
@@ -303,9 +269,9 @@ describe("handleCreate", () => {
     expect(schedulerReloaded).toBe(true);
   });
 
-  test("idempotent — returns existing for duplicate name", () => {
+  test("refuses a name whose id exists, leaving the stored task as it was", () => {
     const ctx = makeCtx();
-    const first = handleCreate(
+    handleCreate(
       {
         manifest: {
           name: "Daily Report",
@@ -316,22 +282,19 @@ describe("handleCreate", () => {
       ctx,
     );
 
-    expect(first.created).toBe(true);
-
-    const second = handleCreate(
-      {
-        manifest: {
-          name: "Daily Report",
-          schedule: { type: "interval", intervalMs: 120_000 },
+    expect(() =>
+      handleCreate(
+        {
+          manifest: {
+            name: "Daily Report",
+            schedule: { type: "interval", intervalMs: 120_000 },
+          },
+          body: "Different prompt",
         },
-        body: "Different prompt",
-      },
-      ctx,
-    );
-
-    expect(second.created).toBe(false);
-    expect(second.task.id).toBe(first.task.id);
-    expect(second.task.prompt).toBe("Generate daily report"); // original prompt
+        ctx,
+      ),
+    ).toThrow(/already exists.*tasks__update/);
+    expect(ctx.definitions().get("daily-report")?.prompt).toBe("Generate daily report");
   });
 });
 
@@ -483,7 +446,7 @@ describe("handleList paging", () => {
     seed(ctx, 30);
 
     const first = handleList({ limit: 10 }, ctx) as ListResult;
-    handleDelete({ name: first.tasks[0]!.name }, ctx);
+    handleDelete({ taskId: first.tasks[0]!.id }, ctx);
     const second = handleList({ limit: 10, cursor: first.nextCursor as string }, ctx) as ListResult;
 
     const seen = new Set([...first.tasks, ...second.tasks].map((a) => a.id));
@@ -539,7 +502,7 @@ describe("handleList paging", () => {
   test("total counts filter matches, not the whole store", () => {
     const ctx = makeCtx();
     seed(ctx, 4);
-    handleUpdate({ name: "Seeded 000", manifest: { enabled: false } }, ctx);
+    handleUpdate({ taskId: "seeded-000", manifest: { enabled: false } }, ctx);
 
     const r = handleList({ enabled: false }, ctx) as ListResult;
     expect(r.total).toBe(1);
@@ -560,7 +523,7 @@ describe("handleUpdate", () => {
       ctx,
     );
 
-    const result = handleUpdate(updateArgs("Daily Report", { enabled: false }), ctx);
+    const result = handleUpdate(updateArgs("daily-report", { enabled: false }), ctx);
 
     expect(result.updated).toBe(true);
     expect(result.task.enabled).toBe(false);
@@ -578,7 +541,7 @@ describe("handleUpdate", () => {
 
     schedulerReloaded = false;
     handleUpdate(
-      updateArgs("My Task", {
+      updateArgs("my-task", {
         schedule: { type: "cron", expression: "0 9 * * 1", timezone: "Pacific/Honolulu" },
       }),
       ctx,
@@ -589,13 +552,13 @@ describe("handleUpdate", () => {
 
   test("throws for nonexistent task", () => {
     const ctx = makeCtx();
-    expect(() => handleUpdate(updateArgs("Nonexistent"), ctx)).toThrow("Task not found");
+    expect(() => handleUpdate(updateArgs("nonexistent"), ctx)).toThrow("No task with id");
   });
   test("sets allowedTools", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = handleUpdate(updateArgs("Scoped", { allowedTools: ["crm__*"] }), ctx);
+    const result = handleUpdate(updateArgs("scoped", { allowedTools: ["crm__*"] }), ctx);
 
     expect(result.task.allowedTools).toEqual(["crm__*"]);
   });
@@ -605,7 +568,7 @@ describe("handleUpdate", () => {
     handleCreate(createArgs("Scoped", "Do it", { type: "interval", intervalMs: 60_000 }), ctx);
 
     expect(() =>
-      handleUpdate(updateArgs("Scoped", { allowedTools: ["tasks__update"] }), ctx),
+      handleUpdate(updateArgs("scoped", { allowedTools: ["tasks__update"] }), ctx),
     ).toThrow(/allowedTools may not include "tasks__update"/);
   });
 });
@@ -655,7 +618,7 @@ describe("handleDelete", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Temp", "Temporary", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const delResult = handleDelete({ name: "Temp" }, ctx);
+    const delResult = handleDelete({ taskId: "temp" }, ctx);
     expect(delResult.deleted).toBe(true);
 
     const listResult = handleList({}, ctx) as { total: number };
@@ -664,7 +627,7 @@ describe("handleDelete", () => {
 
   test("throws for nonexistent task", () => {
     const ctx = makeCtx();
-    expect(() => handleDelete({ name: "Nope" }, ctx)).toThrow("Task not found");
+    expect(() => handleDelete({ taskId: "nope" }, ctx)).toThrow("No task with id");
   });
 });
 
@@ -783,7 +746,7 @@ describe("handleStatus", () => {
       seedRun("status-test", run);
     }
 
-    const result = handleStatus({ name: "Status Test", limit: 5 }, ctx) as {
+    const result = handleStatus({ taskId: "status-test", limit: 5 }, ctx) as {
       task: Task & { scheduleHuman: string };
       recentRuns: TaskRun[];
     };
@@ -798,7 +761,7 @@ describe("handleStatus", () => {
 
   test("throws for nonexistent task", () => {
     const ctx = makeCtx();
-    expect(() => handleStatus({ name: "Nope" }, ctx)).toThrow("Task not found");
+    expect(() => handleStatus({ taskId: "nope" }, ctx)).toThrow("No task with id");
   });
 });
 
@@ -807,43 +770,59 @@ describe("handleStatus", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleRuns", () => {
-  test("filters by status", () => {
+  test("filters by label and by effective verdict", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Run Filter Test", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-
-    seedRun(
-      "run-filter-test",
+    const at = "2025-06-15T10:00:00.000Z";
+    const uncertain = { verdict: "uncertain" as const, assessedAt: at };
+    const runs = [
+      makeRun({ id: "run_plain", status: "success" }),
+      makeRun({ id: "run_failed", status: "failure", error: "oops" }),
+      makeRun({ id: "run_review", status: "success", assessment: uncertain }),
       makeRun({
-        taskId: "run-filter-test",
+        id: "run_human",
         status: "success",
-        startedAt: "2025-06-15T10:00:00.000Z",
+        assessment: { ...uncertain, human: { verdict: "pass", by: "u", via: "ui", at } },
       }),
-    );
-    seedRun(
-      "run-filter-test",
-      makeRun({
+    ];
+    for (const [i, run] of runs.entries()) {
+      seedRun("run-filter-test", {
+        ...run,
         taskId: "run-filter-test",
-        status: "failure",
-        error: "oops",
-        startedAt: "2025-06-15T11:00:00.000Z",
-      }),
-    );
-    seedRun(
-      "run-filter-test",
-      makeRun({
-        taskId: "run-filter-test",
-        status: "success",
-        startedAt: "2025-06-15T12:00:00.000Z",
-      }),
-    );
+        startedAt: `2025-06-15T1${i}:00:00.000Z`,
+      });
+    }
+    const ids = (args: Record<string, unknown>) =>
+      handleRuns({ taskId: "run-filter-test", ...args }, ctx).runs.map((r) => r.id);
 
-    const result = handleRuns({ taskId: "run-filter-test", status: "failure" }, ctx) as {
-      runs: TaskRun[];
-      total: number;
-    };
+    expect(ids({ label: "Needs review" })).toEqual(["run_review"]);
+    expect(ids({ label: "Failed" })).toEqual(["run_failed"]);
+    // A person's verdict replaces the judge's; a run with no deliverable has none.
+    expect(ids({ verdict: "pass" })).toEqual(["run_human"]);
+    expect(ids({ verdict: "not_assessed" })).toEqual(["run_plain"]);
+  });
 
-    expect(result.total).toBe(1);
-    expect(result.runs[0]!.status).toBe("failure");
+  test("a filtered page stops at the limit and hands on from its last run", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Paged Filter", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    for (let i = 0; i < 6; i++) {
+      seedRun(
+        "paged-filter",
+        makeRun({
+          id: `run_${i}`,
+          taskId: "paged-filter",
+          status: i % 2 === 0 ? "failure" : "success",
+          startedAt: `2025-06-15T1${i}:00:00.000Z`,
+        }),
+      );
+    }
+    const first = handleRuns({ taskId: "paged-filter", label: "Failed", limit: 2 }, ctx);
+    expect(first.runs.map((r) => r.id)).toEqual(["run_4", "run_2"]);
+    const rest = handleRuns(
+      { taskId: "paged-filter", label: "Failed", limit: 2, before: first.nextBefore },
+      ctx,
+    );
+    expect(rest.runs.map((r) => r.id)).toEqual(["run_0"]);
   });
 
   test("queries across all tasks", () => {
@@ -868,7 +847,7 @@ describe("handleRun", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Immediate", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ taskId: "Immediate" }, ctx);
+    const result = await handleRun({ taskId: "immediate" }, ctx);
 
     // Narrow the discriminated union explicitly. `as { run }` is the
     // anti-pattern that masked the dispatched-envelope branch — see
@@ -887,7 +866,7 @@ describe("handleRun", () => {
       ctx,
     );
 
-    const result = await handleRun({ taskId: "Paused" }, ctx);
+    const result = await handleRun({ taskId: "paused" }, ctx);
 
     if (!("run" in result)) {
       throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
@@ -901,7 +880,7 @@ describe("handleRun", () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Live", "Run now", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ taskId: "Live" }, ctx);
+    const result = await handleRun({ taskId: "live" }, ctx);
 
     if (!("run" in result)) {
       throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
@@ -925,7 +904,7 @@ describe("handleRun", () => {
     });
     handleCreate(createArgs("Trips", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ taskId: "Trips" }, ctx);
+    const result = await handleRun({ taskId: "trips" }, ctx);
 
     if (!("run" in result)) {
       throw new Error(`expected sync run shape, got ${JSON.stringify(result)}`);
@@ -949,7 +928,7 @@ describe("handleRun", () => {
     );
 
     try {
-      const result = await handleRun({ taskId: "Slow paused" }, slowCtx);
+      const result = await handleRun({ taskId: "slow-paused" }, slowCtx);
       if (!("status" in result)) {
         throw new Error(`expected dispatched envelope, got ${JSON.stringify(result)}`);
       }
@@ -963,7 +942,7 @@ describe("handleRun", () => {
 
   test("throws for nonexistent task", async () => {
     const ctx = makeCtx();
-    await expect(handleRun({ taskId: "Nope" }, ctx)).rejects.toThrow("Task not found");
+    await expect(handleRun({ taskId: "nope" }, ctx)).rejects.toThrow("No task with id");
   });
 
   test("returns 'dispatched' envelope when run outlasts the sync-wait window", async () => {
@@ -991,7 +970,7 @@ describe("handleRun", () => {
     );
 
     try {
-      const result = await handleRun({ taskId: "Slow" }, slowCtx);
+      const result = await handleRun({ taskId: "slow" }, slowCtx);
 
       // Narrow to the "dispatched" branch of the union — if the
       // handler ever stops emitting this branch (regression to a
@@ -1002,12 +981,11 @@ describe("handleRun", () => {
       expect(result.taskId).toBe("slow");
       expect(result.enabled).toBe(true);
       expect(Number.isNaN(Date.parse(result.startedAt))).toBe(false);
-      // Says the run is still going, and where its result will appear.
+      // Says the run is still going, and how to follow and stop it by its id.
       expect(result.message).toContain("still running");
       expect(result.message).toContain("has not failed");
-      expect(result.message).toContain("tasks__runs");
-      expect(result.message).toContain(result.startedAt);
-      expect(result.message).toContain("tasks__run_result");
+      expect(result.message).toContain(`tasks__run_result (runId "${result.runId}")`);
+      expect(result.message).toContain(`tasks__cancel (runId "${result.runId}")`);
       expect(result.message).not.toContain("disabled");
     } finally {
       // Drain the pending runNow promise so it doesn't sit live past
@@ -1027,15 +1005,15 @@ describe("handleRun", () => {
     handleCreate(createArgs("Waits", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
     try {
-      const result = await handleRun({ taskId: "Waits" }, ctx);
+      const result = await handleRun({ taskId: "waits" }, ctx);
       if (!("status" in result) || result.status !== "queued") {
         throw new Error(`expected queued envelope, got ${JSON.stringify(result)}`);
       }
       expect(result.position).toBe(3);
       expect(result.taskId).toBe("waits");
       expect(result.message).toContain("queued at position 3");
-      expect(result.message).toContain("tasks__cancel");
-      expect(result.message).toContain(result.queuedAt);
+      expect(result.message).toContain(`tasks__cancel (runId "${result.runId}")`);
+      expect(result.message).toContain("tasks__run_result");
     } finally {
       resolveRun?.(makeRun());
     }
@@ -1050,7 +1028,7 @@ describe("handleRun", () => {
     const ctx = makeCtx({ runNow: () => ({ state: "refused", run: skipped }) });
     handleCreate(createArgs("Refused", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ taskId: "Refused" }, ctx);
+    const result = await handleRun({ taskId: "refused" }, ctx);
     if (!("run" in result)) throw new Error(`expected run shape, got ${JSON.stringify(result)}`);
     expect(result.run.status).toBe("skipped");
     expect(result.message).toContain("did not run");
@@ -1116,7 +1094,7 @@ describe("create and update report effective run limits", () => {
   test("update reports the clamped value of a patched cap", () => {
     const ctx = makeCtx({ runLimitsOf });
     handleCreate(createArgs("Patched", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-    const result = handleUpdate(updateArgs("Patched", { maxIterations: 30 }), ctx);
+    const result = handleUpdate(updateArgs("patched", { maxIterations: 30 }), ctx);
     expect(result.effectiveLimits.maxIterations).toBe(10);
     expect(result.message).toContain("maxIterations 30 is above");
   });
@@ -1133,7 +1111,7 @@ describe("delete preserves run history", () => {
 
     seedRun("deletable", makeRun({ taskId: "deletable", status: "success" }));
 
-    handleDelete({ name: "Deletable" }, ctx);
+    handleDelete({ taskId: "deletable" }, ctx);
 
     // Runs still accessible via runs tool
     const result = handleRuns({ taskId: "deletable" }, ctx) as {
@@ -1196,7 +1174,7 @@ describe("handleUpdate — re-enable clears disable state", () => {
     saveDefs(defs);
 
     // Re-enable
-    const result = handleUpdate(updateArgs("Disabled Test", { enabled: true }), ctx);
+    const result = handleUpdate(updateArgs("disabled-test", { enabled: true }), ctx);
     const updated = result.task as Task;
     expect(updated.enabled).toBe(true);
     expect(updated.consecutiveErrors).toBe(0);
@@ -1210,27 +1188,30 @@ describe("handleUpdate — re-enable clears disable state", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleCancel", () => {
-  test("calls cancelRun and returns result", () => {
+  test("cancels one run by its id and names its task", () => {
     let cancelledId: string | null = null;
     const ctx = makeCtx({
-      cancelRun: (id) => {
-        cancelledId = id;
+      cancelRun: (runId) => {
+        cancelledId = runId;
         return true;
       },
+      queueView: () => [{ taskId: "cancel-target", runId: "run_abc123", state: "running" }],
     });
-    handleCreate(
-      createArgs("Cancel Target", "test", { type: "interval", intervalMs: 60_000 }),
-      ctx,
-    );
-
-    const result = handleCancel({ name: "Cancel Target" }, ctx);
-    expect(result.cancelled).toBe(true);
-    expect(cancelledId).toBe("cancel-target");
+    const result = handleCancel({ runId: "run_abc123" }, ctx);
+    expect(cancelledId).toBe("run_abc123");
+    expect(result).toEqual({
+      cancelled: true,
+      runId: "run_abc123",
+      taskId: "cancel-target",
+      message: 'Run "run_abc123" cancelled.',
+    });
   });
 
-  test("throws for non-existent task", () => {
-    const ctx = makeCtx();
-    expect(() => handleCancel({ name: "Nonexistent" }, ctx)).toThrow("not found");
+  test("a run that is not queued or running is an answer, not an error", () => {
+    const ctx = makeCtx({ cancelRun: () => false });
+    const result = handleCancel({ runId: "run_gone" }, ctx);
+    expect(result.cancelled).toBe(false);
+    expect(result.message).toContain("is not queued or running");
   });
 });
 
@@ -1426,7 +1407,7 @@ describe("handleUpdate — validation", () => {
 
     expect(() =>
       handleUpdate(
-        updateArgs("Update Target", {
+        updateArgs("update-target", {
           schedule: { type: "interval", intervalMs: 5_000 },
         }),
         ctx,
@@ -1443,7 +1424,7 @@ describe("handleUpdate — validation", () => {
 
     expect(() =>
       handleUpdate(
-        updateArgs("Update To Feb 31", {
+        updateArgs("update-to-feb-31", {
           schedule: { type: "cron", expression: "0 9 31 2 *" },
         }),
         ctx,
@@ -1459,7 +1440,7 @@ describe("handleUpdate — validation", () => {
     );
 
     const result = handleUpdate(
-      updateArgs("Update Target Valid", {
+      updateArgs("update-target-valid", {
         schedule: { type: "cron", expression: "0 9 * * 1" },
       }),
       ctx,
@@ -1483,7 +1464,6 @@ describe("task ownership", () => {
       ctx,
     );
 
-    expect(result.created).toBe(true);
     expect(result.task.ownerId).toBe("usr_alice");
   });
 
@@ -1497,7 +1477,6 @@ describe("task ownership", () => {
       ctx,
     );
 
-    expect(result.created).toBe(true);
     expect(result.task.workspaceId).toBe("ws_0030a37f450693bf");
   });
 
@@ -1514,7 +1493,6 @@ describe("task ownership", () => {
       ctx,
     );
 
-    expect(result.created).toBe(true);
     expect(result.task.ownerId).toBe("usr_bob");
     expect(result.task.workspaceId).toBe("ws_0055880db5dd7ef1");
   });
@@ -1532,7 +1510,6 @@ describe("task ownership", () => {
       ctx,
     );
 
-    expect(result.created).toBe(true);
     expect(result.task.ownerId).toBe(OWNER);
     expect(result.task.workspaceId).toBe(WS);
   });
@@ -1591,7 +1568,7 @@ describe("event schedules", () => {
 
   test("are created and read back through the tool surface", async () => {
     const ctx = makeCtx();
-    const created = await handleCreate(
+    handleCreate(
       {
         manifest: {
           name: "Reply triage",
@@ -1601,9 +1578,8 @@ describe("event schedules", () => {
       },
       ctx,
     );
-    expect(created.created).toBe(true);
 
-    const status = await handleStatus({ name: "Reply triage" }, ctx);
+    const status = await handleStatus({ taskId: "reply-triage" }, ctx);
     expect(status.task.schedule).toEqual({
       type: "event",
       match,
@@ -1634,7 +1610,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
     });
     handleCreate(createArgs("Typed", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    await handleRun({ taskId: "Typed", input: { n: 1 }, idempotencyKey: "k-1" }, ctx);
+    await handleRun({ taskId: "typed", input: { n: 1 }, idempotencyKey: "k-1" }, ctx);
 
     const requested = seen[0]?.requested as {
       runId: string;
@@ -1648,7 +1624,10 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
 
   test("an inline definition creates a oneoff task with no schedule", async () => {
     const ctx = makeCtx({ currentUserId: OWNER, currentWorkspaceId: WS });
-    const result = await handleRun({ prompt: "Summarize the input.", input: "text" }, ctx);
+    const result = await handleRun(
+      { definition: { body: "Summarize the input." }, input: "text" },
+      ctx,
+    );
     if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
 
     const oneoff = loadDefs().get(result.run.taskId);
@@ -1659,26 +1638,39 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
     expect(handleList({}, ctx).tasks).toHaveLength(0);
   });
 
-  test("refuses both a name and an inline definition", async () => {
+  test("refuses both a task and an inline definition", async () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Saved", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-    await expect(handleRun({ taskId: "Saved", prompt: "other" }, ctx)).rejects.toThrow("not both");
+    await expect(
+      handleRun({ taskId: "saved", definition: { body: "other" } }, ctx),
+    ).rejects.toThrow("not both");
   });
 
-  test("refuses a call with neither a name nor a prompt or skill", async () => {
-    await expect(handleRun({ input: { a: 1 } }, makeCtx())).rejects.toThrow("needs `taskId`");
+  test("refuses a call with neither a task nor a definition", async () => {
+    await expect(handleRun({ input: { a: 1 } }, makeCtx())).rejects.toThrow(
+      "Give `taskId` (a task to run, from tasks__list) or `definition`",
+    );
+  });
+
+  test("refuses a definition with neither a body nor a skill", async () => {
+    await expect(
+      handleRun({ definition: { manifest: { maxIterations: 5 } } }, makeCtx()),
+    ).rejects.toThrow("needs a `body`");
   });
 
   test("refuses an inline outputSchema that is not a JSON Schema", async () => {
     await expect(
-      handleRun({ prompt: "p", outputSchema: { type: "no-such-type" } }, makeCtx()),
+      handleRun(
+        { definition: { body: "p", manifest: { outputSchema: { type: "no-such-type" } } } },
+        makeCtx(),
+      ),
     ).rejects.toThrow("outputSchema is not a valid JSON Schema");
   });
 
   test("refuses an input over the size limit", async () => {
     const ctx = makeCtx();
     handleCreate(createArgs("Big", "p", { type: "interval", intervalMs: 60_000 }), ctx);
-    await expect(handleRun({ taskId: "Big", input: "x".repeat(70 * 1024) }, ctx)).rejects.toThrow(
+    await expect(handleRun({ taskId: "big", input: "x".repeat(70 * 1024) }, ctx)).rejects.toThrow(
       "at most",
     );
   });
@@ -1696,7 +1688,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
       ),
       ctx,
     );
-    await expect(handleRun({ taskId: "Needs input" }, ctx)).rejects.toThrow("none was given");
+    await expect(handleRun({ taskId: "needs-input" }, ctx)).rejects.toThrow("none was given");
   });
 
   test("a repeated idempotency key returns the earlier run without asking for another", async () => {
@@ -1719,7 +1711,7 @@ describe("handleRun — inline one-offs, input, idempotency", () => {
     });
     handleCreate(createArgs("Keyed", "p", { type: "interval", intervalMs: 60_000 }), ctx);
 
-    const result = await handleRun({ taskId: "Keyed", idempotencyKey: "k" }, ctx);
+    const result = await handleRun({ taskId: "keyed", idempotencyKey: "k" }, ctx);
     if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
     expect(result.run.id).toBe(existing.id);
     expect(result.message).toContain("idempotencyKey");
@@ -1777,8 +1769,108 @@ describe("create and update — input and output schemas", () => {
       ),
       ctx,
     );
-    const { task } = handleUpdate(updateArgs("Clearable", { outputSchema: null }), ctx);
+    const { task } = handleUpdate(updateArgs("clearable", { outputSchema: null }), ctx);
     expect(task.outputSchema).toBeUndefined();
     expect("outputSchema" in (loadDefs().get("clearable") ?? {})).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The agent-facing surface: clears, times, timezone, polling
+// ---------------------------------------------------------------------------
+
+describe("the tool surface an agent reads", () => {
+  test("null clears every optional field, so its default applies again", () => {
+    const ctx = makeCtx();
+    handleCreate(
+      createArgs(
+        "Full",
+        "p",
+        { type: "interval", intervalMs: 60_000 },
+        {
+          description: "d",
+          skill: "s",
+          model: "anthropic:claude-haiku-4-5",
+          allowedTools: ["web__*"],
+          maxIterations: 10,
+          maxInputTokens: 50_000,
+          maxRunDurationMs: 60_000,
+          tokenBudget: { maxInputTokens: 1_000_000, period: "daily" },
+        },
+      ),
+      ctx,
+    );
+    const cleared = [
+      "description",
+      "skill",
+      "model",
+      "allowedTools",
+      "maxIterations",
+      "maxInputTokens",
+      "maxRunDurationMs",
+      "tokenBudget",
+    ];
+    handleUpdate(updateArgs("full", Object.fromEntries(cleared.map((k) => [k, null]))), ctx);
+    const stored = loadDefs().get("full") as unknown as Record<string, unknown>;
+    for (const key of cleared) expect(key in stored).toBe(false);
+    expect("budgetResetAt" in stored).toBe(false);
+  });
+
+  test("create and status say which timezone the schedule is read in", () => {
+    const ctx = makeCtx({ defaultTimezone: "America/Chicago" });
+    const own = handleCreate(
+      createArgs("Own Zone", "p", { type: "cron", expression: "0 7 * * 1-5", timezone: "UTC" }),
+      ctx,
+    );
+    expect(own.timezone).toBe("UTC");
+    const instance = handleCreate(
+      createArgs("Instance Zone", "p", { type: "cron", expression: "0 7 * * 1-5" }),
+      ctx,
+    );
+    expect(instance.timezone).toBe("America/Chicago");
+    expect(handleStatus({ taskId: "instance-zone" }, ctx).task.timezone).toBe("America/Chicago");
+  });
+
+  test("list gives ISO times, and no next fire for a disabled task", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("On", "p", { type: "interval", intervalMs: 3_600_000 }), ctx);
+    handleCreate(
+      createArgs("Off", "p", { type: "interval", intervalMs: 3_600_000 }, { enabled: false }),
+      ctx,
+    );
+    const rows = new Map(handleList({}, ctx).tasks.map((t) => [t.id, t]));
+    const next = rows.get("on")?.nextRunAt;
+    expect(next).toBeString();
+    expect(new Date(next as string).toISOString()).toBe(next as string);
+    expect(rows.get("off")?.nextRunAt).toBeNull();
+  });
+
+  test("run_result answers a run still running with its state, not an error", () => {
+    const ctx = makeCtx({
+      queueView: () => [
+        {
+          taskId: "daily-report",
+          runId: "run_live00000000",
+          state: "running",
+          startedAt: "2025-06-15T10:00:00.000Z",
+          trigger: "scheduled",
+        },
+      ],
+    });
+    const out = handleRunResult({ runId: "run_live00000000" }, ctx);
+    if (out.status !== "running") throw new Error(`expected running, got ${JSON.stringify(out)}`);
+    expect(out.run.label).toBe("Running");
+    expect(out.message).toContain("has not failed");
+    expect(out.message).toContain('tasks__cancel (runId "run_live00000000")');
+  });
+
+  test("run_result gives an ended run its record and, when it left one, its result", () => {
+    const ctx = makeCtx();
+    handleCreate(createArgs("Ended", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    seedRun("ended", makeRun({ id: "run_skip00000000", taskId: "ended", status: "skipped" }));
+    const out = handleRunResult({ runId: "run_skip00000000" }, ctx);
+    expect(out.status).toBe("ended");
+    expect(out.run.label).toBe("Skipped");
+    expect("result" in out && out.result).toBeFalsy();
   });
 });

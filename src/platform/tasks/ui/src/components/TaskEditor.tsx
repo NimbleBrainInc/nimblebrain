@@ -572,7 +572,7 @@ function TestRunResult({
   onSeed: (verdict: "pass" | "fail", note: string) => void;
   onInfer: (schema: Record<string, unknown>) => void;
 }) {
-  const state = useRunResult(started.runId, started.taskId, started.taskId, started.run);
+  const state = useRunResult(started.runId, started.taskId, started.run);
   const assess = useAssess(started.runId, started.taskId, state.setRun);
   const openFile = useOpenFile();
   const value =
@@ -634,7 +634,7 @@ function draftInputSchema(d: EditorDraft): Record<string, unknown> | undefined {
 }
 
 /** The stored task (when editing) and the connected judges. */
-function useEditorData(taskName: string | undefined) {
+function useEditorData(taskId: string | undefined) {
   const statusTool = useTool<string>("status");
   const judgesTool = useTool<string>("judges");
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -647,16 +647,16 @@ function useEditorData(taskName: string | undefined) {
       .call({})
       .then((res) => setJudges(asDict(res.data) as unknown as JudgesData))
       .catch(() => setJudges({ servers: [] }));
-    if (!taskName) return;
+    if (!taskId) return;
     statusTool
-      .call({ name: taskName, limit: 1 })
+      .call({ taskId, limit: 0 })
       .then((res) => {
         const d = asDict(res.data).task as TaskDetail | undefined;
-        if (!d) throw new Error(`Task not found: ${taskName}`);
+        if (!d) throw new Error(`No task with id "${taskId}".`);
         setDetail(d);
       })
       .catch((err) => setLoadError(toolErrorText(err)));
-  }, [taskName]);
+  }, [taskId]);
   return { detail, loadError, judges };
 }
 
@@ -827,7 +827,7 @@ function EditorForm({
   /** A draft to start a new task from (Duplicate). */
   copy?: EditorDraft | null;
   title: string;
-  onSaved: (name: string, warnings: TaskWarning[]) => void;
+  onSaved: (task: { id: string; name: string }, warnings: TaskWarning[]) => void;
   onCancel: () => void;
 }) {
   const createTool = useTool<string>("create");
@@ -844,7 +844,7 @@ function EditorForm({
   };
 
   async function save() {
-    const built = original ? updateArgs(original, draft) : createArgs(draft);
+    const built = original && detail ? updateArgs(detail.id, original, draft) : createArgs(draft);
     if (!built.args) {
       setProblems(built.problems);
       return;
@@ -854,8 +854,8 @@ function EditorForm({
     try {
       const res = await (original ? updateTool : createTool).call(built.args);
       const data = asDict(res.data);
-      const task = data.task as { name?: string } | undefined;
-      onSaved(task?.name ?? draft.name, (data.warnings as TaskWarning[]) ?? []);
+      const task = data.task as { id: string; name: string };
+      onSaved({ id: task.id, name: task.name }, (data.warnings as TaskWarning[]) ?? []);
     } catch (err) {
       setSaveError(toolErrorText(err, "The task was not saved."));
     } finally {
@@ -901,26 +901,26 @@ function EditorForm({
  * its limits, and a test run of the draft before it is saved.
  */
 export function TaskEditor({
-  taskName,
+  taskId,
   copyOf,
   template,
   onSaved,
   onCancel,
 }: {
   /** The task to edit; absent to create one. */
-  taskName?: string;
-  /** A task to start a new one from. */
+  taskId?: string;
+  /** The id of a task to start a new one from. */
   copyOf?: string;
   template?: Template | null;
-  onSaved: (name: string, warnings: TaskWarning[]) => void;
+  onSaved: (task: { id: string; name: string }, warnings: TaskWarning[]) => void;
   onCancel: () => void;
 }) {
-  const source = taskName ?? copyOf;
+  const source = taskId ?? copyOf;
   const { detail, loadError, judges } = useEditorData(source);
   const loaded = useMemo(() => (detail ? draftFromDetail(detail) : null), [detail]);
-  const original = taskName ? loaded : null;
+  const original = taskId ? loaded : null;
   const copy = copyOf && loaded ? { ...loaded, name: `${loaded.name} (copy)` } : null;
-  const title = taskName ? `Edit ${taskName}` : "New task";
+  const title = taskId ? `Edit ${detail?.name ?? ""}`.trim() : "New task";
   if (source && !detail) {
     return <EditorLoading title={title} error={loadError} onBack={onCancel} />;
   }
@@ -928,7 +928,7 @@ export function TaskEditor({
     <EditorForm
       original={original}
       copy={copy}
-      detail={taskName ? detail : null}
+      detail={taskId ? detail : null}
       judges={judges}
       template={template}
       title={title}

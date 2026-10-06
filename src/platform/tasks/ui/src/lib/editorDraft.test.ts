@@ -11,6 +11,7 @@ const DETAIL: TaskDetail = {
   name: "Research",
   prompt: "Research {{company}}",
   scheduleHuman: "Daily",
+  timezone: "UTC",
   schedule: { type: "cron", expression: "0 8 * * *", timezone: "UTC" },
   enabled: true,
   source: "user",
@@ -18,9 +19,7 @@ const DETAIL: TaskDetail = {
   consecutiveErrors: 0,
   lastRunStatus: null,
   lastRunAt: null,
-  lastRunAtHuman: null,
   nextRunAt: null,
-  nextRunAtHuman: null,
   createdAt: "",
   updatedAt: "",
   inputSchema: {
@@ -88,10 +87,10 @@ describe("createArgs", () => {
 describe("updateArgs", () => {
   test("an unchanged form sends no manifest and no body", () => {
     const d = draftFromDetail(DETAIL);
-    expect(updateArgs(d, d).args).toEqual({ name: "Research" });
+    expect(updateArgs("research", d, d).args).toEqual({ taskId: "research" });
   });
 
-  test("sends the changed fields, null for cleared ones, [] for cleared tools", () => {
+  test("sends the changed fields, and null for cleared ones", () => {
     const original = draftFromDetail(DETAIL);
     const edited = {
       ...original,
@@ -102,13 +101,13 @@ describe("updateArgs", () => {
       allowedTools: "",
       maxIterations: "20",
     };
-    expect(updateArgs(original, edited).args).toEqual({
-      name: "Research",
+    expect(updateArgs("research", original, edited).args).toEqual({
+      taskId: "research",
       manifest: {
         schedule: null,
         criteria: null,
         onPoorResult: null,
-        allowedTools: [],
+        allowedTools: null,
         maxIterations: 20,
       },
       body: "Research {{company}} deeply",
@@ -120,12 +119,16 @@ describe("testRunArgs", () => {
   test("runs the draft inline with its input, recording verdicts only", () => {
     const d = draftFromDetail(DETAIL);
     expect(testRunArgs(d, { company: "Acme" }).args).toEqual({
-      prompt: "Research {{company}}",
-      inputSchema: DETAIL.inputSchema,
-      allowedTools: ["web__*"],
-      limits: { maxIterations: 10 },
-      criteria: DETAIL.criteria,
-      onPoorResult: "record",
+      definition: {
+        body: "Research {{company}}",
+        manifest: {
+          inputSchema: DETAIL.inputSchema,
+          allowedTools: ["web__*"],
+          maxIterations: 10,
+          criteria: DETAIL.criteria,
+          onPoorResult: "record",
+        },
+      },
       input: { company: "Acme" },
     });
   });

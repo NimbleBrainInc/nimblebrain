@@ -180,12 +180,11 @@ describe("task e2e: create -> run -> verify", () => {
         body: "Summarize today's activity",
       },
       ctx,
-    ) as { task: Task; created: boolean };
+    );
 
-    expect(createResult.created).toBe(true);
     expect(createResult.task.id).toBe("daily-summary");
 
-    const run = expectSyncRun(await handleRun({ taskId: "Daily Summary" }, ctx));
+    const run = expectSyncRun(await handleRun({ taskId: "daily-summary" }, ctx));
     expect(run.status).toBe("success");
     expect(run.taskId).toBe("daily-summary");
 
@@ -224,7 +223,7 @@ describe("task e2e: create -> run -> verify", () => {
       ctx,
     );
 
-    await handleRun({ taskId: "Weekly Report" }, ctx);
+    await handleRun({ taskId: "weekly-report" }, ctx);
 
     expect(executorCalls.length).toBe(1);
     const received = executorCalls[0]!.task;
@@ -261,7 +260,7 @@ describe("task e2e: create -> run -> verify", () => {
     defs.get("scoped-task")!.allowedTools = ["files__*", "reports__generate", "analytics__*"];
     ctx.save(defs);
 
-    await handleRun({ taskId: "Scoped Task" }, ctx);
+    await handleRun({ taskId: "scoped-task" }, ctx);
 
     expect(executorCalls.length).toBe(1);
     const received = executorCalls[0]!.task;
@@ -302,7 +301,7 @@ describe("task e2e: run records metrics", () => {
       ctx,
     );
 
-    const run = expectSyncRun(await handleRun({ taskId: "Multi Tool Job" }, ctx));
+    const run = expectSyncRun(await handleRun({ taskId: "multi-tool-job" }, ctx));
 
     expect(run.toolCalls).toBe(7);
     expect(run.iterations).toBe(4);
@@ -324,13 +323,13 @@ describe("task e2e: run records metrics", () => {
       ctx,
     );
 
-    const beforeStatus = handleStatus({ name: "Status Check" }, ctx) as {
+    const beforeStatus = handleStatus({ taskId: "status-check" }, ctx) as {
       task: Task;
     };
     expect(beforeStatus.task.runCount).toBe(0);
     expect(beforeStatus.task.lastRunStatus).toBeUndefined();
 
-    await handleRun({ taskId: "Status Check" }, ctx);
+    await handleRun({ taskId: "status-check" }, ctx);
 
     // After run: scheduler.updateAfterRun updates the definition on disk.
     const updated = loadDefs().get("status-check")!;

@@ -8,7 +8,8 @@ import type { TaskRun } from "../types.ts";
 import { type Screen, TRAIL_ROOT_ID, trailFor, withRun } from "./trail.ts";
 
 const labels = (stack: Screen[]) => trailFor(stack).map((s) => s.label);
-const TASK: Screen = { kind: "task", taskName: "Digest" };
+const TASK: Screen = { kind: "task", taskId: "digest", taskName: "Digest" };
+const DIGEST = { id: "digest", name: "Digest" };
 
 describe("trailFor", () => {
   test("the home list is the root alone", () => {
@@ -28,7 +29,7 @@ describe("trailFor", () => {
     expect(labels([TASK, { kind: "result", runId: "run_abcdef123456", taskId: "digest" }])).toEqual(
       ["Tasks", "Digest", "Run"],
     );
-    expect(labels([TASK, { kind: "editor", taskName: "Digest" }])).toEqual([
+    expect(labels([TASK, { kind: "editor", taskId: "digest" }])).toEqual([
       "Tasks",
       "Digest",
       "Edit",
@@ -58,24 +59,24 @@ describe("withRun", () => {
   });
 
   test("from the home list, the run opens under its task's page", () => {
-    expect(withRun([], run("r1"), "Digest")).toEqual([TASK, run("r1")]);
+    expect(withRun([], run("r1"), DIGEST)).toEqual([TASK, run("r1")]);
   });
   test("from the task's page, the run goes on top", () => {
-    expect(withRun([TASK], run("r1"), "Digest")).toEqual([TASK, run("r1")]);
+    expect(withRun([TASK], run("r1"), DIGEST)).toEqual([TASK, run("r1")]);
   });
   test("from the task's runs, the task is not added again", () => {
     const runs: Screen = { kind: "activity", taskId: "digest", taskName: "Digest" };
-    expect(withRun([TASK, runs], run("r1"), "Digest")).toEqual([TASK, runs, run("r1")]);
+    expect(withRun([TASK, runs], run("r1"), DIGEST)).toEqual([TASK, runs, run("r1")]);
   });
   test("from every run, the task's page comes between", () => {
-    expect(withRun([{ kind: "activity" }], run("r1"), "Digest")).toEqual([
+    expect(withRun([{ kind: "activity" }], run("r1"), DIGEST)).toEqual([
       { kind: "activity" },
       TASK,
       run("r1"),
     ]);
   });
   test("a run on top gives way to the next one (a re-run, a retried run)", () => {
-    expect(withRun([TASK, run("r1")], run("r2"), "Digest")).toEqual([TASK, run("r2")]);
+    expect(withRun([TASK, run("r1")], run("r2"), DIGEST)).toEqual([TASK, run("r2")]);
   });
   test("a run of a task the list does not know opens alone", () => {
     expect(withRun([], run("r1"), undefined)).toEqual([run("r1")]);

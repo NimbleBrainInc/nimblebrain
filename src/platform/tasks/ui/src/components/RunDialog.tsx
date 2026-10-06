@@ -56,7 +56,7 @@ export function RunDialog({
   useEffect(() => {
     if (inputSchema) return;
     statusTool
-      .call({ name: taskId, limit: 1 })
+      .call({ taskId, limit: 0 })
       .then((res) =>
         setSchema((asDict(res.data).task as TaskDetail | undefined)?.inputSchema ?? null),
       )

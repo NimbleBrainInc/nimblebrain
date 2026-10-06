@@ -126,7 +126,7 @@ function harness(opts: { executor: Executor; admission?: RunAdmission }) {
       const runId = readIdempotencyKey(workDir, wsId, owner, id, key);
       return runId ? currentTicket(wsId, owner, runId) : null;
     },
-    cancelRun: (id) => scheduler.cancelRun(wsId, owner, id),
+    cancelRun: (runId) => scheduler.cancelRunById(wsId, owner, runId),
     readRuns: (id, o) => readRuns(workDir, wsId, owner, id, o),
     readRunsPage: () => ({ runs: [] }),
     readAllRuns: () => [],
@@ -405,7 +405,7 @@ describe("tasks__run as a task", () => {
     const { scheduler, source } = harness({ executor });
 
     const task = await startTask(source, {
-      prompt: "Summarize the input.",
+      definition: { body: "Summarize the input." },
       input: { text: "hello" },
       idempotencyKey: "batch-1/item-1",
     });
@@ -417,7 +417,7 @@ describe("tasks__run as a task", () => {
     expect(held[0]?.input).toEqual({ data: { text: "hello" } });
 
     const again = await startTask(source, {
-      prompt: "Summarize the input.",
+      definition: { body: "Summarize the input." },
       input: { text: "hello" },
       idempotencyKey: "batch-1/item-1",
     });
@@ -489,8 +489,16 @@ describe("tasks__run as a task", () => {
     const { executor, held } = heldExecutor();
     const { scheduler, source } = harness({ executor });
     const definition = {
-      prompt: "Fetch the page.",
-      inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+      definition: {
+        body: "Fetch the page.",
+        manifest: {
+          inputSchema: {
+            type: "object",
+            properties: { url: { type: "string" } },
+            required: ["url"],
+          },
+        },
+      },
       idempotencyKey: "page-1",
     };
 
@@ -514,11 +522,11 @@ describe("tasks__run as a task", () => {
   test("a key reused with a different inline definition is refused", async () => {
     const { executor, held } = heldExecutor();
     const { scheduler, source } = harness({ executor });
-    await startTask(source, { prompt: "Version one.", idempotencyKey: "shared" });
+    await startTask(source, { definition: { body: "Version one." }, idempotencyKey: "shared" });
 
     const changed = await source.startToolAsTask(
       "run",
-      { prompt: "Version two.", idempotencyKey: "shared" },
+      { definition: { body: "Version two." }, idempotencyKey: "shared" },
       { ownerContext: OWNED },
     );
     expect("result" in changed && changed.result.isError).toBe(true);

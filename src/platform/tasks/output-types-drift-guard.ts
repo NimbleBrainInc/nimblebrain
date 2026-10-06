@@ -108,13 +108,11 @@ export type DriftTokenBudgetA = AssertAssignable<TaskTokenBudget, TokenBudget>;
 export type DriftTokenBudgetB = AssertAssignable<TokenBudget, TaskTokenBudget>;
 
 // TaskStatusDetail — overlays are: handler-computed display
-// strings, computed cost numbers, and `undefined` → `null` coercions
-// on a few optional fields.
+// strings, the resolved timezone, computed cost numbers, and `undefined` →
+// `null` coercions on a few optional fields.
 type StatusOverlay =
   | "scheduleHuman"
-  | "lastRunAtHuman"
-  | "nextRunAtHuman"
-  | "actualCostUsd"
+  | "timezone"
   | "estimatedCostPerRun"
   | "estimatedCostPerDay"
   | "estimatedCostPerMonth"
@@ -133,9 +131,10 @@ type StatusUnexpected = Exclude<keyof TaskStatusDetail, keyof Task | StatusOverl
 export type DriftStatusUnexpected = AssertNever<StatusUnexpected>;
 
 // TaskSummary — overlays are: derived fields (cost estimate, the
-// schedule's type), formatted fields (schedule rendered to string, timestamps
-// to relative strings), and coerced optionals (`disabledAt`, `disabledReason`,
-// `lastRunStatus` get the `?? null` treatment; an absent `kind` reads `saved`).
+// schedule's type), formatted fields (schedule rendered to string), and
+// coerced optionals (`lastRunAt`, `disabledAt`, `disabledReason`,
+// `lastRunStatus` get the `?? null` treatment; `nextRunAt` is null while
+// disabled; an absent `kind` reads `saved`).
 type SummaryOverlay =
   | "schedule"
   | "scheduleType"

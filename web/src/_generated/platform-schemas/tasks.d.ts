@@ -11,44 +11,33 @@
  * Shape convention (per src/platform/AGENTS.md §1.3):
  *
  *   create: { manifest: { ...config }, body: <prompt> }
- *   update: { name, manifest?: Partial<config>, body?: <new prompt> }
+ *   update: { taskId, manifest?: patch of config (null clears), body?: <new prompt> }
+ *   run / run_batch inline: { definition: { manifest?, body? } }
  *
- * `manifest` is the persistent task definition; `body` is the prompt
- * that opens each run — the analog of a skill's markdown
- * body. The operator-only field `source` is intentionally absent from the
- * LLM-facing schema; it lives on the stored type and is set by the runtime,
- * never by an authoring caller.
+ * One definition shape: `manifest` carries the stored task's field names and
+ * `body` is the prompt that opens each run, in create, update, and an inline
+ * one-off alike. Every tool names a task by `taskId` and a run by `runId`. The
+ * operator-only field `source` is intentionally absent from the LLM-facing
+ * schema; it lives on the stored type and is set by the runtime.
+ *
+ * Numeric bounds here are literals that mirror the constants the handlers
+ * enforce (`src/limits.ts`, `src/platform/tasks/types.ts`): this tree is
+ * codegen'd under a strict rootDir (`scripts/tsconfig.codegen-web.json`) that
+ * forbids importing from outside `src/platform/schemas/`.
  */
 import { type Static } from "@sinclair/typebox";
 import { NotificationRouteMatch } from "./notifications.ts";
 export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
     manifest: import("@sinclair/typebox").TObject<{
-        name: import("@sinclair/typebox").TString;
-        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
-            expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-                source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
-            }>>;
-            debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        }>>;
-        enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
         model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
         allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+        maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         tokenBudget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
             period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
         }>>;
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
@@ -68,41 +57,58 @@ export declare const TasksCreateInput: import("@sinclair/typebox").TObject<{
             options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
         }>>;
         onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+        name: import("@sinclair/typebox").TString;
+        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
+            expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
+            }>>;
+            debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+        }>>;
+        enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
         kind: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"saved" | "oneoff">>;
     }>;
     body: import("@sinclair/typebox").TString;
 }>;
 export type TasksCreateInput = Static<typeof TasksCreateInput>;
 export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
-    name: import("@sinclair/typebox").TString;
+    taskId: import("@sinclair/typebox").TString;
     manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+        description: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
         schedule: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
             type: import("@sinclair/typebox").TUnsafe<"cron" | "interval" | "event" | "once">;
             expression: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             timezone: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
             at: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-            intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            intervalMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
             match: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
                 source: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
                 level: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"info" | "attention" | "urgent">>;
             }>>;
-            debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            debounceMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            maxFiresPerHour: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
         }>, import("@sinclair/typebox").TNull]>>;
         enabled: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        tokenBudget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-            maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-            maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+        skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TString, import("@sinclair/typebox").TNull]>>;
+        allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>, import("@sinclair/typebox").TNull]>>;
+        maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TNull]>>;
+        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TNull]>>;
+        maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TNull]>>;
+        tokenBudget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TObject<{
+            maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
             period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
-        }>>;
+        }>, import("@sinclair/typebox").TNull]>>;
         inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
         outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TUnsafe<Record<string, unknown>>, import("@sinclair/typebox").TNull]>>;
         criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
@@ -125,7 +131,7 @@ export declare const TasksUpdateInput: import("@sinclair/typebox").TObject<{
 }>;
 export type TasksUpdateInput = Static<typeof TasksUpdateInput>;
 export declare const TasksDeleteInput: import("@sinclair/typebox").TObject<{
-    name: import("@sinclair/typebox").TString;
+    taskId: import("@sinclair/typebox").TString;
 }>;
 export type TasksDeleteInput = Static<typeof TasksDeleteInput>;
 export declare const TasksListInput: import("@sinclair/typebox").TObject<{
@@ -137,16 +143,17 @@ export declare const TasksListInput: import("@sinclair/typebox").TObject<{
 }>;
 export type TasksListInput = Static<typeof TasksListInput>;
 export declare const TasksStatusInput: import("@sinclair/typebox").TObject<{
-    name: import("@sinclair/typebox").TString;
-    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    taskId: import("@sinclair/typebox").TString;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;
 export type TasksStatusInput = Static<typeof TasksStatusInput>;
 export declare const TasksRunsInput: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    status: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"skipped" | "running" | "success" | "degraded" | "failure" | "timeout" | "cancelled">>;
+    label: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"Succeeded" | "Poor result" | "Needs review" | "Failed" | "Skipped" | "Cancelled">>;
+    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pass" | "fail" | "uncertain" | "not_assessed">>;
     since: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     before: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+    limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     excludeBatchRuns: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type TasksRunsInput = Static<typeof TasksRunsInput>;
@@ -163,59 +170,94 @@ export declare const TasksJudgesInput: import("@sinclair/typebox").TObject<{}>;
 export type TasksJudgesInput = Static<typeof TasksJudgesInput>;
 export declare const TasksRunInput: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    definition: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+            maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            tokenBudget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+                maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+                period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
+            }>>;
+            inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+            outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+            criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                id: import("@sinclair/typebox").TString;
+                rule: import("@sinclair/typebox").TString;
+                type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+                levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+            }>>>;
+            confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+            }>>;
+            onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
+        }>>;
+        body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>>;
     input: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<unknown>>;
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    prompt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
-    outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
-    allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-    limits: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-    }>>;
-    budget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
-    }>>;
-    criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
-        id: import("@sinclair/typebox").TString;
-        rule: import("@sinclair/typebox").TString;
-        type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
-        levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
-    }>>>;
-    confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-    judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
-    }>>;
-    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
 }>;
 export type TasksRunInput = Static<typeof TasksRunInput>;
 export declare const TasksAssessInput: import("@sinclair/typebox").TObject<{
     runId: import("@sinclair/typebox").TString;
-    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pass" | "fail">>;
     note: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     reassess: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
 }>;
 export type TasksAssessInput = Static<typeof TasksAssessInput>;
 export declare const TasksCancelInput: import("@sinclair/typebox").TObject<{
-    name: import("@sinclair/typebox").TString;
+    runId: import("@sinclair/typebox").TString;
 }>;
 export type TasksCancelInput = Static<typeof TasksCancelInput>;
 export declare const TasksRunResultInput: import("@sinclair/typebox").TObject<{
-    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
     runId: import("@sinclair/typebox").TString;
+    taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
 }>;
 export type TasksRunResultInput = Static<typeof TasksRunResultInput>;
 export declare const TasksRunBatchInput: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    definition: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+        manifest: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+            skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            model: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+            maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+            tokenBudget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+                maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
+                period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
+            }>>;
+            inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+            outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+            criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
+                id: import("@sinclair/typebox").TString;
+                rule: import("@sinclair/typebox").TString;
+                type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
+                levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
+                pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
+            }>>>;
+            confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
+            judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
+                server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+                options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
+            }>>;
+        }>>;
+        body: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+    }>>;
     items: import("@sinclair/typebox").TArray<import("@sinclair/typebox").TUnsafe<unknown>>;
     concurrency: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     budgetUsd: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
@@ -224,42 +266,12 @@ export declare const TasksRunBatchInput: import("@sinclair/typebox").TObject<{
         afterItems: import("@sinclair/typebox").TInteger;
     }>>;
     idempotencyKey: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    prompt: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    skill: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    inputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
-    outputSchema: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
-    allowedTools: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-    limits: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        maxIterations: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        maxRunDurationMs: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-    }>>;
-    budget: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        maxInputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        maxOutputTokens: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-        period: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"daily" | "monthly">>;
-    }>>;
-    criteria: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TObject<{
-        id: import("@sinclair/typebox").TString;
-        rule: import("@sinclair/typebox").TString;
-        type: import("@sinclair/typebox").TUnsafe<"boolean" | "score" | "choice">;
-        levels: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>>;
-        pass: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TBoolean, import("@sinclair/typebox").TInteger, import("@sinclair/typebox").TString, import("@sinclair/typebox").TArray<import("@sinclair/typebox").TString>]>>;
-    }>>>;
-    confidenceThreshold: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TNumber>;
-    judge: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TObject<{
-        server: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        id: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-        options: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<Record<string, unknown>>>;
-    }>>;
-    onPoorResult: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"record" | "notify" | "retry_once">>;
 }>;
 export type TasksRunBatchInput = Static<typeof TasksRunBatchInput>;
 export declare const TasksBatchInput: import("@sinclair/typebox").TObject<{
     batchId: import("@sinclair/typebox").TString;
     results: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TBoolean>;
-    verdict: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pending" | "skipped" | "failed" | "pass" | "cancelled" | "fail" | "uncertain" | "not_assessed" | "failing">>;
+    filter: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"pending" | "skipped" | "failed" | "pass" | "fail" | "uncertain" | "not_assessed" | "cancelled" | "failing">>;
     cursor: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;
@@ -272,7 +284,7 @@ export declare const TasksBatchControlInput: import("@sinclair/typebox").TObject
 export type TasksBatchControlInput = Static<typeof TasksBatchControlInput>;
 export declare const TasksBatchesInput: import("@sinclair/typebox").TObject<{
     taskId: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
-    state: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"running" | "cancelled" | "paused" | "completed">>;
+    state: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TUnsafe<"cancelled" | "running" | "paused" | "completed">>;
     limit: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TInteger>;
 }>;
 export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
@@ -284,11 +296,8 @@ export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
  */
 export type TaskLastRunStatus = "success" | "degraded" | "failure" | "timeout" | "skipped";
 /**
- * Summary row returned per task by `handleList`. Subset of the
- * stored `Task` shape plus a couple of human-formatted fields the
- * UI surfaces directly. `lastRunAt` / `nextRunAt` are human-relative
- * strings (e.g. "in 2h", "4h ago") — the raw ISO timestamps stay on the
- * stored `Task`.
+ * Summary row returned per task by `handleList`. Subset of the stored `Task`
+ * shape plus the schedule in words. Times are ISO-8601.
  */
 export interface TaskSummary {
     id: string;
@@ -306,6 +315,7 @@ export interface TaskSummary {
     runCount: number;
     lastRunStatus: TaskLastRunStatus | null;
     lastRunAt: string | null;
+    /** When its schedule next fires; null when nothing will (no timed schedule, or disabled). */
     nextRunAt: string | null;
     disabledAt: string | null;
     disabledReason: string | null;
@@ -475,14 +485,12 @@ export interface RunFileRefRecord {
     filename: string;
 }
 /**
- * The full deliverable of a run, returned by `handleRunResult`. Mirror of
- * `TaskRunResult` in `platform/tasks/types.ts`. A run is not a
- * conversation: the result carries the final output, the activity log, and refs
- * to any files the run wrote in the workspace file store.
+ * A run's full deliverable: the untruncated final output, the activity log,
+ * and refs to any files the run wrote in the workspace file store. Mirror of
+ * `TaskRunResult` in `platform/tasks/types.ts`, less the ids the run record
+ * beside it carries. A run is not a conversation.
  */
-export interface TasksRunResultOutput {
-    runId: string;
-    taskId: string;
+export interface TaskRunResultBody {
     completedAt: string;
     output: string;
     activityLog: RunToolCallRecord[];
@@ -495,13 +503,24 @@ export interface TasksRunResultOutput {
     stopReason?: "complete" | "max_iterations" | "max_input_tokens" | "spend_limit" | "length" | "content_filter" | "error" | "other";
     /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
     structured?: unknown;
-    /** How the run ended, from its record; absent when the record was not found. */
-    execution?: TaskRunExecution;
-    /** The label the run reads as, from its record; absent when the record was not found. */
-    label?: TaskRunLabel;
-    /** The run's assessment, from its record. */
-    assessment?: TaskRunAssessment;
 }
+/**
+ * `tasks__run_result`: one run by id, whatever state it is in. `status` says
+ * whether it has ended; a run still queued or running is an answer, not an
+ * error, so a caller polls by calling again.
+ */
+export type TasksRunResultOutput = {
+    status: "queued" | "running";
+    run: TaskRunView;
+    /** Queued only: 1 is next to start. */
+    position?: number;
+    message: string;
+} | {
+    status: "ended";
+    run: TaskRunView;
+    /** Absent when the run left no deliverable (skipped, cancelled before it began, failed early). */
+    result?: TaskRunResultBody;
+};
 /**
  * Token budget block on a stored task. Mirror of the
  * `TokenBudget` interface; kept here to avoid a cross-tree import
@@ -546,6 +565,8 @@ export interface TaskStatusDetail {
     kind?: "saved" | "oneoff";
     onceDone?: TaskOnceDone;
     scheduleHuman: string;
+    /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
+    timezone: string;
     enabled: boolean;
     source: "user" | "agent";
     ownerId?: string;
@@ -569,15 +590,12 @@ export interface TaskStatusDetail {
     tokenBudget: TaskTokenBudget | null;
     budgetResetAt: string | null;
     lastRunAt?: string;
-    lastRunAtHuman: string | null;
     lastRunStatus?: TaskLastRunStatus;
     nextRunAt?: string;
-    nextRunAtHuman: string | null;
     disabledAt?: string;
     disabledReason?: string;
     createdAt: string;
     updatedAt: string;
-    actualCostUsd: number;
     estimatedCostPerRun: number;
     estimatedCostPerDay: number;
     estimatedCostPerMonth: number;
@@ -609,41 +627,32 @@ export interface TaskWarning {
     message: string;
 }
 /**
- * Discriminated union — `handleRun` returns one of two shapes:
+ * `handleRun` returns one of three shapes:
  *
- *   { run: TaskRunRecord; enabled; message? }  when the run finishes
- *                                                    inside the sync-wait
- *                                                    window (~30s default).
+ *   { run; enabled; message? }               the run ended inside the
+ *                                            sync-wait window (~30s), or was
+ *                                            refused before it started: a
+ *                                            `skipped` run whose `error` says
+ *                                            why (already running or queued,
+ *                                            a full queue, a spent budget).
  *
- *   { status: "dispatched"; taskId;            when the run is still
- *     startedAt; enabled; message }                  in flight after the
- *                                                    window. It keeps going;
- *                                                    its record lands in
- *                                                    `tasks__runs`
- *                                                    (`since: startedAt`)
- *                                                    when it ends.
+ *   { status: "dispatched"; runId; ... }     still running after the window;
+ *                                            it keeps going.
  *
- *   { status: "queued"; taskId; position;     when every run slot was
- *     queuedAt; enabled; message }                   busy. It starts as soon
- *                                                    as a slot frees; its record
- *                                                    lands in `tasks__runs`
- *                                                    (`since: queuedAt`) when it
- *                                                    ends. `tasks__cancel`
- *                                                    removes it from the queue.
+ *   { status: "queued"; runId; position }    every run slot was busy; it
+ *                                            starts as soon as one frees.
  *
- * A Run now the scheduler refuses (already running or queued, a full queue, a
- * spent token budget) returns the first shape with a `skipped` run whose
- * `error` says why.
+ * Read the last two with `tasks__run_result` (runId) until it says `ended`;
+ * `tasks__cancel` (runId) stops them. Only an error response means nothing
+ * was asked for (an unknown task, bad input, a bad definition).
  *
- * `enabled` is the task's own flag. Run now runs a disabled task,
- * because it is a deliberate act and the create form's test run depends on
- * it; a disabled task is not fired by its schedule or by events, and
- * `message` says so.
+ * `enabled` is the task's own flag. Run now runs a disabled task, because it
+ * is a deliberate act and the create form's test run depends on it; a
+ * disabled task is not fired by its schedule or by events, and `message`
+ * says so.
  *
- * Both shapes indicate the dispatch succeeded; only an error response
- * indicates failure to dispatch. Consumers MUST narrow before
- * dereferencing `run.*` — `as { run: ... }` is the anti-pattern that
- * caused the production CLI crash this type prevents.
+ * Consumers MUST narrow before dereferencing `run.*` (`"run" in out`), never
+ * `as { run: ... }`.
  */
 export type TasksRunOutput = {
     run: TaskRunView;
@@ -678,7 +687,9 @@ export interface TasksAssessOutput {
 }
 export interface TasksCancelOutput {
     cancelled: boolean;
-    id: string;
+    runId: string;
+    /** The run's task, when the run was found. */
+    taskId?: string;
     message: string;
 }
 /**
@@ -738,9 +749,10 @@ export interface TaskEffectiveLimits {
 }
 export interface TasksCreateOutput {
     task: TaskRecord;
-    created: boolean;
     message: string;
     effectiveLimits: TaskEffectiveLimits;
+    /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
+    timezone: string;
     /** About the saved task, which was saved anyway. */
     warnings?: TaskWarning[];
 }
@@ -749,6 +761,8 @@ export interface TasksUpdateOutput {
     updated: boolean;
     message: string;
     effectiveLimits: TaskEffectiveLimits;
+    /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
+    timezone: string;
     /** About the saved task, which was saved anyway. */
     warnings?: TaskWarning[];
 }

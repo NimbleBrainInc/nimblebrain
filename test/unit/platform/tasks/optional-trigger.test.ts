@@ -309,7 +309,7 @@ describe("a once schedule", () => {
     // While the first occurrence runs, the owner moves the time out by an hour.
     const newAt = iso(Date.now() + 3_600_000);
     handleUpdate(
-      { name: "Send It", manifest: { schedule: { type: "once", at: newAt } } },
+      { taskId: "send-it", manifest: { schedule: { type: "once", at: newAt } } },
       makeCtx(),
     );
     finish();
@@ -429,7 +429,7 @@ describe("once schedule validation and re-arm", () => {
 
     const at = future();
     const out = handleUpdate(
-      { name: "Send It", manifest: { schedule: { type: "once", at } } },
+      { taskId: "send-it", manifest: { schedule: { type: "once", at } } },
       ctx,
     );
 
@@ -453,9 +453,9 @@ describe("once schedule validation and re-arm", () => {
         disabledReason: `${ONCE_RAN_REASON}${past}`,
       }),
     );
-    expect(() => handleUpdate({ name: "Send It", manifest: { enabled: true } }, makeCtx())).toThrow(
-      /has passed/,
-    );
+    expect(() =>
+      handleUpdate({ taskId: "send-it", manifest: { enabled: true } }, makeCtx()),
+    ).toThrow(/has passed/);
     expect(loadDefs().get("send-it")?.enabled).toBe(false);
   });
 
@@ -463,7 +463,7 @@ describe("once schedule validation and re-arm", () => {
     saveTask(workDir, WS, OWNER, makeTask({ schedule: { type: "once", at: future() } }));
     expect(() =>
       handleUpdate(
-        { name: "Send It", manifest: { schedule: { type: "once", at: iso(Date.now() - 1000) } } },
+        { taskId: "send-it", manifest: { schedule: { type: "once", at: iso(Date.now() - 1000) } } },
         makeCtx(),
       ),
     ).toThrow(/already passed/);
@@ -493,7 +493,7 @@ describe("once schedule validation and re-arm", () => {
       makeTask({ schedule: { type: "once", at: future() }, enabled: false }),
     );
     const out = handleUpdate(
-      { name: "Send It", manifest: { schedule: { type: "once", at: future() } } },
+      { taskId: "send-it", manifest: { schedule: { type: "once", at: future() } } },
       makeCtx(),
     );
     expect(out.task.enabled).toBe(false);
@@ -516,7 +516,7 @@ describe("once schedule validation and re-arm", () => {
     const done = handleList({}, ctx).tasks[0]!;
     expect(done.schedule).toMatch(/^Ran once at Jul 1, 2099/);
     expect(done.onceDone).toEqual({ at, outcome: "ran" });
-    expect(handleStatus({ name: "Send It" }, ctx).task.scheduleHuman).toMatch(/^Ran once/);
+    expect(handleStatus({ taskId: "send-it" }, ctx).task.scheduleHuman).toMatch(/^Ran once/);
   });
 });
 
@@ -568,7 +568,7 @@ describe("a task with no schedule", () => {
       runNow: (id) => scheduler.requestRunNow(WS, OWNER, id),
     });
 
-    const result = await handleRun({ taskId: "By Hand" }, ctx);
+    const result = await handleRun({ taskId: "by-hand" }, ctx);
     scheduler.stop();
 
     if (!("run" in result)) throw new Error(`expected a run, got ${JSON.stringify(result)}`);
@@ -589,7 +589,7 @@ describe("a task with no schedule", () => {
     );
     expect(loadDefs().get("was-daily")?.nextRunAt).toBeDefined();
 
-    const out = handleUpdate({ name: "Was Daily", manifest: { schedule: null } }, ctx);
+    const out = handleUpdate({ taskId: "was-daily", manifest: { schedule: null } }, ctx);
 
     expect(out.updated).toBe(true);
     const stored = loadDefs().get("was-daily")!;
@@ -602,7 +602,7 @@ describe("a task with no schedule", () => {
     const ctx = makeCtx();
     handleCreate({ manifest: { name: "By Hand" }, body: "x" }, ctx);
     const out = handleUpdate(
-      { name: "By Hand", manifest: { schedule: { type: "interval", intervalMs: 3_600_000 } } },
+      { taskId: "by-hand", manifest: { schedule: { type: "interval", intervalMs: 3_600_000 } } },
       ctx,
     );
     expect(out.task.schedule?.type).toBe("interval");

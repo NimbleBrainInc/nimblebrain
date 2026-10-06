@@ -508,12 +508,12 @@ describe("runtime.executeTask", () => {
     // schema validation.
     const validSchedule = { type: "interval", intervalMs: 60_000 };
     const forbiddenCalls: Array<{ tool: string; input: unknown }> = [
-      { tool: "tasks__update", input: { name: "target" } },
+      { tool: "tasks__update", input: { taskId: "target" } },
       {
         tool: "tasks__create",
         input: { manifest: { name: "evil", schedule: validSchedule }, body: "x" },
       },
-      { tool: "tasks__delete", input: { name: "target" } },
+      { tool: "tasks__delete", input: { taskId: "target" } },
       { tool: "tasks__run", input: { taskId: "target" } },
     ];
     for (const { tool, input } of forbiddenCalls) {

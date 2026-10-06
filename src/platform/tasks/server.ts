@@ -17,6 +17,8 @@ import {
 import { MAX_ITERATIONS, TASKS_LIST_DEFAULT_LIMIT, TASKS_LIST_MAX_LIMIT } from "../../limits.ts";
 import type {
   TaskEffectiveLimits,
+  TaskRunLabel,
+  TaskRunResultBody,
   TaskRunStats,
   TaskSummary,
   TasksAssessOutput,
@@ -47,13 +49,20 @@ import {
   validateAssessmentFields,
 } from "./assessment.ts";
 import type { BatchAction, BatchControlResult } from "./batch.ts";
-import { createTask, deleteTask, updateTask } from "./domain.ts";
+import {
+  createTask,
+  type DomainUpdatePatch,
+  deleteTask,
+  requireTask,
+  updateTask,
+} from "./domain.ts";
 import { containsRecursiveTool } from "./executor.ts";
 import { assertJsonSchema, checkAgainstSchema } from "./json-schema.ts";
 import { type JudgeSourceView, judgeServersOf } from "./judge.ts";
 import {
   countsAsEventFire,
   isOpenRun,
+  newRunId,
   type QueueViewEntry,
   type RequestedRun,
   type RunNowTicket,
@@ -293,29 +302,6 @@ function formatTimezoneAbbr(tz: string): string {
   return tz;
 }
 
-/** Format an ISO timestamp as a relative time string. */
-export function formatRelativeTime(isoTimestamp: string, now?: number): string {
-  const targetMs = new Date(isoTimestamp).getTime();
-  const nowMs = now ?? Date.now();
-  const diffMs = targetMs - nowMs;
-  const absDiffMs = Math.abs(diffMs);
-
-  if (absDiffMs < 60_000) return diffMs >= 0 ? "in <1m" : "<1m ago";
-
-  const minutes = Math.floor(absDiffMs / 60_000);
-  if (minutes < 60) {
-    return diffMs >= 0 ? `in ${minutes}m` : `${minutes}m ago`;
-  }
-
-  const hours = Math.floor(absDiffMs / 3_600_000);
-  if (hours < 24) {
-    return diffMs >= 0 ? `in ${hours}h` : `${hours}h ago`;
-  }
-
-  const days = Math.floor(absDiffMs / 86_400_000);
-  return diffMs >= 0 ? `in ${days}d` : `${days}d ago`;
-}
-
 // ---------------------------------------------------------------------------
 // Cost estimation helpers (exported for testing)
 // ---------------------------------------------------------------------------
@@ -422,7 +408,8 @@ export interface ToolContext {
   findRunByKey?: (taskId: string, key: string) => RunTicket | null;
   /** A queued run's place in the run queue (1 is next), or null when it is not queued. */
   queuePosition?: (taskId: string) => number | null;
-  cancelRun: (taskId: string) => boolean;
+  /** Cancel a run by id: abort it in flight, or take it out of the queue. False when none. */
+  cancelRun: (runId: string) => boolean;
   /** Read one task's run history (workspace + owner bound at construction). */
   readRuns: (taskId: string, opts?: ReadRunsOptions) => TaskRun[];
   /** Read one page of a task's full history, back through its archive months. */
@@ -509,10 +496,10 @@ export interface BatchPort {
 export interface ValidatableTaskFields {
   /** `null` is an update's clear: nothing to validate. */
   schedule?: ScheduleSpec | null;
-  maxIterations?: number;
-  maxInputTokens?: number;
-  maxRunDurationMs?: number;
-  allowedTools?: string[];
+  maxIterations?: number | null;
+  maxInputTokens?: number | null;
+  maxRunDurationMs?: number | null;
+  allowedTools?: string[] | null;
   /** `null` is an update's clear: nothing to validate. */
   inputSchema?: Record<string, unknown> | null;
   outputSchema?: Record<string, unknown> | null;
@@ -530,7 +517,7 @@ export function validateTaskFields(args: ValidatableTaskFields): void {
   if (args.outputSchema != null) assertJsonSchema(args.outputSchema, "outputSchema");
   // The executor refuses to run such a task; refusing it here tells the
   // author at write time instead of at the first run.
-  const recursive = containsRecursiveTool(args.allowedTools);
+  const recursive = containsRecursiveTool(args.allowedTools ?? undefined);
   if (recursive !== null) {
     throw new Error(
       `allowedTools may not include "${recursive}": a task cannot create, update, or ` +
@@ -703,6 +690,11 @@ interface CreateInput {
   body: string;
 }
 
+/** The IANA timezone a task's schedule is read in: its own, else the instance's. */
+function timezoneOf(task: Task, ctx: ToolContext): string {
+  return task.schedule?.timezone ?? ctx.defaultTimezone;
+}
+
 export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): TasksCreateOutput {
   const { manifest, body } = args as unknown as CreateInput;
 
@@ -737,7 +729,7 @@ export function handleCreate(args: Record<string, unknown>, ctx: ToolContext): T
     },
     ctx,
   );
-  return withEffectiveLimits(result, ctx);
+  return { ...withEffectiveLimits(result, ctx), timezone: timezoneOf(result.task, ctx) };
 }
 
 /**
@@ -756,55 +748,21 @@ function withEffectiveLimits<T extends { task: Task; message: string }>(
 }
 
 /**
- * Strict input shape for `tasks__update`. `manifest` is a partial
- * of the create-shape; `body` is an optional new prompt. `name` at root
- * is the reference key — `manifest.name` cannot be patched (renaming is
- * a separate operation, blocked at the schema layer).
+ * Strict input shape for `tasks__update`. `manifest` is a patch of the
+ * create-shape in which `null` clears a field; `body` is an optional new
+ * prompt. `name` and `kind` are not patchable (a rename would move the id).
  */
 interface UpdateInput {
-  name: string;
-  manifest?: Partial<
-    Omit<
-      CreateInput["manifest"],
-      | "name"
-      | "schedule"
-      | "kind"
-      | "inputSchema"
-      | "outputSchema"
-      | "criteria"
-      | "confidenceThreshold"
-      | "judge"
-      | "onPoorResult"
-    >
-  > & {
-    /** `null` clears it: nothing fires the task unattended. */
-    schedule?: ScheduleSpec | null;
-    /** `null` clears it: runs take any input. */
-    inputSchema?: Record<string, unknown> | null;
-    /** `null` clears it: the deliverable is not checked. */
-    outputSchema?: Record<string, unknown> | null;
-    /** `null` clears them: runs are not judged. */
-    criteria?: Criterion[] | null;
-    /** `null` clears it: the default threshold applies. */
-    confidenceThreshold?: number | null;
-    /** `null` clears it: the one connected judge server is used. */
-    judge?: TaskJudge | null;
-    /** `null` clears it: the default policy applies. */
-    onPoorResult?: OnPoorResult | null;
-  };
+  taskId: string;
+  manifest?: Omit<DomainUpdatePatch, "prompt">;
   body?: string;
 }
 
 export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): TasksUpdateOutput {
-  const { name, manifest: patch, body } = args as unknown as UpdateInput;
-  if (!name) throw new Error("Missing required field: name");
-
-  if (patch) {
-    validateTaskFields(patch);
-  }
-
+  const { taskId, manifest: patch, body } = args as unknown as UpdateInput;
+  if (patch) validateTaskFields(patch);
   const result = updateTask(
-    name,
+    taskId,
     {
       ...(patch ?? {}),
       // Tool's `body` field maps to domain's `prompt`.
@@ -812,18 +770,16 @@ export function handleUpdate(args: Record<string, unknown>, ctx: ToolContext): T
     },
     ctx,
   );
-  return withEffectiveLimits(result, ctx);
+  return { ...withEffectiveLimits(result, ctx), timezone: timezoneOf(result.task, ctx) };
 }
 
 export function handleDelete(args: Record<string, unknown>, ctx: ToolContext): TasksDeleteOutput {
-  const name = args.name as string;
-  if (!name) throw new Error("Missing required field: name");
-  return deleteTask(name, ctx);
+  const { taskId } = args as unknown as { taskId: string };
+  return deleteTask(taskId, ctx);
 }
 
 export function handleList(args: Record<string, unknown>, ctx: ToolContext): TasksListOutput {
   const defs = ctx.definitions();
-  const now = Date.now();
 
   let tasks = Array.from(defs.values());
 
@@ -887,8 +843,9 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Tas
     source: a.source,
     runCount: a.runCount,
     lastRunStatus: a.lastRunStatus ?? null,
-    lastRunAt: a.lastRunAt ? formatRelativeTime(a.lastRunAt, now) : null,
-    nextRunAt: a.nextRunAt ? formatRelativeTime(a.nextRunAt, now) : null,
+    lastRunAt: a.lastRunAt ?? null,
+    // A disabled task keeps its stored `nextRunAt`, but nothing fires it.
+    nextRunAt: a.enabled ? (a.nextRunAt ?? null) : null,
     disabledAt: a.disabledAt ?? null,
     disabledReason: a.disabledReason ?? null,
     estimatedCostPerDay: estimateCost(a, ctx.defaultModel).perDayUsd,
@@ -916,40 +873,19 @@ export function handleList(args: Record<string, unknown>, ctx: ToolContext): Tas
 }
 
 export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): TasksStatusOutput {
-  const name = args.name as string;
-  if (!name) throw new Error("Missing required field: name");
-
-  const defs = ctx.definitions();
-  const task = findByName(defs, name);
-  if (!task) {
-    throw new Error(`Task not found: "${name}"`);
-  }
-
-  const limit = (args.limit as number) ?? 5;
-  const now = Date.now();
-
-  const runs = ctx.readRuns(task.id, { limit });
-
+  const { taskId, limit = 5 } = args as unknown as { taskId: string; limit?: number };
+  const task = requireTask(ctx.definitions(), taskId);
+  const runs = limit > 0 ? ctx.readRuns(task.id, { limit }) : [];
   const cost = estimateCost(task, ctx.defaultModel);
-
-  const rates = getModelRates(task.model ?? ctx.defaultModel);
-  const actualCostUsd =
-    task.cumulativeInputTokens > 0
-      ? (task.cumulativeInputTokens * rates.input + task.cumulativeOutputTokens * rates.output) /
-        1_000_000
-      : 0;
-
   return {
     task: {
       ...task,
       scheduleHuman: formatSchedule(task.schedule, task),
-      lastRunAtHuman: task.lastRunAt ? formatRelativeTime(task.lastRunAt, now) : null,
-      nextRunAtHuman: task.nextRunAt ? formatRelativeTime(task.nextRunAt, now) : null,
+      timezone: timezoneOf(task, ctx),
       cumulativeInputTokens: task.cumulativeInputTokens,
       cumulativeOutputTokens: task.cumulativeOutputTokens,
       tokenBudget: task.tokenBudget ?? null,
       budgetResetAt: task.budgetResetAt ?? null,
-      actualCostUsd,
       estimatedCostPerRun: cost.perRunUsd,
       estimatedCostPerDay: cost.perDayUsd,
       estimatedCostPerMonth: cost.perMonthUsd,
@@ -958,22 +894,42 @@ export function handleStatus(args: Record<string, unknown>, ctx: ToolContext): T
   };
 }
 
+/** Runs read per page while `tasks__runs` filters by label or verdict. */
+const FILTER_SCAN_PAGE = 500;
+/** Most runs one filtered `tasks__runs` call reads before it answers with `nextBefore`. */
+const FILTER_SCAN_CAP = 5_000;
+
+/** `tasks__runs`' arguments, already shape-checked by its input schema. */
+interface RunsInput {
+  taskId?: string;
+  label?: TaskRunLabel;
+  verdict?: "pass" | "fail" | "uncertain" | "not_assessed";
+  since?: string;
+  before?: string;
+  limit?: number;
+  excludeBatchRuns?: boolean;
+}
+
 export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): TasksRunsOutput {
-  const taskId = args.taskId as string | undefined;
-  const status = args.status as TaskRun["status"] | undefined;
-  const since = args.since as string | undefined;
-  const before = args.before as string | undefined;
-  const limit = (args.limit as number) ?? 20;
-  const excludeBatch = args.excludeBatchRuns === true ? { excludeBatch: true } : {};
+  const {
+    taskId,
+    label,
+    verdict,
+    since,
+    before,
+    limit = 20,
+    excludeBatchRuns,
+  } = args as unknown as RunsInput;
   if (before !== undefined && Number.isNaN(new Date(before).getTime())) {
     throw new Error(`Invalid before timestamp: "${before}"`);
   }
+  // A deleted task's history is still read by its id, so the task need not exist.
+  const excludeBatch = excludeBatchRuns === true ? { excludeBatch: true } : {};
+  const read = (pageBefore: string | undefined, pageLimit: number): RunsPage =>
+    readRunsPageOf(ctx, taskId, { limit: pageLimit, since, before: pageBefore, ...excludeBatch });
 
-  // One task's history pages back through its archive with a cursor.
-  // The first page (no `before`) reads only the hot index; its `nextBefore`
-  // says older runs exist.
-  if (taskId) {
-    const page = ctx.readRunsPage(taskId, { limit, status, since, before, ...excludeBatch });
+  if (label === undefined && verdict === undefined) {
+    const page = read(before, limit);
     return {
       runs: page.runs.map(toRunView),
       total: page.runs.length,
@@ -981,22 +937,68 @@ export function handleRuns(args: Record<string, unknown>, ctx: ToolContext): Tas
     };
   }
 
-  // Every task's runs: one more than the page, to know whether more remain,
-  // cut without splitting runs that share a start time (as `readRunsPage`).
-  const read = ctx.readAllRuns({ limit: limit + 1, status, since, before, ...excludeBatch });
-  if (read.length <= limit) return { runs: read.map(toRunView), total: read.length };
-  const startedMs = (r: TaskRun) => new Date(r.startedAt).getTime();
-  let cut = limit;
-  while (cut > 0 && cut < read.length && startedMs(read[cut]!) === startedMs(read[cut - 1]!)) {
-    cut++;
+  // Filtered: read pages back until the page is full or the scan cap is
+  // reached, then answer with where to go on from.
+  const keep = (run: TaskRun): boolean =>
+    (label === undefined || labelOf(run) === label) &&
+    (verdict === undefined || (isAssessable(run) && effectiveVerdict(run.assessment) === verdict));
+  const matched: TaskRun[] = [];
+  let cursor = before;
+  let scanned = 0;
+  let next: string | undefined;
+  for (;;) {
+    const page = read(cursor, FILTER_SCAN_PAGE);
+    scanned += page.runs.length;
+    matched.push(...page.runs.filter(keep));
+    next = page.nextBefore;
+    if (matched.length >= limit || !next || scanned >= FILTER_SCAN_CAP) break;
+    cursor = next;
   }
-  const runs = read.slice(0, cut);
+  if (matched.length <= limit) {
+    return {
+      runs: matched.map(toRunView),
+      total: matched.length,
+      ...(next ? { nextBefore: next } : {}),
+    };
+  }
+  const runs = cutPage(matched, limit);
   const last = runs[runs.length - 1];
   return {
     runs: runs.map(toRunView),
     total: runs.length,
     ...(last ? { nextBefore: last.startedAt } : {}),
   };
+}
+
+/**
+ * The first `limit` runs (newest first), extended so runs that share a start
+ * time are never split: a `before` cursor at that time would skip the rest.
+ */
+function cutPage(runs: TaskRun[], limit: number): TaskRun[] {
+  const startedMs = (r: TaskRun) => new Date(r.startedAt).getTime();
+  let cut = limit;
+  while (cut > 0 && cut < runs.length && startedMs(runs[cut]!) === startedMs(runs[cut - 1]!)) {
+    cut++;
+  }
+  return runs.slice(0, cut);
+}
+
+/**
+ * One page of runs, newest first, with the `before` that continues it: one
+ * task's history through its archive months, or every task's (one extra run
+ * read to know whether more remain, a start-time group never split).
+ */
+function readRunsPageOf(
+  ctx: ToolContext,
+  taskId: string | undefined,
+  opts: ReadRunsOptions & { limit: number },
+): RunsPage {
+  if (taskId !== undefined) return ctx.readRunsPage(taskId, opts);
+  const read = ctx.readAllRuns({ ...opts, limit: opts.limit + 1 });
+  if (read.length <= opts.limit) return { runs: read };
+  const runs = cutPage(read, opts.limit);
+  const last = runs[runs.length - 1];
+  return { runs, ...(last ? { nextBefore: last.startedAt } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,9 +1230,7 @@ export function handleStats(args: Record<string, unknown>, ctx: ToolContext): Ta
   const defs = ctx.definitions();
   let tasks: Task[];
   if (taskId !== undefined) {
-    const task = defs.get(taskId);
-    if (!task) throw new Error(`Task not found: "${taskId}"`);
-    tasks = [task];
+    tasks = [requireTask(defs, taskId)];
   } else {
     tasks = [...defs.values()].filter((t) => kindOf(t) === "saved");
   }
@@ -1282,63 +1282,102 @@ export async function handleJudges(
 }
 
 /**
- * Fetch a single run's full result (the deliverable) — the untruncated output,
- * the activity log of every tool call, and refs to any files the run wrote.
- * The run-list summary (`handleRuns`/`handleStatus`) carries only a truncated
- * preview; this is how a caller pulls the whole thing.
+ * One of the caller's runs by id, wherever it is: through the task named, the
+ * run's ticket (a run `tasks__run` asked for), the runs in flight or queued
+ * now, or the hot run index of each of the caller's tasks. `task` is absent
+ * when the run's task has since been deleted.
+ */
+function locateRun(
+  ctx: ToolContext,
+  runId: string,
+  taskId: string | undefined,
+): { taskId: string; task?: Task; run: TaskRun } {
+  const defs = ctx.definitions();
+  if (taskId !== undefined) {
+    const task = requireTask(defs, taskId);
+    const run = ctx.findRun?.(task.id, runId) ?? openRunOf(ctx, runId, task.id);
+    if (!run) throw new Error(`No run "${runId}" in task "${task.id}".`);
+    return { taskId: task.id, task, run };
+  }
+  const ticket = ctx.readRunTicket?.(runId);
+  if (ticket) {
+    const run = isOpenRun(ticket.run)
+      ? ticket.run
+      : (ctx.findRun?.(ticket.taskId, runId) ?? ticket.run);
+    return { taskId: ticket.taskId, task: defs.get(ticket.taskId), run };
+  }
+  const open = openRunOf(ctx, runId);
+  if (open) return { taskId: open.taskId, task: defs.get(open.taskId), run: open };
+  for (const task of defs.values()) {
+    const run = ctx.readRuns(task.id).find((r) => r.id === runId);
+    if (run) return { taskId: task.id, task, run };
+  }
+  throw new Error(
+    `No run "${runId}" among your tasks' recent runs. Pass its taskId too for a run past the ` +
+      "newest 1000 of its task.",
+  );
+}
+
+/**
+ * A run in flight or queued now, as a record of what is known of it so far;
+ * null when none has that id. A scheduled or event run has no ticket, and its
+ * record is written only when it ends.
+ */
+function openRunOf(ctx: ToolContext, runId: string, taskId?: string): TaskRun | null {
+  const entry = ctx.queueView?.().find((e) => e.runId === runId);
+  if (!entry || (taskId !== undefined && entry.taskId !== taskId)) return null;
+  return {
+    id: runId,
+    taskId: entry.taskId,
+    startedAt: entry.startedAt ?? new Date().toISOString(),
+    status: entry.state,
+    inputTokens: 0,
+    outputTokens: 0,
+    toolCalls: 0,
+    iterations: 0,
+    ...(entry.trigger ? { trigger: entry.trigger } : {}),
+  };
+}
+
+/** A result sidecar less the ids the run record beside it carries. */
+function resultBody(result: TaskRunResult): TaskRunResultBody {
+  const { runId: _runId, taskId: _taskId, ...body } = result;
+  return body;
+}
+
+/**
+ * `tasks__run_result`: one run by id, in whatever state it is. A run still
+ * queued or running is an answer (`status`), so a caller polls by calling
+ * again; an ended one carries its record and, when it left one, its full
+ * deliverable: the untruncated output, the activity log, file refs, usage,
+ * and the parsed `structured` output.
  */
 export function handleRunResult(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): TasksRunResultOutput {
-  const name = args.name as string | undefined;
-  const runId = args.runId as string;
-  if (!runId) throw new Error("Missing required field: runId");
-
-  // A run `tasks__run` started is found by its id alone, through its
-  // ticket, which also says when it has not ended yet.
-  if (!name) {
-    const ticket = ctx.readRunTicket?.(runId);
-    if (!ticket) {
-      throw new Error(
-        `Run not found: "${runId}". Pass the task's name too for a run not started by tasks__run.`,
-      );
-    }
-    if (isOpenRun(ticket.run)) {
-      throw new Error(
-        `Run "${runId}" is still ${ticket.run.status}; its result is written when it ends.`,
-      );
-    }
-    const result = ctx.readRunResult(ticket.taskId, runId);
-    if (!result) {
-      throw new Error(
-        `Run "${runId}" ended without a result (${ticket.run.status}${ticket.run.error ? `: ${ticket.run.error}` : ""}).`,
-      );
-    }
-    return withRunOutcome(result, ticket.run);
+  const { runId, taskId: givenTaskId } = args as unknown as { runId: string; taskId?: string };
+  const { taskId, run } = locateRun(ctx, runId, givenTaskId);
+  if (run.status === "queued" || run.status === "running") {
+    const position =
+      run.status === "queued"
+        ? ctx.queueView?.().find((e) => e.runId === runId)?.position
+        : undefined;
+    return {
+      status: run.status,
+      run: toRunView(run),
+      ...(position !== undefined ? { position } : {}),
+      message:
+        `Run "${runId}" is ${run.status === "queued" ? "queued" : "still running"}; it has not ` +
+        "failed. Call tasks__run_result again until its status is ended, or stop it with " +
+        `tasks__cancel (runId "${runId}").`,
+    };
   }
-
-  const defs = ctx.definitions();
-  const task = findByName(defs, name);
-  if (!task) {
-    throw new Error(`Task not found: "${name}"`);
-  }
-
-  const result = ctx.readRunResult(task.id, runId);
-  if (!result) {
-    throw new Error(`Run result not found: "${runId}" for task "${name}".`);
-  }
-  return withRunOutcome(result, ctx.findRun?.(task.id, runId) ?? null);
-}
-
-/** A run's result with the outcome its record says: execution, label, and assessment. */
-function withRunOutcome(result: TaskRunResult, run: TaskRun | null): TasksRunResultOutput {
-  if (!run) return result;
+  const result = ctx.readRunResult(taskId, runId);
   return {
-    ...result,
-    execution: executionOf(run),
-    label: labelOf(run),
-    ...(run.assessment ? { assessment: run.assessment } : {}),
+    status: "ended",
+    run: toRunView(run),
+    ...(result ? { result: resultBody(result) } : {}),
   };
 }
 
@@ -1360,41 +1399,38 @@ export const MAX_RUN_INPUT_BYTES = 64 * 1024;
 export const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 
 /**
- * An inline one-off's definition: `tasks__run` with these instead of
- * `taskId` creates a `oneoff` task with no schedule and runs it once.
+ * An inline one-off's manifest: create's definition fields, without identity
+ * (name, kind) or trigger (schedule, enabled).
  */
-export interface InlineDefinition {
-  prompt?: string;
+export interface InlineManifest {
   skill?: string;
+  model?: string;
+  allowedTools?: string[];
+  maxIterations?: number;
+  maxInputTokens?: number;
+  maxRunDurationMs?: number;
+  tokenBudget?: TokenBudget;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
-  allowedTools?: string[];
-  limits?: { maxIterations?: number; maxInputTokens?: number; maxRunDurationMs?: number };
-  budget?: TokenBudget;
   criteria?: Criterion[];
   confidenceThreshold?: number;
   judge?: TaskJudge;
   onPoorResult?: OnPoorResult;
 }
 
-/** The fields of `tasks__run` that make it an inline one-off. */
-export const INLINE_FIELDS = [
-  "prompt",
-  "skill",
-  "inputSchema",
-  "outputSchema",
-  "allowedTools",
-  "limits",
-  "budget",
-  "criteria",
-  "confidenceThreshold",
-  "judge",
-  "onPoorResult",
-] as const;
+/**
+ * An inline one-off's definition (`definition` on `tasks__run` and
+ * `tasks__run_batch`): the shape of `tasks__create`'s `{ manifest, body }`.
+ */
+export interface InlineDefinition {
+  manifest?: InlineManifest;
+  body?: string;
+}
 
 /** `tasks__run`'s arguments, already shape-checked by the tool's input schema. */
-interface RunArgs extends InlineDefinition {
+interface RunArgs {
   taskId?: string;
+  definition?: InlineDefinition;
   input?: unknown;
   idempotencyKey?: string;
 }
@@ -1408,11 +1444,6 @@ export type PreparedRun =
       requested: RequestedRun;
       ticket: RunNowTicket;
     };
-
-/** A fresh run id, in the runtime's shape (`run_<12 chars>`). */
-function newRunId(): string {
-  return `run_${randomBytes(6).toString("hex")}`;
-}
 
 /**
  * The id of the one-off an inline `tasks__run` creates. With an
@@ -1432,6 +1463,7 @@ function oneoffId(idSeed: string | undefined): string {
 const ONEOFF_DEFINITION_FIELDS = [
   "prompt",
   "skill",
+  "model",
   "inputSchema",
   "outputSchema",
   "allowedTools",
@@ -1466,71 +1498,41 @@ function oneoffDefinition(
   return canonicalJson(Object.fromEntries(ONEOFF_DEFINITION_FIELDS.map((f) => [f, source[f]])));
 }
 
-/** The assessment fields an inline definition sets, and only those. */
-function assessmentDefinition(
-  args: InlineDefinition,
-): Pick<InlineDefinition, "criteria" | "confidenceThreshold" | "judge" | "onPoorResult"> {
-  return {
-    ...(args.criteria ? { criteria: args.criteria } : {}),
-    ...(args.confidenceThreshold !== undefined
-      ? { confidenceThreshold: args.confidenceThreshold }
-      : {}),
-    ...(args.judge ? { judge: args.judge } : {}),
-    ...(args.onPoorResult ? { onPoorResult: args.onPoorResult } : {}),
-  };
-}
-
 /**
- * Find or create the `oneoff` task an inline `tasks__run` (or
- * `tasks__run_batch`) names. The definition and the input(s) are checked
- * (`checkInput`, given the one-off's id and input schema) before anything is
- * written, so a refused call leaves no one-off behind. With `idSeed` (the
- * call's idempotency key, namespaced by tool) the one-off's id is derived
- * from it, and a seed that already names a one-off with a different definition
- * is refused rather than run against the old one.
+ * Find or create the `oneoff` task an inline `definition` names
+ * (`tasks__run`, `tasks__run_batch`). The definition and the input(s) are
+ * checked (`checkInput`, given the one-off's id and input schema) before
+ * anything is written, so a refused call leaves no one-off behind. With
+ * `idSeed` (the call's idempotency key, namespaced by tool) the one-off's id
+ * is derived from it, and a seed that already names a one-off with a different
+ * definition is refused rather than run against the old one.
  */
 export function ensureOneoff(
-  args: InlineDefinition,
+  def: InlineDefinition,
   ctx: ToolContext,
   checkInput: (id: string, inputSchema: Record<string, unknown> | undefined) => void,
   idSeed: string | undefined,
-  missing = "tasks__run needs `taskId` (a task to run)",
 ): Task {
-  if (!args.prompt && !args.skill) {
-    throw new Error(`${missing} or an inline definition with \`prompt\` or \`skill\`.`);
+  const manifest = def.manifest ?? {};
+  if (!def.body && !manifest.skill) {
+    throw new Error("A `definition` needs a `body` (the prompt), or a `manifest.skill`.");
   }
-  const limits = args.limits ?? {};
-  validateTaskFields({
-    ...limits,
-    ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
-    ...(args.inputSchema ? { inputSchema: args.inputSchema } : {}),
-    ...(args.outputSchema ? { outputSchema: args.outputSchema } : {}),
-    ...assessmentDefinition(args),
-  });
+  validateTaskFields(manifest);
   const id = oneoffId(idSeed);
   const prompt =
-    args.prompt ??
-    `Carry out the "${args.skill}" skill on this run's input, and give its result as the deliverable.`;
-  const definition = {
-    prompt,
-    ...(args.skill ? { skill: args.skill } : {}),
-    ...(args.inputSchema ? { inputSchema: args.inputSchema } : {}),
-    ...(args.outputSchema ? { outputSchema: args.outputSchema } : {}),
-    ...(args.allowedTools ? { allowedTools: args.allowedTools } : {}),
-    ...limits,
-    ...(args.budget ? { tokenBudget: args.budget } : {}),
-    ...assessmentDefinition(args),
-  };
+    def.body ||
+    `Carry out the "${manifest.skill}" skill on this run's input, and give its result as the deliverable.`;
+  const definition = { prompt, ...manifest };
 
-  checkInput(id, args.inputSchema);
+  checkInput(id, manifest.inputSchema);
 
   const existing = ctx.definitions().get(id);
   if (existing) {
     if (oneoffDefinition(existing) !== oneoffDefinition(definition)) {
       throw new Error(
         "idempotencyKey reused with a different definition: this key already started a one-off " +
-          "with another prompt, skill, schema, tools, limits, or budget. Use a new key for a new " +
-          "definition, or repeat the original definition to get its run.",
+          "with another body or manifest. Use a new key for a new definition, or repeat the " +
+          "original definition to get its run.",
       );
     }
     return existing;
@@ -1599,11 +1601,9 @@ function checkRunInput(
  */
 export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): PreparedRun {
   const args = rawArgs as RunArgs;
-  const inline = INLINE_FIELDS.filter((field) => args[field] !== undefined);
-  if (args.taskId && inline.length > 0) {
+  if ((args.taskId === undefined) === (args.definition === undefined)) {
     throw new Error(
-      `Give either \`taskId\` (a task to run) or an inline definition, not both ` +
-        `(also given: ${inline.join(", ")}).`,
+      "Give `taskId` (a task to run, from tasks__list) or `definition` (a one-off), not both.",
     );
   }
   const key = args.idempotencyKey;
@@ -1615,15 +1615,13 @@ export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): 
   ctx.reloadScheduler();
 
   let task: Task;
-  if (args.taskId) {
-    const found = findByName(ctx.definitions(), args.taskId);
-    if (!found) throw new Error(`Task not found: "${args.taskId}"`);
-    task = found;
+  if (args.taskId !== undefined) {
+    task = requireTask(ctx.definitions(), args.taskId);
     checkRunInput(task.name, task.inputSchema, args.input);
   } else {
     // Checks the input against the inline definition before creating anything.
     task = ensureOneoff(
-      args,
+      args.definition ?? {},
       ctx,
       (id, schema) => checkRunInput(id, schema, args.input),
       args.idempotencyKey,
@@ -1657,15 +1655,13 @@ export function prepareRun(rawArgs: Record<string, unknown>, ctx: ToolContext): 
 
 /** The answer for a run an earlier call with the same idempotency key started. */
 function existingRunAnswer(task: Task, ticket: RunTicket, ctx: ToolContext): TasksRunOutput {
-  const { enabled } = disabledState(ctx, task.name, task);
+  const { enabled } = disabledState(ctx, task);
   const same = "An earlier call with this idempotencyKey already started this run";
   const { run } = ticket;
   if (!isOpenRun(run)) {
     return { run: toRunView(run), enabled, message: `${same}; this is its record.` };
   }
-  const where =
-    `Its record appears in tasks__runs (taskId "${task.id}") when it ends; ` +
-    `read it with tasks__run_result (runId "${ticket.runId}").`;
+  const where = followUp(ticket.runId);
   if (run.status === "queued") {
     return {
       status: "queued",
@@ -1699,7 +1695,7 @@ export async function handleRun(
   const runId = requested.runId;
 
   if (ticket.state === "refused") {
-    const { enabled } = disabledState(ctx, name, task);
+    const { enabled } = disabledState(ctx, task);
     return {
       run: toRunView(ticket.run),
       enabled,
@@ -1711,7 +1707,7 @@ export async function handleRun(
     // The queued run is the scheduler's to finish; nothing awaits it here.
     ticket.run.catch(() => {});
     const queuedAt = requested.requestedAt;
-    const { enabled, disabledNote } = disabledState(ctx, name, task);
+    const { enabled, disabledNote } = disabledState(ctx, task);
     return {
       status: "queued",
       taskId: task.id,
@@ -1721,10 +1717,7 @@ export async function handleRun(
       enabled,
       message:
         `"${name}" is queued at position ${ticket.position}: every task run slot is busy, ` +
-        `and it starts as soon as one frees. When it ends, read it with tasks__run_result ` +
-        `(runId "${runId}"); it also appears in tasks__runs (taskId ` +
-        `"${task.id}", since "${queuedAt}"). Remove it from the queue with ` +
-        `tasks__cancel.${disabledNote}`,
+        `and it starts as soon as one frees. ${followUp(runId)}${disabledNote}`,
     };
   }
 
@@ -1767,7 +1760,7 @@ export async function handleRun(
 
   // Read after the run settles: the run itself can disable it (failure
   // auto-disable, token budget).
-  const { enabled, disabledNote } = disabledState(ctx, name, task);
+  const { enabled, disabledNote } = disabledState(ctx, task);
 
   if (outcome === PENDING) {
     return {
@@ -1778,9 +1771,7 @@ export async function handleRun(
       enabled,
       message:
         `"${name}" is still running after ${waitMs / 1000}s and continues in the background; ` +
-        `it has not failed. When it ends, read its full output with tasks__run_result ` +
-        `(runId "${runId}"); it also appears in tasks__runs (taskId ` +
-        `"${task.id}", since "${startedAt}"). Stop it with tasks__cancel.${disabledNote}`,
+        `it has not failed. ${followUp(runId)}${disabledNote}`,
     };
   }
 
@@ -1789,85 +1780,57 @@ export async function handleRun(
     : { run: toRunView(outcome), enabled };
 }
 
+/** How to follow a run that has not ended. */
+function followUp(runId: string): string {
+  return (
+    `Call tasks__run_result (runId "${runId}") until its status is ended; ` +
+    `tasks__cancel (runId "${runId}") stops it.`
+  );
+}
+
 /**
  * The task's current `enabled` flag, and a note for a disabled one. Run
  * now runs a disabled task (see `Scheduler.requestRunNow`); the note says
  * so, since its schedule and events will not fire it again.
  */
-function disabledState(
-  ctx: ToolContext,
-  name: string,
-  task: Task,
-): { enabled: boolean; disabledNote: string } {
-  const current = findByName(ctx.definitions(), name) ?? task;
+function disabledState(ctx: ToolContext, task: Task): { enabled: boolean; disabledNote: string } {
+  const current = ctx.definitions().get(task.id) ?? task;
   const enabled = current.enabled;
   // `enabled` gates only the trigger; with none there is nothing to say.
   const disabledNote =
     enabled || !current.schedule
       ? ""
-      : ` "${name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;
+      : ` "${current.name}" is disabled, so its schedule and events will not fire it; enable it to run unattended.`;
   return { enabled, disabledNote };
 }
 
+/**
+ * Cancel one run by id: abort it in flight, or take it out of the queue
+ * (recorded cancelled). A batch's runs are cancelled with the batch
+ * (`tasks__batch_control`), but one of them can be cancelled here too.
+ */
 export function handleCancel(args: Record<string, unknown>, ctx: ToolContext): TasksCancelOutput {
-  const name = args.name as string;
-  if (!name) throw new Error("Missing required field: name");
-
-  // Ensure scheduler has fresh definitions
-  ctx.reloadScheduler();
-
-  const defs = ctx.definitions();
-  const task = findByName(defs, name);
-  if (!task) {
-    throw new Error(`Task not found: "${name}"`);
-  }
-
-  const cancelled = ctx.cancelRun(task.id);
+  const { runId } = args as unknown as { runId: string };
+  const taskId =
+    ctx.queueView?.().find((e) => e.runId === runId)?.taskId ?? ctx.readRunTicket?.(runId)?.taskId;
+  const cancelled = ctx.cancelRun(runId);
   return {
     cancelled,
-    id: task.id,
+    runId,
+    ...(taskId !== undefined ? { taskId } : {}),
     message: cancelled
-      ? `Task "${name}" run cancelled.`
-      : `Task "${name}" has no running or queued run to cancel.`,
+      ? `Run "${runId}" cancelled.`
+      : `Run "${runId}" is not queued or running (it has ended, or no run of yours has that id).`,
   };
 }
 
 /** `tasks__assess`'s arguments, already shape-checked by its input schema. */
 interface AssessInput {
   runId: string;
-  name?: string;
+  taskId?: string;
   verdict?: "pass" | "fail";
   note?: string;
   reassess?: boolean;
-}
-
-/**
- * One of the caller's runs by id, with its task: through the task named, the
- * run's ticket, or the hot run index of each of the caller's tasks.
- */
-function findOwnRun(
-  ctx: ToolContext,
-  runId: string,
-  name: string | undefined,
-): { task: Task; run: TaskRun } {
-  const defs = ctx.definitions();
-  if (name) {
-    const task = findByName(defs, name);
-    if (!task) throw new Error(`Task not found: "${name}"`);
-    const run = ctx.findRun?.(task.id, runId) ?? null;
-    if (!run) throw new Error(`Run not found: "${runId}" for task "${name}".`);
-    return { task, run };
-  }
-  const ticket = ctx.readRunTicket?.(runId);
-  const ticketTask = ticket ? defs.get(ticket.taskId) : undefined;
-  if (ticket && ticketTask) {
-    return { task: ticketTask, run: ctx.findRun?.(ticketTask.id, runId) ?? ticket.run };
-  }
-  for (const task of defs.values()) {
-    const run = ctx.readRuns(task.id).find((r) => r.id === runId);
-    if (run) return { task, run };
-  }
-  throw new Error(`Run not found: "${runId}". Pass the task's name too for an older run.`);
 }
 
 /**
@@ -1880,14 +1843,16 @@ export async function handleAssess(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<TasksAssessOutput> {
-  const { runId, name, verdict, note, reassess } = args as unknown as AssessInput;
+  const { runId, taskId, verdict, note, reassess } = args as unknown as AssessInput;
   if ((verdict === undefined) === (reassess !== true)) {
     throw new Error("Give `verdict` (pass or fail) or `reassess: true`: one of the two.");
   }
   if (note !== undefined && verdict === undefined) {
     throw new Error("`note` goes with a `verdict`.");
   }
-  const { task, run } = findOwnRun(ctx, runId, name);
+  const located = locateRun(ctx, runId, taskId);
+  const { run } = located;
+  const task = located.task ?? requireTask(ctx.definitions(), located.taskId);
   if (!isAssessable(run)) {
     throw new Error(
       `Run "${runId}" left no deliverable to assess (it ${executionOf(run)}); only a run that ` +
@@ -1965,20 +1930,4 @@ export function withWarnings<T extends { message?: string; warnings?: TaskWarnin
 /** The task a `tasks__run` answer is about. */
 export function runOutputTaskId(out: TasksRunOutput): string {
   return "run" in out ? out.run.taskId : out.taskId;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-export function findByName(defs: Map<string, Task>, name: string): Task | undefined {
-  // First try direct id lookup (kebab-case of name)
-  const byId = defs.get(toKebabCase(name));
-  if (byId) return byId;
-
-  // Fall back to name match
-  for (const auto of defs.values()) {
-    if (auto.name === name) return auto;
-  }
-  return undefined;
 }

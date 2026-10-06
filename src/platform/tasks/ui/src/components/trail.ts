@@ -10,12 +10,19 @@ import type { Template } from "./templates.ts";
 
 /** A page over the home list. The stack is the trail: one page, one crumb. */
 export type Screen =
-  | { kind: "task"; taskName: string }
+  | { kind: "task"; taskId: string; taskName: string }
   | { kind: "upcoming" }
   | { kind: "activity"; taskId?: string; taskName?: string }
   | { kind: "result"; runId: string; taskId?: string; run?: TaskRun }
   | { kind: "batch"; batchId: string; batch?: TaskBatch }
-  | { kind: "editor"; taskName?: string; copyOf?: string; template?: Template | null };
+  | {
+      kind: "editor";
+      /** The task edited; absent for a new one. */
+      taskId?: string;
+      /** The task a new one copies. */
+      copyOf?: string;
+      template?: Template | null;
+    };
 
 export interface TrailStep {
   id: string;
@@ -35,12 +42,12 @@ function runLabel(s: Extract<Screen, { kind: "result" }>): string {
 function stepFor(screen: Screen, stack: Screen[]): TrailStep {
   switch (screen.kind) {
     case "task":
-      return { id: `task/${screen.taskName}`, label: screen.taskName, stack };
+      return { id: `task/${screen.taskId}`, label: screen.taskName, stack };
     case "upcoming":
       return { id: "upcoming", label: "Coming up", stack };
     case "activity":
-      return screen.taskName
-        ? { id: `runs/${screen.taskName}`, label: "All runs", stack }
+      return screen.taskId
+        ? { id: `runs/${screen.taskId}`, label: "All runs", stack }
         : { id: "activity", label: "Every run", stack };
     case "result":
       return { id: `run/${screen.runId}`, label: runLabel(screen), stack };
@@ -51,8 +58,8 @@ function stepFor(screen: Screen, stack: Screen[]): TrailStep {
         stack,
       };
     case "editor":
-      return screen.taskName
-        ? { id: `edit/${screen.taskName}`, label: "Edit", stack }
+      return screen.taskId
+        ? { id: `edit/${screen.taskId}`, label: "Edit", stack }
         : { id: "new", label: "New task", stack };
   }
 }
@@ -66,11 +73,12 @@ function stepFor(screen: Screen, stack: Screen[]): TrailStep {
 export function withRun(
   stack: Screen[],
   run: Extract<Screen, { kind: "result" }>,
-  taskName: string | undefined,
+  task: { id: string; name: string } | undefined,
 ): Screen[] {
   const base = stack[stack.length - 1]?.kind === "result" ? stack.slice(0, -1) : stack;
-  const hasTask = base.some((s) => s.kind === "task" && s.taskName === taskName);
-  const parent = taskName && !hasTask ? [{ kind: "task" as const, taskName }] : [];
+  const hasTask = !!task && base.some((s) => s.kind === "task" && s.taskId === task.id);
+  const parent =
+    task && !hasTask ? [{ kind: "task" as const, taskId: task.id, taskName: task.name }] : [];
   return [...base, ...parent, run];
 }
 

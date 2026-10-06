@@ -822,6 +822,11 @@ function notStartedRun(
 }
 
 /** A requested run's record, carrying its id and what it was asked with. */
+/** A fresh run id, in the runtime's shape (`run_<12 hex>`). */
+export function newRunId(): string {
+  return `run_${randomBytes(6).toString("hex")}`;
+}
+
 function withRequest(run: TaskRun, requested: RequestedRun): TaskRun {
   return {
     ...run,
@@ -885,7 +890,7 @@ export class Scheduler {
   /** When each in-flight run started and what started it, by the same key, for `queueView`. */
   private readonly activeInfo: Map<
     string,
-    { startedAt: string; trigger: TaskRunTrigger; runId?: string }
+    { startedAt: string; trigger: TaskRunTrigger; runId: string }
   > = new Map();
   /**
    * Requested runs this process is carrying, by run id: queued or in flight,
@@ -1311,14 +1316,19 @@ export class Scheduler {
   }
 
   /**
-   * Cancel a requested run by its id, when this process is carrying it for
-   * that owner in that workspace: abort it in flight, or take it out of the
-   * queue. False when it carries no such run.
+   * Cancel a run by its id, when this process is carrying it for that owner
+   * in that workspace: abort it in flight (a requested run, or a scheduled or
+   * event run by the id minted at dispatch), or take a requested run out of
+   * the queue. False when it carries no such run.
    */
   cancelRunById(wsId: string, ownerId: string, runId: string): boolean {
+    const prefix = `${wsId}/${ownerId}/`;
     const open = this.openRuns.get(runId);
-    if (!open?.key.startsWith(`${wsId}/${ownerId}/`)) return false;
-    return this.cancelKey(open.key);
+    if (open) return open.key.startsWith(prefix) && this.cancelKey(open.key);
+    for (const [key, info] of this.activeInfo) {
+      if (info.runId === runId && key.startsWith(prefix)) return this.cancelKey(key);
+    }
+    return false;
   }
 
   /**
@@ -1656,14 +1666,13 @@ export class Scheduler {
     const out: QueueViewEntry[] = [];
     for (const [key, info] of this.activeInfo) {
       if (!key.startsWith(prefix)) continue;
-      const { taskId, runId } = parse(key);
-      const id = runId ?? info.runId;
+      const { taskId } = parse(key);
       out.push({
         taskId,
         state: "running",
         startedAt: info.startedAt,
         trigger: info.trigger,
-        ...(id ? { runId: id } : {}),
+        runId: info.runId,
       });
     }
     this.getQueuedRunIds().forEach((key, index) => {
@@ -1848,7 +1857,10 @@ export class Scheduler {
     // to the millisecond — operators can't tell the failure modes apart
     // from the run record alone.
     const startedAt = new Date().toISOString();
-    this.activeInfo.set(key, { startedAt, trigger, runId: requested?.runId });
+    // Every run has its id from dispatch, so one in flight is found (and
+    // cancelled) by it whatever started it; a requested run brings its own.
+    const runId = requested?.runId ?? newRunId();
+    this.activeInfo.set(key, { startedAt, trigger, runId });
     // The once occurrence this run is, if any: an `at` edited while it runs is
     // a new occurrence, which the run must not retire.
     const firedOnceAt =
@@ -1857,6 +1869,7 @@ export class Scheduler {
     let recorded: { run: TaskRun; result: TaskRunResult | null };
     try {
       recorded = await this.executeAndRecord(auto, controller, {
+        runId,
         startedAt,
         trigger,
         input,
@@ -1953,7 +1966,7 @@ export class Scheduler {
     const { workspaceId: wsId, ownerId } = auto;
     if (!wsId || !ownerId) return false;
     const requested: RequestedRun = {
-      runId: `run_${randomBytes(6).toString("hex")}`,
+      runId: newRunId(),
       requestedAt: new Date().toISOString(),
       ...(run.input !== undefined ? { input: run.input } : {}),
       retryOf: run.id,
@@ -1977,6 +1990,7 @@ export class Scheduler {
     auto: Task,
     controller: AbortController,
     dispatch: {
+      runId: string;
       startedAt: string;
       trigger: TaskRunTrigger;
       input: RunInput | undefined;
@@ -1986,7 +2000,7 @@ export class Scheduler {
       batch?: BatchRunOptions;
     },
   ): Promise<{ run: TaskRun; result: TaskRunResult | null }> {
-    const { startedAt, trigger, input, lease, firedOnceAt, requested, batch } = dispatch;
+    const { runId, startedAt, trigger, input, lease, firedOnceAt, requested, batch } = dispatch;
     const ticket = (run: TaskRun) => {
       if (requested && auto.workspaceId && auto.ownerId) {
         this.writeTicket(auto.workspaceId, auto.ownerId, auto.id, requested, run);
@@ -2011,7 +2025,7 @@ export class Scheduler {
         trigger,
         input,
         lease,
-        requested?.runId,
+        runId,
         batch?.accounts(),
       );
       const run = requested ? withRequest(executed.run, requested) : executed.run;

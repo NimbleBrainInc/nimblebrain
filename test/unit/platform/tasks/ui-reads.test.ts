@@ -378,7 +378,7 @@ describe("tasks__stats", () => {
   });
 
   test("refuses an unknown task and a bad since", () => {
-    expect(() => handleStats({ taskId: "nope" }, makeCtx())).toThrow("Task not found");
+    expect(() => handleStats({ taskId: "nope" }, makeCtx())).toThrow("No task with id");
     expect(() => handleStats({ since: "yesterday" }, makeCtx())).toThrow("Invalid since");
   });
 });

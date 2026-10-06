@@ -137,20 +137,26 @@ export interface DomainCreateInput {
   workspaceId?: string;
 }
 
-/** Patch shape for update. Every field optional. */
+/**
+ * Patch shape for update. Every field optional; `null` on any field but
+ * `prompt` and `enabled` removes it, so its default applies again.
+ */
 export interface DomainUpdatePatch {
-  description?: string;
+  description?: string | null;
   /** `null` removes the schedule: nothing fires the task unattended. */
   schedule?: ScheduleSpec | null;
   prompt?: string;
-  skill?: string;
-  model?: string;
-  maxIterations?: number;
-  maxInputTokens?: number;
-  maxRunDurationMs?: number;
-  tokenBudget?: TokenBudget;
+  skill?: string | null;
+  /** `null` removes it: runs use the workspace default model. */
+  model?: string | null;
+  maxIterations?: number | null;
+  maxInputTokens?: number | null;
+  maxRunDurationMs?: number | null;
+  /** `null` removes it: runs are bounded by no budget across runs. */
+  tokenBudget?: TokenBudget | null;
   enabled?: boolean;
-  allowedTools?: string[];
+  /** `null` removes it: runs may use every tool in the workspace. */
+  allowedTools?: string[] | null;
   /** `null` removes it: runs take any input. */
   inputSchema?: Record<string, unknown> | null;
   /** `null` removes it: the deliverable is not checked. */
@@ -213,10 +219,13 @@ export function toKebabCase(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function findByName(defs: Map<string, Task>, name: string): Task | undefined {
-  // Match either the kebab-case id or the human-readable name (case-sensitive).
-  const id = toKebabCase(name);
-  return defs.get(id) ?? Array.from(defs.values()).find((a) => a.name === name);
+/** The task with this id, or an error that says where ids come from. */
+export function requireTask(defs: Map<string, Task>, taskId: string): Task {
+  const task = defs.get(taskId);
+  if (!task) {
+    throw new Error(`No task with id "${taskId}". tasks__list lists your tasks and their ids.`);
+  }
+  return task;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +234,6 @@ function findByName(defs: Map<string, Task>, name: string): Task | undefined {
 
 export interface CreateResult {
   task: Task;
-  created: boolean;
   message: string;
 }
 
@@ -233,14 +241,13 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
   const id = toKebabCase(input.name);
   const defs = ctx.definitions();
 
-  // Idempotent: return existing if same id.
-  const existing = defs.get(id);
-  if (existing) {
-    return {
-      task: existing,
-      created: false,
-      message: `Task "${input.name}" already exists (id: ${id}). Returning existing.`,
-    };
+  // A name already taken is refused, never answered with the stored task: a
+  // caller that reads success would report a definition that was not saved.
+  if (defs.has(id)) {
+    throw new Error(
+      `A task with id "${id}" already exists. Change it with tasks__update, or give a ` +
+        "different name.",
+    );
   }
 
   assertEventScheduleAllowed(input.schedule, input.source ?? "agent", input.name);
@@ -297,11 +304,7 @@ export function createTask(input: DomainCreateInput, ctx: TaskDomainContext): Cr
   ctx.save(defs);
   ctx.reloadScheduler();
 
-  return {
-    task,
-    created: true,
-    message: `Task "${input.name}" created (id: ${id}).`,
-  };
+  return { task, message: `Task "${input.name}" created (id: ${id}).` };
 }
 
 export interface UpdateResult {
@@ -347,34 +350,22 @@ function reanchorNextRunAt(task: Task, defaultTimezone?: string): void {
   setNextRunAt(task, computeNextRunAt(task, Date.now(), defaultTimezone));
 }
 
-/** Patch fields where `null` deletes the key rather than storing a null. */
-const CLEARABLE_FIELDS = [
-  "schedule",
-  "inputSchema",
-  "outputSchema",
-  "criteria",
-  "confidenceThreshold",
-  "judge",
-  "onPoorResult",
-] as const satisfies readonly (keyof DomainUpdatePatch | keyof Task)[];
-
 /**
- * Copy the patch's fields onto `task`. `null` on a clearable field
- * (`CLEARABLE_FIELDS`) deletes the key, so a schedule
- * cleared reads as manual-only. Returns whether anything was written.
+ * Copy the patch's fields onto `task`. `null` deletes the key, so the
+ * field reads as never set and its default applies (a cleared schedule reads
+ * as manual-only). Returns whether anything was written.
  */
 function applyPatchFields(task: Task, patch: DomainUpdatePatch): boolean {
   let changed = false;
   const record = task as unknown as Record<string, unknown>;
   for (const field of UPDATABLE_FIELDS) {
     if (!(field in patch) || patch[field] === undefined) continue;
-    if (patch[field] === null && (CLEARABLE_FIELDS as readonly string[]).includes(field)) {
-      delete record[field];
-    } else {
-      record[field] = patch[field];
-    }
+    if (patch[field] === null) delete record[field];
+    else record[field] = patch[field];
     changed = true;
   }
+  // A budget removed takes its window with it.
+  if (patch.tokenBudget === null) delete task.budgetResetAt;
   return changed;
 }
 
@@ -411,15 +402,12 @@ function assertOnceArmable(task: Task, patch: DomainUpdatePatch, wasEnabled: boo
 }
 
 export function updateTask(
-  name: string,
+  taskId: string,
   patch: DomainUpdatePatch,
   ctx: TaskDomainContext,
 ): UpdateResult {
   const defs = ctx.definitions();
-  const task = findByName(defs, name);
-  if (!task) {
-    throw new Error(`Task not found: "${name}"`);
-  }
+  const task = requireTask(defs, taskId);
 
   assertEventScheduleAllowed(patch.schedule ?? undefined, task.source, task.name);
 
@@ -456,7 +444,12 @@ export function updateTask(
     // A CHANGED budget starts a fresh accounting window (cf. the nextRunAt
     // recompute on a schedule change above): spend from the prior budget must
     // not count against the new ceiling.
-    resetBudgetWindowIfChanged(task, prevTokenBudget, patch.tokenBudget, ctx.defaultTimezone);
+    resetBudgetWindowIfChanged(
+      task,
+      prevTokenBudget,
+      patch.tokenBudget ?? undefined,
+      ctx.defaultTimezone,
+    );
 
     defs.set(task.id, task);
     ctx.save(defs);
@@ -466,7 +459,7 @@ export function updateTask(
   return {
     task,
     updated: changed,
-    message: changed ? `Task "${name}" updated.` : `No changes applied to "${name}".`,
+    message: changed ? `Task "${task.name}" updated.` : `No changes applied to "${task.name}".`,
   };
 }
 
@@ -476,12 +469,9 @@ export interface DeleteResult {
   message: string;
 }
 
-export function deleteTask(name: string, ctx: TaskDomainContext): DeleteResult {
+export function deleteTask(taskId: string, ctx: TaskDomainContext): DeleteResult {
   const defs = ctx.definitions();
-  const task = findByName(defs, name);
-  if (!task) {
-    throw new Error(`Task not found: "${name}"`);
-  }
+  const task = requireTask(defs, taskId);
 
   defs.delete(task.id);
   ctx.save(defs);
@@ -490,6 +480,6 @@ export function deleteTask(name: string, ctx: TaskDomainContext): DeleteResult {
   return {
     deleted: true,
     id: task.id,
-    message: `Task "${name}" deleted. Run history preserved.`,
+    message: `Task "${task.name}" deleted. Run history preserved.`,
   };
 }

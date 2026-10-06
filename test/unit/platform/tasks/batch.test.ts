@@ -364,8 +364,10 @@ describe("tasks__run_batch validation", () => {
     expect(() =>
       handleRunBatch(
         {
-          prompt: "Do it",
-          inputSchema: { type: "object", required: ["v"] },
+          definition: {
+            body: "Do it",
+            manifest: { inputSchema: { type: "object", required: ["v"] } },
+          },
           items: [{ v: "a" }, {}],
         },
         h.ctx,
@@ -767,7 +769,7 @@ describe("tasks__batch reads", () => {
     expect(last.results?.map((r) => r.index)).toEqual([4]);
     expect(last.nextCursor).toBeUndefined();
 
-    const failing = handleBatch({ batchId: out.batch.id, verdict: "fail" }, h.ctx);
+    const failing = handleBatch({ batchId: out.batch.id, filter: "fail" }, h.ctx);
     expect(failing.results?.map((r) => r.index)).toEqual([1, 3]);
     expect(failing.results?.[0]?.label).toBe("Poor result");
     expect(failing.results?.[0]?.inputSummary).toBe('{"v":"fail"}');

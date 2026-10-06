@@ -135,11 +135,11 @@ describe("definition fields", () => {
     expect(stored?.confidenceThreshold).toBe(0.8);
     expect(stored?.onPoorResult).toBe("record");
 
-    handleUpdate({ name: "report", manifest: { judge: { server: "judge" } } }, ctx);
+    handleUpdate({ taskId: "report", manifest: { judge: { server: "judge" } } }, ctx);
     expect(loadDefs().get("report")?.judge).toEqual({ server: "judge" });
 
     handleUpdate(
-      { name: "report", manifest: { criteria: null, confidenceThreshold: null, judge: null } },
+      { taskId: "report", manifest: { criteria: null, confidenceThreshold: null, judge: null } },
       ctx,
     );
     const cleared = loadDefs().get("report");
@@ -173,10 +173,11 @@ describe("run surfaces carry execution, assessment, and label", () => {
     const runs = handleRuns({ taskId: "report" }, ctx).runs;
     expect(runs[0]).toMatchObject({ execution: "completed", label: "Poor result" });
     expect(runs[0]?.assessment?.verdict).toBe("fail");
-    expect(handleStatus({ name: "report" }, ctx).recentRuns[0]?.label).toBe("Poor result");
-    const result = handleRunResult({ name: "report", runId: "run_aaaaaaaaaaaa" }, ctx);
-    expect(result).toMatchObject({ execution: "completed", label: "Poor result" });
-    expect(result.assessment?.verdict).toBe("fail");
+    expect(handleStatus({ taskId: "report" }, ctx).recentRuns[0]?.label).toBe("Poor result");
+    const out = handleRunResult({ runId: "run_aaaaaaaaaaaa" }, ctx);
+    expect(out.status).toBe("ended");
+    expect(out.run).toMatchObject({ execution: "completed", label: "Poor result" });
+    expect(out.run.assessment?.verdict).toBe("fail");
   });
 });
 
@@ -269,7 +270,7 @@ describe("tasks__assess", () => {
     const ctx = makeCtx();
     createReport(ctx);
     await expect(handleAssess({ runId: "run_bbbbbbbbbbbb", verdict: "pass" }, ctx)).rejects.toThrow(
-      /Run not found/,
+      /No run "run_bbbbbbbbbbbb"/,
     );
   });
 });

@@ -356,17 +356,6 @@ const DEFINITION_KEYS = [
   "schedule",
 ] as const;
 
-/** Fields an update clears with `null`; the rest can only be set, not unset. */
-const CLEARABLE = new Set([
-  "schedule",
-  "inputSchema",
-  "outputSchema",
-  "criteria",
-  "confidenceThreshold",
-  "judge",
-  "onPoorResult",
-]);
-
 /** `tasks__create`'s arguments, or the problems that stop it. */
 export function createArgs(d: EditorDraft): { args?: Record<string, unknown>; problems: string[] } {
   const def = buildDefinition(d);
@@ -378,19 +367,12 @@ export function createArgs(d: EditorDraft): { args?: Record<string, unknown>; pr
   return { args: { manifest, body: def.body }, problems: [] };
 }
 
-/** What an update sends for one definition field that changed. */
-function patchValue(key: (typeof DEFINITION_KEYS)[number], next: unknown): unknown {
-  if (next !== undefined) return next;
-  if (CLEARABLE.has(key)) return null;
-  // An empty tool list is "every tool"; the other fields cannot be unset.
-  return key === "allowedTools" ? [] : undefined;
-}
-
 /**
  * `tasks__update`'s arguments: only what changed from the stored task, `null`
- * for a cleared field that can be cleared. An unchanged form sends no manifest.
+ * for a field cleared. An unchanged form sends no manifest.
  */
 export function updateArgs(
+  taskId: string,
   original: EditorDraft,
   d: EditorDraft,
 ): { args?: Record<string, unknown>; problems: string[] } {
@@ -400,38 +382,20 @@ export function updateArgs(
   const manifest: Record<string, unknown> = {};
   for (const k of DEFINITION_KEYS) {
     if (JSON.stringify(before[k]) === JSON.stringify(next[k])) continue;
-    const value = patchValue(k, next[k]);
-    if (value !== undefined) manifest[k] = value;
+    manifest[k] = next[k] ?? null;
   }
   if (d.description.trim() !== original.description.trim()) {
-    manifest.description = d.description.trim();
+    manifest.description = d.description.trim() || null;
   }
   if (d.enabled !== original.enabled) manifest.enabled = d.enabled;
-  const args: Record<string, unknown> = { name: original.name };
+  const args: Record<string, unknown> = { taskId };
   if (Object.keys(manifest).length > 0) args.manifest = manifest;
   if (next.body !== before.body) args.body = next.body;
   return { args, problems: [] };
 }
 
-/** The per-run caps an inline run takes, or undefined when none is set. */
-function limitsOf(def: BuiltDefinition): Record<string, number> | undefined {
-  const limits: Record<string, number> = {};
-  if (def.maxIterations !== undefined) limits.maxIterations = def.maxIterations;
-  if (def.maxRunDurationMs !== undefined) limits.maxRunDurationMs = def.maxRunDurationMs;
-  if (def.maxInputTokens !== undefined) limits.maxInputTokens = def.maxInputTokens;
-  return Object.keys(limits).length > 0 ? limits : undefined;
-}
-
-/** The inline-run fields a test run carries over from the definition, unchanged. */
-const INLINE_KEYS = [
-  "skill",
-  "inputSchema",
-  "outputSchema",
-  "allowedTools",
-  "criteria",
-  "confidenceThreshold",
-  "judge",
-] as const;
+/** The definition fields a test run carries over: create's manifest, without trigger. */
+const INLINE_KEYS = DEFINITION_KEYS.filter((k) => k !== "schedule");
 
 /** `tasks__run`'s arguments for a test run of the draft as an inline one-off. */
 export function testRunArgs(
@@ -440,13 +404,16 @@ export function testRunArgs(
 ): { args?: Record<string, unknown>; problems: string[] } {
   const def = buildDefinition(d);
   if (def.problems.length > 0) return { problems: def.problems };
-  const args: Record<string, unknown> = {};
-  if (def.body) args.prompt = def.body;
-  for (const k of INLINE_KEYS) if (def[k] !== undefined) args[k] = def[k];
-  const limits = limitsOf(def);
-  if (limits) args.limits = limits;
+  const manifest: Record<string, unknown> = {};
+  for (const k of INLINE_KEYS) if (def[k] !== undefined) manifest[k] = def[k];
   // A test run records its verdict only: no inbox item, no retry.
-  if (def.criteria || def.outputSchema) args.onPoorResult = "record";
-  if (input !== undefined) args.input = input;
-  return { args, problems: [] };
+  if (def.criteria || def.outputSchema) manifest.onPoorResult = "record";
+  const definition: Record<string, unknown> = {
+    ...(def.body ? { body: def.body } : {}),
+    ...(Object.keys(manifest).length > 0 ? { manifest } : {}),
+  };
+  return {
+    args: { definition, ...(input !== undefined ? { input } : {}) },
+    problems: [],
+  };
 }

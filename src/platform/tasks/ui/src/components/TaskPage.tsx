@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { StatusIcon } from "../icons.tsx";
 import { healthOf, type TaskHealth } from "../lib/attention.ts";
 import { inputSummary, runTime } from "../lib/plain.ts";
+import { readResult } from "../lib/runResult.ts";
 import type { TaskDetail, TaskRun, TaskRunResult, TaskStats, TaskSummary } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import {
@@ -682,14 +683,14 @@ function TaskActions({
  * its setup behind disclosures.
  */
 export function TaskPage({
-  taskName,
+  taskId,
   summary,
   refreshKey,
   busy,
   actions,
   onBack,
 }: {
-  taskName: string;
+  taskId: string;
   /** The task's row from the list, when it has one. */
   summary?: TaskSummary;
   refreshKey: number;
@@ -714,10 +715,10 @@ export function TaskPage({
   useEffect(() => {
     let cancelled = false;
     statusTool
-      .call({ name: taskName, limit: 1 })
+      .call({ taskId, limit: 1 })
       .then(async (res) => {
         const d = asDict(res.data).task as TaskDetail | undefined;
-        if (!d) throw new Error(`Task not found: ${taskName}`);
+        if (!d) throw new Error(`No task with id "${taskId}".`);
         if (cancelled) return;
         setDetail(d);
         setError(null);
@@ -733,7 +734,7 @@ export function TaskPage({
     return () => {
       cancelled = true;
     };
-  }, [taskName, refreshKey]);
+  }, [taskId, refreshKey]);
 
   // The latest run's full result, for its preview: structured output when it has one.
   const latestId = runs?.[0] && !isOpenRun(runs[0]) ? runs[0].id : null;
@@ -742,14 +743,9 @@ export function TaskPage({
     setLatestResult(undefined);
     if (!latestId || !detail) return;
     let cancelled = false;
-    resultTool
-      .call({ runId: latestId, name: detail.id })
-      .then((res) => {
-        if (!cancelled) setLatestResult(asDict(res.data) as unknown as TaskRunResult);
-      })
-      .catch(() => {
-        if (!cancelled) setLatestResult(null);
-      });
+    void readResult(resultTool.call, latestId, detail.id).then((read) => {
+      if (!cancelled) setLatestResult(read.result);
+    });
     return () => {
       cancelled = true;
     };
@@ -787,7 +783,7 @@ export function TaskPage({
   return (
     <div className="app">
       <PageHeader
-        title={d?.name ?? taskName}
+        title={d?.name ?? summary?.name ?? taskId}
         onBack={onBack}
         status={
           d && health ? (

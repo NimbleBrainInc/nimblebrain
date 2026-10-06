@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { readResult } from "../lib/runResult.ts";
 import type { BatchItemResult, TaskBatch, TaskRunResult } from "../types.ts";
 import { useTool } from "../useTool.ts";
 import { asDict, formatCost, relativeTime } from "../utils.ts";
@@ -60,7 +61,7 @@ export function BatchPane({
         batchId: batch.id,
         results: true,
         limit: PAGE,
-        ...(failingOnly ? { verdict: "failing" } : {}),
+        ...(failingOnly ? { filter: "failing" } : {}),
         ...(cursor !== undefined ? { cursor } : {}),
       });
       const data = asDict(result.data);
@@ -369,21 +370,18 @@ function BatchRunOutput({
   error?: string;
   onOpenRun?: (runId: string) => void;
 }) {
-  const runResultTool = useTool<TaskRunResult>("run_result");
+  const runResultTool = useTool<string>("run_result");
   const [result, setResult] = useState<TaskRunResult | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [raw, setRaw] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runResultTool.call is stable
   useEffect(() => {
     let cancelled = false;
-    runResultTool
-      .call({ runId })
-      .then((res) => {
-        if (!cancelled) setResult(asDict(res.data) as unknown as TaskRunResult);
-      })
-      .catch((err) => {
-        if (!cancelled) setFailed(err instanceof Error ? err.message : String(err));
-      });
+    void readResult(runResultTool.call, runId, undefined).then((read) => {
+      if (cancelled) return;
+      if (read.result) setResult(read.result);
+      else setFailed(read.error ?? (read.open ? "This run has not ended." : "No output."));
+    });
     return () => {
       cancelled = true;
     };

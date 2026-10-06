@@ -195,11 +195,11 @@ function StopRuleFields({
 
 /** Run on a list…: one run of the task per pasted item, with a budget and a stop rule. */
 export function BatchDialog({
-  taskName,
+  taskId,
   onClose,
   onCreated,
 }: {
-  taskName: string;
+  taskId: string;
   onClose: () => void;
   onCreated: (batch: TaskBatch) => void;
 }) {
@@ -218,10 +218,10 @@ export function BatchDialog({
   // biome-ignore lint/correctness/useExhaustiveDependencies: statusTool.call is stable
   useEffect(() => {
     statusTool
-      .call({ name: taskName, limit: 1 })
+      .call({ taskId, limit: 0 })
       .then((res) => setDetail((asDict(res.data).task as TaskDetail) ?? null))
       .catch((err) => setError(toolErrorText(err)));
-  }, [taskName]);
+  }, [taskId]);
 
   const parsed = parseItems(text, detail?.inputSchema);
   const assessable = !!(detail?.criteria?.length || detail?.outputSchema);
@@ -256,7 +256,7 @@ export function BatchDialog({
   }
 
   return (
-    <Modal title={`Run ${taskName} on a list`} onClose={onClose} wide>
+    <Modal title={`Run ${detail?.name ?? "this task"} on a list`} onClose={onClose} wide>
       <ItemsField
         text={text}
         columns={schemaColumns(detail?.inputSchema)}

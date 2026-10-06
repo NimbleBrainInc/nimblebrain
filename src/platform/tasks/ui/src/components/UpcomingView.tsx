@@ -69,7 +69,7 @@ export function UpcomingBody({
   days: WindowDays;
   onDays: (d: WindowDays) => void;
   onOpenRun: (run: UpcomingRun) => void;
-  onOpenTask: (taskName: string) => void;
+  onOpenTask: (task: { id: string; name: string }) => void;
 }) {
   if (!data && loading) {
     return (
@@ -167,7 +167,7 @@ export function UpcomingBody({
                     <button
                       type="button"
                       className="task-link up-what"
-                      onClick={() => onOpenTask(f.taskName)}
+                      onClick={() => onOpenTask({ id: f.taskId, name: f.taskName })}
                     >
                       {f.taskName}
                     </button>
@@ -189,7 +189,7 @@ export function UpcomingBody({
                     <button
                       type="button"
                       className="task-link up-what"
-                      onClick={() => onOpenTask(f.taskName)}
+                      onClick={() => onOpenTask({ id: f.taskId, name: f.taskName })}
                     >
                       {f.taskName}
                     </button>
@@ -212,7 +212,7 @@ export function UpcomingBody({
                   <button
                     type="button"
                     className="task-link up-when"
-                    onClick={() => onOpenTask(e.taskName)}
+                    onClick={() => onOpenTask({ id: e.taskId, name: e.taskName })}
                   >
                     {e.taskName}
                   </button>
@@ -240,7 +240,7 @@ export function UpcomingView({
 }: {
   refreshKey: number;
   onOpenRun: (run: UpcomingRun) => void;
-  onOpenTask: (taskName: string) => void;
+  onOpenTask: (task: { id: string; name: string }) => void;
 }) {
   const upcomingTool = useTool<string>("upcoming");
   const batchesTool = useTool<string>("batches");

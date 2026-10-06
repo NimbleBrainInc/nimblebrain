@@ -70,7 +70,11 @@ function scriptedModel(): LanguageModelV4 {
       responses: [
         {
           toolCalls: [
-            { toolCallId: "tc_nested", toolName, input: JSON.stringify({ prompt: "spawned" }) },
+            {
+              toolCallId: "tc_nested",
+              toolName,
+              input: JSON.stringify({ definition: { body: "spawned" } }),
+            },
           ],
         },
       ],
@@ -214,7 +218,7 @@ function runIdOf(taskId: string): string {
 
 describe("tasks__run on the 2026-07-28 leg", () => {
   it("returns a handle naming the run, whose record exists, and completes with the deliverable", async () => {
-    const taskId = await startRun({ prompt: "Write one line.", input: { item: 7 } });
+    const taskId = await startRun({ definition: { body: "Write one line." }, input: { item: 7 } });
     const runId = runIdOf(taskId);
     expect(runId).toMatch(/^run_/);
     // Written before the handle came back.
@@ -235,7 +239,7 @@ describe("tasks__run on the 2026-07-28 leg", () => {
   });
 
   it("answers another identity's poll, and a poll at another workspace's URL, as not found", async () => {
-    const taskId = await startRun({ prompt: "Mine." });
+    const taskId = await startRun({ definition: { body: "Mine." } });
     await untilStatus(taskId, "completed");
     expect((await taskGet(taskId, { as: "other" })).error?.code).toBe(-32602);
     expect((await taskGet(taskId, { wsId: OTHER_WORKSPACE_ID })).error?.code).toBe(-32602);
@@ -244,7 +248,7 @@ describe("tasks__run on the 2026-07-28 leg", () => {
   });
 
   it("cancels a running run through tasks/cancel", async () => {
-    const taskId = await startRun({ prompt: `${HOLD} then answer.` });
+    const taskId = await startRun({ definition: { body: `${HOLD} then answer.` } });
     await untilStatus(taskId, "working");
     const ticketStatus = () =>
       readRunTicket(workDir, TEST_WORKSPACE_ID, DEV_IDENTITY.id, runIdOf(taskId))?.run.status;
@@ -256,15 +260,15 @@ describe("tasks__run on the 2026-07-28 leg", () => {
   });
 
   it("returns the same handle for a repeated idempotency key", async () => {
-    const first = await startRun({ prompt: "Once.", idempotencyKey: "item-1" });
-    const again = await startRun({ prompt: "Once.", idempotencyKey: "item-1" });
+    const first = await startRun({ definition: { body: "Once." }, idempotencyKey: "item-1" });
+    const again = await startRun({ definition: { body: "Once." }, idempotencyKey: "item-1" });
     expect(runIdOf(again)).toBe(runIdOf(first));
   });
 
   it("answers inline, as before, when the client does not opt in", async () => {
     const { result } = await modern("tools/call", {
       name: "tasks__run",
-      arguments: { prompt: "Inline please." },
+      arguments: { definition: { body: "Inline please." } },
     });
     expect(result?.resultType).toBe("complete");
     const content = (result?.content ?? []) as Array<{ text: string }>;
@@ -289,7 +293,7 @@ describe("tasks__run on the 2026-07-28 leg", () => {
   });
 
   it("answers a handle after a restart, from the record on disk", async () => {
-    const taskId = await startRun({ prompt: "Survive a restart." });
+    const taskId = await startRun({ definition: { body: "Survive a restart." } });
     await untilStatus(taskId, "completed");
     await shutdown();
     await boot();
@@ -307,7 +311,7 @@ describe("tasks__run on the 2025-11-25 leg", () => {
       expect(client.getNegotiatedProtocolVersion()).toBe("2025-11-25");
       const result = await client.callTool({
         name: "tasks__run",
-        arguments: { prompt: "Legacy inline." },
+        arguments: { definition: { body: "Legacy inline." } },
       });
       expect(result.isError).toBeFalsy();
       const body = JSON.parse((result.content[0] as { text: string }).text);

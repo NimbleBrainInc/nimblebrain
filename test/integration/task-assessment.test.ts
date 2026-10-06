@@ -77,10 +77,11 @@ async function call<T>(
 
 async function runInline(name: string, criteria: unknown[]): Promise<string> {
   const out = await call<TasksRunOutput>("run", {
-    prompt: `Write the ${name} report.`,
+    definition: {
+      body: `Write the ${name} report.`,
+      manifest: { criteria, onPoorResult: "notify" },
+    },
     idempotencyKey: name,
-    criteria,
-    onPoorResult: "notify",
   });
   if (out.isError) throw new Error(out.text);
   if (!("run" in out.data)) throw new Error(`expected a finished run, got ${out.text}`);
@@ -95,19 +96,20 @@ describe("assessment through the runtime", () => {
     expect(stub.calls).toHaveLength(1);
     expect(stub.calls[0]?.criteria[0]?.id).toBe("sourced");
     const result = await call<TasksRunResultOutput>("run_result", { runId });
-    expect(result.data.assessment).toMatchObject({
+    expect(result.data.status).toBe("ended");
+    expect(result.data.run.assessment).toMatchObject({
       verdict: "pass",
       judge: { server: "grader", id: "stub", calibrated: true },
     });
-    expect(result.data.label).toBe("Succeeded");
+    expect(result.data.run.label).toBe("Succeeded");
   });
 
   it("a fail is a poor result, and the workspace inbox hears of it", async () => {
     stub.answer = (c) => answerAll(c, false);
     const runId = await runInline("failing", SOURCED);
     const result = await call<TasksRunResultOutput>("run_result", { runId });
-    expect(result.data.label).toBe("Poor result");
-    expect(result.data.execution).toBe("completed");
+    expect(result.data.run.label).toBe("Poor result");
+    expect(result.data.run.execution).toBe("completed");
     const inbox = runtime.getNotificationStore(TEST_WORKSPACE_ID).list({ source: "tasks" });
     const item = inbox.find((n) => n.envelope.eventId === `poor-result:${runId}`);
     expect(item?.envelope.name).toBe("task.run.poor_result");
@@ -190,7 +192,6 @@ describe("a write warns when its task's runs would not be judged", () => {
   it("no_judge: saved, with the warning in the text and as a field", async () => {
     const out = await create("warn-no-judge", {}, BARE_WS);
     expect(out.isError).toBe(false);
-    expect(out.data.created).toBe(true);
     expect(out.data.warnings?.map((w) => w.code)).toEqual(["no_judge"]);
     expect(out.data.message).toContain("Needs review");
   });
@@ -198,25 +199,27 @@ describe("a write warns when its task's runs would not be judged", () => {
   it("judge_not_found on update naming a source that is not a connected judge", async () => {
     await create("warn-named", {});
     const out = await call<TasksUpdateOutput>("update", {
-      name: "warn-named",
+      taskId: "warn-named",
       manifest: { judge: { server: "missing" } },
     });
     expect(out.data.updated).toBe(true);
     expect(out.data.warnings?.map((w) => w.code)).toEqual(["judge_not_found"]);
   });
 
-  it("judge_ambiguous with two judges and none named; an inline run warns too", async () => {
+  it("judge_ambiguous with two judges and none named; a run warns too", async () => {
     const second = await createStubJudge("grader2");
     runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(second.source);
     try {
       const out = await create("warn-two", {});
       expect(out.data.warnings?.map((w) => w.code)).toEqual(["judge_ambiguous"]);
       const run = await call<TasksRunOutput>("run", {
-        prompt: "Inline with criteria.",
+        definition: { body: "Inline with criteria.", manifest: { criteria: SOURCED } },
         idempotencyKey: "warn-inline",
-        criteria: SOURCED,
       });
       expect(run.data.warnings?.map((w) => w.code)).toEqual(["judge_ambiguous"]);
+      // A saved task's run is warned about too: the judge can change after it was written.
+      const saved = await call<TasksRunOutput>("run", { taskId: "warn-two" });
+      expect(saved.data.warnings?.map((w) => w.code)).toEqual(["judge_ambiguous"]);
       expect(run.data.warnings?.[0]?.message).toStartWith("This run's criteria cannot be judged");
       expect(out.data.warnings?.[0]?.message).toStartWith("Saved, but");
     } finally {

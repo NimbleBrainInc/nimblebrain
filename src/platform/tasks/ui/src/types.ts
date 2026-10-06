@@ -30,6 +30,8 @@ export interface TaskDetail {
   /** Absent: no schedule (manual only). */
   schedule?: Record<string, unknown>;
   scheduleHuman: string;
+  /** The IANA timezone its schedule is read in. */
+  timezone: string;
   enabled: boolean;
   source: "user" | "agent";
   model?: string | null;
@@ -41,9 +43,7 @@ export interface TaskDetail {
   consecutiveErrors: number;
   lastRunStatus: string | null;
   lastRunAt: string | null;
-  lastRunAtHuman: string | null;
   nextRunAt: string | null;
-  nextRunAtHuman: string | null;
   createdAt: string;
   updatedAt: string;
   disabledAt?: string | null;
@@ -52,7 +52,6 @@ export interface TaskDetail {
   cumulativeOutputTokens?: number;
   tokenBudget?: { maxInputTokens?: number; maxOutputTokens?: number; period?: string } | null;
   budgetResetAt?: string | null;
-  actualCostUsd?: number;
   estimatedCostPerRun?: number;
   estimatedCostPerDay?: number;
   estimatedCostPerMonth?: number;

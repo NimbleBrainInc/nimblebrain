@@ -7,99 +7,127 @@
  * Shape convention (per src/platform/AGENTS.md §1.3):
  *
  *   create: { manifest: { ...config }, body: <prompt> }
- *   update: { name, manifest?: Partial<config>, body?: <new prompt> }
+ *   update: { taskId, manifest?: patch of config (null clears), body?: <new prompt> }
+ *   run / run_batch inline: { definition: { manifest?, body? } }
  *
- * `manifest` is the persistent task definition; `body` is the prompt
- * that opens each run — the analog of a skill's markdown
- * body. The operator-only field `source` is intentionally absent from the
- * LLM-facing schema; it lives on the stored type and is set by the runtime,
- * never by an authoring caller.
+ * One definition shape: `manifest` carries the stored task's field names and
+ * `body` is the prompt that opens each run, in create, update, and an inline
+ * one-off alike. Every tool names a task by `taskId` and a run by `runId`. The
+ * operator-only field `source` is intentionally absent from the LLM-facing
+ * schema; it lives on the stored type and is set by the runtime.
+ *
+ * Numeric bounds here are literals that mirror the constants the handlers
+ * enforce (`src/limits.ts`, `src/platform/tasks/types.ts`): this tree is
+ * codegen'd under a strict rootDir (`scripts/tsconfig.codegen-web.json`) that
+ * forbids importing from outside `src/platform/schemas/`.
  */
 
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, type TProperties, type TSchema, Type } from "@sinclair/typebox";
 import { StringEnum } from "./_shared.ts";
 import { NotificationRouteMatch } from "./notifications.ts";
 
 // ── Shared sub-schemas ───────────────────────────────────────────────────
 
+/** An optional field an update clears with `null` (src/platform/AGENTS.md §1.3). */
+function clearable<T extends TSchema>(schema: T, description: string) {
+  return Type.Optional(Type.Union([schema, Type.Null()], { description }));
+}
+
+const TaskIdField = Type.String({
+  minLength: 1,
+  description: "The task's id, as tasks__list returns it.",
+});
+
+const RunIdField = Type.String({
+  minLength: 1,
+  description: "The run's id, as tasks__run, tasks__runs, or tasks__upcoming return it.",
+});
+
 const Schedule = Type.Object(
   {
     type: StringEnum(["cron", "interval", "event", "once"] as const, {
       description:
-        "`cron` and `interval` recur. `once` fires one time, at `at`, and then the task " +
-        "is disabled with no next run until a new `at` re-arms it: use it for a single action " +
-        "at a set time instead of a cron with a fixed date, which recurs every year. `event` " +
-        "has no next run: the task fires when a notification a workspace admin routed to " +
-        "it arrives.",
+        "`cron` (needs `expression`) and `interval` (needs `intervalMs`) recur. `once` (needs " +
+        "`at`) fires one time, and then the task is disabled with no next run until a new `at` " +
+        "re-arms it: use it for a single action at a set time instead of a cron with a fixed " +
+        "date, which recurs every year. `event` (needs `match`) has no next run: the task fires " +
+        "when a notification a workspace admin routed to it arrives.",
     }),
     expression: Type.Optional(
-      Type.String({ description: "5-field cron expression (when type=cron)." }),
+      Type.String({ description: "5-field cron expression (type=cron), e.g. `0 7 * * 1-5`." }),
     ),
     timezone: Type.Optional(
-      Type.String({ description: "IANA timezone. Default: system timezone." }),
+      Type.String({
+        description:
+          "IANA timezone the cron expression is read in (type=cron). Default: this instance's " +
+          "timezone, which tasks__create and tasks__update return as `timezone`.",
+      }),
     ),
     at: Type.Optional(
       Type.String({
         description:
-          "When a once schedule fires (when type=once): an ISO-8601 timestamp with an explicit " +
+          "When a once schedule fires (type=once): an ISO-8601 timestamp with an explicit " +
           "offset, e.g. 2026-07-01T13:12:00-07:00. Must be in the future. A once whose time " +
           "passes while the runtime is down fires on restart if it is at most an hour late, " +
           "and is recorded as skipped otherwise.",
       }),
     ),
     intervalMs: Type.Optional(
-      Type.Number({
+      Type.Integer({
         minimum: 60000,
-        description: "Interval in ms (when type=interval). Min 60000.",
+        description: "Interval in ms (type=interval). Min 60000.",
       }),
     ),
     match: Type.Optional(
       Type.Object(NotificationRouteMatch.properties, {
         additionalProperties: false,
         description:
-          "Which notifications this task wants (when type=event). Required for an event " +
+          "Which notifications this task wants (type=event). Required for an event " +
           "schedule. A workspace admin must ALSO have written a delivery route naming this " +
           "task — this narrows what arrives down that route, it does not open one.",
       }),
     ),
     debounceMs: Type.Optional(
-      // Bounds mirror DEFAULT_EVENT_DEBOUNCE_MS / MAX_EVENT_DEBOUNCE_MS in
-      // src/platform/tasks/types.ts. Literals for the same reason as
-      // maxIterations below: this schema is codegen'd under a strict rootDir
-      // that forbids importing from outside src/platform/schemas/.
-      Type.Number({
+      // Bounds mirror DEFAULT_EVENT_DEBOUNCE_MS / MAX_EVENT_DEBOUNCE_MS.
+      Type.Integer({
         minimum: 1000,
         maximum: 900000,
         description:
           "How long matching notifications coalesce into one batch before the run starts, in " +
-          "ms (when type=event). Default 30000, max 900000. A burst becomes one run with a " +
+          "ms (type=event). Default 30000, max 900000. A burst becomes one run with a " +
           "list in it, not one run per item.",
       }),
     ),
     maxFiresPerHour: Type.Optional(
-      Type.Number({
+      Type.Integer({
         minimum: 1,
         maximum: 60,
         description:
-          "Most runs this task may fire from events in a rolling hour (when type=event). " +
+          "Most runs this task may fire from events in a rolling hour (type=event). " +
           "Default 12, max 60. Exceeding it disables the task — it is what terminates a " +
           "loop in which a run's own work produces the event that fires it again.",
       }),
     ),
   },
-  { required: ["type"] },
+  {
+    required: ["type"],
+    additionalProperties: false,
+    description:
+      "What fires it unattended. Omit for a task that runs only when someone runs it " +
+      "(tasks__run).",
+  },
 );
 
 const TokenBudget = Type.Object(
   {
     maxInputTokens: Type.Optional(
-      Type.Number({
+      Type.Integer({
         minimum: 1,
         description: "Most input tokens this task's runs may use in total per period.",
       }),
     ),
     maxOutputTokens: Type.Optional(
-      Type.Number({
+      Type.Integer({
         minimum: 1,
         description: "Most output tokens this task's runs may use in total per period.",
       }),
@@ -113,6 +141,7 @@ const TokenBudget = Type.Object(
     ),
   },
   {
+    additionalProperties: false,
     description:
       "Spending limit across runs, in tokens (not dollars). Checked before each model " +
       "call: each step may write only what is left of the period's budget, and a run with " +
@@ -137,14 +166,14 @@ function jsonSchemaField(description: string) {
 }
 
 const InputSchemaField = jsonSchemaField(
-  "JSON Schema each run's `input` must match (tasks__run `input`). A run whose input " +
-    "does not match is refused before it starts. Omit to take any JSON input.",
+  "JSON Schema each run's `input` must match (tasks__run `input`, tasks__run_batch `items`). " +
+    "A run whose input does not match is refused before it starts. Omit to take any JSON input.",
 );
 
 const OutputSchemaField = jsonSchemaField(
   "JSON Schema the deliverable must match. The run is told to answer with JSON matching it; " +
-    "the final output is parsed and checked, kept as the result's `structured`, and the run " +
-    "record says whether it matched (`outputSchemaValid`, `outputSchemaErrors`).",
+    "the final output is parsed and checked, kept as the result's `structured`, and a " +
+    "deliverable that does not match is assessed `fail` without a judge call.",
 );
 
 // ── Acceptance criteria and the judge ────────────────────────────────────
@@ -195,7 +224,7 @@ const Criterion = Type.Object(
       }),
     ),
   },
-  { required: ["id", "rule", "type"] },
+  { required: ["id", "rule", "type"], additionalProperties: false },
 );
 
 const CriteriaField = Type.Array(Criterion, {
@@ -205,7 +234,8 @@ const CriteriaField = Type.Array(Criterion, {
     "Acceptance criteria. After each run that leaves a deliverable, a judge server the " +
     "workspace connected answers every criterion (the deliverable, the input, and a summary " +
     "of the tool calls are sent to it), and the run is recorded pass, fail, or uncertain. " +
-    "Without a connected judge server the run is not assessed.",
+    "Without a connected judge server every run is uncertain (Needs review); the answer's " +
+    "`warnings` say so. tasks__judges lists the judge servers.",
 });
 
 const ConfidenceThresholdField = Type.Number({
@@ -221,7 +251,8 @@ const JudgeField = Type.Object(
     server: Type.Optional(
       Type.String({
         description:
-          "The connected judge server to use. Needed only when the workspace has more than one.",
+          "The connected judge server to use (tasks__judges lists them). Needed only when the " +
+          "workspace has more than one.",
       }),
     ),
     id: Type.Optional(
@@ -236,85 +267,81 @@ const JudgeField = Type.Object(
       }),
     ),
   },
-  { description: "Which judge answers the criteria. Omit to use the one connected judge server." },
+  {
+    additionalProperties: false,
+    description: "Which judge answers the criteria. Omit to use the one connected judge server.",
+  },
 );
 
 const OnPoorResultField = StringEnum(["record", "notify", "retry_once"] as const, {
   description:
-    "What a `fail` assessment does. record: nothing more. notify (default): a notification in " +
-    "the workspace inbox naming the task and the failed criteria. retry_once: run again once, " +
-    "with the failed criteria as guidance.",
+    "What a `fail` assessment does. record: nothing more. notify (default): an item in the " +
+    "workspace inbox saying a run was judged poor, with its run id; it never names the task " +
+    "or its criteria, since the inbox is shared and the task is private to its owner. " +
+    "retry_once: run again once, with the failed criteria as guidance. Batch runs ignore it.",
 });
 
-// Manifest fields shared by create + update. `name` is required for create
-// (rebuilt with explicit required); update uses the same fields minus name
-// (renames are not patchable; the kebab-case id would drift).
-const ManifestFields = {
-  name: Type.String({ description: "Human-readable name. Becomes the kebab-case id." }),
-  description: Type.Optional(Type.String({ description: "What this task does." })),
-  schedule: Type.Optional(
-    Type.Object(Schedule.properties, {
-      required: ["type"],
-      description:
-        "What fires it unattended. Omit for a task that runs only when someone runs it " +
-        "(tasks__run).",
-    }),
-  ),
-  enabled: Type.Optional(
-    Type.Boolean({
-      description:
-        "Whether its schedule or events fire it. Default true. Run now (tasks__run) runs it either way.",
-    }),
-  ),
-  skill: Type.Optional(
-    Type.String({
-      description: "Force a specific skill match for this task's runs.",
-    }),
-  ),
-  model: Type.Optional(
-    Type.String({ description: "Model override. Omit to use the workspace default." }),
-  ),
-  maxIterations: Type.Optional(
-    // Default/cap mirror DEFAULT_MAX_ITERATIONS / MAX_ITERATIONS in src/limits.ts.
-    // Kept as a literal because this schema is codegen'd under a strict rootDir
-    // (scripts/tsconfig.codegen-web.json) that forbids importing from outside
-    // src/platform/schemas/. The enforcement path (server.ts) imports the
-    // real constant; this is documentation only.
-    Type.Number({
-      description:
-        "Max LLM iterations per run. Default 25, hard cap 50. Runs are also held to the " +
-        "runtime's per-run ceiling; create and update report the effective value.",
-    }),
-  ),
-  maxInputTokens: Type.Optional(
-    Type.Number({
-      description:
-        "Input tokens one run may spend in total, summed over every model call (1000 to " +
-        "1000000), counting cache reads. Before each model call the run stops with stopReason " +
-        "max_input_tokens if that call's projected input would pass the cap. Omit for no " +
-        "per-run cap unless the runtime sets a per-run ceiling, which also bounds a set value; " +
-        "create and update report the effective value.",
-    }),
-  ),
-  allowedTools: Type.Optional(
-    Type.Array(Type.String(), {
-      description:
-        "Tools this task's runs may use, as names or globs: `gmail__*` for a workspace " +
-        "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
-        "run cannot activate or call a tool outside the list; only nb__search and " +
-        "nb__manage_tools pass without being listed, so name any other nb__ tool a run needs " +
-        "(nb__use_skill for skills, nb__read_resource for resources). Prefer a `<connector>__*` " +
-        "glob, since a connector can rename its tools. Omit or leave empty to allow every tool in the " +
-        "workspace. May not name tasks__create, tasks__update, or tasks__delete.",
-    }),
-  ),
-  maxRunDurationMs: Type.Optional(
-    Type.Number({
-      description:
-        "Max wall-clock per run (ms), 10000 to 600000. Default 120000. Runs are also held to " +
-        "the runtime's per-run ceiling; create and update report the effective value.",
-    }),
-  ),
+const MaxIterationsField = Type.Integer({
+  minimum: 1,
+  maximum: 50,
+  description:
+    "Max LLM iterations per run, 1 to 50. Default 25. Runs are also held to the runtime's " +
+    "per-run ceiling; create and update report the effective value.",
+});
+
+const MaxInputTokensField = Type.Integer({
+  minimum: 1000,
+  maximum: 1000000,
+  description:
+    "Input tokens one run may spend in total, summed over every model call (1000 to " +
+    "1000000), counting cache reads. Before each model call the run stops with stopReason " +
+    "max_input_tokens if that call's projected input would pass the cap. Omit for no " +
+    "per-run cap unless the runtime sets a per-run ceiling, which also bounds a set value; " +
+    "create and update report the effective value.",
+});
+
+const MaxRunDurationField = Type.Integer({
+  minimum: 10000,
+  maximum: 600000,
+  description:
+    "Max wall-clock per run (ms), 10000 to 600000. Default 120000. Runs are also held to " +
+    "the runtime's per-run ceiling; create and update report the effective value.",
+});
+
+const AllowedToolsField = Type.Array(Type.String({ minLength: 1 }), {
+  minItems: 1,
+  description:
+    "Tools this task's runs may use, as names or globs: `gmail__*` for a workspace " +
+    "connector's tools, `my_gmail__*` for your personal one, `files__read` for one tool. A " +
+    "run cannot activate or call a tool outside the list, and a run is refused before it " +
+    "starts when an entry matches no tool it can reach. Only nb__search and nb__manage_tools " +
+    "pass without being listed, so name any other nb__ tool a run needs (nb__use_skill for " +
+    "skills, nb__read_resource for resources). Prefer a `<connector>__*` glob, since a " +
+    "connector can rename its tools. Omit for every tool in the workspace; an empty list is " +
+    "refused. Listing tasks__create, tasks__update, or tasks__delete is refused, and a run is " +
+    "barred from tasks__run, tasks__run_batch, tasks__batch_control, and tasks__assess whatever " +
+    "the list says.",
+});
+
+const SkillField = Type.String({
+  minLength: 1,
+  description: "A skill each run carries out, matched by name.",
+});
+
+const ModelField = Type.String({
+  minLength: 1,
+  description: "Model for this task's runs. Omit to use the workspace default.",
+});
+
+// The definition fields every shape shares: create's manifest, update's patch
+// (each clearable), and an inline one-off's manifest.
+const DefinitionFields = {
+  skill: Type.Optional(SkillField),
+  model: Type.Optional(ModelField),
+  allowedTools: Type.Optional(AllowedToolsField),
+  maxIterations: Type.Optional(MaxIterationsField),
+  maxInputTokens: Type.Optional(MaxInputTokensField),
+  maxRunDurationMs: Type.Optional(MaxRunDurationField),
   tokenBudget: Type.Optional(TokenBudget),
   inputSchema: Type.Optional(InputSchemaField),
   outputSchema: Type.Optional(OutputSchemaField),
@@ -322,280 +349,333 @@ const ManifestFields = {
   confidenceThreshold: Type.Optional(ConfidenceThresholdField),
   judge: Type.Optional(JudgeField),
   onPoorResult: Type.Optional(OnPoorResultField),
-  kind: Type.Optional(
-    StringEnum(["saved", "oneoff"] as const, {
-      description:
-        "`saved` (default) for a task to keep and list. `oneoff` for one made to be run " +
-        "once with no schedule: it is kept with its run history but left out of " +
-        "tasks__list unless asked for.",
-    }),
-  ),
 };
 
-// Update is a partial of the create-shape minus `name` and `kind` (a one-off
-// does not become a saved task by a patch). `schedule: null` clears the
-// schedule, leaving a task that runs only when someone runs it.
-const UpdateManifestFields = {
-  description: ManifestFields.description,
-  schedule: Type.Optional(
-    Type.Union([Schedule, Type.Null()], {
-      description:
-        "New schedule, or null to remove it so nothing fires it unattended. Setting a new once " +
+const BodyField = Type.String({
+  description:
+    "The prompt that opens every run, whatever starts it: its schedule, an event, or " +
+    "someone running it. Describe the job, not tool names: a name such as " +
+    "`gmail__send_email` changes with how its connector is installed (`my_` for a personal " +
+    "one). List the tools in `manifest.allowedTools`, where one the run cannot reach refuses " +
+    "the run. A run's `input` is given to it as data beside this prompt. Nothing delivers the " +
+    "deliverable: to post or send it, say so here and allow the tool.",
+});
+
+const CreateManifest = Type.Object(
+  {
+    name: Type.String({
+      minLength: 1,
+      description: "Human-readable name. Becomes the kebab-case id, which must not already exist.",
+    }),
+    description: Type.Optional(Type.String({ description: "What this task does." })),
+    schedule: Type.Optional(Schedule),
+    enabled: Type.Optional(
+      Type.Boolean({
+        description:
+          "Whether its schedule or events fire it. Default true. tasks__run runs it either way.",
+      }),
+    ),
+    kind: Type.Optional(
+      StringEnum(["saved", "oneoff"] as const, {
+        description:
+          "`saved` (default) for a task to keep and list. `oneoff` for one made to be run " +
+          "once with no schedule: it is kept with its run history but left out of " +
+          "tasks__list unless asked for.",
+      }),
+    ),
+    ...DefinitionFields,
+  },
+  {
+    required: ["name"],
+    additionalProperties: false,
+    description: "Task definition: identity, schedule, run-time policy.",
+  },
+);
+
+// Update is the create shape as a patch, minus `name` and `kind` (a rename
+// would move the id; a one-off does not become a saved task by a patch).
+// `null` clears a field so its default applies again.
+const UpdateManifest = Type.Object(
+  {
+    description: clearable(Type.String(), "New description, or null to remove it."),
+    schedule: clearable(
+      Schedule,
+      "New schedule, or null to remove it so nothing fires it unattended. Setting a new once " +
         "`at` on a task that already ran once (or missed its time) re-arms and enables it.",
-    }),
-  ),
-  enabled: ManifestFields.enabled,
-  skill: ManifestFields.skill,
-  model: ManifestFields.model,
-  maxIterations: ManifestFields.maxIterations,
-  maxInputTokens: ManifestFields.maxInputTokens,
-  allowedTools: ManifestFields.allowedTools,
-  maxRunDurationMs: ManifestFields.maxRunDurationMs,
-  tokenBudget: ManifestFields.tokenBudget,
-  inputSchema: Type.Optional(
-    Type.Union([InputSchemaField, Type.Null()], {
-      description: "New input schema, or null to remove it so runs take any input.",
-    }),
-  ),
-  outputSchema: Type.Optional(
-    Type.Union([OutputSchemaField, Type.Null()], {
-      description: "New output schema, or null to remove it so the deliverable is not checked.",
-    }),
-  ),
-  criteria: Type.Optional(
-    Type.Union([CriteriaField, Type.Null()], {
-      description: "New acceptance criteria (the whole list), or null to remove them.",
-    }),
-  ),
-  confidenceThreshold: Type.Optional(
-    Type.Union([ConfidenceThresholdField, Type.Null()], {
-      description: "New confidence threshold, or null for the default (0.7).",
-    }),
-  ),
-  judge: Type.Optional(
-    Type.Union([JudgeField, Type.Null()], {
-      description: "Which judge to use, or null to use the one connected judge server.",
-    }),
-  ),
-  onPoorResult: Type.Optional(
-    Type.Union([OnPoorResultField, Type.Null()], {
-      description: "What a fail assessment does, or null for the default (notify).",
-    }),
-  ),
-};
+    ),
+    enabled: Type.Optional(
+      Type.Boolean({ description: "Whether its schedule or events fire it." }),
+    ),
+    skill: clearable(SkillField, "Skill each run carries out, or null for none."),
+    model: clearable(ModelField, "Model for its runs, or null for the workspace default."),
+    allowedTools: clearable(
+      AllowedToolsField,
+      "Tools its runs may use (see tasks__create), or null to allow every tool.",
+    ),
+    maxIterations: clearable(MaxIterationsField, "Per-run iteration cap, or null for the default."),
+    maxInputTokens: clearable(MaxInputTokensField, "Per-run input-token cap, or null for none."),
+    maxRunDurationMs: clearable(MaxRunDurationField, "Per-run time cap, or null for the default."),
+    tokenBudget: clearable(TokenBudget, "Spending limit across runs, or null to remove it."),
+    inputSchema: clearable(
+      InputSchemaField,
+      "New input schema, or null to remove it so runs take any input.",
+    ),
+    outputSchema: clearable(
+      OutputSchemaField,
+      "New output schema, or null to remove it so the deliverable is not checked.",
+    ),
+    criteria: clearable(
+      CriteriaField,
+      "New acceptance criteria (the whole list), or null to remove them.",
+    ),
+    confidenceThreshold: clearable(
+      ConfidenceThresholdField,
+      "New confidence threshold, or null for the default (0.7).",
+    ),
+    judge: clearable(
+      JudgeField,
+      "Which judge to use, or null to use the one connected judge server.",
+    ),
+    onPoorResult: clearable(
+      OnPoorResultField,
+      "What a fail assessment does, or null for the default (notify).",
+    ),
+  },
+  {
+    additionalProperties: false,
+    description:
+      "Patch of the manifest (field names as tasks__create). Omitted fields keep their " +
+      "values; null clears one so its default applies.",
+  },
+);
+
+/** An inline one-off's definition: create's manifest without identity or trigger. */
+function inlineDefinition<T extends TProperties>(fields: T, what: string) {
+  return Type.Object(
+    {
+      manifest: Type.Optional(
+        Type.Object(fields, {
+          additionalProperties: false,
+          description: "As tasks__create's manifest, minus name, schedule, enabled, and kind.",
+        }),
+      ),
+      body: Type.Optional(
+        Type.String({
+          description:
+            "The prompt that opens each run (as tasks__create's body). Omit only with `manifest.skill`.",
+        }),
+      ),
+    },
+    {
+      additionalProperties: false,
+      description:
+        `${what}: a \`oneoff\` task with no schedule is created from it, owned by you in this ` +
+        "workspace, and kept with its runs. Give this or `taskId`, not both.",
+    },
+  );
+}
+
+const { onPoorResult: _batchIgnores, ...BatchDefinitionFields } = DefinitionFields;
+
+const IdempotencyKeyField = Type.String({
+  minLength: 1,
+  maxLength: 256,
+  description:
+    "Repeat-safe key. A later call with the same key returns what the first call started " +
+    "instead of starting another. With an inline definition, a repeat must give the same " +
+    "definition.",
+});
 
 // ── Tool input schemas ───────────────────────────────────────────────────
 
 export const TasksCreateInput = Type.Object(
-  {
-    manifest: Type.Object(ManifestFields, {
-      required: ["name"],
-      description: "Task definition: identity, schedule, run-time policy.",
-    }),
-    body: Type.String({
-      description:
-        "The prompt that opens every run, whatever starts it: its schedule, an event, or " +
-        "someone running it. Describe the job, not tool names: a name such as " +
-        "`gmail__send_email` changes with how its connector is installed (`my_` for a personal " +
-        "one), and a run that cannot find a named tool ends quietly. List the tools in " +
-        "`manifest.allowedTools`, where a missing one fails the run.",
-    }),
-  },
-  { required: ["manifest", "body"] },
+  { manifest: CreateManifest, body: BodyField },
+  { required: ["manifest", "body"], additionalProperties: false },
 );
 export type TasksCreateInput = Static<typeof TasksCreateInput>;
 
 export const TasksUpdateInput = Type.Object(
   {
-    name: Type.String({ description: "Name of the task to update." }),
-    manifest: Type.Optional(
-      Type.Object(UpdateManifestFields, {
-        description: "Partial manifest patch. Omitted fields keep their current values.",
-      }),
-    ),
+    taskId: TaskIdField,
+    manifest: Type.Optional(UpdateManifest),
     body: Type.Optional(
       Type.String({ description: "New prompt. Omit to keep the current prompt." }),
     ),
   },
-  { required: ["name"] },
+  { required: ["taskId"], additionalProperties: false },
 );
 export type TasksUpdateInput = Static<typeof TasksUpdateInput>;
 
 export const TasksDeleteInput = Type.Object(
-  { name: Type.String({ description: "Name of the task to delete." }) },
-  { required: ["name"] },
+  { taskId: TaskIdField },
+  { required: ["taskId"], additionalProperties: false },
 );
 export type TasksDeleteInput = Static<typeof TasksDeleteInput>;
 
-export const TasksListInput = Type.Object({
-  enabled: Type.Optional(Type.Boolean({ description: "Filter by enabled status." })),
-  source: Type.Optional(
-    StringEnum(["user", "agent"] as const, { description: "Filter by source." }),
-  ),
-  kind: Type.Optional(
-    StringEnum(["saved", "oneoff", "all"] as const, {
-      description: "Which kind to list. Default `saved`; `oneoff` or `all` to include one-offs.",
-    }),
-  ),
-  limit: Type.Optional(
-    // Default/cap mirror TASKS_LIST_DEFAULT_LIMIT / TASKS_LIST_MAX_LIMIT
-    // in src/limits.ts. Literals for the same reason as maxIterations above: this
-    // schema is codegen'd under a strict rootDir that forbids importing from
-    // outside src/platform/schemas/. server.ts imports the real constants.
-    Type.Integer({
-      minimum: 1,
-      maximum: 500,
-      description:
-        "Max tasks to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
-    }),
-  ),
-  cursor: Type.Optional(
-    Type.String({
-      description:
-        "Opaque pagination cursor from a previous response's `nextCursor`. Omit for the first page.",
-    }),
-  ),
-});
+export const TasksListInput = Type.Object(
+  {
+    enabled: Type.Optional(Type.Boolean({ description: "Filter by enabled status." })),
+    source: Type.Optional(
+      StringEnum(["user", "agent"] as const, { description: "Filter by source." }),
+    ),
+    kind: Type.Optional(
+      StringEnum(["saved", "oneoff", "all"] as const, {
+        description: "Which kind to list. Default `saved`; `oneoff` or `all` to include one-offs.",
+      }),
+    ),
+    limit: Type.Optional(
+      // Default/cap mirror TASKS_LIST_DEFAULT_LIMIT / TASKS_LIST_MAX_LIMIT.
+      Type.Integer({
+        minimum: 1,
+        maximum: 500,
+        description:
+          "Max tasks to return. Default 100, max 500. The response always reports the unpaged total and whether more remain.",
+      }),
+    ),
+    cursor: Type.Optional(
+      Type.String({
+        description:
+          "Opaque pagination cursor from a previous response's `nextCursor`. Omit for the first page.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 export type TasksListInput = Static<typeof TasksListInput>;
 
 export const TasksStatusInput = Type.Object(
   {
-    name: Type.String({ description: "Name of the task." }),
-    limit: Type.Optional(Type.Number({ description: "Max recent runs to include. Default: 5." })),
+    taskId: TaskIdField,
+    limit: Type.Optional(
+      Type.Integer({
+        minimum: 0,
+        maximum: 50,
+        description: "Recent runs to include, 0 to 50. Default 5.",
+      }),
+    ),
   },
-  { required: ["name"] },
+  { required: ["taskId"], additionalProperties: false },
 );
 export type TasksStatusInput = Static<typeof TasksStatusInput>;
 
-export const TasksRunsInput = Type.Object({
-  taskId: Type.Optional(Type.String({ description: "Filter by task ID." })),
-  status: Type.Optional(
-    StringEnum(
-      ["running", "success", "degraded", "failure", "timeout", "cancelled", "skipped"] as const,
-      {
-        description: "Filter by run status.",
-      },
+/** The labels an ended run reads as, as `tasks__runs` filters them. Mirror of `RunLabel`. */
+const RunLabelFilter = StringEnum(
+  ["Succeeded", "Poor result", "Needs review", "Failed", "Skipped", "Cancelled"] as const,
+  {
+    description:
+      "Only runs that ended reading as this label. `Needs review` finds runs awaiting a " +
+      "person's verdict. Runs still queued or running are in tasks__upcoming.",
+  },
+);
+
+export const TasksRunsInput = Type.Object(
+  {
+    taskId: Type.Optional(Type.String({ minLength: 1, description: "Only this task's runs." })),
+    label: Type.Optional(RunLabelFilter),
+    verdict: Type.Optional(
+      StringEnum(["pass", "fail", "uncertain", "not_assessed"] as const, {
+        description:
+          "Only runs with this effective verdict (a person's replaces the judge's). A run with " +
+          "no deliverable has none, and never matches.",
+      }),
     ),
-  ),
-  since: Type.Optional(
-    Type.String({
-      description: "ISO timestamp — only runs started on or after this time.",
-    }),
-  ),
-  before: Type.Optional(
-    Type.String({
-      description:
-        "ISO timestamp — only runs started before this time. Pages back through the full run " +
-        "history, which is kept indefinitely: pass the previous response's `nextBefore`, with " +
-        "or without `taskId`. Without it, only the most recent runs (up to 1000 per task) are " +
-        "read, so pass a time just ahead of now to page every run back through the archives.",
-    }),
-  ),
-  limit: Type.Optional(Type.Number({ description: "Max runs to return. Default: 20." })),
-  excludeBatchRuns: Type.Optional(
-    Type.Boolean({
-      description: "true: leave out runs that are items of a batch (read those with tasks__batch).",
-    }),
-  ),
-});
+    since: Type.Optional(
+      Type.String({
+        description: "ISO timestamp — only runs started on or after this time.",
+      }),
+    ),
+    before: Type.Optional(
+      Type.String({
+        description:
+          "ISO timestamp — only runs started before this time. Pages back through the full run " +
+          "history, which is kept indefinitely: pass the previous response's `nextBefore`, with " +
+          "or without `taskId`. Without it, only the most recent runs (up to 1000 per task) are " +
+          "read, so pass a time just ahead of now to page every run back through the archives.",
+      }),
+    ),
+    limit: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: 500, description: "Max runs to return. Default 20." }),
+    ),
+    excludeBatchRuns: Type.Optional(
+      Type.Boolean({
+        description:
+          "true: leave out runs that are items of a batch (read those with tasks__batch).",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 export type TasksRunsInput = Static<typeof TasksRunsInput>;
 
-export const TasksUpcomingInput = Type.Object({
-  days: Type.Optional(
-    Type.Integer({
-      minimum: 1,
-      maximum: 30,
-      description:
-        "How many days ahead to list scheduled fires. Default 7, max 30. Every enabled timed " +
-        "task's next fire is listed even when it falls past the window.",
-    }),
-  ),
-});
+export const TasksUpcomingInput = Type.Object(
+  {
+    days: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 30,
+        description:
+          "How many days ahead to list scheduled fires. Default 7, max 30. Every enabled timed " +
+          "task's next fire is listed even when it falls past the window.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 export type TasksUpcomingInput = Static<typeof TasksUpcomingInput>;
 
-export const TasksStatsInput = Type.Object({
-  since: Type.Optional(
-    Type.String({
-      description: "ISO timestamp: count runs started on or after it. Default: 30 days ago.",
-    }),
-  ),
-  taskId: Type.Optional(
-    Type.String({ description: "Only this task (any kind). Default: every saved task." }),
-  ),
-});
+export const TasksStatsInput = Type.Object(
+  {
+    since: Type.Optional(
+      Type.String({
+        description: "ISO timestamp: count runs started on or after it. Default: 30 days ago.",
+      }),
+    ),
+    taskId: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description: "Only this task (any kind). Default: every saved task.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 export type TasksStatsInput = Static<typeof TasksStatsInput>;
 
-export const TasksJudgesInput = Type.Object({});
+export const TasksJudgesInput = Type.Object({}, { additionalProperties: false });
 export type TasksJudgesInput = Static<typeof TasksJudgesInput>;
 
-export const TasksRunInput = Type.Object({
-  taskId: Type.Optional(
-    Type.String({
-      description:
-        "The saved task to run (its id, as tasks__list returns it). Omit it and give " +
-        "`prompt` (or `skill`) instead to run an inline one-off: a `oneoff` task with no " +
-        "schedule is created, owned by you in this workspace, run once, and kept with its run.",
-    }),
-  ),
-  input: Type.Optional(
-    Type.Unsafe<unknown>({
-      description:
-        "JSON input for this run (any JSON value, at most 64 KiB serialized). Checked against " +
-        "the task's inputSchema when it has one, kept on the run record, and given to " +
-        "the run as data, never as instructions.",
-    }),
-  ),
-  idempotencyKey: Type.Optional(
-    Type.String({
-      minLength: 1,
-      maxLength: 256,
-      description:
-        "Repeat-safe key. A later call with the same key for the same task (or the same " +
-        "inline one-off) returns the run the first call started instead of starting another.",
-    }),
-  ),
-  prompt: Type.Optional(
-    Type.String({ description: "Inline one-off: the prompt that opens the run." }),
-  ),
-  skill: Type.Optional(
-    Type.String({ description: "Inline one-off: a skill for the run to carry out." }),
-  ),
-  inputSchema: Type.Optional(InputSchemaField),
-  outputSchema: Type.Optional(OutputSchemaField),
-  allowedTools: Type.Optional(
-    Type.Array(Type.String(), {
-      description:
-        "Inline one-off: the tools the run may use, as names or globs (see tasks__create).",
-    }),
-  ),
-  limits: Type.Optional(
-    Type.Object(
-      {
-        maxIterations: ManifestFields.maxIterations,
-        maxInputTokens: ManifestFields.maxInputTokens,
-        maxRunDurationMs: ManifestFields.maxRunDurationMs,
-      },
-      {
-        additionalProperties: false,
-        description: "Inline one-off: per-run caps, as on tasks__create.",
-      },
-    ),
-  ),
-  budget: Type.Optional(TokenBudget),
-  criteria: Type.Optional(CriteriaField),
-  confidenceThreshold: Type.Optional(ConfidenceThresholdField),
-  judge: Type.Optional(JudgeField),
-  onPoorResult: Type.Optional(OnPoorResultField),
+const RunInputField = Type.Unsafe<unknown>({
+  description:
+    "JSON input for this run (any JSON value, at most 64 KiB serialized). Checked against " +
+    "the task's inputSchema when it has one, kept on the run record, and given to the run " +
+    "as data, never as instructions.",
 });
+
+export const TasksRunInput = Type.Object(
+  {
+    taskId: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description: "The task to run, as tasks__list returns it. Or give `definition`.",
+      }),
+    ),
+    definition: Type.Optional(inlineDefinition(DefinitionFields, "A one-off to run once")),
+    input: Type.Optional(RunInputField),
+    idempotencyKey: Type.Optional(IdempotencyKeyField),
+  },
+  { additionalProperties: false },
+);
 export type TasksRunInput = Static<typeof TasksRunInput>;
 
 export const TasksAssessInput = Type.Object(
   {
-    runId: Type.String({ description: "The run to assess." }),
-    name: Type.Optional(
+    runId: RunIdField,
+    taskId: Type.Optional(
       Type.String({
+        minLength: 1,
         description:
-          "Name of the run's task. Optional: a run is found among your tasks by its id alone.",
+          "The run's task. Needed only for a run past the newest 1000 of its task; any other " +
+          "is found by its id alone.",
       }),
     ),
     verdict: Type.Optional(
@@ -615,28 +695,29 @@ export const TasksAssessInput = Type.Object(
       }),
     ),
   },
-  { required: ["runId"] },
+  { required: ["runId"], additionalProperties: false },
 );
 export type TasksAssessInput = Static<typeof TasksAssessInput>;
 
 export const TasksCancelInput = Type.Object(
-  { name: Type.String({ description: "Name of the task to cancel." }) },
-  { required: ["name"] },
+  { runId: RunIdField },
+  { required: ["runId"], additionalProperties: false },
 );
 export type TasksCancelInput = Static<typeof TasksCancelInput>;
 
 export const TasksRunResultInput = Type.Object(
   {
-    name: Type.Optional(
+    runId: RunIdField,
+    taskId: Type.Optional(
       Type.String({
+        minLength: 1,
         description:
-          "Name of the task. Optional for a run tasks__run started, which is found " +
-          "by its id alone.",
+          "The run's task. Needed only for a run past the newest 1000 of its task; any other " +
+          "is found by its id alone.",
       }),
     ),
-    runId: Type.String({ description: "The run id (from a run record) to fetch the result for." }),
   },
-  { required: ["runId"] },
+  { required: ["runId"], additionalProperties: false },
 );
 export type TasksRunResultInput = Static<typeof TasksRunResultInput>;
 
@@ -651,10 +732,12 @@ export const TasksRunBatchInput = Type.Object(
   {
     taskId: Type.Optional(
       Type.String({
-        description:
-          "The saved task every item runs. Omit it and give `prompt` (or `skill`) instead to " +
-          "run an inline definition: a `oneoff` task is created for the batch.",
+        minLength: 1,
+        description: "The task every item runs, as tasks__list returns it. Or give `definition`.",
       }),
+    ),
+    definition: Type.Optional(
+      inlineDefinition(BatchDefinitionFields, "The definition every item runs"),
     ),
     items: Type.Array(
       Type.Unsafe<unknown>({
@@ -684,8 +767,8 @@ export const TasksRunBatchInput = Type.Object(
         exclusiveMinimum: 0,
         description:
           "Whole-batch ceiling in USD, checked before every model call across all of the batch's " +
-          "runs at once. When too little is left, no new item starts and the batch pauses " +
-          "(resume can raise it).",
+          "runs at once. When it is spent, no new item starts and the batch pauses (resume " +
+          "with a higher `budgetUsd`).",
       }),
     ),
     stopWhen: Type.Optional(
@@ -706,54 +789,18 @@ export const TasksRunBatchInput = Type.Object(
           additionalProperties: false,
           description:
             "Pause the batch when its pass rate collapses. Uncertain results are excluded, so " +
-            "judge doubt alone never pauses it. Needs a task with criteria or an outputSchema.",
+            "judge doubt alone never pauses it, and nor does a task whose criteria no judge " +
+            "answers. Needs a task with criteria or an outputSchema.",
         },
       ),
     ),
-    idempotencyKey: Type.Optional(
-      Type.String({
-        minLength: 1,
-        maxLength: 256,
-        description: "Repeat-safe key: a later call with the same key returns the same batch.",
-      }),
-    ),
-    prompt: Type.Optional(
-      Type.String({ description: "Inline definition: the prompt that opens each run." }),
-    ),
-    skill: Type.Optional(
-      Type.String({ description: "Inline definition: a skill for each run to carry out." }),
-    ),
-    inputSchema: Type.Optional(InputSchemaField),
-    outputSchema: Type.Optional(OutputSchemaField),
-    allowedTools: Type.Optional(
-      Type.Array(Type.String(), {
-        description: "Inline definition: the tools each run may use (see tasks__create).",
-      }),
-    ),
-    limits: Type.Optional(
-      Type.Object(
-        {
-          maxIterations: ManifestFields.maxIterations,
-          maxInputTokens: ManifestFields.maxInputTokens,
-          maxRunDurationMs: ManifestFields.maxRunDurationMs,
-        },
-        {
-          additionalProperties: false,
-          description: "Inline definition: per-run caps, as on tasks__create.",
-        },
-      ),
-    ),
-    budget: Type.Optional(TokenBudget),
-    criteria: Type.Optional(CriteriaField),
-    confidenceThreshold: Type.Optional(ConfidenceThresholdField),
-    judge: Type.Optional(JudgeField),
-    onPoorResult: Type.Optional(OnPoorResultField),
+    idempotencyKey: Type.Optional(IdempotencyKeyField),
   },
-  { required: ["items"] },
+  { required: ["items"], additionalProperties: false },
 );
 export type TasksRunBatchInput = Static<typeof TasksRunBatchInput>;
 
-/** What `tasks__batch` `verdict` filters results to. `failing` is fail plus failed. */
+/** What `tasks__batch` `filter` narrows results to. `failing` is fail plus failed. */
 const BatchResultFilter = StringEnum(
   [
     "pass",
@@ -780,10 +827,10 @@ export const TasksBatchInput = Type.Object(
     results: Type.Optional(
       Type.Boolean({
         description:
-          "true: include item results, a page at a time. A verdict, cursor, or limit also asks for them.",
+          "true: include item results, a page at a time. A filter, cursor, or limit also asks for them.",
       }),
     ),
-    verdict: Type.Optional(BatchResultFilter),
+    filter: Type.Optional(BatchResultFilter),
     cursor: Type.Optional(
       Type.Integer({
         minimum: 0,
@@ -794,7 +841,7 @@ export const TasksBatchInput = Type.Object(
       Type.Integer({ minimum: 1, maximum: 500, description: "Items per page. Default 50." }),
     ),
   },
-  { required: ["batchId"] },
+  { required: ["batchId"], additionalProperties: false },
 );
 export type TasksBatchInput = Static<typeof TasksBatchInput>;
 
@@ -803,9 +850,12 @@ export const TasksBatchControlInput = Type.Object(
     batchId: BatchIdField,
     action: StringEnum(["pause", "resume", "cancel", "rerun_failed"] as const, {
       description:
-        "pause: no new item starts; runs still queued are taken back, runs in flight finish. resume: start items again. " +
-        "cancel: stop for good, cancelling queued and running runs. rerun_failed: run again, " +
-        "each as a new run, every item that failed, was skipped or cancelled, or was judged fail.",
+        "pause: no new item starts; runs still queued are taken back, runs in flight finish. " +
+        "resume: start items again. cancel: stop for good, cancelling queued and running runs. " +
+        "rerun_failed: run again, each as a new run, every item that failed, was skipped or " +
+        "cancelled, or was judged fail (not uncertain ones: judge those with tasks__assess). " +
+        "A batch paused for budget needs resume with a higher `budgetUsd` before anything " +
+        "runs again.",
     }),
     budgetUsd: Type.Optional(
       Type.Number({
@@ -817,21 +867,24 @@ export const TasksBatchControlInput = Type.Object(
       }),
     ),
   },
-  { required: ["batchId", "action"] },
+  { required: ["batchId", "action"], additionalProperties: false },
 );
 export type TasksBatchControlInput = Static<typeof TasksBatchControlInput>;
 
-export const TasksBatchesInput = Type.Object({
-  taskId: Type.Optional(Type.String({ description: "Only batches of this task." })),
-  state: Type.Optional(
-    StringEnum(["running", "paused", "completed", "cancelled"] as const, {
-      description: "Only batches in this state.",
-    }),
-  ),
-  limit: Type.Optional(
-    Type.Integer({ minimum: 1, maximum: 100, description: "Most batches. Default 20." }),
-  ),
-});
+export const TasksBatchesInput = Type.Object(
+  {
+    taskId: Type.Optional(Type.String({ minLength: 1, description: "Only batches of this task." })),
+    state: Type.Optional(
+      StringEnum(["running", "paused", "completed", "cancelled"] as const, {
+        description: "Only batches in this state.",
+      }),
+    ),
+    limit: Type.Optional(
+      Type.Integer({ minimum: 1, maximum: 100, description: "Most batches. Default 20." }),
+    ),
+  },
+  { additionalProperties: false },
+);
 export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
 
 // ── Tool output types ────────────────────────────────────────────────────
@@ -873,11 +926,8 @@ export type TasksBatchesInput = Static<typeof TasksBatchesInput>;
 export type TaskLastRunStatus = "success" | "degraded" | "failure" | "timeout" | "skipped";
 
 /**
- * Summary row returned per task by `handleList`. Subset of the
- * stored `Task` shape plus a couple of human-formatted fields the
- * UI surfaces directly. `lastRunAt` / `nextRunAt` are human-relative
- * strings (e.g. "in 2h", "4h ago") — the raw ISO timestamps stay on the
- * stored `Task`.
+ * Summary row returned per task by `handleList`. Subset of the stored `Task`
+ * shape plus the schedule in words. Times are ISO-8601.
  */
 export interface TaskSummary {
   id: string;
@@ -895,6 +945,7 @@ export interface TaskSummary {
   runCount: number;
   lastRunStatus: TaskLastRunStatus | null;
   lastRunAt: string | null;
+  /** When its schedule next fires; null when nothing will (no timed schedule, or disabled). */
   nextRunAt: string | null;
   disabledAt: string | null;
   disabledReason: string | null;
@@ -1093,14 +1144,12 @@ export interface RunFileRefRecord {
 }
 
 /**
- * The full deliverable of a run, returned by `handleRunResult`. Mirror of
- * `TaskRunResult` in `platform/tasks/types.ts`. A run is not a
- * conversation: the result carries the final output, the activity log, and refs
- * to any files the run wrote in the workspace file store.
+ * A run's full deliverable: the untruncated final output, the activity log,
+ * and refs to any files the run wrote in the workspace file store. Mirror of
+ * `TaskRunResult` in `platform/tasks/types.ts`, less the ids the run record
+ * beside it carries. A run is not a conversation.
  */
-export interface TasksRunResultOutput {
-  runId: string;
-  taskId: string;
+export interface TaskRunResultBody {
   completedAt: string;
   output: string;
   activityLog: RunToolCallRecord[];
@@ -1117,13 +1166,27 @@ export interface TasksRunResultOutput {
     | "other";
   /** The deliverable parsed as JSON, when the task has an outputSchema and it parsed. */
   structured?: unknown;
-  /** How the run ended, from its record; absent when the record was not found. */
-  execution?: TaskRunExecution;
-  /** The label the run reads as, from its record; absent when the record was not found. */
-  label?: TaskRunLabel;
-  /** The run's assessment, from its record. */
-  assessment?: TaskRunAssessment;
 }
+
+/**
+ * `tasks__run_result`: one run by id, whatever state it is in. `status` says
+ * whether it has ended; a run still queued or running is an answer, not an
+ * error, so a caller polls by calling again.
+ */
+export type TasksRunResultOutput =
+  | {
+      status: "queued" | "running";
+      run: TaskRunView;
+      /** Queued only: 1 is next to start. */
+      position?: number;
+      message: string;
+    }
+  | {
+      status: "ended";
+      run: TaskRunView;
+      /** Absent when the run left no deliverable (skipped, cancelled before it began, failed early). */
+      result?: TaskRunResultBody;
+    };
 
 /**
  * Token budget block on a stored task. Mirror of the
@@ -1172,6 +1235,8 @@ export interface TaskStatusDetail {
   kind?: "saved" | "oneoff";
   onceDone?: TaskOnceDone;
   scheduleHuman: string;
+  /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
+  timezone: string;
   enabled: boolean;
   source: "user" | "agent";
   ownerId?: string;
@@ -1195,15 +1260,12 @@ export interface TaskStatusDetail {
   tokenBudget: TaskTokenBudget | null;
   budgetResetAt: string | null;
   lastRunAt?: string;
-  lastRunAtHuman: string | null;
   lastRunStatus?: TaskLastRunStatus;
   nextRunAt?: string;
-  nextRunAtHuman: string | null;
   disabledAt?: string;
   disabledReason?: string;
   createdAt: string;
   updatedAt: string;
-  actualCostUsd: number;
   estimatedCostPerRun: number;
   estimatedCostPerDay: number;
   estimatedCostPerMonth: number;
@@ -1239,41 +1301,32 @@ export interface TaskWarning {
 }
 
 /**
- * Discriminated union — `handleRun` returns one of two shapes:
+ * `handleRun` returns one of three shapes:
  *
- *   { run: TaskRunRecord; enabled; message? }  when the run finishes
- *                                                    inside the sync-wait
- *                                                    window (~30s default).
+ *   { run; enabled; message? }               the run ended inside the
+ *                                            sync-wait window (~30s), or was
+ *                                            refused before it started: a
+ *                                            `skipped` run whose `error` says
+ *                                            why (already running or queued,
+ *                                            a full queue, a spent budget).
  *
- *   { status: "dispatched"; taskId;            when the run is still
- *     startedAt; enabled; message }                  in flight after the
- *                                                    window. It keeps going;
- *                                                    its record lands in
- *                                                    `tasks__runs`
- *                                                    (`since: startedAt`)
- *                                                    when it ends.
+ *   { status: "dispatched"; runId; ... }     still running after the window;
+ *                                            it keeps going.
  *
- *   { status: "queued"; taskId; position;     when every run slot was
- *     queuedAt; enabled; message }                   busy. It starts as soon
- *                                                    as a slot frees; its record
- *                                                    lands in `tasks__runs`
- *                                                    (`since: queuedAt`) when it
- *                                                    ends. `tasks__cancel`
- *                                                    removes it from the queue.
+ *   { status: "queued"; runId; position }    every run slot was busy; it
+ *                                            starts as soon as one frees.
  *
- * A Run now the scheduler refuses (already running or queued, a full queue, a
- * spent token budget) returns the first shape with a `skipped` run whose
- * `error` says why.
+ * Read the last two with `tasks__run_result` (runId) until it says `ended`;
+ * `tasks__cancel` (runId) stops them. Only an error response means nothing
+ * was asked for (an unknown task, bad input, a bad definition).
  *
- * `enabled` is the task's own flag. Run now runs a disabled task,
- * because it is a deliberate act and the create form's test run depends on
- * it; a disabled task is not fired by its schedule or by events, and
- * `message` says so.
+ * `enabled` is the task's own flag. Run now runs a disabled task, because it
+ * is a deliberate act and the create form's test run depends on it; a
+ * disabled task is not fired by its schedule or by events, and `message`
+ * says so.
  *
- * Both shapes indicate the dispatch succeeded; only an error response
- * indicates failure to dispatch. Consumers MUST narrow before
- * dereferencing `run.*` — `as { run: ... }` is the anti-pattern that
- * caused the production CLI crash this type prevents.
+ * Consumers MUST narrow before dereferencing `run.*` (`"run" in out`), never
+ * `as { run: ... }`.
  */
 export type TasksRunOutput =
   | { run: TaskRunView; enabled: boolean; message?: string; warnings?: TaskWarning[] }
@@ -1308,7 +1361,9 @@ export interface TasksAssessOutput {
 
 export interface TasksCancelOutput {
   cancelled: boolean;
-  id: string;
+  runId: string;
+  /** The run's task, when the run was found. */
+  taskId?: string;
   message: string;
 }
 
@@ -1371,9 +1426,10 @@ export interface TaskEffectiveLimits {
 
 export interface TasksCreateOutput {
   task: TaskRecord;
-  created: boolean;
   message: string;
   effectiveLimits: TaskEffectiveLimits;
+  /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
+  timezone: string;
   /** About the saved task, which was saved anyway. */
   warnings?: TaskWarning[];
 }
@@ -1383,6 +1439,8 @@ export interface TasksUpdateOutput {
   updated: boolean;
   message: string;
   effectiveLimits: TaskEffectiveLimits;
+  /** The IANA timezone its schedule is read in: the schedule's own, else this instance's. */
+  timezone: string;
   /** About the saved task, which was saved anyway. */
   warnings?: TaskWarning[];
 }

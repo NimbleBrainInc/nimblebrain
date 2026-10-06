@@ -3,6 +3,7 @@ import { useApp } from "@nimblebrain/synapse/react";
 import { useCallback, useEffect, useState } from "react";
 import { STARTED_BY_TEXT, startedByOf } from "../lib/activity.ts";
 import { assessmentReasonText, inputSummary, runName, runTime } from "../lib/plain.ts";
+import { readResult } from "../lib/runResult.ts";
 import { effectiveVerdict } from "../lib/verdict.ts";
 import { renderMarkdown } from "../markdown.ts";
 import type { RunFileRef, TaskCriterion, TaskDetail, TaskRun, TaskRunResult } from "../types.ts";
@@ -256,62 +257,28 @@ const POLL_MS = 3000;
 
 type ToolCall = (args: Record<string, unknown>) => Promise<{ data?: unknown }>;
 
-/** A run's result, or that it is still open, or why it could not be read. */
-async function readResult(
-  call: ToolCall,
-  runId: string,
-  name: string | undefined,
-): Promise<{ result: TaskRunResult | null; open: boolean; error?: string }> {
-  try {
-    const res = await call({ runId, ...(name ? { name } : {}) });
-    return { result: asDict(res.data) as unknown as TaskRunResult, open: false };
-  } catch (err) {
-    const text = toolErrorText(err);
-    return /still (queued|running)/.test(text)
-      ? { result: null, open: true }
-      : { result: null, open: false, error: text };
-  }
-}
-
-/** A run's record from its task's recent runs; `fallback` when it is not among them. */
-async function readRecord(
-  call: ToolCall,
-  taskId: string | undefined,
-  runId: string,
-  fallback: TaskRun | undefined,
-): Promise<TaskRun | undefined> {
-  if (!taskId) return fallback;
-  try {
-    const res = await call({ taskId, limit: 200 });
-    const runs = (asDict(res.data).runs as TaskRun[]) ?? [];
-    return runs.find((r) => r.id === runId) ?? fallback;
-  } catch {
-    // the record is optional: the result carries the label and assessment
-    return fallback;
-  }
-}
-
 /** The run's task: its name and criteria (for each rule's text), or that it is gone. */
 async function readTask(
   call: ToolCall,
-  name: string | undefined,
+  taskId: string | undefined,
 ): Promise<{ taskName?: string; criteria?: TaskCriterion[]; taskGone?: boolean }> {
-  if (!name) return {};
+  if (!taskId) return {};
   try {
-    const res = await call({ name, limit: 1 });
+    const res = await call({ taskId, limit: 0 });
     const task = asDict(res.data).task as TaskDetail | undefined;
     return task ? { taskName: task.name, criteria: task.criteria } : { taskGone: true };
   } catch (err) {
-    return /not found/i.test(toolErrorText(err)) ? { taskGone: true } : {};
+    return /no task with id/i.test(toolErrorText(err)) ? { taskGone: true } : {};
   }
 }
 
 /** What the screen shows from what was read. */
 function stateOf(
-  read: { result: TaskRunResult | null; open: boolean; error?: string },
-  run: TaskRun | undefined,
+  read: { run?: TaskRun; result: TaskRunResult | null; open: boolean; error?: string },
+  fallback: TaskRun | undefined,
   task: { taskName?: string; criteria?: TaskCriterion[]; taskGone?: boolean },
 ): RunResultState {
+  const run = read.run ?? fallback;
   const open = read.open || (!!run && isOpenRun(run));
   const status = open ? "open" : read.result || run ? "ready" : "error";
   return { status, run, result: read.result, error: read.error, ...task };
@@ -319,17 +286,14 @@ function stateOf(
 
 /**
  * Load a run's record, result, and its task's criteria; poll while the run
- * is still open. `name` is the task's name or id (the tools take either);
- * the record is read from `taskId`'s runs.
+ * is still open.
  */
 export function useRunResult(
   runId: string,
-  name: string | undefined,
   taskId: string | undefined,
   initialRun?: TaskRun,
 ): RunResultState & { setRun: (run: TaskRun) => void; reload: () => void } {
   const resultTool = useTool<string>("run_result");
-  const runsTool = useTool<string>("runs");
   const statusTool = useTool<string>("status");
   const [state, setState] = useState<RunResultState>({
     status: "loading",
@@ -338,18 +302,17 @@ export function useRunResult(
   });
   const [tick, setTick] = useState(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable; reload on run, name, task, or tick
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tool calls are stable; reload on run, task, or tick
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
     void (async () => {
-      const [read, run, task] = await Promise.all([
-        readResult(resultTool.call, runId, name),
-        readRecord(runsTool.call, taskId, runId, initialRun),
-        readTask(statusTool.call, name),
+      const [read, task] = await Promise.all([
+        readResult(resultTool.call, runId, taskId),
+        readTask(statusTool.call, taskId),
       ]);
       if (cancelled) return;
-      const next = stateOf(read, run, task);
+      const next = stateOf(read, initialRun, task);
       setState(next);
       if (next.status === "open") timer = setTimeout(() => setTick((t) => t + 1), POLL_MS);
     })();
@@ -357,7 +320,7 @@ export function useRunResult(
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [runId, name, taskId, tick]);
+  }, [runId, taskId, tick]);
 
   const setRun = useCallback((run: TaskRun) => {
     setState((s) => ({
@@ -493,7 +456,11 @@ export function ResultBody({
 }
 
 /** Set a verdict or re-judge, keeping the screen's copy of the run current. */
-export function useAssess(runId: string, name: string | undefined, onRun: (run: TaskRun) => void) {
+export function useAssess(
+  runId: string,
+  taskId: string | undefined,
+  onRun: (run: TaskRun) => void,
+) {
   const assessTool = useTool<string>("assess");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -501,7 +468,7 @@ export function useAssess(runId: string, name: string | undefined, onRun: (run: 
     setBusy(true);
     setError(null);
     try {
-      const res = await assessTool.call({ runId, ...(name ? { name } : {}), ...args });
+      const res = await assessTool.call({ runId, ...(taskId ? { taskId } : {}), ...args });
       const run = asDict(res.data).run as TaskRun | undefined;
       if (run) onRun(run);
       return true;
@@ -573,14 +540,14 @@ export function ResultScreen({
   /** Told the run's record once read, so the crumb can name the run as the heading does. */
   onRunLoaded?: (run: TaskRun) => void;
 }) {
-  const name = taskName ?? taskId;
-  const state = useRunResult(runId, name, taskId ?? initialRun?.taskId, initialRun);
+  const ownerTaskId = taskId ?? initialRun?.taskId;
+  const state = useRunResult(runId, ownerTaskId, initialRun);
   const loadedStart = state.run?.startedAt;
   // biome-ignore lint/correctness/useExhaustiveDependencies: report once per run start, not per callback identity
   useEffect(() => {
     if (state.run && !initialRun) onRunLoaded?.(state.run);
   }, [loadedStart]);
-  const assess = useAssess(runId, name, state.setRun);
+  const assess = useAssess(runId, ownerTaskId, state.setRun);
   const cancelTool = useTool<string>("cancel");
   const [cancelling, setCancelling] = useState(false);
   const openFile = useOpenFile();
@@ -615,14 +582,14 @@ export function ResultScreen({
         }
         actions={
           <>
-            {state.status === "open" && name && (
+            {state.status === "open" && (
               <button
                 type="button"
                 className="btn btn-danger"
                 disabled={cancelling}
                 onClick={() => {
                   setCancelling(true);
-                  void cancelTool.call({ name }).finally(() => {
+                  void cancelTool.call({ runId }).finally(() => {
                     setCancelling(false);
                     state.reload();
                   });
@@ -659,7 +626,7 @@ export function ResultScreen({
         <div className="view-pad result-content">
           <ResultBody
             state={state}
-            canAct={!!name && !state.taskGone}
+            canAct={!!ownerTaskId && !state.taskGone}
             assessBusy={assess.busy}
             assessError={assess.error}
             onVerdict={(v, note) => void assess.verdict(v, note)}

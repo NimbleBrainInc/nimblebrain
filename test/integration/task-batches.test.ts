@@ -81,8 +81,10 @@ async function until(
 describe("batches through the runtime", () => {
   it("runs every item of an inline batch, each run recording its batch", async () => {
     const started = await call<TasksRunBatchOutput>("run_batch", {
-      prompt: "Summarize the company in the input.",
-      inputSchema: { type: "object", required: ["company"] },
+      definition: {
+        body: "Summarize the company in the input.",
+        manifest: { inputSchema: { type: "object", required: ["company"] } },
+      },
       items: [{ company: "a" }, { company: "b" }, { company: "c" }],
       concurrency: 2,
     });
@@ -120,8 +122,10 @@ describe("batches through the runtime", () => {
   it("refuses a batch with a bad item and creates nothing", async () => {
     const before = await call<TasksBatchesOutput>("batches", {});
     const refused = await call<{ error: string }>("run_batch", {
-      prompt: "Do it.",
-      inputSchema: { type: "object", required: ["company"] },
+      definition: {
+        body: "Do it.",
+        manifest: { inputSchema: { type: "object", required: ["company"] } },
+      },
       items: [{ company: "a" }, { nope: true }],
     });
     expect(refused.isError).toBe(true);
@@ -132,7 +136,7 @@ describe("batches through the runtime", () => {
 
   it("enforces the batch budget at the door: a budget too small for one call pauses the batch", async () => {
     const started = await call<TasksRunBatchOutput>("run_batch", {
-      prompt: "Summarize the input.",
+      definition: { body: "Summarize the input." },
       items: [1, 2, 3],
       concurrency: 1,
       budgetUsd: 0.000001,
@@ -160,7 +164,7 @@ describe("batches through the runtime", () => {
 
   it("inside a run, reads a batch but cannot start or control one", async () => {
     const started = await call<TasksRunBatchOutput>("run_batch", {
-      prompt: "Summarize.",
+      definition: { body: "Summarize." },
       items: [1],
     });
     const { id } = started.data.batch;
@@ -172,7 +176,7 @@ describe("batches through the runtime", () => {
     expect(list.isError).toBe(false);
     const start = await call<{ error: string }>(
       "run_batch",
-      { prompt: "Fan out.", items: [1] },
+      { definition: { body: "Fan out." }, items: [1] },
       { unattended: true },
     );
     expect(start.isError).toBe(true);

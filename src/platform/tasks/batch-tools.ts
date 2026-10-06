@@ -15,10 +15,9 @@ import type {
 } from "../schemas/tasks.ts";
 import { MAX_BATCH_INPUT_BYTES, MAX_BATCH_ITEMS, passRateOf } from "./batch.ts";
 import { bucketOf } from "./batch-store.ts";
+import { requireTask } from "./domain.ts";
 import {
   ensureOneoff,
-  findByName,
-  INLINE_FIELDS,
   type InlineDefinition,
   MAX_IDEMPOTENCY_KEY_LENGTH,
   runInputProblem,
@@ -40,8 +39,9 @@ const OUTPUT_FIELDS = 12;
 const OUTPUT_VALUE_CHARS = 200;
 
 /** `tasks__run_batch`'s arguments, already shape-checked by its input schema. */
-interface RunBatchArgs extends InlineDefinition {
+interface RunBatchArgs {
   taskId?: string;
+  definition?: InlineDefinition;
   items: unknown[];
   concurrency?: number;
   budgetUsd?: number;
@@ -100,25 +100,21 @@ function checkItems(name: string, inputSchema: Task["inputSchema"], items: unkno
 
 /** Resolve the task a batch runs: a saved one, or a one-off from the inline definition. Items are checked first. */
 function resolveTask(args: RunBatchArgs, ctx: ToolContext): Task {
-  const inline = INLINE_FIELDS.filter((field) => args[field] !== undefined);
-  if (args.taskId && inline.length > 0) {
+  if ((args.taskId === undefined) === (args.definition === undefined)) {
     throw new Error(
-      `Give either \`taskId\` (a task to run) or an inline definition, not both ` +
-        `(also given: ${inline.join(", ")}).`,
+      "Give `taskId` (a task to run, from tasks__list) or `definition` (a one-off), not both.",
     );
   }
-  if (args.taskId) {
-    const task = findByName(ctx.definitions(), args.taskId);
-    if (!task) throw new Error(`Task not found: "${args.taskId}"`);
+  if (args.taskId !== undefined) {
+    const task = requireTask(ctx.definitions(), args.taskId);
     checkItems(task.name, task.inputSchema, args.items);
     return task;
   }
   return ensureOneoff(
-    args,
+    args.definition ?? {},
     ctx,
     (id, schema) => checkItems(id, schema, args.items),
     args.idempotencyKey !== undefined ? `batch:${args.idempotencyKey}` : undefined,
-    "tasks__run_batch needs `taskId` (a task to run)",
   );
 }
 
@@ -202,7 +198,7 @@ export function handleRunBatch(
   };
 }
 
-/** What `tasks__batch` `verdict` filters to. */
+/** What `tasks__batch` `filter` narrows results to. */
 type ResultFilter =
   | "pass"
   | "fail"
@@ -287,27 +283,27 @@ function toItemView(item: BatchItem, output: TaskBatchItemView["output"]): TaskB
 interface BatchArgs {
   batchId: string;
   results?: boolean;
-  verdict?: ResultFilter;
+  filter?: ResultFilter;
   cursor?: number;
   limit?: number;
 }
 
 export function handleBatch(rawArgs: Record<string, unknown>, ctx: ToolContext): TasksBatchOutput {
-  const { batchId, results, verdict, cursor, limit } = rawArgs as unknown as BatchArgs;
+  const { batchId, results, filter, cursor, limit } = rawArgs as unknown as BatchArgs;
   const found = portOf(ctx).get(batchId);
   if (!found) throw new Error(`Batch not found: "${batchId}".`);
   const { batch, items } = found;
   const view = toBatchView(batch);
   // A filter or a page asks for results even without `results: true`.
   const wantResults =
-    results === true || verdict !== undefined || cursor !== undefined || limit !== undefined;
+    results === true || filter !== undefined || cursor !== undefined || limit !== undefined;
   if (!wantResults) return { batch: view };
   const pageSize = limit ?? DEFAULT_RESULTS_LIMIT;
   const start = cursor ?? 0;
   const page: TaskBatchItemView[] = [];
   let nextCursor: number | undefined;
   for (const item of items) {
-    if (item.index < start || !matchesFilter(item, verdict)) continue;
+    if (item.index < start || !matchesFilter(item, filter)) continue;
     if (page.length === pageSize) {
       nextCursor = item.index;
       break;
