@@ -1587,12 +1587,16 @@ export interface TaskUpcomingFrequent {
   taskName: string;
   schedule: string;
   scheduleType: "cron" | "interval";
-  /** Fires within the window. */
+  /** Fires within the window; a floor when `countCapped`. */
   count: number;
-  /** True when counting stopped at the cap, so `count` is a floor. */
+  /**
+   * True when a cron was counted only until it was known to be frequent, so
+   * `count` is a floor (shown as "25+"). An interval is always counted exactly.
+   */
   countCapped?: boolean;
   first: string;
-  last: string;
+  /** The last fire in the window; absent when `countCapped`. */
+  last?: string;
 }
 
 /** A task an event fires, with its fire ceiling and how much of it the last hour used. */

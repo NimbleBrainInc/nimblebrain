@@ -274,10 +274,28 @@ describe("tasks__upcoming", () => {
     const byId = new Map(out.frequent.map((f) => [f.taskId, f]));
     const end = Date.parse(out.windowEnd);
     expect(byId.get("five-min")?.count).toBe(Math.floor((end - base) / 300_000) + 1);
-    expect(byId.get("cron-15")?.count).toBe(Math.floor((end - base) / 900_000) + 1);
+    // A cron is counted only until it is known to be frequent: a floor.
+    expect(byId.get("cron-15")).toMatchObject({ count: 25, countCapped: true });
+    expect(byId.get("cron-15")?.last).toBeUndefined();
     expect(byId.get("cron-15")?.scheduleType).toBe("cron");
-    expect(byId.get("cron-15")?.countCapped).toBeUndefined();
+    expect(byId.get("five-min")?.countCapped).toBeUndefined();
+    expect(byId.get("five-min")?.last).toBeString();
     expect(byId.get("five-min")?.first).toBe(new Date(base).toISOString());
+  });
+
+  test("a minute-scale cron over the longest window answers at once", () => {
+    seed(
+      makeTask({
+        id: "every-minute",
+        schedule: { type: "cron", expression: "* * * * *", timezone: "UTC" },
+        nextRunAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    );
+    const started = performance.now();
+    const out = handleUpcoming({ days: 30 }, makeCtx());
+    // Stepping all 43,200 fires took about 20 seconds; counting stops at 25.
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(out.frequent[0]).toMatchObject({ count: 25, countCapped: true });
   });
 
   test("days is bounded by the schema", () => {

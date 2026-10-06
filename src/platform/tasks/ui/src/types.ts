@@ -299,9 +299,11 @@ export interface UpcomingFrequent {
   schedule: string;
   scheduleType: "cron" | "interval";
   count: number;
+  /** `count` is a floor: a cron is counted only until it is known to be frequent. */
   countCapped?: boolean;
   first: string;
-  last: string;
+  /** Absent when `countCapped`. */
+  last?: string;
 }
 
 /** A task that fires on events (mirror of TaskUpcomingEventTask). */
