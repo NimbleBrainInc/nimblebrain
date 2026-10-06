@@ -86,7 +86,6 @@ let workosKey: TestKeyPair;
 const BASE_CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_test_authkit",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_test_authkit",
   apiKey: "sk_test_fake_authkit",
   authkitDomain: "testapp",

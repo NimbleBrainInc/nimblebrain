@@ -70,10 +70,9 @@ export interface RemoteTransportConfig {
      * `isMintedFleetSource`. The
      * built-in `"minted"` provider mints a short-lived, workspace-scoped service
      * token against the fleet authorizer (config:
-     * `{ audience, scope, tokenUrl?, issuer? }`) and re-mints on expiry. The
-     * endpoint resolves via `resolveAuthorizerTokenUrl`: `tokenUrl` is an explicit
-     * per-connection endpoint override; `issuer` is the legacy identity from which
-     * `${issuer}/token` is derived. Per-connection config wins over the global env.
+     * `{ audience, scope, tokenUrl? }`) and re-mints on expiry. The endpoint
+     * resolves via `resolveAuthorizerTokenUrl`: `tokenUrl` is a per-connection
+     * endpoint override that wins over the global `NB_FLEET_AUTHORIZER_TOKEN_URL`.
      * No interactive OAuth, no static secret. The
      * workspace dimension is the connection's own workspace.
      */

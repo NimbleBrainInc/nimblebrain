@@ -39,11 +39,10 @@ export function isMintedFleetSource(config: RemoteTransportConfig | undefined): 
  * read path uses it too), but `remote-transport.ts` reaches it only through this
  * registered provider, never by import.
  *
- * `config`: `{ audience: string; scope: string; tokenUrl?: string; issuer?: string }`.
- * The authorizer token endpoint resolves via `resolveAuthorizerTokenUrl`: an explicit
- * `tokenUrl` (config or `NB_FLEET_AUTHORIZER_TOKEN_URL`) wins, else `${issuer}/token`
- * from `NB_FLEET_AUTHORIZER_ISSUER` (legacy fallback). Workspace comes from the
- * connection (the dimension the token is scoped to), NOT from config.
+ * `config`: `{ audience: string; scope: string; tokenUrl?: string }`.
+ * The authorizer token endpoint resolves via `resolveAuthorizerTokenUrl`: the
+ * config's `tokenUrl`, else `NB_FLEET_AUTHORIZER_TOKEN_URL`. Workspace comes from
+ * the connection (the dimension the token is scoped to), NOT from config.
  */
 export const mintedCredentialProvider: TransportCredentialProvider = {
   credentialFor(
@@ -60,13 +59,12 @@ export const mintedCredentialProvider: TransportCredentialProvider = {
         "minted transport credential requires a config object ({ audience, scope }); got a `provider` auth with no `config`",
       );
     }
-    const tokenUrl = resolveAuthorizerTokenUrl({
-      tokenUrl: typeof config.tokenUrl === "string" ? config.tokenUrl : undefined,
-      issuer: typeof config.issuer === "string" ? config.issuer : undefined,
-    });
+    const tokenUrl = resolveAuthorizerTokenUrl(
+      typeof config.tokenUrl === "string" ? config.tokenUrl : undefined,
+    );
     if (!tokenUrl) {
       throw new Error(
-        "minted transport credential requires the authorizer token endpoint (set NB_FLEET_AUTHORIZER_TOKEN_URL, or NB_FLEET_AUTHORIZER_ISSUER for the legacy `<issuer>/token` fallback)",
+        "minted transport credential requires the authorizer token endpoint (set NB_FLEET_AUTHORIZER_TOKEN_URL)",
       );
     }
     const { audience, scope } = config;
