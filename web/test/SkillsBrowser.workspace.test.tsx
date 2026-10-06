@@ -106,6 +106,10 @@ const SKILLS_FIXTURE = [
 // refetch can shrink the tier set (exercises the stale-filter fallback).
 const deletedIds = new Set<string>();
 
+// Bodies the mock has "saved" — a later read returns what the update wrote, as
+// the server does, so a stale detail on the client is observable.
+const savedBodies = new Map<string, string>();
+
 mock.module("../src/api/client", () => ({
   ...realClient,
   callTool: async (server: string, tool: string, args: Record<string, unknown>) => {
@@ -135,6 +139,7 @@ mock.module("../src/api/client", () => ({
       };
     }
     if (server === "skills" && tool === "update") {
+      if (typeof args.body === "string") savedBodies.set(args.id as string, args.body);
       return { structuredContent: { id: args.id }, isError: false };
     }
     if (server === "skills" && tool === "read") {
@@ -146,7 +151,7 @@ mock.module("../src/api/client", () => ({
       return {
         structuredContent: {
           id: args.id,
-          content: "Original body content.",
+          content: savedBodies.get(args.id as string) ?? "Original body content.",
           layer: 3,
           scope: "workspace",
           source: { path: args.id },
@@ -239,6 +244,7 @@ afterEach(() => {
   mounted = null;
   callToolCalls.length = 0;
   deletedIds.clear();
+  savedBodies.clear();
 });
 
 async function mount(element: React.ReactElement): Promise<Mounted> {
@@ -503,6 +509,41 @@ describe("SkillsBrowser with surface='workspace' (workspace settings tab)", () =
     expect(manifest.loadingStrategy).toBe("always");
     expect(manifest.toolAffinity).toEqual([]);
     expect(manifest.triggers).toEqual([]);
+  });
+
+  test("after a save, the open row and the next edit show the saved body", async () => {
+    // The open row's detail is what Edit seeds the form from. Left at the
+    // pre-save read, the row shows the old body, and a second edit would save
+    // that old body back over the one just written.
+    mounted = await mountAsAdmin();
+    await act(async () => {
+      clickByText(mounted!.container, "Workspace-tier rule.");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      clickByText(mounted!.container, "Edit");
+    });
+    await typeInto(mounted.container.querySelector("#rule-body"), "Edited body content.");
+    await act(async () => {
+      clickByText(mounted!.container, "Save");
+    });
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+
+    const text = mounted.container.textContent ?? "";
+    expect(text).toContain("Edited body content.");
+    expect(text).not.toContain("Original body content.");
+
+    await act(async () => {
+      clickByText(mounted!.container, "Edit");
+    });
+    const body = mounted.container.querySelector("#rule-body") as HTMLTextAreaElement | null;
+    expect(body?.value).toBe("Edited body content.");
   });
 
   test("edit-view back arrow returns to the list (not up the route tree)", async () => {
