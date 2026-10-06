@@ -578,6 +578,37 @@ describe("ProfileConnectorsTab", () => {
     await flush();
     expect(disconnectPersonalConnector).not.toHaveBeenCalled();
   });
+
+  test("a failed Disconnect stays in the confirm dialog, with its error", async () => {
+    nextConnectors = [
+      {
+        serverName: "granola",
+        displayName: "Granola",
+        description: null,
+        state: "running",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    disconnectPersonalConnector.mockImplementationOnce(async () => {
+      throw new Error("vendor refused the sign-out");
+    });
+    mounted = await mount();
+    await openRow("Granola");
+    await click(allButtons().find((b) => b.textContent === "Disconnect"));
+    await flush();
+    await click(
+      allButtons()
+        .filter((b) => b.textContent === "Disconnect")
+        .at(-1),
+    );
+    await flush();
+    expect(disconnectPersonalConnector).toHaveBeenCalledWith("granola");
+    expect(document.querySelector('[role="dialog"]')?.textContent ?? "").toContain(
+      "vendor refused the sign-out",
+    );
+    expect(mounted.container.textContent ?? "").toContain("Granola");
+  });
 });
 
 describe("workspaceReach", () => {

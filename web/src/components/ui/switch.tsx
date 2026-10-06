@@ -30,7 +30,7 @@ export function Switch({
       className={cn(
         "relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full bg-foreground/10 p-0.5 transition-colors outline-none",
         "focus-visible:ring-3 focus-visible:ring-ring/50 data-[checked]:bg-primary",
-        "disabled:cursor-default disabled:opacity-50 motion-reduce:transition-none",
+        "data-[disabled]:cursor-default data-[disabled]:opacity-50 motion-reduce:transition-none",
         className,
       )}
       {...props}
