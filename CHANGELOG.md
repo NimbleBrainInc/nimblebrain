@@ -149,7 +149,7 @@
 
 ### Breaking
 
-- **A WorkOS instance with an empty `organizationId` refuses to start.** A blank or whitespace-only value in `instance.json` is a startup error; omit the field to run without an organization. Render the key only when it has a value ([#1153](https://github.com/NimbleBrainInc/nimblebrain/issues/1153)).
+- **A WorkOS instance with an empty `organizationId` refuses to start.** A blank or whitespace-only value in `instance.json` is a startup error. Omitting the field still runs without an organization, which admits every user in the AuthKit environment ([#1153](https://github.com/NimbleBrainInc/nimblebrain/issues/1153)).
 - **`tasks__run` selects a saved task with `taskId` (as `tasks__run_batch` does); `name` is removed.**
 - **Only the `fl_<24 hex>` file id form is served.** A file stored under the older `fl_<base36>_<8 hex>` id returns 400. **Breaking**: a deployment holding files under the older form must upgrade to `v0.35.0` and re-key them, and every reference to them, with that release's tooling before taking a later release.
 - **`POST /v1/workspaces/:wsId/chat` and `POST /v1/workspaces/:wsId/chat/stream` are removed.** Start a turn with `POST /v1/workspaces/:wsId/chat/start`, which answers the conversation id, and read it from `GET /v1/conversations/:id/events`, which resumes by sequence and ends with the `done` frame the synchronous route returned. The shell response drops `chatEndpoint`, the `subscribed` frame drops `subscriberId`, and the `X-Origin-Subscriber-Id` header is no longer read.
