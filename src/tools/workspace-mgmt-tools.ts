@@ -103,7 +103,7 @@ export function createManageWorkspacesTool(ctx: ManageWorkspacesContext): InProc
   return {
     name: "manage_workspaces",
     description:
-      "Manage workspaces and their members. Workspace CRUD requires org admin, except a rename (update with only name), which a workspace admin member may also make. Listing members is open to any member of the workspace. Changing members requires org admin or workspace admin membership, so an org admin can seat themselves as admin of any workspace, including one left with no admin member. add_member takes the person's userId or the email of someone in the organization. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory. Conversation sharing was removed in Stage 1 of the cross-workspace refactor and returns in Stage 4 with policy-gated primitives.",
+      "Manage workspaces and their members. Workspace CRUD requires org admin, except a rename (update with only name), which a workspace admin member may also make. Listing members is open to any member of the workspace. Changing members requires org admin or workspace admin membership, so an org admin can seat themselves as admin of any workspace, including one left with no admin member. add_member takes the person's userId or the email of someone in the organization. list_archives and purge_archive (org admin) list the archives deleted workspaces leave under archived/ and permanently remove one, named by its directory.",
     meta: { ui: { visibility: ["app"] }, ...WORKSPACE_OPTIONAL_META },
     inputSchema: {
       type: "object",
