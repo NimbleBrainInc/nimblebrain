@@ -72,6 +72,7 @@ function llmText(runId: string, text: string, opts?: LlmEventOpts): LlmResponseE
     content: [{ type: "text", text }],
     usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
+    finishReason: "stop",
   };
 }
 
@@ -90,6 +91,7 @@ function llmToolCall(
     content: [{ type: "tool-call", toolCallId, toolName, input: JSON.stringify(input) }],
     usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
+    finishReason: "tool-calls",
   };
 }
 
@@ -112,6 +114,7 @@ function llmParallelToolCalls(
     })),
     usage: buildUsage(opts),
     llmMs: opts?.llmMs ?? 500,
+    finishReason: "tool-calls",
   };
 }
 
@@ -627,17 +630,6 @@ describe("reconstructMessages", () => {
     expect(messages[1].metadata!.finishReason).toBe("length");
   });
 
-  it("omits finishReason from metadata when the event lacks it (legacy)", () => {
-    const events: ConversationEvent[] = [
-      userMessage("Hi"),
-      runStart("run-1"),
-      llmText("run-1", "Hello"),
-      runDone("run-1"),
-    ];
-    const messages = reconstructMessages(events);
-    expect(messages[1].metadata!.finishReason).toBeUndefined();
-  });
-
   it("populates usage in assistant metadata so cost can be derived later", () => {
     // costUsd is no longer stored on metadata — cost is computed at the API
     // boundary from (model, usage). The reconstructor's job is to make the
@@ -910,32 +902,6 @@ describe("deriveUsageMetrics", () => {
     const metrics = deriveUsageMetrics(events);
     expect(metrics.totalInputTokens).toBe(0);
     expect(metrics.totalOutputTokens).toBe(0);
-    expect(metrics.lastModel).toBeNull();
-  });
-
-  it("does not crash on legacy events with flat token fields and no `usage`", () => {
-    // Pre-unification on-disk shape: token counts at the top level instead
-    // of nested under `usage`. The reader must skip these without crashing
-    // (the conversation load path goes through deriveUsageMetrics — a
-    // crash here takes down the entire conversation list).
-    const legacyEvent = {
-      ts: "2025-01-01T00:00:00Z",
-      type: "llm.response" as const,
-      runId: "r1",
-      model: "claude-sonnet-4-5",
-      content: [{ type: "text" as const, text: "hi" }],
-      inputTokens: 100,
-      outputTokens: 50,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      llmMs: 200,
-    };
-    const metrics = deriveUsageMetrics([legacyEvent as unknown as ConversationEvent]);
-    // Legacy events contribute zero — the deliberate "ignore old data"
-    // choice. The point of this test is the absence of a TypeError.
-    expect(metrics.totalInputTokens).toBe(0);
-    expect(metrics.totalOutputTokens).toBe(0);
-    expect(metrics.totalCostUsd).toBe(0);
     expect(metrics.lastModel).toBeNull();
   });
 });

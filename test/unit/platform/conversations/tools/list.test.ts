@@ -34,6 +34,7 @@ interface ConvSpec {
 
 function writeConvFile(spec: ConvSpec): string {
   const meta = {
+    model: "anthropic:claude-sonnet-4-6",
     id: spec.id,
     createdAt: spec.createdAt,
     updatedAt: spec.updatedAt,

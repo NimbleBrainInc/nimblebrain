@@ -43,7 +43,7 @@ describe("Conversation full lifecycle (store-level)", () => {
 
   it("create → append 3 messages → list (verify tokens) → rename → search → fork → delete", async () => {
     // --- create ---
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     expect(conv.id).toMatch(/^conv_/);
 
     // --- append 3 messages ---

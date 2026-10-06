@@ -149,6 +149,7 @@
 
 ### Breaking
 
+- **A WorkOS instance with an empty `organizationId` refuses to start.** A blank or whitespace-only value in `instance.json` is a startup error. Omitting the field still runs without an organization, which admits every user in the AuthKit environment ([#1153](https://github.com/NimbleBrainInc/nimblebrain/issues/1153)).
 - **The host no longer sends a `--nb-*` theme key that has a spec twin.** An app reads the status colours, the info ground and on-fill text from `--color-text-danger`, `--color-text-success`, `--color-text-warning`, `--color-background-info` and `--color-text-inverse`, as `@nimblebrain/synapse` 0.30.0 does; `--nb-color-processing`, `--nb-color-processing-light` and `--nb-font-heading` remain. [Theming](https://docs.nimblebrain.ai/apps/theming/).
 - **`tasks__run` selects a saved task with `taskId` (as `tasks__run_batch` does); `name` is removed.**
 - **Only the `fl_<24 hex>` file id form is served.** A file stored under the older `fl_<base36>_<8 hex>` id returns 400. **Breaking**: a deployment holding files under the older form must upgrade to `v0.35.0` and re-key them, and every reference to them, with that release's tooling before taking a later release.
@@ -242,6 +243,7 @@
 
 ### Fixed
 
+- **Listing conversations no longer re-parses a long conversation on every refresh.** While a turn runs, the conversations list re-reads only the events appended since its last read, so a refresh on a multi-megabyte conversation costs under a millisecond instead of blocking every chat on the tenant for up to 0.7s ([#1637](https://github.com/NimbleBrainInc/nimblebrain/pull/1637)).
 - **A connector whose sign-in ended is left to rest.** After a sign-in is declined or times out, the health monitor no longer restarts the connector every sweep with no way to succeed; Reconnect starts a new sign-in ([#337](https://github.com/NimbleBrainInc/nimblebrain/issues/337)).
 - **A brokered Google connection shows its account.** When the broker records no display name, the account comes from the id_token the vendor issued, so a Google toolkit whose auth config grants `openid` and `userinfo.email` reads "Connected as …" like Gmail does ([#1612](https://github.com/NimbleBrainInc/nimblebrain/issues/1612)).
 - **Connect on a personal connector resumes a sign-in that was left open.** Closing the provider's tab and clicking Connect again returns the same sign-in instead of "already in progress" until the 15-minute timeout, and a connector whose sign-in is still open no longer reads "Connected" ([#1611](https://github.com/NimbleBrainInc/nimblebrain/issues/1611)).
@@ -339,6 +341,7 @@
 
 ### Removed
 
+- **Readers for historic conversation and usage-ledger shapes:** `skills.loaded` entries without a `name`, `context.assembled` rows counting `turns`, `llm.response` events without `usage` or `finishReason`, `tool.done` events without `output`, conversation headers without a bound `model` (now refused as `conversation_corrupted`), usage-ledger lines carrying `sessionId` / `parentRunId` / `delegated`, and the web parser for `ws_<id>-` tool names. No converter ships: a deployment that holds any of these shapes must convert them before upgrading, or they are not read.
 - **Four legacy config aliases.** `COMPOSIO_MONITOR_INTERVAL_SECONDS` is no longer read; set `NB_CONNECTION_REVALIDATE_INTERVAL_SECONDS` ([#727](https://github.com/NimbleBrainInc/nimblebrain/issues/727)). The minted credential and the artifacts reader no longer derive the authorizer token endpoint from `NB_FLEET_AUTHORIZER_ISSUER` or a connection's `issuer`; set `NB_FLEET_AUTHORIZER_TOKEN_URL`. The WorkOS `redirectUri` in `instance.json` is ignored; the sign-in callback is always `<public origin>/v1/auth/callback`. `home.userName` no longer falls back for `preferences.displayName`.
 - **Readers for four legacy stored shapes:** a Composio connector ref's `composio` block and its `x-api-key: ${COMPOSIO_API_KEY}` transport auth, plaintext OAuth record files under `credentials/mcp-oauth/`, and message-per-line conversation files (with `JsonlConversationStore`). No release converts them, and no converter ships: a deployment that holds any of these shapes must convert it before upgrading, or the data is not read (a message-format conversation reads as empty). Upgrading a deployment that still holds them across this release is not supported.
 - **The boot move of task storage from `automations/` to `tasks/`.** Upgrade through v0.35.x first; a later release does not read `automations/`.

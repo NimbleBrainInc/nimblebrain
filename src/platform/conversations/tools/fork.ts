@@ -139,8 +139,10 @@ function segmentEvents(
       input: JSON.stringify(tc.input ?? {}),
     });
   }
+  // A segment carrying tool calls ended to run them; anything else ended normally.
+  const finishReason = seg.tools && seg.tools.length > 0 ? "tool-calls" : "stop";
   return [
-    { ts, type: "llm.response", runId, model, content, usage, llmMs },
+    { ts, type: "llm.response", runId, model, content, usage, llmMs, finishReason },
     ...(seg.tools ?? []).flatMap((tc) => toolCallEvents(ts, runId, tc)),
   ];
 }
@@ -242,10 +244,9 @@ export async function handleFork(
     ...(conversation.meta.ownerId ? { ownerId: conversation.meta.ownerId } : {}),
     format: "events",
     // A fork continues the source conversation, so it inherits the model
-    // binding along with the owner. Without this the copy would be unpinned
-    // and resolve from current config, replaying the source's history to a
-    // different provider.
-    ...(conversation.meta.model ? { model: conversation.meta.model } : {}),
+    // binding along with the owner. Re-resolving would move the copy onto the
+    // current default and replay the source's history to a different provider.
+    model: conversation.meta.model,
   };
   const lines = [JSON.stringify(header), ...messagesToEventLines(messagesToCopy)];
 

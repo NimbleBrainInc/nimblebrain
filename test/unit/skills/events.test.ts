@@ -62,6 +62,7 @@ function makeConfigWithMetadata(): EngineConfig {
         skills: [
           {
             id: "/work/skills/voice-rules.md",
+            name: "voice-rules",
             layer: 3,
             scope: "org",
             version: "2026-04-27T00:00:00.000Z",
@@ -72,6 +73,7 @@ function makeConfigWithMetadata(): EngineConfig {
           },
           {
             id: "/work/workspaces/ws_002afe1142297ff4/skills/proposal-followup.md",
+            name: "proposal-followup",
             layer: 3,
             scope: "workspace",
             version: "2026-04-26T00:00:00.000Z",
@@ -272,7 +274,7 @@ async function readEvents(id: string): Promise<ConversationEvent[]> {
 
 describe("EventSourcedConversationStore — persistence", () => {
   test("skills.loaded emit is mapped to a ConversationEvent in the conv jsonl", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -282,6 +284,7 @@ describe("EventSourcedConversationStore — persistence", () => {
         skills: [
           {
             id: "/skills/x.md",
+            name: "x",
             layer: 3,
             scope: "org",
             version: "2026-01-01T00:00:00.000Z",
@@ -307,7 +310,7 @@ describe("EventSourcedConversationStore — persistence", () => {
   });
 
   test("context.assembled persists with sources + total intact", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     store.emit({
@@ -334,7 +337,7 @@ describe("EventSourcedConversationStore — persistence", () => {
   });
 
   test("end-to-end: engine emit → store persist preserves shape", async () => {
-    const conv = await store.create({ ownerId: "user_test" });
+    const conv = await store.create({ model: "anthropic:claude-sonnet-4-6", ownerId: "user_test" });
     store.setActiveConversation(conv.id);
 
     const sink: EventSink = {

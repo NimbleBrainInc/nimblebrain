@@ -200,7 +200,7 @@ describe("detached turn HTTP surface", () => {
   async function seedOtherUserConversation(convId: string): Promise<void> {
     await runtime
       .workspaceConversationStore(TEST_WORKSPACE_ID, "usr_someone_else")
-      .create({ ownerId: "usr_someone_else", id: convId });
+      .create({ model: "anthropic:claude-sonnet-4-6", ownerId: "usr_someone_else", id: convId });
   }
 
   it("GET /v1/conversations/:id/events on another user's conversation is 403", async () => {

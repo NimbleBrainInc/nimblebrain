@@ -22,6 +22,7 @@ function makeDirs() {
 
 function makeMetadataLine(id: string): string {
   return JSON.stringify({
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt: "2026-04-14T00:00:00Z",
     format: "events",

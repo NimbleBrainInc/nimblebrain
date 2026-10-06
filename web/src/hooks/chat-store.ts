@@ -145,7 +145,7 @@ export interface LoadedConversationMeta {
   /**
    * The model this conversation is bound to, from `conversations__get`. Fixed
    * at create and never changes, so the composer states it rather than
-   * offering it. Absent on conversations that predate the binding.
+   * offering it. Absent until the conversation's metadata has arrived.
    */
   model?: string;
   /**
@@ -954,7 +954,7 @@ export function createChatStore(): ChatStore {
     // The binding arrives with the id because a just-created conversation is
     // never loaded, so `loadConversation` would never supply it — and the
     // composer has to state the model the server pinned, not the one asked for.
-    const learnedModel = evt.model && slice.meta?.model !== evt.model;
+    const learnedModel = slice.meta?.model !== evt.model;
     if (learnedModel) slice.meta = { ...slice.meta, model: evt.model };
     if (evt.conversationId && slice.conversationId !== evt.conversationId) {
       slice.conversationId = evt.conversationId;
@@ -978,12 +978,10 @@ export function createChatStore(): ChatStore {
   /**
    * One untrusted stream entry → a ledger row, every field defaulted.
    *
-   * The `name` fallback is a malformed-frame guard, not the legacy path: the
-   * runtime stamps `name` on every entry it emits, and events recorded before
-   * that field existed reach the UI only through replay, where the
-   * conversations app resolves a name before this ever sees them. It still
-   * derives rather than printing the id, because every connector skill's id
-   * ends in `/SKILL.md` — the guard firing must not put that back on screen.
+   * The `name` fallback is a malformed-frame guard: the runtime stamps `name`
+   * on every entry it emits. It derives rather than printing the id, because
+   * every connector skill's id ends in `/SKILL.md` — the guard firing must not
+   * put that back on screen.
    */
   function toLedgerSkill(s: Record<string, unknown>): LedgerSkill {
     return {
@@ -1058,9 +1056,6 @@ export function createChatStore(): ChatStore {
       status: "running",
       resourceUri: evt.resourceUri,
       input: evt.input,
-      // Bare source/app name. Parse the namespace first (#354): a naive
-      // `__` split leaves the `ws_<id>-` prefix attached, which fails
-      // registry.hasSource() with a 403 on the resource-read path.
       appName: appNameFromToolName(evt.name),
     };
     slice.toolCalls = [...slice.toolCalls, newTool];

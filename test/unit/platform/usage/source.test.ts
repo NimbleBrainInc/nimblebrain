@@ -61,7 +61,7 @@ async function seedSpend(
   workDir: string,
   wsId: string,
   ownerId: string,
-  sessionId: string,
+  conversationId: string,
   input: number,
   output: number,
 ): Promise<void> {
@@ -76,7 +76,7 @@ async function seedSpend(
     llmMs: 100,
     userId: ownerId,
     workspaceId: wsId,
-    sessionId,
+    conversationId,
   };
   await appendFile(join(dir, "test.jsonl"), `${JSON.stringify(entry)}\n`);
 }

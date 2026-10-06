@@ -38,6 +38,7 @@ function writeConversation(dir: string, id: string, opts: WriteOpts = {}): void 
 
   // Line-1 totals are no longer read by the connector; lastModel still is.
   const meta = JSON.stringify({
+    model: "anthropic:claude-sonnet-4-6",
     id,
     createdAt,
     updatedAt,

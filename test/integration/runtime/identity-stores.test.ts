@@ -151,6 +151,7 @@ describe("Runtime identity stores wiring", () => {
     // `findConversation`, which routes through that same locator.
     const store = rt.workspaceConversationStore(TEST_WORKSPACE_ID, "user_test");
     const conv = await store.create({
+      model: "anthropic:claude-sonnet-4-6",
       workspaceId: TEST_WORKSPACE_ID,
       ownerId: "user_test",
     });

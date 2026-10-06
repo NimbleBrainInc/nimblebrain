@@ -61,13 +61,7 @@ const WritableSkillScope = Type.Union([
 
 export const SkillsLoadedEntry = Type.Object({
   id: Type.String(),
-  name: Type.Optional(
-    Type.String({
-      description:
-        "The skill's own name. Optional because events recorded before the " +
-        "field existed are read back through this shape.",
-    }),
-  ),
+  name: Type.String({ description: "The skill's own name." }),
   connector: Type.Optional(
     Type.String({ description: "MCP server that published the skill, when one did." }),
   ),
@@ -106,13 +100,6 @@ export const ContextAssembledSource = Type.Object({
   userId: Type.Optional(Type.String()),
   messages: Type.Optional(
     Type.Number({ description: "`history`: how many messages the windowed history holds." }),
-  ),
-  turns: Type.Optional(
-    Type.Number({
-      description:
-        "`history`, as recorded before `messages` existed — the same message " +
-        "count under a name that read as conversational turns.",
-    }),
   ),
   compacted: Type.Optional(Type.Boolean()),
 });
@@ -287,8 +274,8 @@ export type AdminToolCallPayload = Static<typeof AdminToolCallPayload>;
 /** A chat turn's conversation is resolved and the run is about to start. */
 export const ChatStartPayload = Type.Object({
   conversationId: Type.String(),
-  /** The conversation's bound model; absent when it has none. */
-  model: Type.Optional(Type.String()),
+  /** The conversation's bound model. */
+  model: Type.String(),
 });
 export type ChatStartPayload = Static<typeof ChatStartPayload>;
 

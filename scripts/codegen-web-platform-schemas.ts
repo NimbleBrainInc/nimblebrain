@@ -38,8 +38,6 @@ import { dirname, join, resolve } from "node:path";
 const REPO_ROOT = resolve(import.meta.dirname ?? __dirname, "..");
 const TMP_OUT = join(REPO_ROOT, ".tmp-codegen");
 const WEB_DEST = join(REPO_ROOT, "web/src/_generated/platform-schemas");
-const WORKSPACE_ID_PATTERN_SRC = join(REPO_ROOT, "src/workspace/workspace-id-pattern.ts");
-const WORKSPACE_ID_PATTERN_DEST = join(REPO_ROOT, "web/src/_generated/workspace-id-pattern.ts");
 const CONNECTOR_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-connectors");
 const CONNECTOR_TYPES_DEST = join(REPO_ROOT, "web/src/_generated/connector-catalog");
 const API_TYPES_TMP = join(REPO_ROOT, ".tmp-codegen-api");
@@ -97,25 +95,14 @@ function injectHeaders(dir: string, treeRoot: string, sourceRoot: string): void 
   }
 }
 
-// ── workspace-id-pattern (Stage 2 / T012) ──────────────────────────
-//
-// Emits a runtime `.ts` mirroring the literal pattern + flags exported
-// from `src/workspace/workspace-id-pattern.ts`. The web tier
-// (`web/src/lib/namespaced-tool.ts`) imports the generated copy and
-// constructs its own RegExp locally. CI's `check:codegen` step
-// catches drift between the server source and the emitted copy.
-//
-// Why we don't ship a `.d.ts` here: the web tier needs the actual
-// string values at runtime to validate workspace ids. `.d.ts` would
-// only give us type-level types. So this step is a hand-written extract
-// of the two string literals — no `tsc` emission needed.
+// Mirrored string constants: a runtime `.ts` carrying a literal exported from
+// `src/`, which the web tier needs as a value (a `.d.ts` would give it only a
+// type). CI's `check:codegen` step catches drift between source and copy.
 
 function extractStringLiteral(source: string, name: string): string {
   // Match `export const <name> = "<value>";` with the value as a
-  // double-quoted JS string literal. No escapes are interpreted — the
-  // workspace-id pattern uses only ASCII + the chars `^$_{},|[]0-9a-z`,
-  // none of which need escaping in a JS string. If a future change to
-  // the source adds escapes, this regex needs to widen accordingly.
+  // double-quoted JS string literal. No escapes are interpreted; if a
+  // mirrored source ever adds escapes, this regex needs to widen accordingly.
   const re = new RegExp(`export\\s+const\\s+${name}\\s*=\\s*"([^"\\\\]*)"`);
   const m = re.exec(source);
   if (!m || typeof m[1] !== "string") {
@@ -126,40 +113,13 @@ function extractStringLiteral(source: string, name: string): string {
   return m[1];
 }
 
-console.log("[codegen] workspace-id-pattern → web/src/_generated/workspace-id-pattern.ts");
-
-{
-  const src = readFileSync(WORKSPACE_ID_PATTERN_SRC, "utf-8");
-  const pattern = extractStringLiteral(src, "WORKSPACE_ID_PATTERN");
-  const flags = extractStringLiteral(src, "WORKSPACE_ID_FLAGS");
-
-  // JSON.stringify produces a safely-quoted JS string literal even if
-  // someone slips a `"` or `\` into the pattern later. Defense in depth
-  // against silent codegen breakage.
-  const patternLiteral = JSON.stringify(pattern);
-  const flagsLiteral = JSON.stringify(flags);
-
-  const body = `${header("src/workspace/workspace-id-pattern.ts")}
-// Workspace-id pattern + flags mirrored from the server-side source.
-// The web tier rebuilds the regex locally; see the source file's
-// header for the contract.
-
-export const WORKSPACE_ID_PATTERN = ${patternLiteral};
-export const WORKSPACE_ID_FLAGS = ${flagsLiteral};
-`;
-
-  mkdirSync(dirname(WORKSPACE_ID_PATTERN_DEST), { recursive: true });
-  writeFileSync(WORKSPACE_ID_PATTERN_DEST, body);
-  console.log(`[codegen] OK → ${WORKSPACE_ID_PATTERN_DEST.replace(REPO_ROOT, ".")}`);
-}
-
 console.log(
   "[codegen] personal-connector-prefix → web/src/_generated/personal-connector-prefix.ts",
 );
 
 {
-  // Mirrored for the same reason as the workspace-id pattern, and with more at
-  // stake: this marker is what separates the caller's own connector from a
+  // Mirrored because the web tier needs the value, and with real stakes: this
+  // marker is what separates the caller's own connector from a
   // same-named workspace source. A hand-copied copy that drifts stops the web
   // tier recognising a marked name, which mounts a workspace app's iframe for a
   // connector's tool call — the exact collision the marker exists to prevent,

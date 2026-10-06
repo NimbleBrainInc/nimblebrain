@@ -170,6 +170,14 @@ describe("WorkOS resolveOrgRole slug mapping", () => {
     expect(await resolveOrgRole(p, "u")).toBe("member");
   });
 
+  it("refuses to construct with an empty or whitespace organizationId", () => {
+    for (const organizationId of ["", "   "]) {
+      expect(() => makeProvider(new Map(), { organizationId })).toThrow(
+        "'organizationId' must not be empty",
+      );
+    }
+  });
+
   it("returns null (deny) when the user has no org membership", async () => {
     const p = makeProvider(new Map());
     expect(await resolveOrgRole(p, "u")).toBeNull();
