@@ -45,12 +45,23 @@ name: `io.modelcontextprotocol/tasks` already names long-running tool calls
 `_meta["ai.nimblebrain/scheduled-prompts"]`. The marker carries:
 
 - the declared **bounds**: a `schedule`; the server's own `tools`, named bare;
-  `requires`, for tools outside the server; per-run `limits`; and a `budget`;
+  per-run `limits`; and a `budget`;
+- `needs`: what else the run needs, as outcomes in words ("durable memory to
+  record corrections", "look up a contact"), shown to a person and never
+  matched by the runtime;
 - optionally, an output schema, acceptance criteria, `onPoorResult`, and
   whether the task starts enabled.
 
 The prompt's `arguments` are the per-workspace values. A prompt is listed like
 any other, so a host without the extension still sees an ordinary prompt.
+
+**A declaration never names another server.** The marker has no field for
+another server's name, tools or resources, and the runtime refuses a `tools`
+entry that the declaring server does not list as its own. A server that needs
+reach beyond itself says so in `needs`, and **the workspace binds each need to
+connectors it has installed**. A named dependency breaks when the other server
+is renamed, replaced or absent, and it ties together servers a workspace
+installs separately. Only the workspace knows what it has installed.
 
 **A connector principal owns and runs the tasks.** For each workspace a
 connector is installed in, the runtime holds a principal for that installed
@@ -61,8 +72,8 @@ connector. The principal:
 - **has standing in place of membership.** The run-start door admits its run
   only while the connector is installed in the run's workspace. After an
   uninstall the run is recorded skipped, as a removed member's run is;
-- **reaches only what the workspace holds.** Its run calls only its approved
-  tools, through the workspace wall, the unattended policy and the run's tool
+- **reaches only what the workspace holds.** Its run calls only its server's
+  approved tools and the connectors bound to its needs, through the workspace wall, the unattended policy and the run's tool
   bound. It gets no identity tools and no personal connector, because a
   personal-connector grant belongs to the user who made it (ADR-0006);
 - **uses the workspace's credential for each connector it calls.** A connector
@@ -72,14 +83,20 @@ connector. The principal:
   its task's own. The door holds the account as it holds any other, opaquely.
 
 **A workspace admin approves the bounds before they take effect.** The install
-flow lists the server's scheduled prompts with their bounds and takes the
-argument values. The approval records the bounds and the values, never the
-prompt text. After install:
+flow lists the server's scheduled prompts with their bounds and needs, takes
+the argument values, and asks which of the workspace's connectors may meet each
+need. It pre-selects none, because the runtime never guesses which connector
+meets a need. The approval records the bounds, the values and the bindings,
+never the prompt text. After install:
 
 - A declaration whose bounds narrow or stay the same applies at once.
-- One that widens them waits for approval: a new tool or `requires` entry, a
-  more frequent schedule, higher limits or budget. Until then the approved
-  bounds keep running.
+- One that widens them waits for approval: a new tool of its own, a more
+  frequent schedule, higher limits or budget. Until then the approved bounds
+  keep running.
+- Reach into another connector is widened only by the workspace. A release
+  that changes `needs` changes the wording shown, never a binding.
+- A bound connector that is uninstalled is unbound from every task, and the
+  admin is asked to choose another.
 - A prompt added after install waits for approval too.
 - An agent that installs a connector asks before approving, as it asks before
   creating a task.
@@ -134,9 +151,10 @@ admin's grant, and the provenance allowlist refuses it.
 - Which platform tools act on the workspace and which act on a person becomes
   a property each platform tool must state. A principal reaches only the
   first kind.
-- Approving `requires` is trusting the server with that reach, unattended, for
-  as long as it stays installed. The approval says so in words. The runtime
-  enforces the bounds whatever the procedure says. It cannot judge whether a
+- Binding a connector to a task is trusting the declaring server's procedure
+  with that connector, unattended, for as long as both stay installed. The
+  approval says so in words. The runtime enforces the bounds whatever the
+  procedure says. It cannot judge whether a
   new procedure uses them well.
 - Every scheduled run makes one `prompts/get` call before its first model call.
   A server that is down fails the run as transient, and the task's own backoff
@@ -161,6 +179,12 @@ admin's grant, and the provenance allowlist refuses it.
 - **A bespoke definition format instead of prompts** — rejected: prompts
   already carry server-authored instructions, arguments, resource links and
   change notification, and other hosts already show them.
+- **Declarations that name the tools they need on other servers** — rejected:
+  it hard-links one server to another's names, and it lets a server's release
+  widen its own reach into other connectors.
+- **A shared vocabulary of capabilities that servers provide and the runtime
+  matches** — rejected for now: it is a registry every server must agree on,
+  ahead of any evidence that a person binding needs by reading them fails.
 - **Naming the extension `ai.nimblebrain/tasks`** — rejected: the protocol's
   tasks extension and the domain task already share the word.
 - **Pinning the procedure to the version that was approved** — rejected: it
