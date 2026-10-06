@@ -13,7 +13,7 @@ This is the counterpart to a workspace [Connector](/using/connectors), which is 
 
 Open **Profile → Connectors**. The page has two lists:
 
-- **Your connectors** — what you've already connected, each with its connection state and the number of workspaces it's granted into.
+- **Your connectors** — what you've already connected. Each row shows the account it's connected as and where it is on (for example, **On in 2 of 3 workspaces**). Click a row to open it and manage that connector.
 - **Add a connector** — the curated set of services offered for a personal connection you haven't added yet.
 
 Which services appear under **Add a connector** is set by the platform operator (a connector is flagged as personal in the catalog). Personal connectors authenticate by standard OAuth (**dcr**) or through **Composio**.
@@ -41,8 +41,8 @@ A personal connector is yours, so **you** decide which of your workspaces may us
 The rule has **no exception for a workspace only you belong to** — you grant the connector there too before your agent can use it. There is no "free at home".
 
 <Steps>
-1. In **Your connectors**, click a connector's **"Granted to N workspaces"** label to open its access panel.
-2. Toggle **Grant** on each workspace where you want your agent to use it. Toggle **Revoke** to take access away again.
+1. In **Your connectors**, click the connector's row to open it.
+2. Under **Workspaces**, switch the connector on in each workspace where you want your agent to use it. Switching it on grants it there; switching it off revokes the grant.
 </Steps>
 
 Granting into a workspace makes that connector's tools appear to the agent there on its next turn. Revoking removes them just as immediately. Grants are per-workspace and independent — granting into one never affects another.
@@ -55,7 +55,7 @@ Once a personal connector is **granted into the workspace you're chatting in**, 
 
 ## Tool permissions
 
-A connected personal connector has a **Tool permissions** link on its row. It opens a table of the connector's tools, each set to **Allow** or **Disallow**, with **Allow all** and **Disallow all** for the whole set. A tool with no setting is allowed.
+Open a connected personal connector's row and click **Show tools** under **Tool permissions**. A table lists the connector's tools, each set to **Allow** or **Disallow**, with **Allow all** and **Disallow all** for the whole set. A tool with no setting is allowed.
 
 The policy is yours, like the connector: it applies in every workspace you grant the connector into, and no admin role is needed to change it. It is separate from a workspace connector of the same name, whose policy the workspace's admins set under Settings → Connectors. From chat, ask the agent to set it; the agent addresses your personal connector with `scope: "identity"`.
 
@@ -78,7 +78,7 @@ way it stops the agent — immediately, and visibly in the item's delivery ledge
 
 ## Disconnecting
 
-**Disconnect** on a connector's row fully removes it from your identity in one step:
+**Disconnect**, at the bottom of a connector's opened row, fully removes it from your identity in one step:
 
 - revokes **every** workspace grant,
 - deletes the connection's stored credentials,

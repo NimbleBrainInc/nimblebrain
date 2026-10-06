@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   type CatalogListing,
   disconnectPersonalConnector,
@@ -13,7 +14,10 @@ import {
 } from "../../api/client";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
 import { Button } from "../../components/ui/button";
+import { ConfirmDialog } from "../../components/ui/confirm-dialog";
+import { Switch } from "../../components/ui/switch";
 import { useWorkspaceContext, type WorkspaceInfo } from "../../context/WorkspaceContext";
+import { cn } from "../../lib/utils";
 import { EmptyState, InlineError, Section, SettingsPageHeader } from "./components";
 
 /**
@@ -171,27 +175,13 @@ export function ProfileConnectorsTab() {
   );
 
   // Fully remove a personal connector — de-auth + delete credentials + revoke all
-  // grants + drop the install. Destructive, so confirm first (naming the grant
-  // count). On success it leaves "Your connectors" and returns to the picker.
+  // grants + drop the install. The row confirms first; a failure throws, so the
+  // confirm dialog shows it beside the action that caused it.
   const onDisconnect = useCallback(
-    async (connector: PersonalConnector) => {
-      const grants = connector.grantedWorkspaces.length;
-      const name = connector.displayName || connector.serverName;
-      const confirmMsg =
-        grants > 0
-          ? `Disconnect "${name}"? This removes it from your identity and revokes access in ${grants} workspace${grants === 1 ? "" : "s"}.`
-          : `Disconnect "${name}"? This removes it from your identity.`;
-      if (!window.confirm(confirmMsg)) return;
+    async (serverName: string) => {
       setActionError(null);
-      setBusyKey(`disconnect:${connector.serverName}`);
-      try {
-        await disconnectPersonalConnector(connector.serverName);
-        await fetchLists();
-      } catch (err) {
-        setActionError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setBusyKey(null);
-      }
+      await disconnectPersonalConnector(serverName);
+      await fetchLists();
     },
     [fetchLists],
   );
@@ -200,7 +190,7 @@ export function ProfileConnectorsTab() {
     <div className="space-y-6">
       <SettingsPageHeader
         title="Connectors"
-        description="Your personal connections — remote MCP services like Granola. Grant one into a workspace to let your agent use it there."
+        description="Your personal connections to services like Granola. Turn one on in a workspace to let your agent use it there."
       />
       {actionError ? <InlineError message={actionError} /> : null}
       {loading ? (
@@ -221,7 +211,7 @@ export function ProfileConnectorsTab() {
                     workspaces={workspaces}
                     busyKey={busyKey}
                     onConnect={() => onConnectExisting(c)}
-                    onDisconnect={() => onDisconnect(c)}
+                    onDisconnect={() => onDisconnect(c.serverName)}
                     onSetGrant={onSetGrant}
                   />
                 ))}
@@ -252,6 +242,21 @@ export function ProfileConnectorsTab() {
   );
 }
 
+/**
+ * One personal connector, as a single disclosure:
+ *
+ *   [icon] <name>                                <workspace reach>  [Connect]  ⌄
+ *          ● Connected as <account>
+ *   ── opened ──────────────────────────────────────────────────────────────
+ *          Workspaces        one switch per workspace
+ *          Tool permissions  the table, listed on request
+ *          Disconnect <name>
+ *
+ * Closed, the row says only what is true: who it is signed in as and where the
+ * agent may use it. Connect is the one action shown closed, because it is the
+ * one thing that needs doing. Everything that changes the connector, including
+ * the destructive Disconnect, is inside.
+ */
 function PersonalConnectorRow({
   connector,
   workspaces,
@@ -264,193 +269,243 @@ function PersonalConnectorRow({
   workspaces: WorkspaceInfo[];
   busyKey: string | null;
   onConnect: () => void;
-  onDisconnect: () => void;
+  onDisconnect: () => Promise<void>;
   onSetGrant: (serverName: string, wsId: string, granted: boolean) => void;
 }) {
-  const [managing, setManaging] = useState(false);
-  // Listing tools starts a cold connector, so the table mounts on demand rather
-  // than once per row on page load.
-  const [showingTools, setShowingTools] = useState(false);
-  const grants = connector.grantedWorkspaces.length;
-  const grantLabel =
-    grants === 0 ? "Not granted" : `Granted to ${grants} workspace${grants === 1 ? "" : "s"}`;
+  const [open, setOpen] = useState(false);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  const panelId = useId();
+  const name = connector.displayName || connector.serverName;
   const connected = connector.state === "running";
   const account = connector.identity?.email ?? connector.identity?.name;
   const connectBusy = busyKey === connector.serverName;
-  const disconnectBusy = busyKey === `disconnect:${connector.serverName}`;
+  const reach = workspaceReach(connector.grantedWorkspaces, workspaces);
 
   return (
-    <div className="border-b border-border py-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          {connector.iconUrl ? (
-            <img src={connector.iconUrl} alt="" className="h-6 w-6 shrink-0 rounded" />
-          ) : null}
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium">
-              {connector.displayName || connector.serverName}
-            </div>
-            {connector.description ? (
-              <div className="truncate text-xs text-muted-foreground">{connector.description}</div>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          <ToolPermissionsToggle
-            connected={connected}
-            open={showingTools}
-            onToggle={() => setShowingTools((t) => !t)}
-          />
+    <div className="border-b border-border">
+      <div className="relative -mx-2 flex items-center gap-3 rounded-sm px-2 py-3">
+        {connector.iconUrl ? (
+          <img src={connector.iconUrl} alt="" className="h-6 w-6 shrink-0 rounded" />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          {/* The name is the disclosure; its ::after stretches over the whole
+              row, so the row is one click target. Connect sits above it. */}
           <button
             type="button"
-            onClick={() => setManaging((m) => !m)}
-            className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-            aria-expanded={managing}
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            aria-controls={panelId}
+            className="block max-w-full truncate text-left text-sm font-medium outline-none after:absolute after:inset-0 after:rounded-sm after:content-[''] hover:after:bg-foreground/5 focus-visible:after:ring-3 focus-visible:after:ring-ring/50"
           >
-            {grantLabel}
+            {name}
           </button>
-          {connected ? (
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
-              {account ? (
-                <span className="max-w-56 truncate">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span
+              className={cn(
+                "h-1.5 w-1.5 shrink-0 rounded-full",
+                connected ? "bg-success" : "bg-muted-foreground/50",
+              )}
+              aria-hidden
+            />
+            <span className="truncate">
+              {!connected ? (
+                "Not connected"
+              ) : account ? (
+                <>
                   Connected as <span className="font-medium text-foreground">{account}</span>
-                </span>
+                </>
               ) : (
                 "Connected"
               )}
             </span>
-          ) : (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onConnect}
-              disabled={connectBusy}
-            >
-              {connectBusy ? "Connecting…" : "Connect"}
-            </Button>
-          )}
-          <button
-            type="button"
-            onClick={onDisconnect}
-            disabled={disconnectBusy}
-            className="text-xs text-muted-foreground underline-offset-4 hover:text-red-600 hover:underline disabled:opacity-50"
-          >
-            {disconnectBusy ? "Disconnecting…" : "Disconnect"}
-          </button>
+          </div>
         </div>
+        <span
+          className={cn(
+            "shrink-0 text-xs tabular-nums",
+            connector.grantedWorkspaces.length === 0 ? "text-foreground" : "text-muted-foreground",
+          )}
+        >
+          {reach}
+        </span>
+        {connected ? null : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onConnect}
+            disabled={connectBusy}
+            className="relative"
+          >
+            {connectBusy ? "Connecting…" : "Connect"}
+          </Button>
+        )}
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+            open && "rotate-180",
+          )}
+        />
       </div>
 
-      {managing ? (
-        <WorkspaceAccessPanel
-          connector={connector}
-          workspaces={workspaces}
-          busyKey={busyKey}
-          onSetGrant={onSetGrant}
-        />
+      {open ? (
+        <div id={panelId} className="space-y-6 pb-4 pl-9">
+          <WorkspaceAccess
+            connector={connector}
+            name={name}
+            workspaces={workspaces}
+            busyKey={busyKey}
+            onSetGrant={onSetGrant}
+          />
+          <ToolPermissionsSection
+            serverName={connector.serverName}
+            name={name}
+            connected={connected}
+          />
+          <div className="border-t border-border/60 pt-3">
+            <button
+              type="button"
+              onClick={() => setConfirmingDisconnect(true)}
+              className="text-xs text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
+            >
+              Disconnect {name}
+            </button>
+          </div>
+        </div>
       ) : null}
 
-      <ToolPermissionsPanel serverName={connector.serverName} open={connected && showingTools} />
+      <ConfirmDialog
+        open={confirmingDisconnect}
+        onOpenChange={setConfirmingDisconnect}
+        title={`Disconnect ${name}?`}
+        description={disconnectConsequence(connector.grantedWorkspaces.length)}
+        confirmLabel="Disconnect"
+        pendingLabel="Disconnecting…"
+        destructive
+        onConfirm={async () => {
+          await onDisconnect();
+          setConfirmingDisconnect(false);
+        }}
+      />
     </div>
   );
 }
 
-/**
- * The connector's tool policy — the viewer's own (`scope: "identity"`), so they
- * may always change it.
- */
-function ToolPermissionsPanel({ serverName, open }: { serverName: string; open: boolean }) {
-  if (!open) return null;
+/** Where the agent may use the connector, read against the caller's workspaces. */
+export function workspaceReach(grantedIds: string[], workspaces: WorkspaceInfo[]): string {
+  const n = grantedIds.length;
+  if (n === 0) return "Not on in any workspace";
+  const total = workspaces.length;
+  // A grant into a workspace the list doesn't hold (not loaded yet, or no longer
+  // a member) has no "of N" to count against.
+  if (!grantedIds.every((id) => workspaces.some((w) => w.id === id))) {
+    return `On in ${n} workspace${n === 1 ? "" : "s"}`;
+  }
+  if (n === total) return total === 1 ? "On in your workspace" : "On in all workspaces";
+  return `On in ${n} of ${total} workspaces`;
+}
+
+function disconnectConsequence(grants: number): string {
+  const base = "Signs out and removes it from your account.";
+  if (grants === 0) return base;
+  return `${base} It turns off in the ${grants} workspace${grants === 1 ? "" : "s"} it is on in.`;
+}
+
+/** A section heading inside an opened row, styled like the tool table's own. */
+function PanelHeading({ title, hint }: { title: string; hint: string }) {
   return (
-    <div className="mt-3 border-t border-border/60 pt-3">
-      <ToolPermissionsTable serverName={serverName} scope="identity" canManage />
+    <div>
+      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+        {title}
+      </h2>
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
     </div>
   );
 }
 
-/** Opens the connector's tool-permissions table; only a connected connector has tools to list. */
-function ToolPermissionsToggle({
-  connected,
-  open,
-  onToggle,
-}: {
-  connected: boolean;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  if (!connected) return null;
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-      aria-expanded={open}
-    >
-      Tool permissions
-    </button>
-  );
-}
-
-function WorkspaceAccessPanel({
+function WorkspaceAccess({
   connector,
+  name,
   workspaces,
   busyKey,
   onSetGrant,
 }: {
   connector: PersonalConnector;
+  name: string;
   workspaces: WorkspaceInfo[];
   busyKey: string | null;
   onSetGrant: (serverName: string, wsId: string, granted: boolean) => void;
 }) {
   return (
-    <div className="mt-3 border-t border-border/60 pt-3">
-      <div className="mb-2 text-xs text-muted-foreground">
-        Grant this connector into a workspace to let your agent use it there.
-      </div>
+    <section className="space-y-3">
+      <PanelHeading
+        title="Workspaces"
+        hint={`Your agent can use ${name} only in workspaces where it is on.`}
+      />
       {workspaces.length === 0 ? (
-        <div className="text-xs text-muted-foreground">You have no workspaces yet.</div>
+        <p className="text-xs text-muted-foreground">You have no workspaces yet.</p>
       ) : (
-        <div className="space-y-0.5">
-          {workspaces.map((ws) => (
-            <WorkspaceGrantRow
-              key={ws.id}
-              ws={ws}
-              granted={connector.grantedWorkspaces.includes(ws.id)}
-              busy={busyKey === `grant:${connector.serverName}:${ws.id}`}
-              onToggle={(granted) => onSetGrant(connector.serverName, ws.id, granted)}
-            />
-          ))}
-        </div>
+        <ul className="border-t border-border/60">
+          {workspaces.map((ws) => {
+            const granted = connector.grantedWorkspaces.includes(ws.id);
+            return (
+              <li
+                key={ws.id}
+                className="flex items-center justify-between gap-4 border-b border-border/60 py-2.5"
+              >
+                <span className="truncate text-sm">{ws.name}</span>
+                <Switch
+                  checked={granted}
+                  disabled={busyKey === `grant:${connector.serverName}:${ws.id}`}
+                  onCheckedChange={() => onSetGrant(connector.serverName, ws.id, granted)}
+                  aria-label={`Use ${name} in ${ws.name}`}
+                />
+              </li>
+            );
+          })}
+        </ul>
       )}
-    </div>
+    </section>
   );
 }
 
-function WorkspaceGrantRow({
-  ws,
-  granted,
-  busy,
-  onToggle,
+/**
+ * The connector's tool policy — the viewer's own (`scope: "identity"`), so they
+ * may always change it. Listing tools starts a cold connector, so the table
+ * mounts only when asked for, and replaces this stand-in heading in place.
+ */
+function ToolPermissionsSection({
+  serverName,
+  name,
+  connected,
 }: {
-  ws: WorkspaceInfo;
-  granted: boolean;
-  busy: boolean;
-  onToggle: (granted: boolean) => void;
+  serverName: string;
+  name: string;
+  connected: boolean;
 }) {
+  const [showing, setShowing] = useState(false);
+  if (connected && showing) {
+    return <ToolPermissionsTable serverName={serverName} scope="identity" canManage />;
+  }
   return (
-    <div className="flex items-center justify-between gap-3 py-1">
-      <span className="truncate text-sm">{ws.name}</span>
-      <Button
-        type="button"
-        size="sm"
-        variant={granted ? "ghost" : "outline"}
-        disabled={busy}
-        onClick={() => onToggle(granted)}
-      >
-        {busy ? "…" : granted ? "Revoke" : "Grant"}
-      </Button>
-    </div>
+    <section className="flex items-start justify-between gap-3">
+      <PanelHeading
+        title="Tool permissions"
+        hint={
+          connected ? "Choose which tools the agent can call." : `Connect ${name} to see its tools.`
+        }
+      />
+      {connected ? (
+        <button
+          type="button"
+          onClick={() => setShowing(true)}
+          className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        >
+          Show tools
+        </button>
+      ) : null}
+    </section>
   );
 }
 
