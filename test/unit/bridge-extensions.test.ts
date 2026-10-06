@@ -115,6 +115,7 @@ function simulatePostMessage(iframe: FakeIframe, data: unknown) {
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic import after mocks
 const { createBridge } = await import("../../web/src/bridge/bridge.ts");
 const { postToApp } = await import("../../web/src/bridge/app-channel.ts");
+const { getHostThemeMode, getThemeTokens } = await import("../../web/src/bridge/theme.ts");
 
 /** The app's side of the handshake's last step; the host posts nothing unsolicited before it. */
 function completeHandshake(iframe: FakeIframe) {
@@ -454,6 +455,16 @@ describe("Bridge — ext-apps dual protocol", () => {
     // And we should still be sending the core spec-allowed ones
     expect(keys).toContain("--color-background-primary");
     expect(keys).toContain("--font-sans");
+    // The status colours go out under their spec keys, which any MCP Apps host
+    // can send, carrying the value of the `--nb-*` extension each mirrors.
+    const all = getThemeTokens(getHostThemeMode());
+    expect(hostContext.styles.variables).toMatchObject({
+      "--color-text-danger": all["--nb-color-danger"],
+      "--color-text-success": all["--nb-color-success"],
+      "--color-text-warning": all["--nb-color-warning"],
+      "--color-background-info": all["--nb-color-info-light"],
+      "--color-text-inverse": all["--nb-color-accent-foreground"],
+    });
 
     handle.destroy();
   });
