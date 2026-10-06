@@ -183,6 +183,13 @@ describe("ContextInspectorPage", () => {
     const { container } = renderPage();
     await waitFor(() => expect(container.textContent).toContain("System prompt"));
     await waitFor(() => expect(container.textContent).toContain("Identity (default)"));
+    // The first layer opens in an effect after the layers render, so wait for
+    // its body rather than reading the commit that first shows the rows.
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        "You are a helpful assistant powered by NimbleBrain.",
+      ),
+    );
     const text = container.textContent ?? "";
 
     // Budget breakdown + the window total, stated once (in the header).
@@ -397,5 +404,29 @@ describe("ContextInspectorPage", () => {
     expect(container.textContent).toContain("Layer-3 skills");
     // The drilled layer is expanded — its composed section is on screen.
     expect(container.textContent).toContain("## Skills");
+  });
+
+  test("a drill-in made before the first layer auto-opens stays open", async () => {
+    // Poll the DOM outside act (which would drain pending effects) so the click
+    // lands in the window after the layers render and before the auto-open
+    // effect runs. That effect must not close the layer the click opened.
+    const g = globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean };
+    g.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      const { container } = renderPage();
+      for (let i = 0; i < 500 && !container.textContent?.includes("Identity (default)"); i++) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      const skillsBucket = buttons(container).find((b) =>
+        b.textContent?.trim().startsWith("Skills"),
+      );
+      if (!skillsBucket) throw new Error("skills bucket not found");
+      fireEvent.click(skillsBucket);
+
+      await waitFor(() => expect(container.textContent).not.toContain("Identity (default)"));
+      await waitFor(() => expect(container.textContent).toContain("## Skills"));
+    } finally {
+      g.IS_REACT_ACT_ENVIRONMENT = true;
+    }
   });
 });

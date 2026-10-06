@@ -94,10 +94,14 @@ export function ContextInspectorPage() {
   // Open the first layer once the composition arrives, so the reader lands on
   // something rather than an all-collapsed list. Toggles after that are the
   // user's. The latch is re-armed by the load effect above per conversation.
+  // It adds rather than replaces: a click on a row or a budget bucket can land
+  // after the layers render but before this effect runs, and replacing would
+  // close the layer that click opened.
   useEffect(() => {
     if (!openedInitial.current && visibleLayers.length > 0) {
       openedInitial.current = true;
-      setOpen(new Set([layerKey(visibleLayers[0])]));
+      const first = layerKey(visibleLayers[0]);
+      setOpen((prev) => new Set(prev).add(first));
     }
   }, [visibleLayers]);
 
