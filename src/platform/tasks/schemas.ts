@@ -257,6 +257,35 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     annotations: READ,
   },
   {
+    name: "upcoming",
+    description:
+      "What runs next among your tasks in this workspace: runs holding a run slot now, runs " +
+      "waiting for one (with their place in the queue, and batch item when they are one), the " +
+      "fires of timed schedules within the next `days` (default 7) soonest first, each " +
+      "enabled timed task's next fire even when it is past the window (`beyondWindow`), a " +
+      "schedule that fires more than 24 times in the window as one `frequent` row with its " +
+      "count, and the tasks events fire (with each one's hourly fire ceiling and how much of " +
+      "it the last hour used).",
+    inputSchema: TasksUpcomingInput,
+  },
+  {
+    name: "stats",
+    description:
+      "Per task, since a time (default 30 days ago): how many runs started, their verdicts " +
+      "(pass, fail, uncertain; your verdict replaces the judge's), the pass rate " +
+      "pass / (pass + fail), what they cost in USD, and the newest run's label. Every saved " +
+      "task, or one by `taskId`.",
+    inputSchema: TasksStatsInput,
+  },
+  {
+    name: "judges",
+    description:
+      "The judge servers connected in this workspace (servers exposing judge and " +
+      "list_judges), to name in a task's judge.server, and a warning when a task naming none " +
+      "would not be judged (no judge server, or more than one).",
+    inputSchema: TasksJudgesInput,
+  },
+  {
     name: "cancel",
     description:
       "Cancel one run by `runId`: stop it in flight, or take it out of the queue (recorded " +

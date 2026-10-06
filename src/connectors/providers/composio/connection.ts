@@ -71,8 +71,9 @@ export interface ComposioConnection {
   status: string;
   /**
    * The provider-side account this connection is signed in as (e.g. the Gmail
-   * address), from Composio's `state.val.displayName` when the connection
-   * landed. Display-only; absent when Composio reported none.
+   * address), from Composio's `state.val.displayName` or else the email in
+   * its `state.val.id_token`, when the connection landed. Display-only;
+   * absent when neither names an account.
    */
   displayName?: string;
 }

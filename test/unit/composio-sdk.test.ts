@@ -159,6 +159,11 @@ afterEach(() => {
 
 // ── composioUserId ──────────────────────────────────────────────────
 
+/** base64url without padding, as a JWT segment is encoded. */
+function b64url(text: string): string {
+  return Buffer.from(text, "utf-8").toString("base64url");
+}
+
 describe("composioUserId", () => {
   test("returns wsId alone when NB_TENANT_ID unset", () => {
     expect(composioUserId({ type: "workspace", wsId: "ws_0001f3ac8053ce11" })).toBe(
@@ -235,6 +240,68 @@ describe("findActiveComposioConnection", () => {
       authConfigId: "ac_x",
     });
     expect(result).toEqual({ id: "ca_first", status: "ACTIVE", displayName: "user@example.com" });
+  });
+
+  test("names the account from the vendor's id_token when the broker recorded no display name", async () => {
+    const idToken = (claims: Record<string, unknown>) =>
+      `${b64url('{"alg":"RS256"}')}.${b64url(JSON.stringify(claims))}.sig`;
+    const find = () =>
+      findActiveComposioConnection({
+        apiKey: "k_test",
+        userId: "ws_008bd230f095f38a",
+        authConfigId: "ac_x",
+      });
+
+    // A Google toolkit whose auth config grants openid + email: Google issues
+    // an id_token, and the broker keeps it beside the tokens without a name.
+    sdkCalls.listImpl = async () => ({
+      items: [
+        {
+          id: "ca_cal",
+          status: "ACTIVE",
+          state: {
+            val: {
+              access_token: "secret",
+              id_token: idToken({ sub: "1", email: "user@example.com", name: "User" }),
+            },
+          },
+        },
+      ],
+    });
+    expect(await find()).toEqual({
+      id: "ca_cal",
+      status: "ACTIVE",
+      displayName: "user@example.com",
+    });
+
+    // A recorded display name wins over the token.
+    sdkCalls.listImpl = async () => ({
+      items: [
+        {
+          id: "ca_mail",
+          status: "ACTIVE",
+          state: {
+            val: {
+              displayName: "mail@example.com",
+              id_token: idToken({ email: "other@example.com" }),
+            },
+          },
+        },
+      ],
+    });
+    expect(await find()).toEqual({
+      id: "ca_mail",
+      status: "ACTIVE",
+      displayName: "mail@example.com",
+    });
+
+    // A token that names no email, or is not a JWT, names nothing.
+    for (const token of [idToken({ sub: "1" }), "not-a-jwt", ""]) {
+      sdkCalls.listImpl = async () => ({
+        items: [{ id: "ca_x", status: "ACTIVE", state: { val: { id_token: token } } }],
+      });
+      expect(await find()).toEqual({ id: "ca_x", status: "ACTIVE" });
+    }
   });
 
   test("ignores entries with missing id (defensive against SDK shape drift)", async () => {
