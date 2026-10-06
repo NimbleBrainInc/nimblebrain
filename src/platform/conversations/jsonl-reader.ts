@@ -10,7 +10,7 @@
  */
 
 import { type Dirent, readdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { type FileHandle, open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -874,98 +874,207 @@ export async function readConversation(
 }
 
 /**
- * How many messages the header should report, without reconstructing any.
+ * A header read in progress: everything the summary is folded from, plus where
+ * in the file the fold stopped.
  *
- * Lines are not messages: one turn is a `run.start`, an `llm.response`, any
- * number of `tool.*` pairs and a `run.done`, so counting lines counts events
- * and reports a 1-turn conversation as 5.
- *
- * The number has to agree with {@link readConversation}, because the two
- * describe the same file to the same user — `conversations__list` says how
- * many messages a conversation has and opening it shows them. So this mirrors
- * `reconstructFromEvents`' rule exactly: every `user.message`, plus every run
- * that produced at least one `llm.response` (a run that produced none yields
- * no message there, and must yield none here).
- *
- * One pass, two sets, no message building — this stays the fast path.
+ * Conversation files are append-only event logs, so a change to one is new
+ * lines at its end. Resuming from `offset` makes a re-read cost the bytes
+ * appended since the last one instead of the whole file, which is what keeps a
+ * list refresh during a turn on a long conversation from re-parsing megabytes
+ * on the event loop after every tool call. `ino` and `line1` detect the cases
+ * where the file is not the one the fold read (replaced, rewritten, truncated);
+ * those start over.
  */
-function countHeaderMessages(dataLines: string[]): number {
-  let userMessages = 0;
-  const runStarts: string[] = [];
-  const runsWithResponse = new Set<string>();
-
-  for (const line of dataLines) {
-    const parsed = parseJsonLine(line);
-    const runId = typeof parsed?.runId === "string" ? parsed.runId : null;
-    if (parsed?.type === "user.message") userMessages++;
-    else if (parsed?.type === "run.start" && runId) runStarts.push(runId);
-    else if (parsed?.type === "llm.response" && runId) runsWithResponse.add(runId);
-  }
-
-  return userMessages + runStarts.filter((runId) => runsWithResponse.has(runId)).length;
+export interface HeaderScan {
+  /** Line 1 as read, before event-derived fields are applied. */
+  meta: ConversationMeta;
+  /** The file's text through line 1, compared against its first bytes on resume. */
+  line1: string;
+  ino: number;
+  /** Bytes folded so far: always just past a newline, or the end of a final line that parsed. */
+  offset: number;
+  preview: string;
+  /** The last `metadata.title` event's title, when one has been seen. */
+  title?: string;
+  userMessages: number;
+  runStarts: string[];
+  runsWithResponse: Set<string>;
+  metrics: DerivedMetrics;
 }
 
 /**
- * The conversation's preview: the first user message's text.
+ * Fold one event line into the scan. One `JSON.parse` per line.
  *
- * The scan stops at that line rather than reading on — nothing after it can
- * change the answer. An empty user message is not an answer, so the search
- * continues past one (a picture with no caption still needs a preview).
+ * Each field keeps the rule it has always had, because the header must agree
+ * with {@link readConversation} on the same file:
+ *
+ * - The preview is the first user message with text. An empty user message is
+ *   not an answer, so the search continues past one (a picture with no caption
+ *   still needs a preview).
+ * - The count is messages, not lines. One turn is a `run.start`, an
+ *   `llm.response`, any number of `tool.*` pairs and a `run.done`, so this
+ *   mirrors `reconstructFromEvents`: every `user.message`, plus every run that
+ *   produced at least one `llm.response`.
+ * - The title is the last `metadata.title` event's.
+ * - Totals, last model and `updatedAt` come from events that carry `ts` and
+ *   `type`, through {@link accumulateEventMetrics}.
+ *
+ * Returns false when the line is not JSON.
  */
-function findPreview(dataLines: string[]): string {
-  for (const line of dataLines) {
-    const parsed = parseJsonLine(line);
-    if (!parsed) continue;
-    if (parsed.type === "user.message" && Array.isArray(parsed.content)) {
-      const text = extractText(parsed.content as ContentPart[]);
-      if (text) return text;
-    }
+function foldHeaderLine(scan: HeaderScan, line: string): boolean {
+  let parsed: Record<string, unknown> & { ts?: string; type?: string };
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return false;
   }
-  return "";
+  if (parsed === null || typeof parsed !== "object") return true;
+  foldHeaderEvent(scan, parsed);
+  if (parsed.ts && parsed.type) {
+    // Same narrowing as `parseEventLine`: a line with `ts` and `type` is read
+    // as an event, and `accumulateEventMetrics` keys on `type` alone.
+    accumulateEventMetrics(parsed as KnownEvent & { ts: string; type: string }, scan.metrics);
+  }
+  return true;
 }
 
-function parseJsonLine(line: string): Record<string, unknown> | null {
+/** The preview, count and title parts of {@link foldHeaderLine}. */
+function foldHeaderEvent(scan: HeaderScan, parsed: Record<string, unknown>): void {
+  const runId = typeof parsed.runId === "string" ? parsed.runId : null;
+  if (parsed.type === "user.message") {
+    scan.userMessages++;
+    if (!scan.preview && Array.isArray(parsed.content)) {
+      scan.preview = extractText(parsed.content as ContentPart[]);
+    }
+  } else if (parsed.type === "run.start" && runId) {
+    scan.runStarts.push(runId);
+  } else if (parsed.type === "llm.response" && runId) {
+    scan.runsWithResponse.add(runId);
+  } else if (parsed.type === "metadata.title" && typeof parsed.title === "string") {
+    scan.title = parsed.title;
+  }
+}
+
+/**
+ * Fold the complete lines of `text` into the scan and return how much of it
+ * was consumed, in string length.
+ *
+ * A final line without a newline is folded only when it parses: an append in
+ * flight is left for the next read rather than skipped as malformed and then
+ * stepped over for good.
+ */
+function foldHeaderText(scan: HeaderScan, text: string): number {
+  const lastNl = text.lastIndexOf("\n");
+  for (const line of text.slice(0, Math.max(lastNl, 0)).split("\n")) {
+    if (line) foldHeaderLine(scan, line);
+  }
+  const tail = text.slice(lastNl + 1);
+  if (tail && foldHeaderLine(scan, tail)) return text.length;
+  return lastNl + 1;
+}
+
+/**
+ * Read a conversation file's header state, resuming from `prior` when the file
+ * has only grown since that read.
+ *
+ * Returns null when the file is missing, empty, or line 1 is not conversation
+ * metadata. A resumed read still opens the file and checks it is the same one
+ * (inode, line 1, not shorter); anything else is read again from the start.
+ */
+export async function scanConversationHeader(
+  filePath: string,
+  prior?: HeaderScan,
+): Promise<HeaderScan | null> {
+  let handle: FileHandle;
   try {
-    return JSON.parse(line) as Record<string, unknown>;
+    handle = await open(filePath, "r");
   } catch {
     return null;
   }
+  try {
+    const { ino, size } = await handle.stat();
+    if (prior && prior.ino === ino && size >= prior.offset) {
+      const line1Bytes = Buffer.byteLength(prior.line1);
+      const head = Buffer.alloc(line1Bytes);
+      const headRead = await handle.read(head, 0, line1Bytes, 0);
+      if (head.toString("utf8", 0, headRead.bytesRead) === prior.line1) {
+        const scan = cloneScan(prior);
+        if (size > prior.offset) {
+          const buf = Buffer.alloc(size - prior.offset);
+          const { bytesRead } = await handle.read(buf, 0, buf.length, prior.offset);
+          const text = buf.toString("utf8", 0, bytesRead);
+          scan.offset += Buffer.byteLength(text.slice(0, foldHeaderText(scan, text)));
+        }
+        return scan;
+      }
+    }
+
+    const content = (await handle.readFile()).toString("utf8");
+    // Line 1 is the first non-empty line. `line1` keeps any blank lines before
+    // it, so a resumed read can compare it against the file's first bytes.
+    const leading = content.length - content.replace(/^\n+/, "").length;
+    const lineEnd = content.indexOf("\n", leading);
+    const firstEnd = lineEnd < 0 ? content.length : lineEnd;
+    if (firstEnd === leading) return null;
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(content.slice(leading, firstEnd)) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+    const meta = parseMeta(raw);
+    if (!meta) return null;
+
+    const scan: HeaderScan = {
+      meta,
+      line1: content.slice(0, firstEnd),
+      ino,
+      offset: 0,
+      preview: "",
+      userMessages: 0,
+      runStarts: [],
+      runsWithResponse: new Set(),
+      metrics: { totalInputTokens: 0, totalOutputTokens: 0, lastModel: null, lastEventTs: null },
+    };
+    const afterLine1 = Math.min(firstEnd + 1, content.length);
+    const consumed = foldHeaderText(scan, content.slice(afterLine1));
+    scan.offset = Buffer.byteLength(content.slice(0, afterLine1 + consumed));
+    return scan;
+  } finally {
+    await handle.close();
+  }
+}
+
+function cloneScan(scan: HeaderScan): HeaderScan {
+  return {
+    ...scan,
+    meta: { ...scan.meta },
+    runStarts: [...scan.runStarts],
+    runsWithResponse: new Set(scan.runsWithResponse),
+    metrics: { ...scan.metrics },
+  };
+}
+
+/** The summary a scan describes: line-1 metadata with the event-derived fields applied. */
+export function headerOfScan(scan: HeaderScan): {
+  meta: ConversationMeta;
+  preview: string;
+  messageCount: number;
+} {
+  const meta = { ...scan.meta };
+  if (scan.title !== undefined) meta.title = scan.title;
+  applyDerivedMetrics(meta, scan.metrics);
+  const messageCount =
+    scan.userMessages + scan.runStarts.filter((runId) => scan.runsWithResponse.has(runId)).length;
+  return { meta, preview: scan.preview, messageCount };
 }
 
 /** Fast header read — metadata + preview + count, no message reconstruction. */
 export async function readConversationHeader(
   filePath: string,
 ): Promise<{ meta: ConversationMeta; preview: string; messageCount: number } | null> {
-  let content: string;
-  try {
-    content = await readFile(filePath, "utf-8");
-  } catch {
-    return null;
-  }
-
-  const lines = content.split("\n").filter(Boolean);
-  if (lines.length === 0) return null;
-
-  let raw: Record<string, unknown>;
-  try {
-    raw = JSON.parse(lines[0]!) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-
-  const meta = parseMeta(raw);
-  if (!meta) return null;
-
-  const dataLines = lines.slice(1);
-  // `countHeaderMessages` must agree with `readConversation`'s count; the
-  // header/full-reader parity tests pin it.
-  const preview = findPreview(dataLines);
-  const messageCount = countHeaderMessages(dataLines);
-
-  deriveTitleFromEvents(meta, dataLines);
-  applyDerivedMetrics(meta, deriveMetricsFromLines(dataLines));
-
-  return { meta, preview, messageCount };
+  const scan = await scanConversationHeader(filePath);
+  return scan ? headerOfScan(scan) : null;
 }
 
 /** Collect `.jsonl` file paths under a workspace's `conversations/<ownerId>/` partitions. */
