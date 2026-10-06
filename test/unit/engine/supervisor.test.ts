@@ -215,6 +215,43 @@ describe("supervisor — recovery from a trip", () => {
     expect(sup.snapshot().trippedTools).toEqual([]);
   });
 
+  it("a call on probation that fails says it ran, without calling the tool disabled", () => {
+    const sup = createRunSupervisor();
+    trip(sup);
+    const v = sup.observe(call("foo"), textResult("still broken", true));
+    expect(v.type).toBe("synth");
+    if (v.type === "synth") {
+      const text = textOf(v.replacement);
+      expect(text).toContain("ran, but its result shows no progress");
+      expect(text).toContain("still broken");
+      expect(text).toContain("3 times in a row");
+      expect(text).not.toContain("disabled");
+      expect(text).not.toContain("corrected call");
+      expect(v.replacement.isError).toBe(true);
+    }
+  });
+
+  it("a landed write repeating the tripped content is not reported as a failure", () => {
+    // A write tool whose success text is constant trips on three identical
+    // calls. A later call with new input lands, but returns the same text, so
+    // it is no evidence of progress and the trip holds — yet the write
+    // happened, so the replacement must say the call ran and not flag an error.
+    const sup = createRunSupervisor();
+    for (const _ of [1, 2, 3]) sup.observe(call("save", { id: "a" }), textResult("ok"));
+    expect(sup.snapshot().trippedTools).toEqual(["save"]);
+
+    const v = sup.observe(call("save", { id: "b" }), textResult("ok"));
+    expect(v.type).toBe("synth");
+    if (v.type === "synth") {
+      const text = textOf(v.replacement);
+      expect(text).toContain("ran");
+      expect(text).toContain("Underlying output (this call):\nok");
+      expect(text).not.toContain("disabled");
+      expect(v.replacement.isError).toBe(false);
+    }
+    expect(sup.snapshot().trippedTools).toEqual(["save"]);
+  });
+
   it("stays armed after recovering — a fresh streak trips again", () => {
     const sup = createRunSupervisor();
     trip(sup);

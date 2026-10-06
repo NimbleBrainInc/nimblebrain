@@ -277,4 +277,93 @@ describe("engine ↔ supervisor wiring", () => {
       expect(snap.names).toContain("other");
     }
   });
+
+  it("a withheld tool named from context is checked and run, and that call is how it recovers", async () => {
+    // The contract: a trip withdraws the offer, not the permission. Three
+    // identical invalid calls trip `log`. The model then names it anyway —
+    // first with the same invalid input, which must be rejected by input
+    // validation without reaching the tool, then with valid input, which runs,
+    // succeeds, and brings `log` back into the offered set.
+    const logSchema: ToolSchema = {
+      name: "log",
+      description: "Records an interaction.",
+      inputSchema: {
+        type: "object",
+        properties: { kind: { type: "string" } },
+        required: ["kind"],
+        additionalProperties: false,
+      },
+    };
+
+    const offered: string[][] = [];
+    const model = createMockModel((opts) => {
+      const names = (opts.tools ?? []).map((t) => (t as { name?: string }).name ?? "");
+      offered.push(names);
+      const turn = offered.length;
+      const callLog = (input: Record<string, unknown>) => ({
+        content: [
+          {
+            type: "tool-call" as const,
+            toolCallId: `call-${turn}`,
+            toolName: "log",
+            input: JSON.stringify(input),
+          },
+        ],
+        inputTokens: 1,
+        outputTokens: 1,
+      });
+      // Turns 1-4 send the wrong shape (turn 4 after the trip, from context);
+      // turn 5 sends the corrected shape; turn 6 finishes.
+      if (turn <= 4) return callLog({ type: "meeting" });
+      if (turn === 5) return callLog({ kind: "meeting" });
+      return { content: [{ type: "text", text: "done" }], inputTokens: 1, outputTokens: 1 };
+    });
+
+    const executed: ToolCall[] = [];
+    const handler = (call: ToolCall): ToolResult => {
+      executed.push(call);
+      return { content: textContent('{"interaction":{"id":"ix_1"}}'), isError: false };
+    };
+
+    const events: EngineEvent[] = [];
+    const engine = new AgentEngine(
+      model,
+      new StaticToolRouter([logSchema], handler),
+      collect(events),
+    );
+    const result = await engine.run(
+      config,
+      "system",
+      [{ role: "user", content: [{ type: "text", text: "go" }] }],
+      [logSchema],
+    );
+    expect(result.stopReason).toBe("complete");
+
+    // Withheld after the trip on turn 3, offered again after the recovery.
+    expect(offered.map((names) => names.includes("log"))).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+    ]);
+
+    // Only the valid call reached the tool: the invalid call on turn 4 was
+    // rejected by validation although `log` was not in that turn's toolset.
+    expect(executed.map((c) => c.input)).toEqual([{ kind: "meeting" }]);
+
+    const done = events
+      .filter((e) => e.type === "tool.done")
+      .map((e) => e.data as Record<string, unknown>);
+    expect(done).toHaveLength(5);
+    // Turn 4: the probation directive, which does not call the tool disabled.
+    expect(done[3]!.supervisorTripped).toBe(true);
+    expect(String(done[3]!.output)).toContain("ran, but its result shows no progress");
+    expect(String(done[3]!.output)).not.toContain("disabled");
+    // Turn 5: the real result, untouched.
+    expect(done[4]!.supervisorTripped).toBeUndefined();
+    expect(done[4]!.ok).toBe(true);
+    expect(done[4]!.output).toBe('{"interaction":{"id":"ix_1"}}');
+  });
 });

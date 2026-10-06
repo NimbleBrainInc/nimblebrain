@@ -2312,7 +2312,10 @@ export class AgentEngine {
     // On a trip, the replacement directive flows downstream in place
     // of the original tool result. While it stays tripped the tool is
     // withheld from `modelTools` on subsequent iterations (see
-    // buildIterationTools), so the model is not offered it again.
+    // buildIterationTools), so the model is not offered it again. Withheld is
+    // not refused: checkAndGate does not consult the trip, so a call naming
+    // the tool still runs, and that call is how a trip clears (see the
+    // supervisor's file header).
     const verdict = ctx.supervisor.observe(gatedCall, hookedResult);
     const finalResult = verdict.type === "synth" ? verdict.replacement : hookedResult;
 
