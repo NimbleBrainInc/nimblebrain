@@ -139,22 +139,6 @@ async function fetchJson(
 }
 
 /**
- * Parse an OIDC id_token's payload claims. Returns the relevant subset
- * (`sub`, `email`, `name`) or `null` if the token doesn't look like a
- * JWT or the payload isn't valid JSON.
- *
- * Deliberately does NOT verify the signature. Two reasons:
- *
- *   1. The token came directly from the AS over TLS (the SDK fetches
- *      the token endpoint), which is the trust anchor we already rely
- *      on for the access_token itself.
- *   2. We treat the parsed claims as informational only — they're shown
- *      in the Connections page UI, never used for access decisions.
- *
- * Catching `email_verified=false` is also out of scope: the upstream AS
- * controls verification and we surface what they tell us.
- */
-/**
  * Hard ceiling on id_token byte length we'll attempt to parse. JWT payloads
  * in practice run well under 4KB; 16KB leaves headroom for AS-specific
  * extensions while bounding the cost of malicious or malformed tokens. A
@@ -162,6 +146,23 @@ async function fetchJson(
  */
 const ID_TOKEN_MAX_LENGTH = 16 * 1024;
 
+/**
+ * Parse an OIDC id_token's payload claims. Returns the relevant subset
+ * (`sub`, `email`, `name`) or `null` if the token doesn't look like a
+ * JWT or the payload isn't valid JSON.
+ *
+ * Deliberately does NOT verify the signature. Two reasons:
+ *
+ *   1. The token arrived over TLS beside the access_token it was issued
+ *      with, from the AS's token endpoint or from the broker that holds
+ *      the connection, which is the trust anchor we already rely on for
+ *      the access_token itself.
+ *   2. We treat the parsed claims as informational only — they're shown
+ *      in the Connections page UI, never used for access decisions.
+ *
+ * Catching `email_verified=false` is also out of scope: the upstream AS
+ * controls verification and we surface what they tell us.
+ */
 export function parseIdTokenClaims(idToken: string): IdentityClaims | null {
   if (idToken.length > ID_TOKEN_MAX_LENGTH) return null;
   // JWT shape: header.payload.signature — three base64url segments
