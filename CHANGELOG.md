@@ -245,7 +245,7 @@
 
 ### Fixed
 
-- **Listing conversations no longer re-parses a long conversation on every refresh.** While a turn runs, the conversations list re-reads only the events appended since its last read, so a refresh on a multi-megabyte conversation costs under a millisecond instead of blocking every chat on the tenant for up to 0.7s.
+- **Listing conversations no longer re-parses a long conversation on every refresh.** While a turn runs, the conversations list re-reads only the events appended since its last read, so a refresh on a multi-megabyte conversation costs under a millisecond instead of blocking every chat on the tenant for up to 0.7s ([#1637](https://github.com/NimbleBrainInc/nimblebrain/pull/1637)).
 - **A connector whose sign-in ended is left to rest.** After a sign-in is declined or times out, the health monitor no longer restarts the connector every sweep with no way to succeed; Reconnect starts a new sign-in ([#337](https://github.com/NimbleBrainInc/nimblebrain/issues/337)).
 - **A brokered Google connection shows its account.** When the broker records no display name, the account comes from the id_token the vendor issued, so a Google toolkit whose auth config grants `openid` and `userinfo.email` reads "Connected as …" like Gmail does ([#1612](https://github.com/NimbleBrainInc/nimblebrain/issues/1612)).
 - **Connect on a personal connector resumes a sign-in that was left open.** Closing the provider's tab and clicking Connect again returns the same sign-in instead of "already in progress" until the 15-minute timeout, and a connector whose sign-in is still open no longer reads "Connected" ([#1611](https://github.com/NimbleBrainInc/nimblebrain/issues/1611)).
