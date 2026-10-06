@@ -111,7 +111,7 @@ window.parent.postMessage({
 
 The rule, rather than a list you would have to keep checking: **only keys in the ext-apps spec's own variable enum cross the boundary.** Two families of what the host injects are not in it, so neither refreshes:
 
-- the `--nb-*` extension tokens, which have no spec equivalent by definition, and
+- the `--nb-*` extension tokens (most repeat a spec key's value, and the spec key is the one that refreshes), and
 - NimbleBrain's additions to spec-shaped families — `--color-text-accent`, and the `3xs`, `2xs` and `base` steps of the type scale (the spec enum carries only `xs`, `sm`, `md` and `lg`).
 
 Drive any surface that must flip between light and dark from the spec tokens that *do* cross: `--color-background-*`, `--color-text-*` other than `-accent`, `--color-border-*`, and `--color-ring-*`. Do **not** key light/dark styling off `--color-text-accent` — it is injected at load but never updates on a toggle.
