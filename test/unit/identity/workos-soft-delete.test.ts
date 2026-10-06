@@ -76,7 +76,6 @@ let workosKey: TestKeyPair;
 const CONFIG: WorkosAuth = {
   adapter: "workos",
   clientId: "client_soft_delete_test",
-  redirectUri: "http://localhost/callback",
   organizationId: "org_soft_delete_test",
   apiKey: "sk_test_fake",
 };

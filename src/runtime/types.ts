@@ -242,10 +242,8 @@ export interface RuntimeConfig {
     enabled?: boolean;
   };
 
-  /** Legacy tenant defaults; `preferences` takes precedence over both. */
+  /** Legacy tenant default; `preferences.timezone` takes precedence. */
   home?: {
-    /** Legacy fallback for `preferences.displayName`. */
-    userName?: string;
     /** IANA timezone (e.g., "Pacific/Honolulu"). Empty uses system timezone. */
     timezone?: string;
   };
@@ -278,7 +276,7 @@ export interface RuntimeConfig {
 
   /** User preferences for personalization. */
   preferences?: {
-    /** Display name. Falls back to home.userName. */
+    /** Display name. */
     displayName?: string;
     /** IANA timezone. Falls back to home.timezone. */
     timezone?: string;

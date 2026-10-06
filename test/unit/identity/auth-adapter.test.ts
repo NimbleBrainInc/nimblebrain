@@ -53,7 +53,6 @@ describe("createIdentityProvider", () => {
       auth: {
         adapter: "workos",
         clientId: "client_123",
-        redirectUri: "http://localhost:3000/v1/auth/callback",
       },
     };
     const provider = createIdentityProvider(config, userStore, workDir);

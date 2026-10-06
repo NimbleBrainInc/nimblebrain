@@ -147,6 +147,8 @@ Until `initialized` arrives, the host posts the app nothing but the answers to i
 
 The spec negotiates extensions under `capabilities.extensions`, not `experimental`. The ext-apps bridge capability object has no `extensions` field, so `experimental` carrying the extension identifier is as close as this channel reaches. When ext-apps adds one, the identifiers move there.
 
+**Theme colours arrive as the spec's `hostContext.styles.variables`**, and only under keys the spec's variable enum names: one key outside it makes a spec client reject the whole host context. Status colours go out as `--color-text-danger`, `--color-text-success`, `--color-text-warning` and `--color-background-info`, and text on a filled accent or danger surface as `--color-text-inverse`, the same keys any MCP Apps host sends. The `--nb-*` extensions reach the app only through the style block injected at load; see [Theming](/apps/theming/).
+
 **Host fonts arrive as `hostContext.styles.css.fonts`**, a block of `@font-face` CSS the app injects into its own document — an iframe inherits none from the shell, so a `--font-*` variable alone names a typeface the app cannot render. It is read once, at the handshake.
 
 <Aside type="tip">

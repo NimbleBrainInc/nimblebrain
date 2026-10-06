@@ -26,7 +26,8 @@ import {
  * Build the ext-apps token map for a mode.
  *
  * Spec keys follow the MCP ext-apps contract. Anything with no spec equivalent
- * rides as a `--nb-*` extension — the prefix *is* the rule, so there is no list
+ * rides as a `--nb-*` extension, and so does each colour and font an older
+ * Synapse reads only by its `--nb-*` name — the prefix *is* the rule, so there is no list
  * to keep in step: `--nb-*` keys are injected into the iframe's style block and
  * filtered off the protocol boundary by `getSpecThemeTokens`. (Note the
  * converse does not hold: a few spec-shaped keys are also filtered, because
@@ -49,6 +50,16 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
     "--color-border-primary": c("border"),
     "--color-border-secondary": c("border"),
     "--color-ring-primary": c("ring"),
+    // The status hues and the info ground: the keys any MCP Apps host can send.
+    "--color-text-danger": c("destructive"),
+    "--color-text-success": c("success"),
+    "--color-text-warning": c("warning"),
+    "--color-background-info": c("info-light"),
+    // Text on a filled accent or danger surface. The spec names no "on-accent"
+    // colour; `text-inverse` is text for a surface of the opposite polarity,
+    // which a saturated fill is in both modes. One key carries both
+    // foregrounds, so `palette.test.ts` holds them equal.
+    "--color-text-inverse": c("primary-foreground"),
 
     // ── ext-apps spec: Typography ──
     "--font-sans": fonts.sans,
@@ -61,7 +72,12 @@ export function paletteToExtAppsTokens(mode: Mode): Record<string, string> {
     // ── ext-apps spec: Effects ──
     ...shadows[mode],
 
-    // ── NimbleBrain extensions (no ext-apps spec equivalent) ──
+    // ── NimbleBrain extensions ──
+    // `processing` and `processing-light` have no spec equivalent. Every other
+    // key here repeats a spec key above, for apps on a Synapse that reads the
+    // `--nb-*` name: `danger`/`success`/`warning` are `--color-text-*`,
+    // `info-light` is `--color-background-info`, both foregrounds are
+    // `--color-text-inverse`, and `font-heading` is `--font-sans`.
     "--nb-color-accent-foreground": c("primary-foreground"),
     "--nb-color-danger": c("destructive"),
     "--nb-color-danger-foreground": c("destructive-foreground"),
