@@ -21,14 +21,20 @@ on:
   merge_group:
     types: [checks_requested]
 
-# Cancel superseded runs on a PR branch (new push kills the old run), but never
-# cancel a push to main or a merge-queue run: each main commit must complete so
-# its SHA-tagged image lands in ECR (see build-and-push), and the queue decides
-# for itself when a group is obsolete. On push and merge_group events head_ref is
-# empty, so the group falls back to the unique run_id: every such run is its own
+# Cancel superseded runs on a PR (new push kills the old run), but never cancel a
+# push to main or a merge-queue run: each main commit must complete so its
+# SHA-tagged image lands in ECR (see build-and-push), and the queue decides for
+# itself when a group is obsolete. On push and merge_group events there is no pull
+# request, so the group falls back to the unique run_id: every such run is its own
 # group.
+#
+# The group is keyed on the PR number, not the branch name, because forks share
+# branch names. It also carries the PR's draft state from the triggering event: a
+# draft run skips every job, so it must never cancel a ready run. Approving a fork
+# PR's workflows releases its pending draft and ready runs together, in no fixed
+# order, and in one group the draft run could start second and cancel the checks.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
 # Single source of truth for the bun toolchain version across every job.
