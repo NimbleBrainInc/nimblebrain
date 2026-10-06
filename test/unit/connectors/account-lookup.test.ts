@@ -223,11 +223,14 @@ describe("ConnectorLifecycleManager.lookUpAccount", () => {
   }
 
   /**
-   * A real `McpSource` whose `execute` is counted instead of dispatched. Cold
-   * as constructed (`isAlive()` is false); `live` gives it a client and a
+   * A real `McpSource` whose `execute` and `start` are counted instead of run.
+   * Cold as constructed (`isAlive()` is false); `live` gives it a client and a
    * transport, which is all `isAlive()` reads.
    */
-  function mcpSource(name: string, opts: { live: boolean }): McpSource & { calls: () => number } {
+  function mcpSource(
+    name: string,
+    opts: { live: boolean },
+  ): McpSource & { calls: () => number; starts: () => number } {
     const source = new McpSource(
       name,
       { type: "remote", url: new URL("http://localhost:0/mcp") },
@@ -235,6 +238,10 @@ describe("ConnectorLifecycleManager.lookUpAccount", () => {
         emit: () => {},
       },
     );
+    let starts = 0;
+    source.start = async () => {
+      starts += 1;
+    };
     let calls = 0;
     source.execute = async () => {
       calls += 1;
@@ -246,7 +253,7 @@ describe("ConnectorLifecycleManager.lookUpAccount", () => {
       internals.client = {};
       internals.transport = {};
     }
-    return Object.assign(source, { calls: () => calls });
+    return Object.assign(source, { calls: () => calls, starts: () => starts });
   }
 
   /** The lifecycle with one workspace registry and one user registry, each holding `source`. */
@@ -277,6 +284,7 @@ describe("ConnectorLifecycleManager.lookUpAccount", () => {
       expect(await lifecycle.lookUpAccount(owner, "zoom", lookup)).toBeNull();
     }
     expect(zoom.calls()).toBe(0);
+    expect(zoom.starts()).toBe(0);
   });
 
   test("a live source is asked through its owner's registry", async () => {
