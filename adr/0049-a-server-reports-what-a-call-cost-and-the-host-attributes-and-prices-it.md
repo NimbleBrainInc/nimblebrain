@@ -77,37 +77,46 @@ A tool result, success or `isError`, may carry one report:
 | `usage` | One or more `{meter, quantity, unit}`. `meter` is a name the server chooses for what was consumed, and never names an upstream vendor, a vendor's product, or a vendor's unit. `quantity` is a decimal string; `"0"` is a valid report of a call that consumed nothing, and is different from no report. |
 | `amount` | Optional. `value` is a decimal string, `currency` an ISO 4217 code with no default. `basis` is `cost` when it is what the server paid for this call, or `price` when it is what the server charges its caller. Either way it is what this call cost the host's side. A server may withhold `amount` and report units only. |
 
-### Credits and prepaid balances
+### Credits, prepaid balances, and what nobody here can see
 
-**A credit is a unit, never a currency.** A call that draws on a prepaid balance
-reports what it drew in `usage` (`{"meter": "email.validation", "quantity": "1",
-"unit": "credit"}`), and reports `amount` only when it can convert credits to
-money. Spending the balance and buying it are two different events:
+The accounts behind a server's provider are bought and managed on the
+provider's own platform: credits topped up, plans changed, keys rotated. None of
+that passes through the runtime or the server, and neither can assume it knows
+what was paid. What each side can know:
 
-- **Buying credits is a purchase, not a call's cost.** "$10 of credits" and
-  "10,000 credits for $50" are both an acquisition: they fix a rate (dollars per
-  credit) and fund a balance. They are reconciled against the vendor's invoice,
-  not attributed to a run, because no run caused them.
-- **A call's cost is the credits it drew, at the rate they were bought at.** The
-  rate belongs to whoever bought the credits, beside the account that holds them:
-  for a server on its own account, in that server's configuration, so it reports
-  `amount` with `status: estimated` (a rate across purchases at different prices
-  is an average, not a bill); for credits bought on the caller's account,
-  `payer: caller`. A server that does not know its rate reports units only, and
-  the host may price the meter by its policy.
-- **A subscription with included credits** costs nothing at the margin until the
-  allowance runs out, then the overage rate. The server reports the rate it
-  chooses to attribute by (usually the subscription's cost over its allowance),
-  as an estimate. The subscription itself, like any charge with no originating
-  call, is not a ledger line.
+- **At the call, the units are always knowable.** A server knows what it asked
+  for (one request, ten results, one lookup), and many providers also return
+  what the call drew (credits, tokens). A call that draws on a prepaid balance
+  reports it in `usage`: `{"meter": "email.validation", "quantity": "1",
+  "unit": "credit"}`. **A credit is a unit, never a currency.**
+- **Money is knowable at the call only when the provider says so.** Some
+  providers return a per-call dollar figure; the server passes it on as
+  `amount`, `status: estimated`. A server never derives `amount` from a rate it
+  was not given: a credit's price is a fact of a purchase the server never saw.
+- **The rate is an operator's estimate, held by the host.** An operator who
+  knows roughly what a credit costs (from the provider's dashboard or invoice)
+  sets a cost rate per server and meter in the host's operator configuration.
+  It lives there because it describes an account the host's operator manages,
+  it can change without redeploying any server, and it prices a third-party
+  server's units the same way as ours. The host applies it, when it is written,
+  to a line that carries units and no `amount`, and marks the line's cost as
+  estimated from that rate. A provider-reported `amount` takes precedence.
+- **With no amount and no rate, a line is unpriced, not free.** It shows its
+  units ("1,240 credits") and counts as unpriced spend on every total it is part
+  of, and it debits no money account.
+- **Purchases are not ledger lines.** Topping up a balance, a plan's monthly
+  fee, an allowance included in a subscription: none has an originating call,
+  so none is attributed to a run. They are reconciled outside the runtime, by
+  comparing what a provider invoiced with the units the ledger recorded against
+  its meters. That comparison is also how a rate is set or found wrong.
 
-Because every line keeps its units, a rate found to be wrong can be corrected by
-re-pricing lines on purpose. It never happens as a side effect of reading.
+Because every line keeps its units, a wrong rate is corrected by re-pricing the
+affected lines on purpose, never as a side effect of reading.
 
-The same rule holds on the host's side of the price. If a tenant buys
-NimbleBrain credits rather than paying in dollars, the price policy prices in
-that unit, and a spend account is denominated in it. The tenant's purchase of
-credits is billing, not a ledger line.
+The same holds on the host's side of the price. If a tenant buys NimbleBrain
+credits rather than paying in dollars, the price policy prices in that unit and
+a spend account is denominated in it. The tenant's purchase is billing, not a
+ledger line.
 
 A report describes its own hop. A server that called other servers reports what
 this call cost its caller, never the reports it received.
@@ -158,7 +167,8 @@ deliverable, carries that run's labels.
 **What a tenant pays is the host's decision, made by a price policy in tenant
 configuration and applied when the line is written.** The policy prices a line
 from its cost, with a markup by default and an optional rate per meter, and
-covers model lines and tool lines alike. Each line stores its `cost`, its
+covers model lines and tool lines alike. A per-meter rate prices units directly,
+so a line can carry a price even when its cost is unknown. Each line stores its `cost`, its
 `price`, and the version of the policy applied, as model lines already store the
 rates they were priced at. Changing the policy changes lines written after the
 change and none before.
@@ -174,9 +184,10 @@ unit the host sells) is debited a tool line's price after the call, and a tool
 call is refused while any such account its run holds is at or below zero.**
 Nothing is reserved before a tool call, because nothing about its cost is known
 before it. A run can therefore pass its budget by the cost of one tool call,
-as it can already pass it by input beyond its projection. A line with no amount
-debits nothing, so a budget is only as complete as the reports behind it, and a
-run or batch shows how many of its tool calls had no price.
+as it can already pass it by input beyond its projection. An unpriced line
+(no amount and no operator rate) debits nothing, so a budget is only as complete
+as the reports and rates behind it, and a run or batch shows its unpriced units
+beside its total.
 
 Token-unit accounts are never debited by a tool line. They budget the run's own
 model.
