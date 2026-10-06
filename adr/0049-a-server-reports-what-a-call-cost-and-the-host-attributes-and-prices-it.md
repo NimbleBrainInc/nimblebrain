@@ -48,7 +48,7 @@ accepted from a server.
 
 **A server reports what a call consumed in the result's `_meta`, under
 `ai.nimblebrain/usage`. The host attaches attribution, applies the tenant's
-price, records both on the ledger, and debits the run's spend accounts in that price.**
+price, records both on the ledger, and debits the price from the run's spend accounts.**
 
 ### The report
 
