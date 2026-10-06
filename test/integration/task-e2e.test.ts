@@ -139,7 +139,7 @@ function createHarness(): ToolContext {
     save: (defs) => saveDefs(defs),
     reloadScheduler: () => scheduler.reload(),
     runNow: (id) => scheduler.requestRunNow(WS, OWNER, id),
-    cancelRun: (id) => scheduler.cancelRun(WS, OWNER, id),
+    cancelRun: (runId) => scheduler.cancelRunById(WS, OWNER, runId),
     readRuns: (id, opts) => readRuns(TMP_DIR, WS, OWNER, id, opts),
     readRunsPage: (id, opts) => readRunsPage(TMP_DIR, WS, OWNER, id, opts),
     readAllRuns: (opts) => readAllRuns(TMP_DIR, WS, OWNER, opts),

@@ -235,8 +235,10 @@ describe("assessment after a run", () => {
     const [first] = readRuns(workDir, WS, OWNER, "judged");
     expect(first?.status).toBe("success");
     expect(first?.assessment).toBeUndefined();
+    expect(scheduler.isAssessing(first?.id ?? "")).toBe(true);
     release();
     await scheduler.assessmentsSettled();
+    expect(scheduler.isAssessing(first?.id ?? "")).toBe(false);
     expect(readRuns(workDir, WS, OWNER, "judged")[0]?.assessment?.verdict).toBe("pass");
   });
 });

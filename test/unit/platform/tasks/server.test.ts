@@ -1873,4 +1873,17 @@ describe("the tool surface an agent reads", () => {
     expect(out.run.label).toBe("Skipped");
     expect("result" in out && out.result).toBeFalsy();
   });
+
+  test("run_result answers a recorded run still being assessed as running, not Succeeded", () => {
+    let assessing = true;
+    const ctx = makeCtx({ isAssessing: (id) => assessing && id === "run_judg00000000" });
+    handleCreate(createArgs("Judged", "p", { type: "interval", intervalMs: 60_000 }), ctx);
+    seedRun("judged", makeRun({ id: "run_judg00000000", taskId: "judged", status: "success" }));
+    const out = handleRunResult({ runId: "run_judg00000000" }, ctx);
+    if (out.status !== "running") throw new Error(`expected running, got ${JSON.stringify(out)}`);
+    expect(out.run.label).toBe("Running");
+    expect(out.message).toContain("being assessed");
+    assessing = false;
+    expect(handleRunResult({ runId: "run_judg00000000" }, ctx).status).toBe("ended");
+  });
 });

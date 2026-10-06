@@ -293,7 +293,7 @@ function harness(opts: HarnessOptions = {}): Harness {
     },
     reloadScheduler: () => scheduler.reload(),
     runNow: (id, requested) => scheduler.requestRunNow(WS, OWNER, id, requested),
-    cancelRun: (id) => scheduler.cancelRun(WS, OWNER, id),
+    cancelRun: (runId) => scheduler.cancelRunById(WS, OWNER, runId),
     readRuns: (id, o) => readRuns(workDir, WS, OWNER, id, o),
     readRunsPage: () => ({ runs: [] }),
     readAllRuns: () => [],

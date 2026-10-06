@@ -500,17 +500,16 @@ function getTimezoneOffsetMs(tz: string, date: Date): number {
 
 /**
  * How a thrown run maps to a persisted failure record. One guard-clause row per
- * outcome keeps `status`, the id `suffix`, the `error` text, and the `transient`
- * flag together so they can't drift apart.
+ * outcome keeps `status`, the `error` text, and the `transient` flag together
+ * so they can't drift apart.
  */
 function classifyRunFailure(err: unknown): {
   status: TaskRun["status"];
-  suffix: string;
   error: string;
   transient: boolean;
 } {
   if (err instanceof DOMException && err.name === "AbortError") {
-    return { status: "cancelled", suffix: "cancel", error: "Cancelled by user", transient: false };
+    return { status: "cancelled", error: "Cancelled by user", transient: false };
   }
   const errorMsg = err instanceof Error ? err.message : String(err);
   // Owner removed from the task's provenance workspace: the runtime denied
@@ -519,7 +518,7 @@ function classifyRunFailure(err: unknown): {
   // so the task self-heals the moment the owner is re-added. Matched by the
   // error's stable `code`, which crosses the in-process runtime→app boundary.
   if ((err as { code?: string })?.code === "workspace_membership_revoked") {
-    return { status: "skipped", suffix: "skip", error: errorMsg, transient: false };
+    return { status: "skipped", error: errorMsg, transient: false };
   }
   // A tool in the task's `allowedTools` matches nothing the run can reach
   // (`DeclaredToolsUnavailableError`, thrown before the first model call). A
@@ -527,19 +526,17 @@ function classifyRunFailure(err: unknown): {
   // stays gone backs the task off and disables it, saying why. Not transient:
   // a retry minutes later meets the same missing connector.
   if ((err as { code?: string })?.code === "declared_tools_unavailable") {
-    return { status: "failure", suffix: "err", error: errorMsg, transient: false };
+    return { status: "failure", error: errorMsg, transient: false };
   }
   if (errorMsg.includes("timed out")) {
     return {
       status: "timeout",
-      suffix: "timeout",
       error: errorMsg,
       transient: isTransientError(errorMsg),
     };
   }
   return {
     status: "failure",
-    suffix: "err",
     error: errorMsg,
     transient: isTransientError(errorMsg),
   };
@@ -821,12 +818,12 @@ function notStartedRun(
   return { run: requested ? withRequest(run, requested) : run, started: false };
 }
 
-/** A requested run's record, carrying its id and what it was asked with. */
 /** A fresh run id, in the runtime's shape (`run_<12 hex>`). */
 export function newRunId(): string {
   return `run_${randomBytes(6).toString("hex")}`;
 }
 
+/** A requested run's record, carrying its id and what it was asked with. */
 function withRequest(run: TaskRun, requested: RequestedRun): TaskRun {
   return {
     ...run,
@@ -901,8 +898,11 @@ export class Scheduler {
   private readonly openRuns: Map<string, { key: string; ended: Promise<TaskRun> }> = new Map();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
-  /** Assessments in flight, so a test (or a caller) can wait for them. */
-  private readonly pendingAssessments = new Set<Promise<TaskRun>>();
+  /**
+   * Assessments in flight by run id, so a caller can wait for them and a run
+   * whose record has landed reads as not yet ended until its verdict has.
+   */
+  private readonly pendingAssessments = new Map<string, Promise<TaskRun>>();
 
   private readonly executor: Executor;
   private config: SchedulerConfig;
@@ -1916,8 +1916,8 @@ export class Scheduler {
       });
       return run;
     });
-    this.pendingAssessments.add(pending);
-    pending.finally(() => this.pendingAssessments.delete(pending));
+    this.pendingAssessments.set(run.id, pending);
+    pending.finally(() => this.pendingAssessments.delete(run.id));
     return pending;
   }
 
@@ -1981,8 +1981,13 @@ export class Scheduler {
   /** Resolves once every assessment in flight has been recorded. */
   async assessmentsSettled(): Promise<void> {
     while (this.pendingAssessments.size > 0) {
-      await Promise.allSettled([...this.pendingAssessments]);
+      await Promise.allSettled([...this.pendingAssessments.values()]);
     }
+  }
+
+  /** Whether a recorded run is still being assessed, so its verdict is not yet on its record. */
+  isAssessing(runId: string): boolean {
+    return this.pendingAssessments.has(runId);
   }
 
   /** Run the executor and record the outcome; the slot is released by the caller. */
@@ -2040,9 +2045,9 @@ export class Scheduler {
       this.runRecorded(auto);
       return { run, result };
     } catch (err) {
-      const { status, suffix, error, transient } = classifyRunFailure(err);
+      const { status, error, transient } = classifyRunFailure(err);
       const failed: TaskRun = {
-        id: `run_${Date.now()}_${suffix}`,
+        id: runId,
         taskId: auto.id,
         startedAt,
         completedAt: new Date().toISOString(),

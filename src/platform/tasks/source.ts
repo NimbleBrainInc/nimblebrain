@@ -436,6 +436,7 @@ export async function createTasksSource(
         return index >= 0 ? index + 1 : null;
       },
       cancelRun: (runId) => scheduler.cancelRunById(wsId, owner, runId),
+      isAssessing: (runId) => scheduler.isAssessing(runId),
       readRuns: (id, opts) => readRuns(workDir, wsId, owner, id, opts),
       readRunsPage: (id, opts) => readRunsPage(workDir, wsId, owner, id, opts),
       readAllRuns: (opts) => readAllRuns(workDir, wsId, owner, opts),

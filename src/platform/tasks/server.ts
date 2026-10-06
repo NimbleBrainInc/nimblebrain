@@ -410,6 +410,8 @@ export interface ToolContext {
   queuePosition?: (taskId: string) => number | null;
   /** Cancel a run by id: abort it in flight, or take it out of the queue. False when none. */
   cancelRun: (runId: string) => boolean;
+  /** Whether a run's record has landed but its assessment has not yet been written. */
+  isAssessing?: (runId: string) => boolean;
   /** Read one task's run history (workspace + owner bound at construction). */
   readRuns: (taskId: string, opts?: ReadRunsOptions) => TaskRun[];
   /** Read one page of a task's full history, back through its archive months. */
@@ -1358,6 +1360,17 @@ export function handleRunResult(
 ): TasksRunResultOutput {
   const { runId, taskId: givenTaskId } = args as unknown as { runId: string; taskId?: string };
   const { taskId, run } = locateRun(ctx, runId, givenTaskId);
+  // Recorded but not yet judged: its label would read Succeeded until the
+  // verdict lands, so it is not ended yet.
+  if (ctx.isAssessing?.(runId)) {
+    return {
+      status: "running",
+      run: { ...toRunView(run), label: "Running" },
+      message:
+        `Run "${runId}" has finished and is being assessed against its criteria. Call ` +
+        "tasks__run_result again until its status is ended.",
+    };
+  }
   if (run.status === "queued" || run.status === "running") {
     const position =
       run.status === "queued"
