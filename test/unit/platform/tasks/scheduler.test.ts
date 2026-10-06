@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StaticToolRouter } from "../../../../src/adapters/static-router.ts";
@@ -9,6 +9,7 @@ import { textContent } from "../../../../src/engine/content-helpers.ts";
 import { AgentEngine } from "../../../../src/engine/engine.ts";
 import type { ToolResult, ToolSchema } from "../../../../src/engine/types.ts";
 import { createDirectExecutor, type TaskFn } from "../../../../src/platform/tasks/executor.ts";
+import { taskRunIndexPath } from "../../../../src/platform/tasks/paths.ts";
 import {
   backoffDelay,
   budgetSpendAccounts,
@@ -1540,6 +1541,35 @@ describe("Scheduler — interrupted scheduled runs", () => {
     expect(stored.scheduledRunInFlight).toBeUndefined();
     expect(stored.runCount).toBe(1);
     expect(new Date(stored.nextRunAt!).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("test_interruptedRun_runIndexUnreadable_startStillSucceeds", () => {
+    const auto = makeTask({
+      scheduledRunInFlight: {
+        runId: "run_0123456789ab",
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+    // A directory where the run index belongs: reading it throws (EISDIR).
+    mkdirSync(taskRunIndexPath(tmpDir, WS, OWNER, auto.id), { recursive: true });
+
+    const scheduler = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+    expect(() => scheduler.start()).not.toThrow();
+    scheduler.stop();
+  });
+
+  it("test_anotherRunRecorded_whileScheduledRunInFlight_markKept", () => {
+    const inFlight = { runId: "run_0123456789ab", startedAt: new Date().toISOString() };
+    const auto = makeTask({ scheduledRunInFlight: inFlight });
+    seedDefs(tmpDir, new Map([[auto.id, auto]]));
+
+    // A record for a different run of the same task (a skip, a batch item)
+    // lands while the scheduled run is still going.
+    const scheduler = new Scheduler(createMockExecutor(), { workDir: tmpDir });
+    scheduler.updateAfterRun(auto, { ...makeSuccessRun(auto.id), id: "run_ffffffffffff" });
+
+    expect(loadDefs(tmpDir).get(auto.id)!.scheduledRunInFlight).toEqual(inFlight);
   });
 });
 

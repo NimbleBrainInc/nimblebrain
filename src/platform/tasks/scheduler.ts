@@ -1020,25 +1020,27 @@ export class Scheduler {
       if (!inFlight || this.scheduledInFlight.has(inFlight.runId)) continue;
       const { workspaceId: wsId, ownerId } = auto;
       if (!wsId || !ownerId) continue;
-      // A stop between the record's append and the task's save leaves the
-      // record in the index: settle the task from it rather than append another.
-      const recorded = readRuns(this.config.workDir, wsId, ownerId, auto.id).find(
-        (r) => r.id === inFlight.runId,
-      );
-      const run: TaskRun = recorded ?? {
-        id: inFlight.runId,
-        taskId: auto.id,
-        startedAt: inFlight.startedAt,
-        completedAt: now,
-        status: "failure",
-        inputTokens: 0,
-        outputTokens: 0,
-        toolCalls: 0,
-        iterations: 0,
-        error: INTERRUPTED_RUN_ERROR,
-        trigger: "scheduled",
-      };
+      // Inside the try with the write: one task's unreadable run index must
+      // not throw out of `start()`, or the mark it leaves fails every boot.
       try {
+        // A stop between the record's append and the task's save leaves the
+        // record in the index: settle the task from it rather than append another.
+        const recorded = readRuns(this.config.workDir, wsId, ownerId, auto.id).find(
+          (r) => r.id === inFlight.runId,
+        );
+        const run: TaskRun = recorded ?? {
+          id: inFlight.runId,
+          taskId: auto.id,
+          startedAt: inFlight.startedAt,
+          completedAt: now,
+          status: "failure",
+          inputTokens: 0,
+          outputTokens: 0,
+          toolCalls: 0,
+          iterations: 0,
+          error: INTERRUPTED_RUN_ERROR,
+          trigger: "scheduled",
+        };
         this.updateAfterRun(auto, run, "scheduled", inFlight.onceAt, {
           appendRecord: recorded === undefined,
         });
