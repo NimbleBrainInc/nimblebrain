@@ -413,6 +413,20 @@ function ResultStatus({ state }: { state: RunResultState }) {
   return null;
 }
 
+/**
+ * Whether the run page offers Cancel: a run still open, of a known task, that
+ * is not a batch item. Cancel names the task, which reaches only its own run,
+ * never a batch item's; a batch is stopped from its page. A batch item still
+ * running has no record yet, so its batch comes from the page that opened it.
+ */
+export function showsCancel(
+  state: Pick<RunResultState, "status" | "run">,
+  taskName: string | undefined,
+  batchId: string | undefined,
+): boolean {
+  return state.status === "open" && !!taskName && !(state.run?.batchId ?? batchId);
+}
+
 /** Links to the run this one retried, and to its batch. */
 function RelatedLinks({
   run,
@@ -555,6 +569,7 @@ export function ResultScreen({
   taskId,
   taskName,
   initialRun,
+  batchId,
   onBack,
   onRerun,
   onOpenRun,
@@ -566,6 +581,8 @@ export function ResultScreen({
   /** Absent when the task was deleted. */
   taskName?: string;
   initialRun?: TaskRun;
+  /** The batch the run is an item of, when the page that opened it knows. */
+  batchId?: string;
   onBack: () => void;
   onRerun?: (task: { id: string; name: string }, input: unknown) => void;
   onOpenRun: (runId: string, taskId?: string) => void;
@@ -615,8 +632,7 @@ export function ResultScreen({
         }
         actions={
           <>
-            {/* Cancel names the task, which reaches only its own run, never a batch item's: a batch is stopped from its page. */}
-            {state.status === "open" && name && !run?.batchId && (
+            {showsCancel(state, name, batchId) && (
               <button
                 type="button"
                 className="btn btn-danger"

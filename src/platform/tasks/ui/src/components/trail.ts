@@ -13,7 +13,14 @@ export type Screen =
   | { kind: "task"; taskName: string }
   | { kind: "upcoming" }
   | { kind: "activity"; taskId?: string; taskName?: string }
-  | { kind: "result"; runId: string; taskId?: string; run?: TaskRun }
+  | {
+      kind: "result";
+      runId: string;
+      taskId?: string;
+      run?: TaskRun;
+      /** The batch the run is an item of, known before its record is written. */
+      batchId?: string;
+    }
   | { kind: "batch"; batchId: string; batch?: TaskBatch }
   | { kind: "editor"; taskName?: string; copyOf?: string; template?: Template | null };
 

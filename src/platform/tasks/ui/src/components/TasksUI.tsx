@@ -118,9 +118,13 @@ export function TasksUI() {
     setStack((prev) => prev.slice(0, -1));
   };
   /** Open a run under its task's page, so its crumb leads to the task. */
-  const openRun = (runId: string, taskId?: string, run?: TaskRun) =>
+  const openRun = (runId: string, taskId?: string, run?: TaskRun, batchId?: string) =>
     setStack((prev) =>
-      withRun(prev, { kind: "result", runId, taskId, run }, taskId ? nameOf(taskId) : undefined),
+      withRun(
+        prev,
+        { kind: "result", runId, taskId, run, ...(batchId ? { batchId } : {}) },
+        taskId ? nameOf(taskId) : undefined,
+      ),
     );
 
   function mark(id: string, what: string | null) {
@@ -326,7 +330,7 @@ function ScreenRoute({
   onBack: () => void;
   onPush: (s: Screen) => void;
   onRunLoaded: (runId: string, run: TaskRun) => void;
-  onOpenRun: (runId: string, taskId?: string, run?: TaskRun) => void;
+  onOpenRun: (runId: string, taskId?: string, run?: TaskRun, batchId?: string) => void;
   onReplaceTop: (s: Screen | null) => void;
   onRerun: (task: TaskRef, input: unknown) => void;
   onSaved: (warnings: TaskWarning[]) => void;
@@ -342,6 +346,7 @@ function ScreenRoute({
           taskId={screen.taskId}
           taskName={screen.taskId ? nameOf(screen.taskId) : undefined}
           initialRun={screen.run}
+          batchId={screen.batchId}
           onBack={onBack}
           onRerun={onRerun}
           onOpenRun={openRun}
@@ -357,7 +362,7 @@ function ScreenRoute({
           taskName={nameOf}
           refreshKey={refreshKey}
           onBack={onBack}
-          onOpenRun={openRun}
+          onOpenRun={(runId, taskId) => openRun(runId, taskId, undefined, screen.batchId)}
         />
       );
     case "editor":
@@ -382,7 +387,7 @@ function ScreenRoute({
           <main className="content">
             <UpcomingView
               refreshKey={refreshKey}
-              onOpenRun={(r) => r.runId && openRun(r.runId, r.taskId)}
+              onOpenRun={(r) => r.runId && openRun(r.runId, r.taskId, undefined, r.batchId)}
               onOpenTask={(name) => onPush({ kind: "task", taskName: name })}
             />
           </main>

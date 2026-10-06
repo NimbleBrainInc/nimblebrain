@@ -512,6 +512,26 @@ describe("Result", () => {
   });
 });
 
+describe("Cancel on a run page", () => {
+  const open = { status: "open" as const, run: undefined };
+  test("a run in flight of a known task offers Cancel", () => {
+    expect(result.showsCancel(open, "Research", undefined)).toBe(true);
+  });
+  test("a batch item still running, opened from its batch or Coming up, does not", () => {
+    // Its record is written only when it ends, so the batch comes from the page that opened it.
+    expect(result.showsCancel(open, "Research", "batch_4f2a00000000")).toBe(false);
+  });
+  test("a batch item whose record says so does not, whatever opened it", () => {
+    const run = { batchId: "batch_4f2a00000000" } as TaskRun;
+    expect(result.showsCancel({ status: "open", run }, "Research", undefined)).toBe(false);
+  });
+  test("an ended run does not", () => {
+    expect(result.showsCancel({ status: "ready", run: undefined }, "Research", undefined)).toBe(
+      false,
+    );
+  });
+});
+
 describe("InputEditor", () => {
   test("draws a form for a flat schema", () => {
     const html = render(
