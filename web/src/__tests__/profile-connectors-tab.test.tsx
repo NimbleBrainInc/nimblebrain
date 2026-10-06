@@ -510,6 +510,23 @@ describe("ProfileConnectorsTab", () => {
     );
   });
 
+  test("gives a connector with no icon a letter tile, so every row's name lines up", async () => {
+    nextConnectors = [
+      {
+        serverName: "notion",
+        displayName: "Notion",
+        description: null,
+        state: "not_authenticated",
+        auth: "dcr",
+        grantedWorkspaces: [],
+      },
+    ];
+    mounted = await mount();
+    expect(mounted.container.getElementsByTagName("img")).toHaveLength(0);
+    const tile = mounted.container.querySelector('[aria-hidden="true"].h-6.w-6');
+    expect(tile?.textContent).toBe("N");
+  });
+
   test("Disconnect confirms, calls the API, and refreshes", async () => {
     nextConnectors = [
       {
@@ -523,7 +540,7 @@ describe("ProfileConnectorsTab", () => {
     ];
     mounted = await mount();
     await openRow("Granola");
-    await click(allButtons().find((b) => b.textContent === "Disconnect Granola"));
+    await click(allButtons().find((b) => b.textContent === "Disconnect"));
     await flush();
     // The dialog says what disconnecting takes with it.
     expect(document.body.textContent ?? "").toContain("It turns off in the 1 workspace");
@@ -531,7 +548,11 @@ describe("ProfileConnectorsTab", () => {
 
     // Emptied on the post-disconnect refresh so the row goes away.
     nextConnectors = [];
-    await click(allButtons().find((b) => b.textContent === "Disconnect"));
+    await click(
+      allButtons()
+        .filter((b) => b.textContent === "Disconnect")
+        .at(-1),
+    );
     await flush();
     expect(disconnectPersonalConnector).toHaveBeenCalledWith("granola");
     // Re-fetched after the disconnect.
@@ -551,7 +572,7 @@ describe("ProfileConnectorsTab", () => {
     ];
     mounted = await mount();
     await openRow("Granola");
-    await click(allButtons().find((b) => b.textContent === "Disconnect Granola"));
+    await click(allButtons().find((b) => b.textContent === "Disconnect"));
     await flush();
     await click(allButtons().find((b) => b.textContent === "Cancel"));
     await flush();

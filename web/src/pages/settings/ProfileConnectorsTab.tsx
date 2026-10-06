@@ -12,6 +12,7 @@ import {
   type PersonalConnector,
   revokeConnector,
 } from "../../api/client";
+import { ConnectorIcon } from "../../components/connectors/ConnectorIcon";
 import { ToolPermissionsTable } from "../../components/connectors/ToolPermissionsTable";
 import { Button } from "../../components/ui/button";
 import { ConfirmDialog } from "../../components/ui/confirm-dialog";
@@ -250,7 +251,7 @@ export function ProfileConnectorsTab() {
  *   ── opened ──────────────────────────────────────────────────────────────
  *          Workspaces        one switch per workspace
  *          Tool permissions  the table, listed on request
- *          Disconnect <name>
+ *          Disconnect
  *
  * Closed, the row says only what is true: who it is signed in as and where the
  * agent may use it. Connect is the one action shown closed, because it is the
@@ -284,9 +285,7 @@ function PersonalConnectorRow({
   return (
     <div className="border-b border-border">
       <div className="relative -mx-2 flex items-center gap-3 rounded-sm px-2 py-3">
-        {connector.iconUrl ? (
-          <img src={connector.iconUrl} alt="" className="h-6 w-6 shrink-0 rounded" />
-        ) : null}
+        <ConnectorIcon name={name} iconUrl={connector.iconUrl} className={ROW_ICON} />
         <div className="min-w-0 flex-1">
           {/* The name is the disclosure; its ::after stretches over the whole
               row, so the row is one click target. Connect sits above it. */}
@@ -350,7 +349,7 @@ function PersonalConnectorRow({
       </div>
 
       {open ? (
-        <div id={panelId} className="space-y-6 pb-4 pl-9">
+        <div id={panelId} className="space-y-6 pt-3 pb-4 pl-9">
           <WorkspaceAccess
             connector={connector}
             name={name}
@@ -363,14 +362,18 @@ function PersonalConnectorRow({
             name={name}
             connected={connected}
           />
-          <div className="border-t border-border/60 pt-3">
-            <button
+          <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-4">
+            <p className="text-xs text-muted-foreground">
+              Sign out of {name} and remove it from your account.
+            </p>
+            <Button
               type="button"
+              variant="destructive"
+              size="sm"
               onClick={() => setConfirmingDisconnect(true)}
-              className="text-xs text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
             >
-              Disconnect {name}
-            </button>
+              Disconnect
+            </Button>
           </div>
         </div>
       ) : null}
@@ -391,6 +394,9 @@ function PersonalConnectorRow({
     </div>
   );
 }
+
+/** A list row's icon; the panel's indent (`pl-9`) is this width plus the row's gap. */
+const ROW_ICON = "h-6 w-6 rounded text-xs";
 
 /** Where the agent may use the connector, read against the caller's workspaces. */
 export function workspaceReach(grantedIds: string[], workspaces: WorkspaceInfo[]): string {
@@ -521,9 +527,7 @@ function AvailableConnectorRow({
   return (
     <div className="flex items-center justify-between gap-3 border-b border-border py-3">
       <div className="flex min-w-0 items-center gap-3">
-        {entry.iconUrl ? (
-          <img src={entry.iconUrl} alt="" className="h-6 w-6 shrink-0 rounded" />
-        ) : null}
+        <ConnectorIcon name={entry.name} iconUrl={entry.iconUrl} className={ROW_ICON} />
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">{entry.name}</div>
           {entry.description ? (
