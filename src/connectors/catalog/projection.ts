@@ -23,6 +23,7 @@ import { parseNotificationsDeclaration } from "../../notifications/declaration.t
 import { parseAdminToolsDeclaration } from "../../permissions/admin-tools.ts";
 import { validateAdditionalAuthorizationParams } from "../../util/oauth-params.ts";
 import { isHttpUrl } from "../../util/url.ts";
+import { parseAccountLookup } from "./account-lookup.ts";
 import {
   type ComposioConnectorConfig,
   getNimbleBrainConnectorMeta,
@@ -153,6 +154,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
   const hooks = parseHookDeclarations(getNimbleBrainHostMeta(s));
   const notifications = parseNotificationsDeclaration(getNimbleBrainHostMeta(s));
   const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(s), s.name);
+  const account = parseAccountLookup(meta?.account);
   // The "interactive" chip is cosmetic catalog metadata (no runtime behavior). Derive
   // it from whether the connector renders a VALID UI: an explicit connector flag OR a
   // placement that survives `sanitizePlacements` (the same check registration uses).
@@ -172,6 +174,7 @@ export function serverDetailToCatalogEntry(s: ServerDetail): ConnectorCatalogEnt
     ...(interactive ? { interactive: true } : {}),
     ...(meta?.docsUrl ? { docsUrl: meta.docsUrl } : {}),
     ...(meta?.personal === true ? { personal: true } : {}),
+    ...(account ? { account } : {}),
     ...(ui ? { ui } : {}),
     ...(hooks.length > 0 ? { hooks } : {}),
     ...(notifications ? { notifications } : {}),

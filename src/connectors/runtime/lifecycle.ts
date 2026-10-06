@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { resolveConnectorSkillsConfig } from "../../config/connector-skills.ts";
+import type { AccountLookup } from "../../connectors/catalog/account-lookup.ts";
 import type { ManagedConnectorProvider } from "../../connectors/providers/managed-provider.ts";
 import {
   type ManagedConnectorRegistry,
@@ -31,6 +32,7 @@ import {
   OAuthFlowAbandonedError,
   OAuthFlowExpiredError,
   OAuthFlowRefusedError,
+  peekFlowOwner,
 } from "../../tools/oauth-flow-registry.ts";
 import { SharedSourceRef, ToolRegistry } from "../../tools/registry.ts";
 import type { ToolSource } from "../../tools/types.ts";
@@ -38,6 +40,7 @@ import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts"
 import { validateAdditionalAuthorizationParams } from "../../util/oauth-params.ts";
 import { WorkspaceContext } from "../../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../../workspace/workspace-store.ts";
+import { AccountLookups } from "./account-lookups.ts";
 import { brokeredConnectorDir, brokeredRef } from "./brokered.ts";
 import {
   type Connection,
@@ -98,7 +101,8 @@ type SeedManifestMeta = {
 /**
  * A user-initiated interactive connect (`startIdentityAuth`) can't start a clean
  * OAuth flow because a start for the same `(userId, serverName)` is already in
- * flight, or the source is already connected. Retriable and NOT a server fault —
+ * flight, or the source is already connected. A sign-in that only waits on its
+ * person is not this: Connect resumes it. Retriable and NOT a server fault —
  * the caller should back off and retry, not read logs. Surfaced as a `409` at
  * the route layer.
  */
@@ -1390,6 +1394,30 @@ export class ConnectorLifecycleManager {
   }
 
   /**
+   * Ask a connection's connected service which account it is signed in as,
+   * through the tool its catalog entry declares (`AccountLookup`). Null when
+   * the connection has no live source in this process, or the tool names no
+   * account. Never throws.
+   *
+   * Asks only a source that is already connected and starts nothing: a
+   * connectors listing must not start a cold connector to label it. A
+   * personal connector that is authenticated but cold is labelled the first
+   * time it is listed after something has used it.
+   */
+  lookUpAccount(
+    owner: ConnectorOwner,
+    serverName: string,
+    lookup: AccountLookup,
+  ): Promise<string | null> {
+    const source =
+      owner.type === "workspace"
+        ? this.connectionSource(serverName, owner.wsId)
+        : this.registriesByUser.get(owner.userId)?.getSource(serverName);
+    if (!(source instanceof McpSource) || !source.isAlive()) return Promise.resolve(null);
+    return this.accountLookups.ask(source, lookup);
+  }
+
+  /**
    * The runtime's `wsId` → `ToolRegistry` map, **asked for on every read**.
    * Required so `startAuth` / `disconnect` / `connectionSource` can reach a
    * workspace's sources without callers having to thread the registry through
@@ -1443,6 +1471,33 @@ export class ConnectorLifecycleManager {
    * 409 at the route) rather than racing a rival `auth()` chain.
    */
   private readonly identityConnectorStarts = new Map<string, Promise<ToolSource | undefined>>();
+
+  /** Account lookups in flight and recently failed, per source. */
+  private readonly accountLookups = new AccountLookups();
+
+  /**
+   * The sign-in each interactive Connect handed out, keyed like
+   * `identityConnectorStarts`: the authorization URL and the flow `state` in
+   * it. Written when the provider hands a URL out and dropped with the start
+   * gate, so an entry never outlives the start it belongs to.
+   *
+   * It is what separates a start that waits on a PERSON from one that is in
+   * flight. The gate treats both as held, but only the second is busy: a
+   * sign-in can wait for the flow's whole TTL, and its person coming back to
+   * click Connect again is asking for that same sign-in.
+   */
+  private readonly identitySignIns = new Map<string, { url: string; state: string }>();
+
+  /**
+   * The authorization URL of a personal connector's sign-in that is still
+   * waiting on its person: handed out, and not yet answered by a callback.
+   * Once the callback delivers a code the flow leaves the registry and this
+   * reads undefined, though the start runs on (the exchange, the reconnect).
+   */
+  private waitingIdentitySignIn(connectorKey: string): string | undefined {
+    const signIn = this.identitySignIns.get(connectorKey);
+    return signIn && peekFlowOwner(signIn.state) !== null ? signIn.url : undefined;
+  }
 
   /**
    * Per-`${serverName}|${wsId}` timestamp (epoch ms) of the last
@@ -1614,8 +1669,13 @@ export class ConnectorLifecycleManager {
    * authenticated" (cross-pod / persisted connection state is the deferred reauth
    * slice). Used by `list_personal_connectors` so a just-connected connector
    * reflects "running" instead of the resting state.
+   *
+   * A source whose sign-in still waits on its person is registered and not
+   * running: it reads false, so the listing offers Connect (which resumes that
+   * sign-in) and does not call it connected.
    */
   isIdentityConnectorRunning(userId: string, serverName: string): boolean {
+    if (this.waitingIdentitySignIn(`${userId}|${serverName}`)) return false;
     return this.registriesByUser.get(userId)?.hasSource(serverName) ?? false;
   }
 
@@ -1747,6 +1807,11 @@ export class ConnectorLifecycleManager {
    * second Connect finds the gate held and throws `ConnectorBusyError` (a
    * retriable 409 at the route) rather than racing a rival `auth()` chain.
    *
+   * A Connect that arrives while an earlier one's sign-in waits on the person
+   * resumes it: the same authorization URL is returned and nothing is started
+   * (see `identitySignIns`). Busy is for a start that is in flight, which
+   * lasts seconds; a sign-in can wait for the flow's whole TTL.
+   *
    * Minimal connection state by design: the returned URL drives the browser and
    * the source runs once the user returns; the rich per-user connection-state
    * model + reauth surfacing are deferred.
@@ -1772,6 +1837,13 @@ export class ConnectorLifecycleManager {
     // exists, or a start is already in flight either way, we can't run a clean
     // interactive flow — surface a retriable busy error instead of racing a
     // second `auth()` chain that would clobber the shared credential root.
+    //
+    // A sign-in still waiting on this person is the exception: nothing is in
+    // flight, and the same authorization URL carries on the same flow (state,
+    // PKCE pair, records). Handing it out again starts nothing, so it races
+    // nothing, and it is how someone who closed the provider's tab gets back.
+    const waiting = this.waitingIdentitySignIn(connectorKey);
+    if (waiting) return { authorizationUrl: waiting };
     if (registry.hasSource(serverName) || this.identityConnectorStarts.has(connectorKey)) {
       throw new ConnectorBusyError(serverName, userId);
     }
@@ -1788,6 +1860,7 @@ export class ConnectorLifecycleManager {
     const clearConnectorGate = (): void => {
       if (this.identityConnectorStarts.get(connectorKey) === sourceReady) {
         this.identityConnectorStarts.delete(connectorKey);
+        this.identitySignIns.delete(connectorKey);
       }
     };
 
@@ -1829,6 +1902,10 @@ export class ConnectorLifecycleManager {
         },
         (url) => {
           capturedAuthUrl = url;
+          // Each hand-out replaces the last: a flow that fell back to the
+          // connector's own scope runs on the fallback URL from then on.
+          const state = URL.canParse(url) ? new URL(url).searchParams.get("state") : null;
+          if (state) this.identitySignIns.set(connectorKey, { url, state });
           resolveAuthUrl(url);
         },
       );
